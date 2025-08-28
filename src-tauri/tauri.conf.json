@@ -1,0 +1,29 @@
+{
+  "productName": "Plex SIMKL Desktop",
+  "version": "0.2.0",
+  "identifier": "app.plex.simkl.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:5174",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Plex \u21c4 SIMKL Desktop",
+        "width": 1100,
+        "height": 740,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

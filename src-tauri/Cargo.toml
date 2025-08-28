@@ -1,0 +1,26 @@
+[package]
+name = "plex_simkl_desktop"
+version = "0.2.0"
+description = "Plex ⇄ SIMKL Desktop (Tauri v2)"
+authors = ["Pazzie"]
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-opener = "2.0.0"
+tauri-plugin-shell = "2.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros","rt-multi-thread","time"] }
+tiny_http = "0.12"
+anyhow = "1"
+thiserror = "1"
+directories = "5"
+chrono = { version = "0.4", features = ["clock"] }
+url = "2.5"
+urlencoding = "2.1"
