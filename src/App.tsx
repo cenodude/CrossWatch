@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { LinkIcon, RefreshCw, PlayCircle, Save, Settings, X } from 'lucide-react'
+import { LinkIcon, RefreshCw, PlayCircle, Save, Settings, X, ChevronDown } from 'lucide-react'
 
 type Config = {
   plex?: { account_token?: string }
@@ -18,13 +18,25 @@ type Config = {
 
 function Badge({ ok }: { ok: boolean }) {
   return (
-    <span className={"px-2 py-1 rounded-md text-xs " + (ok ? "bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-700" : "bg-rose-600/20 text-rose-300 ring-1 ring-rose-700")}>
+    <span className={
+      "px-2 py-1 rounded-md text-xs " +
+      (ok ? "bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-700" : "bg-rose-600/20 text-rose-300 ring-1 ring-rose-700")
+    }>
       {ok ? "Connected" : "Not connected"}
     </span>
   )
 }
 
 export default function App() {
+  const [toast, setToast] = useState<string>('')
+  const [showToast, setShowToast] = useState(false)
+  const showToastMsg = (msg: string) => { setToast(msg); setShowToast(true); setTimeout(()=>setShowToast(false), 2000) }
+  const copyToClipboard = async (t: string) => {
+    try { if ((navigator as any)?.clipboard?.writeText) { await (navigator as any).clipboard.writeText(t); return true } } catch {}
+    try { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); return true } catch {}
+    return false
+  }
+
   const [cfg, setCfg] = useState<Config>({
     plex: { account_token: '' },
     simkl: { client_id: '', client_secret: '' },
@@ -34,6 +46,8 @@ export default function App() {
   const [log, setLog] = useState('')
   const [busy, setBusy] = useState(false)
   const plexConnected = !!cfg.plex?.account_token
+  const [plexOpen, setPlexOpen] = useState(true)
+  const [simklOpen, setSimklOpen] = useState(false)
   const simklConnected = !!cfg.simkl?.access_token && (!!cfg.simkl?.token_expires_at ? cfg.simkl!.token_expires_at! > Math.floor(Date.now()/1000) : true)
   const needsSetup = !(plexConnected && simklConnected)
   const [showSettings, setShowSettings] = useState(false)
@@ -57,10 +71,6 @@ export default function App() {
     } catch {}
   })() }, [])
 
-  useEffect(() => {
-    if (needsSetup) setShowSettings(true)
-  }, [needsSetup])
-
   function update<K extends keyof Config>(k: K, v: Config[K]) {
     setCfg(prev => ({ ...prev, [k]: v }))
   }
@@ -73,65 +83,86 @@ export default function App() {
 
   // --- SYNC ---
   async function runSync() {
-    setBusy(true); setLog(l => l + "\n[SYNC] Launching Python sidecar...")
-    try { await invoke('cmd_run_sync'); setLog(l => l + "\n[SYNC] Completed.") }
-    catch (e:any) { setLog(l => l + "\n[SYNC] Error: " + e?.toString()) }
+    setBusy(true); setLog(l => `${l}
+[SYNC] Launching Python sidecar...`)
+    try { await invoke('cmd_run_sync'); setLog(l => `${l}
+[SYNC] Completed.`) }
+    catch (e:any) { setLog(l => `${l}
+[SYNC] Error: ${(e as any)?.toString?.() ?? String(e)}`) }
     finally { setBusy(false) }
   }
 
   // --- PLEX PIN UX ---
   const [pinId, setPinId] = useState<number|undefined>(undefined)
+  const [pinCid, setPinCid] = useState<string>('')
   const [pinCode, setPinCode] = useState<string>('')
   const [pinBusy, setPinBusy] = useState(false)
+
   async function plexCreatePin() {
   setPinBusy(true)
   try {
-    const res = await invoke<{id:number, code:string, expires_at:number}>('cmd_plex_create_pin')
-    setPinId(res.id); setPinCode(res.code)
-    setLog(l => l + `
+    const res = await invoke<{id:number, code:string, expires_at:number, client_id:string}>('cmd_plex_create_pin')
+    setPinId(res.id); setPinCode(res.code); setPinCid(res.client_id);
+    try { const ok = await copyToClipboard(res.code); if (ok) showToastMsg('PIN copied to clipboard'); } catch {}
+    setLog(l => `${l}
 [Plex] PIN created: ${res.code}. Opening plex.tv/link...`)
-    await invoke('cmd_open_url', { url: "https://plex.tv/link" })
-    // auto-poll until token received or expiry (~90s)
-    const start = Date.now()
-    const poll = async () => {
+    try { await invoke('cmd_open_external_sized', { url: 'https://plex.tv/link', width: 520, height: 720 }) } catch { await invoke('cmd_open_external_sized', { url: 'https://plex.tv/link', width: 520, height: 720 }) }
+
+    const deadline = Date.now() + 90_000
+    const interval = setInterval(async () => {
       try {
-        const token = await invoke<string>('cmd_plex_poll_pin', { id: res.id })
-        if (token) {
-          setLog(l => l + "
-[Plex] Token received.")
+        const token = await invoke<string>('cmd_plex_poll_pin', { id: res.id, clientId: res.client_id })
+        if (token && token.length > 0) {
+          clearInterval(interval)
+          setLog(l => `${l}
+[Plex] Token received.`)
           setCfg(prev => ({ ...prev, plex: { account_token: token } }))
-          await saveConfig()
           setPinBusy(false)
-          return
         }
       } catch (e:any) {
-        // keep polling unless error is terminal
+        // keep polling
       }
-      if (Date.now() - start < 90000) {
-        setTimeout(poll, 1500)
-      } else {
+      if (Date.now() >= deadline) {
+        clearInterval(interval)
         setPinBusy(false)
-        setLog(l => l + "
-[Plex] PIN expired; please create a new PIN.")
+        setLog(l => `${l}
+[Plex] PIN expired; please create a new PIN.`)
       }
-    }
-    setTimeout(poll, 1500)
+    }, 1500)
   } catch (e:any) {
-    setLog(l => l + "
-[Plex] Error creating PIN: " + e?.toString())
+    setLog(l => `${l}
+[Plex] Error creating PIN: ${(e as any)?.toString?.() ?? String(e)}`)
     setPinBusy(false)
   }
 }
+
+  async function plexPollPin() {
+    if (!pinId) return
+    setPinBusy(true)
+    try {
+      const token = await invoke<string>('cmd_plex_poll_pin', { id: pinId, client_id: pinCid })
+      setLog(l => `${l}
+[Plex] Token received.`)
+      setCfg(prev => ({ ...prev, plex: { account_token: token } }))
+      await invoke('cmd_write_config', { cfg: { ...cfg, plex: { account_token: token } } })
+    } catch (e:any) {
+      setLog(l => `${l}
+[Plex] Poll error: ${(e as any)?.toString?.() ?? String(e)}`)
+    } finally { setPinBusy(false) }
+  }
+
   // --- SIMKL ---
   const simklReady = !!cfg.simkl?.client_id && !!cfg.simkl?.client_secret
   async function connectSimkl() {
-    setBusy(true); setLog(l => l + "\n[SIMKL] Opening authorize page...")
-    try { await invoke('cmd_simkl_oauth'); setLog(l => l + "\n[SIMKL] Tokens saved.") }
-    catch (e:any) { setLog(l => l + "\n[SIMKL] Error: " + e?.toString()) }
+    setBusy(true); setLog(l => `${l}
+[SIMKL] Opening authorize page...`)
+    try { await invoke('cmd_simkl_oauth'); setLog(l => `${l}
+[SIMKL] Tokens saved.`) }
+    catch (e:any) { setLog(l => `${l}
+[SIMKL] Error: ${(e as any)?.toString?.() ?? String(e)}`) }
     finally { setBusy(false) }
   }
 
-  // --- UI ---
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
       <header className="flex items-center justify-between">
@@ -158,6 +189,13 @@ export default function App() {
         <pre className="log">{log}</pre>
       </div>
 
+{showToast && (
+        <div className="fixed right-4 bottom-4 z-[60]">
+          <div className="rounded-xl bg-zinc-900/90 ring-1 ring-zinc-700 px-4 py-2 text-sm text-zinc-100 shadow-lg">
+            {toast}
+          </div>
+        </div>
+      )}
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
@@ -200,7 +238,17 @@ export default function App() {
             <div className="grid md:grid-cols-2 gap-6">
               {/* Plex */}
               <div className="space-y-4">
-                <div className="section-title">Authentication — Plex</div>
+                <button className="w-full flex items-center justify-between rounded-xl px-3 py-2 bg-zinc-800/60 hover:bg-zinc-800 transition-colors"
+  onClick={() => setPlexOpen(o => !o)}>
+  <div className="flex items-center gap-2">
+    <div className={`transition-transform ${plexOpen ? "" : "-rotate-90"}`}><ChevronDown size={16}/></div>
+    <div className="section-title">Authentication — Plex</div>
+  </div>
+  <Badge ok={plexConnected}/>
+</button>
+<div className={`overflow-hidden transition-all duration-300 ${plexOpen ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'}`}>
+  <div className="pt-3 space-y-4">
+
                 <div className="space-y-2">
                   <label className="label">Account token (manual)</label>
                   <input className="input" value={cfg.plex?.account_token || ''}
@@ -210,19 +258,29 @@ export default function App() {
                   <label className="label">PIN code</label>
                   <div className="flex gap-2">
                     <input className="input" value={pinCode} readOnly placeholder="Press 'Create PIN'"/>
-                    <button className="btn" onClick={() => invoke('cmd_open_url', { url: 'https://plex.tv/link' })}><LinkIcon size={16}/> Open link</button>
-                  </div>
+                    </div>
                 </div>
-                <div className="flex gap-3">
+                </div>
+<div className="flex gap-3">
                   <button className="btn btn-primary" disabled={pinBusy} onClick={plexCreatePin}><LinkIcon size={16}/> Create PIN</button>
-                  <button className="btn" disabled={pinBusy || !pinId} onClick={plexPollPin}><RefreshCw size={16}/> I entered the code</button>
                   <button className="btn" disabled={busy} onClick={saveConfig}><Save size={16}/> Save</button>
                 </div>
               </div>
 
               {/* SIMKL */}
               <div className="space-y-4">
-                <div className="section-title">Authentication — SIMKL</div>
+                  </div>
+</div>
+<button className="w-full flex items-center justify-between rounded-xl px-3 py-2 bg-zinc-800/60 hover:bg-zinc-800 transition-colors"
+  onClick={() => setSimklOpen(o => !o)}>
+  <div className="flex items-center gap-2">
+    <div className={`transition-transform ${simklOpen ? "" : "-rotate-90"}`}><ChevronDown size={16}/></div>
+    <div className="section-title">Authentication — SIMKL</div>
+  </div>
+  <Badge ok={simklConnected}/>
+</button>
+<div className={`overflow-hidden transition-all duration-300 ${simklOpen ? 'max-h-[700px] opacity-100' : 'max-h-0 opacity-0'}`}>
+
                 <div className="space-y-2">
                   <label className="label">Client ID</label>
                   <input className="input" value={cfg.simkl?.client_id || ''}

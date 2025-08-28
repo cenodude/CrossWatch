@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::{Path, PathBuf}, time::Duration};
 use tauri::AppHandle;
+
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::ShellExt;
 use directories::ProjectDirs;
@@ -56,16 +57,64 @@ fn write_cfg(cfg: &Config) -> Result<()> {
   Ok(())
 }
 
-#[tauri::command] async fn cmd_read_config() -> Result<Config, String> { read_cfg().map_err(|e| e.to_string()) }
-#[tauri::command] async fn cmd_write_config(cfg: Config) -> Result<(), String> { write_cfg(&cfg).map_err(|e| e.to_string()) }
+#[tauri::command]
+async fn cmd_read_config() -> Result<Config, String> { read_cfg().map_err(|e| e.to_string()) }
+
+#[tauri::command]
+async fn cmd_write_config(cfg: Config) -> Result<(), String> { write_cfg(&cfg).map_err(|e| e.to_string()) }
 
 #[tauri::command]
 async fn cmd_open_url(app: AppHandle, url: String) -> Result<(), String> {
   app.opener().open_url(url, None::<String>).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+        async fn cmd_open_external_sized(app: AppHandle, url: String, width: Option<u32>, height: Option<u32>) -> Result<(), String> {
+          let w = width.unwrap_or(520);
+          let h = height.unwrap_or(720);
+
+          // Try Microsoft Edge first
+          let edge_candidates = [
+            std::env::var("PROGRAMFILES(X86)").ok().map(|p| format!(r"{}\Microsoft\Edge\Application\msedge.exe", p)),
+            std::env::var("PROGRAMFILES").ok().map(|p| format!(r"{}\Microsoft\Edge\Application\msedge.exe", p)),
+          ];
+          let args_edge = vec![
+            "--new-window".into(),
+            format!("--window-size={},{}", w, h),
+            url.clone(),
+          ];
+          for p in edge_candidates.into_iter().flatten() {
+            if Path::new(&p).exists() {
+              app.shell().command(p).args(args_edge.clone()).spawn().map_err(|e| e.to_string())?;
+              return Ok(());
+            }
+          }
+
+          // Try Google Chrome
+          let chrome_candidates = [
+            std::env::var("PROGRAMFILES(X86)").ok().map(|p| format!(r"{}\Google\Chrome\Application\chrome.exe", p)),
+            std::env::var("PROGRAMFILES").ok().map(|p| format!(r"{}\Google\Chrome\Application\chrome.exe", p)),
+          ];
+          let args_chrome = vec![
+            "--new-window".into(),
+            format!("--window-size={},{}", w, h),
+            url.clone(),
+          ];
+          for p in chrome_candidates.into_iter().flatten() {
+            if Path::new(&p).exists() {
+              app.shell().command(p).args(args_chrome.clone()).spawn().map_err(|e| e.to_string())?;
+              return Ok(());
+            }
+          }
+
+          // Fallback: default browser (size not controllable)
+          app.opener().open_url(url, None::<String>).map_err(|e| e.to_string())
+        }
+
+
+
 #[derive(Serialize)]
-struct PinCreateOut { id: i64, code: String, expires_at: i64 }
+struct PinCreateOut { id: i64, code: String, expires_at: i64, client_id: String }
 
 fn plex_headers(cid: &str) -> reqwest::header::HeaderMap {
   use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
@@ -81,7 +130,6 @@ fn plex_headers(cid: &str) -> reqwest::header::HeaderMap {
 }
 
 fn iso_to_epoch(iso: &str) -> Option<i64> {
-  // Accepts e.g. "2025-08-27T23:00:30Z"
   chrono::DateTime::parse_from_rfc3339(iso)
     .ok()
     .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
@@ -89,7 +137,6 @@ fn iso_to_epoch(iso: &str) -> Option<i64> {
 
 #[tauri::command]
 async fn cmd_plex_create_pin() -> Result<PinCreateOut, String> {
-  // Mirror plex_token_helper.py: /pins.json with strong=true
   use rand::{distributions::Alphanumeric, Rng};
   let cid: String = rand::thread_rng().sample_iter(&Alphanumeric).take(10).map(char::from).collect();
   let cid = format!("crosswatch-{}", cid.to_lowercase());
@@ -107,39 +154,28 @@ async fn cmd_plex_create_pin() -> Result<PinCreateOut, String> {
   let code = pin.get("code").and_then(|v| v.as_str()).ok_or("missing pin.code")?.to_string();
   let exp_iso = pin.get("expires_at").and_then(|v| v.as_str()).ok_or("missing pin.expires_at")?;
   let exp = iso_to_epoch(exp_iso).ok_or("bad expires_at")?;
-  Ok(PinCreateOut { id, code, expires_at: exp })
+  Ok(PinCreateOut { id, code, expires_at: exp, client_id: cid })
 }
 
 #[tauri::command]
-async fn cmd_plex_poll_pin(id: i64) -> Result<String, String> {
+#[allow(non_snake_case)]
+async fn cmd_plex_poll_pin(id: i64, clientId: String) -> Result<String, String> {
   let client = reqwest::Client::new();
-  loop {
-    let res = client.get(format!("https://plex.tv/pins/{id}.json"))
-      .headers(plex_headers("crosswatch"))
-      .send().await.map_err(|e| e.to_string())?;
-    if !res.status().is_success() { return Err(format!("Poll failed: {}", res.status())); }
-    let js: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    let pin = js.get("pin").cloned().unwrap_or(js);
-    // try both styles
-    if let Some(t) = pin.get("auth_token").and_then(|v| v.as_str()) {
-      // save
-      let mut cfg = read_cfg().map_err(|e| e.to_string())?;
-      let mut plex = cfg.plex.unwrap_or_default();
-      plex.account_token = Some(t.to_string());
-      cfg.plex = Some(plex);
-      write_cfg(&cfg).map_err(|e| e.to_string())?;
-      return Ok(t.to_string());
-    }
-    if let Some(t) = pin.get("authToken").and_then(|v| v.as_str()) {
-      let mut cfg = read_cfg().map_err(|e| e.to_string())?;
-      let mut plex = cfg.plex.unwrap_or_default();
-      plex.account_token = Some(t.to_string());
-      cfg.plex = Some(plex);
-      write_cfg(&cfg).map_err(|e| e.to_string())?;
-      return Ok(t.to_string());
-    }
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+  let res = client.get(format!("https://plex.tv/pins/{id}.json"))
+    .headers(plex_headers(&clientId))
+    .send().await.map_err(|e| e.to_string())?;
+  if !res.status().is_success() { return Err(format!("Poll failed: {}", res.status())); }
+  let js: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+  let pin = js.get("pin").cloned().unwrap_or(js);
+  if let Some(t) = pin.get("auth_token").and_then(|v| v.as_str()).or_else(|| pin.get("authToken").and_then(|v| v.as_str())) {
+    let mut cfg = read_cfg().map_err(|e| e.to_string())?;
+    let mut plex = cfg.plex.unwrap_or_default();
+    plex.account_token = Some(t.to_string());
+    cfg.plex = Some(plex);
+    write_cfg(&cfg).map_err(|e| e.to_string())?;
+    return Ok(t.to_string());
   }
+  Ok(String::new())
 }
 
 #[tauri::command]
@@ -209,7 +245,7 @@ fn main() {
     .plugin(tauri_plugin_shell::init())
     .invoke_handler(tauri::generate_handler![
       cmd_read_config, cmd_write_config,
-      cmd_open_url,
+      cmd_open_url, cmd_open_external_sized, 
       cmd_plex_create_pin, cmd_plex_poll_pin,
       cmd_simkl_oauth, cmd_run_sync
     ])
