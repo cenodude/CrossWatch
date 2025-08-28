@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, time::Duration};
-use tauri::{Manager, AppHandle};
+use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::ShellExt;
 use directories::ProjectDirs;
@@ -30,7 +30,7 @@ struct Config {
 }
 
 fn config_dir() -> PathBuf {
-  if let Some(pd) = ProjectDirs::from("app","plex-simkl","desktop") {
+  if let Some(pd) = ProjectDirs::from("app","cenodude","crosswatch") {
     return pd.config_dir().to_path_buf();
   }
   PathBuf::from("./config")
@@ -45,67 +45,101 @@ fn config_path() -> PathBuf {
 
 fn read_cfg() -> Result<Config> {
   let p = config_path();
-  if !p.exists() {
-    Ok(Config::default())
-  } else {
-    let s = fs::read_to_string(p)?;
-    Ok(serde_json::from_str(&s)?)
-  }
+  if !p.exists() { Ok(Config::default()) }
+  else { Ok(serde_json::from_str(&fs::read_to_string(p)?)?) }
 }
 
 fn write_cfg(cfg: &Config) -> Result<()> {
   let p = config_path();
   if let Some(dir) = p.parent() { fs::create_dir_all(dir)?; }
-  let s = serde_json::to_string_pretty(cfg)?;
-  fs::write(p, s)?;
+  fs::write(p, serde_json::to_string_pretty(cfg)?)?;
   Ok(())
 }
 
+#[tauri::command] async fn cmd_read_config() -> Result<Config, String> { read_cfg().map_err(|e| e.to_string()) }
+#[tauri::command] async fn cmd_write_config(cfg: Config) -> Result<(), String> { write_cfg(&cfg).map_err(|e| e.to_string()) }
+
 #[tauri::command]
-async fn cmd_read_config() -> Result<Config, String> {
-  read_cfg().map_err(|e| e.to_string())
+async fn cmd_open_url(app: AppHandle, url: String) -> Result<(), String> {
+  app.opener().open_url(url, None::<String>).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct PinCreateOut { id: i64, code: String, expires_at: i64 }
+
+fn plex_headers(cid: &str) -> reqwest::header::HeaderMap {
+  use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+  let mut h = HeaderMap::new();
+  h.insert(ACCEPT, HeaderValue::from_static("application/json"));
+  h.insert(USER_AGENT, HeaderValue::from_static("CrossWatch/0.3.0"));
+  h.insert("X-Plex-Product", HeaderValue::from_static("CrossWatch"));
+  h.insert("X-Plex-Version", HeaderValue::from_static("0.3.0"));
+  h.insert("X-Plex-Client-Identifier", HeaderValue::from_str(cid).unwrap());
+  h.insert("X-Plex-Device", HeaderValue::from_static("Desktop"));
+  h.insert("X-Plex-Platform", HeaderValue::from_static("Rust"));
+  h
+}
+
+fn iso_to_epoch(iso: &str) -> Option<i64> {
+  // Accepts e.g. "2025-08-27T23:00:30Z"
+  chrono::DateTime::parse_from_rfc3339(iso)
+    .ok()
+    .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
 }
 
 #[tauri::command]
-async fn cmd_write_config(cfg: Config) -> Result<(), String> {
-  write_cfg(&cfg).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn cmd_plex_pin_flow(app: AppHandle) -> Result<(), String> {
-  #[derive(Deserialize)] struct PinResp { id: i64 }
-  #[derive(Deserialize)] struct PollResp { auth_token: Option<String> }
+async fn cmd_plex_create_pin() -> Result<PinCreateOut, String> {
+  // Mirror plex_token_helper.py: /pins.json with strong=true
+  use rand::{distributions::Alphanumeric, Rng};
+  let cid: String = rand::thread_rng().sample_iter(&Alphanumeric).take(10).map(char::from).collect();
+  let cid = format!("crosswatch-{}", cid.to_lowercase());
 
   let client = reqwest::Client::new();
-  let create = client.post("https://plex.tv/pins.json")
-    .header("X-Plex-Product", "PlexSIMKLDesktop")
-    .header("X-Plex-Version", "0.2.0")
-    .header("X-Plex-Client-Identifier", "plex-simkl-desktop")
-    .form(&[("strong", "true")])
+  let res = client.post("https://plex.tv/pins.json")
+    .headers(plex_headers(&cid))
+    .form(&[("strong","true")])
     .send().await.map_err(|e| e.to_string())?;
-  let pin: PinResp = create.json().await.map_err(|e| e.to_string())?;
+  if !res.status().is_success() { return Err(format!("Create PIN failed: {}", res.status())); }
 
-  let _ = app.opener().open_url("https://plex.tv/link");
+  let js: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+  let pin = js.get("pin").cloned().unwrap_or(js);
+  let id = pin.get("id").and_then(|v| v.as_i64()).ok_or("missing pin.id")?;
+  let code = pin.get("code").and_then(|v| v.as_str()).ok_or("missing pin.code")?.to_string();
+  let exp_iso = pin.get("expires_at").and_then(|v| v.as_str()).ok_or("missing pin.expires_at")?;
+  let exp = iso_to_epoch(exp_iso).ok_or("bad expires_at")?;
+  Ok(PinCreateOut { id, code, expires_at: exp })
+}
 
-  let mut token: Option<String> = None;
-  for _ in 0..60 {
-    let poll = client.get(format!("https://plex.tv/pins/{id}.json", id=pin.id))
-      .header("X-Plex-Product", "PlexSIMKLDesktop")
-      .header("X-Plex-Version", "0.2.0")
-      .header("X-Plex-Client-Identifier", "plex-simkl-desktop")
+#[tauri::command]
+async fn cmd_plex_poll_pin(id: i64) -> Result<String, String> {
+  let client = reqwest::Client::new();
+  loop {
+    let res = client.get(format!("https://plex.tv/pins/{id}.json"))
+      .headers(plex_headers("crosswatch"))
       .send().await.map_err(|e| e.to_string())?;
-    let pr: PollResp = poll.json().await.map_err(|e| e.to_string())?;
-    if let Some(t) = pr.auth_token { token = Some(t); break; }
+    if !res.status().is_success() { return Err(format!("Poll failed: {}", res.status())); }
+    let js: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    let pin = js.get("pin").cloned().unwrap_or(js);
+    // try both styles
+    if let Some(t) = pin.get("auth_token").and_then(|v| v.as_str()) {
+      // save
+      let mut cfg = read_cfg().map_err(|e| e.to_string())?;
+      let mut plex = cfg.plex.unwrap_or_default();
+      plex.account_token = Some(t.to_string());
+      cfg.plex = Some(plex);
+      write_cfg(&cfg).map_err(|e| e.to_string())?;
+      return Ok(t.to_string());
+    }
+    if let Some(t) = pin.get("authToken").and_then(|v| v.as_str()) {
+      let mut cfg = read_cfg().map_err(|e| e.to_string())?;
+      let mut plex = cfg.plex.unwrap_or_default();
+      plex.account_token = Some(t.to_string());
+      cfg.plex = Some(plex);
+      write_cfg(&cfg).map_err(|e| e.to_string())?;
+      return Ok(t.to_string());
+    }
     tokio::time::sleep(Duration::from_millis(1500)).await;
   }
-
-  let t = token.ok_or_else(|| "Plex token not granted (timeout)".to_string())?;
-  let mut cfg = read_cfg().map_err(|e| e.to_string())?;
-  let mut plex = cfg.plex.unwrap_or_default();
-  plex.account_token = Some(t);
-  cfg.plex = Some(plex);
-  write_cfg(&cfg).map_err(|e| e.to_string())?;
-  Ok(())
 }
 
 #[tauri::command]
@@ -116,7 +150,7 @@ async fn cmd_simkl_oauth(app: AppHandle) -> Result<(), String> {
 
   let redirect = "http://127.0.0.1:8787/callback";
   let auth_url = format!("https://api.simkl.com/oauth/authorize?response_type=code&client_id={}&redirect_uri={}", simkl.client_id, urlencoding::encode(redirect).into_owned());
-  let _ = app.opener().open_url(&auth_url);
+  let _ = app.opener().open_url(&auth_url, None::<String>);
 
   let server = tiny_http::Server::http("127.0.0.1:8787").map_err(|e| e.to_string())?;
   let code: String = loop {
@@ -146,6 +180,7 @@ async fn cmd_simkl_oauth(app: AppHandle) -> Result<(), String> {
       "code": code
     }))
     .send().await.map_err(|e| e.to_string())?;
+  if !token_resp.status().is_success() { return Err(format!("SIMKL token exchange failed: {}", token_resp.status())); }
   let tr: TokResp = token_resp.json().await.map_err(|e| e.to_string())?;
 
   let mut cfg2 = read_cfg().map_err(|e| e.to_string())?;
@@ -160,13 +195,11 @@ async fn cmd_simkl_oauth(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn cmd_run_sync(app: AppHandle) -> Result<(), String> {
-  let sh = app.shell();
-  let mut cmd = sh.command("python");
-  cmd.args(["resources/python/plex_simkl_watchlist_sync.py", "--sync"]);
-  let status = cmd.status().map_err(|e| e.to_string())?;
-  if !status.success() {
-    return Err(format!("Python exited with code {:?}", status.code()));
-  }
+  let status = app.shell()
+    .command("python")
+    .args(["resources/python/plex_simkl_watchlist_sync.py", "--sync"])
+    .status().await.map_err(|e| e.to_string())?;
+  if !status.success() { return Err(format!("Python exited with code {:?}", status.code())); }
   Ok(())
 }
 
@@ -176,7 +209,9 @@ fn main() {
     .plugin(tauri_plugin_shell::init())
     .invoke_handler(tauri::generate_handler![
       cmd_read_config, cmd_write_config,
-      cmd_plex_pin_flow, cmd_simkl_oauth, cmd_run_sync
+      cmd_open_url,
+      cmd_plex_create_pin, cmd_plex_poll_pin,
+      cmd_simkl_oauth, cmd_run_sync
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

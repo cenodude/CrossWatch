@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 :root { color-scheme: dark; }
-
 .card { @apply rounded-2xl bg-zinc-900/60 ring-1 ring-zinc-800 shadow-xl p-6; }
 .btn { @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 ring-1 ring-zinc-700 hover:ring-zinc-500 bg-zinc-800 hover:bg-zinc-700 transition; }
 .btn-primary { @apply bg-indigo-600 hover:bg-indigo-500 ring-transparent; }

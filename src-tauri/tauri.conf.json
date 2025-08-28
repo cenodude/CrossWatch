@@ -1,7 +1,7 @@
 {
-  "productName": "Plex SIMKL Desktop",
-  "version": "0.2.0",
-  "identifier": "app.plex.simkl.desktop",
+  "productName": "CrossWatch",
+  "version": "0.3.0",
+  "identifier": "app.cenodude.crosswatch",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:5174",
@@ -10,7 +10,7 @@
   "app": {
     "windows": [
       {
-        "title": "Plex \u21c4 SIMKL Desktop",
+        "title": "CrossWatch",
         "width": 1100,
         "height": 740,
         "resizable": true

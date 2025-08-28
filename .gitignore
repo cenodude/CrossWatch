@@ -1,58 +1,38 @@
 
-# --- Node / Vite ---
 node_modules/
 dist/
 build/
 .vite/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
 .eslintcache
-
-# env files (keep an example in repo)
 .env
 .env.*
 !.env.example
 
-# --- Tauri / Rust ---
+# Tauri/Rust build output
 /target/
 src-tauri/target/
 src-tauri/**/target/
-/src-tauri/tauri-debug.log
-# Keep Cargo.lock for apps (recommended), so do NOT ignore it.
-
-# Bundled installers/output (produced by tauri build)
 src-tauri/target/**/bundle/
 src-tauri/target/**/release/
 src-tauri/target/**/debug/
+src-tauri/tauri-debug.log
 
-# --- Python sidecar ---
+# Python
 __pycache__/
 **/__pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.coverage*
-htmlcov/
-venv/
 .venv/
-env/
-ENV/
+venv/
 resources/python/venv/
 resources/python/.venv/
 
-# --- App config / secrets ---
+# App config
 config/config.json
-# keep example file tracked
 !config/config.example.json
 
-# --- Editors / OS junk ---
+# Editors / OS
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
@@ -62,8 +42,3 @@ config/config.json
 *.iml
 .DS_Store
 Thumbs.db
-
-# --- Misc ---
-*.swp
-*.swo
-*.orig

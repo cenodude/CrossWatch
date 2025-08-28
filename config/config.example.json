@@ -1,0 +1,18 @@
+{
+  "plex": {
+    "account_token": ""
+  },
+  "simkl": {
+    "client_id": "",
+    "client_secret": "",
+    "access_token": "",
+    "refresh_token": "",
+    "token_expires_at": 0
+  },
+  "sync": {
+    "mode": "mirror"
+  },
+  "runtime": {
+    "debug": false
+  }
+}
