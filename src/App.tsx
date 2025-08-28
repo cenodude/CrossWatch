@@ -1,8 +1,13 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { LinkIcon, RefreshCw, PlayCircle, Save, Settings, X, ChevronDown, Check, XCircle } from 'lucide-react'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 
-type PlexCfg = { account_token?: string | null }
+// ---------------- Types matching Rust ----------------
+
+type PlexCfg = {
+  account_token?: string | null
+}
+
 type SimklCfg = {
   client_id: string
   client_secret: string
@@ -10,303 +15,478 @@ type SimklCfg = {
   refresh_token?: string | null
   token_expires_at?: number | null
 }
+
+type BidirectionalCfg = {
+  enabled: boolean
+  mode: string
+  source_of_truth: string
+}
+
+type ActivityCfg = {
+  use_activity: boolean
+  types: string[]
+}
+
+type SyncCfg = {
+  enable_add: boolean
+  enable_remove: boolean
+  bidirectional: BidirectionalCfg
+  activity: ActivityCfg
+}
+
+type RuntimeCfg = {
+  debug: boolean
+}
+
 type Config = {
   plex?: PlexCfg
   simkl?: SimklCfg
-  sync?: { mode?: string }
-  debug?: boolean
-  [key: string]: any
+  sync?: SyncCfg
+  runtime?: RuntimeCfg
 }
 
-const Badge = ({ ok }: { ok: boolean }) => (
-  <span className={`px-3 py-1 text-xs rounded-lg ring-1 ${ok ? 'text-emerald-200 bg-emerald-900/40 ring-emerald-700/50' : 'text-rose-200 bg-rose-900/40 ring-rose-700/50'}`}>
+// ---------------- Defaults & helpers ----------------
+
+const defaultCfg: Config = {
+  plex: { account_token: '' },
+  simkl: { client_id: '', client_secret: '', access_token: '', refresh_token: '', token_expires_at: 0 },
+  runtime: { debug: false },
+  sync: {
+    enable_add: true,
+    enable_remove: true,
+    bidirectional: { enabled: false, mode: 'mirror', source_of_truth: 'plex' },
+    activity: { use_activity: false, types: [] }
+  }
+}
+
+function ensureCfgShape(c: Partial<Config>): Config {
+  const merged: Config = {
+    plex: { account_token: '', ...(c.plex || {}) },
+    simkl: { client_id: '', client_secret: '', access_token: '', refresh_token: '', token_expires_at: 0, ...(c.simkl || {}) },
+    runtime: { debug: false, ...(c.runtime || {}) },
+    sync: {
+      enable_add: true,
+      enable_remove: true,
+      bidirectional: { enabled: false, mode: 'mirror', source_of_truth: 'plex', ...(c.sync?.bidirectional || {}) },
+      activity: { use_activity: false, types: [], ...(c.sync?.activity || {}) },
+      ...(c.sync || {})
+    }
+  }
+  return merged
+}
+
+const pill = (ok: boolean) => (
+  <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 12, background: ok ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.12)', color: ok ? '#10b981' : '#ef4444' }}>
     {ok ? 'Connected' : 'Not connected'}
   </span>
 )
 
+function Section({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: 16, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 16, letterSpacing: .5 }}>{title}</h3>
+        <div>{right}</div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 12, alignItems: 'center', margin: '10px 0' }}>
+      <div style={{ opacity: .8 }}>{label}</div>
+      <div>{children}</div>
+    </div>
+  )
+}
+
+function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input {...props} style={{ ...(props.style || {}), width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '10px 12px', color: 'white' }} />
+  )
+}
+
+function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { children, style, ...rest } = props
+  return (
+    <button {...rest} style={{ ...(style || {}), background: 'linear-gradient(180deg, rgba(59,130,246,0.25), rgba(59,130,246,0.15))', border: '1px solid rgba(59,130,246,0.35)', borderRadius: 12, padding: '10px 14px', color: 'white' }}>
+      {children}
+    </button>
+  )
+}
+
+function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { children, style, ...rest } = props
+  return (
+    <button {...rest} style={{ ...(style || {}), background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 12, padding: '8px 12px', color: 'white' }}>
+      {children}
+    </button>
+  )
+}
+
+// ---------------- App ----------------
+
 export default function App() {
-  const [cfg, setCfg] = useState<Config>({})
-  const [loading, setLoading] = useState(true)
-  const [log, setLog] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
+  const [view, setView] = useState<'main' | 'settings'>('main')
+  const [cfg, setCfg] = useState<Config>(defaultCfg)
+  const [log, setLog] = useState<string>('')
+  const [loading, setLoading] = useState<boolean>(true)
 
-  // Collapsibles
-  const [plexOpen, setPlexOpen] = useState(false)
-  const [simklOpen, setSimklOpen] = useState(false)
+  // collapsibles
+  const [plexOpen, setPlexOpen] = useState<boolean>(false)     // default closed as requested
+  const [simklOpen, setSimklOpen] = useState<boolean>(false)    // default closed
 
-  // Plex PIN state
-  const [pinId, setPinId] = useState<number | null>(null)
-  const [pinCode, setPinCode] = useState<string>('')
-  const [pinCid, setPinCid] = useState<string>('')
+  // Plex pin state
   const [pinBusy, setPinBusy] = useState(false)
-
-  // Toast
-  const [toast, setToast] = useState<string>('')
-  const [showToast, setShowToast] = useState(false)
-  const showToastMsg = (msg: string) => { setToast(msg); setShowToast(true); setTimeout(()=>setShowToast(false), 2200) }
-
-  const copyToClipboard = async (t: string) => {
-    try { if ((navigator as any)?.clipboard?.writeText) { await (navigator as any).clipboard.writeText(t); return true } } catch {}
-    try { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); return true } catch {}
-    return false
-  }
-
-  const plexConnected = !!cfg.plex?.account_token
-  const simklConnected = !!cfg.simkl?.access_token
+  const [pinCode, setPinCode] = useState<string>('')
+  const [pinId, setPinId] = useState<number | null>(null)
+  const [pinExp, setPinExp] = useState<number>(0)
+  const [clientId, setClientId] = useState<string>('')
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     (async () => {
       try {
         const c = await invoke<Config>('cmd_read_config')
-        setCfg(c || {})
-      } catch (e:any) {
-        setLog(l => l + `\n[Init] ${e?.toString()}`)
+        setCfg(ensureCfgShape(c || {}))
+      } catch (e: any) {
+        setLog(l => `${l}\n[Init] Failed to read config: ${e?.toString?.() ?? e}`)
       } finally {
         setLoading(false)
       }
     })()
+
+    let unlisten: UnlistenFn | null = null
+    ;(async () => {
+      unlisten = await listen('simkl_linked', async (event) => {
+        const payload = (event as any)?.payload
+        if (payload?.ok) {
+          setLog(l => `${l}\n[SIMKL] Linked successfully.`)
+          // refresh config (tokens written by backend)
+          try {
+            const c = await invoke<Config>('cmd_read_config')
+            setCfg(ensureCfgShape(c || {}))
+          } catch {}
+        } else {
+          setLog(l => `${l}\n[SIMKL] Link failed: ${payload?.error ?? 'Unknown error'}`)
+        }
+      })
+    })()
+
+    return () => {
+      if (unlisten) unlisten()
+      if (pollRef.current) clearTimeout(pollRef.current)
+    }
   }, [])
 
-  const saveConfig = async () => {
-    try {
-      await invoke('cmd_write_config', { cfg })
-      showToastMsg('Settings saved')
-    } catch (e:any) {
-      setLog(l => l + `\n[Save] ${e?.toString()}`)
-    }
+  const plexConnected = !!cfg?.plex?.account_token
+  const simklConnected = !!cfg?.simkl?.access_token
+
+  async function saveConfig() {
+    const shaped = ensureCfgShape(cfg)
+    await invoke('cmd_write_config', { cfg: shaped })
+    setLog(l => `${l}\n[Config] Saved.`)
   }
 
-  async function plexCreatePin() {
+  // --------- Plex PIN flow ----------
+  async function createPlexPin() {
     try {
       setPinBusy(true)
-      setLog(l => l + `\n[Plex] Requesting PIN...`)
-      const res = await invoke<{ id: number, code: string, expires_at: number, client_id: string }>('cmd_plex_create_pin')
-      setPinId(res.id); setPinCode(res.code); setPinCid(res.client_id)
-      try { const ok = await copyToClipboard(res.code); if (ok) showToastMsg('PIN copied to clipboard') } catch {}
+      const out = await invoke<{ id: number; code: string; expires_at: number; client_id: string }>('cmd_plex_create_pin')
+      setPinId(out.id)
+      setPinCode(out.code)
+      setPinExp(out.expires_at)
+      setClientId(out.client_id)
+
+      // auto-copy pin (requested)
+      try {
+        await navigator.clipboard.writeText(out.code)
+        setLog(l => `${l}\n[Plex] PIN: ${out.code} (copied). Expires at ${new Date(out.expires_at * 1000).toLocaleTimeString()}`)
+      } catch {
+        setLog(l => `${l}\n[Plex] PIN: ${out.code}. Expires at ${new Date(out.expires_at * 1000).toLocaleTimeString()} (copy failed)`)
+      }
+
+      // open browser small
       await invoke('cmd_open_external_sized', { url: 'https://plex.tv/link', width: 520, height: 720 })
 
-      const deadline = Date.now() + (res.expires_at * 1000 - Date.now())
+      // start polling
       const poll = async () => {
+        if (!pinId || !clientId) return
+        if (Date.now() / 1000 > pinExp) {
+          setPinBusy(false)
+          setLog(l => `${l}\n[Plex] PIN expired; please create a new PIN.`)
+          return
+        }
         try {
-          const token = await invoke<string>('cmd_plex_poll_pin', { id: res.id, clientId: res.client_id })
+          const token = await invoke<string>('cmd_plex_poll_pin', { id: pinId, clientId })
           if (token) {
-            setLog(l => l + `\n[Plex] Token received.`)
-            setCfg(prev => ({ ...prev, plex: { account_token: token } }))
+            setLog(l => `${l}\n[Plex] Token received.`)
+            setCfg(prev => ensureCfgShape({ ...prev, plex: { ...(prev.plex || {}), account_token: token } }))
+            await saveConfig()
             setPinBusy(false)
             return
           }
-        } catch (e:any) {
-          setLog(l => l + `\n[Plex] Poll error: ${e?.toString()}`)
+        } catch (e: any) {
+          setLog(l => `${l}\n[Plex] Poll error: ${e?.toString?.() ?? e}`)
         }
-        if (Date.now() < deadline) setTimeout(poll, 1500)
-        else { setPinBusy(false); setLog(l => l + `\n[Plex] PIN expired; request a new one.`) }
+        pollRef.current = setTimeout(poll, 1500)
       }
-      setTimeout(poll, 1200)
-    } catch (e:any) {
-      setLog(l => l + `\n[Plex] Error creating PIN: ${e?.toString()}`)
+      pollRef.current = setTimeout(poll, 1500)
+    } catch (e: any) {
+      setLog(l => `${l}\n[Plex] Error creating PIN: ${e?.toString?.() ?? e}`)
       setPinBusy(false)
     }
   }
 
-  const runSync = async () => {
+  // --------- SIMKL Link (loopback) ----------
+  function randomState(len = 16) {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'
+    return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  }
+
+  async function linkSIMKL() {
+    const id = cfg.simkl?.client_id?.trim() || ''
+    const secret = cfg.simkl?.client_secret?.trim() || ''
+    if (!id || !secret) {
+      setLog(l => `${l}\n[SIMKL] Please fill Client ID and Secret first.`)
+      return
+    }
     try {
-      setLog(l => l + `\n[Sync] Running...`)
-      await invoke('cmd_run_sync')
-      setLog(l => l + `\n[Sync] Done.`)
-    } catch (e:any) {
-      setLog(l => l + `\n[Sync] Error: ${e?.toString()}`)
+      await invoke('cmd_simkl_start_listener')
+      const state = randomState()
+      const url = `https://simkl.com/oauth/authorize?response_type=code&client_id=${encodeURIComponent(id)}&redirect_uri=${encodeURIComponent('http://127.0.0.1:8787/callback')}&state=${encodeURIComponent(state)}`
+      await invoke('cmd_open_external_sized', { url, width: 520, height: 720 })
+      setLog(l => `${l}\n[SIMKL] Waiting for authorization…`)
+    } catch (e: any) {
+      setLog(l => `${l}\n[SIMKL] Failed to start loopback listener: ${e?.toString?.() ?? e}`)
     }
   }
 
+  // --------------- UI ---------------
+
   if (loading) {
-    return <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">Loading…</div>
+    return (
+      <div style={{ minHeight: '100vh', background: '#0b0f16', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, Arial' }}>
+        Loading…
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Header */}
-      <div className="px-6 py-4 flex items-center justify-between border-b border-zinc-800/80">
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-semibold tracking-wide">CrossWatch</span>
-          <span className="text-xs text-zinc-400">Plex ↔︎ SIMKL</span>
-        </div>
-        <button className="btn subtle" onClick={() => setShowSettings(true)}><Settings size={16} className="mr-2"/>Settings</button>
-      </div>
-
-      {/* Main */}
-      <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-4">
-          <div className="rounded-2xl bg-zinc-900/50 ring-1 ring-zinc-800/70 p-6">
-            <div className="flex items-center gap-3">
-              <button className="btn" onClick={runSync}><PlayCircle size={16} className="mr-2"/>Run Sync</button>
-              <div className="text-xs text-zinc-400">Make sure both providers are connected.</div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-zinc-900/50 ring-1 ring-zinc-800/70 p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex items-center justify-between rounded-xl bg-zinc-900/50 ring-1 ring-zinc-800/70 px-4 py-3">
-              <div className="flex items-center gap-2"><span className="font-medium">Plex</span></div>
-              {plexConnected ? <Check size={18} className="text-emerald-400"/> : <XCircle size={18} className="text-rose-400"/>}
-            </div>
-            <div className="flex items-center justify-between rounded-xl bg-zinc-900/50 ring-1 ring-zinc-800/70 px-4 py-3">
-              <div className="flex items-center gap-2"><span className="font-medium">SIMKL</span></div>
-              {simklConnected ? <Check size={18} className="text-emerald-400"/> : <XCircle size={18} className="text-rose-400"/>}
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-zinc-900/50 ring-1 ring-zinc-800/70 p-5">
-            <div className="text-xs text-zinc-400 whitespace-pre-wrap leading-relaxed min-h-[120px]">{log || 'Logs will appear here…'}</div>
+    <div style={{ minHeight: '100vh', background: '#0b0f16', color: 'white', fontFamily: 'Inter, system-ui, Arial' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+        {/* Top bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+          <h1 style={{ margin: 0, fontSize: 22, letterSpacing: .5 }}>CrossWatch</h1>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <GhostButton onClick={() => setView('main')}>Main</GhostButton>
+            <GhostButton onClick={() => setView('settings')}>Settings</GhostButton>
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-2xl bg-zinc-900/50 ring-1 ring-zinc-800/70 p-5">
-            <div className="text-sm text-zinc-400 mb-3">Quick actions</div>
-            <div className="flex flex-col gap-3">
-              <button className="btn" onClick={() => setShowSettings(true)}><Settings size={16} className="mr-2"/>Open Settings</button>
-              <button className="btn subtle" onClick={saveConfig}><Save size={16} className="mr-2"/>Save Settings</button>
-            </div>
-          </div>
-        </div>
-      </div>
+        {view === 'main' ? (
+          <>
+            <Section
+              title="Sync"
+              right={<div style={{ display: 'flex', gap: 10 }}>
+                <div>Plex: {pill(plexConnected)}</div>
+                <div>SIMKL: {pill(simklConnected)}</div>
+              </div>}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Button onClick={async () => {
+                  try {
+                    await invoke('cmd_write_config', { cfg: ensureCfgShape(cfg) }) // ensure most recent on disk
+                    await invoke('cmd_run_sync')
+                    setLog(l => `${l}\n[Sync] Script finished OK.`)
+                  } catch (e: any) {
+                    setLog(l => `${l}\n[Sync] Error: ${e?.toString?.() ?? e}`)
+                  }
+                }}>Run Sync</Button>
+              </div>
+            </Section>
 
-      {/* Toast */}
-      {showToast && (
-        <div className="fixed right-4 bottom-4 z-[60]">
-          <div className="rounded-xl bg-zinc-900/90 ring-1 ring-zinc-700 px-4 py-2 text-sm text-zinc-100 shadow-lg">
-            {toast}
-          </div>
-        </div>
-      )}
+            <Section title="Log">
+              <pre style={{ whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: 12, minHeight: 140, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                {log.trim() || 'Ready.'}
+              </pre>
+            </Section>
+          </>
+        ) : (
+          <>
+            {/* Runtime + Sync settings */}
+            <Section title="General settings">
+              <Row label="Debug">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.runtime?.debug}
+                  onChange={(e) => setCfg(ensureCfgShape({ ...cfg, runtime: { ...(cfg.runtime || {}), debug: e.target.checked } }))}
+                />
+              </Row>
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setShowSettings(false)} />
-          <div className="relative w-[min(1100px,96vw)] max-h-[90vh] overflow-auto rounded-3xl bg-zinc-950 ring-1 ring-zinc-800/70 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xl font-semibold flex items-center gap-2"><Settings size={18}/> Settings</div>
-              <button className="btn icon subtle" onClick={() => setShowSettings(false)}><X size={16}/></button>
-            </div>
+              <Row label="Sync: allow add">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.sync?.enable_add}
+                  onChange={(e) => setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), enable_add: e.target.checked } }))}
+                />
+              </Row>
+              <Row label="Sync: allow remove">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.sync?.enable_remove}
+                  onChange={(e) => setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), enable_remove: e.target.checked } }))}
+                />
+              </Row>
 
-            {/* General row */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="label">Sync mode</label>
+              <Row label="Sync mode">
                 <select
-                  className="input"
-                  value={cfg.sync?.mode ?? 'mirror'}
-                  onChange={(e) => setCfg(prev => ({ ...prev, sync: { ...(prev.sync ?? {}), mode: e.target.value } }))}
+                  value={cfg.sync?.bidirectional?.enabled ? 'two-way' : (cfg.sync?.bidirectional?.mode || 'mirror')}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === 'two-way') {
+                      setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), bidirectional: { ...(cfg.sync?.bidirectional as any || {}), enabled: true } } }))
+                    } else {
+                      setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), bidirectional: { ...(cfg.sync?.bidirectional as any || {}), enabled: false, mode: 'mirror' } } }))
+                    }
+                  }}
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, color: 'white', padding: '8px 10px' }}
                 >
-                  <option value="mirror">mirror</option>
-                  <option value="two-way">two-way</option>
+                  <option value="mirror">Mirror (one-way)</option>
+                  <option value="two-way">Two-way</option>
                 </select>
-              </div>
-              <div>
-                <label className="label">Debug</label>
-                <select
-                  className="input"
-                  value={String(cfg.debug ?? 'false')}
-                  onChange={(e) => setCfg(prev => ({ ...prev, debug: e.target.value === 'true' }))}
-                >
-                  <option value="false">false</option>
-                  <option value="true">true</option>
-                </select>
-              </div>
-            </div>
+              </Row>
 
-            <div className="my-6 h-px w-full bg-zinc-800/80" />
+              <Row label="Activity: use activity">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.sync?.activity?.use_activity}
+                  onChange={(e) =>
+                    setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), activity: { ...(cfg.sync?.activity as any || {}), use_activity: e.target.checked } } }))
+                  }
+                />
+              </Row>
 
-            {/* Auth grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-              {/* PLEX column */}
-              <div className="space-y-2 min-w-0">
-                <button
-                  className="w-full flex items-center justify-between rounded-2xl px-4 py-3 bg-zinc-800/60 hover:bg-zinc-800 transition-colors"
-                  onClick={() => setPlexOpen(o => !o)}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`transition-transform ${plexOpen ? '' : '-rotate-90'}`}><ChevronDown size={16}/></div>
-                    <div className="section-title">Authentication — PLEX</div>
-                  </div>
-                  <Badge ok={plexConnected}/>
-                </button>
-
-                <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ${plexOpen ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                  <div className="pt-3 space-y-4">
-                    <div>
-                      <label className="label">Account token</label>
-                      <input
-                        className="input"
-                        placeholder="Plex account token"
-                        value={cfg.plex?.account_token ?? ''}
-                        onChange={(e) => setCfg(prev => ({ ...prev, plex: { ...(prev.plex ?? {}), account_token: e.target.value } }))}
-                      />
-                    </div>
-
-                    <div className="rounded-xl bg-zinc-900/40 p-3 ring-1 ring-zinc-800/70">
-                      <div className="text-xs text-zinc-400 mb-2">Create a PIN (auto-copied), we open plex.tv/link in a small window, and will poll until accepted.</div>
-                      <div className="flex items-center gap-3">
-                        <button className="btn" disabled={pinBusy} onClick={plexCreatePin}>
-                          {pinBusy ? <RefreshCw className="spin mr-2" size={16}/> : <LinkIcon className="mr-2" size={16}/>}
-                          Create PIN
-                        </button>
-                        <input className="input w-28 text-center tracking-[0.3em]" value={pinCode ?? ''} readOnly placeholder="PIN" />
-                        <div className="grow" />
-                        <button className="btn subtle" onClick={saveConfig}><Save size={16} className="mr-2"/>Save</button>
-                      </div>
-                    </div>
-                  </div>
+              <Row label="Activity types">
+                <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={(cfg.sync?.activity?.types || []).includes('watchlist')}
+                      onChange={(e) => {
+                        const on = e.target.checked
+                        const types = new Set(cfg.sync?.activity?.types ?? [])
+                        if (on) {
+                          types.add('watchlist')
+                        } else {
+                          types.delete('watchlist')
+                        }
+                        setCfg(ensureCfgShape({ ...cfg, sync: { ...(cfg.sync as any), activity: { ...(cfg.sync?.activity as any || {}), types: Array.from(types) } } }))
+                      }}
+                    />
+                    Watchlist
+                  </label>
                 </div>
+              </Row>
+
+              <div style={{ marginTop: 12 }}>
+                <Button onClick={saveConfig}>Save settings</Button>
               </div>
+            </Section>
 
-              {/* SIMKL column */}
-              <div className="space-y-2 min-w-0">
-                <button
-                  className="w-full flex items-center justify-between rounded-2xl px-4 py-3 bg-zinc-800/60 hover:bg-zinc-800 transition-colors"
-                  onClick={() => setSimklOpen(o => !o)}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`transition-transform ${simklOpen ? '' : '-rotate-90'}`}><ChevronDown size={16}/></div>
-                    <div className="section-title">Authentication — SIMKL</div>
-                  </div>
-                  <Badge ok={simklConnected}/>
-                </button>
-
-                <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ${simklOpen ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                  <div className="pt-3 space-y-4">
-                    <div>
-                      <label className="label">Client ID</label>
-                      <input
-                        className="input"
-                        placeholder="SIMKL client_id"
-                        value={cfg.simkl?.client_id ?? ''}
-                        onChange={(e) => setCfg(prev => ({ ...prev, simkl: { ...(prev.simkl ?? {}), client_id: e.target.value } }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">Client Secret</label>
-                      <input
-                        className="input"
-                        placeholder="SIMKL client_secret"
-                        value={cfg.simkl?.client_secret ?? ''}
-                        onChange={(e) => setCfg(prev => ({ ...prev, simkl: { ...(prev.simkl ?? {}), client_secret: e.target.value } }))}
-                      />
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button className="btn" onClick={() => invoke('cmd_simkl_oauth')}>
-                        <RefreshCw className="mr-2" size={16}/>Connect SIMKL
-                      </button>
-                      <div className="grow" />
-                      <button className="btn subtle" onClick={saveConfig}><Save size={16} className="mr-2"/>Save</button>
-                    </div>
-                  </div>
+            {/* Authentication row: two columns */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Plex */}
+              <Section
+                title="Authentication — Plex"
+                right={<div>{pill(plexConnected)}</div>}
+              >
+                {/* Collapsible header */}
+                <div style={{ marginBottom: 8 }}>
+                  <GhostButton onClick={() => setPlexOpen(v => !v)}>{plexOpen ? 'Hide' : 'Show'}</GhostButton>
                 </div>
-              </div>
+                {plexOpen && (
+                  <div>
+                    <Row label="Account token">
+                      <Input
+                        value={cfg.plex?.account_token || ''}
+                        placeholder="Paste Plex token or let PIN flow fill it…"
+                        onChange={(e) => setCfg(ensureCfgShape({ ...cfg, plex: { ...(cfg.plex || {}), account_token: e.target.value } }))}
+                      />
+                    </Row>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0 2px' }}>
+                      <Button onClick={createPlexPin} disabled={pinBusy}>
+                        {pinBusy ? 'Waiting…' : 'Create PIN'}
+                      </Button>
+                      {!!pinCode && <span style={{ opacity: .85 }}>PIN: <b style={{ letterSpacing: 2 }}>{pinCode}</b></span>}
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <Button onClick={saveConfig}>Save</Button>
+                    </div>
+                  </div>
+                )}
+              </Section>
+
+              {/* SIMKL */}
+              <Section
+                title="Authentication — SIMKL"
+                right={<div>{pill(simklConnected)}</div>}
+              >
+                <div style={{ marginBottom: 8 }}>
+                  <GhostButton onClick={() => setSimklOpen(v => !v)}>{simklOpen ? 'Hide' : 'Show'}</GhostButton>
+                </div>
+                {simklOpen && (
+                  <div>
+                    <Row label="Client ID">
+                      <Input
+                        value={cfg.simkl?.client_id || ''}
+                        onChange={(e) => setCfg(ensureCfgShape({ ...cfg, simkl: { ...(cfg.simkl || {}), client_id: e.target.value } }))}
+                        placeholder="SIMKL client id"
+                      />
+                    </Row>
+                    <Row label="Client Secret">
+                      <Input
+                        value={cfg.simkl?.client_secret || ''}
+                        onChange={(e) => setCfg(ensureCfgShape({ ...cfg, simkl: { ...(cfg.simkl || {}), client_secret: e.target.value } }))}
+                        placeholder="SIMKL client secret"
+                      />
+                    </Row>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                      <Button onClick={linkSIMKL}>Link SIMKL</Button>
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <Button onClick={saveConfig}>Save</Button>
+                    </div>
+                  </div>
+                )}
+              </Section>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   )
+}
+
+async function simklCreatePin(clientId: string) {
+  const created = await invoke<any>('cmd_simkl_create_pin', { clientId, redirect: 'https://simkl.com/apps/crosswatch/connected/' })
+  const code = created.code || created.user_code
+  if (code) {
+    setSimklPin(code)
+    await navigator.clipboard.writeText(code)
+    setSimklStatus('PIN copied. Approve at simkl.com/pin, then Start Polling.')
+  } else {
+    setSimklStatus('Failed to create SIMKL PIN.')
+  }
+}
+
+async function simklPollOnce(clientId: string, code: string) {
+  const r = await invoke<any>('cmd_simkl_poll_pin', { clientId, code })
+  if (r && r.access_token) {
+    setSimklStatus('Linked')
+    setSimklPolling(false)
+    // TODO: write into config like your existing save path if needed
+  }
 }
