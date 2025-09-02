@@ -1,15 +1,42 @@
-# Ignore Git
+# --- VCS / IDE ---
 .git
 .gitignore
 .vscode
+.idea
+*.swp
+*.swo
+
+# --- Python cache ---
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.pkl
+*.egg-info
+.eggs/
 
-# Ignore local configs/logs
+# --- Virtual envs ---
+.venv/
+env/
+venv/
+
+# --- Local configs / runtime ---
 config/
 logs/
 *.log
-images/
-README.md
+state.json
+profiles.json
+
+# --- OS / misc ---
+.DS_Store
+Thumbs.db
+
+# --- Build artifacts ---
+dist/
+build/
+*.egg
+*.whl
+
+# --- Licensing/docs (not needed in container) ---
 LICENSE
-config;C/
+README.md

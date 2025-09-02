@@ -1,72 +1,44 @@
-# ./Dockerfile
-FROM python:3.12-slim
+# Dev-friendly container for CrossWatch (modular platform)
+FROM python:3.11-slim
 
-# Install OS deps
-RUN apt-get update \
- && apt-get install -y --no-install-recommends cron tzdata \
- && rm -rf /var/lib/apt/lists/*
+# System deps (bash, tzdata, git, build tools minimal), uvicorn for dev server
+RUN apt-get update && apt-get install -y --no-install-recommends \    bash ca-certificates tzdata curl git \    && rm -rf /var/lib/apt/lists/*
 
-# Python runtime flags
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Copy application files
-COPY plex_simkl_watchlist_sync.py /app/
-COPY config.example.json /app/
-COPY plex_token_helper.py /app/
-COPY webapp.py /app/
-COPY _auth_helper.py /app/
-COPY _FastAPI.py /app/
-COPY _scheduling.py /app/
-COPY _TMDB.py /app/
-COPY _watchlist.py /app/
-COPY _statistics.py /app/
+# Copy everything (dev intent). We'll clean common junk right after.
+COPY . /app
 
-# Copy assets folder
-COPY assets/ /app/assets/
+# Remove junk we don't want inside the image
+RUN rm -rf /app/.venv /app/.vscode || true \    && find /app -type d -name "__pycache__" -prune -exec rm -rf {} + || true
 
-# Python dependencies
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir \
-    plexapi \
-    requests \
-    fastapi \
-    uvicorn \
-    pydantic \
-    pillow \
-    packaging
+# Install dependencies if present
+# - prefer locked deps when available
+RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi \    && pip install --no-cache-dir uvicorn
 
-# Copy helper scripts
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY docker/run-sync.sh   /usr/local/bin/run-sync.sh
+# Non-root dev user (configurable via env at runtime)
+ENV PUID=1000 PGID=1000 TZ=Europe/Amsterdam
 
-# Permissions + cron log
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh \
- && touch /var/log/cron.log
-
-# Default runtime configuration
-ENV TZ="Europe/Amsterdam" \
-    RUNTIME_DIR="/config" \
-    CRON_SCHEDULE="0 0 * * *" \
-    PUID="1000" \
-    PGID="1000" \
-    SYNC_CMD="python /app/plex_simkl_watchlist_sync.py --sync" \
-    INIT_CMD="python /app/plex_simkl_watchlist_sync.py --init-simkl redirect --bind 0.0.0.0:8787" \
-    WEBINTERFACE="yes"
-
-# First-run OAuth environment variables (optional)
-ENV PLEX_ACCOUNT_TOKEN="" \
-    SIMKL_CLIENT_ID="" \
-    SIMKL_CLIENT_SECRET=""
-
-# Web UI port
+# Expose default web port
 EXPOSE 8787
 
-# Persist configuration/state
+# Scripts
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY run-sync.sh /usr/local/bin/run-sync.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh
+
+# Default runtime env
+ENV RUNTIME_DIR=/config \
+    WEB_HOST=0.0.0.0 \
+    WEB_PORT=8787 \
+    WEBINTERFACE=yes \
+    DEV_SHELL_ON_FAIL=yes
+
 VOLUME ["/config"]
 
-# Entrypoint decides what to launch; by default we want the web interface.
+# Start via entrypoint (starts web UI; falls back to shell on failure when DEV_SHELL_ON_FAIL=yes)
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["python", "/app/webapp.py", "--host", "0.0.0.0", "--port", "8787"]
