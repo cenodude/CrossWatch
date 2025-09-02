@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web UI backend (FastAPI)
+Web UI backend (FastAPI) for Plex ⇄ SIMKL Watchlist Sync
 """
 import requests
 import json
@@ -1199,6 +1199,74 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     _PROBE_CACHE["plex"] = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
     return {"ok": True}
+
+
+# ---- Modular Auth (dynamic providers) ----
+# Discovers /auth/_auth_*.py; exposes generic endpoints.
+try:
+    from auth.manager import AuthManager
+    _AUTH = AuthManager(load_config, save_config)
+except Exception as _e:
+    _AUTH = None
+    print("AuthManager not available:", _e)
+
+@app.get("/api/auth/providers")
+def api_auth_providers() -> JSONResponse:
+    if not _AUTH:
+        return JSONResponse({"ok": False, "error": "AuthManager not available"}, status_code=500)
+    return JSONResponse(_AUTH.list())
+
+class _StartPayload(BaseModel):
+    redirect_uri: str | None = None
+
+@app.post("/api/auth/{provider}/start")
+def api_auth_start(provider: str, payload: _StartPayload) -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    # Fallback: compute redirect if not given
+    redirect_uri = payload.redirect_uri or (str(request.base_url).rstrip("/") + "/callback")
+    return _AUTH.start(provider, redirect_uri)
+
+@app.post("/api/auth/{provider}/finish")
+def api_auth_finish(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    return _AUTH.finish(provider, **(body or {}))
+
+@app.post("/api/auth/{provider}/refresh")
+def api_auth_refresh(provider: str) -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    return _AUTH.refresh(provider)
+
+@app.post("/api/auth/{provider}/disconnect")
+def api_auth_disconnect(provider: str) -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    return _AUTH.disconnect(provider)
+
+# Back-compat: map legacy routes to modular layer
+@app.post("/api/plex/pin/new")
+def api_plex_pin_new_mod() -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    return _AUTH.start("PLEX", str(request.base_url).rstrip("/") + "/callback")
+
+@app.post("/api/plex/pin/check")
+def api_plex_pin_check_mod() -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    return _AUTH.finish("PLEX")
+
+@app.post("/api/simkl/authorize")
+def api_simkl_authorize_mod(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    if not _AUTH:
+        return {"ok": False, "error": "AuthManager not available"}
+    client_id = (payload or {}).get("client_id") or (load_config().get("simkl") or {}).get("client_id", "")
+    redirect_uri = (payload or {}).get("redirect_uri") or (str(request.base_url).rstrip("/") + "/callback")
+    # ensure client id is saved so start() can use it
+    cfg = load_config(); cfg.setdefault("simkl", {})["client_id"] = client_id; save_config(cfg)
+    return _AUTH.start("SIMKL", redirect_uri)
 
 # ---- PLEX auth ----
 @app.post("/api/plex/pin/new")

@@ -10,6 +10,8 @@ def get_index_html() -> str:
 
 
   <link rel="stylesheet" href="/assets/crosswatch.css">
+
+<!-- Auth providers are listed dynamically via /api/auth/providers -->
 </head><body>
 
 <header>
