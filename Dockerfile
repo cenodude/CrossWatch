@@ -57,18 +57,6 @@ ENV RUNTIME_DIR=/config \
     WEBINTERFACE=yes \
     DEV_SHELL_ON_FAIL=yes
 
-# Healthcheck (no curl needed)
-HEALTHCHECK --interval=30s --timeout=5s --retries=5 \
-  CMD python - <<'PY' || exit 1
-import socket, sys
-host = "127.0.0.1"; port = int(__import__("os").environ.get("WEB_PORT","8787"))
-s=socket.socket(); s.settimeout(2)
-try:
-    s.connect((host, port)); s.close(); sys.exit(0)
-except Exception:
-    sys.exit(1)
-PY
-
 # Own files and drop privileges
 RUN chown -R ${APP_USER}:${APP_USER} /app
 VOLUME ["/config"]
