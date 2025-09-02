@@ -37,6 +37,8 @@ build/
 *.egg
 *.whl
 
-# --- Licensing/docs (not needed in container) ---
-LICENSE
-README.md
+# --- Licensing/docs (optional, if you want them inside image then remove these) ---
+# LICENSE
+# README.md
+
+# --- DO NOT ignore requirements.txt or source code! ---
