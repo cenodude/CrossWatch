@@ -16,7 +16,7 @@ def get_index_html() -> str:
 
 <header>
   <div class="brand">
-    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Plex ⇄ SIMKL Watchlist Sync">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch">
       <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
         <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/>
       </linearGradient></defs>
@@ -27,7 +27,7 @@ def get_index_html() -> str:
       <circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
       <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <span class="name">Plex ⇄ SIMKL Watchlist Sync</span>
+    <span class="name">CrossWatch</span>
   </div>
 
   <div class="tabs">
