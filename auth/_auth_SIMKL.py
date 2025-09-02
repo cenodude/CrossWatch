@@ -16,13 +16,25 @@ class SimklAuth(AuthProvider):
             name="SIMKL",
             label="SIMKL",
             flow="oauth",
-            fields=[                       # editable provider config fields
+            fields=[
                 {"key": "simkl.client_id", "label": "Client ID", "type": "text", "required": True},
                 {"key": "simkl.client_secret", "label": "Client Secret", "type": "password", "required": True},
             ],
             actions={"start": True, "finish": False, "refresh": True, "disconnect": True},
-            notes="Opens SIMKL to authorize, returns to your callback.",
+            notes="Authorize with SIMKL; you'll be redirected back to the app.",
         )
+
+    def capabilities(self) -> dict:
+        return {
+            "features": {
+                "watchlist": {"read": True, "write": True},
+                "collections": {"read": False, "write": False},
+                "ratings": {"read": True, "write": True, "scale": "1-10"},
+                "watched": {"read": True, "write": True},
+                "liked_lists": {"read": True, "write": False},
+            },
+            "entity_types": ["movie", "show"],
+        }
 
     def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
         s = cfg.get("simkl") or {}

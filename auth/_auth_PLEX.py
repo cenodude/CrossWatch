@@ -10,17 +10,29 @@ UA = "Crosswatch/1.0"
 class PlexAuth(AuthProvider):
     name = "PLEX"
 
-    # tells the UI what to render
     def manifest(self) -> AuthManifest:
         return AuthManifest(
             name="PLEX",
             label="Plex",
             flow="device_pin",
-            fields=[],  # no fields needed for Plex device PIN
-            actions={"start": True, "finish": True, "disconnect": True, "refresh": False},
+            fields=[],
+            actions={"start": True, "finish": True, "refresh": False, "disconnect": True},
             verify_url="https://plex.tv/pin",
-            notes="Open Plex, enter PIN, then click 'Check PIN'.",
+            notes="Open Plex, enter the PIN, then click 'Check PIN'.",
         )
+
+    def capabilities(self) -> dict:
+        # Plex can read/write watchlist, ratings, watched; collections read-only
+        return {
+            "features": {
+                "watchlist": {"read": True, "write": True},
+                "collections": {"read": True, "write": False},
+                "ratings": {"read": True, "write": True, "scale": "1-10"},
+                "watched": {"read": True, "write": True},
+                "liked_lists": {"read": False, "write": False},
+            },
+            "entity_types": ["movie", "show"],
+        }
 
     def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
         token = (cfg.get("plex") or {}).get("account_token") or ""
@@ -63,5 +75,4 @@ class PlexAuth(AuthProvider):
         log("Plex: disconnected", level="INFO", module="AUTH")
         return self.get_status(cfg)
 
-# exported symbol for discovery
 PROVIDER = PlexAuth()

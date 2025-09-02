@@ -1532,3 +1532,51 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
 
 if __name__ == "__main__":
     main()
+
+# ---- Modular Sync (capabilities, options, profiles) ----
+try:
+    from sync.manager import SyncManager
+    _SYNC = SyncManager(load_config, save_config, storage=REPORT_DIR / "profiles.json")
+except Exception as _e:
+    _SYNC = None
+    print("SyncManager not available:", _e)
+
+@app.get("/api/sync/providers")
+def api_sync_providers() -> JSONResponse:
+    if not _SYNC:
+        return JSONResponse({"ok": False, "error": "SyncManager not available"}, status_code=500)
+    return JSONResponse(_SYNC.providers())
+
+class _OptsBody(BaseModel):
+    source: str
+    target: str
+    direction: str = "mirror"
+
+@app.post("/api/sync/options")
+def api_sync_options(body: _OptsBody) -> Dict[str, Any]:
+    if not _SYNC:
+        return {"ok": False, "error": "SyncManager not available"}
+    return _SYNC.options(body.source, body.target, direction=body.direction)
+
+class _ProfileBody(BaseModel):
+    id: str | None = None
+    source: str
+    target: str
+    direction: str = "mirror"
+    features: dict = {}
+
+@app.get("/api/sync/profiles")
+def api_sync_profiles() -> Dict[str, Any]:
+    if not _SYNC:
+        return {"ok": False, "error": "SyncManager not available"}
+    return {"items": _SYNC.list_profiles()}
+
+@app.post("/api/sync/profiles")
+def api_sync_profiles_upsert(body: _ProfileBody) -> Dict[str, Any]:
+    if not _SYNC:
+        return {"ok": False, "error": "SyncManager not available"}
+    try:
+        prof = _SYNC.upsert_profile(body.dict())
+        return {"ok": True, "profile": prof}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
