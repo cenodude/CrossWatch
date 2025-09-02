@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web UI backend (FastAPI) for Plex ⇄ SIMKL Watchlist Sync
+Web UI backend (FastAPI)
 """
 import requests
 import json
@@ -1200,74 +1200,6 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     _PROBE_CACHE["simkl"] = (0.0, False)
     return {"ok": True}
 
-
-# ---- Modular Auth (dynamic providers) ----
-# Discovers /auth/_auth_*.py; exposes generic endpoints.
-try:
-    from auth.manager import AuthManager
-    _AUTH = AuthManager(load_config, save_config)
-except Exception as _e:
-    _AUTH = None
-    print("AuthManager not available:", _e)
-
-@app.get("/api/auth/providers")
-def api_auth_providers() -> JSONResponse:
-    if not _AUTH:
-        return JSONResponse({"ok": False, "error": "AuthManager not available"}, status_code=500)
-    return JSONResponse(_AUTH.list())
-
-class _StartPayload(BaseModel):
-    redirect_uri: str | None = None
-
-@app.post("/api/auth/{provider}/start")
-def api_auth_start(provider: str, payload: _StartPayload) -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    # Fallback: compute redirect if not given
-    redirect_uri = payload.redirect_uri or (str(request.base_url).rstrip("/") + "/callback")
-    return _AUTH.start(provider, redirect_uri)
-
-@app.post("/api/auth/{provider}/finish")
-def api_auth_finish(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    return _AUTH.finish(provider, **(body or {}))
-
-@app.post("/api/auth/{provider}/refresh")
-def api_auth_refresh(provider: str) -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    return _AUTH.refresh(provider)
-
-@app.post("/api/auth/{provider}/disconnect")
-def api_auth_disconnect(provider: str) -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    return _AUTH.disconnect(provider)
-
-# Back-compat: map legacy routes to modular layer
-@app.post("/api/plex/pin/new")
-def api_plex_pin_new_mod() -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    return _AUTH.start("PLEX", str(request.base_url).rstrip("/") + "/callback")
-
-@app.post("/api/plex/pin/check")
-def api_plex_pin_check_mod() -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    return _AUTH.finish("PLEX")
-
-@app.post("/api/simkl/authorize")
-def api_simkl_authorize_mod(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    if not _AUTH:
-        return {"ok": False, "error": "AuthManager not available"}
-    client_id = (payload or {}).get("client_id") or (load_config().get("simkl") or {}).get("client_id", "")
-    redirect_uri = (payload or {}).get("redirect_uri") or (str(request.base_url).rstrip("/") + "/callback")
-    # ensure client id is saved so start() can use it
-    cfg = load_config(); cfg.setdefault("simkl", {})["client_id"] = client_id; save_config(cfg)
-    return _AUTH.start("SIMKL", redirect_uri)
-
 # ---- PLEX auth ----
 @app.post("/api/plex/pin/new")
 def api_plex_pin_new() -> Dict[str, Any]:
@@ -1533,50 +1465,69 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
 if __name__ == "__main__":
     main()
 
-# ---- Modular Sync (capabilities, options, profiles) ----
+# ---- Platform Manager (unified facade) ----
 try:
-    from sync.manager import SyncManager
-    _SYNC = SyncManager(load_config, save_config, storage=REPORT_DIR / "profiles.json")
+    from platform.manager import PlatformManager
+    _PLATFORM = PlatformManager(load_config, save_config, profiles_path=REPORT_DIR / "profiles.json")
 except Exception as _e:
-    _SYNC = None
-    print("SyncManager not available:", _e)
+    _PLATFORM = None
+    print("PlatformManager not available:", _e)
 
-@app.get("/api/sync/providers")
-def api_sync_providers() -> JSONResponse:
-    if not _SYNC:
-        return JSONResponse({"ok": False, "error": "SyncManager not available"}, status_code=500)
-    return JSONResponse(_SYNC.providers())
+@app.get("/api/platform/providers")
+def api_platform_providers() -> JSONResponse:
+    if not _PLATFORM:
+        return JSONResponse({"ok": False, "error": "PlatformManager not available"}, status_code=500)
+    return JSONResponse(_PLATFORM.providers_list())
 
-class _OptsBody(BaseModel):
+@app.post("/api/platform/auth/{provider}/start")
+def api_platform_auth_start(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    redirect_uri = (body or {}).get("redirect_uri") or (str(request.base_url).rstrip("/") + "/callback")
+    return _PLATFORM.auth_start(provider, redirect_uri)
+
+@app.post("/api/platform/auth/{provider}/finish")
+def api_platform_auth_finish(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    return _PLATFORM.auth_finish(provider, **(body or {}))
+
+@app.post("/api/platform/auth/{provider}/refresh")
+def api_platform_auth_refresh(provider: str) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    return _PLATFORM.auth_refresh(provider)
+
+@app.post("/api/platform/auth/{provider}/disconnect")
+def api_platform_auth_disconnect(provider: str) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    return _PLATFORM.auth_disconnect(provider)
+
+class _PlatOpts(BaseModel):
     source: str
     target: str
     direction: str = "mirror"
 
-@app.post("/api/sync/options")
-def api_sync_options(body: _OptsBody) -> Dict[str, Any]:
-    if not _SYNC:
-        return {"ok": False, "error": "SyncManager not available"}
-    return _SYNC.options(body.source, body.target, direction=body.direction)
+@app.post("/api/platform/sync/options")
+def api_platform_sync_options(body: _PlatOpts) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    return _PLATFORM.sync_options(body.source, body.target, direction=body.direction)
 
-class _ProfileBody(BaseModel):
-    id: str | None = None
-    source: str
-    target: str
-    direction: str = "mirror"
-    features: dict = {}
+@app.get("/api/platform/sync/profiles")
+def api_platform_sync_profiles() -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
+    return {"items": _PLATFORM.sync_profiles()}
 
-@app.get("/api/sync/profiles")
-def api_sync_profiles() -> Dict[str, Any]:
-    if not _SYNC:
-        return {"ok": False, "error": "SyncManager not available"}
-    return {"items": _SYNC.list_profiles()}
-
-@app.post("/api/sync/profiles")
-def api_sync_profiles_upsert(body: _ProfileBody) -> Dict[str, Any]:
-    if not _SYNC:
-        return {"ok": False, "error": "SyncManager not available"}
+@app.post("/api/platform/sync/profiles")
+def api_platform_sync_profiles_upsert(body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    if not _PLATFORM:
+        return {"ok": False, "error": "PlatformManager not available"}
     try:
-        prof = _SYNC.upsert_profile(body.dict())
+        prof = _PLATFORM.sync_profiles_upsert(body or {})
         return {"ok": True, "profile": prof}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
