@@ -1,0 +1,15 @@
+# Ignore Git
+.git
+.gitignore
+.vscode
+__pycache__/
+*.pyc
+
+# Ignore local configs/logs
+config/
+logs/
+*.log
+images/
+README.md
+LICENSE
+config;C/

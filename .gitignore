@@ -1,0 +1,47 @@
+# ------------------------------------------------------------------------------
+# Python
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+*.log
+
+# Virtualenv
+.venv/
+env/
+venv/
+ENV/
+pip-wheel-metadata/
+*.sqlite3
+
+# ------------------------------------------------------------------------------
+# VS Code
+# ------------------------------------------------------------------------------
+.vscode/*
+# tenzij je deze expliciet wil delen met je repo:
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ------------------------------------------------------------------------------
+# Docker / Container data
+# ------------------------------------------------------------------------------
+# lokale docker compose overrides
+docker-compose.override.yml
+
+# volumes/configs die containers schrijven
+/config/
+state.json
+config.json
+
+# ------------------------------------------------------------------------------
+# OS-specific
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db

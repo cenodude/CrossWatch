@@ -1,0 +1,37 @@
+{
+  "plex": {
+    "account_token": "YOUR_PLEX_ACCOUNT_TOKEN"
+  },
+  "simkl": {
+    "client_id": "YOUR_SIMKL_CLIENT_ID",
+    "client_secret": "YOUR_SIMKL_CLIENT_SECRET",
+    "access_token": "",
+    "refresh_token": "",
+    "token_expires_at": 0
+  },
+  "sync": {
+    "enable_add": true,
+    "enable_remove": true,
+    "bidirectional": {
+      "enabled": true,
+      "mode": "two-way",
+      "source_of_truth": "plex"
+    },
+    "activity": {
+      "use_activity": true,
+      "types": ["watchlist"]
+    }
+  },
+  "scheduling": {
+    "enabled": false,
+    "mode": "disabled",
+    "every_n_hours": 2,
+    "daily_time": "03:30",
+    "timezone": "Europe/Amsterdam",
+    "last_run": 0,
+    "next_run": 0
+  },
+  "runtime": {
+    "debug": false
+  }
+}

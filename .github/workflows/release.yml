@@ -1,0 +1,89 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version/tag
+        id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.tag }}" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          ZIP_NAME="Plex ⇄ SIMKL ${TAG}.zip"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "zipname=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout selected tag (workflow_dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.v.outputs.tag != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          git checkout "refs/tags/${{ steps.v.outputs.tag }}"
+
+      - name: Verify files exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l config.example.json README.md
+          [[ -d assets ]] || { echo "Missing required directory: assets/"; exit 1; }
+          shopt -s globstar nullglob
+          py=(**/*.py *.py)
+          if (( ${#py[@]} == 0 )); then
+            echo "No .py files found." >&2
+            exit 1
+          fi
+          echo "Python files to include:"
+          printf ' - %s\n' "${py[@]}"
+          echo "Assets directory will be included recursively."
+
+      - name: Create ZIP artifact (preserve paths; include assets/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s globstar nullglob
+          py=(**/*.py *.py)
+          extras=(config.example.json README.md)
+          # -r to recurse directories; include assets/ with full structure
+          # Exclude VCS/CI and output dirs just in case
+          zip -9 -r "dist/${{ steps.v.outputs.zipname }}" \
+            "${py[@]}" \
+            "${extras[@]}" \
+            assets \
+            -x ".git/*" ".github/*" "dist/*"
+          (cd dist && sha256sum "${{ steps.v.outputs.zipname }}" > "${{ steps.v.outputs.zipname }}.sha256")
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: Plex ⇄ SIMKL ${{ steps.v.outputs.tag }}
+          files: |
+            dist/${{ steps.v.outputs.zipname }}
+            dist/${{ steps.v.outputs.zipname }}.sha256
+          generate_release_notes: true
