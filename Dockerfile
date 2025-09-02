@@ -27,8 +27,8 @@ ENV PUID=1000 PGID=1000 TZ=Europe/Amsterdam
 EXPOSE 8787
 
 # Scripts
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY run-sync.sh /usr/local/bin/run-sync.sh
+COPY /docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY /docker/run-sync.sh /usr/local/bin/run-sync.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sync.sh
 
 # Default runtime env
