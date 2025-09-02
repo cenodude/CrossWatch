@@ -276,24 +276,16 @@ def get_index_html() -> str:
         </div>
         </div>
 
-        <!-- TMDb -->
-        <div class="section" id="sec-tmdb">
-          <div class="head" onclick="toggleSection('sec-tmdb')">
-            <span class="chev"></span><strong>TMDb</strong>
-          </div>
-          <div class="body">
-            <div class="grid2">
-              <div style="grid-column:1 / -1">
-                <label>API key</label>
-                <input id="tmdb_api_key" placeholder="Your TMDb API key"
-                      oninput="this.dataset.dirty='1'; updateTmdbHint()">
-                <div id="tmdb_hint" class="msg warn hidden">
-                  TMDb is optional but recommended to enrich posters & metadata in the preview.
-                  Get an API key at
-                  <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb API settings</a>.
-                </div>
-                <div class="sub">This product uses the TMDb API but is not endorsed by TMDb.</div>
-              </div>
+        <!-- Metadata -->
+<div class="section" id="sec-meta">
+  <div class="head" onclick="toggleSection('sec-meta')">
+    <span class="chev">▶</span><strong>Metadata</strong>
+  </div>
+  <div class="body">
+    <!-- Dynamic metadata providers -->
+    <div id="metadata-providers"></div>
+  </div>
+</div>
             </div>
             <div class="sep"></div>
           </div>

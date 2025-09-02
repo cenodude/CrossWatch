@@ -1512,3 +1512,18 @@ async function mountAuthProviders(){
   }catch(e){}
 }
 document.addEventListener('DOMContentLoaded', () => { try{ mountAuthProviders(); }catch(_){}});
+
+
+// Dynamically load metadata provider HTML
+async function mountMetadataProviders(){
+  try{
+    const res = await fetch('/api/metadata/providers/html');
+    if(!res.ok) return;
+    const html = await res.text();
+    const slot = document.getElementById('metadata-providers');
+    if(slot){ slot.innerHTML = html; }
+    // Post-mount: update hint visibility
+    try{ updateTmdbHint?.(); }catch(_){}
+  }catch(e){}
+}
+document.addEventListener('DOMContentLoaded', () => { try{ mountMetadataProviders(); }catch(_){}});

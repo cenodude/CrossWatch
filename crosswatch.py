@@ -1473,6 +1473,22 @@ def api_auth_providers():
 def api_auth_providers_html():
     return HTMLResponse(auth_providers_html())
 
+
+# ---- Dynamic metadata providers listing ----
+try:
+    from providers.metadata.registry import metadata_providers_html, metadata_providers_manifests
+except Exception as _e:
+    metadata_providers_html = lambda : "<div class='sub'>No metadata providers found.</div>"
+    metadata_providers_manifests = lambda : []
+
+@app.get("/api/metadata/providers")
+def api_metadata_providers():
+    return JSONResponse(metadata_providers_manifests())
+
+@app.get("/api/metadata/providers/html")
+def api_metadata_providers_html():
+    return HTMLResponse(metadata_providers_html())
+
 if __name__ == "__main__":
     main()
 
