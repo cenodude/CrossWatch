@@ -105,7 +105,7 @@ class _LoggerAdapter:
 
 
 # ---- constants & regexes -----------------------------------------------------
-UA = "Plex-SIMKL-Watchlist-Sync/Module"
+UA = "CrossWatch/Module"
 DISCOVER_HOST = "https://discover.provider.plex.tv"
 PLEX_WATCHLIST_PATH = "/library/sections/watchlist/all"
 PLEX_METADATA_PATH = "/library/metadata"

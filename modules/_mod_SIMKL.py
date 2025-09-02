@@ -109,7 +109,7 @@ SIMKL_ADD_TO_LIST    = f"{SIMKL_BASE}/sync/add-to-list"
 SIMKL_HISTORY_REMOVE = f"{SIMKL_BASE}/sync/history/remove"
 SIMKL_ACTIVITIES     = f"{SIMKL_BASE}/sync/activities"
 
-UA = "Plex-SIMKL-Watchlist-Sync/Module"
+UA = "CrossWatch/Module"
 
 
 def _headers(simkl_cfg: Mapping[str, Any]) -> Dict[str, str]:

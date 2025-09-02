@@ -4,19 +4,19 @@
 def get_index_html() -> str:
     return r"""<!doctype html><html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plex ⇄ SIMKL Watchlist Sync</title>
+<title>CrossWatch</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
 
 
-  <link rel="stylesheet" href="/assets/crosswatch.css">
+  <link rel="stylesheet" href="/assets/crossover.css">
 
 <!-- Auth providers are listed dynamically via /api/platform/providers -->
 </head><body>
 
 <header>
   <div class="brand">
-    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Plex ⇄ SIMKL Watchlist Sync">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch">
       <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
         <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/>
       </linearGradient></defs>
@@ -27,7 +27,7 @@ def get_index_html() -> str:
       <circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
       <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <span class="name">Plex ⇄ SIMKL Watchlist Sync</span>
+    <span class="name">CrossWatch</span>
   </div>
 
   <div class="tabs">
@@ -434,7 +434,7 @@ def get_index_html() -> str:
 </main>
 
 
-  <script src="/assets/crosswatch.js"></script>
+  <script src="/assets/crossover.js"></script>
 
     <!-- Provider-agnostic Authentication Cards (rendered by crosswatch.js /api/platform/providers) -->
     <section id="settings-auth" style="margin-top:24px;">

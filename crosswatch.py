@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web UI backend (FastAPI) for Plex ⇄ SIMKL Watchlist Sync
+Web UI backend (FastAPI) for CrossWatch
 """
 import requests
 import json
@@ -19,6 +19,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from _statistics import Stats
+from pydantic import BaseModel
 from fastapi import Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,14 +29,16 @@ from _watchlist import build_watchlist, delete_watchlist_item
 from _FastAPI import get_index_html
 from functools import lru_cache
 from packaging.version import Version, InvalidVersion
+from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Any, Any, Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Dict, Any, Optional
 
 import uvicorn
+from pydantic import BaseModel
 from fastapi import Body, FastAPI, Request, Path as FPath, Query
 from fastapi.responses import (
     HTMLResponse,
@@ -98,6 +101,16 @@ async def _lifespan(app):
             pass
 app = FastAPI(lifespan=_lifespan, )
 
+
+
+# ---- Platform Manager (unified facade) ----
+try:
+    from platform.manager import PlatformManager
+    _PLATFORM = PlatformManager(load_config, save_config, profiles_path=REPORT_DIR / "profiles.json")
+except Exception as _e:
+    _PLATFORM = None
+    print("PlatformManager not available:", _e)
+
 # --assets image mapping
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -142,7 +155,7 @@ def _cached_latest_release(_marker: int) -> dict:
     """
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "Plex-SIMKL-Watchlist-Sync"
+        "User-Agent": "CrossWatch"
     }
     try:
         r = requests.get(GITHUB_API, headers=headers, timeout=8)
@@ -1464,27 +1477,3 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
 
 if __name__ == "__main__":
     main()
-
-# ---- Orchestrator runner (profiles) ----
-try:
-    from platform.orchestrator import Orchestrator as _Orch
-    _ORCH = _Orch(load_config, save_config, _PLATFORM)
-except Exception as _e:
-    _ORCH = None
-    print("Orchestrator not available:", _e)
-
-class _RunBody(BaseModel):
-    id: str
-    dry_run: bool = False
-    timeout_sec: int | None = 600
-
-@app.post("/api/platform/sync/run")
-def api_platform_sync_run(body: _RunBody) -> Dict[str, Any]:
-    if not _PLATFORM or not _ORCH:
-        return {"ok": False, "error": "Orchestrator not available"}
-    try:
-        rep = _ORCH.run_profile(body.id, dry_run=body.dry_run, timeout_sec=body.timeout_sec)
-        return {"ok": True, "report": rep}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
