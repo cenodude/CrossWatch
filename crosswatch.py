@@ -1468,3 +1468,187 @@ except Exception as _e:
     _PLATFORM = None
     print("PlatformManager not available:", _e)
 
+
+
+# ---- Metadata Manager ----
+try:
+    from cw_platform.metadata import MetadataManager as _MetadataMgr
+    _METADATA = _MetadataMgr(load_config, save_config)
+except Exception as _e:
+    _METADATA = None
+    print("MetadataManager not available:", _e)
+
+# ---- Compatibility shims (moved TMDb logic into provider) ----
+from typing import Tuple
+
+def plex_request_pin() -> dict:
+    """
+    Start Plex PIN flow via provider. Returns legacy-shaped dict.
+    """
+    # Prefer PlatformManager if available; otherwise call provider directly
+    try:
+        from providers.auth._auth_PLEX import PROVIDER as _PLEX_PROVIDER
+    except Exception:
+        _PLEX_PROVIDER = None
+
+    cfg = load_config()
+    code = None
+    pin_id = None
+    try:
+        if _PLEX_PROVIDER is not None:
+            res = _PLEX_PROVIDER.start(cfg, redirect_uri="")
+            save_config(cfg)
+            code = (res or {}).get("pin")
+            pend = (cfg.get("plex") or {}).get("_pending_pin") or {}
+            pin_id = pend.get("id")
+        elif _PLATFORM is not None:
+            res = _PLATFORM.auth_start("PLEX", {})
+            cfg = load_config()
+            save_config(cfg)
+            code = (res or {}).get("pin")
+            pend = (cfg.get("plex") or {}).get("_pending_pin") or {}
+            pin_id = pend.get("id")
+    except Exception as e:
+        raise RuntimeError(f"Plex PIN error: {e}")
+
+    if not code or not pin_id:
+        raise RuntimeError("Plex PIN could not be issued")
+
+    expires_epoch = int(time.time()) + 300
+    return {"id": pin_id, "code": code, "expires_epoch": expires_epoch, "headers": {}}
+
+
+def plex_wait_for_token(pin_id: int, headers: dict | None = None, timeout_sec: int = 300, interval: float = 1.0) -> str | None:
+    """
+    Poll provider.finish() until token appears in config or timeout.
+    """
+    try:
+        from providers.auth._auth_PLEX import PROVIDER as _PLEX_PROVIDER
+    except Exception:
+        _PLEX_PROVIDER = None
+
+    deadline = time.time() + max(0, int(timeout_sec))
+    while time.time() < deadline:
+        cfg = load_config()
+        token = (cfg.get("plex") or {}).get("account_token")
+        if token:
+            return token
+        try:
+            if _PLEX_PROVIDER is not None:
+                _PLEX_PROVIDER.finish(cfg)
+                save_config(cfg)
+            elif _PLATFORM is not None:
+                _PLATFORM.auth_finish("PLEX")
+        except Exception:
+            pass
+        time.sleep(max(0.05, float(interval)))
+    return None
+
+
+def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> dict:
+    """
+    Delegate metadata to MetadataManager (TMDb provider normalizes fields).
+    """
+    if _METADATA is None:
+        raise RuntimeError("MetadataManager not available")
+    entity = "movie" if str(typ).lower() == "movie" else "show"
+    res = _METADATA.resolve(entity=entity, ids={"tmdb": str(tmdb_id)}, locale=None,
+                            need={"poster": True, "backdrop": True, "logo": False})
+    return res or {}
+
+
+def get_runtime(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> int | None:
+    """
+    Read normalized runtime from metadata.
+    """
+    meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
+    return meta.get("runtime_minutes")
+
+
+def _cache_download(url: str, dest_path: Path, timeout: float = 15.0) -> Tuple[Path, str]:
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    if not dest_path.exists():
+        r = requests.get(url, stream=True, timeout=timeout)
+        r.raise_for_status()
+        with open(dest_path, "wb") as f:
+            for chunk in r.iter_content(64 * 1024):
+                if chunk:
+                    f.write(chunk)
+    ext = dest_path.suffix.lower()
+    mime = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "application/octet-stream")
+    return dest_path, mime
+
+
+def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache_dir: Path | str) -> tuple[str, str]:
+    """
+    Resolve poster URL via provider and cache locally.
+    """
+    meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
+    posters = ((meta.get("images") or {}).get("poster") or [])
+    if not posters:
+        raise FileNotFoundError("No poster found")
+    src_url = posters[0]["url"]
+    ext = ".jpg" if ".jpg" in src_url or ".jpeg" in src_url else ".png"
+    size_tag = (size or "w780").lower().strip()
+    cache_root = Path(cache_dir or "./.cache") / "posters"
+    dest = cache_root / f"{typ}_{tmdb_id}_{size_tag}{ext}"
+    path, mime = _cache_download(src_url, dest)
+    return str(path), mime
+
+
+def simkl_build_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
+    """
+    Build SIMKL OAuth authorize URL using the provider, preserving state.
+    """
+    try:
+        from providers.auth._auth_SIMKL import PROVIDER as _SIMKL_PROVIDER
+    except Exception:
+        _SIMKL_PROVIDER = None
+    cfg = load_config()
+    # Ensure cfg carries latest client_id
+    cfg.setdefault("simkl", {})["client_id"] = (client_id or cfg.get("simkl", {}).get("client_id") or "").strip()
+    url = f"https://simkl.com/oauth/authorize?response_type=code&client_id={cfg['simkl']['client_id']}&redirect_uri={redirect_uri}"
+    try:
+        if _SIMKL_PROVIDER is not None:
+            res = _SIMKL_PROVIDER.start(cfg, redirect_uri=redirect_uri) or {}
+            url = res.get("url") or url
+            save_config(cfg)
+    except Exception:
+        pass
+    if "state=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}state={state}"
+    return url
+
+
+def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
+    """
+    Exchange SIMKL authorization code for tokens via provider. Returns minimal token dict.
+    """
+    try:
+        from providers.auth._auth_SIMKL import PROVIDER as _SIMKL_PROVIDER
+    except Exception:
+        _SIMKL_PROVIDER = None
+    cfg = load_config()
+    s = cfg.setdefault("simkl", {})
+    s["client_id"] = client_id.strip()
+    s["client_secret"] = client_secret.strip()
+    try:
+        if _SIMKL_PROVIDER is not None:
+            _SIMKL_PROVIDER.finish(cfg, redirect_uri=redirect_uri, code=code)
+            save_config(cfg)
+    except Exception:
+        pass
+    # Read back tokens from cfg
+    s = load_config().get("simkl", {}) or {}
+    access = s.get("access_token", "")
+    refresh = s.get("refresh_token", "")
+    exp_at = int(s.get("token_expires_at", 0) or 0)
+    expires_in = max(0, exp_at - int(time.time())) if exp_at else 0
+    out = {"access_token": access}
+    if refresh:
+        out["refresh_token"] = refresh
+    if expires_in:
+        out["expires_in"] = expires_in
+    return out
+

@@ -1,185 +1,136 @@
 # providers/metadata/_meta_TMDB.py
 from __future__ import annotations
 
+from typing import Any, Dict, Optional, MutableMapping, Mapping
 import hashlib
-import os
-from typing import Any, Dict, Optional
-
+import time
 import requests
 
 from _logging import log
 
 
-class TmdbProvider:
-    """
-    TMDb metadata provider.
-    Minimal, fast, and returns normalized fields the app expects.
-    """
+IMG_BASE = "https://image.tmdb.org/t/p"
 
+
+class TmdbProvider:
     name = "TMDB"
-    UA = "CrossWatch/1.0"
+    UA = "Crosswatch/1.0"
 
     def __init__(self, load_cfg, save_cfg) -> None:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
-        self._cache: Dict[str, dict] = {}  # tiny in-memory cache for dev
+        self._cache: dict[str, Any] = {}
 
-    # ---- manifest / capabilities -------------------------------------------------
-
-    def manifest(self) -> dict:
-        # Used by Settings → Metadata (UI hints only)
-        return {
-            "name": self.name,
-            "label": "TMDb",
-            "supports": {
-                "entities": ["movie", "show", "season", "episode"],
-                "assets": ["poster", "backdrop", "logo"],
-                "locales": True,
-            },
-            "auth": {"api_key": True},  # show API key field in UI
-        }
-
-    def capabilities(self) -> dict:
-        # Informational; the manager doesn’t strictly depend on it
-        return {
-            "images": {"poster": True, "backdrop": True, "logo": True},
-            "text": {"title": True, "overview": True},
-            "ids": ["tmdb", "imdb"],
-        }
-
-    # ---- HTTP / key --------------------------------------------------------------
-
+    # ---- config helpers ----
     def _apikey(self) -> str:
         cfg = self.load_cfg() or {}
-        # prefers config; falls back to env
-        return (cfg.get("tmdb", {}).get("api_key") or os.environ.get("TMDB_API_KEY") or "").strip()
-
-    def _get(self, url: str, params: dict) -> dict:
-        key = self._apikey()
-        if not key:
+        md = cfg.get("tmdb") or cfg.get("metadata") or {}
+        # support either {"tmdb":{"api_key":...}} or {"metadata":{"tmdb_api_key":...}}
+        api_key = (md.get("api_key") or md.get("tmdb_api_key") or "").strip()
+        if not api_key:
             raise RuntimeError("TMDb API key is missing")
-        q = dict(params or {})
-        q["api_key"] = key
+        return api_key
 
+    # ---- tiny GET with cache ----
+    def _get(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        q = dict(params or {})
+        q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
-        h = hashlib.sha1(ck.encode()).hexdigest()
+        h = hashlib.sha1(ck.encode("utf-8")).hexdigest()
         if h in self._cache:
             return self._cache[h]
-
-        r = requests.get(
-            url,
-            params=q,
-            headers={"User-Agent": self.UA, "Accept": "application/json"},
-            timeout=10,
-        )
+        r = requests.get(url, params=q, headers={"User-Agent": self.UA, "Accept": "application/json"}, timeout=12)
         r.raise_for_status()
         data = r.json()
         self._cache[h] = data
         return data
 
-    # ---- fetch -------------------------------------------------------------------
+    # ---- normalize helpers ----
+    @staticmethod
+    def _safe_int_year(s: Optional[str]) -> Optional[int]:
+        if not s: return None
+        if len(s) >= 4 and s[:4].isdigit():
+            return int(s[:4])
+        return None
 
-    def fetch(
-        self,
-        *,
-        entity: str,
-        ids: Dict[str, str],
-        locale: Optional[str] = None,
-        need: Optional[Dict[str, bool]] = None,
-    ) -> dict:
-        """
-        Return normalized metadata:
+    def _images(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> Dict[str, list]:
+        out: Dict[str, list] = {}
+        include = f"{lang[:2]},{lang},null" if lang else "en,null"
+        if kind == "movie":
+            imgs = self._get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/images", {"include_image_language": include})
+        else:
+            imgs = self._get(f"https://api.themoviedb.org/3/tv/{tmdb_id}/images", {"include_image_language": include})
+        posters = imgs.get("posters") or []
+        backs = imgs.get("backdrops") or []
+        logos = imgs.get("logos") or []
 
-        {
-          "ids": {"tmdb":"...", "imdb":"..."},
-          "title": "...",
-          "overview": "...",
-          "year": 2024,
-          "images": {
-            "poster": [{"url": "...", "w": 1000, "h": 1500, "lang":"en"}],
-            "backdrop": [...],
-            "logo": [...]
-          }
-        }
-        """
+        if need.get("poster"):
+            out["poster"] = [
+                {"url": f"{IMG_BASE}/w780{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
+                for p in posters if p.get("file_path")
+            ]
+        if need.get("backdrop"):
+            out["backdrop"] = [
+                {"url": f"{IMG_BASE}/w1280{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
+                for p in backs if p.get("file_path")
+            ]
+        if need.get("logo"):
+            out["logo"] = [
+                {"url": f"{IMG_BASE}/w500{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
+                for p in logos if p.get("file_path")
+            ]
+        return out
+
+    # ---- provider API ----
+    def fetch(self, *, entity: str, ids: Dict[str, str], locale: Optional[str] = None,
+              need: Optional[Dict[str, bool]] = None) -> dict:
         need = need or {"poster": True, "backdrop": True}
-        lang = (locale or "en-US")
-        out: Dict[str, Any] = {"ids": {}, "images": {}}
-
-        base = "https://api.themoviedb.org/3"
-        img_base = "https://image.tmdb.org/t/p"
-        kind = entity.lower()
-
-        # Resolve a tmdb id if only imdb was provided
-        tmdb_id = ids.get("tmdb")
-        if not tmdb_id and ids.get("imdb"):
-            try:
-                data = self._get(f"{base}/find/{ids['imdb']}", {"external_source": "imdb_id", "language": lang})
-                blk = None
-                if kind == "movie":
-                    blk = (data.get("movie_results") or [None])[0]
-                elif kind in ("show", "tv"):
-                    blk = (data.get("tv_results") or [None])[0]
-                if blk and blk.get("id"):
-                    tmdb_id = str(blk["id"])
-            except Exception as e:
-                log(f"TMDb external-id resolve failed: {e}", level="WARNING", module="META")
-
+        entity = (entity or "").lower().strip()
+        if entity not in ("movie", "show"):
+            return {}
+        tmdb_id = ids.get("tmdb") or ids.get("id") or ""
         if not tmdb_id:
-            # nothing we can do
             return {}
 
-        out["ids"]["tmdb"] = tmdb_id
-        if ids.get("imdb"):
-            out["ids"]["imdb"] = ids["imdb"]
-
-        # Details
+        lang = (locale or "en-US")
+        base = "https://api.themoviedb.org/3"
         try:
-            if kind == "movie":
+            if entity == "movie":
                 det = self._get(f"{base}/movie/{tmdb_id}", {"language": lang})
-            elif kind in ("show", "tv"):
-                det = self._get(f"{base}/tv/{tmdb_id}", {"language": lang})
+                title = det.get("title") or det.get("original_title")
+                year = self._safe_int_year(det.get("release_date"))
+                runtime = det.get("runtime")
+                runtime_minutes = runtime if isinstance(runtime, int) and runtime > 0 else None
+                detail = {"release_date": det.get("release_date"), "runtime": runtime}
             else:
-                det = {}
-            out["title"] = det.get("title") or det.get("name")
-            out["overview"] = det.get("overview")
-            date = det.get("release_date") or det.get("first_air_date") or ""
-            out["year"] = int(date[:4]) if len(date) >= 4 and date[:4].isdigit() else None
+                det = self._get(f"{base}/tv/{tmdb_id}", {"language": lang})
+                title = det.get("name") or det.get("original_name")
+                year = self._safe_int_year(det.get("first_air_date"))
+                run_list = det.get("episode_run_time") or []
+                ep_runtime = next((x for x in run_list if isinstance(x, int) and x > 0), None)
+                runtime_minutes = ep_runtime
+                detail = {
+                    "first_air_date": det.get("first_air_date"),
+                    "episode_run_time": run_list,
+                    "number_of_seasons": det.get("number_of_seasons"),
+                }
         except Exception as e:
             log(f"TMDb detail fetch failed: {e}", level="WARNING", module="META")
+            return {}
 
-        # Images
+        out: Dict[str, Any] = {
+            "type": "movie" if entity == "movie" else "show",
+            "ids": {"tmdb": str(tmdb_id)},
+            "title": title,
+            "year": year,
+            "runtime_minutes": runtime_minutes,
+            "images": {},
+            "detail": detail,
+        }
+
         try:
-            if kind == "movie":
-                imgs = self._get(
-                    f"{base}/movie/{tmdb_id}/images",
-                    {"include_image_language": f"{lang[:2]},{lang},null"},
-                )
-            else:
-                imgs = self._get(
-                    f"{base}/tv/{tmdb_id}/images",
-                    {"include_image_language": f"{lang[:2]},{lang},null"},
-                )
-
-            posters = imgs.get("posters") or []
-            backs = imgs.get("backdrops") or []
-            logos = imgs.get("logos") or []
-
-            if need.get("poster"):
-                out["images"]["poster"] = [
-                    {"url": f"{img_base}/w780{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                    for p in posters if p.get("file_path")
-                ]
-            if need.get("backdrop"):
-                out["images"]["backdrop"] = [
-                    {"url": f"{img_base}/w1280{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                    for p in backs if p.get("file_path")
-                ]
-            if need.get("logo"):
-                out["images"]["logo"] = [
-                    {"url": f"{img_base}/w500{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                    for p in logos if p.get("file_path")
-                ]
+            imgs = self._images(str(tmdb_id), "movie" if entity == "movie" else "tv", lang, need)
+            if imgs: out["images"] = imgs
         except Exception as e:
             log(f"TMDb images fetch failed: {e}", level="WARNING", module="META")
 
@@ -189,3 +140,6 @@ class TmdbProvider:
 # Discovery hook
 def build(load_cfg, save_cfg):
     return TmdbProvider(load_cfg, save_cfg)
+
+# Optional singleton export for direct imports
+PROVIDER = TmdbProvider  # allow manager to call build, or importers to instantiate
