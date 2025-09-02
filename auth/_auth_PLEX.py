@@ -5,7 +5,7 @@ from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 from _logging import log
 
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
-UA = "Crosswatch/1.0"
+UA = "CrossWatch/1.0"
 
 class PlexAuth(AuthProvider):
     name = "PLEX"

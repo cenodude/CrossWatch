@@ -1,5 +1,5 @@
 # _watchlist.py
-# Watchlist logic for Plex ⇄ SIMKL Web UI (PlexAPI-only, hide-overlay)
+# Watchlist logic for CrossWatch Web UI (PlexAPI-only, hide-overlay)
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Set
