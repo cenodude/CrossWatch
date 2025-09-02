@@ -33,7 +33,7 @@ jobs:
           else
             TAG="${GITHUB_REF_NAME}"
           fi
-          ZIP_NAME="Plex ⇄ SIMKL ${TAG}.zip"
+          ZIP_NAME="CrossWatch-${TAG}.zip"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "zipname=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
 
@@ -49,8 +49,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ls -l config.example.json README.md
+          # Adjust these if you rename docs
+          test -f README.md || { echo "Missing README.md"; exit 1; }
           [[ -d assets ]] || { echo "Missing required directory: assets/"; exit 1; }
+          # Optional but nice to have:
+          if [[ -f dev.MD ]]; then echo "Found dev.MD"; fi
+          if [[ -f providers/README.md ]]; then echo "Found providers/README.md"; fi
+
           shopt -s globstar nullglob
           py=(**/*.py *.py)
           if (( ${#py[@]} == 0 )); then
@@ -61,28 +66,32 @@ jobs:
           printf ' - %s\n' "${py[@]}"
           echo "Assets directory will be included recursively."
 
-      - name: Create ZIP artifact (preserve paths; include assets/)
+      - name: Create ZIP artifact (preserve paths; include assets/ and docs)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           shopt -s globstar nullglob
           py=(**/*.py *.py)
-          extras=(config.example.json README.md)
-          # -r to recurse directories; include assets/ with full structure
-          # Exclude VCS/CI and output dirs just in case
+          extras=()
+          [[ -f config.example.json ]] && extras+=(config.example.json)
+          [[ -f README.md ]] && extras+=(README.md)
+          [[ -f dev.MD ]] && extras+=(dev.MD)
+          [[ -f providers/README.md ]] && extras+=(providers/README.md)
+
           zip -9 -r "dist/${{ steps.v.outputs.zipname }}" \
             "${py[@]}" \
             "${extras[@]}" \
             assets \
-            -x ".git/*" ".github/*" "dist/*"
+            -x ".git/*" ".github/*" "dist/*" "__pycache__/*" "*.pyc" ".venv/*"
+
           (cd dist && sha256sum "${{ steps.v.outputs.zipname }}" > "${{ steps.v.outputs.zipname }}.sha256")
 
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.v.outputs.tag }}
-          name: Plex ⇄ SIMKL ${{ steps.v.outputs.tag }}
+          name: CrossWatch ${{ steps.v.outputs.tag }}
           files: |
             dist/${{ steps.v.outputs.zipname }}
             dist/${{ steps.v.outputs.zipname }}.sha256
