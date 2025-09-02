@@ -40,7 +40,20 @@ class PlexAuth(AuthProvider):
 
     def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, str]:
         log("Plex: request PIN", level="INFO", module="AUTH")
-        r = requests.post(PLEX_PIN_URL, headers={"Accept":"application/json","User-Agent":UA}, timeout=10)
+        plex = cfg.setdefault("plex", {})
+        cid = plex.get("client_id")
+        if not cid:
+            cid = secrets.token_hex(12)
+            plex["client_id"] = cid
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": UA,
+            "X-Plex-Product": "CrossWatch",
+            "X-Plex-Version": "1.0",
+            "X-Plex-Client-Identifier": cid,
+            "X-Plex-Platform": "Web",
+        }
+        r = requests.post(PLEX_PIN_URL, headers=headers, timeout=10)
         r.raise_for_status()
         j = r.json()
         cfg.setdefault("plex", {})["_pending_pin"] = {"id": j["id"], "code": j["code"], "created": int(time.time())}
@@ -54,7 +67,7 @@ class PlexAuth(AuthProvider):
             log("Plex: no pending PIN", level="WARNING", module="AUTH")
             return self.get_status(cfg)
         url = f"{PLEX_PIN_URL}/{pend['id']}"
-        r = requests.get(url, headers={"Accept":"application/json","User-Agent":UA}, timeout=10)
+        r = requests.get(url, headers={"Accept":"application/json","User-Agent":UA,"X-Plex-Product":"CrossWatch","X-Plex-Version":"1.0","X-Plex-Client-Identifier": cfg.get("plex",{}).get("client_id",""),"X-Plex-Platform":"Web"}, timeout=10)
         r.raise_for_status()
         j = r.json()
         if j.get("authToken"):

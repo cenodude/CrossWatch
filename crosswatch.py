@@ -1201,6 +1201,10 @@ def api_plex_pin_new() -> Dict[str, Any]:
     try:
         info = plex_request_pin()
         pin_id = info["id"]; code = info["code"]; exp_epoch = int(info["expires_epoch"]); headers = info["headers"]
+        # Persist pending PIN so provider.finish() can poll
+        cfg2 = load_config(); plex2 = cfg2.setdefault('plex', {})
+        plex2['_pending_pin'] = {'id': pin_id, 'code': code}; save_config(cfg2)
+
         def waiter(_pin_id: int, _headers: Dict[str, str]):
             token = plex_wait_for_token(_pin_id, headers=_headers, timeout_sec=360, interval=1.0)
             if token:
@@ -1514,6 +1518,21 @@ except Exception as _e:
 from typing import Tuple
 
 def plex_request_pin() -> dict:
+    cfg = load_config(); plex = cfg.setdefault('plex', {})
+    cid = plex.get('client_id')
+    if not cid:
+        import secrets
+        cid = secrets.token_hex(12)
+        plex['client_id'] = cid
+        save_config(cfg)
+    headers = {
+        'Accept': 'application/json',
+        'User-Agent': 'CrossWatch/1.0',
+        'X-Plex-Product': 'CrossWatch',
+        'X-Plex-Version': '1.0',
+        'X-Plex-Client-Identifier': cid,
+        'X-Plex-Platform': 'Web',
+    }
     """
     Start Plex PIN flow via provider. Returns legacy-shaped dict.
     """
@@ -1550,30 +1569,40 @@ def plex_request_pin() -> dict:
     return {"id": pin_id, "code": code, "expires_epoch": expires_epoch, "headers": {}}
 
 
+
 def plex_wait_for_token(pin_id: int, headers: dict | None = None, timeout_sec: int = 300, interval: float = 1.0) -> str | None:
-    """
-    Poll provider.finish() until token appears in config or timeout.
-    """
+    """Poll provider.finish() until token appears in config or timeout."""
     try:
         from providers.auth._auth_PLEX import PROVIDER as _PLEX_PROVIDER
     except Exception:
         _PLEX_PROVIDER = None
 
     deadline = time.time() + max(0, int(timeout_sec))
+    sleep_s = max(0.2, float(interval))
+    # Ensure pending pin id is present for the provider
+    try:
+        cfg0 = load_config(); plex0 = cfg0.setdefault('plex', {})
+        pend = plex0.get('_pending_pin') or {}
+        if not pend.get('id') and pin_id:
+            pend = {'id': pin_id}
+            plex0['_pending_pin'] = pend
+            save_config(cfg0)
+    except Exception:
+        pass
+
     while time.time() < deadline:
         cfg = load_config()
-        token = (cfg.get("plex") or {}).get("account_token")
+        token = (cfg.get('plex') or {}).get('account_token')
         if token:
             return token
         try:
             if _PLEX_PROVIDER is not None:
                 _PLEX_PROVIDER.finish(cfg)
                 save_config(cfg)
-            elif _PLATFORM is not None:
-                _PLATFORM.auth_finish("PLEX")
         except Exception:
+            # swallow and retry
             pass
-        time.sleep(max(0.05, float(interval)))
+        time.sleep(sleep_s)
     return None
 
 
