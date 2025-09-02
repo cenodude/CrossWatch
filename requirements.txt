@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+plexapi
+python-dateutil
+tzdata
+typing_extensions
+httpx
