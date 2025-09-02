@@ -49,7 +49,6 @@ from fastapi.responses import (
     FileResponse,
 )
 
-from _TMDB import get_poster_file, get_meta, get_runtime
 from _scheduling import SyncScheduler
 
 ROOT = Path(__file__).resolve().parent
