@@ -6,7 +6,7 @@ from _logging import log
 
 SIMKL_AUTH = "https://simkl.com/oauth/authorize"
 SIMKL_TOKEN = "https://api.simkl.com/oauth/token"
-UA = "CrossWatch/1.0"
+UA = "Crosswatch/1.0"
 
 class SimklAuth(AuthProvider):
     name = "SIMKL"

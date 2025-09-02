@@ -903,7 +903,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!s) { flashCopy(btn, false, 'No summary'); return; }
 
     const lines = [];
-    lines.push(`CrossWatch Watchlist Sync ${s.version || ''}`.trim());
+    lines.push(`Plex ⇄ SIMKL Watchlist Sync ${s.version || ''}`.trim());
     if (s.started_at)   lines.push(`Start:   ${s.started_at}`);
     if (s.finished_at)  lines.push(`Finish:  ${s.finished_at}`);
     if (s.cmd)          lines.push(`Cmd:     ${s.cmd}`);

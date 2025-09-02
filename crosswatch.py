@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web UI backend (FastAPI) for CrossWatch
+Web UI backend (FastAPI)
 """
 import requests
 import json
@@ -33,9 +33,9 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional
+from typing import Optional
 
 import uvicorn
 from pydantic import BaseModel
@@ -49,12 +49,6 @@ from fastapi.responses import (
     FileResponse,
 )
 
-from _auth_helper import (
-    plex_request_pin,
-    plex_wait_for_token,
-    simkl_build_authorize_url,
-    simkl_exchange_code,
-)
 from _TMDB import get_poster_file, get_meta, get_runtime
 from _scheduling import SyncScheduler
 
@@ -101,16 +95,6 @@ async def _lifespan(app):
             pass
 app = FastAPI(lifespan=_lifespan, )
 
-
-
-# ---- Platform Manager (unified facade) ----
-try:
-    from platform.manager import PlatformManager
-    _PLATFORM = PlatformManager(load_config, save_config, profiles_path=REPORT_DIR / "profiles.json")
-except Exception as _e:
-    _PLATFORM = None
-    print("PlatformManager not available:", _e)
-
 # --assets image mapping
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -155,7 +139,7 @@ def _cached_latest_release(_marker: int) -> dict:
     """
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "CrossWatch"
+        "User-Agent": "Plex-SIMKL-Watchlist-Sync"
     }
     try:
         r = requests.get(GITHUB_API, headers=headers, timeout=8)
@@ -1202,84 +1186,10 @@ def api_status(fresh: int = Query(0)):
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-@app.get("/api/config")
-def api_config() -> JSONResponse:
-    return JSONResponse(load_config())
+# [removed legacy auth route]
 
-@app.post("/api/config")
-def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    save_config(cfg)
-    _PROBE_CACHE["plex"] = (0.0, False)
-    _PROBE_CACHE["simkl"] = (0.0, False)
-    return {"ok": True}
+# [removed legacy auth route]
 
-# ---- PLEX auth ----
-@app.post("/api/plex/pin/new")
-def api_plex_pin_new() -> Dict[str, Any]:
-    try:
-        info = plex_request_pin()
-        pin_id = info["id"]; code = info["code"]; exp_epoch = int(info["expires_epoch"]); headers = info["headers"]
-        def waiter(_pin_id: int, _headers: Dict[str, str]):
-            token = plex_wait_for_token(_pin_id, headers=_headers, timeout_sec=360, interval=1.0)
-            if token:
-                cfg = load_config(); cfg.setdefault("plex", {})["account_token"] = token; save_config(cfg)
-                _append_log("PLEX", "\x1b[92m[PLEX]\x1b[0m Token acquired and saved.")
-                _PROBE_CACHE["plex"] = (0.0, False)
-            else:
-                _append_log("PLEX", "\x1b[91m[PLEX]\x1b[0m PIN expired or not authorized.")
-        threading.Thread(target=waiter, args=(pin_id, headers), daemon=True).start()
-        expires_in = max(0, exp_epoch - int(time.time()))
-        return {"ok": True, "code": code, "pin_id": pin_id, "expiresIn": expires_in}
-    except Exception as e:
-        _append_log("PLEX", f"[PLEX] ERROR: {e}")
-        return {"ok": False, "error": str(e)}
-
-# ---- SIMKL OAuth ----
-@app.post("/api/simkl/authorize")
-def api_simkl_authorize(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    try:
-        origin = (payload or {}).get("origin") or ""
-        if not origin:
-            return {"ok": False, "error": "origin missing"}
-        cfg = load_config(); simkl = cfg.get("simkl", {}) or {}
-        client_id = (simkl.get("client_id") or "").strip(); client_secret = (simkl.get("client_secret") or "").strip()
-        bad_cid = (not client_id) or _is_placeholder(client_id, "YOUR_SIMKL_CLIENT_ID")
-        bad_sec = (not client_secret) or _is_placeholder(client_secret, "YOUR_SIMKL_CLIENT_SECRET")
-        if bad_cid or bad_sec:
-            return {"ok": False, "error": "SIMKL client_id and client_secret must be set in settings first"}
-        state = secrets.token_urlsafe(24); redirect_uri = f"{origin}/callback"
-        SIMKL_STATE["state"] = state; SIMKL_STATE["redirect_uri"] = redirect_uri
-        url = simkl_build_authorize_url(client_id, redirect_uri, state)
-        return {"ok": True, "authorize_url": url}
-    except Exception as e:
-        _append_log("SIMKL", f"[SIMKL] ERROR: {e}")
-        return {"ok": False, "error": str(e)}
-
-@app.get("/callback")
-def oauth_simkl_callback(request: Request) -> PlainTextResponse:
-    try:
-        params = dict(request.query_params); code = params.get("code"); state = params.get("state")
-        if not code or not state: return PlainTextResponse("Missing code or state.", status_code=400)
-        if state != SIMKL_STATE.get("state"): return PlainTextResponse("State mismatch.", status_code=400)
-        redirect_uri = str(SIMKL_STATE.get("redirect_uri") or f"{request.base_url}callback")
-        cfg = load_config(); simkl_cfg = cfg.setdefault("simkl", {})
-        client_id = (simkl_cfg.get("client_id") or "").strip(); client_secret = (simkl_cfg.get("client_secret") or "").strip()
-        bad_cid = (not client_id) or _is_placeholder(client_id, "YOUR_SIMKL_CLIENT_ID")
-        bad_sec = (not client_secret) or _is_placeholder(client_secret, "YOUR_SIMKL_CLIENT_SECRET")
-        if bad_cid or bad_sec: return PlainTextResponse("SIMKL client_id/secret missing or placeholders in config.", status_code=400)
-        tokens = simkl_exchange_code(client_id, client_secret, code, redirect_uri)
-        if not tokens or "access_token" not in tokens: return PlainTextResponse("SIMKL token exchange failed.", status_code=400)
-        simkl_cfg["access_token"] = tokens["access_token"]
-        if tokens.get("refresh_token"): simkl_cfg["refresh_token"] = tokens["refresh_token"]
-        if tokens.get("expires_in"): simkl_cfg["token_expires_at"] = int(time.time()) + int(tokens["expires_in"])
-        save_config(cfg); _append_log("SIMKL", "\x1b[92m[SIMKL]\x1b[0m Access token saved.")
-        _PROBE_CACHE["simkl"] = (0.0, False)
-        return PlainTextResponse("SIMKL authorized. You can close this tab and return to the app.", status_code=200)
-    except Exception as e:
-        _append_log("SIMKL", f"[SIMKL] ERROR: {e}")
-        return PlainTextResponse(f"Error: {e}", status_code=500)
-
-# ---- Run & Summary ----
 @app.post("/api/run")
 def api_run_sync() -> Dict[str, Any]:
     sync_script = ROOT / "plex_simkl_watchlist_sync.py"

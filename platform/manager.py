@@ -1,151 +1,101 @@
 from __future__ import annotations
-import importlib, pkgutil, json, time
+import json, os, importlib, pkgutil
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping, List
+from typing import Any, Dict, List
+
 from _logging import log
 
-def _discover_providers() -> dict[str, Any]:
-    """Find /auth/_auth_*.py and return {NAME: provider_instance}."""
-    out: dict[str, Any] = {}
-    try:
-        import auth
-    except Exception as e:
-        log(f"Platform: auth package not found: {e}", level="ERROR", module="PLATFORM")
-        return out
-    for pkg_path in getattr(auth, "__path__", []):
-        for m in pkgutil.iter_modules([str(pkg_path)]):
-            if not m.name.startswith("_auth_"):
-                continue
-            mod = importlib.import_module(f"auth.{m.name}")
-            prov = getattr(mod, "PROVIDER", None)
-            if prov and isinstance(getattr(prov, "name", None), str):
-                out[prov.name.upper()] = prov
-    return out
-
-def _merge_constraints(src_caps: dict, dst_caps: dict) -> dict:
-    notes: dict[str, Any] = {}
-    s_scale = src_caps.get("features", {}).get("ratings", {}).get("scale")
-    d_scale = dst_caps.get("features", {}).get("ratings", {}).get("scale")
-    if s_scale and d_scale and s_scale != d_scale:
-        notes["ratings.scale_mismatch"] = f"{s_scale} vs {d_scale}"
-    return notes
-
-def compute_sync_options(src_caps: dict, dst_caps: dict, *, direction: str = "mirror") -> Dict[str, Any]:
-    """Compute allowed features for source → target with direction 'mirror' or 'two-way'."""
-    result: Dict[str, Any] = {
-        "watchlist": False, "collections": False, "ratings": False, "watched": False, "liked_lists": False
-    }
-    for feat in list(result.keys()):
-        s = src_caps.get("features", {}).get(feat, {})
-        d = dst_caps.get("features", {}).get(feat, {})
-        if direction == "mirror":
-            result[feat] = bool(s.get("read") and d.get("write"))
-        else:
-            result[feat] = bool(s.get("read") and s.get("write") and d.get("read") and d.get("write"))
-    ent_src = set(src_caps.get("entity_types", []) or [])
-    ent_dst = set(dst_caps.get("entity_types", []) or [])
-    result["entity_types"] = sorted(ent_src & ent_dst)
-    result["notes"] = _merge_constraints(src_caps, dst_caps)
-    return result
-
 class PlatformManager:
-    """Unified facade: auth + capabilities + sync profiles (no external managers)."""
-    def __init__(self, load_cfg, save_cfg, profiles_path: Path):
+    """Unified facade for providers and sync profiles."""
+    def __init__(self, load_cfg, save_cfg, profiles_path: Path | None = None) -> None:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
-        self.profiles_path = profiles_path
-        self.profiles_path.parent.mkdir(parents=True, exist_ok=True)
-        self.providers = _discover_providers()
+        self.profiles_path = profiles_path or Path(os.environ.get("RUNTIME_DIR","/config")) / "profiles.json"
+        self._providers = self._discover_providers()
 
-    # ---------- Providers ----------
-    def providers_list(self) -> list[dict]:
-        """[{ name, manifest, status, capabilities }]"""
-        cfg = self.load_cfg()
-        out: list[dict] = []
-        for name, prov in self.providers.items():
-            man = prov.manifest()
-            caps = getattr(prov, "capabilities", lambda: {"features": {}, "entity_types": []})()
-            st = prov.get_status(cfg)
-            out.append({"name": name, "manifest": man.__dict__, "status": st.__dict__, "capabilities": caps})
-        log("Platform: providers listed", level="DEBUG", module="PLATFORM")
+    # ---- discovery ----
+    def _discover_providers(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        try:
+            import providers.auth as auth_pkg
+        except Exception as e:
+            log(f"auth package missing: {e}", level="ERROR", module="PLATFORM")
+            return out
+        for p in getattr(auth_pkg, "__path__", []):
+            for m in pkgutil.iter_modules([str(p)]):
+                if not m.name.startswith("_auth_"): continue
+                mod = importlib.import_module(f"providers.auth.{m.name}")
+                prov = getattr(mod, "PROVIDER", None)
+                if prov:
+                    name = getattr(prov, "name", m.name.replace("_auth_",""))
+                    out[name.upper()] = prov
         return out
 
-    # ---------- Auth ----------
-    def auth_start(self, provider: str, redirect_uri: str) -> dict:
-        cfg = self.load_cfg()
-        prov = self.providers[provider.upper()]
-        res = prov.start(cfg, redirect_uri)
-        self.save_cfg(cfg)
-        log("Platform: auth start", level="INFO", module="PLATFORM", extra={"provider": provider})
-        return res
+    # ---- providers ----
+    def providers_list(self) -> List[dict]:
+        items = []
+        for name, prov in self._providers.items():
+            try:
+                man = prov.manifest()
+            except Exception:
+                man = {"name": name, "label": name.title()}
+            try:
+                caps = prov.capabilities()
+            except Exception:
+                caps = {}
+            try:
+                st = prov.get_status(self.load_cfg())
+            except Exception:
+                st = {"connected": False}
+            items.append({"name": name, "manifest": man, "capabilities": caps, "status": st})
+        return items
 
-    def auth_finish(self, provider: str, **payload) -> dict:
-        cfg = self.load_cfg()
-        prov = self.providers[provider.upper()]
-        st = prov.finish(cfg, **payload)
-        self.save_cfg(cfg)
-        log("Platform: auth finish", level="INFO", module="PLATFORM", extra={"provider": provider})
-        return st.__dict__
+    # ---- auth actions ----
+    def auth_start(self, provider: str, payload: dict) -> dict:
+        prov = self._providers.get(provider.upper())
+        if not prov: raise ValueError(f"Unknown provider: {provider}")
+        return prov.start(self.load_cfg(), payload or {}, self.save_cfg)
+
+    def auth_finish(self, provider: str, payload: dict | None = None) -> dict:
+        prov = self._providers.get(provider.upper())
+        if not prov: raise ValueError(f"Unknown provider: {provider}")
+        return prov.finish(self.load_cfg(), payload or {}, self.save_cfg)
 
     def auth_refresh(self, provider: str) -> dict:
-        cfg = self.load_cfg()
-        prov = self.providers[provider.upper()]
-        st = prov.refresh(cfg)
-        self.save_cfg(cfg)
-        log("Platform: auth refresh", level="INFO", module="PLATFORM", extra={"provider": provider})
-        return st.__dict__
+        prov = self._providers.get(provider.upper())
+        if not prov: raise ValueError(f"Unknown provider: {provider}")
+        return prov.refresh(self.load_cfg(), self.save_cfg)
 
     def auth_disconnect(self, provider: str) -> dict:
-        cfg = self.load_cfg()
-        prov = self.providers[provider.upper()]
-        st = prov.disconnect(cfg)
-        self.save_cfg(cfg)
-        log("Platform: auth disconnect", level="INFO", module="PLATFORM", extra={"provider": provider})
-        return st.__dict__
+        prov = self._providers.get(provider.upper())
+        if not prov: raise ValueError(f"Unknown provider: {provider}")
+        return prov.disconnect(self.load_cfg(), self.save_cfg)
 
-    # ---------- Capabilities / Options ----------
+    # ---- sync options ----
+    def _caps(self, name: str) -> dict:
+        prov = self._providers.get(name.upper())
+        return prov.capabilities() if prov else {}
+
     def sync_options(self, source: str, target: str, direction: str = "mirror") -> dict:
-        s = self.providers[source.upper()].capabilities()
-        t = self.providers[target.upper()].capabilities()
-        return compute_sync_options(s, t, direction=direction)
+        s = self._caps(source) or {}
+        t = self._caps(target) or {}
+        # basic intersection for features
+        feats = {k: bool((s.get("features",{}).get(k) or {}).get("read") and (t.get("features",{}).get(k) or {}).get("write")) for k in set((s.get("features") or {}).keys()) | set((t.get("features") or {}).keys())}
+        return feats
 
-    # ---------- Profiles ----------
-    def _read_profiles(self) -> List[dict]:
-        if not self.profiles_path.exists():
-            return []
+    # ---- profiles ----
+    def _read_profiles(self) -> list[dict]:
         try:
             return json.loads(self.profiles_path.read_text(encoding="utf-8"))
         except Exception:
             return []
 
-    def _write_profiles(self, rows: List[dict]) -> None:
-        tmp = self.profiles_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-        tmp.replace(self.profiles_path)
+    def _write_profiles(self, arr: list[dict]) -> None:
+        self.profiles_path.parent.mkdir(parents=True, exist_ok=True)
+        self.profiles_path.write_text(json.dumps(arr, indent=2), encoding="utf-8")
 
-    def sync_profiles(self) -> List[dict]:
+    def sync_profiles(self) -> list[dict]:
         return self._read_profiles()
 
-    def sync_profiles_upsert(self, profile: dict) -> dict:
-        prof = dict(profile)
-        prof["direction"] = str(prof.get("direction", "mirror")).lower()
-        src = prof["source"].upper()
-        dst = prof["target"].upper()
-        caps = self.sync_options(src, dst, prof["direction"])
-        feats = prof.get("features", {}) or {}
-        for k, v in feats.items():
-            if v and not caps.get(k, False):
-                raise ValueError(f"Feature '{k}' not supported for {src} → {dst} ({prof['direction']})")
-        key = prof.get("id") or f"{src}→{dst}"
-        prof["id"] = key
-        prof["updated_at"] = int(time.time())
-        rows = self._read_profiles()
-        for i, r in enumerate(rows):
-            if r.get("id") == key:
-                rows[i] = prof
-                break
-        else:
-            rows.append(prof)
-        self._write_profiles(rows)
-        log("Platform: profile saved", level="SUCCESS", module="PLATFORM", extra={"id": key})
-        return prof
+    def sync_profiles_save(self, items: list[dict]) -> None:
+        self._write_profiles(items)

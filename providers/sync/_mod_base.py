@@ -1,3 +1,4 @@
+from _logging import log
 # /modules/_mod_base.py
 from __future__ import annotations
 from dataclasses import dataclass, field
