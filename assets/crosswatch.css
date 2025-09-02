@@ -1097,3 +1097,19 @@ main.single #stats-card{
 .cw-badge--plex::before    { box-shadow: inset 0 0 0 1px rgba(255, 179, 0, .45); }
 .cw-badge--simkl::before   { box-shadow: inset 0 0 0 1px rgba(70, 195, 255, .45); }
 
+
+
+/* Auth provider cards */
+.auth-card { border: 1px solid var(--line, #2a2a2a); border-radius: 12px; padding: 12px; margin: 8px 0; background: var(--panel, #121212); }
+.auth-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.auth-card-header h3 { margin: 0; font-size: 1rem; }
+.auth-card-header .status.ok { color: #5ad27a; }
+.auth-card-header .status.no { color: #ff6b6b; }
+.auth-card-notes { font-size: .85rem; opacity: .8; margin-bottom: 8px; }
+.auth-card-fields .field { margin: 6px 0; }
+.auth-card-fields input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line, #2a2a2a); background: var(--panel, #0f0f0f); color: inherit; }
+.auth-card-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.auth-card-actions .btn { padding: 6px 10px; border-radius: 8px; background: var(--chip, #1f1f1f); border: 1px solid var(--line, #2a2a2a); cursor: pointer; }
+.auth-card-actions .btn:hover { filter: brightness(1.1); }
+.auth-card-actions .btn.danger { background: #2a1414; border-color: #4a1a1a; }
+.auth-card-caps .cap { display: inline-block; margin: 4px 6px 0 0; opacity: .9; }

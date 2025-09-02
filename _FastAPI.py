@@ -11,7 +11,7 @@ def get_index_html() -> str:
 
   <link rel="stylesheet" href="/assets/crosswatch.css">
 
-<!-- Auth providers are listed dynamically via /api/auth/providers -->
+<!-- Auth providers are listed dynamically via /api/platform/providers -->
 </head><body>
 
 <header>
@@ -435,5 +435,12 @@ def get_index_html() -> str:
 
 
   <script src="/assets/crosswatch.js"></script>
+
+    <!-- Provider-agnostic Authentication Cards (rendered by crosswatch.js /api/platform/providers) -->
+    <section id="settings-auth" style="margin-top:24px;">
+      <h2>Authentication</h2>
+      <div id="auth-cards"></div>
+    </section>
+    
 </body></html>
 """

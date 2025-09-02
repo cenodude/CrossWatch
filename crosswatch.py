@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Web UI backend (FastAPI)
+Web UI backend (FastAPI) for Plex ⇄ SIMKL Watchlist Sync
 """
 import requests
 import json
@@ -1465,69 +1465,26 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
 if __name__ == "__main__":
     main()
 
-# ---- Platform Manager (unified facade) ----
+# ---- Orchestrator runner (profiles) ----
 try:
-    from platform.manager import PlatformManager
-    _PLATFORM = PlatformManager(load_config, save_config, profiles_path=REPORT_DIR / "profiles.json")
+    from platform.orchestrator import Orchestrator as _Orch
+    _ORCH = _Orch(load_config, save_config, _PLATFORM)
 except Exception as _e:
-    _PLATFORM = None
-    print("PlatformManager not available:", _e)
+    _ORCH = None
+    print("Orchestrator not available:", _e)
 
-@app.get("/api/platform/providers")
-def api_platform_providers() -> JSONResponse:
-    if not _PLATFORM:
-        return JSONResponse({"ok": False, "error": "PlatformManager not available"}, status_code=500)
-    return JSONResponse(_PLATFORM.providers_list())
+class _RunBody(BaseModel):
+    id: str
+    dry_run: bool = False
+    timeout_sec: int | None = 600
 
-@app.post("/api/platform/auth/{provider}/start")
-def api_platform_auth_start(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    redirect_uri = (body or {}).get("redirect_uri") or (str(request.base_url).rstrip("/") + "/callback")
-    return _PLATFORM.auth_start(provider, redirect_uri)
-
-@app.post("/api/platform/auth/{provider}/finish")
-def api_platform_auth_finish(provider: str, body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    return _PLATFORM.auth_finish(provider, **(body or {}))
-
-@app.post("/api/platform/auth/{provider}/refresh")
-def api_platform_auth_refresh(provider: str) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    return _PLATFORM.auth_refresh(provider)
-
-@app.post("/api/platform/auth/{provider}/disconnect")
-def api_platform_auth_disconnect(provider: str) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    return _PLATFORM.auth_disconnect(provider)
-
-class _PlatOpts(BaseModel):
-    source: str
-    target: str
-    direction: str = "mirror"
-
-@app.post("/api/platform/sync/options")
-def api_platform_sync_options(body: _PlatOpts) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    return _PLATFORM.sync_options(body.source, body.target, direction=body.direction)
-
-@app.get("/api/platform/sync/profiles")
-def api_platform_sync_profiles() -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
-    return {"items": _PLATFORM.sync_profiles()}
-
-@app.post("/api/platform/sync/profiles")
-def api_platform_sync_profiles_upsert(body: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
-    if not _PLATFORM:
-        return {"ok": False, "error": "PlatformManager not available"}
+@app.post("/api/platform/sync/run")
+def api_platform_sync_run(body: _RunBody) -> Dict[str, Any]:
+    if not _PLATFORM or not _ORCH:
+        return {"ok": False, "error": "Orchestrator not available"}
     try:
-        prof = _PLATFORM.sync_profiles_upsert(body or {})
-        return {"ok": True, "profile": prof}
+        rep = _ORCH.run_profile(body.id, dry_run=body.dry_run, timeout_sec=body.timeout_sec)
+        return {"ok": True, "report": rep}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
