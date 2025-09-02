@@ -1457,6 +1457,22 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     print(f"  Reports: {REPORT_DIR}\n")
     uvicorn.run(app, host=host, port=port)
 
+
+# ---- Dynamic auth providers listing ----
+try:
+    from providers.auth.registry import auth_providers_html, auth_providers_manifests
+except Exception as _e:
+    auth_providers_html = lambda : "<div class='sub'>No providers found.</div>"
+    auth_providers_manifests = lambda : []
+
+@app.get("/api/auth/providers")
+def api_auth_providers():
+    return JSONResponse(auth_providers_manifests())
+
+@app.get("/api/auth/providers/html")
+def api_auth_providers_html():
+    return HTMLResponse(auth_providers_html())
+
 if __name__ == "__main__":
     main()
 

@@ -101,3 +101,46 @@ class SimklAuth(AuthProvider):
         return self.get_status(cfg)
 
 PROVIDER = SimklAuth()
+
+
+def html() -> str:
+    return r'''<div class="section" id="sec-simkl">
+  <div class="head" onclick="toggleSection('sec-simkl')">
+    <span class="chev"></span><strong>SIMKL</strong>
+  </div>
+  <div class="body">
+    <div class="grid2">
+      <div>
+        <label>Client ID</label>
+        <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklStartBtn()">
+      </div>
+      <div>
+        <label>Client Secret</label>
+        <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklStartBtn()" type="password">
+      </div>
+    </div>
+
+    <div id="simkl_hint" class="msg warn hidden">
+      You need a SIMKL API key. Create one at
+      <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">SIMKL Developer</a>.
+      Set the Redirect URL to <code id="redirect_uri_preview"></code>.
+      <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="simkl_start_btn" class="btn" onclick="startSimkl()" disabled>Start SIMKL Auth</button>
+      <div style="align-self:center;color:var(--muted)">Opens SIMKL authorize, callback to this webapp</div>
+    </div>
+
+    <div class="grid2" style="margin-top:8px">
+      <div>
+        <label>Access token</label>
+        <input id="simkl_access_token" readonly placeholder="empty = not set">
+      </div>
+    </div>
+
+    <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
+    <div class="sep"></div>
+  </div>
+</div>
+'''

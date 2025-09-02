@@ -76,3 +76,36 @@ class PlexAuth(AuthProvider):
         return self.get_status(cfg)
 
 PROVIDER = PlexAuth()
+
+
+def html() -> str:
+    return r'''<div class="section" id="sec-plex">
+  <div class="head" onclick="toggleSection('sec-plex')">
+    <span class="chev"></span><strong>Plex</strong>
+  </div>
+  <div class="body">
+    <div class="grid2">
+      <div>
+        <label>Current token</label>
+        <div style="display:flex;gap:8px">
+          <input id="plex_token" placeholder="empty = not set">
+          <button id="btn-copy-plex-token" class="btn copy" onclick="copyInputValue('plex_token', this)">Copy</button>
+        </div>
+      </div>
+      <div>
+        <label>Link code (PIN)</label>
+        <div style="display:flex;gap:8px">
+          <input id="plex_pin" placeholder="" readonly>
+          <button id="btn-copy-plex-pin" class="btn copy" onclick="copyInputValue('plex_pin', this)">Copy</button>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn" onclick="requestPlexPin()">Get New PIN</button>
+      <div style="align-self:center;color:var(--muted)">Generates a new Plex Link PIN and opens plex.tv/link</div>
+    </div>
+    <div id="plex_msg" class="msg ok hidden">Successfully retrieved token</div>
+    <div class="sep"></div>
+  </div>
+</div>
+'''

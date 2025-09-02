@@ -743,7 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!s) { flashCopy(btn, false, 'No summary'); return; }
 
     const lines = [];
-    lines.push(`Plex ⇄ SIMKL Watchlist Sync ${s.version || ''}`.trim());
+    lines.push(`CrossWatch ${s.version || ''}`.trim());
     if (s.started_at)   lines.push(`Start:   ${s.started_at}`);
     if (s.finished_at)  lines.push(`Finish:  ${s.finished_at}`);
     if (s.cmd)          lines.push(`Cmd:     ${s.cmd}`);
@@ -1494,3 +1494,21 @@ async function resolvePosterUrl(entity, ids, locale='en-US') {
   return posters.length ? posters[0].url : null;
 }
 
+
+
+// Dynamically load auth provider HTML
+async function mountAuthProviders(){
+  try{
+    const res = await fetch('/api/auth/providers/html');
+    if(!res.ok){ return; }
+    const html = await res.text();
+    const slot = document.getElementById('auth-providers');
+    if(slot){ slot.innerHTML = html; }
+    // Wire up copy buttons if present
+    document.getElementById('btn-copy-plex-pin')
+      ?.addEventListener('click', (e) => copyInputValue('plex_pin', e.currentTarget));
+    document.getElementById('btn-copy-plex-token')
+      ?.addEventListener('click', (e) => copyInputValue('plex_token', e.currentTarget));
+  }catch(e){}
+}
+document.addEventListener('DOMContentLoaded', () => { try{ mountAuthProviders(); }catch(_){}});
