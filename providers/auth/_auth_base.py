@@ -1,5 +1,5 @@
-from _logging import log
 from __future__ import annotations
+from _logging import log
 from dataclasses import dataclass, field
 from typing import Any, Mapping, MutableMapping, Optional, Protocol
 
