@@ -9,166 +9,6 @@
   window._ui = { status: null, summary: null };
 
   /* ====== Utilities ====== */
-  // Render dynamic auth provider cards if container exists
-  function renderAuthCards(providers){
-    const host = document.getElementById('auth-cards') || document.getElementById('settings-auth') || document.querySelector('[data-auth-cards]');
-    if (!host) return; // nothing to render into; keep legacy badges
-    // build cards
-    const frag = document.createDocumentFragment();
-    providers.forEach(p => {
-      const st = p.status || {};
-      const man = p.manifest || {};
-      const caps = p.capabilities || {};
-      const card = document.createElement('div');
-      card.className = 'auth-card';
-      const connected = !!st.connected;
-      const header = document.createElement('div');
-      header.className = 'auth-card-header';
-      header.innerHTML = `<h3>${man.label || p.name}</h3><span class="status ${connected?'ok':'no'}">${connected?'Connected':'Not connected'}</span>`;
-      card.appendChild(header);
-
-      if (man.notes){
-        const notes = document.createElement('div');
-        notes.className = 'auth-card-notes';
-        notes.textContent = man.notes;
-        card.appendChild(notes);
-      }
-
-      // Fields (api_keys/oauth fields)
-      if (Array.isArray(man.fields) && man.fields.length){
-        const form = document.createElement('div');
-        form.className = 'auth-card-fields';
-        man.fields.forEach(f => {
-          const row = document.createElement('div');
-          row.className = 'field';
-          const input = document.createElement('input');
-          input.type = f.type || 'text';
-          input.placeholder = f.label || f.key;
-          input.dataset.key = f.key;
-          row.appendChild(input);
-          form.appendChild(row);
-        });
-        card.appendChild(form);
-        card._fieldsForm = form;
-      }
-
-      // Actions
-      const actions = document.createElement('div');
-      actions.className = 'auth-card-actions';
-
-      // helper to gather form values into config keys
-      async function saveFieldValues(){
-        const form = card._fieldsForm;
-        if (!form) return;
-        const inputs = form.querySelectorAll('input[data-key]');
-        if (!inputs.length) return;
-        // POST to a tiny helper endpoint if you have one; otherwise, update via start which persists cfg
-        // Here we include field values as part of start payload so backend can save them
-      }
-
-      const doStart = async ()=>{
-        try{
-          // gather field values
-          const payload = { redirect_uri: window.location.origin + '/callback' };
-          if (card._fieldsForm){
-            for (const el of card._fieldsForm.querySelectorAll('input[data-key]')){
-              payload[el.dataset.key] = el.value;
-              // also persist to config-specific namespaces via dedicated endpoints if needed
-            }
-          }
-          const r = await fetch(`/api/platform/auth/${p.name}/start`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify(payload)
-          });
-          const j = await r.json();
-          if (man.flow === 'oauth' && j && j.url){
-            window.location.href = j.url;
-          } else if (man.flow === 'device_pin' && j && j.pin){
-            alert(`PIN: ${j.pin}\nGo to: ${j.verify_url || man.verify_url || ''}`);
-          }
-        }catch(e){ console.warn(e); }
-      };
-
-      const doFinish = async ()=>{
-        try{
-          const r = await fetch(`/api/platform/auth/${p.name}/finish`, { method:'POST' });
-          await r.json();
-          refreshStatus();
-        }catch(e){ console.warn(e); }
-      };
-
-      const doRefresh = async ()=>{
-        try{
-          const r = await fetch(`/api/platform/auth/${p.name}/refresh`, { method:'POST' });
-          await r.json();
-          refreshStatus();
-        }catch(e){ console.warn(e); }
-      };
-
-      const doDisconnect = async ()=>{
-        try{
-          const r = await fetch(`/api/platform/auth/${p.name}/disconnect`, { method:'POST' });
-          await r.json();
-          refreshStatus();
-        }catch(e){ console.warn(e); }
-      };
-
-      const can = man.actions || {};
-      // Start/connect
-      if (can.start){
-        const btn = document.createElement('button');
-        btn.className = 'btn';
-        btn.textContent = connected ? 'Reconnect' : (man.flow === 'oauth' ? 'Connect' : 'Get PIN');
-        btn.onclick = doStart;
-        actions.appendChild(btn);
-      }
-      // Finish (for device_pin)
-      if (can.finish){
-        const btn = document.createElement('button');
-        btn.className = 'btn';
-        btn.textContent = 'Check PIN';
-        btn.onclick = doFinish;
-        actions.appendChild(btn);
-      }
-      // Refresh
-      if (can.refresh){
-        const btn = document.createElement('button');
-        btn.className = 'btn';
-        btn.textContent = 'Refresh';
-        btn.onclick = doRefresh;
-        actions.appendChild(btn);
-      }
-      // Disconnect
-      if (can.disconnect && connected){
-        const btn = document.createElement('button');
-        btn.className = 'btn danger';
-        btn.textContent = 'Disconnect';
-        btn.onclick = doDisconnect;
-        actions.appendChild(btn);
-      }
-
-      card.appendChild(actions);
-
-      // Capabilities summary
-      if (caps && caps.features){
-        const feats = document.createElement('div');
-        feats.className = 'auth-card-caps';
-        const items = Object.keys(caps.features).map(k => {
-          const f = caps.features[k] || {};
-          const rw = [f.read?'R':'-', f.write?'W':'-'].join('/');
-          return `<span class="cap"><code>${k}</code> ${rw}</span>`;
-        }).join('');
-        feats.innerHTML = `<div class="caps">${items}</div>`;
-        card.appendChild(feats);
-      }
-
-      frag.appendChild(card);
-    });
-    host.innerHTML = '';
-    host.appendChild(frag);
-  }
-
   function computeRedirectURI(){ return location.origin + '/callback'; }
 
   function flashCopy(btn, ok, msg){
@@ -1396,7 +1236,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tmdb = item.tmdb;
     if(!tmdb) return null;
     const cb = window._lastSyncEpoch || 0;
-    return `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size || 'w342')}&cb=${cb}`;
+    return `/api/metadata/resolve /* DEPRECATED: use JSON result to get poster URL */ ${typ}/${tmdb}?size=${encodeURIComponent(size || 'w342')}&cb=${cb}`;
   }
 
   async function loadWall() {
@@ -1641,4 +1481,16 @@ document.addEventListener('DOMContentLoaded', () => {
   showTab('main');
   updateWatchlistTabVisibility();
   window.addEventListener('storage', (event) => { if (event.key === 'wl_hidden') { loadWatchlist(); } });
+
+// ---- Metadata helper for posters ----
+async function resolvePosterUrl(entity, ids, locale='en-US') {
+  const r = await fetch('/api/metadata/resolve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ entity, ids, locale, need: { poster: true } })
+  });
+  const data = await r.json();
+  const posters = (data.result?.images?.poster) || [];
+  return posters.length ? posters[0].url : null;
+}
 

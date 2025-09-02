@@ -17,7 +17,7 @@ root/
 │   ├── crossover.css
 │   └── crossover.js
 │
-├── platform/
+├── cw_platform/
 │   ├── manager.py        # unified auth + sync profiles
 │   ├── orchestrator.py   # runs sync profiles via providers.sync modules
 │   └── metadata.py       # MetadataManager (providers.metadata)
