@@ -221,13 +221,48 @@ def get_index_html() -> str:
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
 
-    <div class="section" id="sec-sync">
-      <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Sync Options</strong></div>
-      <div class="body">
-        <div class="grid2">
-          <div><label>Mode</label><select id="mode"><option value="two-way">two-way</option><option value="mirror">mirror</option></select></div>
-          <div><label>Source of truth (mirror only)</label><select id="source"><option value="plex">plex</option><option value="simkl">simkl</option></select></div>
-        </div>
+    
+<div class="section" id="sec-sync">
+  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Sync Providers</strong></div>
+  
+  <div class="body">
+    
+    <div class="tabs" id="sync-subtabs" style="display:flex;gap:6px;margin:8px 0 12px 0">
+      <button class="btn" data-tab="providers" onclick="showSyncSub('providers')">Providers</button>
+      <button class="btn" data-tab="pairs" onclick="showSyncSub('pairs')">Pairs</button>
+      <button class="btn" data-tab="batches" onclick="showSyncSub('batches')">Batches</button>
+    </div>
+
+    <!-- Providers panel -->
+    <div id="sync_panel_providers" class="sync-subpanel">
+      <div class="sub">Providers</div>
+      <div id="providers_list" class="grid2"></div>
+    </div>
+
+    <!-- Pairs panel -->
+    <div id="sync_panel_pairs" class="sync-subpanel hidden">
+      <div class="sub">Pairs</div>
+      <div class="muted">Configure source → target, mode, and features per pair. Only Watchlist sync is active now; other features are disabled placeholders.</div>
+      <div id="pairs_list"></div>
+      <div class="footer">
+        <button class="btn" onclick="addPair()"><span class="btn-ic">＋</span> Add pair</button>
+        <!-- optioneel: <button class="btn btn-save" onclick="savePairs()"><span class="btn-ic">✔</span> Save pairs</button> -->
+      </div>
+    </div>
+
+    <!-- Batches panel -->
+    <div id="sync_panel_batches" class="sync-subpanel hidden">
+      <div class="sub">Batches</div>
+      <div class="muted">Run all enabled batches in order, or run a single batch. Drag to reorder.</div>
+      <div id="batches_list" class="draggable-list"></div>
+      <div class="footer">
+        <button class="btn" onclick="addBatch()"><span class="btn-ic">＋</span> Add batch</button>
+        <button class="btn" onclick="runAllBatches()"><span class="btn-ic">⏵</span> Run all</button>
+        <!-- optioneel: <button class="btn btn-save" onclick="saveBatches()"><span class="btn-ic">✔</span> Save batches</button> -->
+      </div>
+    </div>
+
+
       </div>
     </div>
 
@@ -357,12 +392,6 @@ def get_index_html() -> str:
 
 
   <script src="/assets/crosswatch.js"></script>
-
-    <!-- Provider-agnostic Authentication Cards (rendered by crosswatch.js /api/platform/providers) -->
-    <section id="settings-auth" style="margin-top:24px;">
-      <h2>Authentication</h2>
-      <div id="auth-cards"></div>
-    </section>
     
 </body></html>
 """

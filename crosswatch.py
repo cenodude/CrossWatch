@@ -1713,3 +1713,138 @@ def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_
         out["expires_in"] = expires_in
     return out
 
+
+
+
+
+
+# ---- Pairs / Batches ----
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+class PairIn(BaseModel):
+    source: str = Field(default="PLEX")
+    target: str = Field(default="SIMKL")
+    mode: str = Field(default="one-way")  # 'one-way' | 'two-way'
+    enabled: bool = Field(default=True)
+    features: Optional[dict] = Field(default_factory=dict)
+
+class BatchIn(BaseModel):
+    name: str = Field(default="New Batch")
+    enabled: bool = Field(default=True)
+    pair_ids: List[str] = Field(default_factory=list)
+
+def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return cfg.setdefault("pairs", [])
+
+def _cfg_batches(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return cfg.setdefault("batches", [])
+
+def _gen_id(prefix: str = "id") -> str:
+    import secrets
+    return f"{prefix}_{secrets.token_hex(6)}"
+
+@app.get("/api/pairs")
+def api_pairs_list() -> JSONResponse:
+    cfg = load_config()
+    return JSONResponse(_cfg_pairs(cfg))
+
+@app.post("/api/pairs")
+def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_pairs(cfg)
+    item = payload.model_dump()
+    item["id"] = _gen_id("pair")
+    arr.append(item)
+    save_config(cfg)
+    return {"ok": True, "id": item["id"]}
+
+@app.put("/api/pairs/{pair_id}")
+def api_pairs_update(pair_id: str, payload: PairIn) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_pairs(cfg)
+    for it in arr:
+        if it.get("id") == pair_id:
+            it.update(payload.model_dump())
+            save_config(cfg)
+            return {"ok": True}
+    return {"ok": False, "error": "not_found"}
+
+@app.delete("/api/pairs/{pair_id}")
+def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_pairs(cfg)
+    n = len(arr)
+    arr[:] = [it for it in arr if it.get("id") != pair_id]
+    deleted = n - len(arr)
+    save_config(cfg)
+    return {"ok": True, "deleted": deleted}
+
+@app.get("/api/batches")
+def api_batches_list() -> JSONResponse:
+    cfg = load_config()
+    return JSONResponse(_cfg_batches(cfg))
+
+@app.post("/api/batches")
+def api_batches_add(payload: BatchIn) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_batches(cfg)
+    item = payload.model_dump()
+    item["id"] = _gen_id("batch")
+    # position is implicit by index; can be added later
+    arr.append(item)
+    save_config(cfg)
+    return {"ok": True, "id": item["id"]}
+
+@app.put("/api/batches/{batch_id}")
+def api_batches_update(batch_id: str, payload: BatchIn) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_batches(cfg)
+    for it in arr:
+        if it.get("id") == batch_id:
+            it.update(payload.model_dump())
+            save_config(cfg)
+            return {"ok": True}
+    return {"ok": False, "error": "not_found"}
+
+@app.delete("/api/batches/{batch_id}")
+def api_batches_delete(batch_id: str) -> Dict[str, Any]:
+    cfg = load_config()
+    arr = _cfg_batches(cfg)
+    n = len(arr)
+    arr[:] = [it for it in arr if it.get("id") != batch_id]
+    deleted = n - len(arr)
+    save_config(cfg)
+    return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/sync/providers")
+def api_sync_providers() -> JSONResponse:
+    items = {}
+    # A) Try package discovery
+    try:
+        import pkgutil, importlib, providers.sync as sync_pkg
+        for p in getattr(sync_pkg, "__path__", []):
+            for m in pkgutil.iter_modules([str(p)]):
+                name = m.name
+                if not name.startswith("_mod_"):
+                    continue
+                prov_key = name.replace("_mod_", "").upper()
+                items[prov_key] = {"name": prov_key, "label": prov_key.title(),
+                                   "features": {"watchlist": True, "ratings": True, "history": True, "playlists": True}}
+                try:
+                    importlib.import_module(f"providers.sync.{name}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # B) Always also scan filesystem, then merge
+    try:
+        ROOT = Path(__file__).resolve().parent
+        for f in (ROOT / "providers" / "sync").glob("_mod_*.py"):
+            prov_key = f.stem.replace("_mod_", "").upper()
+            items.setdefault(prov_key, {"name": prov_key, "label": prov_key.title(),
+                                        "features": {"watchlist": True, "ratings": True, "history": True, "playlists": True}})
+    except Exception:
+        pass
+    return JSONResponse(list(items.values()))

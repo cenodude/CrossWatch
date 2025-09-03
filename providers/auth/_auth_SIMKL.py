@@ -112,11 +112,11 @@ def html() -> str:
     <div class="grid2">
       <div>
         <label>Client ID</label>
-        <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklStartBtn()">
+        <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
       </div>
       <div>
         <label>Client Secret</label>
-        <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklStartBtn()" type="password">
+        <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
       </div>
     </div>
 

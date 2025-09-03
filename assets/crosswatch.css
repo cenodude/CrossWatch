@@ -1113,3 +1113,12 @@ main.single #stats-card{
 .auth-card-actions .btn:hover { filter: brightness(1.1); }
 .auth-card-actions .btn.danger { background: #2a1414; border-color: #4a1a1a; }
 .auth-card-caps .cap { display: inline-block; margin: 4px 6px 0 0; opacity: .9; }
+
+/* Neon-ready disabled look */
+.feature-disabled{opacity:.35;pointer-events:none;filter:grayscale(40%);}
+.draggable-list{display:flex;flex-direction:column;gap:8px}
+.draggable-item{border:1px solid var(--border); border-radius:14px; padding:10px 12px; background:#0f1022; cursor:grab; box-shadow:0 0 8px #0006;}
+.draggable-item.dragging{opacity:.7; outline:1px dashed var(--accent)}
+.badge{display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; opacity:.75}
+.matrix{display:grid; grid-template-columns: 180px repeat(2,120px); gap:6px; align-items:center}
+.matrix .head{font-weight:700; opacity:.8}

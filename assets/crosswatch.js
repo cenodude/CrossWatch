@@ -1,6 +1,19 @@
 // script block #1
 
 /* ====== Globals ====== */
+function _el(id){ return document.getElementById(id); }
+function _val(id, d=''){ const el=_el(id); return (el && 'value' in el) ? (el.value ?? d) : d; }
+function _boolSel(id){ const v=_val(id,'false'); return (String(v).toLowerCase()==='true'); }
+function _text(id, d=''){ const el=_el(id); return el ? (el.textContent ?? d) : d; }
+
+function _el(id){ return document.getElementById(id); }
+function _boolSel(id){ const v=_val(id,'false'); return (String(v).toLowerCase()==='true'); }
+
+function _setVal(id, val){ const el=document.getElementById(id); if(el) el.value = (val ?? ''); }
+function _setText(id, val){ const el=document.getElementById(id); if(el) el.textContent = (val ?? ''); }
+function _setChecked(id,on){ const el=document.getElementById(id); if(el) el.checked=!!on; }
+function _getVal(id){ const el=document.getElementById(id); return el?el.value:''; }
+
 
 function setValIfExists(id, val){ const el=document.getElementById(id); if(el) el.value = val ?? ''; }
 
@@ -348,7 +361,7 @@ function setValIfExists(id, val){ const el=document.getElementById(id); if(el) e
 
       if (n === 'watchlist') { loadWatchlist(); }
 
-      else { document.getElementById('sec-auth')?.classList.add('open'); await loadConfig();
+      else { document.getElementById('sec-auth')?.classList.add('open'); try{ await loadConfig(); }catch(e){ console.warn('loadConfig failed', e); };
 
             updateTmdbHint?.(); updateSimklHint?.(); updateSimklButtonState?.(); loadScheduling?.(); }
 
@@ -1693,15 +1706,15 @@ document.addEventListener('DOMContentLoaded', () => {
   try { updateSimklButtonState(cfg); } catch(_) {}
 // Sync Options
 
-    document.getElementById('mode').value   = cfg.sync?.bidirectional?.mode || 'two-way';
+    _setVal('mode', cfg.sync?.bidirectional?.mode || 'two-way');
 
-    document.getElementById('source').value = cfg.sync?.bidirectional?.source_of_truth || 'plex';
+    _setVal('source', cfg.sync?.bidirectional?.source_of_truth || 'plex');
 
 
 
     // Troubleshoot / Runtime
 
-    document.getElementById('debug').value  = String(!!cfg.runtime?.debug);
+    _setVal('debug', String(!!cfg.runtime?.debug));
 
 
 
@@ -1718,17 +1731,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const s = cfg.scheduling || {};
 
-    document.getElementById('schEnabled').value = String(!!s.enabled);
+    _setVal('schEnabled', String(!!s.enabled));
 
-    document.getElementById('schMode').value    = (typeof s.mode === 'string' && s.mode) ? s.mode : 'hourly';
+    _setVal('schMode', (typeof s.mode === 'string' && s.mode) ? s.mode : 'hourly');
 
-    document.getElementById('schN').value       = Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : '2';
+    _setVal('schN', Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : '2');
 
-    document.getElementById('schTime').value    = (typeof s.daily_time === 'string' && s.daily_time) ? s.daily_time : '03:30';
+    _setVal('schTime', (typeof s.daily_time === 'string' && s.daily_time) ? s.daily_time : '03:30');
 
     // Optional timezone field if you add an <input id="schTz">
 
-    if (document.getElementById('schTz')) document.getElementById('schTz').value = s.timezone || '';
+    if (document.getElementById('schTz')) _setVal('schTz', s.timezone || '');
 
 
 
@@ -1743,6 +1756,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Save settings back to server
 
   async function saveSettings(){
+  const uiPlexToken = _val('plex_account_token') || _val('plex_token');
+  const uiCid = _val('simkl_client_id');
+  const uiSec = _val('simkl_client_secret');
+  const uiTmdb = _val('tmdb_api_key');
+
 
     const toast = document.getElementById('save_msg');
 
@@ -1788,9 +1806,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // --- SYNC ---
 
-      const uiMode   = document.getElementById('mode').value;
+      const uiMode   = _getVal('mode');
 
-      const uiSource = document.getElementById('source').value;
+      const uiSource = _getVal('source');
 
       const prevMode   = serverCfg?.sync?.bidirectional?.mode || 'two-way';
 
@@ -1816,7 +1834,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // --- RUNTIME ---
 
-      const uiDebug = (document.getElementById('debug').value === 'true');
+      const uiDebug = (_getVal('debug') === 'true');
 
       const prevDebug = !!serverCfg?.runtime?.debug;
 
@@ -1894,15 +1912,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const schPayload = {
 
-          enabled: document.getElementById('schEnabled').value === 'true',
+          enabled: _getVal('schEnabled') === 'true',
 
-          mode: document.getElementById('schMode').value,
+          mode: _getVal('schMode'),
 
-          every_n_hours: parseInt(document.getElementById('schN').value || '2', 10),
+          every_n_hours: parseInt(_getVal('schN') || '2', 10),
 
-          daily_time: document.getElementById('schTime').value || '03:30',
+          daily_time: _getVal('schTime') || '03:30',
 
-          timezone: (document.getElementById('schTz')?.value || '').trim() || undefined
+          timezone: (_val('schTz') || '').trim() || undefined
 
         };
 
@@ -3224,3 +3242,236 @@ function startPlexTokenPoll(){
 }
 
 
+
+// ---- Expose functions globally for inline onclick handlers ----
+try { window.addPair = addPair; } catch(e){}
+try { window.savePairs = savePairs; } catch(e){}
+try { window.deletePair = deletePair; } catch(e){}
+try { window.loadPairs = loadPairs; } catch(e){}
+
+try { window.addBatch = addBatch; } catch(e){}
+try { window.saveBatches = saveBatches; } catch(e){}
+try { window.loadBatches = loadBatches; } catch(e){}
+try { window.runAllBatches = runAllBatches; } catch(e){}
+
+try { window.loadProviders = loadProviders; } catch(e){}
+
+// Auto-boot lists after DOM is ready (and again when opening Settings)
+window.addEventListener('DOMContentLoaded', () => {
+  try{ loadProviders(); }catch(e){}
+  try{ loadPairs(); }catch(e){}
+  try{ loadBatches(); }catch(e){}
+});
+
+
+async function loadProviders(){
+  const div = document.getElementById('providers_list');
+  if (!div) return;
+  try{
+    const arr = await fetch('/api/sync/providers', {cache:'no-store'})
+                       .then(r=>r.json())
+                       .catch(()=>[]);
+    if (!Array.isArray(arr) || !arr.length){
+      div.innerHTML = '<div class="muted">No providers discovered.</div>';
+      return;
+    }
+    const html = arr.map(p=>{
+      const caps = p.features || {};
+      const cap  = k => !!caps[k];
+      const chip = (t,on)=> `<span class="badge ${on?'':'feature-disabled'}" style="margin-left:6px">${t}</span>`;
+      return `<div class="card" style="padding:12px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700">${p.label||p.name}</div>
+        <div>${chip('Watchlist',cap('watchlist'))}${chip('Ratings',cap('ratings'))}${chip('History',cap('history'))}${chip('Playlists',cap('playlists'))}</div>
+      </div>`;
+    }).join('');
+    div.innerHTML = html;
+  }catch(e){
+    div.innerHTML = '<div class="muted">Failed to load providers.</div>';
+    console.warn('loadProviders error', e);
+  }
+}
+
+
+// ===== Global exports for inline onclicks =====
+
+// --- Pairs/Batches ---
+let _providersCache = [];
+
+async function _ensureProviders(){
+  if (_providersCache.length) return _providersCache;
+  try{
+    _providersCache = await fetch('/api/sync/providers', {cache:'no-store'}).then(r=>r.json());
+  }catch(e){ _providersCache = []; }
+  return _providersCache;
+}
+
+function _providerOptions(selected){
+  return (_providersCache||[]).map(p=>{
+    const name = p.name || p.label || '';
+    const sel = (selected && (selected===name || selected===(p.label||''))) ? ' selected' : '';
+    return `<option value="${name}">${p.label||name}</option>`;
+  }).join('');
+}
+
+async function loadPairs(){
+  const wrap = document.getElementById('pairs_list');
+  if (!wrap) return;
+  await _ensureProviders();
+  try{
+    const arr = await fetch('/api/pairs', {cache:'no-store'}).then(r=>r.json());
+    if (!Array.isArray(arr) || !arr.length){
+      wrap.innerHTML = '<div class="muted">No pairs yet.</div>';
+      return;
+    }
+    wrap.innerHTML = arr.map(p=>{
+      const features = p.features || {};
+      return `<div class="card" data-id="${p.id}" style="padding:12px;display:grid;grid-template-columns:1fr 1fr auto auto auto;gap:8px;align-items:center">
+        <div><label class="muted">Source</label><select class="pair-src">${_providerOptions(p.source)}</select></div>
+        <div><label class="muted">Target</label><select class="pair-tgt">${_providerOptions(p.target)}</select></div>
+        <div><label class="muted">Mode</label>
+          <select class="pair-mode"><option value="one-way"${p.mode==='one-way'?' selected':''}>one-way</option><option value="two-way"${p.mode==='two-way'?' selected':''}>two-way</option></select>
+        </div>
+        <div><label class="muted">Enabled</label><input type="checkbox" class="pair-enabled"${p.enabled?' checked':''}></div>
+        <div><button class="btn danger" onclick="deletePair('${p.id}')">Delete</button></div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    wrap.innerHTML = '<div class="muted">Failed to load pairs.</div>';
+    console.warn('loadPairs error', e);
+  }
+}
+
+async function addPair(){
+  await _ensureProviders();
+  const a = _providersCache[0]?.name || 'PLEX';
+  const b = _providersCache[1]?.name || 'SIMKL';
+  const body = { source: a, target: b, mode: 'one-way', enabled: true, features: { watchlist: true } };
+  try{
+    await fetch('/api/pairs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}).then(r=>r.json());
+    await loadPairs();
+  }catch(e){ console.warn('addPair failed', e); }
+}
+
+async function deletePair(id){
+  try{
+    await fetch('/api/pairs/'+encodeURIComponent(id), {method:'DELETE'}).then(r=>r.json());
+    await loadPairs();
+  }catch(e){ console.warn('deletePair failed', e); }
+}
+
+async function savePairs(){
+  const wrap = document.getElementById('pairs_list');
+  if (!wrap) return;
+  const cards = [...wrap.querySelectorAll('.card[data-id]')];
+  for (const card of cards){
+    const id = card.getAttribute('data-id');
+    const payload = {
+      source: card.querySelector('.pair-src')?.value || '',
+      target: card.querySelector('.pair-tgt')?.value || '',
+      mode: card.querySelector('.pair-mode')?.value || 'one-way',
+      enabled: !!card.querySelector('.pair-enabled')?.checked
+    };
+    await fetch('/api/pairs/'+encodeURIComponent(id), {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  }
+}
+
+async function loadBatches(){
+  const wrap = document.getElementById('batches_list');
+  if (!wrap) return;
+  try{
+    const arr = await fetch('/api/batches', {cache:'no-store'}).then(r=>r.json());
+    if (!Array.isArray(arr) || !arr.length){
+      wrap.innerHTML = '<div class="muted">No batches yet.</div>';
+      return;
+    }
+    wrap.innerHTML = arr.map(b=>{
+      return `<div class="card" data-id="${b.id}" style="padding:12px;display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center">
+        <input class="batch-name" value="${b.name||''}" placeholder="Batch name">
+        <div><label class="muted">Enabled</label><input type="checkbox" class="batch-enabled"${b.enabled?' checked':''}></div>
+        <div><button class="btn danger" onclick="deleteBatch('${b.id}')">Delete</button></div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    wrap.innerHTML = '<div class="muted">Failed to load batches.</div>';
+    console.warn('loadBatches error', e);
+  }
+}
+
+async function addBatch(){
+  const body = { name: 'New Batch', enabled: true, pair_ids: [] };
+  try{
+    await fetch('/api/batches', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}).then(r=>r.json());
+    await loadBatches();
+  }catch(e){ console.warn('addBatch failed', e); }
+}
+
+async function deleteBatch(id){
+  try{
+    await fetch('/api/batches/'+encodeURIComponent(id), {method:'DELETE'}).then(r=>r.json());
+    await loadBatches();
+  }catch(e){ console.warn('deleteBatch failed', e); }
+}
+
+async function saveBatches(){
+  const wrap = document.getElementById('batches_list');
+  if (!wrap) return;
+  const cards = [...wrap.querySelectorAll('.card[data-id]')];
+  for (const card of cards){
+    const id = card.getAttribute('data-id');
+    const payload = {
+      name: card.querySelector('.batch-name')?.value || '',
+      enabled: !!card.querySelector('.batch-enabled')?.checked
+    };
+    await fetch('/api/batches/'+encodeURIComponent(id), {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  }
+}
+
+async function runAllBatches(){
+  alert('Not implemented yet'); // placeholder
+}
+
+
+// init basic lists on page load
+window.addEventListener('DOMContentLoaded', () => {
+  try{ loadProviders(); }catch{}
+  try{ loadPairs(); }catch{}
+  try{ loadBatches(); }catch{}
+});
+
+
+function showSyncSub(tab){
+  const panels = {
+    providers: document.getElementById('sync_panel_providers'),
+    pairs: document.getElementById('sync_panel_pairs'),
+    batches: document.getElementById('sync_panel_batches')
+  };
+  for (const k of Object.keys(panels)){
+    if (panels[k]) panels[k].classList.toggle('hidden', k !== tab);
+  }
+  const bar = document.getElementById('sync-subtabs');
+  if (bar){
+    const btns = bar.querySelectorAll('button[data-tab]');
+    btns.forEach(b => b.classList.toggle('btn-save', b.getAttribute('data-tab') === tab));
+  }
+  try{
+    if (tab === 'providers') { loadProviders(); }
+    else if (tab === 'pairs') { loadPairs(); }
+    else if (tab === 'batches') { loadBatches(); }
+  }catch(e){ console.warn('showSyncSub load err', e); }
+}
+
+(function(){
+  try{ window.addPair       = addPair; }catch(e){}
+  try{ window.savePairs     = savePairs; }catch(e){}
+  try{ window.deletePair    = deletePair; }catch(e){}
+  try{ window.loadPairs     = loadPairs; }catch(e){}
+
+  try{ window.addBatch      = addBatch; }catch(e){}
+  try{ window.saveBatches   = saveBatches; }catch(e){}
+  try{ window.loadBatches   = loadBatches; }catch(e){}
+  try{ window.runAllBatches = runAllBatches; }catch(e){}
+
+  try{ window.loadProviders = loadProviders; }catch(e){}
+  try{ window.showSyncSub = showSyncSub; }catch(e){}
+  try{ window.showTab = showTab; }catch(e){}
+})();
