@@ -18,7 +18,7 @@ except Exception:
 
 # Import modules
 from providers.sync._mod_PLEX import PLEXModule, plex_fetch_watchlist_items, gather_plex_rows, build_index  # type: ignore
-from providers.sync._mod_SIMKL import SIMKLModule, simkl_ptw_full, build_index_from_simkl  # type: ignore
+from providers.sync._mod_SIMKL import SIMKLModule, build_index_from_simkl  # type: ignore, simkl_build_index, simkl_ptw_full
 
 def _safe_get(d: dict, *path, default=None):
     cur = d
@@ -38,8 +38,7 @@ def _index_for(cfg: Dict[str, Any], name: str) -> Dict[str, dict]:
         return build_index(rows_movies, rows_shows)
     elif n == "SIMKL":
         s = dict(cfg.get("simkl") or {})
-        shows, movies = simkl_ptw_full(s)
-        return build_index_from_simkl(movies, shows)
+        return simkl_build_index(s)
     return {}
 
 def _items_by_type(idx: Dict[str, dict], keys: List[str]) -> Dict[str, List[dict]]:
@@ -101,37 +100,9 @@ class Orchestrator:
                     return m.plex_add(items, dry_run=dry_run)
                 return {"ok": False, "error": f"unknown target {target}"}
 
-            
-            def _normalize_title_year(entry: dict) -> tuple[str, Optional[int]]:
-                t = str((entry.get("title") or "")).strip().lower()
-                # cheap normalization: collapse whitespace
-                t = " ".join(t.split())
-                y = entry.get("year")
-                try:
-                    y = int(y) if y is not None else None
-                except Exception:
-                    y = None
-                return (t, y)
-
             def _diff_additions(a_idx: Dict[str, dict], b_idx: Dict[str, dict]) -> Dict[str, list]:
-                # primary diff on id keys
-                missing_keys = list(set(a_idx.keys()) - set(b_idx.keys()))
-                if not missing_keys:
-                    return {}
-
-                # build a fallback signature set from destination by (title, year)
-                dst_sig = set(_normalize_title_year(v) for v in b_idx.values() if v.get("title"))
-                # filter out any source keys whose (title,year) is already in destination
-                filtered = []
-                for k in missing_keys:
-                    ent = a_idx.get(k) or {}
-                    sig = _normalize_title_year(ent)
-                    if sig in dst_sig:
-                        continue  # consider present via title/year
-                    filtered.append(k)
-
-                filtered.sort()
-                return _items_by_type(a_idx, filtered)
+                keys = sorted(list(set(a_idx.keys()) - set(b_idx.keys())))
+                return _items_by_type(a_idx, keys)
 
             items_fw = _diff_additions(idx_src, idx_dst)
             if not items_fw:
