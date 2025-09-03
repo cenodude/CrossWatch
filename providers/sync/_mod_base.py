@@ -1,7 +1,7 @@
 from __future__ import annotations
 from _logging import log
 
-# /modules/_mod_base.py
+# /providers/sync/_mod_base.py
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, Mapping, Optional, Protocol, Callable  # <- Callable erbij
@@ -80,6 +80,9 @@ class ModuleInfo:
     description: str = ""
     vendor: str = "community"
     capabilities: ModuleCapabilities = ModuleCapabilities()
+    hidden: bool = False
+    is_template: bool = False
+
 
 # ---------- Errors
 

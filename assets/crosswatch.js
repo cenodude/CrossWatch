@@ -3451,7 +3451,7 @@ function renderConnections(){ cxEnsureStyles(); hideLegacyPairsUI();
           <div><label>Mode</label>
             <div class="radio-row">
               <label><input type="radio" name="cx-mode" value="one-way" checked> One-way</label>
-              <label class="muted"><input type="radio" name="cx-mode" value="two-way" disabled> Two-way (coming soon)</label>
+              <label id="cx-two-label" class="muted"><input id="cx-mode-two" type="radio" name="cx-mode" value="two-way" disabled> Two-way</label>
             </div>
           </div>
           <div><label>Enabled</label>
@@ -3517,10 +3517,20 @@ function cxOpenModalFor(pair, editingId){
   const src = _byName(window.cx.providers, pair.source);
   const dst = _byName(window.cx.providers, pair.target);
   const wlOk = _cap(src,'watchlist') && _cap(dst,'watchlist');
+  const twoInput = document.querySelector('input[name="cx-mode"][value="two-way"]');
+  const twoLabel = document.getElementById('cx-two-label') || (twoInput && twoInput.closest('label'));
+  const twoWayOk = !!(src && dst && src.capabilities && dst.capabilities && src.capabilities.bidirectional && dst.capabilities.bidirectional);
+  if (twoInput) twoInput.disabled = !twoWayOk;
+  if (twoLabel) twoLabel.classList.toggle('muted', !twoWayOk);
+
   document.getElementById('cx-src').value = pair.source;
   document.getElementById('cx-dst').value = pair.target;
   for (const r of document.querySelectorAll('input[name="cx-mode"]')){
     r.checked = (r.value === (pair.mode||'one-way'));
+  }
+  if (!twoWayOk){
+    const one = document.querySelector('input[name="cx-mode"][value="one-way"]');
+    if (one) one.checked = true;
   }
   document.getElementById('cx-enabled').checked = pair.enabled!==false;
   const wf = _pairFeatureObj(pair).watchlist;

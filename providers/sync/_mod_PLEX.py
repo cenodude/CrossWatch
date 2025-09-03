@@ -3,6 +3,7 @@ from _logging import log
 # /modules/_mod_PLEX.py
 __VERSION__ = "0.2.0"
 
+
 import re
 import time
 import json
@@ -404,8 +405,8 @@ class PLEXModule(SyncModule):
             supports_dry_run=True,
             supports_cancel=True,
             supports_timeout=True,
-            bidirectional=True,
             status_stream=True,
+            bidirectional=True,
             config_schema={
                 "type": "object",
                 "properties": {

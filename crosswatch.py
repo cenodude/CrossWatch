@@ -1776,35 +1776,95 @@ def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_
 
 @app.get("/api/sync/providers")
 def api_sync_providers() -> JSONResponse:
+    """
+    Return provider list with features/capabilities.
+    Hidden/templates are skipped. Only successfully imported providers are listed.
+    """
+    import importlib, pkgutil, dataclasses as _dc, inspect
+
+    HIDDEN = {"BASE"}
+    PKG_CANDIDATES = ("providers.sync",)
+
+    def ensure(items, prov_key):
+        return items.setdefault(
+            prov_key,
+            {
+                "name": prov_key,
+                "label": prov_key.title(),
+                "features": {"watchlist": True, "ratings": True, "history": True, "playlists": True},
+                "capabilities": {"bidirectional": False},
+            },
+        )
+
     items = {}
-    # A) Try package discovery
-    try:
-        import pkgutil, importlib, providers.sync as sync_pkg
-        for p in getattr(sync_pkg, "__path__", []):
-            for m in pkgutil.iter_modules([str(p)]):
+
+    for pkg_name in PKG_CANDIDATES:
+        try:
+            pkg = importlib.import_module(pkg_name)
+        except Exception:
+            continue
+
+        for pkg_path in getattr(pkg, "__path__", []):
+            for m in pkgutil.iter_modules([str(pkg_path)]):
                 name = m.name
                 if not name.startswith("_mod_"):
                     continue
-                prov_key = name.replace("_mod_", "").upper()
-                items[prov_key] = {"name": prov_key, "label": prov_key.title(),
-                                   "features": {"watchlist": True, "ratings": True, "history": True, "playlists": True}}
-                try:
-                    importlib.import_module(f"providers.sync.{name}")
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    # B) Always also scan filesystem, then merge
-    try:
-        ROOT = Path(__file__).resolve().parent
-        for f in (ROOT / "providers" / "sync").glob("_mod_*.py"):
-            prov_key = f.stem.replace("_mod_", "").upper()
-            items.setdefault(prov_key, {"name": prov_key, "label": prov_key.title(),
-                                        "features": {"watchlist": True, "ratings": True, "history": True, "playlists": True}})
-    except Exception:
-        pass
-    return JSONResponse(list(items.values()))
 
+                prov_key = name.replace("_mod_", "").upper()
+                if prov_key in HIDDEN:
+                    continue
+
+                try:
+                    mod = importlib.import_module(f"{pkg_name}.{name}")
+                except Exception:
+                    continue
+
+                candidates = [
+                    cls
+                    for _, cls in inspect.getmembers(mod, inspect.isclass)
+                    if cls.__module__ == mod.__name__
+                    and cls.__name__.endswith("Module")
+                    and hasattr(cls, "info")
+                ]
+                if not candidates:
+                    continue
+
+                mod_cls = candidates[0]
+                info = getattr(mod_cls, "info", None)
+                if not info:
+                    continue
+                if bool(getattr(info, "hidden", False)) or bool(getattr(info, "is_template", False)):
+                    continue
+
+                entry = ensure(items, prov_key)
+                entry["label"] = getattr(info, "name", prov_key).title()
+
+                caps = getattr(info, "capabilities", None)
+                caps_dict = {}
+                try:
+                    if caps is not None:
+                        if _dc.is_dataclass(caps):
+                            caps_dict = _dc.asdict(caps)
+                        elif isinstance(caps, dict):
+                            caps_dict = dict(caps)
+                        else:
+                            for k in ("bidirectional",):
+                                if hasattr(caps, k):
+                                    caps_dict[k] = getattr(caps, k)
+                except Exception:
+                    caps_dict = {}
+
+                bidir = caps_dict.get("bidirectional", getattr(caps, "bidirectional", False))
+                if not bidir:
+                    modes = getattr(info, "supported_modes", None) or getattr(mod_cls, "supported_modes", None) or []
+                    try:
+                        bidir = any(str(m).lower() == "two-way" for m in modes)
+                    except Exception:
+                        pass
+
+                entry["capabilities"]["bidirectional"] = bool(bidir)
+
+    return JSONResponse(list(items.values()))
 
 # ==== Pairs helpers & schema ====
 class PairIn(BaseModel):

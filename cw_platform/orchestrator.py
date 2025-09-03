@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple, Optional, Callable
 try:
     from _logging import log as default_log
 except Exception:
-    def default_log(msg: str, **_: Any) -> None: print(msg)
+    def default_log(message: str, **_: Any) -> None: print(message)
 
 # Types from base (optional imports for type hints)
 try:
@@ -90,24 +90,45 @@ class Orchestrator:
             mode = (pair.get("mode") or "one-way").lower()
             if progress: progress(f"[i] Pair {i}: {src} → {dst} (mode={mode})")
             idx_src = _index_for(cfg, src); idx_dst = _index_for(cfg, dst)
-            to_add_keys = sorted(list(set(idx_src.keys()) - set(idx_dst.keys())))
-            items_by_type = _items_by_type(idx_src, to_add_keys)
-            if not items_by_type:
-                if progress: progress(f"[i] Pair {i}: nothing to add"); continue
+            
+            # Compute forward additions (src -> dst)
+            def _apply_add(target: str, items: Dict[str, list]) -> Dict[str, Any]:
+                if target == "SIMKL":
+                    m = SIMKLModule(cfg, default_log)
+                    return m.simkl_add_to_ptw(items, dry_run=dry_run)
+                elif target == "PLEX":
+                    m = PLEXModule(cfg, default_log)
+                    return m.plex_add(items, dry_run=dry_run)
+                return {"ok": False, "error": f"unknown target {target}"}
 
-            if dst == "SIMKL":
-                m = SIMKLModule(cfg, default_log)
-                res = m.simkl_add_to_ptw(items_by_type, dry_run=dry_run)
-            elif dst == "PLEX":
-                m = PLEXModule(cfg, default_log)
-                res = m.plex_add(items_by_type, dry_run=dry_run)
+            def _diff_additions(a_idx: Dict[str, dict], b_idx: Dict[str, dict]) -> Dict[str, list]:
+                keys = sorted(list(set(a_idx.keys()) - set(b_idx.keys())))
+                return _items_by_type(a_idx, keys)
+
+            items_fw = _diff_additions(idx_src, idx_dst)
+            if not items_fw:
+                if progress: progress(f"[i] Pair {i}: nothing to add {src}→{dst}")
             else:
-                res = {"ok": False, "error": f"unknown target {dst}"}
-            if not res.get("ok"):
-                if progress: progress(f"[!] Pair {i}: add failed: {res.get('error')}")
-                continue
-            added = int(res.get("added", 0)); added_total += added
-            if progress: progress(f"[i] Pair {i}: added {added} to {dst}")
+                res = _apply_add(dst, items_fw)
+                if not res.get("ok"):
+                    if progress: progress(f"[!] Pair {i}: add {src}→{dst} failed: {res.get('error')}")
+                else:
+                    added = int(res.get("added", 0)); added_total += added
+                    if progress: progress(f"[i] Pair {i}: added {added} to {dst}")
+
+            # Reverse direction for two-way
+            if mode in ("two-way", "bi-directional", "bidirectional"):
+                items_bw = _diff_additions(idx_dst, idx_src)
+                if not items_bw:
+                    if progress: progress(f"[i] Pair {i}: nothing to add {dst}→{src}")
+                else:
+                    res2 = _apply_add(src, items_bw)
+                    if not res2.get("ok"):
+                        if progress: progress(f"[!] Pair {i}: add {dst}→{src} failed: {res2.get('error')}")
+                    else:
+                        added2 = int(res2.get("added", 0)); added_total += added2
+                        if progress: progress(f"[i] Pair {i}: added {added2} to {src}")
+
 
         plex_post = self._count(cfg, "PLEX")
         simkl_post = self._count(cfg, "SIMKL")
