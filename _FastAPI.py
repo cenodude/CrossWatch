@@ -11,7 +11,7 @@ def get_index_html() -> str:
 
   <link rel="stylesheet" href="/assets/crosswatch.css">
 
-<!-- Auth providers are listed dynamically via /api/platform/providers -->
+<!-- Auth providers are listed dynamically via /api/platform/ -->
 <style>
 /* cw hard hide */
 .pair-selectors, #pairs_list,
@@ -86,7 +86,6 @@ button[onclick="addPair()"],
     <div class="action-row">
       <div class="action-buttons">
         <button id="run" class="btn acc" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
-        <button id="run-batch" class="btn" onclick="openBatchRun()"><span class="btn-ic">⏵</span> BATCH RUN</button>
         <button class="btn" onclick="toggleDetails()">View details</button>
         <button class="btn" onclick="copySummary(this)">Copy summary</button>
         <button class="btn" onclick="downloadSummary()">Download report</button>
@@ -230,12 +229,23 @@ button[onclick="addPair()"],
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
 
-    
+<!-- AUTHENTICATION (settings) -->
+  <div class="section" id="sec-auth">
+    <div class="head" onclick="toggleSection('sec-auth')">
+     <span class="chev">▶</span><strong>Authentication</strong>
+   </div>
+    <div class="body">
+      <!-- Dynamic auth providers will mount here -->
+      <div id="auth-providers"></div>
+      </div>
+     </div>
+
+ 
 <div class="section" id="sec-sync">
-  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Sync Providers & Batches</strong></div>
+  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Providers</strong></div>
   <div class="body">
 
-    <div class="sub">Providers</div>
+    <div class="sub">Synchronization Providers</div>
     <div id="providers_list" class="grid2"></div>
 
     <div class="sep"></div>
@@ -254,25 +264,14 @@ button[onclick="addPair()"],
     <select id="target-provider" style="margin-left:0.5em;"></select>
   </label>
 </div>
-
-      <button class="btn" onclick="addPair()"><span class="btn-ic">＋</span> Add pair</button>
     </div>
-
-    <div class="sep"></div>
-    <div class="sub">Batches</div>
-    <div class="muted">Run all enabled batches in order, or run a single batch. Drag to reorder.</div>
-    <div id="batches_list" class="draggable-list"></div>
-    <div class="footer">
-      <button class="btn" onclick="addBatch()"><span class="btn-ic">＋</span> Add batch</button>
-      <button class="btn" onclick="runAllBatches()"><span class="btn-ic">⏵</span> Run all</button>
     </div>
-
   </div>
 </div>
-
       </div>
     </div>
-
+  
+    
     <div class="section" id="sec-scheduling">
       <div class="head" onclick="toggleSection('sec-scheduling')"><span class="chev">▶</span><strong>Scheduling</strong></div>
       <div class="body">
@@ -307,17 +306,6 @@ button[onclick="addPair()"],
       </div>
     </div>
 
-    <div class="section" id="sec-auth">
-      <div class="head" onclick="toggleSection('sec-auth')">
-        <span class="chev">▶</span><strong>Authentication</strong>
-      </div>
-      <div class="body">
-        <!-- Dynamic auth providers will mount here -->
-        <div id="auth-providers"></div>
-
-        </div>
-        </div>
-
         <!-- Metadata -->
 <div class="section" id="sec-meta">
   <div class="head" onclick="toggleSection('sec-meta')">
@@ -336,7 +324,6 @@ button[onclick="addPair()"],
 
       </div>
     </div>
-
     <div class="footer">
       <button class="btn btn-save" onclick="saveSettings()"><span class="btn-ic">✔</span> Save</button>
       <button class="btn btn-exit" onclick="showTab('main')"><span class="btn-ic">↩</span> Exit</button>

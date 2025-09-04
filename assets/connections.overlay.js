@@ -1,11 +1,12 @@
-// connections.overlay.js
-// Drop-in overlay to enhance provider cards and pair saving without touching the original crosswatch.js.
-// - Dynamic labels: Set as Source / Set as Target / Cancel
-// - Immediate re-render after selection
-// - Drag & drop (source → target)
-// - Safe save fallback when loadPairs() is not defined
-
+// connections.overlay.js (fixed: brand class + icon support)
 (function(){
+
+  function _brandInfo(name){
+    var key = String(name||'').trim().toUpperCase();
+    if (key === 'PLEX')  return { cls:'brand-plex',  icon:'/assets/PLEX.svg'  };
+    if (key === 'SIMKL') return { cls:'brand-simkl', icon:'/assets/SIMKL.svg' };
+    return { cls:'', icon:'' };
+  }
 
   async function _overlayRefreshPairs(){
     try{
@@ -20,23 +21,40 @@
     if (document.getElementById('cx-overlay-style')) return;
     const css = `
       .prov-card.selected{outline:1px solid rgba(124,92,255,.6); box-shadow:0 0 22px rgba(124,92,255,.25)}
-      .cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:6px}
+      .cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:6px}
+
+      /* brand visuals (keihard, ook zonder global css) */
+      :root{ --plex:#e5a00d; --simkl:#00b7eb; }
+      .prov-head{position:relative}
+      .prov-brand{
+        position:absolute;top:8px;right:10px;width:28px;height:28px;display:block;z-index:3;
+        padding:4px;border-radius:8px;background:rgba(0,0,0,.55);
+        filter:drop-shadow(0 2px 6px rgba(0,0,0,.55))
+      }
+      .prov-card.brand-plex{
+        border:1px solid var(--plex) !important;
+        box-shadow:0 0 0 1px var(--plex) inset, 0 0 24px rgba(229,160,13,.30) !important;
+      }
+      .prov-card.brand-simkl{
+        border:1px solid var(--simkl) !important;
+        box-shadow:0 0 0 1px var(--simkl) inset, 0 0 24px rgba(0,183,235,.30) !important;
+      }
     `;
     const s = document.createElement('style');
     s.id = 'cx-overlay-style';
     s.textContent = css;
     document.head.appendChild(s);
+
     // extra overrides
     var extra=document.createElement('style'); extra.textContent = `
-  /* --- Strong UI overrides --- */
-  #providers_list.grid2{ display:block !important; }              /* break the 2-col grid wrapper */
-  #providers_list .pairs-board{ display:flex; flex-direction:column; align-items:flex-start; text-align:left; margin-top:10px;}
-  #providers_list .cx-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
-  /* Kill legacy Add pair/Batches UI hard via selectors */
-  .pair-selectors, #pairs_list,
-  button[onclick="addPair()"],
-  #batches_list, button[onclick="addBatch()"], button[onclick="runAllBatches()"]{ display:none !important; }
-`; document.head.appendChild(extra);
+      #providers_list.grid2{ display:block !important; }
+      #providers_list .pairs-board{ display:flex; flex-direction:column; align-items:flex-start; text-align:left; margin-top:10px;}
+      #providers_list .cx-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
+      .pair-selectors, #pairs_list,
+      button[onclick="addPair()"],
+      #batches_list, button[onclick="addBatch()"], button[onclick="runAllBatches()"]{ display:none !important; }
+    `;
+    document.head.appendChild(extra);
   }
 
   function cap(obj, key){ try { return !!(obj && obj.features && obj.features[key]); } catch(_){ return false; } }
@@ -48,15 +66,16 @@
       if (!host) return;
 
       const provs = (window.cx && window.cx.providers) || [];
-      if (!provs.length) return; // nothing to build yet
+      if (!provs.length) return;
 
       const selSrc = window.cx && window.cx.connect && window.cx.connect.source || null;
 
       const html = provs.map(p => {
-        const name = p.label || p.name;
-        const isSrc = !!(selSrc && String(selSrc).toUpperCase() === String(p.name).toUpperCase());
-        const btnLabel  = !selSrc ? 'Set as Source' : (isSrc ? 'Cancel' : 'Set as Target');
-        const btnOnclick = !selSrc
+        const name   = p.label || p.name;
+        const brand  = _brandInfo(name);
+        const isSrc  = !!(selSrc && String(selSrc).toUpperCase() === String(p.name).toUpperCase());
+        const btnLab = !selSrc ? 'Set as Source' : (isSrc ? 'Cancel' : 'Set as Target');
+        const btnOn  = !selSrc
             ? `cxToggleConnect('${p.name}')`
             : (isSrc ? `cxToggleConnect('${p.name}')` : `cxPickTarget('${p.name}')`);
 
@@ -65,25 +84,32 @@
         const hist= cap(p,'history');
         const pl  = cap(p,'playlists');
 
-        return `<div class="prov-card${isSrc?' selected':''}" data-prov="${p.name}" draggable="true">
-          <div class="prov-title">${name}</div>
+        const iconHtml = brand.icon ? `<img class="prov-brand" src="${brand.icon}" alt="${name}" onerror="this.remove()">` : '';
+
+        return `<div class="prov-card${isSrc?' selected':''} ${brand.cls}" data-prov="${p.name}" draggable="true">
+          <div class="prov-head">
+            <div class="prov-title">${name}</div>
+            ${iconHtml}
+          </div>
           <div class="prov-caps">
             <span class="dot ${wl?'on':'off'}" title="Watchlist"></span>
             <span class="dot ${rat?'on':'off'}" title="Ratings"></span>
             <span class="dot ${hist?'on':'off'}" title="History"></span>
             <span class="dot ${pl?'on':'off'}" title="Playlists"></span>
           </div>
-          <button class="btn neon" onclick="${btnOnclick}">${btnLabel}</button>
+          <button class="btn neon" onclick="${btnOn}">${btnLab}</button>
         </div>`;
       }).join('');
 
-      // Replace only the cards grid (leave pairs/board that the original render added)
       if (!host.querySelector('.cx-grid')) {
         host.innerHTML = `<div class="cx-grid">${html}</div>`;
       } else {
-        const grid = host.querySelector('.cx-grid');
-        grid.innerHTML = html;
+        host.querySelector('.cx-grid').innerHTML = html;
       }
+
+      // graceful: broken icons weg
+      host.querySelectorAll('.prov-brand').forEach(img => img.addEventListener('error', ()=>img.remove()));
+
     } catch (e) {
       console.warn('[overlay] rebuildProviders failed', e);
     }
@@ -112,15 +138,8 @@
     name = String(name||'');
     if(!window.cx || !window.cx.connect) window.cx = { providers: [], pairs: [], connect: { source:null, target:null } };
     const sel = window.cx.connect;
-    if(!sel.source){
-      window.cxStartConnect(name);
-      return;
-    }
-    if(sel.source && sel.source !== name){
-      window.cxPickTarget(name);
-      return;
-    }
-    // same again -> cancel
+    if(!sel.source){ window.cxStartConnect(name); return; }
+    if(sel.source && sel.source !== name){ window.cxPickTarget(name); return; }
     window.cx.connect = { source:null, target:null };
     try { window.renderConnections(); } catch(_){}
   };
@@ -145,88 +164,22 @@
     e.preventDefault();
     const target = card.getAttribute('data-prov');
     const src = (window.cx.connect && window.cx.connect.source) || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
-    if(src && target && src !== target){
-      window.cxPickTarget(target);
-    }
+    if(src && target && src !== target){ window.cxPickTarget(target); }
   });
 
-  // Patch cxOpenModalFor to provide a save fallback
-  const _origOpen = window.cxOpenModalFor;
-  window.cxOpenModalFor = function(pair, editingId){
-    if (typeof _origOpen === 'function') _origOpen(pair, editingId);
-    setTimeout(()=>{
-      try {
-        const saveBtn = document.getElementById('cx-save');
-        if (!saveBtn) return;
-        saveBtn.onclick = async ()=>{
-          const modeEl = document.querySelector('input[name="cx-mode"]:checked');
-          const mode    = (modeEl && modeEl.value) || 'one-way';
-          const enabled = !!document.getElementById('cx-enabled')?.checked;
-          const wlAdd   = !!document.getElementById('cx-wl-add')?.checked;
-          const payload = {
-            source: pair.source, target: pair.target, mode, enabled,
-            features: { watchlist: { add: !!wlAdd, remove: false } }
-          };
-          try{
-            if (editingId){
-              await fetch(`/api/pairs/${editingId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-            } else {
-              const dupe = (window.cx.pairs||[]).some(x => String(x.source).toUpperCase()===payload.source.toUpperCase() && String(x.target).toUpperCase()===payload.target.toUpperCase());
-              if(dupe){ alert('This connection already exists.'); return; }
-              const r = await fetch('/api/pairs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-              if(!r.ok) throw new Error('HTTP '+r.status);
-            }
-            try { if (typeof cxCloseModal === 'function') cxCloseModal(); } catch(_){}
-            if (typeof loadPairs === 'function') {
-              if (typeof loadPairs==='function') { if (typeof loadPairs==='function') { await loadPairs(); } else { await _overlayRefreshPairs(); } } else { await _overlayRefreshPairs(); }
-            } else {
-              const arr = await fetch('/api/pairs',{cache:'no-store'}).then(r=>r.json());
-              window.cx = window.cx || {};
-              window.cx.pairs = Array.isArray(arr) ? arr : [];
-              try { if (typeof renderConnections === 'function') renderConnections(); } catch(_){}
-            }
-          }catch(e){
-            console.warn('[overlay] Save connection failed', e);
-            alert('Failed to save connection.');
-          }
-        };
-      } catch(e){ console.warn('[overlay] modal patch failed', e); }
-    }, 0);
-  };
-
-  // Kick a re-render when providers are loaded
-  document.addEventListener('DOMContentLoaded', function(){
-    try { window.renderConnections && window.renderConnections(); } catch(_){}
-  });
-})();
-
-
-  // Force left alignment within our board
+  // keep the left alignment tweak
   (function ensureLeftAlign(){
     try{
       const s = document.createElement('style');
       s.id = 'cx-left-align';
       s.textContent = `.pairs-board{display:flex;flex-direction:column;align-items:flex-start;text-align:left}`;
       if(!document.getElementById('cx-left-align')) document.head.appendChild(s);
-    // extra overrides
-    var extra=document.createElement('style'); extra.textContent = `
-  /* --- Strong UI overrides --- */
-  #providers_list.grid2{ display:block !important; }              /* break the 2-col grid wrapper */
-  #providers_list .pairs-board{ display:flex; flex-direction:column; align-items:flex-start; text-align:left; margin-top:10px;}
-  #providers_list .cx-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
-  /* Kill legacy Add pair/Batches UI hard via selectors */
-  .pair-selectors, #pairs_list,
-  button[onclick="addPair()"],
-  #batches_list, button[onclick="addBatch()"], button[onclick="runAllBatches()"]{ display:none !important; }
-`; document.head.appendChild(extra);
     }catch(_){}
   })();
 
-
-  // Hide static 'Pairs' and 'Batches' headers + helper text
+  // Hide legacy headers
   function _hideLegacyStaticSections(){
     try{
-      const isSub = el => el && el.classList && el.classList.contains('sub');
       document.querySelectorAll('#sec-sync .sub').forEach(el => {
         const txt = (el.textContent||'').trim().toLowerCase();
         if (txt === 'pairs' || txt === 'batches'){
@@ -237,5 +190,9 @@
       });
     }catch(_){}
   }
-  document.addEventListener('DOMContentLoaded', _hideLegacyStaticSections);
+  document.addEventListener('DOMContentLoaded', function(){
+    try { window.renderConnections && window.renderConnections(); } catch(_){}
+    _hideLegacyStaticSections();
+  });
 
+})();

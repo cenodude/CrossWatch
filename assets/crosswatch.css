@@ -149,7 +149,6 @@
     user-select:none
   }
 
-
   /* Cards */
   .card{
     background:linear-gradient(180deg,rgba(255,255,255,.02),transparent),var(--panel);
@@ -272,7 +271,6 @@
     width:16px; height:16px; border-radius:50%;
     background:#fff; border:1px solid #ffffff22; box-shadow:0 0 10px var(--glow);
   }
-
 
   /* Watchlist grid */
   .wl-grid{
@@ -574,7 +572,6 @@
     justify-content: space-between; /* buttons stick to bottom */
   }
 
-
   /* Hide the bottom title on the WATCHLIST PREVIEW (carousel) only */
   #placeholder-card .cap { display: none !important; }
 
@@ -682,6 +679,39 @@
   --tmdb:  #01d277;   /* TMDb */
 }
 
+/* brand hooks */
+.prov-card{ position:relative; }
+.prov-card.brand-plex  { --brand-color: var(--plex); }
+.prov-card.brand-simkl { --brand-color: var(--simkl); }
+
+/* edge glow + border keyed off --brand-color */
+.prov-card.brand-plex,
+.prov-card.brand-simkl{
+  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
+    0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
+  transition: box-shadow .25s ease, border-color .25s ease;
+}
+.prov-card.brand-plex:hover,
+.prov-card.brand-simkl:hover{
+  box-shadow:
+    0 0 0 1px var(--brand-color) inset,
+    0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
+}
+
+/* top-right brand icon */
+.prov-head{ position:relative; }
+
+/* provider brand badge: readable on light/dark */
+.prov-brand{
+  position:absolute;top:8px;right:10px;width:28px;height:28px;
+  object-fit:contain;display:block;z-index:3;
+  padding:4px;border-radius:8px;background:rgba(0,0,0,.55);
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.55));
+}
+
+
 /* Let section headers show right icon and colored left edge */
 .section > .head{
   position: relative;
@@ -692,7 +722,6 @@
 #sec-plex  > .head{ border-left: 3px solid var(--plex);  padding-left: 10px; }
 #sec-simkl > .head{ border-left: 3px solid var(--simkl); padding-left: 10px; }
 #sec-tmdb  > .head{ border-left: 3px solid var(--tmdb);  padding-left: 10px; }
-
 
 /* Per-brand accents */
 .brand-ico.plex {  color: var(--plex);  background: rgba(229,160,13,.12);  border-color: rgba(229,160,13,.35); }
@@ -710,7 +739,7 @@
   color: #0a0;                      /* inner text color on bright bg */
   color: #0e3;                      /* tweak if needed */
   color: #0c4;                      /* final choice will inherit fine */
-  color: #0;                         /* ensure contrast if your theme is very dark */
+  color: #0000;                     /* ensure contrast if your theme is very dark */
   color: var(--tmdb);
   border: 1px solid currentColor;
   background: rgba(1,210,119,.10);
@@ -863,7 +892,6 @@ main.single #stats-card{
 #layout.full{
   grid-template-columns:1fr;
 }
-
 
 /* Place cards */
 #ops-card{ grid-column:1; }
@@ -1097,8 +1125,6 @@ main.single #stats-card{
 .cw-badge--plex::before    { box-shadow: inset 0 0 0 1px rgba(255, 179, 0, .45); }
 .cw-badge--simkl::before   { box-shadow: inset 0 0 0 1px rgba(70, 195, 255, .45); }
 
-
-
 /* Auth provider cards */
 .auth-card { border: 1px solid var(--line, #2a2a2a); border-radius: 12px; padding: 12px; margin: 8px 0; background: var(--panel, #121212); }
 .auth-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -1122,3 +1148,228 @@ main.single #stats-card{
 .badge{display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; opacity:.75}
 .matrix{display:grid; grid-template-columns: 180px repeat(2,120px); gap:6px; align-items:center}
 .matrix .head{font-weight:700; opacity:.8}
+
+/* === Connectors brand icons (robust) === */
+:root { --plex:#e5a00d; --simkl:#00b7eb; }
+.prov-head { position: relative; }
+
+/* PLEX */
+.prov-card[data-prov="PLEX"] .prov-head::after,
+.prov-card[data-prov="Plex"] .prov-head::after {
+  content: " "; /* must have */
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 28px; height: 28px;
+  display: block;
+  z-index: 50;
+  background-color: rgba(0,0,0,.55) !important;
+  background-image: url("/assets/PLEX.svg?v=1") !important; /* cache-bust */
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  border-radius: 8px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
+  outline: 2px solid magenta !important; /* DEBUG: zie je een magenta box? */
+}
+
+/* SIMKL */
+.prov-card[data-prov="SIMKL"] .prov-head::after,
+.prov-card[data-prov="Simkl"] .prov-head::after {
+  content: " ";
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 28px; height: 28px;
+  display: block;
+  z-index: 50;
+  background-color: rgba(0,0,0,.55) !important;
+  background-image: url("/assets/SIMKL.svg?v=1") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  border-radius: 8px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
+  outline: 2px solid magenta !important; /* DEBUG */
+}
+
+/* -- Connectors: larger, embedded brand badge -- */
+#providers_list .prov-head { position: relative; }
+
+/* kill any older pseudo-elements / debug outlines */
+#providers_list .prov-head::after { content: none !important; }
+#providers_list .prov-brand { outline: none !important; filter: none !important; }
+
+/* clean embedded look */
+#providers_list .prov-brand{
+  position: absolute;
+  top: 12px; right: 14px;
+  width: 44px; height: 44px;          /* <-- groter icoon */
+  display: block;
+  object-fit: contain;
+
+  /* embedded card-badge (geen fel paars) */
+  padding: 6px;                        /* 0 = randloos, 6 = beetje lucht */
+  border-radius: 12px;
+  background: var(--panel, #141418);   /* matcht je kaart */
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow:
+    0 4px 14px rgba(0,0,0,.35),
+    inset 0 0 0 1px rgba(255,255,255,.04);
+}
+
+/* subtiele merk-tint op het randje (geen glow) */
+.prov-card.brand-plex  .prov-brand { border-color: rgba(229,160,13,.35); }
+.prov-card.brand-simkl .prov-brand { border-color: rgba(0,183,235,.35); }
+
+/* match de icon-badge met dezelfde zwarte achtergrond */
+#providers_list .prov-brand{
+  background:#000 !important;
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow:0 6px 16px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.04);
+}
+
+
+/* zorg dat tekst contrasteert */
+#providers_list .prov-title{ color:#fff; }
+
+/* ===== Configure Connection – modern & readable ===== */
+#cfg-conn{
+  --bg:#0e0f13; --panel:#12141a; --muted:rgba(255,255,255,.65);
+  --text:#fff; --border:rgba(255,255,255,.12); --accent:#7c5cff;
+  color:var(--text);
+}
+#cfg-conn .modal-body, /* fallback */
+#cfg-conn .content{ padding: 20px; }
+
+#cfg-conn .title, #cfg-conn h2, #cfg-conn h3{
+  font-weight:600; letter-spacing:.04em; color:#eaeaf0;
+}
+
+/* Layout */
+#cfg-conn .form-grid{
+  display:grid; gap:18px;
+  grid-template-columns: 1fr 1fr; align-items:start;
+}
+@media (max-width: 820px){
+  #cfg-conn .form-grid{ grid-template-columns: 1fr; }
+}
+
+/* Field blocks */
+#cfg-conn .field{ display:flex; flex-direction:column; gap:8px; }
+#cfg-conn .field label{ font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+
+/* Controls */
+#cfg-conn select,
+#cfg-conn input[type="text"],
+#cfg-conn .input{
+  background:var(--panel); color:var(--text);
+  border:1px solid var(--border);
+  border-radius:14px; padding:12px 14px; font-size:0.98rem;
+  outline:none;
+}
+#cfg-conn select:focus,
+#cfg-conn input[type="text"]:focus{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,92,255,.25); }
+
+/* Mode as segmented control */
+#cfg-conn .seg{ display:inline-flex; background:linear-gradient(180deg,#0d0e12,#0b0c10);
+  border:1px solid var(--border); border-radius:12px; padding:4px; gap:6px;
+}
+#cfg-conn .seg input[type="radio"]{ display:none; }
+#cfg-conn .seg label{
+  padding:10px 14px; border-radius:10px; cursor:pointer;
+  color:var(--muted); user-select:none; font-weight:600;
+}
+#cfg-conn .seg input[type="radio"]:checked + label{
+  background:linear-gradient(180deg, rgba(124,92,255,.35), rgba(124,92,255,.15));
+  color:#fff; box-shadow:0 6px 16px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
+}
+
+/* Enabled checkbox + feature toggles */
+#cfg-conn input[type="checkbox"], #cfg-conn input[type="radio"]{
+  accent-color: var(--accent); transform: scale(1.2);
+}
+#cfg-conn .row{ display:flex; align-items:center; gap:14px; }
+#cfg-conn .row .spacer{ flex:1; }
+
+/* Features table/grid */
+#cfg-conn .features{
+  background:linear-gradient(180deg,#0d0f14,#0b0c11);
+  border:1px solid var(--border); border-radius:14px; padding:14px;
+}
+#cfg-conn .fe-row{
+  display:grid; grid-template-columns: 1.2fr .8fr .6fr .6fr; gap:12px; align-items:center;
+  padding:10px 6px; border-bottom:1px dashed rgba(255,255,255,.06);
+}
+#cfg-conn .fe-row:last-child{ border-bottom:none; }
+#cfg-conn .fe-name{ font-weight:600; color:#eaeaf0; }
+#cfg-conn .fe-muted{ color:var(--muted); font-size:.9rem; }
+
+/* Footer actions pinned & clear */
+#cfg-conn .actions{
+  position:sticky; bottom:0; background:linear-gradient(180deg, rgba(14,15,19,.0), rgba(14,15,19,.9) 40%);
+  padding:16px 20px; display:flex; justify-content:flex-end; gap:12px; backdrop-filter: blur(6px);
+}
+#cfg-conn .actions .btn{
+  min-width:110px; border-radius:12px; padding:10px 14px; font-weight:700;
+  border:1px solid var(--border); background:var(--panel); color:#fff;
+}
+#cfg-conn .actions .btn.primary{
+  border-color: rgba(124,92,255,.5);
+  background: radial-gradient(60% 120% at 50% -20%, rgba(124,92,255,.35), transparent),
+              linear-gradient(180deg, rgba(124,92,255,.25), rgba(124,92,255,.10));
+}
+
+/* Make the whole modal a tad darker for contrast */
+#cfg-conn, #cfg-conn .modal-shell{
+  background: radial-gradient(120% 120% at 50% -10%, rgba(0,0,0,.35), transparent) , var(--bg);
+}
+
+/* ===== Configure Connection (modern) ===== */
+#cfg-conn{--bg:#0e0f13;--panel:#11141a;--muted:rgba(255,255,255,.65);--txt:#fff;--bd:rgba(255,255,255,.12);--acc:#7c5cff;color:var(--txt)}
+#cfg-conn .title{font-weight:600;letter-spacing:.04em;color:#eaeaf0}
+#cfg-conn .modal-body{padding:20px}
+#cfg-conn .form-grid{display:grid;gap:18px;grid-template-columns:1fr 1fr;align-items:start}
+@media (max-width:820px){#cfg-conn .form-grid{grid-template-columns:1fr}}
+#cfg-conn .field{display:flex;flex-direction:column;gap:8px}
+#cfg-conn .field>label{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+#cfg-conn select,#cfg-conn input[type=text]{background:var(--panel);color:var(--txt);border:1px solid var(--bd);border-radius:14px;padding:12px 14px;font-size:.98rem;outline:none}
+#cfg-conn select:focus,#cfg-conn input[type=text]:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(124,92,255,.25)}
+#cfg-conn .seg{display:inline-flex;background:linear-gradient(180deg,#0e1016,#0c0e13);border:1px solid var(--bd);border-radius:12px;padding:4px;gap:6px}
+#cfg-conn .seg input[type=radio]{display:none}
+#cfg-conn .seg label{padding:10px 14px;border-radius:10px;cursor:pointer;color:var(--muted);user-select:none;font-weight:600}
+#cfg-conn .seg input[type=radio]:checked+label{background:rgba(124,92,255,.28);color:#fff;box-shadow:0 6px 16px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.06)}
+#cfg-conn input[type=checkbox],#cfg-conn input[type=radio]{accent-color:var(--acc);transform:scale(1.1)}
+#cfg-conn .features{background:linear-gradient(180deg,#0d0f14,#0b0c11);border:1px solid var(--bd);border-radius:14px;padding:14px}
+#cfg-conn .fe-row{display:grid;grid-template-columns:1.2fr .8fr .6fr .6fr;gap:12px;align-items:center;padding:10px 6px;border-bottom:1px dashed rgba(255,255,255,.06)}
+#cfg-conn .fe-row:last-child{border-bottom:none}
+#cfg-conn .fe-name{font-weight:600;color:#eaeaf0}
+#cfg-conn .fe-muted{color:var(--muted);font-size:.9rem}
+#cfg-conn .summary{border:1px solid var(--bd);background:#0b0d12;border-radius:16px;padding:14px}
+#cfg-conn .summary .line{display:flex;justify-content:space-between;padding:8px 10px;border-radius:10px;background:#00000040;border:1px solid rgba(255,255,255,.08)}
+#cfg-conn .brand{display:flex;align-items:center;gap:10px}
+#cfg-conn .chip{width:36px;height:36px;border-radius:12px;background:#000;border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 16px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.05);display:grid;place-items:center;color:#fff;font-weight:800}
+#cfg-conn .actions{position:sticky;bottom:0;background:linear-gradient(180deg,rgba(14,15,19,0),rgba(14,15,19,.9) 40%);padding:16px 20px;display:flex;justify-content:flex-end;gap:12px}
+#cfg-conn .actions .btn{min-width:110px;border-radius:12px;padding:10px 14px;font-weight:700;border:1px solid var(--bd);background:var(--panel);color:#fff}
+#cfg-conn .actions .btn.primary{border-color:rgba(124,92,255,.5);background:linear-gradient(180deg,rgba(124,92,255,.25),rgba(124,92,255,.1))}
+
+.pairs-board{display:flex;gap:14px;overflow-x:auto;padding:8px 2px}
+.pair-card{flex:0 0 320px;cursor:grab}
+.pair-card.dragging{opacity:.6}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.15);color:#cfd6ff;padding:6px 10px;border-radius:10px}
+
+/* === Config modal polish === */
+#cx-modal .mode, #cx-modal .mode-group, #cx-modal .seg-toggle{
+  display: inline-flex; gap: 8px; flex-wrap: wrap;
+}
+#cx-modal .seg-toggle .btn, 
+#cx-modal label[for="cx-mode-one"],
+#cx-modal label[for="cx-mode-two"]{
+  padding: 8px 12px; min-width: auto; /* geen rare overbreedte */
+}
+
+/* 5) Grote, subtiele animatie voor richting */
+#cx-modal .dir{ font-size: 22px; margin: 0 10px; line-height: 1; 
+  filter: drop-shadow(0 0 6px rgba(124,92,255,.35)); }
+#cx-modal .dir.one{ animation: dirPulse 1.2s ease-in-out infinite; }
+#cx-modal .dir.bidi{ animation: dirGlow 1.6s ease-in-out infinite; }
+@keyframes dirPulse{ 0%{transform:translateX(0);opacity:.8} 50%{transform:translateX(3px);opacity:1} 100%{transform:translateX(0);opacity:.8} }
+@keyframes dirGlow{ 0%,100%{text-shadow:0 0 0 rgba(124,92,255,.0)} 50%{text-shadow:0 0 10px rgba(124,92,255,.6)} }
