@@ -1,18 +1,23 @@
 # _statistics.py
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-import json, time, threading
 
-ROOT = Path(__file__).resolve().parent
-CONFIG_BASE = Path("/config") if str(ROOT).startswith("/app") else ROOT
-STATS_PATH = CONFIG_BASE / "statistics.json"
+import json, time, threading, re
+
+from cw_platform.config_base import CONFIG
+STATS_PATH = CONFIG / "statistics.json"
+
+_GUID_TMDB_RE = re.compile(r"^tmdb://(?:movie|tv)/(\d+)$", re.IGNORECASE)
+_GUID_IMDB_RE = re.compile(r"^imdb://(tt?\d+)$", re.IGNORECASE)
+_GUID_TVDB_RE = re.compile(r"^tvdb://(\d+)$", re.IGNORECASE)
 
 def _read_json(p: Path) -> Dict[str, Any]:
     try:
         with p.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
@@ -20,7 +25,7 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
     tmp.replace(p)
 
 class Stats:
@@ -32,8 +37,6 @@ class Stats:
 
     def _load(self) -> None:
         d = _read_json(self.path)
-        if not isinstance(d, dict):
-            d = {}
         d.setdefault("events", [])
         d.setdefault("samples", [])
         d.setdefault("current", {})
@@ -74,29 +77,33 @@ class Stats:
     @staticmethod
     def _canon_from_ids(ids: Dict[str, Any], typ: str) -> Optional[str]:
         imdb = ids.get("imdb")
-        if imdb and isinstance(imdb, str):
+        if isinstance(imdb, str):
             imdb = imdb.lower()
             if not imdb.startswith("tt") and imdb.isdigit():
                 imdb = f"tt{imdb}"
             return f"imdb:{imdb}"
+
         tmdb = ids.get("tmdb")
         if tmdb is not None:
             try:
                 return f"tmdb:{(typ or 'movie').lower()}:{int(tmdb)}"
             except Exception:
                 pass
+
         tvdb = ids.get("tvdb")
         if tvdb is not None:
             try:
                 return f"tvdb:{int(tvdb)}"
             except Exception:
                 pass
+
         simkl = ids.get("simkl")
         if simkl is not None:
             try:
                 return f"simkl:{int(simkl)}"
             except Exception:
                 pass
+
         return None
 
     @staticmethod
@@ -108,6 +115,7 @@ class Stats:
                 v = ids.get(k)
                 if v and k not in out:
                     out[k] = v
+
         for k in ("imdb", "imdb_id", "tt"):
             v = d.get(k)
             if v and "imdb" not in out:
@@ -124,20 +132,25 @@ class Stats:
             v = d.get(k)
             if v and "simkl" not in out:
                 out["simkl"] = v
-        guid = d.get("guid") or d.get("Guid") or ""
+
+        guid = (d.get("guid") or d.get("Guid") or "").strip()
         if isinstance(guid, str) and "://" in guid:
-            try:
-                scheme, rest = guid.split("://", 1)
-                scheme = scheme.lower()
-                rest = rest.strip()
-                if scheme == "imdb" and "imdb" not in out:
-                    out["imdb"] = rest
-                elif scheme == "tmdb" and "tmdb" not in out:
-                    out["tmdb"] = rest
-                elif scheme == "tvdb" and "tvdb" not in out:
-                    out["tvdb"] = rest
-            except Exception:
-                pass
+            g = guid.lower()
+            m = _GUID_IMDB_RE.match(guid)
+            if m and "imdb" not in out:
+                out["imdb"] = m.group(1)
+            m = _GUID_TMDB_RE.match(guid)
+            if m and "tmdb" not in out:
+                out["tmdb"] = m.group(1)
+            m = _GUID_TVDB_RE.match(guid)
+            if m and "tvdb" not in out:
+                out["tvdb"] = m.group(1)
+            # fallback light parsing
+            if "tmdb" not in out and g.startswith("tmdb://"):
+                tail = guid.split("://", 1)[1]
+                num = tail.split("/", 1)[-1]
+                if num.isdigit():
+                    out["tmdb"] = num
         return out
 
     @staticmethod
@@ -181,9 +194,12 @@ class Stats:
         plex_only = simkl_only = both = 0
         for v in (cur or {}).values():
             s = (v or {}).get("src") or ""
-            if s == "plex": plex_only += 1
-            elif s == "simkl": simkl_only += 1
-            elif s == "both": both += 1
+            if s == "plex":
+                plex_only += 1
+            elif s == "simkl":
+                simkl_only += 1
+            elif s == "both":
+                both += 1
         return {
             "plex": plex_only,
             "simkl": simkl_only,
@@ -192,13 +208,13 @@ class Stats:
             "simkl_total": simkl_only + both,
         }
 
-    def _totals_from_events(self) -> dict:
+    def _totals_from_events(self) -> Dict[str, int]:
         ev = list(self.data.get("events") or [])
         adds = sum(1 for e in ev if (e or {}).get("action") == "add")
         rems = sum(1 for e in ev if (e or {}).get("action") == "remove")
         return {"added": adds, "removed": rems}
 
-    def _ensure_counters(self) -> dict:
+    def _ensure_counters(self) -> Dict[str, int]:
         c = self.data.get("counters")
         if not isinstance(c, dict):
             c = self._totals_from_events()
@@ -239,14 +255,20 @@ class Stats:
             ev = self.data.get("events") or []
             for k in added_keys:
                 m = cur.get(k) or {}
-                ev.append({"ts": now, "action": "add", "key": k, "source": m.get("src",""), "title": m.get("title",""), "type": m.get("type","")})
+                ev.append({
+                    "ts": now, "action": "add", "key": k,
+                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
+                })
             for k in removed_keys:
                 m = prev.get(k) or {}
-                ev.append({"ts": now, "action": "remove", "key": k, "source": m.get("src",""), "title": m.get("title",""), "type": m.get("type","")})
+                ev.append({
+                    "ts": now, "action": "remove", "key": k,
+                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
+                })
             self.data["events"] = ev[-5000:]
 
             c = self._ensure_counters()
-            c["added"]   = int(c.get("added", 0))   + len(added_keys)
+            c["added"] = int(c.get("added", 0)) + len(added_keys)
             c["removed"] = int(c.get("removed", 0)) + len(removed_keys)
             self.data["counters"] = c
 
@@ -260,8 +282,8 @@ class Stats:
             self._save()
             return {
                 "now": len(cur),
-                "week": self._count_at(now - 7*86400),
-                "month": self._count_at(now - 30*86400),
+                "week": self._count_at(now - 7 * 86400),
+                "month": self._count_at(now - 30 * 86400),
             }
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
@@ -270,23 +292,17 @@ class Stats:
             ev = self.data.get("events") or []
             ev.append({"ts": now, "action": action, "key": key, "source": source, "title": title, "type": typ})
             self.data["events"] = ev[-5000:]
-            # NOTE: no counters update here; counters are updated in refresh_from_state()
             self._save()
-
 
     def overview(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         now_epoch = int(time.time())
-        week_floor  = now_epoch - 7*86400
-        month_floor = now_epoch - 30*86400
+        week_floor = now_epoch - 7 * 86400
+        month_floor = now_epoch - 30 * 86400
 
         with self.lock:
             cur_map = dict(self.data.get("current") or {})
-            if state is not None:
+            if state:
                 cur_map = self._union_keys(state)
-
-            now_count   = len(cur_map)
-            week_count  = self._count_at(week_floor)
-            month_count = self._count_at(month_floor)
 
             counters = self._ensure_counters()
             last_run = self.data.get("last_run") or {}
@@ -294,16 +310,16 @@ class Stats:
             return {
                 "ok": True,
                 "generated_at": datetime.fromtimestamp(now_epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "now": now_count,
-                "week": week_count,
-                "month": month_count,
+                "now": len(cur_map),
+                "week": self._count_at(week_floor),
+                "month": self._count_at(month_floor),
                 "added": int(counters.get("added", 0)),
                 "removed": int(counters.get("removed", 0)),
                 "new": int(last_run.get("added") or 0),
                 "del": int(last_run.get("removed") or 0),
                 "by_source": self._counts_by_source(cur_map),
                 "window": {
-                    "week_start":  datetime.fromtimestamp(week_floor,  timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "week_start": datetime.fromtimestamp(week_floor, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "month_start": datetime.fromtimestamp(month_floor, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 },
             }

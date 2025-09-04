@@ -7,15 +7,10 @@ from datetime import datetime
 from pathlib import Path
 import json
 
-# Requires: pip install PlexAPI
 from plexapi.myplex import MyPlexAccount
 
-
-# -------- Paths (Docker-aware) --------
-ROOT = Path(__file__).resolve().parent
-CONFIG_BASE = Path("/config") if str(ROOT).startswith("/app") else ROOT
-HIDE_PATH = CONFIG_BASE / "watchlist_hide.json"  # overlay: keys to hide in UI
-
+from cw_platform.config_base import CONFIG
+HIDE_PATH  = CONFIG / "watchlist_hide.json"
 
 # -------- Small helpers --------
 def _load_hide_set() -> Set[str]:

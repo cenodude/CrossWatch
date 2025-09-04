@@ -6,36 +6,37 @@ See `providers/` for all pluggable integrations: auth, sync, metadata.
 ## Project Structure
 ```
 root/
-├── crosswatch.py
-├── _FastAPI.py
-├── _logging.py
-├── _statistics.py
-├── _watchlist.py
-├── _scheduling.py
+├── crosswatch.py                 # main FastAPI app + all API endpoints
+├── _FastAPI.py                   # serves web UI index.html
+├── _logging.py                   # central log helper
+├── _statistics.py                # Stats model + file ops
+├── _watchlist.py                 # helpers to build/remove watchlist items
+├── _scheduling.py                # scheduler wrapper for sync jobs
 │
-├── assets/
-│   ├── crossover.css
-│   └── crossover.js
+├── assets/                       # static frontend bundle
+│   ├── crosswatch.css
+|   ├── crosswatch.js             # main js for 99% of the code
+│   └── connections.overlay.js    # some additional JS script for settings >> Synchronization Providers
 │
-├── cw_platform/
-│   ├── manager.py        # unified auth + sync profiles
-│   ├── orchestrator.py   # runs sync profiles via providers.sync modules
-│   └── metadata.py       # MetadataManager (providers.metadata)
+├── cw_platform/                  # platform-level managers
+│   ├── manager.py                # PlatformManager: unified auth + sync profiles
+│   ├── orchestrator.py           # Orchestrator: runs pairs, writes state.json
+│   └── metadata.py               # MetadataManager: providers.metadata wrapper
 │
-└── providers/
-    ├── auth/
+└── providers/                    # pluggable integrations
+    ├── auth/                     # authentication providers
     │   ├── __init__.py
     │   ├── _auth_base.py
     │   ├── _auth_PLEX.py
     │   └── _auth_SIMKL.py
     │
-    ├── sync/
+    ├── sync/                     # sync modules - must also have mod in /auth
     │   ├── __init__.py
     │   ├── _mod_base.py
     │   ├── _mod_PLEX.py
     │   └── _mod_SIMKL.py
     │
-    └── metadata/
+    └── metadata/                 # metadata providers (e.g. TMDb)
         ├── __init__.py
         └── _meta_TMDB.py
 ```
@@ -162,80 +163,82 @@ uvicorn crosswatch:app --host 0.0.0.0 --port 8787
 
 ### `_FastAPI.py` (Web UI + static references)
 - Renders the root HTML (served at `/`) for the web interface.
-- References the UI assets: `/assets/crosswatch.js` and `/assets/crosswatch.css`.
+- References the UI assets: `/assets/crosswatch.js` `/assets/connections.overlay.js` and `/assets/crosswatch.css`.
 - Keeps UI generation self‑contained; the API endpoints themselves live in `crosswatch.py`.
 
 ---
 
 ## Endpoint Inventory (served by `crosswatch.py`)
+Base URL: `http://0.0.0.0:8787`
 
-> Base URL: `http://0.0.0.0:8787`
+### Metadata
+- **POST `/api/metadata/resolve`** → Resolve metadata (posters, year, runtime) via MetadataManager.
 
-### Root / UI
-- **GET** `/` — Index (serves the web UI)
-
-### Status & Version
-- **GET** `/api/status` — Api Status
-- **GET** `/api/version` — Get Version
-- **GET** `/api/version/check` — Api Version Check
-- **GET** `/api/update` — Api Update
+### Updates & Version
+- **GET `/api/update`** → Check latest GitHub release.  
+- **GET `/api/version`** → Return current + latest version.  
+- **GET `/api/version/check`** → Simple version check (numeric tuple).
 
 ### Insights & Stats
-- **GET** `/api/insights` — Api Insights
-- **GET** `/api/stats/raw` — Api Stats Raw
-- **GET** `/api/stats` — Api Stats
+- **GET `/api/insights`** → Return statistics.json series, sync history, estimated watchtime.  
+- **GET `/api/stats/raw`** → Raw contents of `statistics.json`.  
+- **GET `/api/stats`** → Current overview stats (added/removed counts).
 
-### Logs & Streams
-- **GET** `/api/logs/stream` — Api Logs Stream Initial
-- **GET** `/api/run/summary/stream` — Api Run Summary Stream
-
-### Config
-- **GET** `/api/config` — Api Config
-- **POST** `/api/config` — Api Config Save
-
-### Auth (Plex / SIMKL / OAuth)
-- **POST** `/api/plex/pin/new` — Api Plex Pin New
-- **POST** `/api/simkl/authorize` — Api Simkl Authorize
-- **GET** `/callback` — Oauth Simkl Callback
-
-### Run & Summary
-- **POST** `/api/run` — Api Run Sync
-- **GET** `/api/run/summary` — Api Run Summary
-- **GET** `/api/run/summary/file` — Api Run Summary File
-
-### State & Wall
-- **GET** `/api/state/wall` — Api State Wall
+### Logs
+- **GET `/api/logs/stream`** → Server‑sent event (SSE) stream of logs.
 
 ### Watchlist
-- **GET** `/api/watchlist` — Api Watchlist
-- **DELETE** `/api/watchlist/{key}` — Api Watchlist Delete
+- **GET `/api/watchlist`** → Preview combined Plex+SIMKL watchlist.  
+- **DELETE `/api/watchlist/{key}`** → Remove entry from state.json + providers.
 
-### TMDb / Art / Metadata
-- **GET** `/art/tmdb/{typ}/{tmdb_id}` — Api Tmdb Art
-- **GET** `/api/tmdb/meta/{typ}/{tmdb_id}` — Api Tmdb Meta
+### Root / UI
+- **GET `/`** → Web UI index.
+
+### Status & Config
+- **GET `/api/status`** → Connection status Plex/SIMKL.  
+- **GET `/api/config`** → Get config.json.  
+- **POST `/api/config`** → Save config.json.
+
+### Auth / OAuth
+- **POST `/api/plex/pin/new`** → Start Plex PIN login.  
+- **POST `/api/simkl/authorize`** → Start SIMKL OAuth.  
+- **GET `/callback`** → SIMKL OAuth callback.
+
+### Run & Summary
+- **POST `/api/run`** → Trigger manual sync run.  
+- **GET `/api/run/summary`** → Current summary snapshot.  
+- **GET `/api/run/summary/file`** → Download last run summary.  
+- **GET `/api/run/summary/stream`** → Live run summary stream.
+
+### State & Wall
+- **GET `/api/state/wall`** → Watchlist preview (wall) from state.json.
+
+### TMDb
+- **GET `/art/tmdb/{typ}/{tmdb_id}`** → Serve cached poster/backdrop.  
+- **GET `/api/tmdb/meta/{typ}/{tmdb_id}`** → Fetch metadata for movie/tv.
 
 ### Scheduling
-- **GET** `/api/scheduling` — Api Sched Get
-- **POST** `/api/scheduling` — Api Sched Post
-- **GET** `/api/scheduling/status` — Api Sched Status
+- **GET `/api/scheduling`** → Get scheduling config.  
+- **POST `/api/scheduling`** → Save scheduling config.  
+- **GET `/api/scheduling/status`** → Scheduler status.
 
 ### Troubleshooting
-- **POST** `/api/troubleshoot/reset-stats` — Api Trbl Reset Stats
-- **POST** `/api/troubleshoot/clear-cache` — Api Trbl Clear Cache
-- **POST** `/api/troubleshoot/reset-state` — Api Trbl Reset State
+- **POST `/api/troubleshoot/reset-stats`** → Clear statistics.json.  
+- **POST `/api/troubleshoot/clear-cache`** → Empty cache dir.  
+- **POST `/api/troubleshoot/reset-state`** → Ask orchestrator to rebuild state.json.
 
 ### Providers
-- **GET** `/api/auth/providers` — Api Auth Providers
-- **GET** `/api/auth/providers/html` — Api Auth Providers Html
-- **GET** `/api/metadata/providers` — Api Metadata Providers
-- **GET** `/api/metadata/providers/html` — Api Metadata Providers Html
-- **GET** `/api/sync/providers` — Api Sync Providers
+- **GET `/api/auth/providers`** → List auth providers.  
+- **GET `/api/auth/providers/html`** → Auth providers HTML.  
+- **GET `/api/metadata/providers`** → List metadata providers.  
+- **GET `/api/metadata/providers/html`** → Metadata providers HTML.  
+- **GET `/api/sync/providers`** → List sync modules + capabilities.
 
 ### Pairs
-- **GET** `/api/pairs` — Api Pairs List
-- **POST** `/api/pairs` — Api Pairs Add
-- **PUT** `/api/pairs/{pair_id}` — Api Pairs Update
-- **DELETE** `/api/pairs/{pair_id}` — Api Pairs Delete
+- **GET `/api/pairs`** → List sync pairs.  
+- **POST `/api/pairs`** → Add new pair.  
+- **PUT `/api/pairs/{pair_id}`** → Update pair.  
+- **DELETE `/api/pairs/{pair_id}`** → Delete pair.
 
 ---
 

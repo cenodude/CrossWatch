@@ -83,10 +83,11 @@ class TmdbProvider:
 
     # ---- provider API ----
     def fetch(self, *, entity: str, ids: Dict[str, str], locale: Optional[str] = None,
-              need: Optional[Dict[str, bool]] = None) -> dict:
+            need: Optional[Dict[str, bool]] = None) -> dict:
         need = need or {"poster": True, "backdrop": True}
         entity = (entity or "").lower().strip()
-        if entity not in ("movie", "show"):
+        # accept tv as alias for show
+        if entity not in ("movie", "show", "tv"):
             return {}
         tmdb_id = ids.get("tmdb") or ids.get("id") or ""
         if not tmdb_id:
@@ -114,6 +115,7 @@ class TmdbProvider:
                     "episode_run_time": run_list,
                     "number_of_seasons": det.get("number_of_seasons"),
                 }
+
         except Exception as e:
             log(f"TMDb detail fetch failed: {e}", level="WARNING", module="META")
             return {}

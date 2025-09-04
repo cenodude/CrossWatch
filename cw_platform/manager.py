@@ -3,6 +3,8 @@ import json, os, importlib, pkgutil
 from pathlib import Path
 from typing import Any, Dict, List
 
+from cw_platform.config_base import CONFIG
+
 from _logging import log
 
 class PlatformManager:
@@ -10,7 +12,7 @@ class PlatformManager:
     def __init__(self, load_cfg, save_cfg, profiles_path: Path | None = None) -> None:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
-        self.profiles_path = profiles_path or Path(os.environ.get("RUNTIME_DIR","/config")) / "profiles.json"
+        self.profiles_path = profiles_path or (CONFIG / "profiles.json")
         self._providers = self._discover_providers()
 
     # ---- discovery ----

@@ -2431,7 +2431,7 @@ function artUrl(item, size) {
   const tmdb = item.tmdb;
   if (!tmdb) return null;
   const cb = window._lastSyncEpoch || 0;
-  return `/api/metadata/resolve/${typ}/${tmdb}?size=${encodeURIComponent(size || "w342")}&cb=${cb}`;
+  return `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size || "w342")}&cb=${cb}`;
 }
 
 async function loadWall() {
@@ -2964,23 +2964,23 @@ window.addEventListener("storage", (event) => {
   }
 });
 
-// ---- Metadata helper for posters ----
+// Metadata helper for posters
+async function resolvePosterUrl(entity, id, size = "w342") {
+  if (!id) return null;
+  const typ = entity === "tv" || entity === "show" ? "tv" : "movie";
+  const cb = window._lastSyncEpoch || 0;
 
-async function resolvePosterUrl(entity, ids, locale = "en-US") {
-  const r = await fetch("/api/metadata/resolve", {
-    method: "POST",
+  // Fetch metadata first (so we know poster paths exist)
+  const res = await fetch(`/api/tmdb/meta/${typ}/${id}`);
+  if (!res.ok) return null;
 
-    headers: { "Content-Type": "application/json" },
+  const meta = await res.json();
+  if (!meta.images || !meta.images.poster?.length) return null;
 
-    body: JSON.stringify({ entity, ids, locale, need: { poster: true } }),
-  });
-
-  const data = await r.json();
-
-  const posters = data.result?.images?.poster || [];
-
-  return posters.length ? posters[0].url : null;
+  // Just build the proxy URL, backend serves the file
+  return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
 }
+
 
 // Dynamically load auth provider HTML
 
@@ -4225,3 +4225,37 @@ function renderConnections() {
     ['#cx-mode-one','#cx-mode-two'].forEach(sel => $(sel)?.addEventListener('change', updateDir));
     updateDir();
   })();
+
+/**
+ * Minimal UI helper: given the API payload from /api/sync/providers,
+ * populate a <select id="sync-mode"> with available modes for current pair.
+ * Expects two selects with ids #src-provider and #dst-provider.
+ */
+async function populateSyncModes() {
+  const res = await fetch('/api/sync/providers');
+  const data = await res.json();
+  const src = document.getElementById('src-provider')?.value?.toUpperCase();
+  const dst = document.getElementById('dst-provider')?.value?.toUpperCase();
+  const select = document.getElementById('sync-mode');
+  if (!select || !src || !dst) return;
+
+  const dir = data.directions.find(d => d.source === src && d.target === dst)
+           || data.directions.find(d => d.source === dst && d.target === src); // fallback
+  const modes = dir?.modes || [];
+  select.innerHTML = '';
+  modes.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m === 'two-way' ? 'Two-way (bidirectional)' : 'One-way';
+    select.appendChild(opt);
+  });
+  if (modes.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'Not supported';
+    select.appendChild(opt);
+  }
+}
+
+// expose globally
+window.populateSyncModes = populateSyncModes;
