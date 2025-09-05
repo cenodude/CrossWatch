@@ -277,6 +277,14 @@ async function showTab(n) {
     if (!esSum) openSummaryStream();
     refreshSchedulingBanner();
     refreshStats(true);
+
+    // 👇 preview altijd opnieuw laden
+    window.wallLoaded = false;
+    try {
+      await updatePreviewVisibility();
+    } catch (e) {
+      console.warn("updatePreviewVisibility failed", e);
+    }
   } else {
     layout.classList.add("single");
     layout.classList.remove("full");
@@ -375,13 +383,14 @@ function cxBindCfgEvents() {
   });
   var save = document.getElementById("cx-save");
   if (save) {
-    
     save.addEventListener("click", function () {
       const data = {
         source: document.getElementById("cx-src").value,
         target: document.getElementById("cx-dst").value,
         enabled: true, // default ON; no "activate" toggle in modal
-        mode: document.getElementById("cx-mode-two").checked ? "two-way" : "one-way",
+        mode: document.getElementById("cx-mode-two").checked
+          ? "two-way"
+          : "one-way",
         features: {
           watchlist: {
             enable: document.getElementById("cx-wl-enable").checked,
@@ -398,7 +407,6 @@ function cxBindCfgEvents() {
       }
       cxCloseModal();
     });
-
   }
 }
 
@@ -441,10 +449,20 @@ async function runSync() {
   if (busy) return;
   const btn = document.getElementById("run");
   setBusy(true);
+
+  // clear UI log window
+  const detLog = document.getElementById("det-log");
+  if (detLog) detLog.textContent = "";
+
+  // 🔑 restart EventSource so we always get fresh logs
+  if (esDet) {
+    try { esDet.close(); } catch (_) {}
+    esDet = null;
+  }
+  openDetailsLog(); // reattach SSE listener
+
   try {
     btn?.classList.add("glass");
-  } catch (_) {}
-  try {
     const resp = await fetch("/api/run", { method: "POST" });
     const j = await resp.json();
     if (!resp.ok || !j || j.ok !== true) {
@@ -1388,13 +1406,18 @@ function openDetailsLog() {
 
   esDet.onmessage = (ev) => {
     if (!ev?.data) return;
+    const el = document.getElementById("det-log");
+    if (!el) return;
 
-    el.insertAdjacentHTML("beforeend", ev.data + "<br>");
+    if (ev.data === "::CLEAR::") {
+      el.textContent = "";   // wipe the sync output window
+      return;
+    }
 
-    if (detStickBottom) el.scrollTop = el.scrollHeight;
-
-    updateSlider();
-  };
+  el.insertAdjacentHTML("beforeend", ev.data + "<br>");
+  if (detStickBottom) el.scrollTop = el.scrollHeight;
+  updateSlider();
+};
 
   esDet.onerror = () => {
     try {
@@ -1552,18 +1575,15 @@ async function refreshStatus(force = false) {
 
   appDebug = !!r.debug;
 
+  // Auth Providers Connected or not connected
   const pb = document.getElementById("badge-plex");
-
   const sb = document.getElementById("badge-simkl");
 
   pb.className = "badge " + (r.plex_connected ? "ok" : "no");
-
   pb.innerHTML = `<span class="dot ${
     r.plex_connected ? "ok" : "no"
   }"></span>Plex: ${r.plex_connected ? "Connected" : "Not connected"}`;
-
   sb.className = "badge " + (r.simkl_connected ? "ok" : "no");
-
   sb.innerHTML = `<span class="dot ${
     r.simkl_connected ? "ok" : "no"
   }"></span>SIMKL: ${r.simkl_connected ? "Connected" : "Not connected"}`;
@@ -1596,266 +1616,186 @@ async function refreshStatus(force = false) {
 /* ====== Config & Settings ====== */
 
 async function loadConfig() {
-  const cfg = await fetch("/api/config", { cache: "no-store" }).then((r) =>
-    r.json()
-  );
-  try {
-    window._cfgCache = cfg;
-    updateSimklButtonState(cfg);
-  } catch (_) {}
+  const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
 
-  try {
-    window._cfgCache = cfg;
-    updateSimklButtonState(cfg);
-  } catch (_) {}
+  // cache once
+  window._cfgCache = cfg;
 
-  try {
-    window._cfgCache = cfg;
-  } catch (_) {}
-  try {
-    updateSimklButtonState(cfg);
-  } catch (_) {}
-  // Sync Options
-
-  _setVal("mode", cfg.sync?.bidirectional?.mode || "two-way");
-
+  // ---- Sync Options
+  _setVal("mode",   cfg.sync?.bidirectional?.mode || "two-way");
   _setVal("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
 
-  // Troubleshoot / Runtime
-
+  // ---- Troubleshoot / Runtime
   _setVal("debug", String(!!cfg.runtime?.debug));
 
-  // Auth / Keys
-
-  setValIfExists("plex_token", cfg.plex?.account_token || "");
-  setValIfExists("simkl_client_id", cfg.simkl?.client_id || "");
+  // ---- Auth / Keys (populate inputs FIRST)
+  setValIfExists("plex_token",        cfg.plex?.account_token || "");
+  setValIfExists("simkl_client_id",   cfg.simkl?.client_id     || "");
   setValIfExists("simkl_client_secret", cfg.simkl?.client_secret || "");
-  setValIfExists("simkl_access_token", cfg.simkl?.access_token || "");
-  setValIfExists("tmdb_api_key", cfg.tmdb?.api_key || "");
+  setValIfExists("simkl_access_token",  cfg.simkl?.access_token  || "");
+  setValIfExists("tmdb_api_key",      cfg.tmdb?.api_key        || "");
 
-  // Scheduling (pull from /api/config so the same source drives the UI)
-
+  // ---- Scheduling (drive UI from same source)
   const s = cfg.scheduling || {};
-
   _setVal("schEnabled", String(!!s.enabled));
-
-  _setVal("schMode", typeof s.mode === "string" && s.mode ? s.mode : "hourly");
-
-  _setVal(
-    "schN",
-    Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "2"
-  );
-
-  _setVal(
-    "schTime",
-    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30"
-  );
-
-  // Optional timezone field if you add an <input id="schTz">
-
+  _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
+  _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "2");
+  _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
-  // keep your existing hints
-
-  updateSimklButtonState?.();
-  updateSimklHint?.();
-  updateTmdbHint?.();
+  // ---- After inputs are set, update button/hints (read from inputs!)
+  try { updateSimklButtonState(); } catch {}
+  try { updateSimklHint?.();      } catch {}
+  try { updateTmdbHint?.();       } catch {}
 }
 
 // Save settings back to server
 
+// helper used below
+function _getVal(id) {
+  const el = document.getElementById(id);
+  return (el && typeof el.value === "string" ? el.value : "").trim();
+}
+
 async function saveSettings() {
-  const uiPlexToken = _val("plex_account_token") || _val("plex_token");
-  const uiCid = _val("simkl_client_id");
-  const uiSec = _val("simkl_client_secret");
-  const uiTmdb = _val("tmdb_api_key");
-
   const toast = document.getElementById("save_msg");
-
   const showToast = (text, ok = true) => {
     if (!toast) return;
-
     toast.classList.remove("hidden", "ok", "warn");
-
     toast.classList.add(ok ? "ok" : "warn");
-
     toast.textContent = text;
-
-    // keep it visible long enough to read
-
     setTimeout(() => toast.classList.add("hidden"), 2000);
   };
 
   try {
-    // 1) Pull current server config and clone
-
-    const serverResp = await fetch("/api/config");
-
+    // 1) Pull current server config (fresh) and clone
+    const serverResp = await fetch("/api/config", { cache: "no-store" });
     if (!serverResp.ok) throw new Error(`GET /api/config ${serverResp.status}`);
-
     const serverCfg = await serverResp.json();
-
     const cfg =
       typeof structuredClone === "function"
         ? structuredClone(serverCfg)
         : JSON.parse(JSON.stringify(serverCfg || {}));
 
+    const norm = (s) => (s ?? "").trim();
     let changed = false;
 
     // --- SYNC ---
-
-    const uiMode = _getVal("mode");
-
+    const uiMode   = _getVal("mode");
     const uiSource = _getVal("source");
-
-    const prevMode = serverCfg?.sync?.bidirectional?.mode || "two-way";
-
-    const prevSource =
-      serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
+    const prevMode   = serverCfg?.sync?.bidirectional?.mode || "two-way";
+    const prevSource = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
 
     if (uiMode !== prevMode) {
       cfg.sync = cfg.sync || {};
       cfg.sync.bidirectional = cfg.sync.bidirectional || {};
-
       cfg.sync.bidirectional.mode = uiMode;
       changed = true;
     }
-
     if (uiSource !== prevSource) {
       cfg.sync = cfg.sync || {};
       cfg.sync.bidirectional = cfg.sync.bidirectional || {};
-
       cfg.sync.bidirectional.source_of_truth = uiSource;
       changed = true;
     }
 
     // --- RUNTIME ---
-
-    const uiDebug = _getVal("debug") === "true";
-
+    const uiDebug  = _getVal("debug") === "true";
     const prevDebug = !!serverCfg?.runtime?.debug;
-
     if (uiDebug !== prevDebug) {
       cfg.runtime = cfg.runtime || {};
-
       cfg.runtime.debug = uiDebug;
       changed = true;
     }
 
-    // --- PLEX ---
+    // --- READ UI VALUES (define them!) ---
+    const uiPlexToken = _getVal("plex_token");
+    const uiCid       = _getVal("simkl_client_id");
+    const uiSec       = _getVal("simkl_client_secret");
+    const uiTmdb      = _getVal("tmdb_api_key");
 
-    setValIfExists("plex_token", cfg.plex?.account_token || "");
-    const prevPlexTok = serverCfg?.plex?.account_token || "";
-
-    if (uiPlexToken && uiPlexToken !== prevPlexTok) {
+    // --- PLEX (allow clearing) ---
+    const prevPlex = norm(serverCfg?.plex?.account_token);
+    const newPlex  = norm(uiPlexToken);
+    if (newPlex !== prevPlex) {
       cfg.plex = cfg.plex || {};
-
-      cfg.plex.account_token = uiPlexToken;
+      if (newPlex) cfg.plex.account_token = newPlex;
+      else delete cfg.plex.account_token;
       changed = true;
     }
 
-    // --- SIMKL ---
+    // --- SIMKL (allow clearing) ---
+    const prevCid = norm(serverCfg?.simkl?.client_id);
+    const prevSec = norm(serverCfg?.simkl?.client_secret);
+    const newCid  = norm(uiCid);
+    const newSec  = norm(uiSec);
 
-    setValIfExists("simkl_client_id", cfg.simkl?.client_id || "");
-    setValIfExists("simkl_client_secret", cfg.simkl?.client_secret || "");
-    const prevCid = serverCfg?.simkl?.client_id || "";
-
-    const prevSec = serverCfg?.simkl?.client_secret || "";
-
-    if (uiCid && uiCid !== prevCid) {
+    if (newCid !== prevCid) {
       cfg.simkl = cfg.simkl || {};
-      cfg.simkl.client_id = uiCid;
+      if (newCid) cfg.simkl.client_id = newCid;
+      else delete cfg.simkl.client_id;
       changed = true;
     }
-
-    if (uiSec && uiSec !== prevSec) {
+    if (newSec !== prevSec) {
       cfg.simkl = cfg.simkl || {};
-      cfg.simkl.client_secret = uiSec;
+      if (newSec) cfg.simkl.client_secret = newSec;
+      else delete cfg.simkl.client_secret;
       changed = true;
     }
 
-    // --- TMDb ---
-
-    setValIfExists("tmdb_api_key", cfg.tmdb?.api_key || "");
-    const prevTmdb = serverCfg?.tmdb?.api_key || "";
-
-    if (uiTmdb && uiTmdb !== prevTmdb) {
+    // --- TMDb (allow clearing) ---
+    const prevTmdb = norm(serverCfg?.tmdb?.api_key);
+    const newTmdb  = norm(uiTmdb);
+    if (newTmdb !== prevTmdb) {
       cfg.tmdb = cfg.tmdb || {};
-      cfg.tmdb.api_key = uiTmdb;
+      if (newTmdb) cfg.tmdb.api_key = newTmdb;
+      else delete cfg.tmdb.api_key;
       changed = true;
     }
 
-    // 2) Save updated config (only if changed)
-
+    // Save updated config (only if changed)
     if (changed) {
       const postCfg = await fetch("/api/config", {
         method: "POST",
-
         headers: { "Content-Type": "application/json" },
-
         body: JSON.stringify(cfg),
       });
-
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
+
+      // Re-read to reflect source of truth (prevents UI showing stale values)
+      try { await loadConfig(); } catch {}
     }
 
-    // 3) Save scheduling
-
+    // 3) Save scheduling (best-effort)
     try {
       const schPayload = {
         enabled: _getVal("schEnabled") === "true",
-
         mode: _getVal("schMode"),
-
         every_n_hours: parseInt(_getVal("schN") || "2", 10),
-
         daily_time: _getVal("schTime") || "03:30",
-
-        timezone: (_val("schTz") || "").trim() || undefined,
+        timezone: (_getVal("schTz") || "") || undefined, // fixed _val -> _getVal
       };
-
       const postSch = await fetch("/api/scheduling", {
         method: "POST",
-
         headers: { "Content-Type": "application/json" },
-
         body: JSON.stringify(schPayload),
       });
-
-      if (!postSch.ok)
-        throw new Error(`POST /api/scheduling ${postSch.status}`);
+      if (!postSch.ok) throw new Error(`POST /api/scheduling ${postSch.status}`);
     } catch (e) {
       console.warn("saveSettings: scheduling failed", e);
     }
 
-    // 4) Refresh UI pieces
-
-    try {
-      await refreshStatus(true);
-    } catch {}
-
-    try {
-      updateTmdbHint?.();
-    } catch {}
-
-    try {
-      updateSimklState?.();
-    } catch {}
-
-    try {
-      await updateWatchlistTabVisibility?.();
-    } catch {}
-
-    try {
-      await loadScheduling?.();
-    } catch {}
+    // 4) Refresh UI pieces (best-effort)
+    try { await refreshStatus(true); } catch {}
+    try { updateTmdbHint?.(); } catch {}
+    try { updateSimklState?.(); } catch {}
+    try { await updateWatchlistTabVisibility?.(); } catch {}
+    try { await loadScheduling?.(); } catch {}
 
     // 5) Success toast
-
     showToast("Settings saved ✓", true);
   } catch (err) {
     console.error("saveSettings failed", err);
-
     showToast("Save failed — see console", false);
   }
 }
@@ -1990,32 +1930,28 @@ function refreshSchedulingBanner() {
 }
 
 /* Troubleshooting actions */
-
 async function clearState() {
   const btnText = "Clear State";
-
   try {
-    const r = await fetch("/api/troubleshoot/reset-state", { method: "POST" });
-
+    const r = await fetch("/api/troubleshoot/reset-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "clear_both" }) // state + tombstones
+    });
     const j = await r.json();
-
     const m = document.getElementById("tb_msg");
-
     m.classList.remove("hidden");
     m.textContent = j.ok ? btnText + " – started ✓" : btnText + " – failed";
-
     setTimeout(() => m.classList.add("hidden"), 1600);
+    console.log("Reset:", j);
   } catch (_) {}
 }
 
 async function clearCache() {
   const btnText = "Clear Cache";
-
   try {
     const r = await fetch("/api/troubleshoot/clear-cache", { method: "POST" });
-
     const j = await r.json();
-
     const m = document.getElementById("tb_msg");
 
     m.classList.remove("hidden");
@@ -2030,13 +1966,10 @@ async function resetStats() {
 
   try {
     const r = await fetch("/api/troubleshoot/reset-stats", { method: "POST" });
-
     const j = await r.json();
-
     const m = document.getElementById("tb_msg");
 
     m.classList.remove("hidden");
-
     m.textContent = j.ok
       ? btnText + " – done ✓"
       : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
@@ -2048,7 +1981,6 @@ async function resetStats() {
     const m = document.getElementById("tb_msg");
 
     m.classList.remove("hidden");
-
     m.textContent = btnText + " – failed (network)";
 
     setTimeout(() => m.classList.add("hidden"), 2200);
@@ -2218,30 +2150,16 @@ function isPlaceholder(v, ph) {
   return (v || "").trim().toUpperCase() === ph.toUpperCase();
 }
 
-function updateSimklButtonState(cfgOpt) {
+function updateSimklButtonState() {
   try {
-    const cfg = cfgOpt || window._cfgCache || {};
-    const cid = (
-      document.getElementById("simkl_client_id")?.value ||
-      cfg.simkl?.client_id ||
-      ""
-    ).trim();
-    const sec = (
-      document.getElementById("simkl_client_secret")?.value ||
-      cfg.simkl?.client_secret ||
-      ""
-    ).trim();
-    const btn = document.getElementById("simkl_start_btn");
+    const cid  = (document.getElementById("simkl_client_id")?.value || "").trim();
+    const sec  = (document.getElementById("simkl_client_secret")?.value || "").trim();
+    const btn  = document.getElementById("simkl_start_btn");
     const hint = document.getElementById("simkl_hint");
-    const rid = document.getElementById("redirect_uri_preview");
-
+    const rid  = document.getElementById("redirect_uri_preview");
     if (rid) rid.textContent = location.origin + "/callback";
-
-    const badCid = !cid || cid.toUpperCase() === "YOUR_SIMKL_CLIENT_ID";
-    const badSec = !sec || sec.toUpperCase() === "YOUR_SIMKL_CLIENT_SECRET";
-    const ok = !(badCid || badSec);
-
-    if (btn) btn.disabled = !ok;
+    const ok = cid.length > 0 && sec.length > 0;
+    if (btn)  btn.disabled = !ok;
     if (hint) hint.classList.toggle("hidden", ok);
   } catch (e) {
     console.warn("updateSimklButtonState failed", e);
@@ -2254,99 +2172,89 @@ async function copyRedirect() {
   } catch (_) {}
 }
 
+// --- helpers (SIMKL flow)) ---
+function isSettingsVisible() {
+  const el = document.getElementById("page-settings");
+  return !!(el && !el.classList.contains("hidden"));
+}
+function setBtnBusy(id, busy) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.disabled = !!busy;
+  el.classList.toggle("opacity-50", !!busy);
+}
+
+// Globale refs for timers
+let simklPollTimer = null;
+let simklCountdownTimer = null;
+
+// --- SIMKL-connect flow (max 2 min) ---
 async function startSimkl() {
-  setSimklSuccess(false);
-  await saveSettings();
+  // mirror your old semantics
+  try { setSimklSuccess && setSimklSuccess(false); } catch (_) {}
+  if (typeof saveSettings === "function") {
+    try { await saveSettings(); } catch (_) {}
+  }
 
   const origin = window.location.origin;
-  const r = await fetch("/api/simkl/authorize", {
+  const j = await fetch("/api/simkl/authorize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ origin }),
-  });
+    cache: "no-store",
+  }).then(r => r.json()).catch(() => null);
 
-  const j = await r.json();
-  if (!j.ok) {
-    return;
-  }
+  if (!j?.ok || !j.authorize_url) return;
 
+  // open consent tab
   window.open(j.authorize_url, "_blank");
 
-  if (simklPoll) {
-    clearInterval(simklPoll);
-  }
+  // clear any previous poll
+  if (simklPoll) { clearTimeout(simklPoll); simklPoll = null; }
 
-  let ticks = 0;
+  const MAX_MS = 120000; // 2 minutes
+  const deadline = Date.now() + MAX_MS;
+  const backoff = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
+  let i = 0;
 
-  simklPoll = setInterval(async () => {
-    ticks++;
+  const poll = async () => {
+    // hard stop on timeout
+    if (Date.now() >= deadline) { simklPoll = null; return; }
 
-    const cfg = await fetch("/api/config")
-      .then((r) => r.json())
-      .catch(() => null);
-
-    const tok = cfg?.simkl?.access_token || "";
-
-    if (tok) {
-      setValIfExists("simkl_access_token", cfg.simkl?.access_token || "");
-      clearInterval(simklPoll);
+    // be nice when not visible / settings closed
+    const settingsVisible = !!(document.getElementById("page-settings") && !document.getElementById("page-settings").classList.contains("hidden"));
+    if (document.hidden || !settingsVisible) {
+      simklPoll = setTimeout(poll, 5000);
+      return;
     }
 
-    if (ticks > 600) {
-      clearInterval(simklPoll);
-    }
-  }, 1000);
-}
-
-// triggered by a real click only
-
-async function copyInputValue(inputId, btnEl) {
-  const el = document.getElementById(inputId);
-
-  const val = el?.value?.trim() || "";
-
-  if (!val) return;
-
-  try {
-    // Modern, secure-context path (localhost/127.0.0.1 is ok in moderne browsers)
-
-    flashBtnOK(btnEl);
-  } catch (e) {
-    // Fallback for older/locked-down contexts
-
-    const ta = document.createElement("textarea");
-
-    ta.value = val;
-
-    ta.setAttribute("readonly", "");
-
-    ta.style.position = "fixed";
-
-    ta.style.opacity = "0";
-
-    document.body.appendChild(ta);
-
-    ta.select();
-
+    let cfg = null;
     try {
-      document.execCommand("copy");
-      flashBtnOK(btnEl);
+      cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
     } catch (_) {}
 
-    document.body.removeChild(ta);
-  }
+    const tok = cfg?.simkl?.access_token || "";
+    if (tok) {
+      try { setValIfExists && setValIfExists("simkl_access_token", tok); } catch (_) {}
+      simklPoll = null;
+      return;
+    }
+
+    const delay = backoff[Math.min(i, backoff.length - 1)];
+    i++;
+    simklPoll = setTimeout(poll, delay);
+  };
+
+  // first tick
+  simklPoll = setTimeout(poll, 1000);
 }
 
 function flashBtnOK(btnEl) {
   if (!btnEl) return;
-
   btnEl.disabled = true;
-
   btnEl.classList.add("copied"); // optional style hook
-
   setTimeout(() => {
     btnEl.classList.remove("copied");
-
     btnEl.disabled = false;
   }, 700);
 }
@@ -2431,7 +2339,9 @@ function artUrl(item, size) {
   const tmdb = item.tmdb;
   if (!tmdb) return null;
   const cb = window._lastSyncEpoch || 0;
-  return `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size || "w342")}&cb=${cb}`;
+  return `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(
+    size || "w342"
+  )}&cb=${cb}`;
 }
 
 async function loadWall() {
@@ -2885,22 +2795,25 @@ async function deletePoster(ev, encKey, btnEl) {
   }
 }
 
-/* ====== Watchlist preview visibility ====== */
+/* ====== Watchlist preview visibility (fixed) ====== */
 
 async function updateWatchlistPreview() {
-  await loadWatchlist();
+  try {
+    await loadWall();
+    window.wallLoaded = true;
+  } catch (e) {
+    console.error("Failed to update watchlist preview:", e);
+  }
 }
 
 async function updateWatchlistTabVisibility() {
   try {
     const cfg = await fetch("/api/config").then((r) => r.json());
-
     const tmdbKey = (cfg.tmdb?.api_key || "").trim();
-
     document.getElementById("tab-watchlist").style.display = tmdbKey
       ? "block"
       : "none";
-  } catch (e) {
+  } catch {
     document.getElementById("tab-watchlist").style.display = "none";
   }
 }
@@ -2909,7 +2822,7 @@ async function hasTmdbKey() {
   try {
     const cfg = await fetch("/api/config").then((r) => r.json());
     return !!(cfg.tmdb?.api_key || "").trim();
-  } catch (_) {
+  } catch {
     return false;
   }
 }
@@ -2920,7 +2833,6 @@ function isOnMain() {
 
 async function updatePreviewVisibility() {
   const card = document.getElementById("placeholder-card");
-
   const row = document.getElementById("poster-row");
 
   if (!isOnMain()) {
@@ -2929,25 +2841,20 @@ async function updatePreviewVisibility() {
   }
 
   const show = await hasTmdbKey();
-
   if (!show) {
     card.classList.add("hidden");
-
     if (row) {
       row.innerHTML = "";
       row.classList.add("hidden");
     }
-
     window.wallLoaded = false;
     return false;
   } else {
     card.classList.remove("hidden");
-
     if (!window.wallLoaded) {
-      await loadWall();
+      await loadWall(); // fetch posters from /api/state/wall
       window.wallLoaded = true;
     }
-
     return true;
   }
 }
@@ -2957,6 +2864,15 @@ async function updatePreviewVisibility() {
 showTab("main");
 
 updateWatchlistTabVisibility();
+
+// make sure wall can load on first paint
+window.wallLoaded = false;
+
+document.addEventListener("DOMContentLoaded", () => {
+  try {
+    updatePreviewVisibility();
+  } catch (_) {}
+});
 
 window.addEventListener("storage", (event) => {
   if (event.key === "wl_hidden") {
@@ -2980,7 +2896,6 @@ async function resolvePosterUrl(entity, id, size = "w342") {
   // Just build the proxy URL, backend serves the file
   return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
 }
-
 
 // Dynamically load auth provider HTML
 
@@ -3050,36 +2965,47 @@ try {
 if (typeof updateSimklHint !== "function") {
   function updateSimklHint() {}
 }
+
+// Plex token poll
 function startPlexTokenPoll() {
-  try {
-    if (plexPoll) {
-      clearInterval(plexPoll);
+  try { if (plexPoll) clearTimeout(plexPoll); } catch (_) {}
+  const MAX_MS = 120000; // 2 minutes
+  const deadline = Date.now() + MAX_MS;
+  const backoff = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
+  let i = 0;
+
+  const poll = async () => {
+    if (Date.now() >= deadline) { plexPoll = null; return; }
+
+    // be nice when hidden
+    const settingsVisible = !!(document.getElementById("page-settings") && !document.getElementById("page-settings").classList.contains("hidden"));
+    if (document.hidden || !settingsVisible) {
+      plexPoll = setTimeout(poll, 5000);
+      return;
     }
-  } catch (_) {}
-  let ticks = 0;
-  plexPoll = setInterval(async () => {
-    ticks++;
+
     let cfg = null;
     try {
-      cfg = await fetch("/api/config", { cache: "no-store" }).then((r) =>
-        r.json()
-      );
+      cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
     } catch (_) {}
+
     const tok = cfg?.plex?.account_token || "";
     if (tok) {
       try {
         const el = document.getElementById("plex_token");
         if (el) el.value = tok;
       } catch (_) {}
-      try {
-        setPlexSuccess && setPlexSuccess(true);
-      } catch (_) {}
-      clearInterval(plexPoll);
+      try { setPlexSuccess && setPlexSuccess(true); } catch (_) {}
+      plexPoll = null;
+      return;
     }
-    if (ticks > 360) {
-      clearInterval(plexPoll);
-    }
-  }, 1000);
+
+    const delay = backoff[Math.min(i, backoff.length - 1)];
+    i++;
+    plexPoll = setTimeout(poll, delay);
+  };
+
+  plexPoll = setTimeout(poll, 1000);
 }
 
 // ---- Expose functions globally for inline onclick handlers ----
@@ -3348,7 +3274,9 @@ function renderConnections() {
 
   // Build pairs board (with fast id lookup for editor)
   window._pairsById = Object.create(null);
-  (pairs || []).forEach(p => { window._pairsById[String(p.id)] = p; });
+  (pairs || []).forEach((p) => {
+    window._pairsById[String(p.id)] = p;
+  });
 
   const pairCards = (pairs || [])
     .map((pr) => {
@@ -3357,14 +3285,28 @@ function renderConnections() {
       const enabled = pr.enabled !== false;
       const mode = (pr.mode || "one-way").toUpperCase();
       return `<div class="pair-card" draggable="true" data-id="${pr.id}">
-        <div class="line"><span class="pill src">${pr.source}</span><span class="arrow">→</span><span class="pill dst">${pr.target}</span><span class="mode">${mode}</span></div>
+        <div class="line"><span class="pill src">${
+          pr.source
+        }</span><span class="arrow">→</span><span class="pill dst">${
+        pr.target
+      }</span><span class="mode">${mode}</span></div>
         <div class="line small"><span class="feat">Watchlist: <strong>${wl}</strong></span></div>
         <div class="actions">
-          <label class="switch"><input type="checkbox" ${enabled ? "checked" : ""} onchange="cxToggleEnable('${pr.id}', this.checked)"><span></span></label>
+          <label class="switch"><input type="checkbox" ${
+            enabled ? "checked" : ""
+          } onchange="cxToggleEnable('${
+        pr.id
+      }', this.checked)"><span></span></label>
           <button class="btn" onclick="cxEditPair('${pr.id}')">Edit</button>
-          <button class="btn danger" onclick="deletePair('${pr.id}')">Delete</button>
-          <button class="btn ghost" title="Move first" onclick="movePair('${pr.id}','first')">⏮</button>
-          <button class="btn ghost" title="Move last"  onclick="movePair('${pr.id}','last')">⏭</button>
+          <button class="btn danger" onclick="deletePair('${
+            pr.id
+          }')">Delete</button>
+          <button class="btn ghost" title="Move first" onclick="movePair('${
+            pr.id
+          }','first')">⏮</button>
+          <button class="btn ghost" title="Move last"  onclick="movePair('${
+            pr.id
+          }','last')">⏭</button>
         </div>
       </div>`;
     })
@@ -3373,18 +3315,24 @@ function renderConnections() {
   const board = `<div class="cx-grid">${cards}</div>
     <div class="sep"></div>
     <div class="sub">Configured Connections</div>
-    <div class="pairs-board">${pairCards || '<div class="muted">No connections configured yet.</div>'}</div>`;
+    <div class="pairs-board">${
+      pairCards || '<div class="muted">No connections configured yet.</div>'
+    }</div>`;
 
   host.innerHTML = board;
 
   // kill old dock style if it was injected earlier
-  document.getElementById('cx-dock-style')?.remove();
+  document.getElementById("cx-dock-style")?.remove();
 
   /* ==== Horizontal layout + drag-to-reorder (no dock) ==== */
   (() => {
     // Compact CSS override (no extra UI)
-    let s = document.getElementById('cx-align-style');
-    if (!s) { s = document.createElement('style'); s.id = 'cx-align-style'; document.head.appendChild(s); }
+    let s = document.getElementById("cx-align-style");
+    if (!s) {
+      s = document.createElement("style");
+      s.id = "cx-align-style";
+      document.head.appendChild(s);
+    }
     s.textContent = `
       .pairs-board{display:flex;flex-direction:row;align-items:stretch;gap:12px;overflow-x:auto;padding:8px 2px}
       .pairs-board .pair-card{flex:0 0 280px;width:280px;min-width:280px;min-height:unset;padding:10px 12px;margin:0;cursor:grab}
@@ -3392,23 +3340,25 @@ function renderConnections() {
       .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.15);color:#cfd6ff;padding:6px 10px;border-radius:10px}
     `;
 
-    const row = host.querySelector('.pairs-board');
+    const row = host.querySelector(".pairs-board");
     if (!row) return;
 
     let dragging = null;
 
-    row.addEventListener('dragstart', e => {
-      const card = e.target.closest('.pair-card'); if (!card) return;
-      dragging = card; card.classList.add('dragging');
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    row.addEventListener("dragstart", (e) => {
+      const card = e.target.closest(".pair-card");
+      if (!card) return;
+      dragging = card;
+      card.classList.add("dragging");
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
     });
 
-    row.addEventListener('dragend', () => {
-      if (dragging) dragging.classList.remove('dragging');
+    row.addEventListener("dragend", () => {
+      if (dragging) dragging.classList.remove("dragging");
       dragging = null;
     });
 
-    row.addEventListener('dragover', e => {
+    row.addEventListener("dragover", (e) => {
       if (!dragging) return;
       e.preventDefault();
       const after = getAfter(row, e.clientX);
@@ -3416,44 +3366,62 @@ function renderConnections() {
       else row.insertBefore(dragging, after);
     });
 
-    row.addEventListener('drop', () => commitOrder(row));
+    row.addEventListener("drop", () => commitOrder(row));
 
-    function getAfter(container, x){
-      const els = [...container.querySelectorAll('.pair-card:not(.dragging)')];
-      let closest = null, closestOffset = Number.NEGATIVE_INFINITY;
-      for (const el of els){
+    function getAfter(container, x) {
+      const els = [...container.querySelectorAll(".pair-card:not(.dragging)")];
+      let closest = null,
+        closestOffset = Number.NEGATIVE_INFINITY;
+      for (const el of els) {
         const r = el.getBoundingClientRect();
         const offset = x - (r.left + r.width / 2);
-        if (offset < 0 && offset > closestOffset){ closestOffset = offset; closest = el; }
+        if (offset < 0 && offset > closestOffset) {
+          closestOffset = offset;
+          closest = el;
+        }
       }
       return closest;
     }
 
-    function rebuildIndex(){
+    function rebuildIndex() {
       window._pairsById = Object.create(null);
-      (pairs || []).forEach(p => { window._pairsById[String(p.id)] = p; });
+      (pairs || []).forEach((p) => {
+        window._pairsById[String(p.id)] = p;
+      });
     }
 
-    function commitOrder(container){
-      const ids = [...container.querySelectorAll('.pair-card')].map(el => String(el.dataset.id));
-      pairs.sort((a,b) => ids.indexOf(String(a.id)) - ids.indexOf(String(b.id)));
+    function commitOrder(container) {
+      const ids = [...container.querySelectorAll(".pair-card")].map((el) =>
+        String(el.dataset.id)
+      );
+      pairs.sort(
+        (a, b) => ids.indexOf(String(a.id)) - ids.indexOf(String(b.id))
+      );
       rebuildIndex();
-      try { typeof savePairs === 'function' && savePairs(pairs); } catch(_) {}
-      try { typeof renderConnections === 'function' && renderConnections(); } catch(_) {}
+      try {
+        typeof savePairs === "function" && savePairs(pairs);
+      } catch (_) {}
+      try {
+        typeof renderConnections === "function" && renderConnections();
+      } catch (_) {}
     }
 
     // click helpers remain
-    window.movePair = function(id, where){
-      const i = pairs.findIndex(p => String(p.id) === String(id)); if (i < 0) return;
-      const [item] = pairs.splice(i,1);
-      if (where === 'first') pairs.unshift(item);
-      else if (where === 'last') pairs.push(item);
+    window.movePair = function (id, where) {
+      const i = pairs.findIndex((p) => String(p.id) === String(id));
+      if (i < 0) return;
+      const [item] = pairs.splice(i, 1);
+      if (where === "first") pairs.unshift(item);
+      else if (where === "last") pairs.push(item);
       rebuildIndex();
-      try { typeof savePairs === 'function' && savePairs(pairs); } catch(_) {}
-      try { typeof renderConnections === 'function' && renderConnections(); } catch(_) {}
+      try {
+        typeof savePairs === "function" && savePairs(pairs);
+      } catch (_) {}
+      try {
+        typeof renderConnections === "function" && renderConnections();
+      } catch (_) {}
     };
   })();
-
 
   // Ensure modal is in DOM
   function cxCloseModal() {
@@ -3809,41 +3777,56 @@ function renderConnections() {
     .pairs-board .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.15);color:#cfd6ff;padding:6px 10px;border-radius:10px}
     `;
-    let s = document.getElementById('cx-align-style');
-    if (!s) { s = document.createElement('style'); s.id = 'cx-align-style'; document.head.appendChild(s); }
+    let s = document.getElementById("cx-align-style");
+    if (!s) {
+      s = document.createElement("style");
+      s.id = "cx-align-style";
+      document.head.appendChild(s);
+    }
     s.textContent = css;
   })();
 
   // --- ensure cxEditPair exists (global, works with module too)
-  (function ensureCxEditPair(){
-    if (typeof window.cxEditPair === 'function') return;
+  (function ensureCxEditPair() {
+    if (typeof window.cxEditPair === "function") return;
 
-    function editPairById(id){
+    function editPairById(id) {
       id = String(id);
       // try fast index → state → DOM data
-      const pairs = (window.cx && Array.isArray(window.cx.pairs)) ? window.cx.pairs : [];
-      const byId  = (window._pairsById && window._pairsById[id]) || pairs.find(p => String(p.id) === id);
+      const pairs =
+        window.cx && Array.isArray(window.cx.pairs) ? window.cx.pairs : [];
+      const byId =
+        (window._pairsById && window._pairsById[id]) ||
+        pairs.find((p) => String(p.id) === id);
 
-      const pair = byId || (function(){
-        // fallback: try to read from the card dataset if present
-        const el = document.querySelector(`.pair-card[data-id="${id}"]`);
-        if (!el) return null;
-        return { id, source: el.dataset.source, target: el.dataset.target, mode: el.dataset.mode || 'one-way' };
-      })();
+      const pair =
+        byId ||
+        (function () {
+          // fallback: try to read from the card dataset if present
+          const el = document.querySelector(`.pair-card[data-id="${id}"]`);
+          if (!el) return null;
+          return {
+            id,
+            source: el.dataset.source,
+            target: el.dataset.target,
+            mode: el.dataset.mode || "one-way",
+          };
+        })();
 
-      if (!pair) { console.warn('[cxEditPair] pair not found:', id); return; }
+      if (!pair) {
+        console.warn("[cxEditPair] pair not found:", id);
+        return;
+      }
 
-      if (typeof openPairModal === 'function')      openPairModal(pair);
-      else if (typeof cxOpenModalFor === 'function') cxOpenModalFor(pair);
-      else alert('Pair editor not wired.');
+      if (typeof openPairModal === "function") openPairModal(pair);
+      else if (typeof cxOpenModalFor === "function") cxOpenModalFor(pair);
+      else alert("Pair editor not wired.");
     }
 
     // expose
     window.cxEditPair = editPairById;
   })();
 
-
-  
   function _hideLegacyPairsUIHard() {
     try {
       // Hide legacy Pairs containers if present
@@ -4002,13 +3985,20 @@ function renderConnections() {
 
 (function () {
   // Ensure global namespace
-  window.cx = window.cx || { providers: [], pairs: [], connect: { source: null, target: null } };
+  window.cx = window.cx || {
+    providers: [],
+    pairs: [],
+    connect: { source: null, target: null },
+  };
 
   // Helper: get modal and stash/read editing id
   function _getModal() {
     var m = document.getElementById("cx-modal");
     if (!m && typeof window.cxEnsureCfgModal === "function") {
-      try { window.cxEnsureCfgModal(); m = document.getElementById("cx-modal"); } catch (_) {}
+      try {
+        window.cxEnsureCfgModal();
+        m = document.getElementById("cx-modal");
+      } catch (_) {}
     }
     return m;
   }
@@ -4020,13 +4010,17 @@ function renderConnections() {
       const arr = await res.json().catch(() => []);
       window.cx.pairs = Array.isArray(arr) ? arr : [];
       if (typeof window.renderConnections === "function") {
-        try { window.renderConnections(); } catch (_) {}
+        try {
+          window.renderConnections();
+        } catch (_) {}
       }
     } catch (e) {
       console.warn("[cx] loadPairs failed", e);
     }
   }
-  try { window.loadPairs = loadPairs; } catch (_) {}
+  try {
+    window.loadPairs = loadPairs;
+  } catch (_) {}
 
   // Expose: deletePair(id) -> DELETE then refresh
   async function deletePair(id) {
@@ -4039,19 +4033,29 @@ function renderConnections() {
       alert("Failed to delete connection.");
     }
   }
-  try { window.deletePair = deletePair; } catch (_) {}
+  try {
+    window.deletePair = deletePair;
+  } catch (_) {}
 
   // Expose: cxSavePair(data) -> POST/PUT and refresh
   async function cxSavePair(data) {
     try {
       const modal = _getModal();
-      const editingId = modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
+      const editingId =
+        modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
 
       // Gentle client-side dupe guard (for creates only)
-      if (!editingId && Array.isArray(window.cx.pairs) && window.cx.pairs.some(
-        (x) => String(x.source || "").toUpperCase() === String(data.source || "").toUpperCase() &&
-               String(x.target || "").toUpperCase() === String(data.target || "").toUpperCase()
-      )) {
+      if (
+        !editingId &&
+        Array.isArray(window.cx.pairs) &&
+        window.cx.pairs.some(
+          (x) =>
+            String(x.source || "").toUpperCase() ===
+              String(data.source || "").toUpperCase() &&
+            String(x.target || "").toUpperCase() ===
+              String(data.target || "").toUpperCase()
+        )
+      ) {
         alert("This connection already exists.");
         return;
       }
@@ -4066,7 +4070,8 @@ function renderConnections() {
         features: { watchlist: { add: !!wl.add, remove: !!wl.remove } },
       };
 
-      let ok = false, r;
+      let ok = false,
+        r;
       if (editingId) {
         r = await fetch(`/api/pairs/${encodeURIComponent(editingId)}`, {
           method: "PUT",
@@ -4092,8 +4097,12 @@ function renderConnections() {
 
       // Clear editing id & close
       if (modal && modal.dataset) modal.dataset.editingId = "";
-      try { window.cx.connect = { source: null, target: null }; } catch (_) {}
-      try { if (typeof window.cxCloseModal === "function") window.cxCloseModal(); } catch (_) {}
+      try {
+        window.cx.connect = { source: null, target: null };
+      } catch (_) {}
+      try {
+        if (typeof window.cxCloseModal === "function") window.cxCloseModal();
+      } catch (_) {}
       const close = document.getElementById("cx-modal");
       if (close) close.classList.add("hidden");
 
@@ -4103,14 +4112,18 @@ function renderConnections() {
       alert("Failed to save connection.");
     }
   }
-  try { window.cxSavePair = cxSavePair; } catch (_) {}
+  try {
+    window.cxSavePair = cxSavePair;
+  } catch (_) {}
 
   // Override: cxOpenModalFor -> sets dataset.editingId and pre-fills fields
   const _olderOpen = window.cxOpenModalFor;
   window.cxOpenModalFor = function (pair, editingId) {
     // Try existing behavior first to keep UI in sync
     if (typeof _olderOpen === "function") {
-      try { _olderOpen(pair, editingId); } catch (_) {}
+      try {
+        _olderOpen(pair, editingId);
+      } catch (_) {}
     } else {
       // Minimal fallback prefill (in case earlier versions differ)
       const m = _getModal();
@@ -4118,18 +4131,25 @@ function renderConnections() {
       try {
         var src = document.getElementById("cx-src");
         var dst = document.getElementById("cx-dst");
-        var one = document.querySelector('input[name="cx-mode"][value="one-way"]');
-        var two = document.querySelector('input[name="cx-mode"][value="two-way"]');
-        var en  = document.getElementById("cx-enabled");
-        if (src) src.value = pair && pair.source || "PLEX";
-        if (dst) dst.value = pair && pair.target || "SIMKL";
-        if (en)  en.checked = !(pair && pair.enabled === false);
+        var one = document.querySelector(
+          'input[name="cx-mode"][value="one-way"]'
+        );
+        var two = document.querySelector(
+          'input[name="cx-mode"][value="two-way"]'
+        );
+        var en = document.getElementById("cx-enabled");
+        if (src) src.value = (pair && pair.source) || "PLEX";
+        if (dst) dst.value = (pair && pair.target) || "SIMKL";
+        if (en) en.checked = !(pair && pair.enabled === false);
         if (one && two) {
           const mval = (pair && pair.mode) || "one-way";
-          two.checked = (mval === "two-way");
+          two.checked = mval === "two-way";
           one.checked = !two.checked;
         }
-        const f = (pair && pair.features && pair.features.watchlist) || { add: true, remove: false };
+        const f = (pair && pair.features && pair.features.watchlist) || {
+          add: true,
+          remove: false,
+        };
         const wlAdd = document.getElementById("cx-wl-add");
         const wlRem = document.getElementById("cx-wl-remove");
         if (wlAdd) wlAdd.checked = !!f.add;
@@ -4140,91 +4160,114 @@ function renderConnections() {
 
     // Store editing id on the modal so the Save handler can detect PUT vs POST
     const modal = _getModal();
-    if (modal && modal.dataset) modal.dataset.editingId = editingId ? String(editingId) : "";
+    if (modal && modal.dataset)
+      modal.dataset.editingId = editingId ? String(editingId) : "";
 
     // Ensure Save button wires to our save function (existing listeners will still call us)
     const saveBtn = document.getElementById("cx-save");
     if (saveBtn && !saveBtn.dataset.cxBound) {
       saveBtn.dataset.cxBound = "1";
-      saveBtn.addEventListener("click", function () {
-        // Read from DOM fresh to avoid stale 'data' when using our fallback path
-        const data = {
-          source: (document.getElementById("cx-src") || {}).value,
-          target: (document.getElementById("cx-dst") || {}).value,
-          enabled: !!((document.getElementById("cx-enabled") || {}).checked),
-          mode: (document.querySelector('input[name="cx-mode"]:checked') || {}).value || "one-way",
-          features: {
-            watchlist: {
-              add: !!((document.getElementById("cx-wl-add") || {}).checked),
-              remove: !!((document.getElementById("cx-wl-remove") || {}).checked),
+      saveBtn.addEventListener(
+        "click",
+        function () {
+          // Read from DOM fresh to avoid stale 'data' when using our fallback path
+          const data = {
+            source: (document.getElementById("cx-src") || {}).value,
+            target: (document.getElementById("cx-dst") || {}).value,
+            enabled: !!(document.getElementById("cx-enabled") || {}).checked,
+            mode:
+              (document.querySelector('input[name="cx-mode"]:checked') || {})
+                .value || "one-way",
+            features: {
+              watchlist: {
+                add: !!(document.getElementById("cx-wl-add") || {}).checked,
+                remove: !!(document.getElementById("cx-wl-remove") || {})
+                  .checked,
+              },
             },
-          },
-        };
-        // Intentionally do nothing here; existing listeners already call window.cxSavePair(data)
-        // and our global function above will execute.
-      }, { capture: false });
+          };
+          // Intentionally do nothing here; existing listeners already call window.cxSavePair(data)
+          // and our global function above will execute.
+        },
+        { capture: false }
+      );
     }
   };
 
   // Boot: make sure pairs are loaded once DOM is ready
   document.addEventListener("DOMContentLoaded", () => {
-    try { loadPairs(); } catch (_) {}
+    try {
+      loadPairs();
+    } catch (_) {}
   });
 })();
 
-  /* === Modal tweaks: labels, lock src/dst, remove 'activate', arrow, WL rules === */
-  (function modalTweaks(){
-    const $ = (s) => document.querySelector(s);
+/* === Modal tweaks: labels, lock src/dst, remove 'activate', arrow, WL rules === */
+(function modalTweaks() {
+  const $ = (s) => document.querySelector(s);
 
-    // 1) Source/Target vastzetten zodra beide gekozen zijn
-    const src = $('#cx-src'), dst = $('#cx-dst');
-    function lockSrcDst(){
-      if (src?.value && dst?.value){
-        src.disabled = true; dst.disabled = true;
-        src.title = 'Locked after selection'; dst.title = 'Locked after selection';
-      }
+  // 1) Source/Target vastzetten zodra beide gekozen zijn
+  const src = $("#cx-src"),
+    dst = $("#cx-dst");
+  function lockSrcDst() {
+    if (src?.value && dst?.value) {
+      src.disabled = true;
+      dst.disabled = true;
+      src.title = "Locked after selection";
+      dst.title = "Locked after selection";
     }
-    src?.addEventListener('change', lockSrcDst);
-    dst?.addEventListener('change', lockSrcDst);
-    lockSrcDst();
+  }
+  src?.addEventListener("change", lockSrcDst);
+  dst?.addEventListener("change", lockSrcDst);
+  lockSrcDst();
 
-    // 2+3) UI-labels: Two-way -> Bidirectional, One-way -> Mirror (waarden blijven gelijk)
-    // Probeer zowel label[for=] als tekstknoppen te raken
-    const L1 = document.querySelector('label[for="cx-mode-one"]') || $('#cx-mode-one-label') || $('#cx-one-label');
-    const L2 = document.querySelector('label[for="cx-mode-two"]') || $('#cx-mode-two-label') || $('#cx-two-label');
-    if (L1) L1.textContent = 'Mirror';
-    if (L2) L2.textContent = 'Bidirectional';
+  // 2+3) UI-labels: Two-way -> Bidirectional, One-way -> Mirror (waarden blijven gelijk)
+  // Probeer zowel label[for=] als tekstknoppen te raken
+  const L1 =
+    document.querySelector('label[for="cx-mode-one"]') ||
+    $("#cx-mode-one-label") ||
+    $("#cx-one-label");
+  const L2 =
+    document.querySelector('label[for="cx-mode-two"]') ||
+    $("#cx-mode-two-label") ||
+    $("#cx-two-label");
+  if (L1) L1.textContent = "Mirror";
+  if (L2) L2.textContent = "Bidirectional";
 
-    // 4) "Activate this connection" verbergen; default aan
-    const en = $('#cx-enabled');
-    if (en){
-      en.checked = true;
-      (en.closest('.group,.row,fieldset,div') || en).style.display = 'none';
+  // 4) "Activate this connection" verbergen; default aan
+  const en = $("#cx-enabled");
+  if (en) {
+    en.checked = true;
+    (en.closest(".group,.row,fieldset,div") || en).style.display = "none";
+  }
+
+  // 6) Watchlist Remove mag óók in Mirror; alleen blokkeren als WL disabled
+  function refreshWatchlistUI() {
+    const wlOn = $("#cx-wl-enable")?.checked;
+    const rem = $("#cx-wl-remove");
+    if (rem) {
+      rem.disabled = !wlOn;
+      if (!wlOn) rem.checked = false;
     }
+  }
+  ["#cx-wl-enable", "#cx-mode-one", "#cx-mode-two"].forEach((sel) =>
+    $(sel)?.addEventListener("change", refreshWatchlistUI)
+  );
+  refreshWatchlistUI();
 
-    // 6) Watchlist Remove mag óók in Mirror; alleen blokkeren als WL disabled
-    function refreshWatchlistUI(){
-      const wlOn = $('#cx-wl-enable')?.checked;
-      const rem  = $('#cx-wl-remove');
-      if (rem){
-        rem.disabled = !wlOn;
-        if (!wlOn) rem.checked = false;
-      }
-    }
-    ['#cx-wl-enable','#cx-mode-one','#cx-mode-two'].forEach(sel => $(sel)?.addEventListener('change', refreshWatchlistUI));
-    refreshWatchlistUI();
-
-    // 5) Richtingspijl in de samenvatting (groot + animatie; ⇄ voor bidi)
-    function updateDir(){
-      const two = $('#cx-mode-two')?.checked;
-      const el = $('#sum-dir');
-      if (!el) return;
-      el.className = 'dir ' + (two ? 'bidi' : 'one');
-      el.textContent = two ? '⇄' : '→';
-    }
-    ['#cx-mode-one','#cx-mode-two'].forEach(sel => $(sel)?.addEventListener('change', updateDir));
-    updateDir();
-  })();
+  // 5) Richtingspijl in de samenvatting (groot + animatie; ⇄ voor bidi)
+  function updateDir() {
+    const two = $("#cx-mode-two")?.checked;
+    const el = $("#sum-dir");
+    if (!el) return;
+    el.className = "dir " + (two ? "bidi" : "one");
+    el.textContent = two ? "⇄" : "→";
+  }
+  ["#cx-mode-one", "#cx-mode-two"].forEach((sel) =>
+    $(sel)?.addEventListener("change", updateDir)
+  );
+  updateDir();
+})();
 
 /**
  * Minimal UI helper: given the API payload from /api/sync/providers,
@@ -4232,27 +4275,28 @@ function renderConnections() {
  * Expects two selects with ids #src-provider and #dst-provider.
  */
 async function populateSyncModes() {
-  const res = await fetch('/api/sync/providers');
+  const res = await fetch("/api/sync/providers");
   const data = await res.json();
-  const src = document.getElementById('src-provider')?.value?.toUpperCase();
-  const dst = document.getElementById('dst-provider')?.value?.toUpperCase();
-  const select = document.getElementById('sync-mode');
+  const src = document.getElementById("src-provider")?.value?.toUpperCase();
+  const dst = document.getElementById("dst-provider")?.value?.toUpperCase();
+  const select = document.getElementById("sync-mode");
   if (!select || !src || !dst) return;
 
-  const dir = data.directions.find(d => d.source === src && d.target === dst)
-           || data.directions.find(d => d.source === dst && d.target === src); // fallback
+  const dir =
+    data.directions.find((d) => d.source === src && d.target === dst) ||
+    data.directions.find((d) => d.source === dst && d.target === src); // fallback
   const modes = dir?.modes || [];
-  select.innerHTML = '';
-  modes.forEach(m => {
-    const opt = document.createElement('option');
+  select.innerHTML = "";
+  modes.forEach((m) => {
+    const opt = document.createElement("option");
     opt.value = m;
-    opt.textContent = m === 'two-way' ? 'Two-way (bidirectional)' : 'One-way';
+    opt.textContent = m === "two-way" ? "Two-way (bidirectional)" : "One-way";
     select.appendChild(opt);
   });
   if (modes.length === 0) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = 'Not supported';
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Not supported";
     select.appendChild(opt);
   }
 }

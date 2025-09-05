@@ -56,7 +56,7 @@ button[onclick="addPair()"],
         <span id="badge-simkl" class="badge no"><span class="dot no"></span>SIMKL: Not connected</span>
         <div id="update-banner" class="hidden">
           <span id="update-text">A new version is available.</span>
-          <a id="update-link" href="https://github.com/cenodude/plex-simkl-watchlist-sync/releases"
+          <a id="update-link" href="https://github.com/cenodude/crosswatch/releases"
             target="_blank" rel="noopener noreferrer">Get update</a>
         </div>
         <button id="btn-status-refresh" class="iconbtn" title="Re-check Plex &amp; SIMKL status" aria-label="Refresh status" onclick="manualRefreshStatus()">
@@ -232,20 +232,19 @@ button[onclick="addPair()"],
 <!-- AUTHENTICATION (settings) -->
   <div class="section" id="sec-auth">
     <div class="head" onclick="toggleSection('sec-auth')">
-     <span class="chev">▶</span><strong>Authentication</strong>
+     <span class="chev">▶</span><strong>Authentication Providers</strong>
    </div>
     <div class="body">
       <!-- Dynamic auth providers will mount here -->
       <div id="auth-providers"></div>
       </div>
      </div>
-
  
 <div class="section" id="sec-sync">
-  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Providers</strong></div>
+  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization Providers</strong></div>
   <div class="body">
 
-    <div class="sub">Synchronization Providers</div>
+    <div class="sub">Providers</div>
     <div id="providers_list" class="grid2"></div>
 
     <div class="sep"></div>
@@ -309,7 +308,7 @@ button[onclick="addPair()"],
         <!-- Metadata -->
 <div class="section" id="sec-meta">
   <div class="head" onclick="toggleSection('sec-meta')">
-    <span class="chev">▶</span><strong>Metadata</strong>
+    <span class="chev">▶</span><strong>Metadata Providers</strong>
   </div>
   <div class="body">
     <!-- Dynamic metadata providers -->

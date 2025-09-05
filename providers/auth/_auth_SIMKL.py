@@ -102,7 +102,6 @@ class SimklAuth(AuthProvider):
 
 PROVIDER = SimklAuth()
 
-
 def html() -> str:
     return r'''<div class="section" id="sec-simkl">
   <div class="head" onclick="toggleSection('sec-simkl')">
@@ -127,9 +126,14 @@ def html() -> str:
       <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
     </div>
 
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button id="simkl_start_btn" class="btn" onclick="startSimkl()" disabled>Start SIMKL Auth</button>
-      <div style="align-self:center;color:var(--muted)">Opens SIMKL authorize, callback to this webapp</div>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+      <!-- NEW: button id changed to match startSimkl() helper -->
+      <button id="btn-connect-simkl" class="btn" onclick="startSimkl()" >
+        Connect SIMKL
+      </button>
+      <!-- NEW: countdown + status placeholders used by startSimkl() -->
+      <span id="simkl-countdown" style="min-width:60px;"></span>
+      <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
     </div>
 
     <div class="grid2" style="margin-top:8px">
@@ -144,3 +148,4 @@ def html() -> str:
   </div>
 </div>
 '''
+

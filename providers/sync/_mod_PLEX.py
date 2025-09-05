@@ -3,7 +3,6 @@ from _logging import log
 # /modules/_mod_PLEX.py
 __VERSION__ = "0.2.0"
 
-
 import re
 import time
 import json
@@ -55,7 +54,7 @@ class _LoggerAdapter:
         extra: Optional[Mapping[str, Any]] = None
     ) -> None:
         lvl = (level or "INFO").upper()
-        tag = {"DEBUG": "[debug]", "INFO": "[i]", "WARN": "[!]", "WARNING": "[!]", "ERROR": "[!]"}.get(lvl, "[i]")
+        tag = {"DEBUG": "[debug]", "INFO": "[i]", "WARN": "[!]", "WARNING": "[!]", "ERROR": "[!]"}[lvl] if lvl in {"DEBUG","INFO","WARN","WARNING","ERROR"} else "[i]"
         line = f"{tag} {message}"
         if hasattr(self._logger, "debug") and hasattr(self._logger, "info"):
             if   lvl == "DEBUG": self._logger.debug(line)
@@ -83,7 +82,6 @@ class _LoggerAdapter:
         return dict(self._ctx)
 
     def bind(self, **ctx: Any) -> "_LoggerAdapter":
-        # best-effort: prefer host bind/child, else keep adapter
         base = self._logger
         if hasattr(base, "bind"):
             try:
@@ -116,7 +114,7 @@ _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
 _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|tvdb)://(\d+)", re.I)
 
 
-# ---- plexapi (optional) ------------------------------------------------------
+# ---- plexapi (required) ------------------------------------------------------
 try:
     import plexapi  # type: ignore
     HAS_PLEXAPI = True
@@ -254,13 +252,21 @@ def plex_fetch_watchlist_items_via_plexapi(acct: Optional["MyPlexAccount"], debu
         return None
 
 
-def plex_fetch_watchlist_items(acct: Optional["MyPlexAccount"], plex_token: str, debug: bool = False) -> Sequence[object | Dict[str, Any]]:
+def plex_fetch_watchlist_items(acct: Optional["MyPlexAccount"], plex_token: str, debug: bool = False) -> Sequence[object]:
+    if not HAS_PLEXAPI:
+        raise RecoverableModuleError("plexapi is required for watchlist reads")
+    if acct is None:
+        from plexapi.myplex import MyPlexAccount  # type: ignore
+        if not plex_token:
+            raise ConfigError("plex.account_token is required")
+        try:
+            acct = MyPlexAccount(token=plex_token)
+        except Exception as e:
+            raise RecoverableModuleError(f"Could not authenticate to Plex: {e}")
     items = plex_fetch_watchlist_items_via_plexapi(acct, debug=debug)
-    if items is not None:
-        return items
-    if debug:
-        print("[debug] Falling back to Discover HTTP for watchlist read")
-    return plex_fetch_watchlist_items_via_discover(plex_token, page_size=100, debug=debug)
+    if items is None:
+        raise RecoverableModuleError("plexapi watchlist fetch failed")
+    return items
 
 
 def plex_item_to_ids(item: Any) -> Dict[str, Any]:
@@ -305,6 +311,9 @@ def resolve_discover_item(acct: "MyPlexAccount", ids: dict, libtype: str, debug:
     if ids.get("title"): queries.append(ids["title"])
     queries = list(dict.fromkeys(queries))
 
+    def _same(a: Any, b: Any) -> bool:
+        return str(a).strip() == str(b).strip()
+
     for q in queries:
         try:
             hits: Sequence[Any] = acct.searchDiscover(q, libtype=libtype) or []
@@ -312,13 +321,14 @@ def resolve_discover_item(acct: "MyPlexAccount", ids: dict, libtype: str, debug:
             hits = []
         for md in hits:
             md_ids = plex_item_to_ids(md)
-            if ids.get("imdb") and md_ids.get("imdb") == ids.get("imdb"): return md
-            if ids.get("tmdb") and md_ids.get("tmdb") == ids.get("tmdb"): return md
-            if ids.get("tvdb") and md_ids.get("tvdb") == ids.get("tvdb"): return md
+            if ids.get("imdb") and _same(md_ids.get("imdb"), ids.get("imdb")): return md
+            if ids.get("tmdb") and _same(md_ids.get("tmdb"), ids.get("tmdb")): return md
+            if ids.get("tvdb") and _same(md_ids.get("tvdb"), ids.get("tvdb")): return md
+            if ids.get("slug") and _same(md_ids.get("slug"), ids.get("slug")): return md
             if ids.get("title") and ids.get("year"):
                 try:
                     same_title = str(md_ids.get("title", "")).strip().lower() == str(ids["title"]).strip().lower()
-                    same_year = int(md_ids.get("year", 0)) == int(ids["year"])
+                    same_year = int(str(md_ids.get("year") or 0)) == int(str(ids["year"]))
                     if same_title and same_year: return md
                 except Exception:
                     pass
@@ -399,7 +409,7 @@ class PLEXModule(SyncModule):
     info = ModuleInfo(
         name="PLEX",
         version=__VERSION__,
-        description="Reads and writes Plex watchlist via plexapi/Discover.",
+        description="Reads and writes Plex watchlist via plexapi.",
         vendor="community",
         capabilities=ModuleCapabilities(
             supports_dry_run=True,
@@ -426,6 +436,11 @@ class PLEXModule(SyncModule):
             },
         ),
     )
+    @staticmethod
+    def supported_features() -> dict:
+        """Feature matrix used by /api/sync/providers."""
+        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+
 
     def __init__(self, config: Mapping[str, Any], logger: HostLogger):
         self._cfg_raw: Dict[str, Any] = dict(config or {})
@@ -461,11 +476,11 @@ class PLEXModule(SyncModule):
     def _ensure_acct(self) -> None:
         if self._acct is not None:
             return
-        token = self._plex_cfg.get("account_token")
         if not HAS_PLEXAPI:
-            self._log("plexapi is not installed; write operations are disabled.", level="WARN")
-            self._acct = None
-            return
+            raise RecoverableModuleError("plexapi is required but not installed")
+        token = (self._plex_cfg.get("account_token") or "").strip()
+        if not token:
+            raise ConfigError("plex.account_token is required")
         try:
             from plexapi.myplex import MyPlexAccount as _RealMyPlexAccount  # type: ignore
             self._acct = _RealMyPlexAccount(token=token)
@@ -482,8 +497,6 @@ class PLEXModule(SyncModule):
 
     def plex_add(self, items_by_type: Mapping[str, List[Mapping[str, Any]]], *, dry_run: bool = False) -> Dict[str, Any]:
         self._ensure_acct()
-        if self._acct is None:
-            return {"ok": False, "error": "plexapi not available; cannot add"}
         added = 0
         if dry_run:
             self._log(f"DRY-RUN Plex add: {json.dumps(items_by_type)[:400]}", level="DEBUG")
@@ -491,7 +504,17 @@ class PLEXModule(SyncModule):
         acct = cast("MyPlexAccount", self._acct)
         for typ in ("movies", "shows"):
             for it in items_by_type.get(typ, []):
-                ids = it.get("ids") or {}
+                ids = dict(it.get("ids") or {})
+                # normalize numeric ids and embed title/year for discover matching
+                for k in ("tmdb", "tvdb", "year"):
+                    v = ids.get(k)
+                    if isinstance(v, str) and v.isdigit():
+                        ids[k] = int(v)
+                if "title" not in ids and it.get("title"):
+                    ids["title"] = it.get("title")
+                if "year" not in ids and it.get("year") is not None:
+                    try: ids["year"] = int(it.get("year"))
+                    except Exception: ids["year"] = it.get("year")
                 libtype = "movie" if typ == "movies" else "show"
                 if plex_add_by_ids(acct, ids, libtype, debug=False):
                     added += 1
@@ -499,8 +522,6 @@ class PLEXModule(SyncModule):
 
     def plex_remove(self, items_by_type: Mapping[str, List[Mapping[str, Any]]], *, dry_run: bool = False) -> Dict[str, Any]:
         self._ensure_acct()
-        if self._acct is None:
-            return {"ok": False, "error": "plexapi not available; cannot remove"}
         removed = 0
         if dry_run:
             self._log(f"DRY-RUN Plex remove: {json.dumps(items_by_type)[:400]}", level="DEBUG")
@@ -508,7 +529,17 @@ class PLEXModule(SyncModule):
         acct = cast("MyPlexAccount", self._acct)
         for typ in ("movies", "shows"):
             for it in items_by_type.get(typ, []):
-                ids = it.get("ids") or {}
+                ids = dict(it.get("ids") or {})
+                # --- normalize numeric ids and embed title/year ---
+                for k in ("tmdb", "tvdb", "year"):
+                    v = ids.get(k)
+                    if isinstance(v, str) and v.isdigit():
+                        ids[k] = int(v)
+                if "title" not in ids and it.get("title"):
+                    ids["title"] = it.get("title")
+                if "year" not in ids and it.get("year") is not None:
+                    try: ids["year"] = int(it.get("year"))
+                    except Exception: ids["year"] = it.get("year")
                 libtype = "movie" if typ == "movies" else "show"
                 if plex_remove_by_ids(acct, ids, libtype, debug=False):
                     removed += 1

@@ -1,9 +1,83 @@
 from __future__ import annotations
 
-# CrossWatch Web API (FastAPI)
-# Compact backend exposing status, auth, scheduling, and watchlist utilities.
+"""
+CrossWatch Web API (FastAPI)
+Minimal backend for status, auth, scheduling, and watchlist utilities.
+"""
 
-def _json_safe(obj):
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Literal, cast
+
+import json
+import os
+import re
+import secrets
+import shutil
+import socket
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+import shlex
+
+import requests
+import uvicorn
+from fastapi import Body, FastAPI, Query, Request, Path as FPath
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from packaging.version import InvalidVersion, Version
+from pydantic import BaseModel
+
+from _FastAPI import get_index_html
+from _scheduling import SyncScheduler
+from _statistics import Stats
+from _watchlist import build_watchlist, delete_watchlist_item
+from cw_platform.config_base import CONFIG
+
+from cw_platform.orchestrator import (
+    STATE_PATH, TOMBSTONES_PATH,
+    load_tombstones, save_tombstones,
+    build_state, write_state,
+)
+
+from providers.sync._mod_PLEX import (
+    plex_fetch_watchlist_items, gather_plex_rows, build_index as plex_build_index,
+)
+
+from providers.sync._mod_SIMKL import (
+    simkl_ptw_full, build_index_from_simkl as simkl_build_index,
+)
+
+
+# -----------------------------------------------------------------------------
+# Globals & paths
+# -----------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))  # Make local packages importable early
+
+STATE_PATH = CONFIG / "state.json"
+_METADATA = None  # Set during startup
+TOMBSTONES_PATH = (CONFIG / "tombstones.json").resolve()
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+
+def _json_safe(obj: Any) -> Any:
+    """Make objects JSON-serializable by recursing dicts/lists and stringifying the rest."""
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -12,62 +86,8 @@ def _json_safe(obj):
         return obj
     return str(obj)
 
-import requests
-import json
-import re
-import secrets
-import socket
-import subprocess
-import sys
-import threading
-import time
-import uuid
-import os
-import shutil
-import shlex
-import urllib.request
-import urllib.error
-import urllib.parse
-from _statistics import Stats
-from pydantic import BaseModel
-from fastapi import Query
-from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
-from fastapi.responses import JSONResponse
-from _watchlist import build_watchlist, delete_watchlist_item
-from _FastAPI import get_index_html
-from functools import lru_cache
-from packaging.version import Version, InvalidVersion
-from fastapi import APIRouter, HTTPException
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from contextlib import asynccontextmanager
-from typing import Optional
-from typing import Literal
-
-from pathlib import Path
-ROOT = Path(__file__).resolve().parent
-import sys
-sys.path.insert(0, str(ROOT))  # make local packages importable early
-
-import uvicorn
-from fastapi import Body, FastAPI, Request, Path as FPath
-from fastapi.responses import (
-    HTMLResponse,
-    JSONResponse,
-    StreamingResponse,
-    PlainTextResponse,
-    Response,
-    FileResponse,
-)
-from _scheduling import SyncScheduler
-from cw_platform.config_base import CONFIG
-
-STATE_PATH = CONFIG / "state.json"
-_METADATA = None
-
+RUNNING_PROCS: Dict[str, threading.Thread] = {}
+SYNC_PROC_LOCK = threading.Lock()
 
 class MetadataResolveIn(BaseModel):
     entity: str                  # "movie" | "show"
@@ -136,11 +156,9 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 # Static assets
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.4.5")  # keep in sync with release tag....i think
-REPO = os.getenv("GITHUB_REPO", "cenodude/plex-simkl-watchlist-sync")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.1")
+REPO = os.getenv("GITHUB_REPO", "cenodude/crosswatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-
-router = APIRouter()
 
 @app.post("/api/metadata/resolve")
 def api_metadata_resolve(payload: MetadataResolveIn):
@@ -276,8 +294,6 @@ STATE_PATHS = [CONFIG_BASE / "state.json", ROOT / "state.json"]
 
 HIDE_PATH   = CONFIG_BASE / "watchlist_hide.json"
 
-SYNC_PROC_LOCK = threading.Lock()
-RUNNING_PROCS: Dict[str, subprocess.Popen] = {}
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": []}
 
@@ -436,8 +452,55 @@ def _append_log(tag: str, raw_line: str) -> None:
     if len(buf) > MAX_LOG_LINES:
         LOG_BUFFERS[tag] = buf[-MAX_LOG_LINES:]
 
+# --- Orchestrator ---
+def _sync_progress_ui(raw: str) -> None:
+    msg = raw.replace("state.json", "Snapshot")
+    _append_log("SYNC", msg)
+    _parse_sync_line(strip_ansi(msg))
+
+def _run_pairs_thread(run_id: str) -> None:
+    _summary_reset()
+
+    # clear buffer
+    LOG_BUFFERS["SYNC"] = []
+
+    # special marker to tell frontend to clear its <pre>
+    _sync_progress_ui("::CLEAR::")
+
+    _sync_progress_ui(f"> SYNC start: orchestrator pairs run_id={run_id}")
+
+    try:
+        import importlib
+        orch_mod = importlib.import_module("cw_platform.orchestrator")
+        Orchestrator = getattr(orch_mod, "Orchestrator")
+
+        mgr = Orchestrator(load_config, save_config, logger=_sync_progress_ui)
+        result = mgr.run_pairs(
+            dry_run=False,
+            progress=_sync_progress_ui,
+            write_state_json=True,
+            state_path=STATE_PATH,
+            use_snapshot=True,
+            snapshot_guard_delete=True,
+        )
+
+        added = int(result.get("added", 0))
+        removed = int(result.get("removed", 0))
+        _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}")
+        _sync_progress_ui("[SYNC] exit code: 0")
+
+    except Exception as e:
+        _sync_progress_ui(f"[!] Sync error: {e}")
+        _sync_progress_ui("[SYNC] exit code: 1")
+
+    finally:
+        # ruim status op zodat _is_sync_running() klopt
+        RUNNING_PROCS.pop("SYNC", None)
+
+
 SUMMARY_LOCK = threading.Lock()
 SUMMARY: Dict[str, Any] = {}
+
 # Sync summary
 def _summary_reset() -> None:
     with SUMMARY_LOCK:
@@ -458,6 +521,7 @@ def _summary_reset() -> None:
             "timeline": {"start": False, "pre": False, "post": False, "done": False},
             "raw_started_ts": None,
         })
+        
 def _summary_set(k: str, v: Any) -> None:
     with SUMMARY_LOCK:
         SUMMARY[k] = v
@@ -536,100 +600,6 @@ def _parse_sync_line(line: str) -> None:
         except Exception:
             pass
 
-def _stream_proc(cmd: List[str], tag: str) -> None:
-    try:
-        if tag == "SYNC":
-            _summary_reset()
-            _summary_set("running", True)
-            SUMMARY["raw_started_ts"] = time.time()
-            _summary_set("started_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-            _summary_set_timeline("start", True)
-            try:
-                _summary_set("cmd", " ".join(cmd))
-            except Exception:
-                pass
-            try:
-                if not _summary_snapshot().get("version"):
-                    _summary_set("version", _norm(CURRENT_VERSION))
-            except Exception:
-                pass
-
-        line0 = f"> {tag} start: {' '.join(cmd)}"
-        _append_log(tag, line0)
-        if tag == "SYNC":
-            _parse_sync_line(line0)
-
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=str(ROOT),
-        )
-        RUNNING_PROCS[tag] = proc
-        assert proc.stdout is not None
-
-        for line in proc.stdout:
-            _append_log(tag, line)
-            if tag == "SYNC":
-                _parse_sync_line(line)
-
-        rc = proc.wait()
-        _append_log(tag, f"[{tag}] exit code: {rc}")
-
-        if tag == "SYNC" and rc == 0:
-            _clear_watchlist_hide()
-
-        if tag == "SYNC" and _summary_snapshot().get("exit_code") is None:
-            _summary_set("exit_code", rc)
-            started = _summary_snapshot().get("raw_started_ts")
-            if started:
-                dur = max(0.0, time.time() - float(started))
-                _summary_set("duration_sec", round(dur, 2))
-            _summary_set("finished_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-            _summary_set("running", False)
-            _summary_set_timeline("done", True)
-
-            try:
-                ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-                path = REPORT_DIR / f"sync-{ts}.json"
-                snap = _summary_snapshot()
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text(json.dumps(snap, indent=2), encoding="utf-8")
-                tmp.replace(path)
-            except Exception:
-                pass
-
-            try:
-                try:
-                    STATS.refresh_from_state(_load_state())
-                except Exception:
-                    pass
-
-                ov = STATS.overview(None)
-                added_last = int(ov.get("new", 0))
-                removed_last = int(ov.get("del", 0))
-
-                reports = sorted(REPORT_DIR.glob("sync-*.json"), key=lambda p: p.stat().st_mtime)
-                if reports:
-                    latest = reports[-1]
-                    data = json.loads(latest.read_text(encoding="utf-8"))
-                    data["added_last"] = added_last
-                    data["removed_last"] = removed_last
-                    tmp2 = latest.with_suffix(".tmp")
-                    tmp2.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    tmp2.replace(latest)
-            except Exception:
-                pass
-
-    except Exception as e:
-        _append_log(tag, f"[{tag}] ERROR: {e}")
-    finally:
-        RUNNING_PROCS.pop(tag, None)
-
-def start_proc_detached(cmd: List[str], tag: str) -> None:
-    threading.Thread(target=_stream_proc, args=(cmd, tag), daemon=True).start()
 
 def _load_hide_set() -> set:
     return set()
@@ -676,6 +646,7 @@ def _load_state() -> Dict[str, Any]:
         return json.loads(sp.read_text(encoding="utf-8"))
     except Exception:
         return {}
+    
 
 def _parse_epoch(v: Any) -> int:
     """Accept integer seconds, float, or ISO 8601 strings (returns epoch seconds)."""
@@ -896,10 +867,6 @@ def get_tmdb_api_key():
 async def _on_startup():
     try:
         app.state.cfg = load_config() or {}
-
-        global _METADATA
-        _METADATA = MetadataManager(load_config, save_config)
-
         scheduler.ensure_defaults()
         sch = (app.state.cfg.get("scheduling") or {})
         if sch.get("enabled"):
@@ -920,7 +887,6 @@ async def _on_startup():
         pass
 
 @app.get("/api/insights")
-
 def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
     """
     Returns:
@@ -1076,28 +1042,37 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control":"no-store"})
 
 # Watchlist endpoints
+# Watchlist endpoints
 @app.get("/api/watchlist")
 def api_watchlist() -> JSONResponse:
     cfg = load_config()
     st = _load_state()
     api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
 
+    # Geen snapshot beschikbaar
     if not st:
         return JSONResponse(
-            {"ok": False, "error": "No state.json found or empty.", "missing_tmdb_key": not bool(api_key)},
+            {"ok": False, "error": "No Snapshot found or empty.", "missing_tmdb_key": not bool(api_key)},
             status_code=200,
         )
+
+    # Bouw lijst
     try:
         items = build_watchlist(st, tmdb_api_key_present=bool(api_key))
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e), "missing_tmdb_key": not bool(api_key)}, status_code=200)
-
-    if not items:
         return JSONResponse(
-            {"ok": False, "error": "No state data found.", "missing_tmdb_key": not bool(api_key)},
+            {"ok": False, "error": str(e), "missing_tmdb_key": not bool(api_key)},
             status_code=200,
         )
 
+    # Snapshot wel geladen maar geen items
+    if not items:
+        return JSONResponse(
+            {"ok": False, "error": "No snapshot data found.", "missing_tmdb_key": not bool(api_key)},
+            status_code=200,
+        )
+
+    # Succes
     return JSONResponse(
         {
             "ok": True,
@@ -1154,7 +1129,8 @@ def favicon_ico():
 
 # Scheduler wiring
 def _is_sync_running() -> bool:
-    p = RUNNING_PROCS.get("SYNC")
+    t = RUNNING_PROCS.get("SYNC")
+    return bool(t and t.is_alive())
     try:
         return p is not None and (p.poll() is None)
     except Exception:
@@ -1163,14 +1139,18 @@ def _is_sync_running() -> bool:
 def _start_sync_from_scheduler() -> bool:
     if _is_sync_running():
         return False
-    sync_script = ROOT / "plex_simkl_watchlist_sync.py"
-    if not sync_script.exists():
-        return False
-    cmd = [sys.executable, str(sync_script), "--sync"]
-    start_proc_detached(cmd, tag="SYNC")
+    run_id = str(int(time.time()))
+    th = threading.Thread(target=_run_pairs_thread, args=(run_id,), daemon=True)
+    th.start()
+    RUNNING_PROCS["SYNC"] = th
     return True
 
-scheduler = SyncScheduler(load_config, save_config, run_sync_fn=_start_sync_from_scheduler, is_sync_running_fn=_is_sync_running)
+# zorg dat de scheduler geinitialiseerd is met bovenstaande:
+scheduler = SyncScheduler(
+    load_config, save_config,
+    run_sync_fn=_start_sync_from_scheduler,
+    is_sync_running_fn=_is_sync_running,
+)
 
 INDEX_HTML = get_index_html()
 
@@ -1285,17 +1265,19 @@ def oauth_simkl_callback(request: Request) -> PlainTextResponse:
 @app.post("/api/run")
 def api_run_sync() -> Dict[str, Any]:
     with SYNC_PROC_LOCK:
-        if "SYNC" in RUNNING_PROCS and RUNNING_PROCS["SYNC"] is not None:
-            try:
-                p = RUNNING_PROCS["SYNC"]
-                if hasattr(p, "poll") and p.poll() is None:
-                    return {"ok": False, "error": "Sync already running"}
-            except Exception:
-                pass
+        if _is_sync_running():
+            return {"ok": False, "error": "Sync already running"}
+
+        cfg = load_config()
+        pairs = list((cfg or {}).get("pairs") or [])
+        if not any(p.get("enabled", True) for p in pairs):
+            _append_log("SYNC", "[i] No pairs configured — skipping sync.")
+            return {"ok": True, "skipped": "no_pairs_configured"}
+
         run_id = str(int(time.time()))
         th = threading.Thread(target=_run_pairs_thread, args=(run_id,), daemon=True)
         th.start()
-        RUNNING_PROCS["SYNC"] = None  # marker
+        RUNNING_PROCS["SYNC"] = th
         _append_log("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
 
@@ -1331,8 +1313,14 @@ def api_state_wall() -> Dict[str, Any]:
     api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
     st = _load_state()
     items = _wall_items_from_state()
+
     if not items:
-        return {"ok": False, "error": "No state.json found or empty.", "missing_tmdb_key": not bool(api_key)}
+        return {
+            "ok": False,
+            "error": "No Snapshot found or empty.",
+            "missing_tmdb_key": not bool(api_key),
+        }
+
     return {
         "ok": True,
         "items": items,
@@ -1422,19 +1410,57 @@ def _safe_remove_path(p: Path) -> bool:
         return False
 
 # Troubleshooting
-@app.post("/api/troubleshoot/reset-stats")
-def api_trbl_reset_stats() -> Dict[str, Any]:
+@app.post("/api/troubleshoot/reset-state")
+def api_trbl_reset_state(
+    mode: str = Body("clear_both"),          # "clear_both" | "clear_state" | "clear_tombstones" | "rebuild"
+    ttl_override: Optional[int] = Body(None) # optioneel, alleen voor rebuild/latere uitbreidingen
+) -> Dict[str, Any]:
+    """
+    Clear snapshot/tombstones, or rebuild if gewenst.
+    Default = clear_both (echte cold start).
+    """
     try:
-        with STATS.lock:
-            STATS.data = {
-                "events": [],
-                "samples": [],
-                "current": {},
-                "counters": {"added": 0, "removed": 0},
-                "last_run": {"added": 0, "removed": 0, "ts": 0},
-            }
-            STATS._save()
-        return {"ok": True}
+        # Compute/echo paths for debugging
+        state_path = STATE_PATH
+        tomb_path  = TOMBSTONES_PATH
+
+        if mode in ("clear_both", "clear_state"):
+            state_path.unlink(missing_ok=True)
+
+        if mode in ("clear_both", "clear_tombstones"):
+            tomb_path.unlink(missing_ok=True)
+
+        if mode == "rebuild":
+            # Alleen als je dit expliciet wil — anders weglaten
+            from providers.sync._mod_PLEX import (
+                plex_fetch_watchlist_items, gather_plex_rows, build_index as plex_build_index
+            )
+            from providers.sync._mod_SIMKL import (
+                simkl_ptw_full, build_index_from_simkl as simkl_build_index
+            )
+            from cw_platform.orchestrator import build_state, write_state
+
+            cfg = load_config()
+            token = (cfg.get("plex", {}) or {}).get("account_token") or ""
+            rows = gather_plex_rows(plex_fetch_watchlist_items(None, token, debug=False))
+            plex_idx = plex_build_index(
+                [r for r in rows if r.get("type") == "movie"],
+                [r for r in rows if r.get("type") == "show"],
+            )
+            shows, movies = simkl_ptw_full(cfg.get("simkl") or {})
+            simkl_idx = simkl_build_index(movies, shows)
+
+            snap = build_state(plex_idx, simkl_idx)
+            write_state(snap, state_path)
+
+        return {
+            "ok": True,
+            "mode": mode,
+            "state_path": str(state_path),
+            "tombstones_path": str(tomb_path),
+            "state_exists": state_path.exists(),
+            "tombstones_exists": tomb_path.exists(),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
     
@@ -1460,14 +1486,58 @@ def api_trbl_clear_cache() -> Dict[str, Any]:
 
 # Troubleshooting
 @app.post("/api/troubleshoot/reset-state")
-def api_trbl_reset_state() -> Dict[str, Any]:
-    """Ask the sync script to rebuild state.json asynchronously (logged under TRBL)."""
-    sync_script = ROOT / "plex_simkl_watchlist_sync.py"
-    if not sync_script.exists():
-        return {"ok": False, "error": "plex_simkl_watchlist_sync.py not found"}
-    cmd = [sys.executable, str(sync_script), "--reset-state"]
-    start_proc_detached(cmd, tag="TRBL")
-    return {"ok": True, "started": True}
+def api_trbl_reset_state(
+    mode: str = Body("rebuild"),          # "rebuild" | "clear_both" | "clear_state" | "clear_tombstones" | "clear_tombstone_entries"
+    keep_ttl: bool = Body(True),          # only used for "clear_tombstone_entries"
+    ttl_override: Optional[int] = Body(None),  # set a new TTL in seconds (optional)
+) -> Dict[str, Any]:
+    """
+    Troubleshooting endpoint:
+      - rebuild: rebuild snapshot from live PLEX & SIMKL (default).
+      - clear_state: delete state.json.
+      - clear_tombstones: delete tombstones.json.
+      - clear_tombstone_entries: keep file & TTL, but empty entries (or set new TTL).
+      - clear_both: delete both files.
+    """
+    try:
+        if mode in ("clear_state", "clear_both"):
+            Path(STATE_PATH).unlink(missing_ok=True)
+
+        if mode in ("clear_tombstones", "clear_both"):
+            Path(TOMBSTONES_PATH).unlink(missing_ok=True)
+
+        if mode == "clear_tombstone_entries":
+            tb = load_tombstones()
+            ttl = int(tb.get("ttl_sec", 172800))
+            if isinstance(ttl_override, int) and ttl_override > 0:
+                ttl = ttl_override
+            elif not keep_ttl:
+                ttl = 172800  # reset to default if requested
+            save_tombstones({"ttl_sec": ttl, "entries": {}})
+
+        if mode == "rebuild":
+            cfg = load_config()  # your existing loader
+            # Build fresh PLEX index
+            token = (cfg.get("plex", {}) or {}).get("account_token") or ""
+            rows = gather_plex_rows(plex_fetch_watchlist_items(None, token, debug=False))
+            plex_idx = plex_build_index([r for r in rows if r.get("type") == "movie"],
+                                        [r for r in rows if r.get("type") == "show"])
+            # Build fresh SIMKL PTW index
+            shows, movies = simkl_ptw_full(cfg.get("simkl") or {})
+            simkl_idx = simkl_build_index(movies, shows)
+
+            snap = build_state(plex_idx, simkl_idx)
+            write_state(snap, STATE_PATH)
+            STATS.refresh_from_state(snap)  # keep your current bookkeeping
+            _append_log("TRBL", "[i] Snapshot rebuilt")
+
+        if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
+            return {"ok": False, "error": f"Unknown mode: {mode}"}
+
+        return {"ok": True, "mode": mode}
+    except Exception as e:
+        _append_log("TRBL", f"[!] Reset failed: {e}")
+        return {"ok": False, "error": str(e)}
 
 # Main entry
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
@@ -1782,7 +1852,11 @@ def api_sync_providers() -> JSONResponse:
                 try:
                     if caps is not None:
                         if _dc.is_dataclass(caps):
-                            caps_dict = _dc.asdict(caps)
+                            if isinstance(caps, type):
+                                # If caps is a dataclass type, instantiate it
+                                caps_dict = _dc.asdict(caps())
+                            else:
+                                caps_dict = _dc.asdict(caps)
                         elif isinstance(caps, dict):
                             caps_dict = dict(caps)
                         else:
@@ -1804,12 +1878,6 @@ def api_sync_providers() -> JSONResponse:
 
     return JSONResponse(list(items.values()))
 
-class PairIn(BaseModel):
-    source: str
-    target: str
-    mode: str | None = None          # e.g., "one-way" | "two-way"
-    enabled: bool | None = None
-    features: dict | None = None     # e.g., {"watchlist": true}
 @app.get("/api/pairs")
 def api_pairs_list() -> JSONResponse:
     try:
@@ -1817,24 +1885,39 @@ def api_pairs_list() -> JSONResponse:
         arr = _cfg_pairs(cfg)
         return JSONResponse(_json_safe(arr))
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs GET failed: {e}")
-        except Exception: pass
+        try:
+            _append_log("TRBL", f"/api/pairs GET failed: {e}")
+        except Exception:
+            pass
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 
 @app.post("/api/pairs")
 def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
-        item = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+
+        item: Dict[str, Any] = (
+            payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+        )
         item.setdefault("mode", "one-way")
-        item["enabled"] = True if item.get("enabled", True) is not False else False
-        f = item.get("features") or {"watchlist": True}
+        item["enabled"] = False is not item.get("enabled", True)
+
+        f: Dict[str, Any] = cast(Dict[str, Any], item.get("features") or {"watchlist": True})
         if isinstance(f.get("watchlist"), bool):
             f["watchlist"] = {"add": bool(f["watchlist"]), "remove": False}
         item["features"] = f
-        if any(x for x in arr if str(x.get("source","")).upper()==str(item["source"]).upper() and str(x.get("target","")).upper()==str(item["target"]).upper()):
+
+        src = str(item.get("source", "")).upper()
+        tgt = str(item.get("target", "")).upper()
+        if any(
+            str(x.get("source", "")).upper() == src and
+            str(x.get("target", "")).upper() == tgt
+            for x in arr
+        ):
             return {"ok": False, "error": "duplicate"}
+
         item["id"] = _gen_id("pair")
         arr.append(item)
         save_config(cfg)
@@ -1845,6 +1928,8 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         except Exception:
             pass
         return {"ok": False, "error": str(e)}
+    # Safety net for type checkers (not reachable at runtime).
+    return {"ok": False, "error": "unreachable"}
 
 @app.put("/api/pairs/{pair_id}")
 def api_pairs_update(pair_id: str, payload: PairIn) -> Dict[str, Any]:
@@ -1888,8 +1973,6 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
         try: _append_log("TRBL", f"/api/pairs DELETE failed: {e}")
         except Exception: pass
         return {"ok": False, "error": str(e)}
-        
-
 
 def _safe_get(d: dict, *path, default=None):
     cur = d
@@ -1901,8 +1984,8 @@ def _safe_get(d: dict, *path, default=None):
 def _count_plex(cfg: Dict[str, Any]) -> int:
     try:
         from providers.sync._mod_PLEX import plex_fetch_watchlist_items, gather_plex_rows
-        token = _safe_get(cfg, "plex", "account_token", default="") or ""
-        items = plex_fetch_watchlist_items(None, token, debug=False)  # falls back to Discover if plexapi not present
+        token: str = str(_safe_get(cfg, "plex", "account_token", default="") or "")
+        items = plex_fetch_watchlist_items(None, token, debug=False)
         rows = gather_plex_rows(items)
         return len(rows)
     except Exception as e:
@@ -1918,152 +2001,3 @@ def _count_simkl(cfg: Dict[str, Any]) -> int:
     except Exception as e:
         _append_log("SYNC", f"[!] SIMKL count failed: {e}")
         return 0
-
-def _build_index_for(cfg: Dict[str, Any], name: str) -> Dict[str, dict]:
-    n = name.upper()
-    try:
-        if n == "PLEX":
-            from providers.sync._mod_PLEX import plex_fetch_watchlist_items, gather_plex_rows, build_index
-            token = _safe_get(cfg, "plex", "account_token", default="") or ""
-            items = plex_fetch_watchlist_items(None, token, debug=False)
-            rows = gather_plex_rows(items)
-            rows_movies = [r for r in rows if r.get("type") == "movie"]
-            rows_shows  = [r for r in rows if r.get("type") == "show"]
-            return build_index(rows_movies, rows_shows)
-        elif n == "SIMKL":
-            from providers.sync._mod_SIMKL import simkl_ptw_full, build_index_from_simkl
-            s = dict(cfg.get("simkl") or {})
-            shows, movies = simkl_ptw_full(s)
-            return build_index_from_simkl(movies, shows)
-        else:
-            return {}
-    except Exception as e:
-        _append_log("SYNC", f"[!] Index build for {name} failed: {e}")
-        return {}
-
-def _items_by_type_from_keys(idx: Dict[str, dict], keys: list[str]) -> Dict[str, list]:
-    out = {"movies": [], "shows": []}
-    for k in keys:
-        it = idx.get(k) or {}
-        typ = it.get("type") or "movie"
-        entry = {"ids": it.get("ids") or {}}
-        if typ == "show": out["shows"].append(entry)
-        else: out["movies"].append(entry)
-    return {k:v for k,v in out.items() if v}
-
-def _apply_add_to(name: str, cfg: Dict[str, Any], items_by_type: Dict[str, list]) -> Dict[str, Any]:
-    n = name.upper()
-    try:
-        hostlog = _UIHostLogger("SYNC", module_name=n)
-        if n == "SIMKL":
-            from providers.sync._mod_SIMKL import SIMKLModule
-            mod = SIMKLModule(cfg, hostlog)
-            return mod.simkl_add_to_ptw(items_by_type, dry_run=False)
-        elif n == "PLEX":
-            from providers.sync._mod_PLEX import PLEXModule
-            mod = PLEXModule(cfg, hostlog)
-            return mod.plex_add(items_by_type, dry_run=False)
-        else:
-            return {"ok": False, "error": f"Unknown target {name}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-def _run_pairs_thread(run_id: str) -> None:
-    _summary_reset()
-    _parse_sync_line(f"> SYNC start: orchestrator pairs run_id={run_id}")
-    _append_log("SYNC", f"[i] Starting sync run {run_id}")
-
-    cfg = load_config()
-    pairs = list(cfg.get("pairs") or [])
-    if not pairs:
-        _append_log("SYNC", "[!] No pairs defined; nothing to do") 
-        # Write state snapshot for the UI
-        try:
-            import importlib
-            orch = importlib.import_module("cw_platform.orchestrator")
-            snapshot = orch.build_state({}, {})
-            orch.write_state(snapshot, STATE_PATH)
-            STATS.refresh_from_state(snapshot)
-            _append_log("SYNC", "[i] state.json updated (empty snapshot)")
-        except Exception as e:
-            _append_log("SYNC", f"[!] state.json write failed: {e}")
-
-    # Pre counts
-    try:
-        plex_pre = _count_plex(cfg)
-        simkl_pre = _count_simkl(cfg)
-        _parse_sync_line(f"Pre-sync: Plex={plex_pre} vs SIMKL={simkl_pre}")
-    except Exception as e:
-        _append_log("SYNC", f"[!] Pre-sync count error: {e}")
-        plex_pre = simkl_pre = 0
-
-    added_total = 0
-    for i, pair in enumerate(pairs, start=1):
-        if not pair or not pair.get("enabled", True):
-            continue
-        if not (pair.get("features", {}).get("watchlist", False)):
-            _append_log("SYNC", f"[i] Pair {i}: {pair.get('source')}→{pair.get('target')} — watchlist disabled; skip")
-            continue
-
-        src = str(pair.get("source", "")).upper()
-        dst = str(pair.get("target", "")).upper()
-        mode = (pair.get("mode") or "one-way").lower()
-
-        _append_log("SYNC", f"[i] Pair {i}: {src} → {dst} (mode={mode})")
-
-        idx_src = _build_index_for(cfg, src)
-        idx_dst = _build_index_for(cfg, dst)
-        keys_src = set(idx_src.keys()); keys_dst = set(idx_dst.keys())
-        to_add_keys = sorted(list(keys_src - keys_dst))
-
-        items_by_type = _items_by_type_from_keys(idx_src, to_add_keys)
-        if not items_by_type:
-            _append_log("SYNC", f"[i] Pair {i}: nothing to add")
-        else:
-            res = _apply_add_to(dst, cfg, items_by_type)
-            if not res.get("ok"):
-                _append_log("SYNC", f"[!] Pair {i}: add to {dst} failed: {res.get('error')}")
-            else:
-                added = int(res.get("added", 0))
-                added_total += added
-                _append_log("SYNC", f"[i] Pair {i}: added {added} items to {dst}")
-
-        # optional: simple two-way (mirror back) zonder uitgebreide diff
-        if mode in ("two-way", "bi-directional", "bidirectional"):
-            back_keys = sorted(list(keys_dst - keys_src))
-            items_back = _items_by_type_from_keys(idx_dst, back_keys)
-            if not items_back:
-                _append_log("SYNC", f"[i] Pair {i}: nothing to add {dst}→{src}")
-            else:
-                res2 = _apply_add_to(src, cfg, items_back)
-                if not res2.get("ok"):
-                    _append_log("SYNC", f"[!] Pair {i}: add to {src} failed: {res2.get('error')}")
-                else:
-                    added2 = int(res2.get("added", 0))
-                    added_total += added2
-                    _append_log("SYNC", f"[i] Pair {i}: added {added2} items to {src}")
-
-    # Post counts
-    try:
-        plex_post = _count_plex(cfg)
-        simkl_post = _count_simkl(cfg)
-        result = "EQUAL" if plex_post == simkl_post else "UPDATED"
-        _parse_sync_line(f"Post-sync: Plex={plex_post} vs SIMKL={simkl_post} -> {result}")
-    except Exception as e:
-        _append_log("SYNC", f"[!] Post-sync count error: {e}")
-
-    # Write state snapshot for the UI
-    try:
-        # runtime import to avoid pylance/module-path noise
-        from cw_platform.orchestrator import build_state, write_state
-        plex_idx  = _build_index_for(cfg, "PLEX")
-        simkl_idx = _build_index_for(cfg, "SIMKL")
-        snapshot  = build_state(plex_idx, simkl_idx)
-        write_state(snapshot, STATE_PATH)
-        STATS.refresh_from_state(snapshot)
-        _append_log("SYNC", "[i] state.json updated")
-    except Exception as e:
-        _append_log("SYNC", f"[!] state.json write failed: {e}")
-
-    _append_log("SYNC", f"[i] Done. Total added: {added_total}")
-    _parse_sync_line("[SYNC] exit code: 0")
