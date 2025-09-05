@@ -452,7 +452,7 @@ def _append_log(tag: str, raw_line: str) -> None:
     if len(buf) > MAX_LOG_LINES:
         LOG_BUFFERS[tag] = buf[-MAX_LOG_LINES:]
 
-# --- Orchestrator ---
+# ----------------- Orchestrator ------------------
 def _sync_progress_ui(raw: str) -> None:
     msg = raw.replace("state.json", "Snapshot")
     _append_log("SYNC", msg)
@@ -466,7 +466,6 @@ def _run_pairs_thread(run_id: str) -> None:
 
     # special marker to tell frontend to clear its <pre>
     _sync_progress_ui("::CLEAR::")
-
     _sync_progress_ui(f"> SYNC start: orchestrator pairs run_id={run_id}")
 
     try:
@@ -486,6 +485,17 @@ def _run_pairs_thread(run_id: str) -> None:
 
         added = int(result.get("added", 0))
         removed = int(result.get("removed", 0))
+        try:
+            state = _load_state()
+            if state:
+                STATS.refresh_from_state(state)
+                STATS.record_summary(added, removed)
+            else:
+                _append_log("SYNC", "[!] No state found after sync; stats not updated.")
+        except Exception as e:
+            _append_log("SYNC", f"[!] Stats update failed: {e}")
+        # ----------------------------------------------------------------
+
         _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}")
         _sync_progress_ui("[SYNC] exit code: 0")
 
@@ -494,7 +504,6 @@ def _run_pairs_thread(run_id: str) -> None:
         _sync_progress_ui("[SYNC] exit code: 1")
 
     finally:
-        # ruim status op zodat _is_sync_running() klopt
         RUNNING_PROCS.pop("SYNC", None)
 
 
@@ -565,14 +574,15 @@ def _parse_sync_line(line: str) -> None:
         _summary_set("version", m.group("ver"))
         return
 
-    m = re.search(r"Pre-sync counts:\s+Plex=(?P<pp>\d+)\s+vs\s+SIMKL=(?P<sp>\d+)\s+\((?P<rel>[^)]+)\)", s)
+    m = re.search(r"Pre-sync counts:\s+Plex=(?P<pp>\d+)(?:\s*\([^)]*\))?\s+vs\s+SIMKL=(?P<sp>\d+)(?:\s*\([^)]*\))?(?:\s*\((?P<rel>[^)]+)\))?", s)
+
     if m:
         _summary_set("plex_pre", int(m.group("pp")))
         _summary_set("simkl_pre", int(m.group("sp")))
         _summary_set_timeline("pre", True)
         return
 
-    m = re.search(r"Post-sync:\s+Plex=(?P<pa>\d+)\s+vs\s+SIMKL=(?P<sa>\d+)\s*(?:→|->)\s*(?P<res>[A-Z]+)", s)
+    m = re.search(r"Post-sync:\s+Plex=(?P<pa>\d+)(?:\s*\([^)]*\))?\s+vs\s+SIMKL=(?P<sa>\d+)(?:\s*\([^)]*\))?\s*(?:→|->)\s*(?P<res>[A-Z]+)", s)
     if m:
         _summary_set("plex_post", int(m.group("pa")))   # Store Post-sync Plex count
         _summary_set("simkl_post", int(m.group("sa")))  # Store Post-sync SIMKL count
@@ -690,118 +700,125 @@ def _pick_added(d: Dict[str, Any]) -> Optional[str]:
                     return str(v)
     return None
 
-def _tmdb_genres(api_key: str, typ: str, tmdb_id: int, ttl_days: int = 14) -> List[str]:
-    """Fetch & cache TMDb genres for movie/tv. Safe fallback to []."""
-    try:
-        meta_dir = CACHE_DIR / "tmdb_meta"
-        meta_dir.mkdir(parents=True, exist_ok=True)
-        fpath = meta_dir / f"{typ}-{tmdb_id}.json"
-
-        fresh = False
-        if fpath.exists():
-            age = time.time() - fpath.stat().st_mtime
-            if age < ttl_days * 86400:
-                fresh = True
-
-        data = None
-        if fresh:
-            try:
-                data = json.loads(fpath.read_text(encoding="utf-8"))
-            except Exception:
-                data = None
-
-        if data is None:
-            url = f"https://api.themoviedb.org/3/{'tv' if typ=='tv' else 'movie'}/{tmdb_id}?api_key={api_key}&language=en-US"
-            with urllib.request.urlopen(url, timeout=8) as resp:
-                raw = resp.read()
-            fpath.write_bytes(raw)
-            data = json.loads(raw.decode("utf-8", errors="ignore"))
-
-        genres = []
-        for g in (data.get("genres") or []):
-            name = g.get("name")
-            if isinstance(name, str) and name.strip():
-                genres.append(name.strip())
-        return genres[:8]
-    except Exception:
+def _wall_items_from_state() -> List[Dict[str, Any]]:
+    st = _load_state()
+    if not st:
         return []
 
-def _wall_items_from_state() -> List[Dict[str, Any]]:
-    """Build watchlist preview items from state.json, newest-first."""
-    st = _load_state()
-    plex_items = (st.get("plex", {}) or {}).get("items", {}) or {}
-    simkl_items = (st.get("simkl", {}) or {}).get("items", {}) or {}
+    plex_items  = ((st.get("plex")  or {}).get("items")  or {})
+    simkl_items = ((st.get("simkl") or {}).get("items") or {})
 
-    cfg = load_config()
-    api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
+    def norm_type(v: dict) -> str:
+        return "tv" if str(v.get("type", "")).lower() in ("show", "tv") else "movie"
+
+    def ids_of(v: dict) -> Dict[str, str]:
+        ids = dict(v.get("ids") or {})
+        for k in ("tmdb", "imdb", "tvdb", "slug"):
+            if k not in ids and v.get(k):
+                ids[k] = str(v[k])
+        # stringify & drop None
+        return {k: str(val) for k, val in ids.items() if val is not None}
+
+    def sig_title_year(v: dict) -> str:
+        t = (v.get("title") or v.get("name") or "").strip().lower()
+        t = " ".join(t.split())
+        y = v.get("year") or v.get("release_year")
+        try:
+            y = int(y) if y is not None else None
+        except Exception:
+            y = None
+        return f"{t}|{y or ''}"
+
+    def alias_keys(v: dict) -> List[str]:
+        t = norm_type(v); ids = ids_of(v)
+        out = []
+        for k in ("tmdb", "imdb", "tvdb", "slug"):
+            val = ids.get(k)
+            if val:
+                out.append(f"{t}:{k}:{val}")
+        if not out:
+            out.append(f"{t}:sig:{sig_title_year(v)}")
+        return out
+
+    def primary_key(v: dict) -> str:
+        t = norm_type(v); ids = ids_of(v)
+        for k in ("tmdb", "imdb", "tvdb", "slug"):
+            val = ids.get(k)
+            if val:
+                return f"{t}:{k}:{val}"
+        return f"{t}:sig:{sig_title_year(v)}"
+
+    buckets: Dict[str, Dict[str, Any]] = {}
+    alias2bucket: Dict[str, str] = {}
+
+    def ingest(src: str, rec: dict) -> None:
+        keys = alias_keys(rec)
+        bucket_key = next((k for k in keys if k in alias2bucket), None)
+        if bucket_key is None:
+            bucket_key = primary_key(rec)
+            if bucket_key in buckets:
+                bucket_key = f"{bucket_key}#{len(buckets)}"
+            buckets[bucket_key] = {
+                "type": norm_type(rec),
+                "ids": ids_of(rec),
+                "title": rec.get("title") or rec.get("name") or "",
+                "year": rec.get("year") or rec.get("release_year"),
+                "p": None, "s": None,
+                "added_epoch": int((rec.get("added_epoch") or rec.get("added_ts") or 0) or 0),
+            }
+        b = buckets[bucket_key]
+        if src == "plex":
+            b["p"] = rec
+        else:
+            b["s"] = rec
+        b["ids"].update(ids_of(rec))
+        if not b["title"]:
+            b["title"] = rec.get("title") or rec.get("name") or ""
+        if not b["year"]:
+            b["year"] = rec.get("year") or rec.get("release_year")
+        ts = int((rec.get("added_epoch") or rec.get("added_ts") or 0) or 0)
+        if ts > b["added_epoch"]:
+            b["added_epoch"] = ts
+        for a in keys:
+            alias2bucket[a] = bucket_key
+
+    for _, v in plex_items.items():
+        ingest("plex", v)
+    for _, v in simkl_items.items():
+        ingest("simkl", v)
 
     out: List[Dict[str, Any]] = []
-    all_keys = set(plex_items.keys()) | set(simkl_items.keys())
-
-    def iso_to_epoch(iso: Optional[str]) -> int:
-        if iso is None: return 0
+    for pk, b in buckets.items():
+        ids = b["ids"]
+        tmdb = ids.get("tmdb")
         try:
-            s = str(iso).strip()
-            if s.isdigit(): return int(s)
-            s = s.replace("Z", "+00:00")
-            return int(datetime.fromisoformat(s).timestamp())
+            tmdb = int(tmdb) if tmdb is not None else None
         except Exception:
-            return 0
+            pass
 
-    for key in all_keys:
-        p = plex_items.get(key) or {}
-        s = simkl_items.get(key) or {}
-        info = p or s
-        if not info:
-            continue
-
-        typ_raw = (info.get("type") or "").lower()
-        typ = "tv" if typ_raw in ("tv", "show") else "movie"
-
-        title = info.get("title") or info.get("name") or ""
-        year = info.get("year") or info.get("release_year")
-        tmdb_id = (info.get("ids", {}) or {}).get("tmdb") or info.get("tmdb")
-
-        p_when = _pick_added(p)
-        s_when = _pick_added(s)
-        p_ep = iso_to_epoch(p_when)
-        s_ep = iso_to_epoch(s_when)
-
-        if p_ep >= s_ep:
-            added_when = p_when
-            added_epoch = p_ep
-            added_src = "plex" if p else ("simkl" if s else "")
-        else:
-            added_when = s_when
-            added_epoch = s_ep
-            added_src = "simkl" if s else ("plex" if p else "")
-
-        status = "both" if key in plex_items and key in simkl_items else ("plex_only" if key in plex_items else "simkl_only")
-
-        categories: List[str] = []
-        if api_key and tmdb_id:
-            try:
-                categories = _tmdb_genres(api_key, typ, int(tmdb_id))
-            except Exception:
-                categories = []
+        status = "both" if (b["p"] and b["s"]) else ("plex_only" if b["p"] else "simkl_only")
+        # bron met “nieuwste” added_epoch wint
+        p_ts = int((b["p"] or {}).get("added_epoch") or 0)
+        s_ts = int((b["s"] or {}).get("added_epoch") or 0)
+        added_src = "Plex" if p_ts >= s_ts else "SIMKL"
 
         out.append({
-            "key": key,
-            "type": typ,
-            "title": title,
-            "year": year,
-            "tmdb": tmdb_id,
+            "key": pk,
+            "type": "show" if b["type"] == "tv" else "movie",
+            "tmdb": tmdb,
+            "title": b["title"],
+            "year": b["year"],
             "status": status,
-            "added_epoch": added_epoch,
-            "added_when": added_when,
+            "added_epoch": int(b.get("added_epoch") or 0),
             "added_src": added_src,
-            "categories": categories,
+            "categories": [],
         })
 
-    out.sort(key=lambda x: (x.get("added_epoch") or 0, x.get("year") or 0), reverse=True)
+    out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
 
 _PROBE_CACHE: Dict[str, Tuple[float, bool]] = {"plex": (0.0, False), "simkl": (0.0, False)}
+
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -890,23 +907,24 @@ async def _on_startup():
 def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
     """
     Returns:
-      - series: last N (time, count) samples from statistics.json (ascending order)
-      - history: last few sync reports (date, duration, added_last, removed_last, result)
+      - series: last N (time, count) samples (ascending)
+      - history: last few sync reports
       - watchtime: estimated minutes/hours/days with method=tmdb|fallback|mixed
     """
-    try:
-        stats_raw = json.loads((CONFIG / "statistics.json").read_text(encoding="utf-8"))
-    except Exception:
-        stats_raw = {}
-    samples = list(stats_raw.get("samples") or [])
+    # 1) samples uit STATS, niet uit de file
+    with STATS.lock:
+        samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
     if limit_samples > 0:
         samples = samples[-int(limit_samples):]
     series = [{"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)} for r in samples]
 
+    # 2) history (zoals je had)
     rows = []
     try:
-        files = sorted(REPORT_DIR.glob("sync-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:max(1, int(history))]
+        files = sorted(REPORT_DIR.glob("sync-*.json"),
+                       key=lambda p: p.stat().st_mtime,
+                       reverse=True)[:max(1, int(history))]
         for p in files:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
@@ -917,18 +935,18 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     "result": d.get("result"),
                     "plex_post": d.get("plex_post"),
                     "simkl_post": d.get("simkl_post"),
-                    "added": d.get("added_last"),   # may be None on older reports
-                    "removed": d.get("removed_last")
+                    "added": d.get("added_last"),
+                    "removed": d.get("removed_last"),
                 })
             except Exception:
                 continue
     except Exception:
         pass
 
+    # 3) watchtime uit actuele snapshot (union-map)
     state = _load_state()
-    union = {}
     try:
-        union = Stats._union_keys(state) if state else {}
+        union = Stats._build_union_map(state) if state else {}
     except Exception:
         union = {}
 
@@ -936,13 +954,12 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     simkl_items = ((state.get("simkl") or {}).get("items") or {}) if state else {}
 
     cfg = load_config()
-    api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
+    api_key = ((cfg.get("tmdb") or {}).get("api_key") or "").strip()
     use_tmdb = bool(api_key)
 
     movies = shows = 0
     total_min = 0
     tmdb_hits = tmdb_misses = 0
-
     fetch_cap = 50
     fetched = 0
 
@@ -958,12 +975,10 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         minutes = None
         if use_tmdb and tmdb_id and fetched < fetch_cap:
             try:
-                minutes = get_runtime(api_key, typ, int(tmdb_id), CACHE_DIR)  # <-- use helper from _TMDB.py
+                minutes = get_runtime(api_key, typ, int(tmdb_id), CACHE_DIR)
                 fetched += 1
-                if minutes is not None:
-                    tmdb_hits += 1
-                else:
-                    tmdb_misses += 1
+                if minutes is not None: tmdb_hits += 1
+                else: tmdb_misses += 1
             except Exception:
                 tmdb_misses += 1
 
@@ -973,31 +988,16 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         total_min += int(minutes)
 
     method = "tmdb" if tmdb_hits and not tmdb_misses else ("mixed" if tmdb_hits else "fallback")
-
     watchtime = {
         "movies": movies,
         "shows": shows,
         "minutes": total_min,
         "hours": round(total_min / 60, 1),
         "days": round(total_min / 60 / 24, 1),
-        "method": method
+        "method": method,
     }
 
     return JSONResponse({"series": series, "history": rows, "watchtime": watchtime})
-
-@app.get("/api/stats/raw")
-def api_stats_raw():
-    try:
-        p = CONFIG / "statistics.json"
-        return JSONResponse(json.loads(p.read_text(encoding="utf-8")))
-    except Exception:
-        return JSONResponse({"ok": False}, status_code=404)
-    
-async def _on_shutdown():
-    try:
-        scheduler.stop()
-    except Exception:
-        pass
 
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
@@ -1008,20 +1008,26 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
+@app.get("/api/stats/raw")
+def api_stats_raw():
+    with STATS.lock:
+        # deep-copy via dumps/loads om mutaties te vermijden
+        return JSONResponse(json.loads(json.dumps(STATS.data)))
+
 @app.get("/api/stats")
 def api_stats() -> Dict[str, Any]:
-    base = STATS.overview(None)  # don't pass state here; use persisted file
-
+    base = STATS.overview(None)
     snap = _summary_snapshot() if callable(globals().get("_summary_snapshot", None)) else {}
     try:
         if bool(snap.get("running")):
             state = _load_state()
             if state:
-                base["now"] = len(Stats._union_keys(state))
+                base["now"] = len(Stats._build_union_map(state))
     except Exception:
         pass
 
     return base
+
 
 @app.get("/api/logs/stream")
 def api_logs_stream_initial(tag: str = Query("SYNC")):
@@ -1310,22 +1316,14 @@ def api_run_summary_stream() -> StreamingResponse:
 @app.get("/api/state/wall")
 def api_state_wall() -> Dict[str, Any]:
     cfg = load_config()
-    api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
+    api_key = ((cfg.get("tmdb") or {}).get("api_key") or "")
     st = _load_state()
     items = _wall_items_from_state()
-
-    if not items:
-        return {
-            "ok": False,
-            "error": "No Snapshot found or empty.",
-            "missing_tmdb_key": not bool(api_key),
-        }
-
     return {
-        "ok": True,
+        "ok": bool(items),
         "items": items,
         "missing_tmdb_key": not bool(api_key),
-        "last_sync_epoch": st.get("last_sync_epoch"),
+        "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
     }
 
 # TMDb artwork
@@ -1408,61 +1406,6 @@ def _safe_remove_path(p: Path) -> bool:
         return True
     except Exception:
         return False
-
-# Troubleshooting
-@app.post("/api/troubleshoot/reset-state")
-def api_trbl_reset_state(
-    mode: str = Body("clear_both"),          # "clear_both" | "clear_state" | "clear_tombstones" | "rebuild"
-    ttl_override: Optional[int] = Body(None) # optioneel, alleen voor rebuild/latere uitbreidingen
-) -> Dict[str, Any]:
-    """
-    Clear snapshot/tombstones, or rebuild if gewenst.
-    Default = clear_both (echte cold start).
-    """
-    try:
-        # Compute/echo paths for debugging
-        state_path = STATE_PATH
-        tomb_path  = TOMBSTONES_PATH
-
-        if mode in ("clear_both", "clear_state"):
-            state_path.unlink(missing_ok=True)
-
-        if mode in ("clear_both", "clear_tombstones"):
-            tomb_path.unlink(missing_ok=True)
-
-        if mode == "rebuild":
-            # Alleen als je dit expliciet wil — anders weglaten
-            from providers.sync._mod_PLEX import (
-                plex_fetch_watchlist_items, gather_plex_rows, build_index as plex_build_index
-            )
-            from providers.sync._mod_SIMKL import (
-                simkl_ptw_full, build_index_from_simkl as simkl_build_index
-            )
-            from cw_platform.orchestrator import build_state, write_state
-
-            cfg = load_config()
-            token = (cfg.get("plex", {}) or {}).get("account_token") or ""
-            rows = gather_plex_rows(plex_fetch_watchlist_items(None, token, debug=False))
-            plex_idx = plex_build_index(
-                [r for r in rows if r.get("type") == "movie"],
-                [r for r in rows if r.get("type") == "show"],
-            )
-            shows, movies = simkl_ptw_full(cfg.get("simkl") or {})
-            simkl_idx = simkl_build_index(movies, shows)
-
-            snap = build_state(plex_idx, simkl_idx)
-            write_state(snap, state_path)
-
-        return {
-            "ok": True,
-            "mode": mode,
-            "state_path": str(state_path),
-            "tombstones_path": str(tomb_path),
-            "state_exists": state_path.exists(),
-            "tombstones_exists": tomb_path.exists(),
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
     
 # Troubleshooting
 @app.post("/api/troubleshoot/clear-cache")
@@ -1485,6 +1428,19 @@ def api_trbl_clear_cache() -> Dict[str, Any]:
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
 # Troubleshooting
+@app.post("/api/troubleshoot/reset-stats")
+def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
+    try:
+        STATS.reset()
+        if recalc:
+            state = _load_state()
+            if state:
+                STATS.refresh_from_state(state)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    
 @app.post("/api/troubleshoot/reset-state")
 def api_trbl_reset_state(
     mode: str = Body("rebuild"),          # "rebuild" | "clear_both" | "clear_state" | "clear_tombstones" | "clear_tombstone_entries"

@@ -52,6 +52,7 @@ let detStickBottom = true; // auto-stick to bottom voor details-log
 let wallLoaded = false,
   _lastSyncEpoch = null,
   _wasRunning = false;
+let wallReqSeq = 0;   // request sequence for loadWall
 window._ui = { status: null, summary: null };
 
 /* ====== Utilities ====== */
@@ -2345,6 +2346,7 @@ function artUrl(item, size) {
 }
 
 async function loadWall() {
+  const myReq = ++wallReqSeq;
   const card = document.getElementById("placeholder-card");
   const msg = document.getElementById("wall-msg");
   const row = document.getElementById("poster-row");
@@ -2377,6 +2379,7 @@ async function loadWall() {
 
   try {
     const data = await fetch("/api/state/wall").then((r) => r.json());
+    if (myReq !== wallReqSeq) return;
 
     if (data.missing_tmdb_key) {
       card.classList.add("hidden");
@@ -2865,13 +2868,15 @@ showTab("main");
 
 updateWatchlistTabVisibility();
 
+let _bootPreviewTriggered = false;
+
 // make sure wall can load on first paint
 window.wallLoaded = false;
 
-document.addEventListener("DOMContentLoaded", () => {
-  try {
-    updatePreviewVisibility();
-  } catch (_) {}
+document.addEventListener("DOMContentLoaded", async () => {
+  if (_bootPreviewTriggered) return;
+  _bootPreviewTriggered = true;
+  try { await updatePreviewVisibility(); } catch {}
 });
 
 window.addEventListener("storage", (event) => {
