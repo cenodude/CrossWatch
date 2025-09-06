@@ -56,6 +56,13 @@ let wallReqSeq = 0;   // request sequence for loadWall
 window._ui = { status: null, summary: null };
 
 /* ====== Utilities ====== */
+function toLocal(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString(undefined, { hour12: false });
+}
+
 function computeRedirectURI() {
   return location.origin + "/callback";
 }
@@ -278,8 +285,6 @@ async function showTab(n) {
     if (!esSum) openSummaryStream();
     refreshSchedulingBanner();
     refreshStats(true);
-
-    // 👇 preview altijd opnieuw laden
     window.wallLoaded = false;
     try {
       await updatePreviewVisibility();
@@ -294,7 +299,7 @@ async function showTab(n) {
     if (n === "watchlist") {
       loadWatchlist();
     } else {
-      document.getElementById("sec-auth")?.classList.add("open");
+      // document.getElementById("sec-auth")?.classList.add("open");
       try {
         await loadConfig();
       } catch (e) {
@@ -483,7 +488,6 @@ async function runSync() {
 }
 
 /* Version check + update notification */
-
 const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 let _updInfo = null;
 function openUpdateModal() {
@@ -645,16 +649,13 @@ async function refreshInsights() {
                 : "—";
 
             const added = row.added ?? "—";
-
             const removed = row.removed ?? "—";
-
             const badgeClass =
               String(row.result || "").toUpperCase() === "EQUAL"
                 ? "ok"
                 : "warn";
 
-            const when = row.finished_at || row.started_at || "";
-
+            const when = toLocal(row.finished_at || row.started_at);
             return `<div class="history-item">
 
           <div class="history-meta">${when} • <span class="badge ${badgeClass}">${
@@ -662,17 +663,11 @@ async function refreshInsights() {
             }</span> • ${dur}s</div>
 
           <div class="history-badges">
-
             <span class="badge">+${added}</span>
-
             <span class="badge">-${removed}</span>
-
             <span class="badge">P:${row.plex_post ?? "—"}</span>
-
             <span class="badge">S:${row.simkl_post ?? "—"}</span>
-
           </div>
-
         </div>`;
           })
           .join("") ||
@@ -766,110 +761,57 @@ function renderSparkline(id, points) {
     .join("");
 
   el.innerHTML = `
-
     <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-
       <defs>
-
         <linearGradient id="spark-grad" x1="0" y1="0" x2="1" y2="0">
-
           <stop offset="0" stop-color="var(--grad1,#7c5cff)"/>
-
           <stop offset="1" stop-color="var(--grad2,#2de2ff)"/>
-
         </linearGradient>
-
       </defs>
-
       <path class="line" d="${d}"></path>
-
       ${dots}
-
     </svg>`;
 }
-
 document.addEventListener("DOMContentLoaded", refreshInsights);
 
 async function checkForUpdate() {
   try {
     const r = await fetch("/api/version", { cache: "no-store" });
-
     if (!r.ok) throw new Error("HTTP " + r.status);
 
     const j = await r.json();
-
-    const cur = j.current || "0.0.0";
-
-    const latest = j.latest || null;
-
-    const url =
-      j.html_url ||
-      "https://github.com/cenodude/plex-simkl-watchlist-sync/releases";
-
+    const cur    = String(j.current ?? "0.0.0").trim();
+    const latest = (String(j.latest ?? "") || "").trim() || null;
+    const url    = j.html_url || "https://github.com/cenodude/plex-simkl-watchlist-sync/releases";
     const hasUpdate = !!j.update_available;
 
-    // Update the "Version x.y.z" label (if present)
-
+    // Update version label
     const vEl = document.getElementById("app-version");
-
     if (vEl) vEl.textContent = `Version ${cur}`;
 
-    // Update badge (right side)
-
+    // Badge
     const updEl = document.getElementById("st-update");
-
     if (!updEl) return;
-
-    // Make sure it has the badge classes (harmless if already present)
-
     updEl.classList.add("badge", "upd");
 
     if (hasUpdate && latest) {
-      // Only re-animate if the version changed since last check
-
       const prev = updEl.dataset.lastLatest || "";
-
       const changed = latest !== prev;
 
-      updEl.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">
-
-                           Update ${latest} available
-
-                         </a>`;
-
+      updEl.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">Update ${latest} available</a>`;
       updEl.setAttribute("aria-label", `Update ${latest} available`);
-
       updEl.classList.remove("hidden");
 
       if (changed) {
-        // store for next time
-
         updEl.dataset.lastLatest = latest;
-
-        // retrigger the one-time "reveal" animation
-
-        updEl.classList.remove("reveal"); // reset
-
-        void updEl.offsetWidth; // reflow to restart CSS animation
-
-        updEl.classList.add("reveal"); // CSS handles pop + pulse
+        updEl.classList.remove("reveal");
+        void updEl.offsetWidth; // reflow
+        updEl.classList.add("reveal");
       }
-      setValIfExists("plex_token", cfg.plex?.account_token || "");
-      setValIfExists("simkl_client_id", cfg.simkl?.client_id || "");
-      setValIfExists("simkl_client_secret", cfg.simkl?.client_secret || "");
-      setValIfExists("simkl_access_token", cfg.simkl?.access_token || "");
-      setValIfExists("tmdb_api_key", cfg.tmdb?.api_key || "");
+    } else {
       updEl.classList.add("hidden");
-
       updEl.classList.remove("reveal");
-
       updEl.removeAttribute("aria-label");
-
-      document.getElementById("schTime").value =
-        typeof s.daily_time === "string" && s.daily_time
-          ? s.daily_time
-          : "03:30";
-
       updEl.textContent = "";
     }
   } catch (err) {
@@ -878,72 +820,50 @@ async function checkForUpdate() {
 }
 
 // Run once after DOM is ready
-
 document.addEventListener("DOMContentLoaded", () => {
   checkForUpdate();
-
   // Optional: re-check when the tab becomes visible again
-
   // document.addEventListener('visibilitychange', () => {
-
   //   if (!document.hidden) checkForUpdate();
-
   // });
 });
 
 // tiny toast
-
 function showToast(text, onClick) {
   const toast = document.createElement("div");
-
   toast.className = "msg ok";
-
   toast.textContent = text;
-
   toast.style.position = "fixed";
-
   toast.style.right = "16px";
   toast.style.bottom = "16px";
-
   toast.style.zIndex = 1000;
   toast.style.cursor = "pointer";
-
   toast.onclick = () => {
     onClick && onClick();
     toast.remove();
   };
 
   document.body.appendChild(toast);
-
   setTimeout(() => toast.classList.add("hidden"), 3000);
 }
 
 // call at boot, and on a timer
-
 checkForUpdate(true);
-
 setInterval(() => checkForUpdate(false), UPDATE_CHECK_INTERVAL_MS);
 
 /* ====== Summary stream + details log ====== */
-
 function renderSummary(sum) {
   currentSummary = sum;
-
   window._ui = window._ui || {};
-
   window._ui.summary = sum;
 
   const pp = sum.plex_post ?? sum.plex_pre;
-
   const sp = sum.simkl_post ?? sum.simkl_pre;
 
   document.getElementById("chip-plex").textContent = pp ?? "–";
-
   document.getElementById("chip-simkl").textContent = sp ?? "–";
-
   document.getElementById("chip-dur").textContent =
     sum.duration_sec != null ? sum.duration_sec + "s" : "–";
-
   document.getElementById("chip-exit").textContent =
     sum.exit_code != null ? String(sum.exit_code) : "–";
 
@@ -961,19 +881,12 @@ function renderSummary(sum) {
   }
 
   document.getElementById("det-cmd").textContent = sum.cmd || "–";
-
   document.getElementById("det-ver").textContent = sum.version || "–";
-
-  document.getElementById("det-start").textContent = sum.started_at || "–";
-
-  document.getElementById("det-finish").textContent = sum.finished_at || "–";
-
+  document.getElementById("det-start").textContent  = toLocal(sum.started_at);
+  document.getElementById("det-finish").textContent = toLocal(sum.finished_at);
   const tl = sum.timeline || {};
-
   setTimeline(tl);
-
   updateProgressFromTimeline?.(tl);
-
   const btn = document.getElementById("run");
 
   if (btn) {
@@ -989,9 +902,7 @@ function renderSummary(sum) {
     } else {
       if (_wasRunning) {
         setRunProgress?.(100);
-
         btn.classList.remove("indet");
-
         setTimeout(() => {
           btn.classList.remove("loading", "glass");
           setRunProgress?.(0);
@@ -1008,11 +919,8 @@ function renderSummary(sum) {
 
   if (_wasRunning && !sum.running) {
     window.wallLoaded = false;
-
     updatePreviewVisibility?.();
-
     loadWatchlist?.();
-
     refreshSchedulingBanner?.();
   }
 
@@ -1068,20 +976,15 @@ function animateNumber(el, to) {
 function animateChart(now, week, month) {
   const bars = {
     now: document.querySelector(".bar.now"),
-
     week: document.querySelector(".bar.week"),
-
     month: document.querySelector(".bar.month"),
   };
 
   const max = Math.max(1, now, week, month);
-
   const h = (v) => Math.max(0.04, v / max);
 
   if (bars.week) bars.week.style.transform = `scaleY(${h(week)})`;
-
   if (bars.month) bars.month.style.transform = `scaleY(${h(month)})`;
-
   if (bars.now) bars.now.style.transform = `scaleY(${h(now)})`;
 }
 
@@ -1089,7 +992,6 @@ async function refreshStats(force = false) {
   const nowT = Date.now();
 
   if (!force && nowT - _lastStatsFetch < 900) return;
-
   _lastStatsFetch = nowT;
 
   try {
@@ -1098,43 +1000,32 @@ async function refreshStats(force = false) {
     );
 
     if (!j?.ok) return;
-
     const elNow = document.getElementById("stat-now");
-
     const elW = document.getElementById("stat-week");
-
     const elM = document.getElementById("stat-month");
 
     if (!elNow || !elW || !elM) return;
-
     const n = j.now | 0,
       w = j.week | 0,
       m = j.month | 0;
 
     animateNumber(elNow, n);
-
     animateNumber(elW, w);
-
     animateNumber(elM, m);
 
     // meter
-
     const max = Math.max(1, n, w, m);
-
     const fill = document.getElementById("stat-fill");
 
     if (fill) fill.style.width = Math.round((n / max) * 100) + "%";
 
     // deltas
-
     const bumpOne = (delta, label) => {
       const t = document.getElementById("trend-week");
       if (!t) return;
 
       const cls = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-
       t.className = "chip trend " + cls;
-
       t.textContent =
         delta === 0
           ? "no change"
@@ -1151,19 +1042,13 @@ async function refreshStats(force = false) {
     bumpOne(n - w, "last week"); // or: bumpOne(n - m, 'last month')
 
     // optional API fields
-
     const by = j.by_source || {};
-
     const totalAdd = Number.isFinite(j.added) ? j.added : null; // all-time totals
-
     const totalRem = Number.isFinite(j.removed) ? j.removed : null;
-
     const lastAdd = Number.isFinite(j.new) ? j.new : null; // last run only
-
     const lastRem = Number.isFinite(j.del) ? j.del : null;
 
     // legend numbers (all-time)
-
     const setTxt = (id, val) => {
       const el = document.getElementById(id);
 
@@ -1171,17 +1056,14 @@ async function refreshStats(force = false) {
     };
 
     setTxt("stat-added", totalAdd);
-
     setTxt("stat-removed", totalRem);
 
     // tiles (last run only, auto-hide when null)
-
     const setTile = (tileId, numId, val) => {
       const t = document.getElementById(tileId),
         nEl = document.getElementById(numId);
 
       if (!t || !nEl) return;
-
       if (val == null) {
         t.hidden = true;
         return;
@@ -1192,11 +1074,9 @@ async function refreshStats(force = false) {
     };
 
     setTile("tile-new", "stat-new", lastAdd);
-
     setTile("tile-del", "stat-del", lastRem);
 
     // brand totals for Plex / SIMKL (transparent tiles + subtle edge glow)
-
     const plexVal = Number.isFinite(by.plex_total)
       ? by.plex_total
       : (by.plex ?? 0) + (by.both ?? 0);
@@ -1206,11 +1086,8 @@ async function refreshStats(force = false) {
       : (by.simkl ?? 0) + (by.both ?? 0);
 
     const elP = document.getElementById("stat-plex");
-
     const elS = document.getElementById("stat-simkl");
-
     const curP = Number(elP?.textContent || 0);
-
     const curS = Number(elS?.textContent || 0);
 
     const pop = (el) => {
@@ -1239,49 +1116,37 @@ async function refreshStats(force = false) {
     }
 
     // ensure tiles are visible
-
     document.getElementById("tile-plex")?.removeAttribute("hidden");
-
     document.getElementById("tile-simkl")?.removeAttribute("hidden");
   } catch (_) {}
 }
 
 function _setBarValues(n, w, m) {
   const bw = document.querySelector(".bar.week");
-
   const bm = document.querySelector(".bar.month");
-
   const bn = document.querySelector(".bar.now");
 
   if (bw) bw.dataset.v = String(w);
-
   if (bm) bm.dataset.v = String(m);
-
   if (bn) bn.dataset.v = String(n);
 }
 
 function _initStatsTooltip() {
   const chart = document.getElementById("stats-chart");
-
   const tip = document.getElementById("stats-tip");
 
   if (!chart || !tip) return;
 
   const map = [
     { el: document.querySelector(".bar.week"), label: "Last Week" },
-
     { el: document.querySelector(".bar.month"), label: "Last Month" },
-
     { el: document.querySelector(".bar.now"), label: "Now" },
   ];
 
   function show(e, label, value) {
     tip.textContent = `${label}: ${value} items`;
-
     tip.style.left = e.offsetX + "px";
-
     tip.style.top = e.offsetY + "px";
-
     tip.classList.add("show");
     tip.hidden = false;
   }
@@ -1309,7 +1174,6 @@ function _initStatsTooltip() {
       "touchstart",
       (ev) => {
         const t = ev.touches[0];
-
         const rect = chart.getBoundingClientRect();
 
         show(
@@ -1332,17 +1196,14 @@ function _initStatsTooltip() {
 }
 
 // Call once on boot
-
 document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 
 // Call at boot
-
 document.addEventListener("DOMContentLoaded", () => {
   refreshStats(true);
 });
 
 // Nudge the stats whenever the summary updates or a run finishes
-
 const _origRenderSummary =
   typeof renderSummary === "function" ? renderSummary : null;
 
@@ -1354,13 +1215,10 @@ window.renderSummary = function (sum) {
 
 function openDetailsLog() {
   const el = document.getElementById("det-log");
-
   const slider = document.getElementById("det-scrub");
 
   if (!el) return;
-
   el.innerHTML = "";
-
   detStickBottom = true;
 
   if (esDet) {
@@ -1372,15 +1230,12 @@ function openDetailsLog() {
 
   const updateSlider = () => {
     if (!slider) return;
-
     const max = el.scrollHeight - el.clientHeight;
-
     slider.value = max <= 0 ? 100 : Math.round((el.scrollTop / max) * 100);
   };
 
   const updateStick = () => {
     const pad = 6; // tolerantierandje
-
     detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
   };
 
@@ -1396,15 +1251,12 @@ function openDetailsLog() {
   if (slider) {
     slider.addEventListener("input", () => {
       const max = el.scrollHeight - el.clientHeight;
-
       el.scrollTop = Math.round((slider.value / 100) * max);
-
       detStickBottom = slider.value >= 99;
     });
   }
 
   esDet = new EventSource("/api/logs/stream?tag=SYNC");
-
   esDet.onmessage = (ev) => {
     if (!ev?.data) return;
     const el = document.getElementById("det-log");
@@ -1452,7 +1304,6 @@ function toggleDetails() {
 window.addEventListener("beforeunload", closeDetailsLog);
 
 /* ====== Summary copy / download ====== */
-
 async function copySummary(btn) {
   if (!window.currentSummary) {
     try {
@@ -1473,18 +1324,13 @@ async function copySummary(btn) {
   }
 
   const lines = [];
-
   lines.push(`CrossWatch ${s.version || ""}`.trim());
 
   if (s.started_at) lines.push(`Start:   ${s.started_at}`);
-
   if (s.finished_at) lines.push(`Finish:  ${s.finished_at}`);
-
   if (s.cmd) lines.push(`Cmd:     ${s.cmd}`);
-
   if (s.plex_pre != null && s.simkl_pre != null)
     lines.push(`Pre:     Plex=${s.plex_pre} vs SIMKL=${s.simkl_pre}`);
-
   if (s.plex_post != null && s.simkl_post != null)
     lines.push(
       `Post:    Plex=${s.plex_post} vs SIMKL=${s.simkl_post} -> ${
@@ -1493,11 +1339,9 @@ async function copySummary(btn) {
     );
 
   if (s.duration_sec != null) lines.push(`Duration: ${s.duration_sec}s`);
-
   if (s.exit_code != null) lines.push(`Exit:     ${s.exit_code}`);
 
   const text = lines.join("\n");
-
   let ok = false;
 
   try {
@@ -1536,14 +1380,11 @@ function downloadSummary() {
 }
 
 /* ====== Status refresh (Plex & SIMKL) ====== */
-
 function setRefreshBusy(busy) {
   const btn = document.getElementById("btn-status-refresh");
 
   if (!btn) return;
-
   btn.disabled = !!busy;
-
   btn.classList.toggle("loading", !!busy);
 }
 
@@ -1554,7 +1395,6 @@ async function manualRefreshStatus() {
     setRefreshBusy(true);
 
     btn.classList.add("spin");
-
     setTimeout(() => btn.classList.remove("spin"), 2000);
   } catch (e) {
     console?.warn("Manual status refresh failed", e);
@@ -1602,20 +1442,14 @@ async function refreshStatus(force = false) {
     .classList.contains("hidden");
 
   const logPanel = document.getElementById("log-panel");
-
   const layout = document.getElementById("layout");
-
   const stats = document.getElementById("stats-card");
-
   const hasStatsVisible = !!(stats && !stats.classList.contains("hidden"));
-
   logPanel.classList.toggle("hidden", !(appDebug && onMain));
-
   layout.classList.toggle("full", onMain && !appDebug && !hasStatsVisible);
 }
 
 /* ====== Config & Settings ====== */
-
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
 
@@ -1630,11 +1464,16 @@ async function loadConfig() {
   _setVal("debug", String(!!cfg.runtime?.debug));
 
   // ---- Auth / Keys (populate inputs FIRST)
-  setValIfExists("plex_token",        cfg.plex?.account_token || "");
-  setValIfExists("simkl_client_id",   cfg.simkl?.client_id     || "");
-  setValIfExists("simkl_client_secret", cfg.simkl?.client_secret || "");
-  setValIfExists("simkl_access_token",  cfg.simkl?.access_token  || "");
-  setValIfExists("tmdb_api_key",      cfg.tmdb?.api_key        || "");
+  setValIfExists("plex_token",           cfg.plex?.account_token   || "");
+  setValIfExists("simkl_client_id",      cfg.simkl?.client_id      || "");
+  setValIfExists("simkl_client_secret",  cfg.simkl?.client_secret  || "");
+  setValIfExists("simkl_access_token",   cfg.simkl?.access_token   || "");
+  setValIfExists("tmdb_api_key",         cfg.tmdb?.api_key         || "");
+  setValIfExists("trakt_client_id",      cfg.trakt?.client_id      || "");
+  setValIfExists("trakt_client_secret",  cfg.trakt?.client_secret  || "");
+  setValIfExists("trakt_token",
+    (cfg.auth?.trakt?.access_token) || (cfg.trakt?.access_token) || ""
+  );
 
   // ---- Scheduling (drive UI from same source)
   const s = cfg.scheduling || {};
@@ -1658,6 +1497,7 @@ function _getVal(id) {
   return (el && typeof el.value === "string" ? el.value : "").trim();
 }
 
+// saveSetting - Save Settings
 async function saveSettings() {
   const toast = document.getElementById("save_msg");
   const showToast = (text, ok = true) => {
@@ -1701,7 +1541,7 @@ async function saveSettings() {
     }
 
     // --- RUNTIME ---
-    const uiDebug  = _getVal("debug") === "true";
+    const uiDebug   = _getVal("debug") === "true";
     const prevDebug = !!serverCfg?.runtime?.debug;
     if (uiDebug !== prevDebug) {
       cfg.runtime = cfg.runtime || {};
@@ -1709,11 +1549,15 @@ async function saveSettings() {
       changed = true;
     }
 
-    // --- READ UI VALUES (define them!) ---
+    // --- READ UI VALUES ---
     const uiPlexToken = _getVal("plex_token");
     const uiCid       = _getVal("simkl_client_id");
     const uiSec       = _getVal("simkl_client_secret");
     const uiTmdb      = _getVal("tmdb_api_key");
+
+    // TRAKT
+    const uiTraktCid  = _getVal("trakt_client_id");
+    const uiTraktSec  = _getVal("trakt_client_secret");
 
     // --- PLEX (allow clearing) ---
     const prevPlex = norm(serverCfg?.plex?.account_token);
@@ -1744,6 +1588,25 @@ async function saveSettings() {
       changed = true;
     }
 
+    // --- TRAKT (allow clearing) ---
+    const prevTraktCid = norm(serverCfg?.trakt?.client_id);
+    const prevTraktSec = norm(serverCfg?.trakt?.client_secret);
+    const newTraktCid  = norm(uiTraktCid);
+    const newTraktSec  = norm(uiTraktSec);
+
+    if (newTraktCid !== prevTraktCid) {
+      cfg.trakt = cfg.trakt || {};
+      if (newTraktCid) cfg.trakt.client_id = newTraktCid;
+      else delete cfg.trakt.client_id;
+      changed = true;
+    }
+    if (newTraktSec !== prevTraktSec) {
+      cfg.trakt = cfg.trakt || {};
+      if (newTraktSec) cfg.trakt.client_secret = newTraktSec;
+      else delete cfg.trakt.client_secret;
+      changed = true;
+    }
+
     // --- TMDb (allow clearing) ---
     const prevTmdb = norm(serverCfg?.tmdb?.api_key);
     const newTmdb  = norm(uiTmdb);
@@ -1763,7 +1626,6 @@ async function saveSettings() {
       });
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
 
-      // Re-read to reflect source of truth (prevents UI showing stale values)
       try { await loadConfig(); } catch {}
     }
 
@@ -1774,7 +1636,7 @@ async function saveSettings() {
         mode: _getVal("schMode"),
         every_n_hours: parseInt(_getVal("schN") || "2", 10),
         daily_time: _getVal("schTime") || "03:30",
-        timezone: (_getVal("schTz") || "") || undefined, // fixed _val -> _getVal
+        timezone: (_getVal("schTz") || "") || undefined,
       };
       const postSch = await fetch("/api/scheduling", {
         method: "POST",
@@ -1792,6 +1654,7 @@ async function saveSettings() {
     try { updateSimklState?.(); } catch {}
     try { await updateWatchlistTabVisibility?.(); } catch {}
     try { await loadScheduling?.(); } catch {}
+    try { updateTraktHint?.(); } catch {}
 
     // 5) Success toast
     showToast("Settings saved ✓", true);
@@ -1801,36 +1664,26 @@ async function saveSettings() {
   }
 }
 
-// ---- Scheduling UI ----
 
+// ---- Scheduling UI ----
 async function loadScheduling() {
   try {
     const res = await fetch("/api/scheduling", { cache: "no-store" });
-
     const s = await res.json();
-
     // Debug log so we can verify what the UI received
-
     console.debug("[UI] /api/scheduling ->", s);
-
     const en = document.getElementById("schEnabled");
-
     const mo = document.getElementById("schMode");
-
     const nh = document.getElementById("schN");
-
     const ti = document.getElementById("schTime");
 
     if (!en || !mo || !nh || !ti) {
       console.warn("[UI] scheduling controls not found in DOM");
-
       return;
     }
 
     // Map JSON -> controls (strings for <select> values)
-
     const valEnabled = s && s.enabled === true ? "true" : "false";
-
     const valMode =
       s && typeof s.mode === "string" && s.mode ? s.mode : "hourly";
 
@@ -1843,23 +1696,15 @@ async function loadScheduling() {
         : "03:30";
 
     // Update controls
-
     en.value = valEnabled;
-
     mo.value = valMode;
-
     nh.value = valN;
-
     ti.value = valTime;
 
     // nudge browser to update UI state
-
     en.dispatchEvent(new Event("change"));
-
     mo.dispatchEvent(new Event("change"));
-
     nh.dispatchEvent(new Event("change"));
-
     ti.dispatchEvent(new Event("change"));
   } catch (e) {
     console.warn("Failed to load scheduling config", e);
@@ -1992,7 +1837,6 @@ async function resetStats() {
 
 async function updateTmdbHint() {
   const hint = document.getElementById("tmdb_hint");
-
   const input = document.getElementById("tmdb_api_key");
 
   if (!hint || !input) return;
@@ -2030,17 +1874,75 @@ async function updateTmdbHint() {
   }
 }
 
-/* Plex auth (PIN flow) */
+/* Trakt auth (device/PIN) */
+function setTraktSuccess(show) {
+  const el = document.getElementById("trakt_msg");
+  if (el) el.classList.toggle("hidden", !show);
+}
 
+async function requestTraktPin() {
+  try { setTraktSuccess(false); } catch (_) {}
+
+  let win = null;
+  try {
+    // Houd user-gesture aan voor popup blockers
+    win = window.open("https://trakt.tv/activate", "_blank");
+  } catch (_) {}
+
+  let resp, data;
+  try {
+    resp = await fetch("/api/trakt/pin/new", { method: "POST" });
+  } catch (e) {
+    console.warn("trakt pin fetch failed", e);
+    try { notify && notify("Failed to request Trakt code"); } catch (_) {}
+    return;
+  }
+
+  try {
+    data = await resp.json();
+  } catch (e) {
+    console.warn("trakt pin json parse failed", e);
+    try { notify && notify("Invalid response"); } catch (_) {}
+    return;
+  }
+
+  if (!data || data.ok === false) {
+    console.warn("trakt pin error payload", data);
+    try { notify && notify((data && data.error) ? data.error : "Trakt code request failed"); } catch (_) {}
+    return;
+  }
+
+  const code = data.user_code || "";
+  const url = data.verification_url || "https://trakt.tv/activate";
+
+  // UI invullen
+  try {
+    const el = document.getElementById("trakt_pin");
+    if (el) el.value = code;
+    const msg = document.getElementById("trakt_msg");
+    if (msg) {
+      msg.textContent = code ? ("Code: " + code) : "Code issued";
+      msg.classList.remove("hidden");
+    }
+  } catch (_) {}
+
+  try { if (code) await navigator.clipboard.writeText(code); } catch (_) {}
+
+  try {
+    if (win && !win.closed) { win.location.href = url; win.focus(); }
+  } catch (_) {}
+
+  try { notify && notify("Enter the code on Trakt and wait for confirmation."); } catch (_) {}
+}
+
+/* Plex auth (PIN flow) */
 function setPlexSuccess(show) {
   document.getElementById("plex_msg").classList.toggle("hidden", !show);
 }
-
 async function requestPlexPin() {
   try {
     setPlexSuccess && setPlexSuccess(false);
   } catch (_) {}
-
   let win = null;
 
   try {
@@ -2048,7 +1950,6 @@ async function requestPlexPin() {
 
     win = window.open("https://plex.tv/link", "_blank");
   } catch (_) {}
-
   let resp, data;
 
   try {
@@ -2261,25 +2162,35 @@ function flashBtnOK(btnEl) {
 }
 
 // Wire up buttons once the DOM is ready (no layout changes)
-
 document.addEventListener("DOMContentLoaded", () => {
+  // Plex
   document
     .getElementById("btn-copy-plex-pin")
-
     ?.addEventListener("click", (e) =>
       copyInputValue("plex_pin", e.currentTarget)
     );
 
   document
     .getElementById("btn-copy-plex-token")
-
     ?.addEventListener("click", (e) =>
       copyInputValue("plex_token", e.currentTarget)
+    );
+
+  // Trakt
+  document
+    .getElementById("btn-copy-trakt-pin")
+    ?.addEventListener("click", (e) =>
+      copyInputValue("trakt_pin", e.currentTarget)
+    );
+
+  document
+    .getElementById("btn-copy-trakt-token")
+    ?.addEventListener("click", (e) =>
+      copyInputValue("trakt_token", e.currentTarget)
     );
 });
 
 /* ====== Poster carousel helpers ====== */
-
 function updateEdges() {
   const row = document.getElementById("poster-row");
 
@@ -2494,28 +2405,12 @@ async function loadWall() {
       hover.innerHTML = `
 
           <div class="titleline">${it.title || ""}</div>
-
           <div class="meta">
-
-            <div class="chip src">${
-              uiStatus === "deleted"
-                ? "Status: Deleted"
-                : uiStatus === "both"
-                ? "Source: Synced"
-                : uiStatus === "plex_only"
-                ? "Source: Plex"
-                : "Source: SIMKL"
-            }</div>
-
             <div class="chip time" id="time-${it.type}-${it.tmdb}">${
         _lastSyncEpoch ? "updated " + relTimeFromEpoch(_lastSyncEpoch) : ""
       }</div>
-
           </div>
 
-          <div class="desc" id="desc-${it.type}-${
-        it.tmdb
-      }">Fetching description…</div>
 
         `;
 
@@ -2557,7 +2452,6 @@ async function loadWall() {
 
 async function loadWatchlist() {
   const grid = document.getElementById("wl-grid");
-
   const msg = document.getElementById("wl-msg");
 
   grid.innerHTML = "";
@@ -2625,29 +2519,19 @@ async function loadWatchlist() {
           }" onerror="this.style.display='none'">
 
           <button class="wl-del icon-btn trash"
-
                   type="button"
-
                   title="Remove from Plex watchlist"
-
                   aria-label="Remove from Plex watchlist"
-
                   onclick="deletePoster(event, '${encodeURIComponent(
                     it.key
                   )}', this)">
 
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-
               <path class="lid" d="M9 4h6l1 2H8l1-2z"/>
-
               <path d="M6 7h12l-1 13H7L6 7z"/>
-
               <path d="M10 11v6M14 11v6"/>
-
             </svg>
-
           </button>
-
 
 
           <div class="wl-ovr ovr"><span class="pill ${pillClass}">${pillText}</span></div>
@@ -2655,13 +2539,11 @@ async function loadWatchlist() {
           <div class="wl-cap cap">${(it.title || "").replace(/"/g, "&quot;")} ${
         it.year ? "· " + it.year : ""
       }</div>
-
+      
           <div class="wl-hover hover">
-
             <div class="titleline">${it.title || ""}</div>
 
             <div class="meta">
-
               <div class="chip src">${
                 it.status === "both"
                   ? "Source: Synced"
@@ -2671,7 +2553,6 @@ async function loadWatchlist() {
               }</div>
 
               <div class="chip time">${relTimeFromEpoch(it.added_epoch)}</div>
-
             </div>
 
             <div class="desc" id="wldesc-${node.dataset.type}-${
@@ -2687,15 +2568,7 @@ async function loadWatchlist() {
       if (hidden.has(it.key)) {
         const pill = node.querySelector(".pill");
 
-        // Instead of forcing DELETED, mark visually
-
         pill.classList.add("p-del");
-
-        // keep original text (SYNCED, PLEX, SIMKL, …)
-
-        // or optionally append marker
-
-        // pill.textContent = pill.textContent + ' (hidden)';
       }
 
       node.addEventListener(
@@ -2738,28 +2611,21 @@ async function loadWatchlist() {
 
 async function deletePoster(ev, encKey, btnEl) {
   ev?.stopPropagation?.();
-
   const key = decodeURIComponent(encKey);
-
   const card = btnEl.closest(".wl-poster");
 
   // visual state
-
   btnEl.disabled = true;
-
   btnEl.classList.remove("done", "error");
-
   btnEl.classList.add("working");
 
   try {
     const res = await fetch("/api/watchlist/" + encodeURIComponent(key), {
       method: "DELETE",
     });
-
     if (!res.ok) throw new Error("HTTP " + res.status);
 
     // fade out and remove
-
     if (card) {
       card.classList.add("wl-removing");
 
@@ -2769,7 +2635,6 @@ async function deletePoster(ev, encKey, btnEl) {
     }
 
     // persist hidden key (your existing behavior)
-
     const hidden = new Set(
       JSON.parse(localStorage.getItem("wl_hidden") || "[]")
     );
@@ -2777,17 +2642,12 @@ async function deletePoster(ev, encKey, btnEl) {
     hidden.add(key);
 
     localStorage.setItem("wl_hidden", JSON.stringify([...hidden]));
-
     window.dispatchEvent(new Event("storage"));
-
     btnEl.classList.remove("working");
-
     btnEl.classList.add("done");
   } catch (e) {
     console.warn("deletePoster error", e);
-
     btnEl.classList.remove("working");
-
     btnEl.classList.add("error");
 
     setTimeout(() => btnEl.classList.remove("error"), 1200);
@@ -2799,7 +2659,6 @@ async function deletePoster(ev, encKey, btnEl) {
 }
 
 /* ====== Watchlist preview visibility (fixed) ====== */
-
 async function updateWatchlistPreview() {
   try {
     await loadWall();
@@ -2865,7 +2724,6 @@ async function updatePreviewVisibility() {
 /* ====== Boot ====== */
 
 showTab("main");
-
 updateWatchlistTabVisibility();
 
 let _bootPreviewTriggered = false;
@@ -2903,34 +2761,46 @@ async function resolvePosterUrl(entity, id, size = "w342") {
 }
 
 // Dynamically load auth provider HTML
-
 async function mountAuthProviders() {
   try {
     const res = await fetch("/api/auth/providers/html");
-    if (!res.ok) {
-      return;
-    }
+    if (!res.ok) return;
     const html = await res.text();
     const slot = document.getElementById("auth-providers");
     if (slot) {
       slot.innerHTML = html;
     }
-    // Wire up copy buttons if present
-    document
-      .getElementById("btn-copy-plex-pin")
-      ?.addEventListener("click", (e) =>
-        copyInputValue("plex_pin", e.currentTarget)
-      );
-    document
-      .getElementById("btn-copy-plex-token")
-      ?.addEventListener("click", (e) =>
-        copyInputValue("plex_token", e.currentTarget)
-      );
-  } catch (e) {}
+
+    // Wire up copy buttons (Plex)
+    document.getElementById("btn-copy-plex-pin")
+      ?.addEventListener("click", (e) => copyInputValue("plex_pin", e.currentTarget));
+    document.getElementById("btn-copy-plex-token")
+      ?.addEventListener("click", (e) => copyInputValue("plex_token", e.currentTarget));
+
+    // Wire up copy buttons (Trakt)
+    document.getElementById("btn-copy-trakt-pin")
+      ?.addEventListener("click", (e) => copyInputValue("trakt_pin", e.currentTarget));
+    document.getElementById("btn-copy-trakt-token")
+      ?.addEventListener("click", (e) => copyInputValue("trakt_token", e.currentTarget));
+
+    // Hydrate + run Trakt hint updater
+    await hydrateAuthFromConfig();
+    updateTraktHint();                 
+    setTimeout(updateTraktHint, 0);    
+    requestAnimationFrame(updateTraktHint);
+
+  } catch (e) {
+    console.warn("mountAuthProviders failed", e);
+  }
 }
+
+
 document.addEventListener("DOMContentLoaded", () => {
   try {
-    mountAuthProviders();
+    // call, then update
+    Promise.resolve(mountAuthProviders()).then(() => {
+      try { updateTraktHint?.(); } catch (_) {}
+    });
   } catch (_) {}
 });
 
@@ -2960,15 +2830,186 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // Ensure legacy inline onclick functions are available globally
 try {
-  Object.assign(window, { showTab, requestPlexPin });
+  Object.assign(window, { showTab, requestPlexPin, requestTraktPin });
 } catch (e) {
   console.warn("Global export failed", e);
+}
+
+// Safe no-op for missing hint updaters
+if (typeof updateTraktHint !== "function") {
+  function updateTraktHint() {
+    try {
+      const cid  = document.getElementById("trakt_client_id")?.value?.trim();
+      const secr = document.getElementById("trakt_client_secret")?.value?.trim();
+      const hint = document.getElementById("trakt_hint");
+      if (!hint) return;
+      // Show warning when either field is missing
+      hint.classList.toggle("hidden", !!(cid && secr));
+    } catch (_) {}
+  }
+}
+
+// ---------- Trakt helpers (UI) ----------
+function updateTraktHint() {
+  try {
+    const cid = (document.getElementById("trakt_client_id")?.value || "").trim();
+    const sec = (document.getElementById("trakt_client_secret")?.value || "").trim();
+    const hint = document.getElementById("trakt_hint");
+    if (!hint) return;
+    const missing = !cid || !sec;
+    hint.classList.toggle("hidden", !missing);
+  } catch (_) {}
+}
+
+function copyTraktRedirect() {
+  try {
+    const uri = "urn:ietf:wg:oauth:2.0:oob"; // fixed redirect URI
+    navigator.clipboard.writeText(uri);
+    const codeEl = document.getElementById("trakt_redirect_uri_preview");
+    if (codeEl) codeEl.textContent = uri;
+    notify?.("Redirect URI copied ✓");
+  } catch (e) {
+    console.warn("copyTraktRedirect failed", e);
+  }
+}
+
+// --  Trakt import config + toggle hint
+async function hydrateAuthFromConfig() {
+  try {
+    const r = await fetch("/api/config", { cache: "no-store" });
+    if (!r.ok) return;
+    const cfg = await r.json();
+
+    // Prefill TRKT
+    setValIfExists("trakt_client_id",     (cfg.trakt?.client_id || "").trim());
+    setValIfExists("trakt_client_secret", (cfg.trakt?.client_secret || "").trim());
+    setValIfExists(
+      "trakt_token",
+      (cfg.auth?.trakt?.access_token) || (cfg.trakt?.access_token) || ""
+    );
+
+    // Hint meteen correct
+    updateTraktHint();
+  } catch (_) {}
+}
+
+// Wire up extra buttons after provider HTML mount
+async function mountAuthProviders() {
+  try {
+    const res = await fetch("/api/auth/providers/html");
+    if (!res.ok) return;
+    const html = await res.text();
+    const slot = document.getElementById("auth-providers");
+    if (slot) slot.innerHTML = html;
+
+    // existing Plex bindings…
+    document.getElementById("btn-copy-plex-pin")
+      ?.addEventListener("click", (e) => copyInputValue("plex_pin", e.currentTarget));
+    document.getElementById("btn-copy-plex-token")
+      ?.addEventListener("click", (e) => copyInputValue("plex_token", e.currentTarget));
+
+    // TRAKT bindings
+    document.getElementById("btn-copy-trakt-pin")
+      ?.addEventListener("click", (e) => copyInputValue("trakt_pin", e.currentTarget));
+    document.getElementById("btn-copy-trakt-token")
+      ?.addEventListener("click", (e) => copyInputValue("trakt_token", e.currentTarget));
+    document.getElementById("trakt_client_id")
+      ?.addEventListener("input", updateTraktHint);
+    document.getElementById("trakt_client_secret")
+      ?.addEventListener("input", updateTraktHint);
+
+    // Prefill vanuit config + meerdere veilige toggles i.v.m. render timing
+    await hydrateAuthFromConfig();
+    updateTraktHint();
+    setTimeout(updateTraktHint, 0);
+    requestAnimationFrame(updateTraktHint);
+  } catch (e) {
+    console.warn("mountAuthProviders failed", e);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  try { mountAuthProviders(); } catch (_) {}
+});
+
+// Exporteer legacy globals (voeg toe aan je bestaande export als nodig)
+try {
+  Object.assign(window, { requestTraktPin });
+} catch (_) {}
+
+
+// ---------- Request TRAKT PIN (device code) ----------
+async function requestTraktPin() {
+  // open tab first to keep user gesture
+  let win = null;
+  try { win = window.open("https://trakt.tv/activate", "_blank"); } catch (_) {}
+
+  let resp, data;
+  try {
+    resp = await fetch("/api/trakt/pin/new", { method: "POST" });
+  } catch (e) {
+    console.warn("trakt pin fetch failed", e);
+    try { notify && notify("Failed to request code"); } catch (_) {}
+    return;
+  }
+  try { data = await resp.json(); } catch (e) { data = null; }
+
+  if (!data || data.ok === false) {
+    console.warn("trakt pin error payload", data);
+    try { notify && notify(data && data.error ? data.error : "Code request failed"); } catch (_) {}
+    return;
+  }
+
+  const code = data.user_code || "";
+  try {
+    const pinEl = document.getElementById("trakt_pin");
+    if (pinEl) pinEl.value = code;
+    document.querySelectorAll('#trakt_pin, input[name="trakt_pin"]').forEach(el => { try { el.value = code; } catch(_){ } });
+
+    const msg = document.getElementById("trakt_msg");
+    if (msg) { msg.textContent = code ? "Code: " + code : "Code request ok"; msg.classList.remove("hidden"); }
+
+    if (code) { try { await navigator.clipboard.writeText(code); } catch(_){} }
+    if (win && !win.closed) { try { win.focus(); } catch(_){ } }
+  } catch (e) {
+    console.warn("trakt pin ui update failed", e);
+  }
+}
+
+// Safe fallback for saving settings if not injected
+if (typeof saveSetting !== "function") {
+  async function saveSetting(key, value) {
+    try {
+      await fetch("/api/settings/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value })
+      });
+    } catch (e) {
+      console.warn("saveSetting failed", e);
+    }
+  }
 }
 
 // Safe no-op for missing hint updaters
 
 if (typeof updateSimklHint !== "function") {
   function updateSimklHint() {}
+}
+
+function updateTraktHint() {
+  try {
+    const cid  = (document.getElementById("trakt_client_id")?.value || "").trim();
+    const secr = (document.getElementById("trakt_client_secret")?.value || "").trim();
+    const hint = document.getElementById("trakt_hint");
+    if (!hint) return;
+
+    const show = !(cid && secr);
+    // class toggle
+    hint.classList.toggle("hidden", !show);
+    // style fallback (voor het geval .hidden css nog niet geladen is)
+    hint.style.display = show ? "" : "none";
+  } catch (_) {}
 }
 
 // Plex token poll
@@ -3287,7 +3328,7 @@ function renderConnections() {
     .map((pr) => {
       const f = _pairFeatureObj(pr);
       const wl = f.watchlist.add ? "Add" : "—";
-      const enabled = pr.enabled !== false;
+      const enabled = pr.enabled === true; // default = OFF unless explicitly true
       const mode = (pr.mode || "one-way").toUpperCase();
       return `<div class="pair-card" draggable="true" data-id="${pr.id}">
         <div class="line"><span class="pill src">${
@@ -3559,18 +3600,26 @@ function renderConnections() {
     window.cx.connect = { source: null, target: null };
   }
 
+  // Compact enable/disable toggle with strict error handling
   async function cxToggleEnable(id, on) {
     try {
-      await fetch(`/api/pairs/${id}`, {
+      const r = await fetch(`/api/pairs/${encodeURIComponent(id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !!on }),
       });
-      await loadPairs();
+      if (!r.ok) {
+        console.warn("toggle enable failed:", r.status, r.statusText);
+        alert("Failed to update. Please try again.");
+      }
     } catch (e) {
       console.warn("toggle enable failed", e);
+      alert("Network error. Please try again.");
+    } finally {
+      await loadPairs();
     }
   }
+
 
   /* Toggle connect: if no source selected -> set source, else pick as target (if different) */
   window.cxToggleConnect = function (name) {

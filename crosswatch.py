@@ -295,7 +295,7 @@ STATE_PATHS = [CONFIG_BASE / "state.json", ROOT / "state.json"]
 HIDE_PATH   = CONFIG_BASE / "watchlist_hide.json"
 
 MAX_LOG_LINES = 3000
-LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": []}
+LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
 
 class _UIHostLogger:
     def __init__(self, tag: str = "SYNC", module_name: str | None = None, base_ctx: dict | None = None):
@@ -328,6 +328,7 @@ class _UIHostLogger:
 
 SIMKL_STATE: Dict[str, Any] = {}
 
+# CONFIG.JSON 
 DEFAULT_CFG: Dict[str, Any] = {
     "plex": {"account_token": ""},
     "simkl": {
@@ -336,6 +337,13 @@ DEFAULT_CFG: Dict[str, Any] = {
         "access_token": "",
         "refresh_token": "",
         "token_expires_at": 0,
+    },
+    "trakt": {
+        "client_id": "",
+        "client_secret": "",
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
     },
     "tmdb": {"api_key": ""},
     "sync": {
@@ -346,6 +354,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     },
     "runtime": {"debug": False},
 }
+
 
 def _read_json(p: Path) -> Dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
@@ -817,7 +826,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
 
-_PROBE_CACHE: Dict[str, Tuple[float, bool]] = {"plex": (0.0, False), "simkl": (0.0, False)}
+_PROBE_CACHE: Dict[str, Tuple[float, bool]] = {"plex": (0.0, False), "simkl": (0.0, False), "trakt": (0.0, False)}
 
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
@@ -871,11 +880,40 @@ def probe_simkl(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     _PROBE_CACHE["simkl"] = (now, ok)
     return ok
 
-def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool]:
-    plex_ok = probe_plex(cfg)
+def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
+    ts, ok = _PROBE_CACHE["trakt"]
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok
+
+    tr = cfg.get("trakt", {}) or {}
+    cid = (tr.get("client_id") or "").strip()
+    # token kan in cfg["auth"]["trakt"] of cfg["trakt"] staan:
+    tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
+          or (tr.get("access_token") or "").strip()
+
+    if not cid or not tok:
+        _PROBE_CACHE["trakt"] = (now, False)
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {tok}",
+        "trakt-api-key": cid,
+        "trakt-api-version": "2",
+        "Accept": "application/json",
+        "User-Agent": "CrossWatch/1.0",
+    }
+    code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers, timeout=8)
+    ok = (code == 200)
+    _PROBE_CACHE["trakt"] = (now, ok)
+    return ok
+
+def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
+    plex_ok  = probe_plex(cfg)
     simkl_ok = probe_simkl(cfg)
-    debug = bool(cfg.get("runtime", {}).get("debug"))
-    return plex_ok, simkl_ok, debug
+    trakt_ok = probe_trakt(cfg)
+    debug    = bool(cfg.get("runtime", {}).get("debug"))
+    return plex_ok, simkl_ok, trakt_ok, debug
 
 def get_tmdb_api_key():
     cfg = getattr(app.state, "cfg", {}) or {}
@@ -1151,7 +1189,7 @@ def _start_sync_from_scheduler() -> bool:
     RUNNING_PROCS["SYNC"] = th
     return True
 
-# zorg dat de scheduler geinitialiseerd is met bovenstaande:
+# Schedular Initiation
 scheduler = SyncScheduler(
     load_config, save_config,
     run_sync_fn=_start_sync_from_scheduler,
@@ -1164,7 +1202,92 @@ INDEX_HTML = get_index_html()
 def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
 
-# Status endpoints
+# -------------------- TRAKT --------------------
+def trakt_request_pin() -> dict:
+    try:
+        from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
+    except Exception:
+        _TRAKT_PROVIDER = None
+
+    if _TRAKT_PROVIDER is None:
+        raise RuntimeError("Trakt provider not available")
+
+    cfg = load_config()
+
+    res = _TRAKT_PROVIDER.start(cfg, redirect_uri="")
+    save_config(cfg)
+    pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
+    user_code = (pend.get("user_code") or (res or {}).get("user_code"))
+    device_code = (pend.get("device_code") or (res or {}).get("device_code"))
+    verification_url = (pend.get("verification_url") or (res or {}).get("verification_url") or "https://trakt.tv/activate")
+    exp_epoch = int((pend.get("expires_at") or 0) or (time.time() + 600))
+    if not user_code or not device_code:
+        raise RuntimeError("Trakt PIN could not be issued")
+    return {
+        "user_code": user_code,
+        "device_code": device_code,
+        "verification_url": verification_url,
+        "expires_epoch": exp_epoch
+    }
+
+def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: float = 2.0) -> str | None:
+    """
+    Poll providers.auth._auth_TRAKT.PROVIDER.finish() tot de access_token in cfg staat of timeout.
+    """
+    try:
+        from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
+    except Exception:
+        _TRAKT_PROVIDER = None
+    if _TRAKT_PROVIDER is None:
+        return None
+
+    deadline = time.time() + max(0, int(timeout_sec))
+    sleep_s = max(0.5, float(interval))
+    while time.time() < deadline:
+        cfg = load_config()
+        # token kan in cfg['auth']['trakt'] of cfg['trakt'] terecht komen
+        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
+              or (cfg.get("trakt") or {}).get("access_token")
+        if tok:
+            return tok
+        try:
+            _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
+            save_config(cfg)
+        except Exception:
+            pass
+        time.sleep(sleep_s)
+    return None
+
+#  Endpoints
+
+@app.post("/api/trakt/pin/new")
+def api_trakt_pin_new() -> Dict[str, Any]:
+    """
+    Start Trakt PIN (device) flow en start server-side poller, identiek aan Plex UX.
+    Retourneert: { ok, user_code, verification_url, expiresIn }
+    """
+    try:
+        info = trakt_request_pin()
+        user_code = info["user_code"]
+        verification_url = info["verification_url"]
+        exp_epoch = int(info["expires_epoch"])
+        device_code = info["device_code"]
+
+        def waiter(_device_code: str):
+            token = trakt_wait_for_token(_device_code, timeout_sec=600, interval=2.0)
+            if token:
+                _append_log("TRAKT", "\x1b[92m[TRAKT]\x1b[0m Token acquired and saved.")
+                _PROBE_CACHE["trakt"] = (0.0, False)
+            else:
+                _append_log("TRAKT", "\x1b[91m[TRAKT]\x1b[0m Device code expired or not authorized.")
+
+        threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
+        expires_in = max(0, exp_epoch - int(time.time()))
+        return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": expires_in}
+    except Exception as e:
+        _append_log("TRAKT", f"[TRAKT] ERROR: {e}")
+        return {"ok": False, "error": str(e)}
+    
 @app.get("/api/status")
 def api_status(fresh: int = Query(0)):
     now = time.time()
@@ -1177,12 +1300,14 @@ def api_status(fresh: int = Query(0)):
     cfg = load_config()
     plex_ok  = probe_plex(cfg,  max_age_sec=STATUS_TTL)   # pass 3600 to internal probe cache too
     simkl_ok = probe_simkl(cfg, max_age_sec=STATUS_TTL)
+    trakt_ok = probe_trakt(cfg, max_age_sec=STATUS_TTL)
     debug    = bool(cfg.get("runtime", {}).get("debug"))
     data = {
         "plex_connected": plex_ok,
         "simkl_connected": simkl_ok,
+        "trakt_connected": trakt_ok,
         "debug": debug,
-        "can_run": bool(plex_ok and simkl_ok),
+        "can_run": bool((plex_ok or trakt_ok) and simkl_ok),
         "ts": int(now),
     }
     STATUS_CACHE["ts"] = now
@@ -1857,8 +1982,10 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         item: Dict[str, Any] = (
             payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
         )
+
         item.setdefault("mode", "one-way")
-        item["enabled"] = False is not item.get("enabled", True)
+        item["enabled"] = bool(item.get("enabled", False))  # default OFF
+
 
         f: Dict[str, Any] = cast(Dict[str, Any], item.get("features") or {"watchlist": True})
         if isinstance(f.get("watchlist"), bool):

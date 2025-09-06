@@ -8,10 +8,9 @@ def get_index_html() -> str:
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
 
-
   <link rel="stylesheet" href="/assets/crosswatch.css">
 
-<!-- Auth providers are listed dynamically via /api/platform/ -->
+
 <style>
 /* cw hard hide */
 .pair-selectors, #pairs_list,
@@ -239,9 +238,12 @@ button[onclick="addPair()"],
       <div id="auth-providers"></div>
       </div>
      </div>
- 
+     
+<!-- SYNCHRONIZATION (settings) -->
 <div class="section" id="sec-sync">
-  <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization Providers</strong></div>
+  <div class="head" onclick="toggleSection('sec-sync')">
+    <span class="chev">▶</span><strong>Synchronization Providers</strong>
+  </div>
   <div class="body">
 
     <div class="sub">Providers</div>
@@ -249,27 +251,38 @@ button[onclick="addPair()"],
 
     <div class="sep"></div>
     <div class="sub">Pairs</div>
-    <div class="muted">Configure source → target, mode, and features. Only watchlist add/remove is active now; other features are disabled placeholders.</div>
+    <div class="muted">
+      Configure source → target, mode, and features. Only watchlist add/remove is active now; other features are disabled placeholders.
+    </div>
     <div id="pairs_list"></div>
+
     <div class="footer">
-      
-<div class="pair-selectors" style="margin-top:1em;">
-  <label style="margin-right:1em;">
-    Source:
-    <select id="source-provider" style="margin-left:0.5em;"></select>
-  </label>
-  <label>
-    Target:
-    <select id="target-provider" style="margin-left:0.5em;"></select>
-  </label>
-</div>
-    </div>
-    </div>
-  </div>
-</div>
+      <div class="pair-selectors" style="margin-top:1em;">
+        <label style="margin-right:1em;">
+          Source:
+          <select id="source-provider" style="margin-left:0.5em;"></select>
+        </label>
+        <label>
+          Target:
+          <select id="target-provider" style="margin-left:0.5em;"></select>
+        </label>
       </div>
     </div>
+
+  </div>
+</div>
+
   
+        <!-- Metadata -->
+<div class="section" id="sec-meta">
+  <div class="head" onclick="toggleSection('sec-meta')">
+    <span class="chev">▶</span><strong>Metadata Providers</strong>
+  </div>
+  <div class="body">
+    <!-- Dynamic metadata providers -->
+    <div id="metadata-providers"></div>
+  </div>
+</div>
     
     <div class="section" id="sec-scheduling">
       <div class="head" onclick="toggleSection('sec-scheduling')"><span class="chev">▶</span><strong>Scheduling</strong></div>
@@ -305,21 +318,11 @@ button[onclick="addPair()"],
       </div>
     </div>
 
-        <!-- Metadata -->
-<div class="section" id="sec-meta">
-  <div class="head" onclick="toggleSection('sec-meta')">
-    <span class="chev">▶</span><strong>Metadata Providers</strong>
-  </div>
-  <div class="body">
-    <!-- Dynamic metadata providers -->
-    <div id="metadata-providers"></div>
-  </div>
-</div>
+
             </div>
             <div class="sep"></div>
           </div>
         </div>
-
 
       </div>
     </div>

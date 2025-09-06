@@ -127,11 +127,11 @@ def html() -> str:
     </div>
 
     <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-      <!-- NEW: button id changed to match startSimkl() helper -->
+
       <button id="btn-connect-simkl" class="btn" onclick="startSimkl()" >
         Connect SIMKL
       </button>
-      <!-- NEW: countdown + status placeholders used by startSimkl() -->
+
       <span id="simkl-countdown" style="min-width:60px;"></span>
       <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
     </div>

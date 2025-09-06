@@ -663,13 +663,20 @@ class Orchestrator:
                         else:
                             # Ensure title/year are present in ids even without TMDb
                             items_fw = _union_preserve(items_fw, items_fw)
-
+            
                     if items_fw:
+                        before_dst = _index_for(cfg, dst)  # snapshot before
                         r = _add_to(dst, cfg, items_fw, dry_run)
                         if r.get("ok"):
-                            added_total += int(r.get("added", 0))
-                            if progress: progress(f"[i] +{r.get('added', 0)} → {dst}")
-                            live_dst = _index_for(cfg, dst)
+                            after_dst = _index_for(cfg, dst)  # snapshot after
+                            pt_before, _, _ = _count_types(before_dst)
+                            pt_after,  _, _ = _count_types(after_dst)
+                            delta = max(0, pt_after - pt_before)  # true net additions
+                            added_total += delta
+                            if progress:
+                                submitted = int(r.get("added", 0))
+                                progress(f"[i] +{delta} → {dst} (submitted {submitted})")
+                            live_dst = after_dst
 
                 elif mode == "two-way":
                     # src -> dst
@@ -688,11 +695,20 @@ class Orchestrator:
                         else:
                             items_fw = _union_preserve(items_fw, items_fw)
                     if items_fw:
+                        # snapshot before
+                        before_dst = _index_for(cfg, dst)
                         r = _add_to(dst, cfg, items_fw, dry_run)
                         if r.get("ok"):
-                            added_total += int(r.get("added", 0))
-                            if progress: progress(f"[i] +{r.get('added', 0)} → {dst}")
-                            live_dst = _index_for(cfg, dst)
+                            # snapshot after
+                            after_dst = _index_for(cfg, dst)
+                            tot_before, _, _ = _count_types(before_dst)
+                            tot_after,  _, _ = _count_types(after_dst)
+                            delta = max(0, tot_after - tot_before)
+                            added_total += delta
+                            if progress:
+                                submitted = int(r.get("added", 0))
+                                progress(f"[i] +{delta} → {dst} (submitted {submitted})")
+                            live_dst = after_dst
 
                     # dst -> src
                     items_bw = _diff_additions(live_dst, live_src)
@@ -714,11 +730,18 @@ class Orchestrator:
                         else:
                             items_bw = _union_preserve(items_bw, items_bw)
                     if items_bw:
+                        before_src = _index_for(cfg, src)
                         r2 = _add_to(src, cfg, items_bw, dry_run)
                         if r2.get("ok"):
-                            added_total += int(r2.get("added", 0))
-                            if progress: progress(f"[i] +{r2.get('added', 0)} → {src}")
-                            live_src = _index_for(cfg, src)
+                            after_src = _index_for(cfg, src)
+                            pt_before, _, _ = _count_types(before_src)
+                            pt_after,  _, _ = _count_types(after_src)
+                            delta2 = max(0, pt_after - pt_before)
+                            added_total += delta2
+                            if progress:
+                                submitted2 = int(r2.get("added", 0))
+                                progress(f"[i] +{delta2} → {src} (submitted {submitted2})")
+                            live_src = after_src
             else:
                 if progress: progress("[i] add disabled by features; skipping adds")
 
