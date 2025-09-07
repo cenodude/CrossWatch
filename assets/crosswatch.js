@@ -314,56 +314,325 @@ async function showTab(n) {
 }
 
 /* ====== Connector Model  cxEnsureCfgModal  ====== */
-function cxEnsureCfgModal() {
-  if (document.getElementById("cx-modal")) return;
-  var wrap = document.createElement("div");
-  wrap.id = "cx-modal";
-  wrap.className = "modal-backdrop hidden";
-  var h = "";
-  h +=
-    '<div id="cfg-conn" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cfg-title">';
-  h +=
-    '<div class="modal-header"><div id="cfg-title" class="title">Configure Connection</div><button type="button" class="btn-ghost" aria-label="Close" onclick="cxCloseModal()">✕</button></div>';
-  h += '<div class="modal-body">';
-  h += '<div class="form-grid">';
-  h +=
-    '<div class="field"><label>Source</label><select id="cx-src"><option>PLEX</option><option>SIMKL</option></select></div>';
-  h +=
-    '<div class="field"><label>Target</label><select id="cx-dst"><option>PLEX</option><option>SIMKL</option></select></div>';
-  h += "</div>";
-  h += '<div class="form-grid" style="margin-top:8px">';
-  h += '<div class="field"><label>Mode</label><div class="seg">';
-  h +=
-    '<input id="cx-mode-one" type="radio" name="cx-mode" value="one-way" checked><label for="cx-mode-one">One-way</label>';
-  h +=
-    '<input id="cx-mode-two" type="radio" name="cx-mode" value="two-way"><label id="cx-two-label" for="cx-mode-two">Two-way</label>';
-  h += "</div></div>";
-  h +=
-    '<div class="field"><label>Enabled</label><div class="row"><input id="cx-enabled" type="checkbox" checked><span class="fe-muted">Activate this connection</span></div></div>';
-  h += "</div>";
-  h += '<div class="features" style="margin-top:10px"><div class="fe-row">';
-  h += '<div class="fe-name">Watchlist</div>';
-  h +=
-    '<label class="row"><input id="cx-wl-enable" type="checkbox" checked><span class="fe-muted">Enable</span></label>';
-  h +=
-    '<label class="row"><input id="cx-wl-add" type="checkbox" checked><span class="fe-muted">Add</span></label>';
-  h +=
-    '<label class="row"><input id="cx-wl-remove" type="checkbox" disabled><span class="fe-muted">Remove</span></label>';
-  h += "</div></div>";
-  h += '<div class="summary" style="margin-top:12px">';
-  h +=
-    '<div class="line"><div class="brand"><div class="chip" id="sum-src-chip">P</div><div id="sum-src">PLEX</div></div><div id="sum-dir" style="color:#fff;font-weight:800">→</div><div class="brand"><div class="chip" id="sum-dst-chip">S</div><div id="sum-dst">SIMKL</div></div></div>';
-  h +=
-    '<div class="line" style="margin-top:8px"><span>Watchlist</span><span id="sum-wl">Add</span></div>';
-  h += "</div></div>";
-  h +=
-    '<div class="modal-footer actions"><button type="button" class="btn" onclick="cxCloseModal()">Cancel</button><button type="button" class="btn primary acc" id="cx-save">Save</button></div>';
-  h += "</div>";
-  wrap.innerHTML = h;
+
+// === Dynamic wide modal builder (feature tabs + provider fetch) ===
+async function cxEnsureCfgModal() {
+  // If already present, just return it
+  const ex = document.querySelector('#cx-modal');
+  if (ex) return ex;
+
+  // Backdrop
+  const wrap = document.createElement('div');
+  wrap.id = 'cx-modal';
+  wrap.className = 'modal-backdrop cx-wide hidden';
+
+  // Shell
+  wrap.innerHTML = `
+    <div class="modal-shell">
+      <div class="cx-card">
+        <div class="cx-head">
+          <div class="title-wrap">
+            <div class="app-logo"></div>
+            <div>
+              <div class="app-name">Configure Connection</div>
+              <div class="app-sub">Choose source &rarr; target and what to sync</div>
+            </div>
+          </div>
+        <label id="cx-master-toggle" class="switch big head-toggle" title="Enable/Disable connection">
+  <input type="checkbox" id="cx-enabled">
+  <span class="slider" aria-hidden="true"></span>
+  <span class="lab on"  aria-hidden="true">Enabled</span>
+  <span class="lab off" aria-hidden="true">Disabled</span>
+</label>
+
+
+        <label id="cx-master-toggle" class="switch big head-toggle" title="Enable/Disable connection">
+  <input type="checkbox" id="cx-enabled" checked />
+  <span class="slider"></span>
+  <span class="lab on">Enabled</span>
+  <span class="lab off">Disabled</span>
+</label>
+
+        </div>
+
+        <div class="cx-body">
+          <div class="cx-top grid">
+  <div class="top-left">
+    <div class="cx-row">
+      <div class="field">
+        <label>Source</label>
+        <select id="cx-src" class="input"></select>
+      </div>
+      <div class="field">
+        <label>Target</label>
+        <select id="cx-dst" class="input"></select>
+      </div>
+    </div>
+
+    <div class="cx-row cx-mode-row">
+      <div class="seg">
+        <input type="radio" name="cx-mode" id="cx-mode-one" value="one" />
+        <label for="cx-mode-one">One-way</label>
+        <input type="radio" name="cx-mode" id="cx-mode-two" value="two" />
+        <label for="cx-mode-two">Two-way</label>
+      </div>
+      
+    </div>
+
+    <div class="cx-row">
+      <div id="cx-feat-tabs" class="feature-tabs"></div>
+    </div>
+  </div>
+  <div class="top-right">
+    <div class="flow-card">
+      <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
+      <div class="flow-rail pretty" id="cx-flow-rail"><span class="token" id="cx-flow-src">-</span><span class="arrow"><span class="dot flow a"></span><span class="dot flow b"></span></span><span class="token" id="cx-flow-dst">-</span></div>
+    </div>
+  </div>
+</div><div class="cx-main">
+            <div class="left">
+              <div class="panel" id="cx-feat-panel">
+                <!-- watchlist options injected -->
+              </div>
+            </div>
+            <div class="right"><div class="panel rules-card"><div class="panel-title">Rule preview</div><div class="sub">These rules are generated from your selections.</div><div class="rules" id="cx-rules"><div class="r note" id="cx-notes">Pick a feature.</div></div></div></div>
+          </div>
+        </div>
+
+        <div class="cx-foot">
+          <button id="cx-cancel" class="btn ghost">Cancel</button>
+          <button id="cx-save" class="btn primary">Save</button>
+        </div>
+      </div>
+    </div>`;
+
   document.body.appendChild(wrap);
-  cxBindCfgEvents(); // events pas binden als DOM er is
+
+  // Bind events now that the elements exist
+  if (typeof cxBindCfgEvents === 'function') {
+    cxBindCfgEvents();
+  }
+
+  // Wire close/cancel
+  const close = () => wrap.classList.add('hidden');
+  var _cbtn = wrap.querySelector('#cx-close'); if (_cbtn) _cbtn.onclick = close;
+  wrap.querySelector('#cx-cancel').onclick = close;
+
+  // --- Data & helpers ---
+  const state = {
+    providers: [],
+    src: null,
+    dst: null,
+    feature: 'watchlist',
+    options: { watchlist: { enable: true, add: true, remove: false } }
+  };
+
+  async function loadProviders(){
+    try{
+      const res = await fetch('/api/sync/providers');
+      const list = await res.json();
+      state.providers = Array.isArray(list) ? list : [];
+    }catch(e){
+      console.warn('Failed to load /api/sync/providers', e);
+      state.providers = [
+        {name:'PLEX', label:'Plex', features:{watchlist:true,ratings:true,history:true,playlists:true}, capabilities:{bidirectional:true}},
+        {name:'SIMKL', label:'Simkl', features:{watchlist:true,ratings:true,history:true,playlists:true}, capabilities:{bidirectional:true}},
+        {name:'TRAKT', label:'Trakt', features:{watchlist:true,ratings:true,history:true,playlists:true}, capabilities:{bidirectional:true}},
+      ];
+    }
+  }
+
+  function byName(n){ return state.providers.find(p=>p.name===n); }
+  function commonFeatures(){
+    if(!state.src || !state.dst) return [];
+    const a = byName(state.src), b = byName(state.dst);
+    if(!a || !b) return [];
+    const keys = ['watchlist','ratings','history','playlists'];
+    return keys.filter(k => a.features?.[k] && b.features?.[k]);
+  }
+
+  function renderProviderSelects(){
+    const srcSel = wrap.querySelector('#cx-src');
+    const dstSel = wrap.querySelector('#cx-dst');
+    const opts = state.providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join('');
+    srcSel.innerHTML = `<option value="">Select…</option>${opts}`;
+    dstSel.innerHTML = `<option value="">Select…</option>${opts}`;
+    if(state.src) srcSel.value = state.src;
+    if(state.dst) dstSel.value = state.dst;
+
+    srcSel.onchange = () => { state.src = srcSel.value || null; updateFlow(); refreshTabs(); };
+    dstSel.onchange = () => { state.dst = dstSel.value || null; updateFlow(); refreshTabs(); };
+  }
+
+  function updateFlow(){
+    wrap.querySelector('#cx-flow-src').textContent = byName(state.src)?.label || '—';
+    wrap.querySelector('#cx-flow-dst').textContent = byName(state.dst)?.label || '—';
+    const two = wrap.querySelector('#cx-mode-two');
+    const ok = (byName(state.src)?.capabilities?.bidirectional) && (byName(state.dst)?.capabilities?.bidirectional);
+    // two-way availability
+    two.disabled = !ok;
+    if(!ok && two.checked){ wrap.querySelector('#cx-mode-one').checked = true; }
+    if (two.nextElementSibling) two.nextElementSibling.classList.toggle('disabled', !ok);
+    // flow title
+    const title = (wrap.querySelector('#cx-mode-two').checked ? 'Two-way (bidirectional)' : 'One-way');
+    const tEl = wrap.querySelector('#cx-flow-title');
+    if (tEl) tEl.textContent = title;
+    // classes for animation
+    updateFlowClasses();
 }
 
+
+  function refreshTabs(){
+    const tabs = wrap.querySelector('#cx-feat-tabs');
+    tabs.innerHTML = '';
+    const items = commonFeatures();
+    if(items.length===0){
+      tabs.innerHTML = '<div class="ftab disabled">No common features</div>';
+      renderFeaturePanel(); // empty
+      return;
+    }
+    items.forEach(k=>{
+      const b = document.createElement('button');
+      b.className = 'ftab' + (state.feature===k?' active':'');
+      b.dataset.key = k;
+      b.textContent = k[0].toUpperCase()+k.slice(1);
+      b.onclick = () => { state.feature = k; refreshTabs(); renderFeaturePanel(); };
+      tabs.appendChild(b);
+    });
+    if(!items.includes(state.feature)){ state.feature = items[0]; }
+    // ensure active class
+    [...tabs.children].forEach(c=>c.classList.toggle('active', c.dataset.key===state.feature));
+    renderFeaturePanel();
+  }
+
+  function renderFeaturePanel(){
+    const pane = wrap.querySelector('#cx-feat-panel');
+    if(state.feature!=='watchlist'){
+      pane.innerHTML = `
+        <div class="panel-title">${state.feature[0].toUpperCase()+state.feature.slice(1)} options</div>
+        <div class="muted">Configuration for this feature will be available soon.</div>`;
+      wrap.querySelector('#cx-notes').textContent = `Selected: ${state.feature}.`;
+      return;
+    }
+    // watchlist panel with existing ids so legacy save code still works
+    let wl = state.options.watchlist;
+    try {
+      const mid = (wrap && wrap.dataset ? wrap.dataset.editingId : '') || '';
+      if (mid && Array.isArray(window.cx?.pairs)) {
+        const p = window.cx.pairs.find(x => String(x.id||'') === String(mid));
+        if (p && p.features && p.features.watchlist) {
+          wl = Object.assign({ enable:true, add:true, remove:false }, p.features.watchlist);
+          state.options.watchlist = wl;
+        }
+      }
+    } catch(_) {}
+    const wlEnableEl = document.getElementById('cx-wl-enable');
+
+    pane.innerHTML = `
+      <div class="panel-title">Watchlist options</div>
+      <div class="opt-row">
+        <label>Enable</label>
+        <label class="switch">
+          <input id="cx-wl-enable" type="checkbox" ${wl.enable?'checked':''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="opt-row">
+        <label>Add</label>
+        <label class="switch">
+          <input id="cx-wl-add" type="checkbox" ${wl.add?'checked':''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="opt-row">
+        <label>Remove</label>
+        <label class="switch">
+          <input id="cx-wl-remove" type="checkbox" ${wl.remove?'checked':''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="panel sub">
+        <div class="panel-title small">Advanced</div>
+        <ul class="adv">
+          <li>Filter by type (Movies/Shows)</li>
+          <li>Skip duplicates</li>
+          <li>Prefer target metadata</li>
+          <li>Conflict policy: target wins</li>
+        </ul>
+      </div>`;
+    // update notes + rule preview
+    updateRules();
+  }
+
+  // Compute flow rail classes from current selections (mode + watchlist toggles)
+function updateFlowClasses(){
+  const rail = wrap.querySelector('#cx-flow-rail');
+  if (!rail) return;
+  const two = wrap.querySelector('#cx-mode-two')?.checked;
+  const on  = wrap.querySelector('#cx-wl-enable')?.checked ?? true;
+  const add = wrap.querySelector('#cx-wl-add')?.checked ?? true;
+  const rem = wrap.querySelector('#cx-wl-remove')?.checked ?? false;
+  rail.className = 'flow-rail pretty';
+  rail.classList.toggle('off', !on);
+  rail.classList.toggle('mode-two', !!two);
+  rail.classList.toggle('mode-one', !two);
+  if (two) {
+    rail.classList.toggle('active', on && (add || rem));
+  } else {
+    rail.classList.toggle('dir-add', on && add);
+    rail.classList.toggle('dir-remove', on && !add && rem);
+  }
+}
+function updateRules(){
+    const rules = wrap.querySelector('#cx-rules');
+    rules.innerHTML = '';
+    const push = (title, sub='')=>{
+      const d = document.createElement('div');
+      d.className = 'r';
+      d.innerHTML = `<div class="t">${title}</div>${sub?`<div class="s">${sub}</div>`:''}`;
+      rules.appendChild(d);
+    };
+    if(state.feature==='watchlist'){
+      const two = wrap.querySelector('#cx-mode-two').checked;
+      const wl = {
+        enable: wrap.querySelector('#cx-wl-enable')?.checked ?? false,
+        add:    wrap.querySelector('#cx-wl-add')?.checked ?? false,
+        remove: wrap.querySelector('#cx-wl-remove')?.checked ?? false,
+      };
+      wrap.querySelector('#cx-notes')?.remove(); // not used now
+      push(`Watchlist • ${two?'two‑way':'one‑way'}`, wl.enable?'enabled':'disabled');
+      if(wl.add) push('Add • new items', two?'both directions':'from source → target');
+      if (wl.remove) push('Delete • when removed', two ? 'both directions' : 'from source → target');
+    }
+  }
+
+  updateFlowClasses();
+
+  // Events to keep rule preview live
+  wrap.addEventListener('change', (e)=>{
+    if(['cx-mode-one','cx-mode-two','cx-wl-enable','cx-wl-add','cx-wl-remove'].includes(e.target.id)){
+      updateRules();
+      updateFlow();
+    }
+  });
+
+  // initial data + render
+  try {
+    loadProviders().then(() => {
+      renderProviderSelects();
+      refreshTabs();
+      updateFlow();
+
+      // 👇 add these
+      updateFlowRailLogos();
+      document.getElementById("cx-src")?.addEventListener("change", updateFlowRailLogos);
+      document.getElementById("cx-dst")?.addEventListener("change", updateFlowRailLogos);
+    });
+  } catch (_) {}
+
+  return wrap;
+}
+try { window.cxEnsureCfgModal = cxEnsureCfgModal; } catch(_) {}
 function cxBindCfgEvents() {
   var ids = [
     "cx-src",
@@ -382,9 +651,9 @@ function cxBindCfgEvents() {
       var two = document.getElementById("cx-mode-two").checked;
       var wlOn = document.getElementById("cx-wl-enable").checked;
       var rem = document.getElementById("cx-wl-remove");
-      rem.disabled = !(two && wlOn);
+      rem.disabled = !wlOn;
       if (rem.disabled) rem.checked = false;
-      cxUpdateSummary();
+      try{ cxUpdateSummary(); }catch(_){}
     });
   });
   var save = document.getElementById("cx-save");
@@ -393,7 +662,7 @@ function cxBindCfgEvents() {
       const data = {
         source: document.getElementById("cx-src").value,
         target: document.getElementById("cx-dst").value,
-        enabled: true, // default ON; no "activate" toggle in modal
+        enabled: (document.getElementById("cx-enabled") ? document.getElementById("cx-enabled").checked : true),
         mode: document.getElementById("cx-mode-two").checked
           ? "two-way"
           : "one-way",
@@ -1733,8 +2002,15 @@ async function saveScheduling() {
   const j = await r.json().catch(() => ({}));
 
   const m = document.getElementById("schStatus");
-  m.classList.remove("hidden");
-  m.textContent = j.ok ? "Saved ✓" : "Error";
+      const _wl = (pair && pair.features && pair.features.watchlist) || {};
+    const wlAdd = document.getElementById("cx-wl-add");
+    const wlRem = document.getElementById("cx-wl-remove");
+    if (wlAdd) wlAdd.checked = !!_wl.add;
+    if (wlRem) wlRem.checked = !!_wl.remove;
+    try { document.getElementById('cx-wl-enable')?.dispatchEvent(new Event('change')); } catch(_) {}
+m.classList.remove("hidden");
+      try { await new Promise(r=>setTimeout(r,0)); const wlAdd2=document.getElementById('cx-wl-add'); const wlRem2=document.getElementById('cx-wl-remove'); if(wlAdd2) wlAdd2.checked = !!_wl.add; if(wlRem2) wlRem2.checked = !!_wl.remove; } catch(_) {}
+m.textContent = j.ok ? "Saved ✓" : "Error";
 
   setTimeout(() => m.classList.add("hidden"), 1500);
 
@@ -2243,6 +2519,55 @@ function cxBrandInfo(name) {
   };
   return map[key] || { cls: "", icon: "" };
 }
+
+// === Brand logo helper for the Sync Flow rail ===============================
+// Returns an <img> for known providers or falls back to text.
+function cxBrandLogo(providerName) {
+  const key = (providerName || "").toUpperCase();
+  const ICONS = {
+    PLEX:  "/assets/PLEX.svg",
+    SIMKL: "/assets/SIMKL.svg",
+    TRAKT: "/assets/TRAKT.svg",
+    TMDB:  "/assets/TMDB.svg",
+  };
+  const src = ICONS[key];
+  return src
+    ? `<img class="token-logo" src="${src}" alt="${key} logo" width="28" height="28" loading="lazy">`
+    : `<span class="token-text">${providerName || ""}</span>`;
+}
+
+// === Flow rail logos ===
+
+function updateFlowRailLogos() {
+  const keyOf = id => (document.getElementById(id)?.value || '')
+                      .trim()
+                      .toUpperCase();
+
+  const srcKey = keyOf('cx-src');
+  const dstKey = keyOf('cx-dst');
+
+  const rail = document.querySelector('.flow-rail.pretty');
+  if (!rail) return;
+
+  const tokens = rail.querySelectorAll('.token');
+  if (!tokens.length) return;
+
+  const setToken = (el, key) => {
+    el.innerHTML = key
+      ? `<img class="token-logo" src="/assets/${key}.svg" alt="${key}">`
+      : '';
+  };
+
+  setToken(tokens[0], srcKey);
+  if (tokens[1]) setToken(tokens[1], dstKey);
+}
+
+// initial render + react to changes
+document.addEventListener('DOMContentLoaded', updateFlowRailLogos);
+['cx-src', 'cx-dst'].forEach(id =>
+  document.getElementById(id)?.addEventListener('change', updateFlowRailLogos)
+);
+
 
 /* ====== Watchlist (grid) ====== */
 
@@ -3522,9 +3847,9 @@ function renderConnections() {
           var two = document.getElementById("cx-mode-two").checked;
           var wlOn = document.getElementById("cx-wl-enable").checked;
           var rem = document.getElementById("cx-wl-remove");
-          rem.disabled = !(two && wlOn);
+          rem.disabled = !wlOn;
           if (rem.disabled) rem.checked = false;
-          cxUpdateSummary();
+          try{ cxUpdateSummary(); }catch(_){}
         });
       }
     });
@@ -3942,7 +4267,7 @@ function renderConnections() {
       '<div class="features"><div class="fe-row">' +
       '<div class="fe-name">Watchlist</div>' +
       '<label class="row"><input id="cx-wl-add" type="checkbox" checked><span>Add</span></label>' +
-      '<label class="row"><input id="cx-wl-remove" type="checkbox" disabled><span>Remove</span></label>' +
+      '<label class="row"><input id="cx-wl-remove" type="checkbox"><span>Remove</span></label>' +
       '<div id="cx-wl-note" class="micro-note"></div>' +
       "</div></div></div>" +
       '<div class="modal-footer"><button class="btn acc" id="cx-save">Save</button><button class="btn" onclick="cxCloseModal()">Cancel</button></div></div>';
@@ -3952,89 +4277,69 @@ function renderConnections() {
 
   // Last-write-wins override to guard all callers
   window.cxOpenModalFor = function (pair, editingId) {
-    try {
-      _ensureCfgModal();
-    } catch (_) {}
-    var src = document.getElementById("cx-src");
-    var dst = document.getElementById("cx-dst");
-    var twoInput = document.querySelector(
-      'input[name="cx-mode"][value="two-way"]'
-    );
-    var oneInput = document.querySelector(
-      'input[name="cx-mode"][value="one-way"]'
-    );
-    var enabled = document.getElementById("cx-enabled");
+  try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
-    if (!src || !dst || !twoInput || !oneInput || !enabled) {
+  function pick() {
+    return {
+      src: document.getElementById("cx-src"),
+      dst: document.getElementById("cx-dst"),
+      one: document.getElementById("cx-mode-one") || document.querySelector('input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]'),
+      two: document.getElementById("cx-mode-two") || document.querySelector('input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]'),
+      enabled: document.getElementById("cx-enabled"),
+      wlAdd: document.getElementById("cx-wl-add"),
+      wlRem: document.getElementById("cx-wl-remove"),
+      wlNote: document.getElementById("cx-wl-note"),
+    };
+  }
+
+  var ui = pick();
+
+  if (!ui.src || !ui.dst || !ui.one || !ui.two || !ui.enabled) {
+    try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
+    ui = pick();
+    if (!ui.src || !ui.dst || !ui.one || !ui.two || !ui.enabled) {
       console.warn("cxOpenModalFor: modal inputs missing after ensure()");
       return;
     }
+  }
 
-    // Capability checks (safe if helpers exist)
-    var twoLabel =
-      document.getElementById("cx-two-label") ||
-      (twoInput && twoInput.closest && twoInput.closest("label"));
-    try {
-      var _src =
-        typeof _byName === "function"
-          ? _byName(window.cx.providers, pair.source)
-          : null;
-      var _dst =
-        typeof _byName === "function"
-          ? _byName(window.cx.providers, pair.target)
-          : null;
-      var twoWayOk = !!(
-        _src &&
-        _dst &&
-        _src.capabilities &&
-        _dst.capabilities &&
-        _src.capabilities.bidirectional &&
-        _dst.capabilities.bidirectional
-      );
-      if (twoInput) twoInput.disabled = !twoWayOk;
-      if (twoLabel) twoLabel.classList.toggle("muted", !twoWayOk);
-    } catch (_) {}
+  // two-way available?
+  try {
+    var _src = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
+    var _dst = typeof _byName === "function" ? _byName(window.cx.providers, pair.target) : null;
+    var twoOk = !!(_src && _dst && _src.capabilities && _dst.capabilities && _src.capabilities.bidirectional && _dst.capabilities.bidirectional);
+    if (ui.two) ui.two.disabled = !twoOk;
+    var twoLabel = document.getElementById("cx-two-label") || (ui.two && ui.two.closest && ui.two.closest("label"));
+    if (twoLabel) twoLabel.classList.toggle("muted", !twoOk);
+  } catch (_) {}
 
-    src.value = pair.source;
-    dst.value = pair.target;
-    oneInput.checked = (pair.mode || "one-way") !== "two-way";
-    twoInput.checked = (pair.mode || "one-way") === "two-way";
-    enabled.checked = pair.enabled !== false;
+  ui.src.value = pair.source; try { ui.src.dispatchEvent(new Event("change")); } catch(_){};
+  ui.dst.value = pair.target; try { ui.dst.dispatchEvent(new Event("change")); } catch(_){};
 
-    var wlAdd = document.getElementById("cx-wl-add");
-    var wlRem = document.getElementById("cx-wl-remove");
-    var wlNote = document.getElementById("cx-wl-note");
-    try {
-      var wf = (pair.features && pair.features.watchlist) || {
-        add: true,
-        remove: false,
-      };
-      // If capability helpers exist, respect them
-      var srcObj =
-        typeof _byName === "function"
-          ? _byName(window.cx.providers, pair.source)
-          : null;
-      var dstObj =
-        typeof _byName === "function"
-          ? _byName(window.cx.providers, pair.target)
-          : null;
-      var wlOk =
-        typeof _cap === "function"
-          ? _cap(srcObj, "watchlist") && _cap(dstObj, "watchlist")
-          : true;
-      wlAdd.checked = wlOk && !!wf.add;
-      wlAdd.disabled = !wlOk;
-      wlRem.checked = false;
-      wlRem.disabled = true;
-      if (wlNote)
-        wlNote.textContent = wlOk
-          ? ""
-          : "Watchlist is not supported on one of the providers.";
-    } catch (_) {}
+  var mode = pair.mode || "one-way";
+  if (mode === "one") mode = "one-way";
+  if (mode === "two") mode = "two-way";
+  ui.two.checked = mode === "two-way";
+  ui.one.checked = !ui.two.checked;
+  ui.enabled.checked = pair.enabled !== false;
 
-    var modal = document.getElementById("cx-modal");
-    if (modal) modal.classList.remove("hidden");
-  };
+  try {
+    var wf = (pair.features && pair.features.watchlist) || { add: true, remove: false };
+    var srcObj = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
+    var dstObj = typeof _byName === "function" ? _byName(window.cx.providers, pair.target) : null;
+    var wlOk = !!(srcObj && dstObj ? true : true); // permissive default
+    if (ui.wlAdd) { ui.wlAdd.checked = wlOk && !!wf.add; ui.wlAdd.disabled = !wlOk; }
+    if (ui.wlRem) {
+      var wlOn = document.getElementById("cx-wl-enable") ? document.getElementById("cx-wl-enable").checked : true;
+      ui.wlRem.checked = wlOk && !!wf.remove;
+      ui.wlRem.disabled = !(wlOk && wlOn);
+    }
+    if (ui.wlNote) ui.wlNote.textContent = wlOk ? "" : "Watchlist is not supported on one of the providers.";
+  } catch (_) {}
+
+  var modal = document.getElementById("cx-modal");
+  if (modal) modal.classList.remove("hidden");
+};
 })();
 
 (function () {
@@ -4098,7 +4403,7 @@ function renderConnections() {
       const editingId =
         modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
 
-      // Gentle client-side dupe guard (for creates only)
+      // Gentle client-side dupe guard (creates only)
       if (
         !editingId &&
         Array.isArray(window.cx.pairs) &&
@@ -4114,18 +4419,34 @@ function renderConnections() {
         return;
       }
 
-      // Normalize payload
-      const wl = (data && data.features && data.features.watchlist) || {};
+      // Normalize payload (supports watchlist + future ratings/history/playlists)
+      const F = (data && data.features) || {};
+      const DEF = { enable: true, add: true, remove: false };
+      function norm(feat) {
+        const v = Object.assign({}, DEF, feat || {});
+        return {
+          enable: !!v.enable,
+          add: !!v.add,
+          remove: !!v.remove,
+        };
+      }
+
+      const features = {
+        watchlist: norm(F.watchlist),
+      };
+      if (F.ratings)   features.ratings   = norm(F.ratings);
+      if (F.history)   features.history   = norm(F.history);
+      if (F.playlists) features.playlists = norm(F.playlists);
+
       const payload = {
         source: data.source,
         target: data.target,
         mode: data.mode || "one-way",
         enabled: !!data.enabled,
-        features: { watchlist: { add: !!wl.add, remove: !!wl.remove } },
+        features,
       };
 
-      let ok = false,
-        r;
+      let ok = false, r;
       if (editingId) {
         r = await fetch(`/api/pairs/${encodeURIComponent(editingId)}`, {
           method: "PUT",
@@ -4151,12 +4472,8 @@ function renderConnections() {
 
       // Clear editing id & close
       if (modal && modal.dataset) modal.dataset.editingId = "";
-      try {
-        window.cx.connect = { source: null, target: null };
-      } catch (_) {}
-      try {
-        if (typeof window.cxCloseModal === "function") window.cxCloseModal();
-      } catch (_) {}
+      try { window.cx.connect = { source: null, target: null }; } catch (_) {}
+      try { if (typeof window.cxCloseModal === "function") window.cxCloseModal(); } catch (_) {}
       const close = document.getElementById("cx-modal");
       if (close) close.classList.add("hidden");
 
@@ -4166,87 +4483,93 @@ function renderConnections() {
       alert("Failed to save connection.");
     }
   }
-  try {
-    window.cxSavePair = cxSavePair;
-  } catch (_) {}
+  try { window.cxSavePair = cxSavePair; } catch (_) {}
 
   // Override: cxOpenModalFor -> sets dataset.editingId and pre-fills fields
   const _olderOpen = window.cxOpenModalFor;
-  window.cxOpenModalFor = function (pair, editingId) {
-    // Try existing behavior first to keep UI in sync
+  window.cxOpenModalFor = async function (pair, editingId) {
+    // Laat legacy eerst z’n ding doen (some UIs hangen eraan)
     if (typeof _olderOpen === "function") {
-      try {
-        _olderOpen(pair, editingId);
-      } catch (_) {}
-    } else {
-      // Minimal fallback prefill (in case earlier versions differ)
-      const m = _getModal();
-      if (!m) return;
-      try {
-        var src = document.getElementById("cx-src");
-        var dst = document.getElementById("cx-dst");
-        var one = document.querySelector(
-          'input[name="cx-mode"][value="one-way"]'
-        );
-        var two = document.querySelector(
-          'input[name="cx-mode"][value="two-way"]'
-        );
-        var en = document.getElementById("cx-enabled");
-        if (src) src.value = (pair && pair.source) || "PLEX";
-        if (dst) dst.value = (pair && pair.target) || "SIMKL";
-        if (en) en.checked = !(pair && pair.enabled === false);
-        if (one && two) {
-          const mval = (pair && pair.mode) || "one-way";
-          two.checked = mval === "two-way";
-          one.checked = !two.checked;
-        }
-        const f = (pair && pair.features && pair.features.watchlist) || {
-          add: true,
-          remove: false,
-        };
-        const wlAdd = document.getElementById("cx-wl-add");
-        const wlRem = document.getElementById("cx-wl-remove");
-        if (wlAdd) wlAdd.checked = !!f.add;
-        if (wlRem) wlRem.checked = !!f.remove;
-        m.classList.remove("hidden");
-      } catch (_) {}
+      try { await _olderOpen(pair, editingId); } catch (_) {}
     }
 
-    // Store editing id on the modal so the Save handler can detect PUT vs POST
-    const modal = _getModal();
-    if (modal && modal.dataset)
-      modal.dataset.editingId = editingId ? String(editingId) : "";
+    // Zorg dat de modal er is
+    try {
+      if (typeof cxEnsureCfgModal === "function") {
+        await cxEnsureCfgModal();
+      } else if (typeof _ensureCfgModal === "function") {
+        _ensureCfgModal();
+      }
+    } catch (_) {}
 
-    // Ensure Save button wires to our save function (existing listeners will still call us)
-    const saveBtn = document.getElementById("cx-save");
-    if (saveBtn && !saveBtn.dataset.cxBound) {
-      saveBtn.dataset.cxBound = "1";
-      saveBtn.addEventListener(
-        "click",
-        function () {
-          // Read from DOM fresh to avoid stale 'data' when using our fallback path
-          const data = {
-            source: (document.getElementById("cx-src") || {}).value,
-            target: (document.getElementById("cx-dst") || {}).value,
-            enabled: !!(document.getElementById("cx-enabled") || {}).checked,
-            mode:
-              (document.querySelector('input[name="cx-mode"]:checked') || {})
-                .value || "one-way",
-            features: {
-              watchlist: {
-                add: !!(document.getElementById("cx-wl-add") || {}).checked,
-                remove: !!(document.getElementById("cx-wl-remove") || {})
-                  .checked,
-              },
-            },
-          };
-          // Intentionally do nothing here; existing listeners already call window.cxSavePair(data)
-          // and our global function above will execute.
-        },
-        { capture: false }
-      );
+  // Wacht tot de selects en hun opties er zijn
+  const __wait = (pred, ms = 1500, step = 25) =>
+    new Promise((res) => { const t0 = Date.now(); (function loop(){ if (pred() || Date.now() - t0 >= ms) return res(); setTimeout(loop, step); })(); });
+
+  const m = document.getElementById("cx-modal") || (typeof _getModal === "function" ? _getModal() : null);
+  if (!m) return;
+  if (m.dataset) m.dataset.editingId = String(editingId || (pair && pair.id) || "");
+
+  const q = (sel) => m.querySelector(sel) || document.querySelector(sel);
+
+  await __wait(() => {
+    const s = q("#cx-src"), d = q("#cx-dst");
+    return !!(s && d && s.querySelectorAll("option").length && d.querySelectorAll("option").length);
+  });
+
+  try {
+    const src = q("#cx-src");
+    const dst = q("#cx-dst");
+    const one = q("#cx-mode-one") || q('input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]');
+    const two = q("#cx-mode-two") || q('input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]');
+    const en  = q("#cx-enabled");
+
+    // Prefill source/target
+    if (src) { src.value = (pair && pair.source) || "PLEX"; try { src.dispatchEvent(new Event("change")); } catch(_) {} }
+    if (dst) { dst.value = (pair && pair.target) || "SIMKL"; try { dst.dispatchEvent(new Event("change")); } catch(_) {} }
+
+    // Prefill enabled
+    if (en) en.checked = !(pair && pair.enabled === false);
+
+    // Prefill mode
+    if (one && two) {
+      let mval = (pair && pair.mode) || "one-way";
+      if (mval === "one") mval = "one-way";
+      if (mval === "two") mval = "two-way";
+      two.checked = mval === "two-way";
+      one.checked = !two.checked;
     }
-  };
+
+    // Prefill watchlist (enable/add/remove)
+    const f = (pair && pair.features && pair.features.watchlist) || {};
+    const wlEnable = q("#cx-wl-enable");
+    const wlAdd    = q("#cx-wl-add");
+    const wlRem    = q("#cx-wl-remove");
+
+    const wlOn = ("enable" in f) ? !!f.enable : true;
+    if (wlEnable) {
+      wlEnable.checked = wlOn;
+      try { wlEnable.dispatchEvent(new Event("change")); } catch(_) {}
+    }
+    if (wlAdd) wlAdd.checked = !!f.add;
+    if (wlRem) {
+      wlRem.checked = !!f.remove;
+      wlRem.disabled = !wlOn;      // alleen gate op Enable
+    }
+
+    m.classList.remove("hidden");
+
+    // Second pass (voor late renders)
+    await new Promise(r => setTimeout(r, 0));
+    if (src && pair && pair.source) { src.value = pair.source; try { src.dispatchEvent(new Event("change")); } catch(_) {} }
+    if (dst && pair && pair.target) { dst.value = pair.target; try { dst.dispatchEvent(new Event("change")); } catch(_) {} }
+
+    // Second pass voor WL (zeker weten dat UI listeners klaar zijn)
+    if (wlEnable) { try { wlEnable.dispatchEvent(new Event("change")); } catch(_) {} }
+    if (wlRem) wlRem.disabled = !(wlEnable ? wlEnable.checked : wlOn);
+
+  } catch (_) {}
+};
 
   // Boot: make sure pairs are loaded once DOM is ready
   document.addEventListener("DOMContentLoaded", () => {
@@ -4357,3 +4680,13 @@ async function populateSyncModes() {
 
 // expose globally
 window.populateSyncModes = populateSyncModes;
+
+// Bridge: allow other scripts to request opening the Configure Connection modal
+window.addEventListener('cx:open-modal', function(ev){
+  try{
+    var detail = ev.detail || {};
+    if (typeof window.cxOpenModalFor === 'function') {
+      window.cxOpenModalFor(detail);
+    }
+  }catch(e){ console.warn('cx modal bridge failed', e); }
+});

@@ -1,6 +1,4 @@
 
-/* Styles for :root */
-
 /* ==================================================================
    Base & Layout
    ================================================================== */
@@ -1027,12 +1025,117 @@
 
 /* Styles for .prov-card */
 .prov-card{ position:relative; }
-/* Styles for .prov-card.brand-plex */
 .prov-card.brand-plex  { --brand-color: var(--plex); }
-/* Styles for .prov-card.brand-simkl */
 .prov-card.brand-simkl { --brand-color: var(--simkl); }
+.prov-card.brand-trakt { --brand-color: var(--trakt); }
+
+/* ================================
+   Provider cards: branded inner glow
+   - no markup/JS changes needed
+   - uses your existing classes:
+     .prov-card.brand-plex | .brand-simkl | .brand-trakt
+   ================================ */
+
+.prov-card{
+  position: relative;
+  overflow: hidden;                 /* keep glow inside rounded card */
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.02), transparent),
+    var(--panel, #0d0f14);
+}
+
+/* Set a per-card brand color (already present in your CSS, repeat here for clarity) */
+.prov-card.brand-plex  { --brand-color: var(--plex);  --brand-rgb: var(--plex-rgb);  }
+.prov-card.brand-simkl { --brand-color: var(--simkl); --brand-rgb: var(--simkl-rgb); }
+.prov-card.brand-trakt { --brand-color: var(--trakt); --brand-rgb: 237,28,36;       /* fallback */ }
+
+/* Inner gradient layer (base) */
+.prov-card::before{
+  content:"";
+  position:absolute; inset:6px;     /* inset keeps borders crisp */
+  border-radius: inherit;
+  pointer-events:none;
+  /* modern: use color-mix for a clean tint */
+  background:
+    radial-gradient(120% 60% at 15% 0%,
+      color-mix(in oklab, var(--brand-color) 22%, transparent) 0%,
+      transparent 60%)
+  ,
+    radial-gradient(120% 80% at 85% 0%,
+      color-mix(in oklab, var(--brand-color) 18%, transparent) 0%,
+      transparent 70%)
+  ,
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--brand-color) 10%, transparent) 0%,
+      transparent 52%);
+  opacity:.75;
+  filter:saturate(115%);
+  transition: opacity .25s ease, transform .45s ease, filter .25s ease;
+}
+
+/* Fallback tint if color-mix isn't supported */
+@supports not (background: color-mix(in oklab, red 50%, white)){
+  .prov-card::before{
+    background:
+      radial-gradient(120% 60% at 15% 0%, rgba(var(--brand-rgb, 255,255,255), .16), transparent 60%),
+      radial-gradient(120% 80% at 85% 0%, rgba(var(--brand-rgb, 255,255,255), .12), transparent 70%),
+      linear-gradient(180deg, rgba(var(--brand-rgb, 255,255,255), .08), transparent 52%);
+  }
+}
+
+/* A subtle highlight that hugs the card’s content area */
+.prov-card::after{
+  content:"";
+  position:absolute; inset:10px;
+  border-radius: inherit;
+  pointer-events:none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--brand-color) 22%, transparent);
+  opacity:.35;
+  transition: opacity .25s ease;
+}
+
+/* Hover/active states */
+.prov-card:hover::before{ opacity:.95; transform: scale(1.01); filter:saturate(125%); }
+.prov-card:hover::after { opacity:.55; }
+
+/* Optional: if you mark a provider as the current Source/Target, intensify the glow */
+.prov-card.is-source::before,
+.prov-card.is-target::before{ opacity:1; }
+.prov-card.is-source::after,
+.prov-card.is-target::after{ opacity:.7; }
+
+/* Optional: tint the "Set as Source" button to match brand subtly */
+.prov-card .btn{ transition: box-shadow .2s ease, filter .2s ease; }
+.prov-card.brand-plex  .btn:hover{ box-shadow: 0 0 16px rgba(var(--plex-rgb), .25); }
+.prov-card.brand-simkl .btn:hover{ box-shadow: 0 0 16px rgba(var(--simkl-rgb), .25); }
+.prov-card.brand-trakt .btn:hover{ box-shadow: 0 0 16px rgba(237,28,36,.25); }
 
 
+/* Base border + subtle glow for all brand cards */
+.prov-card.brand-plex,
+.prov-card.brand-simkl,
+.prov-card.brand-trakt{
+  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
+    0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
+  transition: box-shadow .25s ease, border-color .25s ease;
+}
+
+/* Stronger glow on hover */
+.prov-card.brand-plex:hover,
+.prov-card.brand-simkl:hover,
+.prov-card.brand-trakt:hover{
+  box-shadow:
+    0 0 0 1px var(--brand-color) inset,
+    0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
+}
+
+/* Optional: match the small logo badge border tint (like Plex/Simkl rules you have) */
+.prov-card.brand-trakt .prov-brand {
+  border-color: color-mix(in oklab, var(--trakt) 35%, rgba(255,255,255,.35));
+}
 .prov-card.brand-plex,
 /* Styles for .prov-card.brand-simkl */
 .prov-card.brand-simkl{
@@ -1049,11 +1152,6 @@
     0 0 0 1px var(--brand-color) inset,
     0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
 }
-
-
-/* Styles for .prov-head */
-.prov-head{                    }
-
 
 /* Styles for .prov-brand */
 .prov-brand{
@@ -1253,14 +1351,6 @@ main.single #stats-card{
 /* Styles for .mini-legend .n */
 .mini-legend .n{font-weight:800}
 
-
-/* Styles for #stats-card */
-#stats-card{                                     }
-#stats-card .stats-modern.v2,
-/* Styles for #stats-card .stat-tiles */
-#stats-card .stat-tiles{                               }
-
-
 /* Styles for #stats-card .aurora */
 #stats-card .aurora{
   position:absolute;
@@ -1342,9 +1432,7 @@ main.single #stats-card{
 
 
 /* Styles for #stats-card.card */
-#stats-card.card { overflow: hidden; }     
-/* Styles for #stats-card */
-#stats-card {                     }        
+#stats-card.card { overflow: hidden; }          
 
 /* Styles for #stats-card */
 #stats-card { position: relative; overflow: hidden; isolation: isolate; }
@@ -1467,7 +1555,6 @@ main.single #stats-card{
   -webkit-background-clip: initial;
 }
 
-
 /* Styles for .stat-block .pill */
 .stat-block .pill{
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
@@ -1477,7 +1564,6 @@ main.single #stats-card{
   background-color: transparent;
   color: inherit;
 }
-
 
 /* Styles for .sparkline */
 .sparkline { height: 64px; width: 100%; position: relative; }
@@ -1497,8 +1583,7 @@ main.single #stats-card{
 .history-item { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-radius:12px; background: rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.06); }
 /* Styles for .history-meta */
 .history-meta { display:flex; gap:10px; align-items:center; font-size:12px; opacity:.9; }
-/* Styles for .badge */
-.badge {                                                                                               }
+
 /* Styles for .badge.ok */
 .badge.ok { border-color: rgba(46, 204, 113, .5); }
 /* Styles for .badge.warn */
@@ -1946,6 +2031,25 @@ main.single #stats-card{
 /* Styles for @keyframes dirGlow */
 @keyframes dirGlow{ 0%,100%{text-shadow:0 0 0 rgba(124,92,255,.0)} 50%{text-shadow:0 0 10px rgba(124,92,255,.6)} }
 
+/* Sync Flow tokens as icon pills */
+#cx-modal .flow-rail.pretty .token{
+  display:inline-flex;             /* center icon */
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:6px 10px;                /* slightly tighter for a 28px icon */
+  min-width:44px;                  /* keep a nice pill silhouette */
+}
+
+#cx-modal .flow-rail.pretty .token .token-logo{
+  width:28px; height:28px; display:block;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.35));
+}
+
+/* If a provider has no icon we show text; keep it bold */
+#cx-modal .flow-rail.pretty .token .token-text{ font-weight:800; }
+
+
 /* Poster cards in watchlist preview */
 .wall-wrap .poster-card,
 #wl-grid .poster-card {
@@ -1972,3 +2076,472 @@ main.single #stats-card{
 .wl-grid{
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); /* 148px -> 128px */
 }
+
+
+/* === Configure Connection (wide, dynamic) === */
+#cx-modal.cx-wide .modal-shell{ max-width: 1180px; width: 92vw; }
+#cx-modal .cx-card{ background: rgba(18,18,24,.92); border:1px solid rgba(255,255,255,.10); border-radius:16px; overflow:hidden; box-shadow:0 24px 80px rgba(0,0,0,.55); }
+#cx-modal .cx-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; background:linear-gradient(180deg,rgba(255,255,255,.08),transparent); }
+#cx-modal .cx-body{ padding:16px 18px 8px; }
+#cx-modal .cx-foot{ display:flex; justify-content:flex-end; gap:12px; padding:14px 18px; background:linear-gradient(0deg,rgba(255,255,255,.06),transparent); }
+#cx-modal .app-name{ font-weight:800; font-size:18px }
+#cx-modal .app-sub{ opacity:.7; font-size:13px }
+
+#cx-modal .cx-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
+#cx-modal .cx-row .field{ display:flex; flex-direction:column; gap:6px; min-width:220px; flex: 1 1 320px }
+#cx-modal .cx-row label{ font-size:12px; letter-spacing:.06em; text-transform:uppercase; opacity:.8 }
+#cx-modal .cx-row .input, #cx-modal .cx-row select{ background: #0b0b16; color:#e9ebff; border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:12px 14px }
+
+#cx-modal .flow-rail{ margin-left:auto; display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.10); border-radius:12px; padding:10px 14px }
+#cx-modal .flow-rail .token{ font-weight:800 }
+#cx-modal .flow-rail .arrow{ opacity:.85 }
+
+#cx-modal .seg{ display:inline-flex; background:linear-gradient(180deg,#0e1016,#0c0e13); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:4px; gap:6px }
+#cx-modal .seg input{ display:none }
+#cx-modal .seg label{ padding:10px 14px; border-radius:10px; cursor:pointer; opacity:.9 }
+#cx-modal .seg input:checked + label{ background:rgba(124,92,255,.28); color:#fff; box-shadow:0 6px 16px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06) }
+#cx-modal .seg label.disabled{ opacity:.45; filter: grayscale(1) }
+
+#cx-modal .feature-tabs{ display:flex; gap:12px; flex-wrap:wrap }
+#cx-modal .feature-tabs .ftab{ padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:#0b0b16; color:#e9ebff; cursor:pointer; transition:.2s; box-shadow:0 0 0 0 rgba(124,92,255,0) }
+#cx-modal .feature-tabs .ftab.active{ border-color:#7c5cff; box-shadow:0 0 20px rgba(124,92,255,.2) }
+#cx-modal .feature-tabs .ftab.disabled{ opacity:.5; cursor: default }
+
+#cx-modal .cx-main{ display:grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items:stretch; }
+#cx-modal .panel{ background:linear-gradient(180deg,rgba(255,255,255,.02),transparent), #0b0b16; border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px; box-shadow: inset 0 0 40px #000 }
+#cx-modal .panel.sub{ background:#0a0a14; }
+#cx-modal .panel .panel-title{ font-weight:700; margin-bottom:10px }
+#cx-modal .panel .panel-title.small{ font-size:12px; opacity:.8; margin-bottom:6px }
+
+#cx-modal .opt-row{ display:flex; align-items:center; justify-content:space-between; border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:10px; margin-bottom:10px; background: rgba(255,255,255,.02) }
+
+#cx-modal .switch{ position:relative; display:inline-block; width:46px; height:26px }
+#cx-modal .switch input{ opacity:0; width:0; height:0 }
+#cx-modal .switch .slider{ position:absolute; inset:0; border-radius:999px; background:#1e1f2b; border:1px solid rgba(255,255,255,.16); transition:.2s }
+#cx-modal .switch .slider::before{ content:""; position:absolute; left:3px; top:3px; width:18px; height:18px; border-radius:50%; background:#e9ebff; transition:.2s; box-shadow:0 2px 8px rgba(0,0,0,.3) }
+#cx-modal .switch input:checked + .slider{ background:#3d38ff55; border-color:#7c5cff }
+#cx-modal .switch input:checked + .slider::before{ transform: translateX(20px) }
+
+#cx-modal .rules .r{ border:1px solid rgba(255,255,255,.10); background:#0b0b16; border-radius:12px; padding:10px 12px; margin-bottom:10px }
+#cx-modal .rules .r .t{ font-weight:700 }
+#cx-modal .rules .r .s{ opacity:.7; font-size:12px }
+
+
+/* ====== Configure Connection (wide modal) ====== */
+.modal-backdrop.cx-wide { position:fixed; inset:0; background:rgba(4,6,12,.66); backdrop-filter: blur(6px); display:block; }
+.modal-backdrop.cx-wide.hidden { display:none; }
+.cx-card{ background:linear-gradient(180deg,rgba(255,255,255,.02),transparent),var(--panel); border:1px solid var(--border); border-radius:20px; box-shadow:0 10px 50px #000a; padding:0; width:min(1100px, 96vw); margin:40px auto; }
+.cx-card .cx-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); }
+.cx-card .title-wrap{ display:flex; align-items:center; gap:10px; }
+.cx-card .app-name{ font-size:22px; font-weight:900; letter-spacing:.2px; }
+.cx-card .app-sub{ font-size:12px; color:var(--muted); }
+.cx-card .cx-body{ padding:16px; }
+.cx-card .cx-foot{ display:flex; gap:10px; justify-content:flex-end; padding:14px 16px; border-top:1px solid var(--border); }
+
+/* top grid: left stack + right flow card */
+.cx-top.grid{ display:grid; grid-template-columns: 1fr 340px; gap:16px; align-items:start; }
+@media (max-width: 980px){ .cx-top.grid{ grid-template-columns: 1fr; } }
+
+.cx-row{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px; }
+.cx-row .field label{ display:block; margin-bottom:6px; }
+.cx-row .input{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#0a0a17; color:#e7e9f4; }
+
+/* segmented control */
+.cx-mode-row{ display:flex; align-items:center; justify-content:space-between; }
+.cx-mode-row .seg{ display:inline-grid; grid-auto-flow:column; gap:6px; background:#0a0a17; border:1px solid var(--border); border-radius:999px; padding:4px; }
+.cx-mode-row .seg input{ position:absolute; opacity:0; pointer-events:none; }
+.cx-mode-row .seg label{ padding:6px 12px; border-radius:999px; cursor:pointer; color:var(--muted); font-weight:700; }
+#cx-mode-one:checked + label, #cx-mode-two:checked + label{ background:var(--grad1); color:#fff; }
+.cx-mode-row .seg label.disabled{ opacity:.45; cursor:not-allowed; }
+
+/* feature tabs */
+.feature-tabs{ display:flex; gap:10px; flex-wrap:wrap; }
+.feature-tabs .ftab{ padding:10px 14px; border-radius:14px; border:1px solid var(--border); background:#0b0b16; color:#cdd5e2; font-weight:800; cursor:pointer; box-shadow:0 0 0 transparent; }
+.feature-tabs .ftab.active{ background:var(--grad1); color:#fff; box-shadow:0 0 18px #7c5cff44; }
+
+/* left options panel */
+.panel{ border:1px solid var(--border); background:var(--panel2); border-radius:16px; padding:14px; }
+.panel .panel-title{ font-weight:900; margin-bottom:8px; }
+.panel .panel-title.small{ font-size:12px; color:var(--muted); margin-top:8px; }
+
+.opt-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:#0b0b16; margin-bottom:10px; }
+.opt-row .switch{ position:relative; display:inline-block; width:44px; height:24px; }
+.opt-row .switch input{ opacity:0; width:0; height:0; position:absolute; }
+.opt-row .switch .slider{ position:absolute; inset:0; background:#1a1a2a; border:1px solid #2a2a46; border-radius:999px; transition:.2s; }
+.opt-row .switch .slider::before{ content:""; position:absolute; width:18px; height:18px; left:3px; top:50%; transform:translateY(-50%); background:#fff; border-radius:50%; transition:.2s; box-shadow:0 1px 4px #0008; }
+.opt-row .switch input:checked + .slider{ background:linear-gradient(135deg,#7c5cff,#2de2ff); border-color:#5a63ff88; }
+.opt-row .switch input:checked + .slider::before{ transform:translate(18px, -50%); }
+
+.panel.sub{ background:#0a0a14; }
+
+/* right rules preview */
+.rules .r{ border:1px solid var(--border); border-radius:14px; background:#0b0b16; padding:12px; margin-bottom:10px; }
+.rules .r .t{ font-weight:900; }
+.rules .r .s{ color:var(--muted); font-size:12px; margin-top:2px; }
+.rules .r.note{ border-style:dashed; color:var(--muted); }
+
+/* flow card */
+.flow-card{ border:1px solid var(--border); border-radius:16px; padding:12px; background:var(--panel2); }
+.flow-card .flow-title{ font-size:12px; color:var(--muted); margin-bottom:8px; }
+.flow-rail.pretty{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.flow-rail.pretty .token{ padding:6px 10px; border-radius:999px; background:#0b0b16; border:1px solid var(--border); font-weight:800; }
+.flow-rail.pretty .arrow{ position:relative; flex:1; height:2px; background:linear-gradient(90deg,#7c5cff,#2de2ff); border-radius:2px; }
+.flow-rail.pretty .arrow::before, .flow-rail.pretty .arrow::after{ content:""; position:absolute; top:50%; width:0; height:0; border:6px solid transparent; transform:translateY(-50%); }
+.flow-rail.pretty .arrow::before{ left:-2px; border-right-color:#7c5cff; }
+.flow-rail.pretty .arrow::after{ right:-2px; border-left-color:#2de2ff; }
+
+/* ====== Rule preview panel (right) ====== */
+.rules-card .rules .r{ margin-top:10px; }
+
+/* ====== Flow rail animation ====== */
+.flow-rail.pretty{ position:relative; padding:10px; border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.02),transparent), var(--panel2); border:1px solid var(--border); }
+.flow-rail.pretty .arrow{ position:relative; flex:1; height:6px; border-radius:4px;
+  background:linear-gradient(90deg,#7c5cff,#2de2ff);
+  box-shadow:0 0 16px #7c5cff33 inset;
+  display:block;
+}
+.flow-rail.pretty .token{ padding:8px 12px; border-radius:999px; background:#0b0b16; border:1px solid var(--border); font-weight:800; }
+.flow-rail.pretty{ display:flex; align-items:center; gap:14px; }
+
+/* animated dots */
+.flow-rail .arrow .dot.flow{ position:absolute; top:50%; width:10px; height:10px; border-radius:50%; transform:translate(-50%,-50%); opacity:0; }
+.flow-rail .arrow .dot.flow.a{ background:#7c5cff; box-shadow:0 0 10px #7c5cffaa; }
+.flow-rail .arrow .dot.flow.b{ background:#2de2ff; box-shadow:0 0 10px #2de2ffaa; }
+
+@keyframes flowRight { from { left:6px; } to { left: calc(100% - 6px); } }
+@keyframes flowLeft  { from { left: calc(100% - 6px); } to { left:6px; } }
+
+/* One-way: add => right; remove-only => left */
+.flow-rail.mode-one.dir-add   .arrow .dot.flow.a{ opacity:1; animation: flowRight 1.6s linear infinite; }
+.flow-rail.mode-one.dir-remove .arrow .dot.flow.a{ opacity:1; animation: flowLeft  1.6s linear infinite; }
+
+/* Two-way: show both */
+.flow-rail.mode-two.active .arrow .dot.flow.a{ opacity:1; animation: flowRight 1.6s linear infinite; }
+.flow-rail.mode-two.active .arrow .dot.flow.b{ opacity:1; animation: flowLeft  1.6s linear infinite; }
+
+/* Off/disabled state */
+.flow-rail.off .arrow{ filter: grayscale(.7) brightness(.8); opacity:.6; }
+.flow-rail.off .dot.flow{ opacity:.15; animation:none; }
+
+/* === Header Enable/Disable slider (neon friendly) === */
+.cx-head .head-toggle { display:inline-flex; align-items:center; gap:10px; }
+
+/* Palette (muted neon) */
+:root{
+  --sw-on:    #26b87a;  /* groen */
+  --sw-on2:   #1e8f5f;
+  --sw-off:   #c84c4c;  /* rood */
+  --sw-off2:  #9c3d3d;
+  --sw-rail:  #101022;  /* dark rail */
+  --sw-edge:  #2a2a3a;  /* rail border */
+}
+
+.cx-head .head-toggle .lab{ display:none; }
+
+/* ===== Cleaner header ENABLE/DISABLE toggle ===== */
+:root{
+  --sw-on:  #22b27e;   /* muted neon green */
+  --sw-on2: #1a9466;
+  --sw-off: #c84c4c;   /* muted neon red */
+  --sw-off2:#9f3e3e;
+  --sw-rail:#101022;
+  --sw-edge:#2b2e44;
+}
+
+/* position + no clipping */
+.cx-head { overflow: visible; align-items: center; }
+.cx-head .head-toggle { margin-left: auto; display: inline-flex; align-items: center; }
+
+.cx-head .head-toggle .lab{ display:none !important; }
+
+.opt-row .switch{
+  --w:44px; --h:24px; --dot:18px; --pad:3px; --bw:1px;
+  position: relative; display: inline-block; width: var(--w); height: var(--h);
+}
+.opt-row .switch input{ position:absolute; opacity:0; }
+.opt-row .switch .slider{
+  position:absolute; inset:0;
+  box-sizing:border-box; border:var(--bw) solid var(--sw-edge);
+  border-radius:999px; background:#0b0b16;
+}
+.opt-row .switch .slider::before{
+  content:""; position:absolute; top:50%;
+  left: calc(var(--pad) + var(--bw));
+  width:var(--dot); height:var(--dot); transform:translateY(-50%);
+  border-radius:50%; background:#fff; box-shadow:0 1px 4px #0009;
+  transition:left .25s ease;
+}
+.opt-row .switch input:checked + .slider{
+  background: linear-gradient(135deg,#7c5cff,#2de2ff);
+  border-color:#5a63ff66;
+}
+.opt-row .switch input:checked + .slider::before{
+  left: calc(var(--w) - var(--dot) - var(--pad) - var(--bw));
+}
+
+#cx-modal .opt-row .switch input:checked + .slider::before{
+  transform: translateY(-50%) !important; /* kill translateX */
+}
+
+#cx-modal .opt-row .switch .slider::before{
+  top:50%; left: calc(3px + 1px) !important; /* pad + border */
+  width:18px; height:18px; border-radius:50%;
+  transform: translateY(-50%) !important;
+}
+#cx-modal .opt-row .switch input:checked + .slider::before{
+  left: calc(44px - 18px - 3px - 1px) !important; /* w - dot - pad - border */
+}
+
+#cx-modal .cx-head{ overflow:visible; align-items:center; }
+#cx-modal .cx-head .head-toggle{ margin-left:auto; display:inline-flex; align-items:center; }
+
+#cx-modal .cx-head .switch.big{
+  --w:72px; --h:34px; --pad:3px; --dot:26px; --bw:1px;
+  position:relative; display:inline-flex;
+}
+#cx-modal .cx-head .switch.big input{ position:absolute; opacity:0; pointer-events:none; }
+#cx-modal .cx-head .switch.big .slider{
+  position:relative; width:var(--w); height:var(--h); box-sizing:border-box;
+  border: var(--bw) solid #2b2e44; border-radius:999px;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), #101022;
+  box-shadow: inset 0 0 0 1px #0007;
+  transition: background .25s, border-color .25s, box-shadow .25s;
+}
+/* knop exact centreren in OFF én ON, zonder horizontale translate */
+#cx-modal .cx-head .switch.big .slider::before{
+  content:""; position:absolute; top:50%;
+  left: calc(var(--pad) + var(--bw));
+  width:var(--dot); height:var(--dot); border-radius:50%;
+  background:#fff; box-shadow:0 2px 8px #000a, 0 0 0 1px #0005;
+  transform: translateY(-50%) !important;
+  transition: left .25s ease;
+}
+#cx-modal .cx-head .switch.big input:checked + .slider::before{
+  left: calc(var(--w) - var(--dot) - var(--pad) - var(--bw)) !important;
+}
+/* kleurstates: subtiel groen voor ON, rustige rail voor OFF */
+#cx-modal .cx-head .switch.big input:checked + .slider{
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent),
+              linear-gradient(135deg, #22b27e, #1a9466);
+  border-color: color-mix(in srgb, #22b27e 65%, #000);
+  box-shadow: inset 0 0 14px color-mix(in srgb, #22b27e 38%, transparent);
+}
+
+#cx-modal .cx-head .head-toggle .lab{ display:none !important; }
+
+#cx-modal .cx-card{ overflow: visible !important; }
+
+#cx-modal .cx-head{ overflow: visible; }
+#cx-modal .cx-head .head-toggle{ margin-left:auto; display:inline-flex; align-items:center; }
+#cx-modal .cx-head .switch.big{
+  --w:72px; --h:34px; --pad:3px; --dot:26px; --bw:1px;
+}
+#cx-modal .cx-head .switch.big .slider{
+  box-sizing:border-box; border:var(--bw) solid #2b2e44;
+}
+#cx-modal .cx-head .switch.big .slider::before{
+  top:50%; left:calc(var(--pad) + var(--bw)) !important;
+  width:var(--dot); height:var(--dot); transform:translateY(-50%) !important;
+}
+#cx-modal .cx-head .switch.big input:checked + .slider::before{
+  left:calc(var(--w) - var(--dot) - var(--pad) - var(--bw)) !important;
+}
+
+#cx-modal .cx-head{ padding-right:20px; }
+
+/* === FLOW RAIL – FORCE SQUARE LOGO TOKENS & ADEQUATE HEIGHT === */
+.flow-rail.pretty{
+  align-items: center !important;
+  gap: 14px !important;
+  padding: 12px 16px !important;
+  min-height: 68px !important;          /* lifts the rail so tokens fit */
+}
+
+/* The two endpoint tokens: stop them from being pills */
+.flow-rail.pretty .token{
+  width: 44px !important;
+  height: 44px !important;
+  padding: 6px !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #000 !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.05) !important;
+}
+
+/* If you inject <img> inside the token */
+.flow-rail.pretty .token img{
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  display: block !important;
+}
+
+.flow-rail.pretty .token{
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: 80% auto !important;
+}
+
+/* Make the center line feel proportionate */
+.flow-rail.pretty .arrow{
+  height: 8px !important;
+  border-radius: 4px !important;
+}
+.flow-rail.pretty .arrow .dot.flow{ top: 50% !important; }
+
+/* === Header master toggle – isolated styling (no knob) === */
+
+/* Position: set left or right here */
+#cx-modal #cx-master-toggle{
+  position:absolute;            /* keep it in the corner of the modal header */
+  top:12px;
+  right:16px;                   /* ← change to left:16px if you want it on the left */
+  z-index:20;
+}
+
+/* Track dimensions/colors */
+#cx-modal #cx-master-toggle.switch.big{
+  --w:72px; --h:34px; --bw:1px;
+  --pad:3px; --dot:26px;        /* dot not used, but kept for consistency */
+  display:inline-flex;
+}
+#cx-modal #cx-master-toggle.switch.big .slider{
+  position:relative;
+  width:var(--w); height:var(--h);
+  border-radius:999px;
+  box-sizing:border-box;
+  border:var(--bw) solid #2b2e44;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent), #0f1120;
+  transition: background .25s, border-color .25s, box-shadow .25s;
+  box-shadow: inset 0 0 0 1px #0007;
+}
+
+/* Kill the global knob for this toggle */
+#cx-modal #cx-master-toggle.switch.big .slider::before{
+  content:none !important;
+}
+
+/* Put ✓ / ✕ inside the rail instead of a knob */
+#cx-modal #cx-master-toggle.switch.big .slider::after{
+  content:"✕";
+  position:absolute;
+  top:50%;
+  right:12px;
+  transform:translateY(-50%);
+  font-weight:900;
+  font-size:12px;
+  letter-spacing:.02em;
+  color:rgba(255,255,255,.9);
+  pointer-events:none;
+}
+#cx-modal #cx-master-toggle.switch.big input:checked + .slider{
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent),
+              linear-gradient(135deg, #22b27e, #168d63);
+  border-color: color-mix(in srgb, #22b27e 65%, #000);
+  box-shadow: inset 0 0 14px color-mix(in srgb, #22b27e 38%, transparent);
+}
+#cx-modal #cx-master-toggle.switch.big input:checked + .slider::after{
+  content:"✓";
+  left:12px; right:auto;
+}
+
+/* Hide text labels for this compact header switch */
+#cx-modal #cx-master-toggle.head-toggle .lab{ display:none !important; }
+
+#cx-modal .cx-head{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+#cx-modal .head-right{
+  margin-left:auto;                 /* pushes toggle to the far right */
+  display:flex; align-items:center;
+}
+
+/* compact header toggle (no text labels shown) */
+#cx-modal #cx-master-toggle.head-toggle .lab{ display:none !important; }
+
+/* keep the ✓ / ✕ slider */
+#cx-modal #cx-master-toggle.switch.big{ --w:72px; --h:34px; --pad:3px; --dot:26px; --bw:1px; }
+#cx-modal #cx-master-toggle.switch.big .slider{ position:relative; width:var(--w); height:var(--h); border-radius:999px; box-sizing:border-box; border:var(--bw) solid #2b2e44; background:linear-gradient(180deg,rgba(255,255,255,.05),transparent),#0f1120; box-shadow:inset 0 0 0 1px #0007; }
+#cx-modal #cx-master-toggle.switch.big .slider::before{ content:none !important; } /* no knob */
+#cx-modal #cx-master-toggle.switch.big .slider::after{ content:"✕"; position:absolute; top:50%; right:12px; transform:translateY(-50%); font-weight:900; font-size:12px; color:rgba(255,255,255,.9); }
+#cx-modal #cx-master-toggle.switch.big input:checked + .slider{ background:linear-gradient(180deg,rgba(255,255,255,.05),transparent),linear-gradient(135deg,#22b27e,#168d63); border-color:color-mix(in srgb,#22b27e 65%,#000); box-shadow:inset 0 0 14px color-mix(in srgb,#22b27e 38%,transparent); }
+#cx-modal #cx-master-toggle.switch.big input:checked + .slider::after{ content:"✓"; left:12px; right:auto; }
+
+/* === Configured Connections: modernized row === */
+
+/* give room for the number line under the cards */
+.pairs-board { padding-bottom: 28px; }
+
+/* each card will draw its own index just below it */
+.pair-card { position: relative; }
+
+/* 01 / 02 / 03 … with gradient underline */
+.pair-card .ord-index{
+  position: absolute;
+  left: 0; right: 0; bottom: -18px;
+  text-align: center;
+  font-weight: 800;
+  letter-spacing: .18em;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: .9;
+  user-select: none;
+}
+.pair-card .ord-index::after{
+  content:"";
+  display:block;
+  width: 26px;
+  height: 2px;
+  margin: 6px auto 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--grad1), var(--grad2));
+  box-shadow: 0 0 10px #7c5cff44;
+}
+
+/* icon buttons for actions */
+.pair-card .actions .icon-btn{
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .12s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.pair-card .actions .icon-btn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0,0,0,.25);
+}
+.pair-card .actions .icon-btn .ico{ width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; }
+
+/* fun hover touches */
+.icon-btn.edit:hover .ico{ transform: scale(1.06) rotate(-2deg); transition: transform .2s; }
+.icon-btn.trash .lid{ transform-origin: 12px 6px; transition: transform .25s ease; }
+.icon-btn.trash:hover .lid{ transform: translateY(-1px) rotate(-12deg); }
+
+/* animated power icon (checkbox under the hood) */
+.icon-toggle{
+  position: relative;
+  display:inline-flex; align-items:center; justify-content:center;
+  width:36px; height:36px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  cursor:pointer;
+  transition: transform .12s, background .2s, border-color .2s, box-shadow .2s;
+}
+.icon-toggle:hover{ transform: translateY(-1px); box-shadow:0 8px 18px rgba(0,0,0,.25); }
+.icon-toggle input{ position:absolute; inset:0; opacity:0; pointer-events:none; }
+.icon-toggle .ico{ width:18px; height:18px; color:#cfd6ff; transition: transform .25s ease, color .25s ease; }
+.icon-toggle input:checked + .ico{
+  color:#2ecc71;
+  transform: rotate(-6deg) scale(1.06);
+  filter: drop-shadow(0 0 8px rgba(46,204,113,.35));
+}
+
+

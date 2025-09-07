@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Any, cast, Dict, List, Literal, Optional, Tuple
 
 """
 CrossWatch Web API (FastAPI)
@@ -10,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qs
+from typing import Any, Dict, List, Optional, Tuple, Literal, cast
 
 import json
 import os
@@ -26,6 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import shlex
+
 import requests
 import uvicorn
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
@@ -38,14 +38,8 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from providers.webhooks.trakt import process_webhook
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
-
-
-from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
-from providers.scrobble.trakt.sink import TraktSink
-from providers.scrobble.plex.watch import WatchService
 
 from _FastAPI import get_index_html
 from _scheduling import SyncScheduler
@@ -69,22 +63,16 @@ from providers.sync._mod_SIMKL import (
 
 
 # -----------------------------------------------------------------------------
-# Globals paths
+# Globals & paths
 # -----------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT)) # Make local packages importable early
+sys.path.insert(0, str(ROOT))  # Make local packages importable early
 
 STATE_PATH = CONFIG / "state.json"
-_METADATA = None # Set during startup
+_METADATA = None  # Set during startup
 TOMBSTONES_PATH = (CONFIG / "tombstones.json").resolve()
 FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists"]
-
-WATCH: WatchService | None = None
-DISPATCHER: Dispatcher | None = None
-
-_DEBUG_CACHE = {"ts": 0.0, "val": False}
-
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
@@ -104,7 +92,7 @@ def _normalize_features(f: dict | None) -> dict:
     for k in FEATURE_KEYS:
         v = f.get(k)
         if isinstance(v, bool):
-# True all on except remove False all off
+            # True => alles aan (behalve remove), False => alles uit
             f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
         elif isinstance(v, dict):
             v.setdefault("enable", True)
@@ -116,10 +104,10 @@ RUNNING_PROCS: Dict[str, threading.Thread] = {}
 SYNC_PROC_LOCK = threading.Lock()
 
 class MetadataResolveIn(BaseModel):
-    entity: str # movie show
-    ids: dict # bv tmdb 123 imdb tt
+    entity: str                  # "movie" | "show"
+    ids: dict                    # bv. {"tmdb": "123", "imdb": "tt..."}
     locale: str | None = None
-    need: dict | None = None # bv poster True
+    need: dict | None = None     # bv. {"poster": True}
     strategy: str | None = "first_success"
 
 class PairIn(BaseModel):
@@ -139,85 +127,43 @@ def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _gen_id(prefix: str = "pair") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
-def _is_debug_enabled() -> bool:
-    """Read runtime.debug from config with a tiny 2s cache."""
-    try:
-        now = time.time()
-        if now - _DEBUG_CACHE["ts"] > 2.0:
-            cfg = load_config()
-            _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
-            _DEBUG_CACHE["ts"] = now
-        return _DEBUG_CACHE["val"]
-    except Exception:
-        return False
-
 @asynccontextmanager
 async def _lifespan(app):
-# 1 Run legacy startup hook if present
     try:
-        fn = globals().get("_on_startup")
-        if callable(fn):
-            res = fn()
-            try:
-                import inspect
-                if inspect.iscoroutine(res):
-                    import asyncio
-                    await res
-            except Exception:
-                pass
-    except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
-        except Exception:
-            pass
-
-# 2 Start watcher if enabled in config
-    try:
-        cfg = load_config()
-        if ((cfg.get("features") or {}).get("watch") or {}).get("enabled"):
-            _UIHostLogger("TRAKT", "WATCH")("lifespan: ensure_watch_started()", level="INFO")
-            _ensure_watch_started()
-    except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"lifespan start failed: {e}", level="ERROR")
-        except Exception:
-            pass
-
-# ---- app runs ----
+        if '_on_startup' in globals():
+            fn = globals()['_on_startup']
+            if getattr(fn, '__code__', None) and 'async' in str(getattr(fn, '__annotations__', {})) or getattr(fn, '__name__', '').startswith('_'):
+                res = fn()
+                try:
+                    import inspect, asyncio
+                    if inspect.iscoroutine(res):
+                        await res
+                except Exception:
+                    pass
+            else:
+                try:
+                    fn()
+                except Exception:
+                    pass
+    except Exception:
+        pass
     try:
         yield
     finally:
-# 3 Run legacy shutdown hook if present
         try:
-            fn2 = globals().get("_on_shutdown")
-            if callable(fn2):
+            if '_on_shutdown' in globals():
+                fn2 = globals()['_on_shutdown']
                 res2 = fn2()
                 try:
-                    import inspect
+                    import inspect, asyncio
                     if inspect.iscoroutine(res2):
-                        import asyncio
                         await res2
                 except Exception:
                     pass
-        except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
-            except Exception:
-                pass
-
-# 4 Ensure watcher stops cleanly
-        try:
-            if 'WATCH' in globals() and WATCH:
-                WATCH.stop()
-                _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
-        except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
-            except Exception:
-                pass
-
+        except Exception:
+            pass
 # App setup
-app = FastAPI(lifespan=_lifespan)
+app = FastAPI(lifespan=_lifespan, )
 
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -228,134 +174,6 @@ CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.1")
 REPO = os.getenv("GITHUB_REPO", "cenodude/crosswatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
-DISPATCHER: Optional[Dispatcher] = None
-WATCH: Optional[WatchService] = None
-
-
-def _ensure_dispatcher() -> Dispatcher:
-    global DISPATCHER
-    if DISPATCHER is None:
-        DISPATCHER = Dispatcher([TraktSink(logger=_UIHostLogger("TRAKT", "SCROBBLE"))])
-    return DISPATCHER
-
-
-def _ensure_watch_started() -> WatchService:
-    global WATCH
-    _ensure_dispatcher()
-    w = WATCH
-    if w is None:
-        w = WatchService(dispatcher=DISPATCHER, logger=_UIHostLogger("TRAKT", "WATCH"))
-        WATCH = w
-        w.start()
-    elif not (w._thr and w._thr.is_alive()):
-        w.start()
-    return w
-
-
-def _watch_is_alive() -> bool:
-    w = WATCH
-    return bool(w and w._thr and w._thr.is_alive())
-
-@app.on_event("startup")
-async def _watch_start():
-    try:
-        _ensure_watch_started()
-    except Exception as e:
-        _UIHostLogger("TRAKT","WATCH")(f"watch failed: {e}", level="ERROR")
-
-@app.on_event("shutdown")
-async def _watch_stop():
-    global WATCH
-    if WATCH:
-        WATCH.stop()
-
-@app.get("/debug/watch/status")
-def debug_watch_status():
-    w = WATCH # type Optional WatchService
-    if w is None:
-        return {"has_watch": False, "alive": False, "stop_set": False}
-    alive = bool(w._thr and w._thr.is_alive())
-    stop_set = bool(getattr(w, "_stop", None) and w._stop.is_set())
-    return {"has_watch": True, "alive": alive, "stop_set": stop_set}
-
-@app.post("/debug/watch/start")
-def debug_watch_start():
-    w = _ensure_watch_started() # returns WatchService
-    alive = bool(w._thr and w._thr.is_alive())
-    return {"ok": True, "alive": alive}
-
-@app.post("/debug/watch/stop")
-def debug_watch_stop():
-    global WATCH
-    w = WATCH
-    if w is not None:
-        w.stop()
-    return {"ok": True, "alive": False}
-
-# Trakt tv webhook
-@app.post("/webhook/trakt")
-async def webhook_trakt(request: Request):
-    logger = _UIHostLogger("TRAKT", "SCROBBLE")
-    def log(msg, level="INFO"):
-        try: logger(msg, level=level, module="SCROBBLE")
-        except: pass
-
-    ct = (request.headers.get("content-type") or "").lower()
-    payload = None
-
-    try:
-        if "multipart/form-data" in ct:
-            form = await request.form()
-            part = form.get("payload")
-            if part is None:
-                raise ValueError("multipart: no 'payload' part")
-# UploadFile f str
-            try:
-                data = await part.read() # UploadFile
-            except Exception:
-                try: data = part.file.read() # UploadFile sync
-                except Exception:
-                    data = str(part).encode() # plain str
-            payload = json.loads(data.decode("utf-8", errors="replace"))
-            log("parsed multipart payload", "DEBUG")
-
-        else:
-            raw = await request.body()
-            if "application/x-www-form-urlencoded" in ct:
-                d = parse_qs(raw.decode("utf-8", errors="replace"))
-                if "payload" not in d or not d["payload"]:
-                    raise ValueError("urlencoded: no 'payload' key")
-                payload = json.loads(d["payload"][0])
-                log("parsed urlencoded payload", "DEBUG")
-            else:
-                payload = json.loads(raw.decode("utf-8", errors="replace"))
-                log("parsed json payload", "DEBUG")
-
-    except Exception as e:
-        try:
-            raw = await request.body()
-            snippet = raw[:200].decode("utf-8", errors="replace")
-        except Exception:
-            snippet = "<no body>"
-        log(f"failed to parse webhook payload: {e} | body[:200]={snippet}", "ERROR")
-        return JSONResponse({"ok": True}, status_code=200)
-
-    acc = ((payload.get("Account") or {}).get("title") or "").strip()
-    srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
-    md  = payload.get("Metadata") or {}
-    title = md.get("title") or md.get("grandparentTitle") or "?"
-    log(f"payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
-
-    try:
-        res = process_webhook(payload=payload, headers=dict(request.headers), raw=None, logger=logger)
-    except Exception as e:
-        log(f"process_webhook raised: {e}", "ERROR")
-        return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
-
-    log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
-    return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
-
-# metadata resolve
 @app.post("/api/metadata/resolve")
 def api_metadata_resolve(payload: MetadataResolveIn):
     if _METADATA is None:
@@ -386,8 +204,8 @@ def api_update():
         "current_version": cur,
         "latest_version": lat,
         "update_available": bool(update),
-        "html_url": html_url, # -- add this
-        "url": html_url, # -- keep alias just in case UI expects url
+        "html_url": html_url,  # <-- add this
+        "url": html_url,       # <-- keep alias just in case UI expects `url`
         "body": cache.get("body", ""),
         "published_at": cache.get("published_at"),
     }
@@ -477,11 +295,11 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 </svg>"""
 
 STATUS_CACHE = {"ts": 0.0, "data": None}
-STATUS_TTL = 3600 # 60 minutes
+STATUS_TTL = 3600  # 60 minutes
 
 CONFIG_BASE = Path("/config") if str(ROOT).startswith("/app") else ROOT
 JSON_PATH   = CONFIG_BASE / "config.json"
-CONFIG_PATH = JSON_PATH # always JSON
+CONFIG_PATH = JSON_PATH  # always JSON
 
 REPORT_DIR = CONFIG_BASE / "sync_reports"; REPORT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = CONFIG_BASE / "cache"
@@ -493,17 +311,6 @@ HIDE_PATH   = CONFIG_BASE / "watchlist_hide.json"
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
 
-# Append helper timestamp trimming
-def _append_log(tag: str, line: str) -> None:
-    import time
-    buf = LOG_BUFFERS.setdefault(tag, [])
-    ts = time.strftime("%H:%M:%S")
-    buf.append(f"[{ts}] {line}")
-# trim
-    if len(buf) > MAX_LOG_LINES:
-        del buf[: len(buf) - MAX_LOG_LINES]
-
-# replace your _UIHostLogger with this
 class _UIHostLogger:
     def __init__(self, tag: str = "SYNC", module_name: str | None = None, base_ctx: dict | None = None):
         self._tag = tag
@@ -513,14 +320,11 @@ class _UIHostLogger:
     def __call__(self, message: str, *, level: str = "INFO", module: str | None = None, extra: dict | None = None) -> None:
         m = module or self._module or self._ctx.get("module")
         lvl = (level or "INFO").upper()
-        # hide DEBUG unless runtime.debug == true
-        if lvl == "DEBUG" and not _is_debug_enabled():
-            return
-        prefix_mod = f"[{m}]" if m else ""
+        prefix = f"[{m}]" if m else ""
         try:
-            _append_log(self._tag, f"{lvl} {prefix_mod} {message}".strip())
+            _append_log(self._tag, f"{prefix} {message}".strip())
         except Exception:
-            print(f"{self._tag}: {lvl} {prefix_mod} {message}")
+            print(f"{self._tag}: {prefix} {message}")
 
     def set_context(self, **ctx):
         self._ctx.update(ctx)
@@ -538,7 +342,7 @@ class _UIHostLogger:
 
 SIMKL_STATE: Dict[str, Any] = {}
 
-# CONFIG JSON
+# CONFIG.JSON 
 DEFAULT_CFG: Dict[str, Any] = {
     "plex": {"account_token": ""},
     "simkl": {
@@ -556,32 +360,6 @@ DEFAULT_CFG: Dict[str, Any] = {
         "expires_at": 0,
     },
     "tmdb": {"api_key": ""},
-
-    # NEW: feature toggles (default OFF)
-    "features": {
-        "watch": {
-            "enabled": False,
-            "options": {
-                "allow_self_signed": False,
-                "reconnect_backoff_min_seconds": 2,
-                "reconnect_backoff_max_seconds": 60
-            }
-        },
-        "webhook": {
-            "enabled": False
-        },
-        "scrobble": {
-            "enabled": False,
-            "providers": {
-                "trakt": { "enabled": False }
-            },
-            "filters": {
-                "username_whitelist": [],
-                "server_uuid": ""
-            }
-        }
-    },
-
     "sync": {
         "enable_add": True,
         "enable_remove": True,
@@ -590,6 +368,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     },
     "runtime": {"debug": False},
 }
+
 
 def _read_json(p: Path) -> Dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
@@ -649,23 +428,23 @@ def ansi_to_html(line: str) -> str:
         codes = [c for c in (m.group(1) or "").split(";") if c != ""]
         if codes:
             for c in codes:
-                if c == "0": # full reset
+                if c == "0":                      # full reset
                     state.update({"b": False, "u": False, "fg": None, "bg": None})
-                elif c == "1": # bold on
+                elif c == "1":                    # bold on
                     state["b"] = True
-                elif c == "22": # bold off
+                elif c == "22":                   # bold off
                     state["b"] = False
-                elif c == "4": # underline on
+                elif c == "4":                    # underline on
                     state["u"] = True
-                elif c == "24": # underline off
+                elif c == "24":                   # underline off
                     state["u"] = False
-                elif c in _FG_CODES: # set foreground
+                elif c in _FG_CODES:              # set foreground
                     state["fg"] = c
-                elif c == "39": # default foreground
+                elif c == "39":                   # default foreground
                     state["fg"] = None
-                elif c in _BG_CODES: # set background
+                elif c in _BG_CODES:              # set background
                     state["bg"] = c
-                elif c == "49": # default background
+                elif c == "49":                   # default background
                     state["bg"] = None
                 else:
                     pass
@@ -705,10 +484,10 @@ def _sync_progress_ui(raw: str) -> None:
 def _run_pairs_thread(run_id: str) -> None:
     _summary_reset()
 
-# clear buffer
+    # clear buffer
     LOG_BUFFERS["SYNC"] = []
 
-# special marker to tell frontend to clear its pre
+    # special marker to tell frontend to clear its <pre>
     _sync_progress_ui("::CLEAR::")
     _sync_progress_ui(f"> SYNC start: orchestrator pairs run_id={run_id}")
 
@@ -738,7 +517,7 @@ def _run_pairs_thread(run_id: str) -> None:
                 _append_log("SYNC", "[!] No state found after sync; stats not updated.")
         except Exception as e:
             _append_log("SYNC", f"[!] Stats update failed: {e}")
-# ----------------------------------------------------------------
+        # ----------------------------------------------------------------
 
         _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}")
         _sync_progress_ui("[SYNC] exit code: 0")
@@ -767,8 +546,8 @@ def _summary_reset() -> None:
             "version": "",
             "plex_pre": None,
             "simkl_pre": None,
-            "plex_post": None, # Ensure Plex Post-sync is initialized
-            "simkl_post": None, # Ensure SIMKL Post-sync is initialized
+            "plex_post": None,  # Ensure Plex Post-sync is initialized
+            "simkl_post": None,  # Ensure SIMKL Post-sync is initialized
             "result": "",
             "exit_code": None,
             "timeline": {"start": False, "pre": False, "post": False, "done": False},
@@ -828,9 +607,9 @@ def _parse_sync_line(line: str) -> None:
 
     m = re.search(r"Post-sync:\s+Plex=(?P<pa>\d+)(?:\s*\([^)]*\))?\s+vs\s+SIMKL=(?P<sa>\d+)(?:\s*\([^)]*\))?\s*(?:→|->)\s*(?P<res>[A-Z]+)", s)
     if m:
-        _summary_set("plex_post", int(m.group("pa"))) # Store Post-sync Plex count
-        _summary_set("simkl_post", int(m.group("sa"))) # Store Post-sync SIMKL count
-        _summary_set("result", m.group("res")) # Store the result EQUAL or others
+        _summary_set("plex_post", int(m.group("pa")))   # Store Post-sync Plex count
+        _summary_set("simkl_post", int(m.group("sa")))  # Store Post-sync SIMKL count
+        _summary_set("result", m.group("res"))          # Store the result (EQUAL or others)
         _summary_set_timeline("post", True)
         return
 
@@ -863,7 +642,7 @@ def refresh_wall():
     hidden_set = _load_hide_set()
 
     posters = _wall_items_from_state()
-    return posters # Return the posters list directly or implement rendering logic
+    return posters  # Return the posters list directly or implement rendering logic here
 
 def get_primary_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -882,7 +661,7 @@ def _clear_watchlist_hide() -> None:
             return
         tmp = p.with_suffix(p.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as f:
-            json.dump([], f) # empty list
+            json.dump([], f)  # empty list
         tmp.replace(p)
         _append_log("SYNC", "[SYNC] watchlist_hide.json cleared")
     except Exception as e:
@@ -960,7 +739,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
         for k in ("tmdb", "imdb", "tvdb", "slug"):
             if k not in ids and v.get(k):
                 ids[k] = str(v[k])
-# stringify drop None
+        # stringify & drop None
         return {k: str(val) for k, val in ids.items() if val is not None}
 
     def sig_title_year(v: dict) -> str:
@@ -1041,7 +820,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             pass
 
         status = "both" if (b["p"] and b["s"]) else ("plex_only" if b["p"] else "simkl_only")
-# source with newest added_epoch wins
+        # bron met “nieuwste” added_epoch wint
         p_ts = int((b["p"] or {}).get("added_epoch") or 0)
         s_ts = int((b["s"] or {}).get("added_epoch") or 0)
         added_src = "Plex" if p_ts >= s_ts else "SIMKL"
@@ -1123,7 +902,7 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
 
     tr = cfg.get("trakt", {}) or {}
     cid = (tr.get("client_id") or "").strip()
-# token kan in cfg auth trakt or cfg trakt
+    # token kan in cfg["auth"]["trakt"] of cfg["trakt"] staan:
     tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
           or (tr.get("access_token") or "").strip()
 
@@ -1184,7 +963,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
       - history: last few sync reports
       - watchtime: estimated minutes/hours/days with method=tmdb|fallback|mixed
     """
-# 1 samples off STATS niet off de file
+    # 1) samples uit STATS, niet uit de file
     with STATS.lock:
         samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -1192,7 +971,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         samples = samples[-int(limit_samples):]
     series = [{"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)} for r in samples]
 
-# 2 history zoals je had
+    # 2) history (zoals je had)
     rows = []
     try:
         files = sorted(REPORT_DIR.glob("sync-*.json"),
@@ -1216,7 +995,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     except Exception:
         pass
 
-# 3 watchtime off actuele snapshot union-map
+    # 3) watchtime uit actuele snapshot (union-map)
     state = _load_state()
     try:
         union = Stats._build_union_map(state) if state else {}
@@ -1284,7 +1063,7 @@ async def cache_headers_for_api(request: Request, call_next):
 @app.get("/api/stats/raw")
 def api_stats_raw():
     with STATS.lock:
-# deep-copy via dumps loads om mutaties te vermijden
+        # deep-copy via dumps/loads om mutaties te vermijden
         return JSONResponse(json.loads(json.dumps(STATS.data)))
 
 @app.get("/api/stats")
@@ -1301,16 +1080,6 @@ def api_stats() -> Dict[str, Any]:
 
     return base
 
-# --- debug dump logs as JSON no SSE ---
-@app.get("/api/logs/dump")
-def logs_dump(channel: str = "TRAKT", n: int = 50):
-    return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
-
-# --- debug write a test line to TRAKT buffer
-@app.get("/__log_test")
-def __log_test():
-    _UIHostLogger("TRAKT", "TEST")("manual test")
-    return {"ok": True}
 
 @app.get("/api/logs/stream")
 def api_logs_stream_initial(tag: str = Query("SYNC")):
@@ -1331,17 +1100,21 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control":"no-store"})
 
 # Watchlist endpoints
+# Watchlist endpoints
 @app.get("/api/watchlist")
 def api_watchlist() -> JSONResponse:
     cfg = load_config()
     st = _load_state()
     api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
 
+    # Geen snapshot beschikbaar
     if not st:
         return JSONResponse(
             {"ok": False, "error": "No Snapshot found or empty.", "missing_tmdb_key": not bool(api_key)},
             status_code=200,
         )
+
+    # Bouw lijst
     try:
         items = build_watchlist(st, tmdb_api_key_present=bool(api_key))
     except Exception as e:
@@ -1350,13 +1123,14 @@ def api_watchlist() -> JSONResponse:
             status_code=200,
         )
 
+    # Snapshot wel geladen maar geen items
     if not items:
         return JSONResponse(
             {"ok": False, "error": "No snapshot data found.", "missing_tmdb_key": not bool(api_key)},
             status_code=200,
         )
 
-# success
+    # Succes
     return JSONResponse(
         {
             "ok": True,
@@ -1485,7 +1259,7 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
     sleep_s = max(0.5, float(interval))
     while time.time() < deadline:
         cfg = load_config()
-# token kan in cfg 'auth' 'trakt' or cfg 'trakt'
+        # token kan in cfg['auth']['trakt'] of cfg['trakt'] terecht komen
         tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
               or (cfg.get("trakt") or {}).get("access_token")
         if tok:
@@ -1498,7 +1272,7 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
         time.sleep(sleep_s)
     return None
 
-# Endpoints
+#  Endpoints
 
 @app.post("/api/trakt/pin/new")
 def api_trakt_pin_new() -> Dict[str, Any]:
@@ -1538,7 +1312,7 @@ def api_status(fresh: int = Query(0)):
         return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
     cfg = load_config()
-    plex_ok  = probe_plex(cfg,  max_age_sec=STATUS_TTL) # pass 3600 to internal probe cache too
+    plex_ok  = probe_plex(cfg,  max_age_sec=STATUS_TTL)   # pass 3600 to internal probe cache too
     simkl_ok = probe_simkl(cfg, max_age_sec=STATUS_TTL)
     trakt_ok = probe_trakt(cfg, max_age_sec=STATUS_TTL)
     debug    = bool(cfg.get("runtime", {}).get("debug"))
@@ -1632,7 +1406,7 @@ def oauth_simkl_callback(request: Request) -> PlainTextResponse:
         _append_log("SIMKL", f"[SIMKL] ERROR: {e}")
         return PlainTextResponse(f"Error: {e}", status_code=500)
 
-# Run summary endpoints
+# Run & summary endpoints
 @app.post("/api/run")
 def api_run_sync() -> Dict[str, Any]:
     with SYNC_PROC_LOCK:
@@ -1724,7 +1498,7 @@ def api_tmdb_meta_path(
     if _METADATA is None:
         return JSONResponse({"ok": False, "error": "MetadataManager not initialized"}, status_code=500)
 
-    entity = "show" if typ == "tv" else typ # back-compat
+    entity = "show" if typ == "tv" else typ  # back-compat
 
     try:
         res = _METADATA.resolve(
@@ -1808,9 +1582,9 @@ def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
     
 @app.post("/api/troubleshoot/reset-state")
 def api_trbl_reset_state(
-    mode: str = Body("rebuild"), # rebuild clear_both clear_state clear_tombstones clear_tombstone_entries
-    keep_ttl: bool = Body(True), # only used for clear_tombstone_entries
-    ttl_override: Optional[int] = Body(None), # set a new TTL in seconds optional
+    mode: str = Body("rebuild"),          # "rebuild" | "clear_both" | "clear_state" | "clear_tombstones" | "clear_tombstone_entries"
+    keep_ttl: bool = Body(True),          # only used for "clear_tombstone_entries"
+    ttl_override: Optional[int] = Body(None),  # set a new TTL in seconds (optional)
 ) -> Dict[str, Any]:
     """
     Troubleshooting endpoint:
@@ -1833,23 +1607,23 @@ def api_trbl_reset_state(
             if isinstance(ttl_override, int) and ttl_override > 0:
                 ttl = ttl_override
             elif not keep_ttl:
-                ttl = 172800 # reset to default if requested
+                ttl = 172800  # reset to default if requested
             save_tombstones({"ttl_sec": ttl, "entries": {}})
 
         if mode == "rebuild":
-            cfg = load_config() # your existing loader
-# Build fresh PLEX index
+            cfg = load_config()  # your existing loader
+            # Build fresh PLEX index
             token = (cfg.get("plex", {}) or {}).get("account_token") or ""
             rows = gather_plex_rows(plex_fetch_watchlist_items(None, token, debug=False))
             plex_idx = plex_build_index([r for r in rows if r.get("type") == "movie"],
                                         [r for r in rows if r.get("type") == "show"])
-# Build fresh SIMKL PTW index
+            # Build fresh SIMKL PTW index
             shows, movies = simkl_ptw_full(cfg.get("simkl") or {})
             simkl_idx = simkl_build_index(movies, shows)
 
             snap = build_state(plex_idx, simkl_idx)
             write_state(snap, STATE_PATH)
-            STATS.refresh_from_state(snap) # keep your current bookkeeping
+            STATS.refresh_from_state(snap)  # keep your current bookkeeping
             _append_log("TRBL", "[i] Snapshot rebuilt")
 
         if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
@@ -1918,6 +1692,7 @@ except Exception as _e:
 if __name__ == "__main__":
     main()
 
+from typing import Tuple
 
 def plex_request_pin() -> dict:
     cfg = load_config(); plex = cfg.setdefault('plex', {})
@@ -2173,7 +1948,7 @@ def api_sync_providers() -> JSONResponse:
                     if caps is not None:
                         if _dc.is_dataclass(caps):
                             if isinstance(caps, type):
-# If caps is a dataclass type instantiate it
+                                # If caps is a dataclass type, instantiate it
                                 caps_dict = _dc.asdict(caps())
                             else:
                                 caps_dict = _dc.asdict(caps)
@@ -2204,7 +1979,7 @@ def api_pairs_list() -> JSONResponse:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
 
-# Migratie zorg dat alle features dicts zijn with enable
+        # Migratie: zorg dat alle features dicts zijn met enable/add/remove
         dirty = False
         for it in arr:
             newf = _normalize_features(it.get("features"))
@@ -2234,9 +2009,9 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         )
 
         item.setdefault("mode", "one-way")
-        item["enabled"] = bool(item.get("enabled", False)) # default OFF
+        item["enabled"] = bool(item.get("enabled", False))  # default OFF
 
-# Normaliseer features voegt watchlist enable toe als die mist
+        # Normaliseer features (voegt watchlist.enable toe als die mist)
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
 
         src = str(item.get("source", "")).upper()
@@ -2258,7 +2033,7 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         except Exception:
             pass
         return {"ok": False, "error": str(e)}
-# Safety net
+    # Safety net
     return {"ok": False, "error": "unreachable"}
 
 
@@ -2329,4 +2104,3 @@ def _count_simkl(cfg: Dict[str, Any]) -> int:
     except Exception as e:
         _append_log("SYNC", f"[!] SIMKL count failed: {e}")
         return 0
-# keep
