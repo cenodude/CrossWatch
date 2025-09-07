@@ -7,19 +7,30 @@ def get_index_html() -> str:
 <title>CrossWatch</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
-
   <link rel="stylesheet" href="/assets/crosswatch.css">
-
-
 <style>
 /* cw hard hide */
-.pair-selectors, #pairs_list,
+.pair-selectors,
 button[onclick="addPair()"],
-#batches_list, button[onclick="addBatch()"], button[onclick="runAllBatches()"]{ display:none !important; }
-#providers_list.grid2{ display:block !important; }
-#providers_list .pairs-board{ display:flex; flex-direction:column; align-items:flex-start; text-align:left; }
+#batches_list,
+button[onclick="addBatch()"],
+button[onclick="runAllBatches()"] { 
+  display: none !important; 
+}
+
+#providers_list.grid2 { 
+  display: block !important; 
+}
+
+#providers_list .pairs-board { 
+  display: flex; 
+  flex-direction: column; 
+  align-items: flex-start; 
+  text-align: left; 
+}
 </style>
 </head><body>
+
 
 <header>
   <div class="brand">
@@ -389,6 +400,7 @@ button[onclick="addPair()"],
 
   <script src="/assets/crosswatch.js"></script>
   <script src="/assets/connections.overlay.js"></script>
+  <script src="/assets/connections.pairs.overlay.js"></script>
     
 </body></html>
 """

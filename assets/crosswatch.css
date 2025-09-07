@@ -1,4 +1,3 @@
-
 /* ==================================================================
    Base & Layout
    ================================================================== */
@@ -2473,75 +2472,5 @@ main.single #stats-card{
 #cx-modal #cx-master-toggle.switch.big input:checked + .slider{ background:linear-gradient(180deg,rgba(255,255,255,.05),transparent),linear-gradient(135deg,#22b27e,#168d63); border-color:color-mix(in srgb,#22b27e 65%,#000); box-shadow:inset 0 0 14px color-mix(in srgb,#22b27e 38%,transparent); }
 #cx-modal #cx-master-toggle.switch.big input:checked + .slider::after{ content:"✓"; left:12px; right:auto; }
 
-/* === Configured Connections: modernized row === */
-
-/* give room for the number line under the cards */
-.pairs-board { padding-bottom: 28px; }
-
-/* each card will draw its own index just below it */
-.pair-card { position: relative; }
-
-/* 01 / 02 / 03 … with gradient underline */
-.pair-card .ord-index{
-  position: absolute;
-  left: 0; right: 0; bottom: -18px;
-  text-align: center;
-  font-weight: 800;
-  letter-spacing: .18em;
-  font-size: 12px;
-  color: var(--muted);
-  opacity: .9;
-  user-select: none;
-}
-.pair-card .ord-index::after{
-  content:"";
-  display:block;
-  width: 26px;
-  height: 2px;
-  margin: 6px auto 0;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--grad1), var(--grad2));
-  box-shadow: 0 0 10px #7c5cff44;
-}
-
-/* icon buttons for actions */
-.pair-card .actions .icon-btn{
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.06);
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: transform .12s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
-}
-.pair-card .actions .icon-btn:hover{
-  transform: translateY(-1px);
-  box-shadow: 0 8px 18px rgba(0,0,0,.25);
-}
-.pair-card .actions .icon-btn .ico{ width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; }
-
-/* fun hover touches */
-.icon-btn.edit:hover .ico{ transform: scale(1.06) rotate(-2deg); transition: transform .2s; }
-.icon-btn.trash .lid{ transform-origin: 12px 6px; transition: transform .25s ease; }
-.icon-btn.trash:hover .lid{ transform: translateY(-1px) rotate(-12deg); }
-
-/* animated power icon (checkbox under the hood) */
-.icon-toggle{
-  position: relative;
-  display:inline-flex; align-items:center; justify-content:center;
-  width:36px; height:36px;
-  border-radius:10px;
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.06);
-  cursor:pointer;
-  transition: transform .12s, background .2s, border-color .2s, box-shadow .2s;
-}
-.icon-toggle:hover{ transform: translateY(-1px); box-shadow:0 8px 18px rgba(0,0,0,.25); }
-.icon-toggle input{ position:absolute; inset:0; opacity:0; pointer-events:none; }
-.icon-toggle .ico{ width:18px; height:18px; color:#cfd6ff; transition: transform .25s ease, color .25s ease; }
-.icon-toggle input:checked + .ico{
-  color:#2ecc71;
-  transform: rotate(-6deg) scale(1.06);
-  filter: drop-shadow(0 0 8px rgba(46,204,113,.35));
-}
-
-
+/* Hide top-right master enable/disable in the editor */
+.head-toggle { display:none !important; }

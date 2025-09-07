@@ -326,6 +326,7 @@ async function cxEnsureCfgModal() {
   wrap.id = 'cx-modal';
   wrap.className = 'modal-backdrop cx-wide hidden';
 
+
   // Shell
   wrap.innerHTML = `
     <div class="modal-shell">
@@ -338,64 +339,67 @@ async function cxEnsureCfgModal() {
               <div class="app-sub">Choose source &rarr; target and what to sync</div>
             </div>
           </div>
-        <label id="cx-master-toggle" class="switch big head-toggle" title="Enable/Disable connection">
-  <input type="checkbox" id="cx-enabled">
-  <span class="slider" aria-hidden="true"></span>
-  <span class="lab on"  aria-hidden="true">Enabled</span>
-  <span class="lab off" aria-hidden="true">Disabled</span>
-</label>
 
-
-        <label id="cx-master-toggle" class="switch big head-toggle" title="Enable/Disable connection">
-  <input type="checkbox" id="cx-enabled" checked />
-  <span class="slider"></span>
-  <span class="lab on">Enabled</span>
-  <span class="lab off">Disabled</span>
-</label>
-
+          <label class="switch big head-toggle" title="Enable/Disable connection">
+            <input type="checkbox" id="cx-enabled"> 
+            <span class="slider" aria-hidden="true"></span>
+            <span class="lab on"  aria-hidden="true">Enabled</span>
+            <span class="lab off" aria-hidden="true">Disabled</span>
+          </label>
         </div>
 
         <div class="cx-body">
           <div class="cx-top grid">
-  <div class="top-left">
-    <div class="cx-row">
-      <div class="field">
-        <label>Source</label>
-        <select id="cx-src" class="input"></select>
-      </div>
-      <div class="field">
-        <label>Target</label>
-        <select id="cx-dst" class="input"></select>
-      </div>
-    </div>
+            <div class="top-left">
+              <div class="cx-row">
+                <div class="field">
+                  <label>Source</label>
+                  <select id="cx-src" class="input"></select>
+                </div>
+                <div class="field">
+                  <label>Target</label>
+                  <select id="cx-dst" class="input"></select>
+                </div>
+              </div>
 
-    <div class="cx-row cx-mode-row">
-      <div class="seg">
-        <input type="radio" name="cx-mode" id="cx-mode-one" value="one" />
-        <label for="cx-mode-one">One-way</label>
-        <input type="radio" name="cx-mode" id="cx-mode-two" value="two" />
-        <label for="cx-mode-two">Two-way</label>
-      </div>
-      
-    </div>
+              <div class="cx-row cx-mode-row">
+                <div class="seg">
+                  <input type="radio" name="cx-mode" id="cx-mode-one" value="one" />
+                  <label for="cx-mode-one">One-way</label>
+                  <input type="radio" name="cx-mode" id="cx-mode-two" value="two" />
+                  <label for="cx-mode-two">Two-way</label>
+                </div>
+              </div>
 
-    <div class="cx-row">
-      <div id="cx-feat-tabs" class="feature-tabs"></div>
-    </div>
-  </div>
-  <div class="top-right">
-    <div class="flow-card">
-      <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
-      <div class="flow-rail pretty" id="cx-flow-rail"><span class="token" id="cx-flow-src">-</span><span class="arrow"><span class="dot flow a"></span><span class="dot flow b"></span></span><span class="token" id="cx-flow-dst">-</span></div>
-    </div>
-  </div>
-</div><div class="cx-main">
-            <div class="left">
-              <div class="panel" id="cx-feat-panel">
-                <!-- watchlist options injected -->
+              <div class="cx-row">
+                <div id="cx-feat-tabs" class="feature-tabs"></div>
               </div>
             </div>
-            <div class="right"><div class="panel rules-card"><div class="panel-title">Rule preview</div><div class="sub">These rules are generated from your selections.</div><div class="rules" id="cx-rules"><div class="r note" id="cx-notes">Pick a feature.</div></div></div></div>
+            <div class="top-right">
+              <div class="flow-card">
+                <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
+                <div class="flow-rail pretty" id="cx-flow-rail">
+                  <span class="token" id="cx-flow-src">-</span>
+                  <span class="arrow"><span class="dot flow a"></span><span class="dot flow b"></span></span>
+                  <span class="token" id="cx-flow-dst">-</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cx-main">
+            <div class="left">
+              <div class="panel" id="cx-feat-panel"><!-- watchlist options injected --></div>
+            </div>
+            <div class="right">
+              <div class="panel rules-card">
+                <div class="panel-title">Rule preview</div>
+                <div class="sub">These rules are generated from your selections.</div>
+                <div class="rules" id="cx-rules">
+                  <div class="r note" id="cx-notes">Pick a feature.</div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -405,6 +409,7 @@ async function cxEnsureCfgModal() {
         </div>
       </div>
     </div>`;
+
 
   document.body.appendChild(wrap);
 
@@ -634,7 +639,7 @@ function updateRules(){
 }
 try { window.cxEnsureCfgModal = cxEnsureCfgModal; } catch(_) {}
 function cxBindCfgEvents() {
-  var ids = [
+  const ids = [
     "cx-src",
     "cx-dst",
     "cx-mode-one",
@@ -644,33 +649,50 @@ function cxBindCfgEvents() {
     "cx-wl-remove",
     "cx-enabled",
   ];
-  ids.forEach(function (id) {
-    var el = document.getElementById(id);
+
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("change", function () {
-      var two = document.getElementById("cx-mode-two").checked;
-      var wlOn = document.getElementById("cx-wl-enable").checked;
-      var rem = document.getElementById("cx-wl-remove");
-      rem.disabled = !wlOn;
-      if (rem.disabled) rem.checked = false;
-      try{ cxUpdateSummary(); }catch(_){}
+
+    el.addEventListener("change", () => {
+      // Guard every read — elements may not exist yet depending on render timing
+      const twoEl   = document.getElementById("cx-mode-two");
+      const wlEl    = document.getElementById("cx-wl-enable");
+      const remEl   = document.getElementById("cx-wl-remove");
+
+      const two     = !!(twoEl && twoEl.checked);
+      const wlOn    = !!(wlEl && wlEl.checked);
+
+      if (remEl) {
+        remEl.disabled = !wlOn;
+        if (remEl.disabled) remEl.checked = false;
+      }
+
+      try { cxUpdateSummary && cxUpdateSummary(); } catch (_) {}
     });
   });
-  var save = document.getElementById("cx-save");
+
+  const save = document.getElementById("cx-save");
   if (save) {
-    save.addEventListener("click", function () {
+    save.addEventListener("click", () => {
+      const srcEl = document.getElementById("cx-src");
+      const dstEl = document.getElementById("cx-dst");
+      const twoEl = document.getElementById("cx-mode-two");
+      const enEl  = document.getElementById("cx-enabled");
+      const wlE   = document.getElementById("cx-wl-enable");
+      const wlA   = document.getElementById("cx-wl-add");
+      const wlR   = document.getElementById("cx-wl-remove");
+
       const data = {
-        source: document.getElementById("cx-src").value,
-        target: document.getElementById("cx-dst").value,
-        enabled: (document.getElementById("cx-enabled") ? document.getElementById("cx-enabled").checked : true),
-        mode: document.getElementById("cx-mode-two").checked
-          ? "two-way"
-          : "one-way",
+        source:  srcEl ? srcEl.value : "",
+        target:  dstEl ? dstEl.value : "",
+        enabled: enEl ? !!enEl.checked : true,
+        mode:    twoEl && twoEl.checked ? "two-way" : "one-way",
         features: {
           watchlist: {
-            enable: document.getElementById("cx-wl-enable").checked,
-            add: document.getElementById("cx-wl-add").checked,
-            remove: document.getElementById("cx-wl-remove").checked, // allowed for Mirror too
+            enable: wlE ? !!wlE.checked : true,
+            add:    wlA ? !!wlA.checked : true,
+            remove: wlR ? !!wlR.checked : false, // allowed in Mirror too
           },
         },
       };
@@ -680,7 +702,7 @@ function cxBindCfgEvents() {
       } else {
         console.log("cxSavePair payload", data);
       }
-      cxCloseModal();
+      cxCloseModal && cxCloseModal();
     });
   }
 }
@@ -3608,76 +3630,92 @@ function renderConnections() {
   const provs = window.cx.providers || [];
   const pairs = window.cx.pairs || [];
 
-  // Build provider cards with brand icon + glow + "Set as Source"
-  const cards = provs
-    .map((p) => {
-      const name = p.label || p.name;
-      const wl = _cap(p, "watchlist");
-      const rat = _cap(p, "ratings");
-      const hist = _cap(p, "history");
-      const pl = _cap(p, "playlists");
 
-      const brand = cxBrandInfo(p.name);
-      const iconHtml = brand.icon
-        ? `<img class="prov-brand" src="${brand.icon}" alt="${name}" />`
-        : "";
+  // Dynamische handler
+  const btnOn = !selSrc
+    ? `cxToggleConnect('${p.name}')`
+    : (isSrc ? `cxToggleConnect('${p.name}')` : `cxPickTarget('${p.name}')`);
 
-      return `
-      <div class="prov-card ${brand.cls}" data-prov="${p.name}">
-        <div class="prov-head">
-          <div class="prov-title">${name}</div>
-          ${iconHtml}
-        </div>
+  return `
+    <div class="prov-card ${brand.cls}${isSrc ? " selected" : ""}" data-prov="${p.name}">
+      <div class="prov-head">
+        <div class="prov-title">${name}</div>
+        ${iconHtml}
+      </div>
 
-        <div class="prov-caps">
-          <span class="dot ${wl ? "on" : "off"}" title="Watchlist"></span>
-          <span class="dot ${rat ? "on" : "off"}" title="Ratings"></span>
-          <span class="dot ${hist ? "on" : "off"}" title="History"></span>
-          <span class="dot ${pl ? "on" : "off"}" title="Playlists"></span>
-        </div>
+      <div class="prov-caps">
+        <span class="dot ${wl ? "on" : "off"}" title="Watchlist"></span>
+        <span class="dot ${rat ? "on" : "off"}" title="Ratings"></span>
+        <span class="dot ${hist ? "on" : "off"}" title="History"></span>
+        <span class="dot ${pl ? "on" : "off"}" title="Playlists"></span>
+      </div>
 
-        <button class="btn neon" onclick="cxToggleConnect('${
-          p.name
-        }')">Set as Source</button>
-      </div>`;
-    })
-    .join("");
+      <button class="btn neon prov-action" onclick="${btnOn}">${btnLab}</button>
+    </div>`;
+
 
   // Build pairs board (with fast id lookup for editor)
-  window._pairsById = Object.create(null);
-  (pairs || []).forEach((p) => {
-    window._pairsById[String(p.id)] = p;
-  });
-
   const pairCards = (pairs || [])
-    .map((pr) => {
+    .map((pr, i) => {
       const f = _pairFeatureObj(pr);
-      const wl = f.watchlist.add ? "Add" : "—";
-      const enabled = pr.enabled === true; // default = OFF unless explicitly true
+      const enabled = pr.enabled === true; // default = ON unless explicitly false
       const mode = (pr.mode || "one-way").toUpperCase();
+
       return `<div class="pair-card" draggable="true" data-id="${pr.id}">
-        <div class="line"><span class="pill src">${
-          pr.source
-        }</span><span class="arrow">→</span><span class="pill dst">${
-        pr.target
-      }</span><span class="mode">${mode}</span></div>
-        <div class="line small"><span class="feat">Watchlist: <strong>${wl}</strong></span></div>
-        <div class="actions">
-          <label class="switch"><input type="checkbox" ${
-            enabled ? "checked" : ""
-          } onchange="cxToggleEnable('${
-        pr.id
-      }', this.checked)"><span></span></label>
-          <button class="btn" onclick="cxEditPair('${pr.id}')">Edit</button>
-          <button class="btn danger" onclick="deletePair('${
-            pr.id
-          }')">Delete</button>
-          <button class="btn ghost" title="Move first" onclick="movePair('${
-            pr.id
-          }','first')">⏮</button>
-          <button class="btn ghost" title="Move last"  onclick="movePair('${
-            pr.id
-          }','last')">⏭</button>
+        <span class="ord-badge">${i + 1}</span>
+
+        <div class="line">
+          <span class="pill src">${pr.source}</span>
+          <span class="arrow">→</span>
+          <span class="pill dst">${pr.target}</span>
+          <span class="mode">${mode}</span>
+        </div>
+        
+        <div class="actions actions3">
+          <!-- LEFT GROUP: Power -->
+          <div class="act-group">
+            <label class="icon-only" title="Enable/disable">
+
+              <input type="checkbox" ${enabled ? "checked" : ""}
+                    onchange="window.cxToggleEnable('${pr.id}', this.checked, this)">
+
+              <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
+                <path d="M12 3v6"></path>
+                <path d="M5.6 7a8 8 0 1 0 12.8 0"></path>
+              </svg>
+            </label>
+          </div>
+
+          <!-- MIDDLE GROUP: Edit + Delete -->
+          <div class="act-group">
+            <button class="icon-only" title="Edit" onclick="cxEditPair('${pr.id}')">
+              <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path>
+                <path d="M14.06 4.94l3.75 3.75"></path>
+              </svg>
+            </button>
+            <button class="icon-only danger" title="Delete" onclick="deletePair('${pr.id}')">
+              <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4h8v2"></path>
+                <path d="M6 6l1 14h10l1-14"></path>
+              </svg>
+            </button>
+          </div>
+
+          <!-- RIGHT GROUP: Move first / last -->
+          <div class="act-group">
+            <button class="icon-only" title="Move first" onclick="movePair('${pr.id}','first')">
+              <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
+                <path d="M14 7l-5 5 5 5"></path>
+              </svg>
+            </button>
+            <button class="icon-only" title="Move last" onclick="movePair('${pr.id}','last')">
+              <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
+                <path d="M10 7l5 5-5 5"></path>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>`;
     })
@@ -3880,17 +3918,22 @@ function renderConnections() {
       });
     }
   })();
-
+  
   /* === Connect flow handlers === */
   window.cxStartConnect = function (name) {
+    window.cx = window.cx || {};
     window.cx.connect = { source: String(name), target: null };
     logToSyncOutput(`[ui] Select a target for ${name}`);
-    // Visually hint could be added here
+    try { document.dispatchEvent(new CustomEvent('cx-state-change')); } catch (_) {}
   };
 
   window.cxPickTarget = function (name) {
+    window.cx = window.cx || {};
     if (!window.cx.connect || !window.cx.connect.source) return;
     window.cx.connect.target = String(name);
+
+    try { document.dispatchEvent(new CustomEvent('cx-state-change')); } catch (_) {}
+
     cxOpenModalFor({
       source: window.cx.connect.source,
       target: window.cx.connect.target,
@@ -3899,19 +3942,6 @@ function renderConnections() {
       features: { watchlist: { add: true, remove: false } },
     });
   };
-
-  /* Ensure provider cards are clickable for target when in connect mode */
-  document.addEventListener("click", (e) => {
-    const el = e.target.closest && e.target.closest(".prov-card");
-    if (!el) return;
-    if (window.cx && window.cx.connect && window.cx.connect.source) {
-      const name = el.getAttribute("data-prov");
-      if (name && name !== window.cx.connect.source) {
-        e.preventDefault();
-        window.cxPickTarget(name);
-      }
-    }
-  });
 
   function cxEditPair(id) {
     const pr = (window.cx.pairs || []).find((p) => p.id === id);
@@ -3925,91 +3955,127 @@ function renderConnections() {
     window.cx.connect = { source: null, target: null };
   }
 
-  // Compact enable/disable toggle with strict error handling
-  async function cxToggleEnable(id, on) {
+  // Build/refresh local cache if missing
+  async function ensurePairsCache() {
+    if (window._pairsById && Object.keys(window._pairsById).length) return;
+    const res = await fetch("/api/pairs", { cache: "no-store" });
+    const arr = await res.json();
+    window.cx = window.cx || {};
+    window.cx.pairs = Array.isArray(arr) ? arr : [];
+    window._pairsById = Object.create(null);
+    for (const p of window.cx.pairs) window._pairsById[String(p.id)] = p;
+  }
+  function getPairById(id) {
+    const key = String(id);
+    if (window._pairsById && window._pairsById[key]) return window._pairsById[key];
+    if (window.cx && Array.isArray(window.cx.pairs)) {
+      return window.cx.pairs.find(p => String(p.id) === key) || null;
+    }
+    return null;
+  }
+
+  // --- DROP-IN REPLACEMENT: toggle enabled via PUT /api/pairs/:id (volledige payload) ---
+  async function cxToggleEnable(id, on, el) {
+    const key = String(id);
+
+    // zorg dat we de huidige pair-data hebben
+    await ensurePairsCache();
+    const p = getPairById(key);
+    if (!p) { console.warn("cxToggleEnable: pair not found", key); return; }
+
+    // payload opbouwen (zelfde shape als cxSavePair)
+    const wl = (((p.features||{}).watchlist)||{});
+    const payload = {
+      source:  p.source,
+      target:  p.target,
+      mode:    p.mode || "one-way",
+      enabled: !!on,
+      features: {
+        watchlist: {
+          enable: wl.enable !== undefined ? !!wl.enable : true,
+          add:    wl.add    !== undefined ? !!wl.add    : true,
+          remove: wl.remove !== undefined ? !!wl.remove : false,
+        },
+      },
+    };
+
+    // optimistic UI
+    const prev = !!p.enabled;
+    p.enabled = !!on;
+    if (el) el.disabled = true;
+
     try {
-      const r = await fetch(`/api/pairs/${encodeURIComponent(id)}`, {
+      const r = await fetch(`/api/pairs/${encodeURIComponent(key)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !!on }),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) {
+        // revert bij fout
+        p.enabled = prev;
+        if (el) el.checked = prev;
         console.warn("toggle enable failed:", r.status, r.statusText);
-        alert("Failed to update. Please try again.");
+        return;
       }
+
+      // lokale arrays updaten (voor de zekerheid)
+      if (Array.isArray(window.cx?.pairs)) {
+        const idx = window.cx.pairs.findIndex(x => String(x.id) === key);
+        if (idx >= 0) window.cx.pairs[idx].enabled = !!on;
+      }
+      if (window._pairsById) window._pairsById[key].enabled = !!on;
+
+      // UI refresh: eerst pairs, dan evt. providers overlay laten meebouwen
+      if (typeof loadPairs === "function") await loadPairs();
+      try { document.dispatchEvent(new CustomEvent("cx-state-change")); } catch(_) {}
+
     } catch (e) {
+      // revert bij netwerkfout
+      p.enabled = prev;
+      if (el) el.checked = prev;
       console.warn("toggle enable failed", e);
-      alert("Network error. Please try again.");
     } finally {
-      await loadPairs();
+      if (el) el.disabled = false;
     }
   }
 
-
-  /* Toggle connect: if no source selected -> set source, else pick as target (if different) */
-  window.cxToggleConnect = function (name) {
-    name = String(name || "");
-    window.cx = window.cx || {};
-    window.cx.connect = window.cx.connect || { source: null, target: null };
-    const sel = window.cx.connect;
-
-    if (!sel.source) {
-      if (typeof cxStartConnect === "function") cxStartConnect(name);
-      else window.cx.connect = { source: name, target: null };
-      try {
-        logToSyncOutput(`[ui] Source selected: ${name}. Now click a target.`);
-      } catch (_) {}
-      try {
-        window.renderConnections && window.renderConnections();
-      } catch (_) {}
-      return;
-    }
-
-    if (sel.source && sel.source !== name) {
-      if (typeof cxPickTarget === "function") cxPickTarget(name);
-      else window.cx.connect.target = name;
-      return;
-    }
-
-    window.cx.connect = { source: null, target: null };
-    try {
-      logToSyncOutput(`[ui] Selection cleared.`);
-    } catch (_) {}
-    try {
-      window.renderConnections && window.renderConnections();
-    } catch (_) {}
-  };
+  // globaal maken voor inline onchange
+  window.cxToggleEnable = cxToggleEnable;
 
   /* Ensure minimal neon styles for provider/pair cards without touching existing theme */
   function cxEnsureStyles() {
     if (document.getElementById("cx-style")) return;
     const css = `
-  .cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:6px}
-  .prov-card{position:relative;padding:14px;border-radius:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(125,125,255,0.2);box-shadow:0 0 0 1px rgba(125,125,255,0.05) inset, 0 12px 30px rgba(0,0,0,0.2)}
-  .prov-card:hover{box-shadow:0 0 0 1px rgba(125,125,255,0.3) inset, 0 18px 40px rgba(0,0,0,0.35)}
-  .prov-title{font-weight:600;margin-bottom:8px}
-  .prov-caps{display:flex;gap:6px;margin-bottom:10px}
-  .prov-caps .dot{width:8px;height:8px;border-radius:50%;display:inline-block;opacity:.55}
-  .prov-caps .dot.on{opacity:1}
-  .prov-caps .dot.off{opacity:.25;filter:saturate(.2)}
-  .btn.neon{background:linear-gradient(90deg,#2de2ff,#7c5cff,#ff7ae0);-webkit-background-clip:text;background-clip:text;color:transparent;border:1px solid rgba(124,92,255,.5)}
-  .btn.neon:hover{filter:brightness(1.1)}
-  .pair-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,.12);margin-top:8px}
-  .pair-card .line{display:flex;align-items:center;gap:8px}
-  .pair-card .line.small{opacity:.8;font-size:.9em;margin-top:4px}
-  .pair-card .pill{padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
-  .pair-card .arrow{opacity:.7}
-  .pair-card .mode{margin-left:auto;font-size:.75em;opacity:.8}
-  .pairs-board{margin-top:8px}
-  /* Legacy pairs UI hidden when connections builder is active */
-  #pairs_list, .pair-selectors { display:none !important; }
-  #sec-sync .sub { } .prov-card.selected{outline:1px solid rgba(124,92,255,.6); box-shadow:0 0 22px rgba(124,92,255,.25)}
-  `;
+    .cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:6px}
+    .prov-card{position:relative;padding:14px;border-radius:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(125,125,255,0.2);box-shadow:0 0 0 1px rgba(125,125,255,0.05) inset, 0 12px 30px rgba(0,0,0,0.2)}
+    .prov-card:hover{box-shadow:0 0 0 1px rgba(125,125,255,0.3) inset, 0 18px 40px rgba(0,0,0,0.35)}
+    .prov-title{font-weight:600;margin-bottom:8px}
+    .prov-caps{display:flex;gap:6px;margin-bottom:10px}
+    .prov-caps .dot{width:8px;height:8px;border-radius:50%;display:inline-block;opacity:.55}
+    .prov-caps .dot.on{opacity:1}
+    .prov-caps .dot.off{opacity:.25;filter:saturate(.2)}
+    .btn.neon{background:linear-gradient(90deg,#2de2ff,#7c5cff,#ff7ae0);-webkit-background-clip:text;background-clip:text;color:transparent;border:1px solid rgba(124,92,255,5)}
+    .btn.neon:hover{filter:brightness(1.1)}
+    .pair-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,12);margin-top:8px}
+    .pair-card .line{display:flex;align-items:center;gap:8px}
+    .pair-card .line.small{opacity:.8;font-size:.9em;margin-top:4px}
+    .pair-card .pill{padding:3px 8px;border-radius:999px;background:rgba(255,255,255,06);border:1px solid rgba(255,255,255,12)}
+    .pair-card .arrow{opacity:.7}
+    .pair-card .mode{margin-left:auto;font-size:.75em;opacity:.8}
+    .pairs-board{margin-top:8px}
+
+    /* Legacy selectors verbergen, maar NIET #pairs_list */
+    .pair-selectors { display:none !important; }
+
+    /* Safety: zorg dat #pairs_list zichtbaar mag zijn (overlay zet inhoud erin) */
+    #pairs_list { display:block; }
+    `;
     const style = document.createElement("style");
     style.id = "cx-style";
     style.textContent = css;
     document.head.appendChild(style);
   }
+
 
   function hideLegacyPairsUI() {
     // Hide the "Pairs" header and its explanatory text

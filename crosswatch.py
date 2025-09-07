@@ -2261,7 +2261,45 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
 # Safety net
     return {"ok": False, "error": "unreachable"}
 
+@app.post("/api/pairs/reorder")
+def api_pairs_reorder(order: List[str] = Body(...)) -> dict:
+    """
+    Reorder the configured pairs based on the provided list of pair IDs.
+    - IDs not found in the current config are ignored (reported as unknown_ids).
+    - Pairs omitted from 'order' are appended afterwards in their original order.
+    """
+    try:
+        cfg = load_config()
+        arr = _cfg_pairs(cfg)
 
+        index_map = {str(p.get("id")): i for i, p in enumerate(arr)}
+        wanted_ids = [pid for pid in (order or []) if pid in index_map]
+        unknown_ids = [pid for pid in (order or []) if pid not in index_map]
+
+        id_set = set(wanted_ids)
+        head = [next(p for p in arr if str(p.get("id")) == pid) for pid in wanted_ids]
+        tail = [p for p in arr if str(p.get("id")) not in id_set]
+        new_arr = head + tail
+
+        changed = any(a is not b for a, b in zip(arr, new_arr)) or (len(arr) != len(new_arr))
+        if changed:
+            cfg["pairs"] = new_arr
+            save_config(cfg)
+
+        return {
+            "ok": True,
+            "reordered": changed,
+            "count": len(new_arr),
+            "unknown_ids": unknown_ids,
+            "final_order": [str(p.get("id")) for p in new_arr],
+        }
+    except Exception as e:
+        try:
+            _append_log("TRBL", f"/api/pairs/reorder failed: {e}")
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)}
+    
 @app.put("/api/pairs/{pair_id}")
 def api_pairs_update(pair_id: str, payload: PairIn) -> Dict[str, Any]:
     try:
