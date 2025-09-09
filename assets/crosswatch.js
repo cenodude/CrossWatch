@@ -52,6 +52,20 @@ function setValIfExists(id, val) {
   const el = document.getElementById(id);
   if (el) el.value = val ?? "";
 }
+
+function stateAsBool(v) {
+  if (v == null) return false;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "object") {
+    if ("connected"  in v) return !!v.connected;
+    if ("ok"         in v) return !!v.ok;
+    if ("authorized" in v) return !!v.authorized;
+    if ("auth"       in v) return !!v.auth;
+    if ("status"     in v) return /^(ok|connected|authorized|true|ready|valid)$/i.test(String(v.status));
+  }
+  return !!v;
+}
+// --- status fetch & render ---
 const AUTO_STATUS = false; // DISABLE by default
 let lastStatusMs = 0;
 const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
@@ -69,6 +83,131 @@ let wallLoaded = false,
   _wasRunning = false;
 let wallReqSeq = 0;   
 window._ui = { status: null, summary: null };
+
+// ==== CONNECTOR STATUS (drop-in) ============================================
+const STATUS_CACHE_KEY = "cw.status.v1";
+
+// cache helpers
+function saveStatusCache(providers) {
+  try { localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({ providers, updatedAt: Date.now() })); } catch {}
+}
+function loadStatusCache() {
+  try { return JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null"); } catch { return null; }
+}
+
+// state: "ok" | "no" | "unknown"
+function connState(v) {
+  if (v == null) return "unknown";
+  if (typeof v === "boolean") return v ? "ok" : "no";
+  if (typeof v === "object") {
+    if ("connected"  in v) return v.connected  ? "ok" : "no";
+    if ("ok"         in v) return v.ok         ? "ok" : "no";
+    if ("authorized" in v) return v.authorized ? "ok" : "no";
+    if ("auth"       in v) return v.auth       ? "ok" : "no";
+    if ("status"     in v) {
+      const s = String(v.status).toLowerCase();
+      if (/(ok|connected|authorized|active|ready|valid|true)/.test(s)) return "ok";
+      if (/(no|not|disconnected|error|fail|expired|unauth|invalid|false)/.test(s)) return "no";
+      return "unknown";
+    }
+  }
+  return v ? "ok" : "no";
+}
+
+// raakt exact jouw markup (#badge-plex / #badge-simkl)
+function setBadge(id, providerName, state, stale) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("ok", "no", "unknown", "stale");
+  el.classList.add(state);
+  if (stale) el.classList.add("stale");
+
+  const label = `${providerName}: ${state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown"}`;
+  el.innerHTML = `<span class="dot ${state}"></span>${label}`;
+}
+
+function renderConnectorStatus(providers, { stale = false } = {}) {
+  const p = providers || {};
+  setBadge("badge-plex",  "Plex",  connState(p.PLEX),  stale);
+  setBadge("badge-simkl", "SIMKL", connState(p.SIMKL), stale);
+}
+
+// NOTE: verwacht dat je elders deze bestaan hebt:
+//   let lastStatusMs = 0;
+//   const STATUS_MIN_INTERVAL = 1000;
+//   let appDebug = false;
+//   function recomputeRunDisabled(){}
+//   function setRefreshBusy(b){}
+
+async function refreshStatus(force = false) {
+  const now = Date.now();
+  if (!force && typeof lastStatusMs !== "undefined" && typeof STATUS_MIN_INTERVAL !== "undefined" && (now - lastStatusMs < STATUS_MIN_INTERVAL)) return;
+  if (typeof lastStatusMs !== "undefined") lastStatusMs = now;
+
+  try {
+    const r = await fetch("/api/status" + (force ? "?fresh=1" : ""), { cache: "no-store" }).then(r => r.json());
+    if (typeof appDebug !== "undefined") appDebug = !!r.debug;
+
+    const providers = r.providers ?? {
+      PLEX:  { connected: !!r.plex_connected },
+      SIMKL: { connected: !!r.simkl_connected }
+    };
+
+    renderConnectorStatus(providers, { stale: false });
+    saveStatusCache(providers);
+
+    // booleans voor je UI flags
+    window._ui = window._ui || {};
+    window._ui.status = {
+      can_run: !!r.can_run,
+      plex_connected: !!(providers.PLEX  && (providers.PLEX.connected  ?? providers.PLEX.ok)),
+      simkl_connected: !!(providers.SIMKL && (providers.SIMKL.connected ?? providers.SIMKL.ok)),
+    };
+
+    if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
+
+    // bestaande layout toggles (optioneel)
+    const onMain = !document.getElementById("ops-card").classList.contains("hidden");
+    const logPanel = document.getElementById("log-panel");
+    const layout = document.getElementById("layout");
+    const stats = document.getElementById("stats-card");
+    const hasStatsVisible = !!(stats && !stats.classList.contains("hidden"));
+    logPanel?.classList.toggle("hidden", !(appDebug && onMain));
+    layout?.classList.toggle("full", onMain && !appDebug && !hasStatsVisible);
+
+  } catch (e) {
+    console.warn("refreshStatus failed", e);
+  }
+}
+
+async function manualRefreshStatus() {
+  const btn = document.getElementById("btn-status-refresh");
+  btn?.classList.add("spin");
+  if (typeof setRefreshBusy === "function") setRefreshBusy(true);
+  try {
+    // toon cached status (stale) terwijl we live ophalen
+    const cached = loadStatusCache();
+    if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
+    await refreshStatus(true);
+  } catch (e) {
+    console.warn("Manual status refresh failed", e);
+  } finally {
+    if (typeof setRefreshBusy === "function") setRefreshBusy(false);
+    btn?.classList.remove("spin");
+  }
+}
+
+// expose voor onclick in HTML
+window.manualRefreshStatus = manualRefreshStatus;
+window.refreshStatus = refreshStatus;
+window.renderConnectorStatus = renderConnectorStatus;
+
+// hydrate bij pageload (cached → niet rood)
+document.addEventListener("DOMContentLoaded", () => {
+  const cached = loadStatusCache();
+  if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
+});
+
 
 function toLocal(iso) {
   if (!iso) return "—";
@@ -806,20 +945,19 @@ window.renderSummary = function (sum) {
   refreshStats(false);
 };
 
+// tiny glue buffer for SSE chunks
+let detBuf = "";
+
 function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
-
   if (!el) return;
+
   el.innerHTML = "";
+  el.classList?.add("cf-log");
   detStickBottom = true;
 
-  if (esDet) {
-    try {
-      esDet.close();
-    } catch (_) {}
-    esDet = null;
-  }
+  if (esDet) { try { esDet.close(); } catch (_) {} esDet = null; }
 
   const updateSlider = () => {
     if (!slider) return;
@@ -828,18 +966,11 @@ function openDetailsLog() {
   };
 
   const updateStick = () => {
-    const pad = 6; 
+    const pad = 6;
     detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
   };
 
-  el.addEventListener(
-    "scroll",
-    () => {
-      updateSlider();
-      updateStick();
-    },
-    { passive: true }
-  );
+  el.addEventListener("scroll", () => { updateSlider(); updateStick(); }, { passive: true });
 
   if (slider) {
     slider.addEventListener("input", () => {
@@ -849,27 +980,43 @@ function openDetailsLog() {
     });
   }
 
+  const CF = window.ClientFormatter;
+  if (!CF || !CF.processChunk || !CF.renderInto) {
+    console.warn("ClientFormatter not loaded");
+    return;
+  }
+
   esDet = new EventSource("/api/logs/stream?tag=SYNC");
+
   esDet.onmessage = (ev) => {
     if (!ev?.data) return;
-    const el = document.getElementById("det-log");
-    if (!el) return;
 
     if (ev.data === "::CLEAR::") {
-      el.textContent = "";   
+      el.textContent = "";
+      detBuf = "";
       return;
     }
 
-  el.insertAdjacentHTML("beforeend", ev.data + "<br>");
-  if (detStickBottom) el.scrollTop = el.scrollHeight;
-  updateSlider();
-};
+    const { tokens, buf } = CF.processChunk(detBuf, ev.data);
+    detBuf = buf;
+
+    for (const tok of tokens) CF.renderInto(el, tok, window.appDebug);
+
+    if (detStickBottom) el.scrollTop = el.scrollHeight;
+    updateSlider();
+  };
 
   esDet.onerror = () => {
-    try {
-      esDet?.close();
-    } catch (_) {}
+    try { esDet?.close(); } catch (_) {}
     esDet = null;
+
+    if (detBuf && detBuf.trim()) {
+      const { tokens } = CF.processChunk("", detBuf);
+      detBuf = "";
+      for (const tok of tokens) CF.renderInto(el, tok, window.appDebug);
+      if (detStickBottom) el.scrollTop = el.scrollHeight;
+      updateSlider();
+    }
   };
 
   requestAnimationFrame(() => {
@@ -879,11 +1026,11 @@ function openDetailsLog() {
 }
 
 function closeDetailsLog() {
-  try {
-    esDet?.close();
-  } catch (_) {}
+  try { esDet?.close(); } catch (_) {}
   esDet = null;
+  detBuf = "";
 }
+
 
 function toggleDetails() {
   const d = document.getElementById("details");
@@ -979,68 +1126,8 @@ function setRefreshBusy(busy) {
   btn.classList.toggle("loading", !!busy);
 }
 
-async function manualRefreshStatus() {
-  const btn = document.getElementById("btn-status-refresh");
-  try {
-    setRefreshBusy(true);
-    btn?.classList.add("spin");
-    setTimeout(() => btn?.classList.remove("spin"), 2000);
-    await refreshStatus(true);
-  } catch (e) {
-    console?.warn("Manual status refresh failed", e);
-  } finally {
-    setRefreshBusy(false);
-  }
-}
 
-async function refreshStatus(force = false) {
-  const now = Date.now();
 
-  if (!force && now - lastStatusMs < STATUS_MIN_INTERVAL) return;
-
-  lastStatusMs = now;
-
-  const r = await fetch("/api/status" + (force ? "?fresh=1" : "")).then((r) =>
-    r.json()
-  );
-
-  appDebug = !!r.debug;
-
-  
-  const pb = document.getElementById("badge-plex");
-  const sb = document.getElementById("badge-simkl");
-
-  pb.className = "badge " + (r.plex_connected ? "ok" : "no");
-  pb.innerHTML = `<span class="dot ${
-    r.plex_connected ? "ok" : "no"
-  }"></span>Plex: ${r.plex_connected ? "Connected" : "Not connected"}`;
-  sb.className = "badge " + (r.simkl_connected ? "ok" : "no");
-  sb.innerHTML = `<span class="dot ${
-    r.simkl_connected ? "ok" : "no"
-  }"></span>SIMKL: ${r.simkl_connected ? "Connected" : "Not connected"}`;
-
-  window._ui.status = {
-    can_run: !!r.can_run,
-    plex_connected: !!r.plex_connected,
-    simkl_connected: !!r.simkl_connected,
-  };
-
-  recomputeRunDisabled();
-
-  const onMain = !document
-    .getElementById("ops-card")
-    .classList.contains("hidden");
-
-  const logPanel = document.getElementById("log-panel");
-  const layout = document.getElementById("layout");
-  const stats = document.getElementById("stats-card");
-
-  const hasStatsVisible = !!(stats && !stats.classList.contains("hidden"));
-
-  logPanel?.classList.toggle("hidden", !(appDebug && onMain));
-  layout?.classList.toggle("full", onMain && !appDebug && !hasStatsVisible);
-
-}
 
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
@@ -2398,6 +2485,7 @@ async function mountMetadataProviders() {
     } catch (_) {}
   } catch (e) {}
 }
+
 
 document.addEventListener("DOMContentLoaded", () => {
   try {

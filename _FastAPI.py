@@ -112,7 +112,7 @@ button[onclick="runAllBatches()"] {
       <div class="details-grid">
         <div class="det-left">
           <div class="title" style="margin-bottom:6px;font-weight:700">Sync output</div>
-          <pre id="det-log" class="log"></pre>
+          <div id="det-log" class="log"></div>
         </div>
         <div class="det-right">
           <div class="meta-card">
@@ -383,10 +383,11 @@ button[onclick="runAllBatches()"] {
   </div>
 
 </main>
-  <script src="/assets/insights.js" defer></script>         <!-- window.Insights + globals -->
-  <script src="/assets/modals.js" defer></script>           <!-- modals (globals) -->
-  <script src="/assets/crosswatch.js" defer></script>       <!-- core -->
-  <script src="/assets/connections.overlay.js" defer></script>
-  <script src="/assets/connections.pairs.overlay.js" defer></script>
+    <script src="/assets/insights.js" defer></script>          <!-- window.Insights + globals -->
+    <script src="/assets/modals.js" defer></script>            <!-- modals (globals) -->
+    <script src="/assets/client-formatter.js" defer></script>  <!-- exposes window.ClientFormatter -->
+    <script src="/assets/crosswatch.js" defer></script>        <!-- core (uses ClientFormatter) -->
+    <script src="/assets/connections.overlay.js" defer></script>
+    <script src="/assets/connections.pairs.overlay.js" defer></script>
 </body></html>
 """
