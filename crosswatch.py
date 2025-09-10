@@ -509,10 +509,99 @@ def _parse_epoch(v: Any) -> int:
         return int(dt.timestamp())
     except Exception:
         return 0
+    
+# ---- Lanes helpers (build per-feature deltas from statistics events) ----
+
+def _lanes_defaults() -> Dict[str, Dict[str, Any]]:
+    def lane(): 
+        return {"added": 0, "removed": 0, "updated": 0,
+                "spotlight_add": [], "spotlight_remove": [], "spotlight_update": []}
+    return {
+        "watchlist": lane(),
+        "ratings":   lane(),
+        "history":   lane(),
+        "playlists": lane(),
+    }
+
+def _lanes_enabled_defaults() -> Dict[str, bool]:
+    # Zet hier desgewenst dynamisch aan/uit obv. pair-config.
+    return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+
+def _compute_lanes_from_stats(since_epoch: int, until_epoch: int) -> Tuple[Dict[str, Any], Dict[str, bool]]:
+    """
+    Bouw features{watchlist,ratings,history,playlists} uit STATS.data['events']
+    in het venster [since, until]. 'events' shape (bekend): 
+      { ts:int, action:str, title:str, key:str, type:str, source:str }
+    """
+    feats = _lanes_defaults()
+    enabled = _lanes_enabled_defaults()
+
+    # events ophalen
+    with STATS.lock:
+        events = list(STATS.data.get("events") or [])
+    if not events:
+        return feats, enabled
+
+    # venster filteren
+    s = int(since_epoch or 0)
+    u = int(until_epoch or 0) or int(time.time())
+    rows = [e for e in events if s <= int(e.get("ts") or 0) <= u]
+    if not rows:
+        return feats, enabled
+
+    # sorteren op tijd; we willen 'laatste 2-3' voor spotlights
+    rows.sort(key=lambda r: int(r.get("ts") or 0))
+
+    # eenvoudige router
+    for e in rows:
+        action = str(e.get("action") or "").lower()
+        title  = e.get("title") or e.get("key") or "item"
+        slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
+
+        if action in ("add", "remove"):
+            lane = "watchlist"
+            if action == "add":
+                feats[lane]["added"] += 1
+                feats[lane]["spotlight_add"].append(slim)
+            else:
+                feats[lane]["removed"] += 1
+                feats[lane]["spotlight_remove"].append(slim)
+
+        elif action in ("rate", "rating", "update_rating", "unrate"):
+            lane = "ratings"
+            feats[lane]["updated"] += 1
+            feats[lane]["spotlight_update"].append(slim if slim else {"title": title})
+
+        elif action in ("watch", "scrobble", "checkin", "mark_watched"):
+            lane = "history"
+            feats[lane]["added"] += 1
+            feats[lane]["spotlight_add"].append(slim if slim else {"title": title})
+
+        elif action.startswith("playlist"):
+            lane = "playlists"
+            if "remove" in action:
+                feats[lane]["removed"] += 1
+                feats[lane]["spotlight_remove"].append(slim if slim else {"title": title})
+            elif "update" in action or "rename" in action:
+                feats[lane]["updated"] += 1
+                feats[lane]["spotlight_update"].append(slim if slim else {"title": title})
+            else:
+                feats[lane]["added"] += 1
+                feats[lane]["spotlight_add"].append(slim if slim else {"title": title})
+
+    # spotlights: max 3 meest recente
+    for lane in feats.values():
+        lane["spotlight_add"]    = (lane["spotlight_add"]    or [])[-3:]
+        lane["spotlight_remove"] = (lane["spotlight_remove"] or [])[-3:]
+        lane["spotlight_update"] = (lane["spotlight_update"] or [])[-3:]
+
+    return feats, enabled
+
 
 def _parse_sync_line(line: str) -> None:
     s = strip_ansi(line).strip()
 
+    # Start line
     m = re.match(r"^> SYNC start:\s+(?P<cmd>.+)$", s)
     if m:
         if not SUMMARY.get("running"):
@@ -534,38 +623,98 @@ def _parse_sync_line(line: str) -> None:
         _summary_set_timeline("start", True)
         return
 
+    # Version
     m = re.search(r"Version\s+(?P<ver>[0-9][0-9A-Za-z\.\-\+_]*)", s)
     if m:
         _summary_set("version", m.group("ver"))
         return
 
-    m = re.search(r"Pre-sync counts:\s+Plex=(?P<pp>\d+).+SIMKL=(?P<sp>\d+)", s)
+    # Pre-sync counts: generic provider=value list (e.g., "Plex=10 SIMKL=9 Trakt=7")
+    m = re.search(r"Pre-sync counts:\s*(?P<pairs>.+)$", s, re.IGNORECASE)
     if m:
-        _summary_set("plex_pre", int(m.group("pp")))
-        _summary_set("simkl_pre", int(m.group("sp")))
+        pairs = re.findall(r"\b([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(\d+)", m.group("pairs"))
+        for name, val in pairs:
+            key = name.lower()
+            try:
+                val_i = int(val)
+            except Exception:
+                continue
+            if key in ("plex", "simkl", "trakt"):
+                _summary_set(f"{key}_pre", val_i)
         _summary_set_timeline("pre", True)
         return
 
-    m = re.search(r"Post-sync:\s+Plex=(?P<pa>\d+).+SIMKL=(?P<sa>\d+).*(?:→|->)\s*(?P<res>[A-Z]+)", s)
+    # Post-sync counts/result: generic provider=value list + optional arrow + RESULT
+    m = re.search(r"Post-sync:\s*(?P<rest>.+)$", s, re.IGNORECASE)
     if m:
-        _summary_set("plex_post", int(m.group("pa")))
-        _summary_set("simkl_post", int(m.group("sa")))
-        _summary_set("result", m.group("res"))
+        rest = m.group("rest")
+        pairs = re.findall(r"\b([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(\d+)", rest)
+        for name, val in pairs:
+            key = name.lower()
+            try:
+                val_i = int(val)
+            except Exception:
+                continue
+            if key in ("plex", "simkl", "trakt"):
+                _summary_set(f"{key}_post", val_i)
+
+        mres = re.search(r"(?:→|->|=>)\s*([A-Za-z]+)", rest)
+        if mres:
+            _summary_set("result", mres.group(1).upper())
         _summary_set_timeline("post", True)
         return
 
+    # Exit code / finalize
     m = re.search(r"\[SYNC\]\s+exit code:\s+(?P<code>\d+)", s)
     if m:
         code = int(m.group("code"))
         _summary_set("exit_code", code)
+
         started = SUMMARY.get("raw_started_ts")
         if started:
             dur = max(0.0, time.time() - float(started))
             _summary_set("duration_sec", round(dur, 2))
+
         _summary_set("finished_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         _summary_set("running", False)
         _summary_set_timeline("done", True)
 
+        # Ensure timeline consistency when done
+        try:
+            tl = SUMMARY.get("timeline") or {}
+            if tl.get("done"):
+                if not tl.get("pre"):
+                    _summary_set_timeline("pre", True)
+                if not tl.get("post"):
+                    _summary_set_timeline("post", True)
+        except Exception:
+            pass
+
+        # Populate per-feature lanes and per-run totals
+        try:
+            snap0 = _summary_snapshot()
+            since = _parse_epoch(snap0.get("raw_started_ts") or snap0.get("started_at"))
+            until = _parse_epoch(snap0.get("finished_at")) or int(time.time())
+
+            feats, enabled = _compute_lanes_from_stats(since, until)
+            _summary_set("features", feats)
+            _summary_set("enabled",  enabled)
+
+            # Totals across all enabled lanes (for insights recent list)
+            a = r = u = 0
+            for k, data in (feats or {}).items():
+                if isinstance(enabled, dict) and enabled.get(k) is False:
+                    continue
+                a += int((data or {}).get("added")   or 0)
+                r += int((data or {}).get("removed") or 0)
+                u += int((data or {}).get("updated") or 0)
+            _summary_set("added_last",   a)
+            _summary_set("removed_last", r)
+            _summary_set("updated_last", u)
+        except Exception:
+            pass
+
+        # Persist report
         try:
             ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             path = REPORT_DIR / f"sync-{ts}.json"
@@ -963,7 +1112,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     """
     Returns:
       - series:   last N (time,count) samples (ascending)
-      - history:  last few sync reports
+      - history:  last few sync reports (with per-feature breakdown)
       - watchtime:estimated minutes/hours/days with method=tmdb|fallback|mixed
       - providers:{ plex, simkl, trakt } totals (derived from state.json)
       - providers_active:{ plex, simkl, trakt } booleans (from configured pairs)
@@ -977,7 +1126,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         samples = samples[-int(limit_samples):]
     series = [{"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)} for r in samples]
 
-    # Recent sync history
+    # Recent sync history (read recent reports)
     rows: list[dict] = []
     try:
         files = sorted(
@@ -985,17 +1134,64 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
             key=lambda p: p.stat().st_mtime,
             reverse=True
         )[:max(1, int(history))]
+
+        def zero_lane():
+            return {"added": 0, "removed": 0, "updated": 0}
+
         for p in files:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
+
+                # Normalize features + enabled (backwards-compatible)
+                feats = d.get("features") or {}
+                lanes = {
+                    "watchlist": feats.get("watchlist") or zero_lane(),
+                    "ratings":   feats.get("ratings")   or zero_lane(),
+                    "history":   feats.get("history")   or zero_lane(),
+                    "playlists": feats.get("playlists") or zero_lane(),
+                }
+
+                enabled = d.get("enabled")
+                if not isinstance(enabled, dict):
+                    # Fallback: mark lane enabled if present with any non-zero, else False.
+                    enabled = {}
+                    for k, v in lanes.items():
+                        enabled[k] = bool((v.get("added") or 0) or (v.get("removed") or 0) or (v.get("updated") or 0))
+
+                # Totals: prefer explicit *_last fields; else derive from lanes over enabled
+                added_total   = d.get("added_last")
+                removed_total = d.get("removed_last")
+                updated_total = d.get("updated_last")
+
+                if added_total is None or removed_total is None or updated_total is None:
+                    a = r = u = 0
+                    for k, data in lanes.items():
+                        if enabled.get(k) is False:
+                            continue
+                        a += int((data or {}).get("added")   or 0)
+                        r += int((data or {}).get("removed") or 0)
+                        u += int((data or {}).get("updated") or 0)
+                    if added_total   is None: added_total   = a
+                    if removed_total is None: removed_total = r
+                    if updated_total is None: updated_total = u
+
                 rows.append({
                     "started_at":   d.get("started_at"),
                     "finished_at":  d.get("finished_at"),
                     "duration_sec": d.get("duration_sec"),
                     "result":       d.get("result") or "",
-                    "summary":      d.get("summary") or d.get("stats") or {},
-                    "added":        d.get("added_last"),
-                    "removed":      d.get("removed_last"),
+                    "exit_code":    d.get("exit_code"),
+
+                    # Back-compat (UI expects these)
+                    "added":        int(added_total or 0),
+                    "removed":      int(removed_total or 0),
+
+                    # Per-feature breakdown + enabled map
+                    "features":         lanes,
+                    "features_enabled": enabled,
+                    "updated_total":    int(updated_total or 0),
+
+                    # Provider posts if present (Plex/SIMKL/Trakt)
                     "plex_post":    d.get("plex_post"),
                     "simkl_post":   d.get("simkl_post"),
                     "trakt_post":   d.get("trakt_post"),
@@ -1097,7 +1293,6 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         pass
 
     # Optional high-level counters (if available)
-    top = {}
     try:
         top = STATS.overview(None) or {}
     except Exception:
@@ -1821,7 +2016,37 @@ def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
 
 @app.get("/api/run/summary")
 def api_run_summary() -> JSONResponse:
-    return JSONResponse(_summary_snapshot())
+    snap = _summary_snapshot()
+
+    # venster bepalen
+    since = _parse_epoch(snap.get("raw_started_ts") or snap.get("started_at"))
+    until = _parse_epoch(snap.get("finished_at"))
+    if not until and snap.get("running"):
+        until = int(time.time())
+
+    # alleen berekenen als ontbreekt of leeg
+    need = not isinstance(snap.get("features"), dict)
+    if not need:
+        need = not any(isinstance(v, dict) and ((v.get("added") or v.get("removed") or v.get("updated") or 0) > 0
+               or (v.get("spotlight_add") or v.get("spotlight_remove") or v.get("spotlight_update"))) 
+               for v in snap.get("features", {}).values())
+
+    if need:
+        feats, enabled = _compute_lanes_from_stats(since, until)
+        snap["features"] = feats
+        snap["enabled"]  = enabled
+    else:
+        # zorg dat enabled altijd aanwezig is
+        snap.setdefault("enabled", _lanes_enabled_defaults())
+
+    # defensief: timeline consistent
+    tl = snap.get("timeline") or {}
+    if tl.get("done") and not tl.get("post"):
+        tl["post"] = True
+        tl["pre"]  = True
+        snap["timeline"] = tl
+
+    return JSONResponse(snap)
 
 @app.get("/api/run/summary/file")
 def api_run_summary_file() -> Response:

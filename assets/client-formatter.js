@@ -299,10 +299,24 @@
   function renderInto(el, line, isDebug) {
     if (!el || !line) return;
 
+    // Neem globale vlag als fallback als 3e arg niet is meegegeven
+    isDebug = !!(isDebug ?? (typeof window !== "undefined" && window.appDebug));
+
+    if (isDebug) {
+      // RAW: niets formatteren / filteren
+      const raw = String(line);
+      if (!raw) return;
+      const div = document.createElement("div");
+      div.className = "cf-line";
+      div.textContent = raw; // exact zoals binnenkomt
+      el.appendChild(div);
+      return;
+    }
+
+    // Normal mode: pretty blocks + filters
     const html = formatFriendlyLog(line);
     if (html != null) { el.insertAdjacentHTML("beforeend", html); return; }
 
-    // JSON dat we niet bewust formatteren → droppen
     if (String(line).trim().startsWith("{")) return;
 
     const t = String(line).trim();
@@ -311,14 +325,14 @@
     if (squelchPlain > 0 && isContinuationLine(t)) { squelchPlain--; return; }
     if (squelchPlain > 0 && !isContinuationLine(t)) { squelchPlain = 0; }
 
-    if (shouldDropAndMaybeSquelch(t, isDebug)) return;
+    if (shouldDropAndMaybeSquelch(t, false)) return;
 
-    const out = filterPlainLine(t, isDebug);
+    const out = filterPlainLine(t, false);
     if (!out) return;
 
     if (/^<.+>/.test(out)) el.insertAdjacentHTML("beforeend", out);
     else {
-      const div = d.createElement("div");
+      const div = document.createElement("div");
       div.className = "cf-line cf-fade-in";
       div.textContent = out;
       el.appendChild(div);

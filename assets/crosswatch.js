@@ -65,7 +65,8 @@ function stateAsBool(v) {
   }
   return !!v;
 }
-// --- status fetch & render ---
+
+// ========================== CONNECTION STATUS -- BEGIN   ============================================
 const AUTO_STATUS = false; // DISABLE by default
 let lastStatusMs = 0;
 const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
@@ -84,60 +85,161 @@ let wallLoaded = false,
 let wallReqSeq = 0;   
 window._ui = { status: null, summary: null };
 
-// ==== CONNECTOR STATUS (drop-in) ============================================
 const STATUS_CACHE_KEY = "cw.status.v1";
+
+// --- status normalizer (zet alles naar {PLEX|SIMKL|TRAKT: {connected:boolean}})
+function normalizeProviders(input) {
+  const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
+  const normOne = (v) => {
+    if (typeof v === "boolean") return { connected: v };
+    if (v && typeof v === "object") {
+      const c = v.connected ?? v.ok ?? v.online ?? v.status === "ok";
+      return { connected: !!c };
+    }
+    return { connected: false };
+  };
+  const p = input || {};
+  return {
+    PLEX:  normOne(pick(p, "PLEX")  ?? p.plex_connected),
+    SIMKL: normOne(pick(p, "SIMKL") ?? p.simkl_connected),
+    TRAKT: normOne(pick(p, "TRAKT") ?? p.trakt_connected),
+  };
+}
 
 // cache helpers
 function saveStatusCache(providers) {
-  try { localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({ providers, updatedAt: Date.now() })); } catch {}
-}
-function loadStatusCache() {
-  try { return JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null"); } catch { return null; }
+  try {
+    const normalized = normalizeProviders(providers);
+    localStorage.setItem(
+      STATUS_CACHE_KEY,
+      JSON.stringify({ providers: normalized, updatedAt: Date.now(), v: 1 })
+    );
+  } catch {}
 }
 
-// state: "ok" | "no" | "unknown"
-function connState(v) {
-  if (v == null) return "unknown";
-  if (typeof v === "boolean") return v ? "ok" : "no";
-  if (typeof v === "object") {
-    if ("connected"  in v) return v.connected  ? "ok" : "no";
-    if ("ok"         in v) return v.ok         ? "ok" : "no";
-    if ("authorized" in v) return v.authorized ? "ok" : "no";
-    if ("auth"       in v) return v.auth       ? "ok" : "no";
-    if ("status"     in v) {
-      const s = String(v.status).toLowerCase();
-      if (/(ok|connected|authorized|active|ready|valid|true)/.test(s)) return "ok";
-      if (/(no|not|disconnected|error|fail|expired|unauth|invalid|false)/.test(s)) return "no";
-      return "unknown";
+function loadStatusCache(maxAgeMs = 10 * 60 * 1000) {
+  try {
+    const obj = JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null");
+    if (!obj || !obj.providers) return null;
+    if (Date.now() - (obj.updatedAt || 0) > maxAgeMs) return null;
+    return { providers: normalizeProviders(obj.providers), updatedAt: obj.updatedAt };
+  } catch { return null; }
+}
+
+
+
+let _pairsFetchAt = 0;
+
+async function refreshPairedProviders(throttleMs = 5000) {
+  const now = Date.now();
+  if (now - _pairsFetchAt < throttleMs && window._ui?.pairedProviders) {
+    // still apply current visibility
+    toggleProviderBadges(window._ui.pairedProviders);
+    return window._ui.pairedProviders;
+  }
+
+  _pairsFetchAt = now;
+  let pairs = [];
+  try {
+    const res = await fetch("/api/pairs", { cache: "no-store" });
+    if (res.ok) pairs = await res.json();
+  } catch (_) {}
+
+  const active = { PLEX: false, SIMKL: false, TRAKT: false };
+  for (const p of pairs || []) {
+    if (p && p.enabled !== false) {
+      const s = String(p.source || "").toUpperCase();
+      const t = String(p.target || "").toUpperCase();
+      if (s in active) active[s] = true;
+      if (t in active) active[t] = true;
     }
   }
-  return v ? "ok" : "no";
+
+  // Cache for reuse elsewhere
+  window._ui = window._ui || {};
+  window._ui.pairedProviders = active;
+
+  toggleProviderBadges(active);
+  return active;
 }
 
-// raakt exact jouw markup (#badge-plex / #badge-simkl)
+// Hide/show badges by provider
+function toggleProviderBadges(active) {
+  const map = { PLEX: "badge-plex", SIMKL: "badge-simkl", TRAKT: "badge-trakt" };
+  for (const [prov, id] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.toggle("hidden", !(active && active[prov]));
+  }
+}
+
+// Tri-state normalizer: "ok" | "no" | "unknown" (fallback)
+function connState(v) {
+  if (v == null) return "unknown";
+
+  // booleans
+  if (v === true)  return "ok";
+  if (v === false) return "no";
+
+  // numbers
+  if (typeof v === "number") {
+    if (v === 1) return "ok";
+    if (v === 0) return "no";
+  }
+
+  // strings
+  if (typeof v === "string") {
+    const s = v.toLowerCase().trim();
+    if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
+    if (/^(no|down|disconnected|false|off|disabled)$/.test(s))       return "no";
+    if (/^(unknown|stale|n\/a|-|pending)$/.test(s))                  return "unknown";
+    return "unknown";
+  }
+
+  // objects {connected|ok|ready|active|online|status|state}
+  if (typeof v === "object") {
+    if (typeof v.connected === "boolean") return v.connected ? "ok" : "no";
+    const b = v.ok ?? v.ready ?? v.active ?? v.online;
+    if (typeof b === "boolean") return b ? "ok" : "no";
+
+    const s = String(v.status ?? v.state ?? "").toLowerCase().trim();
+    if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
+    if (/^(no|down|disconnected|false|off|disabled)$/.test(s))       return "no";
+    if (/^(unknown|stale|n\/a|-|pending)$/.test(s))                  return "unknown";
+  }
+
+  return "unknown";
+}
+
+// Case-insensitive picker
+function pickCase(obj, k) {
+  return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
+}
+
 function setBadge(id, providerName, state, stale) {
   const el = document.getElementById(id);
   if (!el) return;
   el.classList.remove("ok", "no", "unknown", "stale");
   el.classList.add(state);
   if (stale) el.classList.add("stale");
-
-  const label = `${providerName}: ${state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown"}`;
+  const label =
+    providerName + ": " + (state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown");
   el.innerHTML = `<span class="dot ${state}"></span>${label}`;
 }
 
 function renderConnectorStatus(providers, { stale = false } = {}) {
   const p = providers || {};
-  setBadge("badge-plex",  "Plex",  connState(p.PLEX),  stale);
-  setBadge("badge-simkl", "SIMKL", connState(p.SIMKL), stale);
+
+  // Fallback to false (=> "no") if provider key is missing
+  const plex  = pickCase(p, "PLEX");   // could be boolean or object
+  const simkl = pickCase(p, "SIMKL");
+  const trakt = pickCase(p, "TRAKT");
+
+  setBadge("badge-plex",  "Plex",  connState(plex  ?? false), stale);
+  setBadge("badge-simkl", "SIMKL", connState(simkl ?? false), stale);
+  setBadge("badge-trakt", "Trakt", connState(trakt ?? false), stale);
 }
 
-// NOTE: verwacht dat je elders deze bestaan hebt:
-//   let lastStatusMs = 0;
-//   const STATUS_MIN_INTERVAL = 1000;
-//   let appDebug = false;
-//   function recomputeRunDisabled(){}
-//   function setRefreshBusy(b){}
 
 async function refreshStatus(force = false) {
   const now = Date.now();
@@ -145,28 +247,36 @@ async function refreshStatus(force = false) {
   if (typeof lastStatusMs !== "undefined") lastStatusMs = now;
 
   try {
+    // 1) Make sure we know which providers are used in pairs (throttled)
+    await refreshPairedProviders(force ? 0 : 5000);
+
+    // 2) Fetch live status
     const r = await fetch("/api/status" + (force ? "?fresh=1" : ""), { cache: "no-store" }).then(r => r.json());
     if (typeof appDebug !== "undefined") appDebug = !!r.debug;
 
-    const providers = r.providers ?? {
-      PLEX:  { connected: !!r.plex_connected },
-      SIMKL: { connected: !!r.simkl_connected }
+    const pick = (obj, k) => (obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()]);
+    const norm = (v, fb = false) => (typeof v === "boolean" ? { connected: v } : (v && typeof v === "object") ? v : { connected: !!fb });
+
+    const pRaw = r.providers || {};
+    const providers = {
+      PLEX:  norm(pick(pRaw, "PLEX"),  (r.plex_connected  ?? r.plex)),
+      SIMKL: norm(pick(pRaw, "SIMKL"), (r.simkl_connected ?? r.simkl)),
+      TRAKT: norm(pick(pRaw, "TRAKT"), (r.trakt_connected ?? r.trakt)),
     };
 
     renderConnectorStatus(providers, { stale: false });
-    saveStatusCache(providers);
+    saveStatusCache?.(providers);
 
-    // booleans voor je UI flags
     window._ui = window._ui || {};
     window._ui.status = {
-      can_run: !!r.can_run,
-      plex_connected: !!(providers.PLEX  && (providers.PLEX.connected  ?? providers.PLEX.ok)),
-      simkl_connected: !!(providers.SIMKL && (providers.SIMKL.connected ?? providers.SIMKL.ok)),
+      can_run:          !!r.can_run,
+      plex_connected:   !!(providers.PLEX?.connected  ?? providers.PLEX?.ok),
+      simkl_connected:  !!(providers.SIMKL?.connected ?? providers.SIMKL?.ok),
+      trakt_connected:  !!(providers.TRAKT?.connected ?? providers.TRAKT?.ok),
     };
 
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
 
-    // bestaande layout toggles (optioneel)
     const onMain = !document.getElementById("ops-card").classList.contains("hidden");
     const logPanel = document.getElementById("log-panel");
     const layout = document.getElementById("layout");
@@ -174,40 +284,62 @@ async function refreshStatus(force = false) {
     const hasStatsVisible = !!(stats && !stats.classList.contains("hidden"));
     logPanel?.classList.toggle("hidden", !(appDebug && onMain));
     layout?.classList.toggle("full", onMain && !appDebug && !hasStatsVisible);
-
   } catch (e) {
     console.warn("refreshStatus failed", e);
   }
 }
 
+// ---- bootstrap badges from cached status (runs once on load)
+(function bootstrapStatusFromCache() {
+  try {
+    const cached = loadStatusCache();
+    if (cached?.providers) {
+      renderConnectorStatus(cached.providers, { stale: true }); // voorkom rode flits
+    }
+  } catch {}
+  // badge-visibility naar gelang /api/pairs (als je helper hebt)
+  try { refreshPairedProviders?.(0); } catch {}
+  // daarna live status halen (overschrijft stale weergave + her-cachen)
+  try { refreshStatus(false); } catch {}
+})();
+
 async function manualRefreshStatus() {
+  if (manualRefreshStatus._inFlight) return;
+  manualRefreshStatus._inFlight = true;
+
   const btn = document.getElementById("btn-status-refresh");
   btn?.classList.add("spin");
-  if (typeof setRefreshBusy === "function") setRefreshBusy(true);
+  setRefreshBusy?.(true);
+
   try {
-    // toon cached status (stale) terwijl we live ophalen
-    const cached = loadStatusCache();
+    // Update visibility first so badges hide/show instantly if pairs changed
+    await refreshPairedProviders(0);
+
+    const cached = loadStatusCache?.();
     if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
-    await refreshStatus(true);
+    else if (window._ui?.status) {
+      const s = window._ui.status;
+      renderConnectorStatus({
+        PLEX:  { connected: !!s.plex_connected },
+        SIMKL: { connected: !!s.simkl_connected },
+        TRAKT: { connected: !!s.trakt_connected },
+      }, { stale: true });
+    }
+
+    await Promise.race([
+      refreshStatus(true),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("status refresh timeout")), 8000))
+    ]);
   } catch (e) {
     console.warn("Manual status refresh failed", e);
   } finally {
-    if (typeof setRefreshBusy === "function") setRefreshBusy(false);
+    setRefreshBusy?.(false);
     btn?.classList.remove("spin");
+    manualRefreshStatus._inFlight = false;
   }
 }
 
-// expose voor onclick in HTML
-window.manualRefreshStatus = manualRefreshStatus;
-window.refreshStatus = refreshStatus;
-window.renderConnectorStatus = renderConnectorStatus;
-
-// hydrate bij pageload (cached → niet rood)
-document.addEventListener("DOMContentLoaded", () => {
-  const cached = loadStatusCache();
-  if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
-});
-
+//  ====================== END CONNECTION status =========================
 
 function toLocal(iso) {
   if (!iso) return "—";
@@ -262,12 +394,17 @@ function stopRunVisuals() {
 function updateProgressFromTimeline(tl) {
   const order = ["start", "pre", "post", "done"];
   let done = 0;
-  for (const k of order) {
-    if (tl && tl[k]) done++;
-  }
+  for (const k of order) if (tl && tl[k]) done++;
   let pct = (done / order.length) * 100;
   if (pct > 0 && pct < 15) pct = 15;
-  setRunProgress(pct);
+
+  if (typeof setRunProgress === "function") setRunProgress(pct);
+
+  const payload = { pct, tl: tl || {} };
+  window.dispatchEvent(new CustomEvent("ux:progress", { detail: payload }));
+  if (window.UX && typeof window.UX.updateProgress === "function") {
+    window.UX.updateProgress(payload);
+  }
 }
 
 function recomputeRunDisabled() {
@@ -279,10 +416,17 @@ function recomputeRunDisabled() {
   btn.disabled = busyNow || running || !canRun;
 }
 
+// Bridge-friendly + null-safe
 function setTimeline(tl) {
-  ["start", "pre", "post", "done"].forEach((k) => {
-    document.getElementById("tl-" + k).classList.toggle("on", !!(tl && tl[k]));
-  });
+  const keys = ["start", "pre", "post", "done"];
+  for (const k of keys) {
+    const el = document.getElementById("tl-" + k);
+    if (el) el.classList.toggle("on", !!(tl && tl[k]));
+  }
+  window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
+  if (window.UX && typeof window.UX.updateTimeline === "function") {
+    window.UX.updateTimeline(tl || {});
+  }
 }
 
 function setSyncHeader(status, msg) {
@@ -988,6 +1132,18 @@ function openDetailsLog() {
 
   esDet = new EventSource("/api/logs/stream?tag=SYNC");
 
+  // helper: debug = true
+  const appendRaw = (s) => {
+    const lines = String(s).replace(/\r\n/g, "\n").split("\n");
+    for (const line of lines) {
+      if (!line) continue;
+      const div = document.createElement("div");
+      div.className = "cf-line";
+      div.textContent = line;
+      el.appendChild(div);
+    }
+  };
+
   esDet.onmessage = (ev) => {
     if (!ev?.data) return;
 
@@ -997,10 +1153,18 @@ function openDetailsLog() {
       return;
     }
 
+    // DEBUG: no formatting
+    if (window.appDebug) {
+      appendRaw(ev.data);
+      if (detStickBottom) el.scrollTop = el.scrollHeight;
+      updateSlider();
+      return;
+    }
+
+    // NORMAL: thr. ClientFormatter (tokens + pretty)
     const { tokens, buf } = CF.processChunk(detBuf, ev.data);
     detBuf = buf;
-
-    for (const tok of tokens) CF.renderInto(el, tok, window.appDebug);
+    for (const tok of tokens) CF.renderInto(el, tok, false);
 
     if (detStickBottom) el.scrollTop = el.scrollHeight;
     updateSlider();
@@ -1010,10 +1174,11 @@ function openDetailsLog() {
     try { esDet?.close(); } catch (_) {}
     esDet = null;
 
-    if (detBuf && detBuf.trim()) {
+
+    if (!window.appDebug && detBuf && detBuf.trim()) {
       const { tokens } = CF.processChunk("", detBuf);
       detBuf = "";
-      for (const tok of tokens) CF.renderInto(el, tok, window.appDebug);
+      for (const tok of tokens) CF.renderInto(el, tok, false);
       if (detStickBottom) el.scrollTop = el.scrollHeight;
       updateSlider();
     }
@@ -1023,14 +1188,13 @@ function openDetailsLog() {
     el.scrollTop = el.scrollHeight;
     updateSlider();
   });
-}
+  }
 
-function closeDetailsLog() {
-  try { esDet?.close(); } catch (_) {}
-  esDet = null;
-  detBuf = "";
-}
-
+  function closeDetailsLog() {
+    try { esDet?.close(); } catch (_) {}
+    esDet = null;
+    detBuf = "";
+  }
 
 function toggleDetails() {
   const d = document.getElementById("details");
@@ -1126,9 +1290,6 @@ function setRefreshBusy(busy) {
   btn.classList.toggle("loading", !!busy);
 }
 
-
-
-
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
 
@@ -1141,6 +1302,7 @@ async function loadConfig() {
 
   
   _setVal("debug", String(!!cfg.runtime?.debug));
+  window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
   
   setValIfExists("plex_token",           cfg.plex?.account_token   || "");
@@ -1196,26 +1358,26 @@ async function saveSettings() {
     let changed = false;
 
     // --- UI reads
-    const uiMode    = _getVal("mode");
-    const uiSource  = _getVal("source");
-    const uiDebug   = _getVal("debug") === "true";
-    const uiPlexTok = _getVal("plex_token");
-    const uiCid     = _getVal("simkl_client_id");
-    const uiSec     = _getVal("simkl_client_secret");
-    const uiTmdb    = _getVal("tmdb_api_key");
-    const uiTraktCid= _getVal("trakt_client_id");
-    const uiTraktSec= _getVal("trakt_client_secret");
+    const uiMode     = _getVal("mode");
+    const uiSource   = _getVal("source");
+    const uiDebug    = _getVal("debug") === "true";
+    const uiPlexTok  = _getVal("plex_token");
+    const uiCid      = _getVal("simkl_client_id");
+    const uiSec      = _getVal("simkl_client_secret");
+    const uiTmdb     = _getVal("tmdb_api_key");
+    const uiTraktCid = _getVal("trakt_client_id");
+    const uiTraktSec = _getVal("trakt_client_secret");
 
     // --- Prev values
-    const prevMode    = serverCfg?.sync?.bidirectional?.mode || "two-way";
-    const prevSource  = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
-    const prevDebug   = !!serverCfg?.runtime?.debug;
-    const prevPlex    = norm(serverCfg?.plex?.account_token);
-    const prevCid     = norm(serverCfg?.simkl?.client_id);
-    const prevSec     = norm(serverCfg?.simkl?.client_secret);
-    const prevTmdb    = norm(serverCfg?.tmdb?.api_key);
-    const prevTraktCid= norm(serverCfg?.trakt?.client_id);
-    const prevTraktSec= norm(serverCfg?.trakt?.client_secret);
+    const prevMode     = serverCfg?.sync?.bidirectional?.mode || "two-way";
+    const prevSource   = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
+    const prevDebug    = !!serverCfg?.runtime?.debug;
+    const prevPlex     = norm(serverCfg?.plex?.account_token);
+    const prevCid      = norm(serverCfg?.simkl?.client_id);
+    const prevSec      = norm(serverCfg?.simkl?.client_secret);
+    const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
+    const prevTraktCid = norm(serverCfg?.trakt?.client_id);
+    const prevTraktSec = norm(serverCfg?.trakt?.client_secret);
 
     // --- Apply changes into cfg
     if (uiMode !== prevMode) {
@@ -1308,15 +1470,24 @@ async function saveSettings() {
 
     // --- One-shot connector test 
     const authChanged =
-      norm(uiPlexTok) !== prevPlex ||
-      norm(uiCid)     !== prevCid  ||
-      norm(uiSec)     !== prevSec  ||
-      norm(uiTraktCid)!== prevTraktCid ||
-      norm(uiTraktSec)!== prevTraktSec;
+      norm(uiPlexTok)   !== prevPlex     ||
+      norm(uiCid)       !== prevCid      ||
+      norm(uiSec)       !== prevSec      ||
+      norm(uiTraktCid)  !== prevTraktCid ||
+      norm(uiTraktSec)  !== prevTraktSec;
 
-    if (authChanged) {
-      try { await refreshStatus(true); } catch {}
-    }
+    // ---- Immediately update provider badges based on current pairs, then status
+    try {
+      await refreshPairedProviders(0); // toggles badge visibility (PLEX/SIMKL/TRAKT) based on /api/pairs
+      const cached = typeof loadStatusCache === "function" ? loadStatusCache() : null;
+      if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
+      if (authChanged) {
+        await refreshStatus(true); // live refresh if auth changed
+      } else {
+        // even if auth didn’t change, pairs might; do a quick refresh
+        await refreshStatus(true);
+      }
+    } catch {}
 
     // --- Misc UI updates
     try { updateTmdbHint?.(); } catch {}
@@ -1324,6 +1495,17 @@ async function saveSettings() {
     try { await updateWatchlistTabVisibility?.(); } catch {}
     try { await loadScheduling?.(); } catch {}
     try { updateTraktHint?.(); } catch {}
+
+    // --- Fire global event so other modules can react
+    try {
+      window.dispatchEvent(new CustomEvent("settings-changed", {
+        detail: { scope: "settings", reason: "save" }
+      }));
+    } catch {}
+
+    // Optional: refresh insights + lanes now
+    try { refreshInsights?.(); } catch {}
+    try { window.UX?.refresh?.(); } catch {}
 
     showToast("Settings saved ✓", true);
   } catch (err) {

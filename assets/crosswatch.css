@@ -3689,3 +3689,32 @@ select {
 @keyframes flowRight { from { left:6px; } to { left: calc(100% - 6px); } }
 @keyframes flowLeft { from { left: calc(100% - 6px); } to { left:6px; } }
 
+/* Pin connection badges to the top-right of the ops card */
+#ops-card { position: relative; }
+
+#conn-badges {
+  position: absolute !important;
+  top: 10px;              /* nudge as you like (matches the card’s padding) */
+  right: 12px;
+  margin-left: 0 !important;
+  z-index: 2;             /* stay above progress bar */
+}
+
+/* Keep the refresh icon aligned with the badges */
+#conn-badges .iconbtn { margin-left: 6px; }
+
+/* Responsive: revert to inline flow on smaller screens */
+@media (max-width: 820px) {
+  #conn-badges {
+    position: static !important;
+    margin-left: auto !important;
+  }
+}
+/* Push Plex / SIMKL / Trakt stat tiles further down */
+#tile-plex,
+#tile-simkl,
+#tile-trakt {
+  margin-top: 90px;   /* increase until it feels right (20, 30, 40, etc.) */
+  position: relative;
+  z-index: 1;         /* keep them above the neon bg */
+}

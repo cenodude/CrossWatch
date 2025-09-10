@@ -1,5 +1,5 @@
 # _FastAPI.py
-# Renders the full HTML for the web UI. Keep this file self‑contained 
+# Renders the full HTML for the web UI. Keep this file self-contained 
 
 def get_index_html() -> str:
     return r"""<!doctype html><html><head>
@@ -64,6 +64,7 @@ button[onclick="runAllBatches()"] {
       <div class="badges" id="conn-badges" style="margin-left:auto">
         <span id="badge-plex" class="badge no"><span class="dot no"></span>Plex: Not connected</span>
         <span id="badge-simkl" class="badge no"><span class="dot no"></span>SIMKL: Not connected</span>
+        <span id="badge-trakt" class="badge no"><span class="dot no"></span>Trakt: Not connected</span>
         <div id="update-banner" class="hidden">
           <span id="update-text">A new version is available.</span>
           <a id="update-link" href="https://github.com/cenodude/crosswatch/releases"
@@ -77,34 +78,27 @@ button[onclick="runAllBatches()"] {
         </button>
       </div>
     </div>
-
-    <div class="sync-status">
-      <div id="sync-icon" class="sync-icon sync-warn"></div>
-      <div id="sync-status-text" class="sub">Idle — run a sync to see results</div>
-      <span id="sched-inline" class="sub muted" style="margin-left:8px; white-space:nowrap; display:none"></span>
+    
+    <div class="sync-status" style="display:none">
+      <div id="sync-icon"></div>
+      <div id="sync-status-text"></div>
+      <span id="sched-inline" style="display:none"></span>
     </div>
 
-    <div class="chiprow">
-      <div class="chip">Plex: <span id="chip-plex">–</span></div>
-      <div class="chip">SIMKL: <span id="chip-simkl">–</span></div>
-      <div class="chip">Duration: <span id="chip-dur">–</span></div>
-      <div class="chip">Exit: <span id="chip-exit">–</span></div>
-      <span id="st-update" class="badge upd hidden"></span>
-    </div>
 
-    <div class="sep"></div>
+    <div id="ux-progress"></div>
+    <div id="ux-lanes"></div>
+    <div id="ux-spotlight"></div>
+
+    <!-- ACTION BUTTONS (restored) -->
     <div class="action-row">
       <div class="action-buttons">
-        <button id="run" class="btn acc" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
+        <button id="run" class="btn acc" onclick="runSync()">
+          <span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span>
+        </button>
         <button class="btn" onclick="toggleDetails()">View details</button>
         <button class="btn" onclick="copySummary(this)">Copy summary</button>
         <button class="btn" onclick="downloadSummary()">Download report</button>
-      </div>
-      <div class="stepper" aria-label="Sync progress">
-        <div class="step"><div class="tl-dot" id="tl-start"></div><div class="muted">Start</div></div>
-        <div class="step"><div class="tl-dot" id="tl-pre"></div><div class="muted">Pre-counts</div></div>
-        <div class="step"><div class="tl-dot" id="tl-post"></div><div class="muted">Post</div></div>
-        <div class="step"><div class="tl-dot" id="tl-done"></div><div class="muted">Done</div></div>
       </div>
     </div>
 
@@ -162,14 +156,11 @@ button[onclick="runAllBatches()"] {
       </div>
     </div>
 
-
     <div class="stat-tiles" id="stat-providers">
       <div class="tile plex"  id="tile-plex"><div class="k">Plex</div><div class="n" id="stat-plex">0</div></div>
       <div class="tile simkl" id="tile-simkl"><div class="k">SIMKL</div><div class="n" id="stat-simkl">0</div></div>
       <div class="tile trakt" id="tile-trakt"><div class="k">Trakt</div><div class="n" id="stat-trakt">0</div></div>
     </div>
-    
-
 
     <!-- Insights: Recent syncs -->
     <div class="stat-block">
@@ -383,11 +374,21 @@ button[onclick="runAllBatches()"] {
   </div>
 
 </main>
-    <script src="/assets/insights.js" defer></script>          <!-- window.Insights + globals -->
-    <script src="/assets/modals.js" defer></script>            <!-- modals (globals) -->
-    <script src="/assets/client-formatter.js" defer></script>  <!-- exposes window.ClientFormatter -->
-    <script src="/assets/crosswatch.js" defer></script>        <!-- core (uses ClientFormatter) -->
-    <script src="/assets/connections.overlay.js" defer></script>
-    <script src="/assets/connections.pairs.overlay.js" defer></script>
+  <script src="/assets/client-formatter.js" defer></script>  <!-- exposes window.ClientFormatter -->
+  <script src="/assets/crosswatch.js" defer></script>        <!-- core (fires timeline/progress) -->
+
+  <script src="/assets/main.js" defer></script>              <!-- render left/middle (progress, lanes, spotlights) -->
+
+  <script src="/assets/insights.js" defer></script>          <!-- right-side stats panel -->
+  <script src="/assets/modals.js" defer></script>            <!-- modals (globals) -->
+  <script src="/assets/connections.overlay.js" defer></script>
+  <script src="/assets/connections.pairs.overlay.js" defer></script>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    try { if (typeof openSummaryStream === 'function') openSummaryStream(); } catch (e) {}
+  });
+  </script>
+
 </body></html>
 """

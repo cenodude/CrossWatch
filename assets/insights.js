@@ -57,8 +57,8 @@
     var active = Object.assign({ plex:false, simkl:false, trakt:false }, provActive || {});
 
     [["plex","stat-plex","tile-plex"],
-    ["simkl","stat-simkl","tile-simkl"],
-    ["trakt","stat-trakt","tile-trakt"]].forEach(([k, valId, tileId])=>{
+     ["simkl","stat-simkl","tile-simkl"],
+     ["trakt","stat-trakt","tile-trakt"]].forEach(([k, valId, tileId])=>{
       var v = document.getElementById(valId);
       var t = document.getElementById(tileId);
       if (v) v.textContent = totals[k] | 0;
@@ -71,18 +71,62 @@
     var wrap = d.getElementById("sync-history") || d.querySelector("[data-role='sync-history']") || d.querySelector(".sync-history");
     if (!wrap) return;
     if (!hist || !hist.length) { wrap.innerHTML = '<div class="history-item"><div class="history-meta">No history yet</div></div>'; return; }
+
+    function sumFromFeatures(row) {
+      var feats = row && row.features || {};
+      var en = row && row.features_enabled || {};
+      var keys = ["watchlist","ratings","history","playlists"];
+      var a=0,r=0,u=0;
+      for (var i=0;i<keys.length;i++) {
+        var k = keys[i];
+        if (en && en[k] === false) continue;
+        var f = feats[k] || {};
+        a += +((f.added)||0);
+        r += +((f.removed)||0);
+        u += +((f.updated)||0);
+      }
+      return {a:rNaN(a), r:rNaN(r), u:rNaN(u)};
+      function rNaN(x){ return isFinite(x)?x:0; }
+    }
+
+    var labelMap = { watchlist:"WL", ratings:"RT", history:"HC", playlists:"PL" };
+
     wrap.innerHTML = hist.map(function(row){
-      var dur = row && row.duration_sec != null ? (row.duration_sec.toFixed ? row.duration_sec.toFixed(1) : row.duration_sec) : "—";
-      var added = row && row.added != null ? row.added : "—";
-      var removed = row && row.removed != null ? row.removed : "—";
-      var result = (row && row.result) ? row.result : "—";
       var when = toLocal((row && (row.finished_at || row.started_at)) || null);
-      var badgeClass = String(result).toUpperCase() === "EQUAL" ? "ok" : "warn";
+      var dur = row && row.duration_sec != null ? (+row.duration_sec).toFixed(1) : "—";
+      var totals = { a: row && row.added, r: row && row.removed };
+      if (totals.a == null || totals.r == null) {
+        var t = sumFromFeatures(row);
+        if (totals.a == null) totals.a = t.a;
+        if (totals.r == null) totals.r = t.r;
+      }
+      var result = (row && row.result) ? String(row.result) : "—";
+      var exit = (row && typeof row.exit_code === "number") ? row.exit_code : null;
+
+      var badgeClass = "warn";
+      if (exit != null && exit !== 0) badgeClass = "err";
+      else if (String(result).toUpperCase() === "EQUAL" || ((totals.a|0)===0 && (totals.r|0)===0)) badgeClass = "ok";
+
+      // per-lane micro chips
+      var feats = row && row.features || {};
+      var en = row && row.features_enabled || {};
+      var chips = [];
+      Object.keys(labelMap).forEach(function(k){
+        if (en && en[k] === false) return;
+        var f = feats[k] || {};
+        var a = +f.added || 0, r = +f.removed || 0, u = +f.updated || 0;
+        if (a || r || u) {
+          var txt = labelMap[k] + " +" + a + "/-" + r + (u ? "/~" + u : "");
+          chips.push('<span class="badge micro">'+txt+'</span>');
+        }
+      });
+
       return '<div class="history-item">'
-           +   '<div class="history-meta">'+when+' • <span class="badge '+badgeClass+'">'+result+'</span> • '+dur+'s</div>'
+           +   '<div class="history-meta">'+when+' • <span class="badge '+badgeClass+'">'+result+(exit!=null?(' · '+exit):'')+'</span> • '+dur+'s</div>'
            +   '<div class="history-badges">'
-           +     '<span class="badge">+'+added+'</span>'
-           +     '<span class="badge">-'+removed+'</span>'
+           +     '<span class="badge">+'+(totals.a|0)+'</span>'
+           +     '<span class="badge">-'+(totals.r|0)+'</span>'
+           +     (chips.length ? ('<span class="sep"></span>'+chips.join('')) : '')
            +   '</div>'
            + '</div>';
     }).join("");
