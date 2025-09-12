@@ -1,5 +1,5 @@
 (function (w, d) {
-  // ---------- Inject styles (once) ----------
+  // ---------- styles (once) ----------
   if (!d.getElementById("cf-styles")) {
     const style = d.createElement("style");
     style.id = "cf-styles";
@@ -50,7 +50,7 @@
     d.head.appendChild(style);
   }
 
-  // ---------- Utility functions ----------
+  // ---------- utils ----------
   const esc = s => String(s ?? "").replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
   const BADGE_CLASS = { PLEX: "cf-plex", SIMKL: "cf-simkl", TRAKT: "cf-trakt" };
   const LOGO_SRC    = { PLEX: "/assets/PLEX-log.svg", SIMKL: "/assets/SIMKL-log.svg", TRAKT: "/assets/TRAKT-log.svg" };
@@ -75,18 +75,18 @@
     return `<div class="${cls}"><span class="cf-ico"></span>${titleHTML}${sep}${meta}</div>`;
   };
 
-  // ---------- State tracking ----------
-  // Store run_id from the first plain line; add to run:start
+  // ---------- state ----------
+  // run_id uit eerste plain regel; toevoegen aan run:start
   let pendingRunId = null;
 
-  // Aggregate counts for apply steps
+  // aggregatie voor apply-steps
   let opCounts = { add: { PLEX:0, SIMKL:0 }, remove: { PLEX:0, SIMKL:0 } };
   const dstNameFrom = (ev) => ev.dst || (ev.event.includes(":A:") ? "PLEX" : "SIMKL");
 
-  // Squelch for continuation lines after dropped meta
+  // squelch voor vervolgregels van gedropte meta
   let squelchPlain = 0;
 
-  // ---------- Pretty JSON formatting ----------
+  // ---------- pretty JSON ----------
   function formatFriendlyLog(line) {
     if (!line || line[0] !== "{") return null;
     let ev; try { ev = JSON.parse(line); } catch { return null; }
@@ -100,7 +100,7 @@
         if (pendingRunId) { meta += ` · run_id=${pendingRunId}`; pendingRunId = null; }
         return htmlBlock("start", `${ICON.start} Sync started`, meta);
       }
-  // Show run:pair (with index); suppress pair:start to avoid duplicate tiles
+      // Toon juist run:pair (met index); onderdruk pair:start om dubbele tegels te voorkomen
       case "run:pair": {
         const i = ev.i|0, n = ev.n|0;
         const src = badge(ev.src), dst = badge(ev.dst), arr = arrowFor(ev.mode);
@@ -113,7 +113,7 @@
       case "two:start":
         return htmlBlock("start", `⇄ Two-way sync`, `feature=${esc(ev.feature)} · removals=${!!ev.removals}`);
 
-  // Snapshot without provider badges (no logos)
+      // Snapshot zonder provider-badges (dus geen logo’s)
       case "snapshot:start": {
         const a = esc(ev.a || "");
         const b = esc(ev.b || "");
@@ -135,14 +135,14 @@
           has ? "" : "cf-muted");
       }
 
-  // Hide start events
+      // verberg starts
       case "two:apply:add:A:start":
       case "two:apply:add:B:start":
       case "two:apply:remove:A:start":
       case "two:apply:remove:B:start":
         return null;
 
-  // done → accumulate; render only at two:done
+      // done → tel op; render pas bij two:done
       case "two:apply:add:A:done":
       case "two:apply:add:B:done":
       case "two:apply:remove:A:done":
@@ -171,7 +171,7 @@
 
         const out = [ row("remove", rP, rS), row("add", aP, aS) ].join("");
 
-  // Reset for next pair
+        // reset voor volgende pair
         opCounts = { add:{PLEX:0,SIMKL:0}, remove:{PLEX:0,SIMKL:0} };
 
         return out;
@@ -192,7 +192,7 @@
     const t = String(line).trim();
     if (!t) return null;
 
-  // Detect SYNC start; capture run_id and do not render
+    // vang SYNC start; pak run_id en render niet
     const mRun = t.match(/^>\s*SYNC start:.*?\brun_id=(\d+)/i);
     if (mRun) { pendingRunId = mRun[1]; return null; }
 
@@ -206,14 +206,14 @@
       if (/^•\s*feature=/i.test(t)) return null;
     }
 
-  // Format host "Done. Total ..." as a summary block
+    // maak host "Done. Total ..." een mooi blok
     const mDone = t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)/i);
     if (mDone) {
       const adds = Number(mDone[1]||0), rems = Number(mDone[2]||0);
       return htmlBlock("complete", `${ICON.complete} Sync complete`, `+${adds} / -${rems}`);
     }
 
-  // Keep banners compact (exit code)
+    // banners klein houden (exit code)
     if (/^\[SYNC]\s*exit code/i.test(t)) {
       return `<div class="cf-line cf-fade-in">${esc(t)}</div>`;
     }
@@ -221,7 +221,7 @@
     return t;
   }
 
-  // ---------- Chunk splitting and JSON extraction ----------
+  // ---------- chunk split + JSON extract ----------
   function splitHost(s) {
     return String(s)
       .replace(/\r\n/g, "\n")
@@ -275,7 +275,7 @@
     return { tokens, buf: s.slice(i) };
   }
 
-  // ---------- Squelch helpers ----------
+  // ---------- squelch helpers ----------
   const isContinuationLine = t =>
     /^[\{\[]/.test(t) ||
     /^['"]?[A-Za-z0-9_]+['"]?\s*:/.test(t) ||
@@ -295,25 +295,25 @@
     return false;
   }
 
-  // ---------- Render helper ----------
+  // ---------- render helper ----------
   function renderInto(el, line, isDebug) {
     if (!el || !line) return;
 
-  // Use global flag as fallback if third argument is not provided
+    // Neem globale vlag als fallback als 3e arg niet is meegegeven
     isDebug = !!(isDebug ?? (typeof window !== "undefined" && window.appDebug));
 
     if (isDebug) {
-  // RAW: do not format or filter
+      // RAW: niets formatteren / filteren
       const raw = String(line);
       if (!raw) return;
       const div = document.createElement("div");
       div.className = "cf-line";
-  div.textContent = raw; // display exactly as received
+      div.textContent = raw; // exact zoals binnenkomt
       el.appendChild(div);
       return;
     }
 
-  // Normal mode: pretty blocks and filters
+    // Normal mode: pretty blocks + filters
     const html = formatFriendlyLog(line);
     if (html != null) { el.insertAdjacentHTML("beforeend", html); return; }
 
@@ -339,6 +339,6 @@
     }
   }
 
-  // ---------- Export API ----------
+  // ---------- export ----------
   w.ClientFormatter = { formatFriendlyLog, filterPlainLine, splitHost, processChunk, renderInto };
 })(window, document);

@@ -1,5 +1,5 @@
 # _watchlist.py
-# Implements watchlist logic (PlexAPI-only, hide-overlay)
+# Watchlist logic for Plex ⇄ SIMKL Web UI (PlexAPI-only, hide-overlay)
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -12,9 +12,9 @@ from plexapi.myplex import MyPlexAccount
 from cw_platform.config_base import CONFIG
 HIDE_PATH  = CONFIG / "watchlist_hide.json"
 
-# -------- Helper functions --------
+# -------- Small helpers --------
 def _load_hide_set() -> Set[str]:
-    # Load the hide-overlay set from disk.
+    """Load the hide-overlay set from disk."""
     try:
         if HIDE_PATH.exists():
             data = json.loads(HIDE_PATH.read_text(encoding="utf-8"))
@@ -25,7 +25,7 @@ def _load_hide_set() -> Set[str]:
     return set()
 
 def _save_hide_set(hide: Set[str]) -> None:
-    # Persist the hide-overlay set to disk.
+    """Persist the hide-overlay set."""
     try:
         HIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
         HIDE_PATH.write_text(json.dumps(sorted(hide)), encoding="utf-8")
@@ -33,7 +33,7 @@ def _save_hide_set(hide: Set[str]) -> None:
         print(f"Error saving hide set: {e}")
 
 def _pick_added(d: Dict[str, Any]) -> Optional[str]:
-    # Return a plausible 'added at' timestamp from various input object formats.
+    """Return a plausible 'added at' timestamp from various shapes of input objects."""
     if not isinstance(d, dict):
         return None
     for k in ("added", "added_at", "addedAt", "date_added", "created_at", "createdAt"):
@@ -50,7 +50,7 @@ def _pick_added(d: Dict[str, Any]) -> Optional[str]:
 
 
 def _iso_to_epoch(iso: Optional[str]) -> int:
-    # Convert an ISO-8601-like timestamp to epoch seconds (best effort).
+    """Convert an ISO-8601-like timestamp to epoch seconds (best-effort)."""
     if not iso:
         return 0
     try:
@@ -62,13 +62,13 @@ def _iso_to_epoch(iso: Optional[str]) -> int:
 
 # -------- GUID normalization --------
 def _norm_guid(g: str) -> Tuple[str, str]:
-        """
-        Normalize a GUID to (provider, identifier), for example:
-            "com.plexapp.agents.imdb://tt123?lang=en" -> ("imdb", "tt123")
-            "imdb://tt123"                            -> ("imdb", "tt123")
-            "thetvdb://123"                           -> ("tvdb", "123")
-        Returns ("", "") for unknown or invalid input.
-        """
+    """
+    Normalize a GUID to (provider, ident), e.g.:
+      "com.plexapp.agents.imdb://tt123?lang=en" -> ("imdb", "tt123")
+      "imdb://tt123"                             -> ("imdb", "tt123")
+      "thetvdb://123"                            -> ("tvdb", "123")
+    Unknown/invalid -> ("", "")
+    """
     s = (g or "").strip()
     if not s:
         return "", ""
@@ -91,8 +91,8 @@ def _norm_guid(g: str) -> Tuple[str, str]:
 
 def _guid_variants_from_key_or_item(key: str, item: Optional[Dict[str, Any]] = None) -> List[str]:
     """
-    Build plausible GUID variants for matching PlexAPI watchlist items.
-    Example: imdb:tt123 → ["imdb://tt123", "com.plexapp.agents.imdb://tt123", "com.plexapp.agents.imdb://tt123?lang=en"]
+    Build plausible GUID variants for matching against PlexAPI watchlist items.
+    Example (imdb:tt123) → ["imdb://tt123", "com.plexapp.agents.imdb://tt123", "com.plexapp.agents.imdb://tt123?lang=en"]
     """
     prov, _, ident = (key or "").partition(":")
     prov = (prov or "").lower().strip()
@@ -121,8 +121,8 @@ def _guid_variants_from_key_or_item(key: str, item: Optional[Dict[str, Any]] = N
 
 def _extract_plex_identifiers(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """
-    Extract GUID and ratingKey from a state item, if present.
-    Only the GUID is used for PlexAPI matching; ratingKey is ignored.
+    Extract GUID/ratingKey from a state item (if present).
+    Only the GUID is used for matching with PlexAPI; ratingKey is ignored here.
     """
     if not isinstance(item, dict):
         return None, None
@@ -156,7 +156,7 @@ def _iso_to_epoch(s: str | None) -> int:
         return 0
 
 def _pick_added(rec: Dict[str, Any]) -> str | None:
-    # Prefer explicit added_when; fallback to created_at or updated_at if present.
+    # prefer explicit added_when; fallback to created/updated if present
     return rec.get("added_when") or rec.get("created_at") or rec.get("updated_at")
 
 def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[Dict[str, Any]]:
@@ -225,10 +225,10 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
 # -------- Public: delete one item (PlexAPI only) --------
 def delete_watchlist_item(key: str, state_path: Path, cfg: Dict[str, Any], log=None) -> Dict[str, Any]:
     """
-    Remove the item from the user's online Plex watchlist using PlexAPI.
-    On success, add the key to the local hide-overlay to maintain UI consistency across refreshes.
-    This updates the local hidden items set, but does not modify state.json.
-    The next synchronization will reconcile state.
+    Remove the item from the user's *online* Plex watchlist using PlexAPI.
+    On success, add the key to the local hide-overlay (so the UI stays consistent across refreshes).
+    This will update the local hidden items set, but state.json is not modified.
+    The next sync will reconcile state.
     """
     try:
         token = ((cfg.get("plex", {}) or {}).get("account_token") or "").strip()

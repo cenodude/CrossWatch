@@ -21,7 +21,6 @@
       var cfg = await r.json();
       return cfg || {};
     } catch (_) {
-    // auth.trakt.js — Handles secrets hydration and Trakt device flow (idempotent, avoids optional chaining on LHS)
       return null;
     }
   }

@@ -1,16 +1,16 @@
-// Insights module: provider-agnostic statistics, sync history, and sparkline rendering
+/* Insights module: provider-agnostic stats, history, and sparkline. */
 (function (w, d) {
   function $(sel, root) { return (root || d).querySelector(sel); }
   function txt(el, v) { if (el) el.textContent = v == null ? "—" : String(v); }
   function toLocal(iso) { if (!iso) return "—"; var t = new Date(iso); return isNaN(t) ? "—" : t.toLocaleString(undefined, { hour12: false }); }
 
-  // Fetch JSON data from a URL
+  /* HTTP */
   async function fetchJSON(url) {
     try { const res = await fetch(url, { cache: "no-store" }); return res.ok ? res.json() : null; }
     catch (_) { return null; }
   }
 
-  // Render a compact SVG sparkline for time series data
+  /* Sparkline (compact SVG) */
   function renderSparkline(id, points) {
     var el = d.getElementById(id);
     if (!el) return;
@@ -26,7 +26,7 @@
     el.innerHTML = '<svg viewBox="0 0 '+wv+' '+hv+'" preserveAspectRatio="none"><path class="line" d="'+dStr+'"></path>'+dots+'</svg>';
   }
 
-  // Ensure provider tiles (Plex, Simkl, Trakt) exist in the DOM; create if missing
+  /* Provider tiles (Plex, Simkl, Trakt). Creates tiles if missing. */
   function ensureProviderTiles() {
     var container = d.getElementById("stat-providers") || d.querySelector("[data-role='stat-providers']") || d.body;
     ["plex","simkl","trakt"].forEach(function(name){
@@ -46,7 +46,7 @@
     };
   }
 
-  // Render provider totals and update active/inactive state
+  /* Render provider totals + active flags */
   function renderProviderStats(provTotals, provActive) {
     var totals = { plex:0, simkl:0, trakt:0 };
     if (provTotals && typeof provTotals === "object") {
@@ -66,7 +66,7 @@
     });
   }
 
-  // Render recent sync history items
+  /* Recent syncs */
   function renderHistory(hist) {
     var wrap = d.getElementById("sync-history") || d.querySelector("[data-role='sync-history']") || d.querySelector(".sync-history");
     if (!wrap) return;
@@ -107,7 +107,7 @@
       if (exit != null && exit !== 0) badgeClass = "err";
       else if (String(result).toUpperCase() === "EQUAL" || ((totals.a|0)===0 && (totals.r|0)===0)) badgeClass = "ok";
 
-  // Render micro badges for each feature lane except watchlist
+      // per-lane micro chips
       var feats = row && row.features || {};
       var en = row && row.features_enabled || {};
       var chips = [];
@@ -133,7 +133,7 @@
     }).join("");
   }
 
-  // Render top-level counters for now, week, and month
+  /* Top counters */
   function renderTopStats(s) {
     var now = +((s && s.now) || 0), week = +((s && s.week) || 0), month = +((s && s.month) || 0);
     txt(d.getElementById("stat-now"), now | 0);
@@ -143,7 +143,7 @@
     if (fill) { var max = Math.max(1, now, week, month); fill.style.width = Math.round((now / max) * 100) + "%"; }
   }
 
-  // Fetch insights data and render all statistics and history
+  /* Fetch + render */
   async function refreshInsights() {
     var data = await fetchJSON("/api/insights?limit_samples=60&history=3");
     if (!data) return;
@@ -166,7 +166,7 @@
     }
   }
 
-  // Schedule insights rendering, retrying until required elements are present
+  /* Mount scheduler */
   function scheduleInsights(max) {
     var tries = 0, limit = max || 20;
     (function tick(){
@@ -176,32 +176,32 @@
     })();
   }
 
-  // Expose public API for Insights module
+  /* Expose */
   w.Insights = Object.assign(w.Insights || {}, { renderSparkline, refreshInsights, scheduleInsights, fetchJSON });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
   w.scheduleInsights = scheduleInsights;
   w.fetchJSON = fetchJSON;
 
-  // Initialize insights rendering on DOMContentLoaded and tab change
+  /* Boot */
   d.addEventListener("DOMContentLoaded", function(){ scheduleInsights(); });
   d.addEventListener("tab-changed", function(ev){ if (ev && ev.detail && ev.detail.id === "main") refreshInsights(); });
 })(window, document);
 
 
-// Inject compact provider layout styles (only once)
+/* Inject compact provider layout styles (once) */
 (function injectInsightStyles() {
   var id = "insights-provider-styles";
   if (document.getElementById(id)) return; // avoid duplicates
   var css = `
-  // Provider tiles: force a single 3-column row
+  /* Provider tiles: force a single 3-column row */
   #stat-providers {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: .5rem;
     margin-top: .5rem;
   }
-  // Neutralize legacy 2-column rules
+  /* Neutralize legacy 2-col rules */
   .stat-tiles { grid-template-columns: unset; }
 
   #stat-providers .tile {
@@ -227,12 +227,12 @@
     font-weight: 700;
     line-height: 1;
   }
-  // Dim provider tiles that are not part of any current sync pair
+  /* Dim providers not part of any current pair */
   #stat-providers .tile.inactive {
     opacity: .55;
     filter: saturate(.7);
   }
-  // Responsive fallback for smaller screens
+  /* Responsive fallback */
   @media (max-width: 560px) {
     #stat-providers { grid-template-columns: repeat(2, minmax(0,1fr)); }
   }
@@ -245,7 +245,7 @@
   document.head.appendChild(style);
 })();
 
-// Inject CSS for provider tiles (fixed 3-column layout)
+/* Inject CSS for provider tiles (3 columns fixed) */
 (function addProviderCss() {
   var id = "insights-provider-css";
   if (document.getElementById(id)) return;

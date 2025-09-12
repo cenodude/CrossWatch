@@ -1,11 +1,10 @@
-// connections.overlay.js — Implements provider drag-and-drop: drag to set source, drop on target, prevents button conflicts.
-// - Provider titles are uppercase (PLEX, SIMKL, TRAKT)
-// - Applies a subtle glass effect to provider cards for a cohesive connector style with minimal changes
+// connections.overlay.js (providers DnD: drag to set source → drop on target, no button conflict)
+// - Provider titles uppercase (PLEX, SIMKL, TRAKT)
+// - Subtle glass look on provider cards (matching connectors vibe, minimal changes)
 (function () {
-  let dragSrc = null;           // Temporary drag source (provider name)
-  let isDragging = false;       // Prevents button clicks during drag operation
+  let dragSrc = null;           // transient drag source (provider name)
+  let isDragging = false;       // blocks button clicks while dragging
 
-  // Returns brand class and icon for a provider name
   function _brandInfo(name) {
     const key = String(name || "").trim().toUpperCase();
     if (key === "PLEX") return { cls: "brand-plex", icon: "/assets/PLEX.svg" };
@@ -14,7 +13,6 @@
     return { cls: "", icon: "" };
   }
 
-  // Injects overlay styles if not already present
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
@@ -130,12 +128,10 @@
     document.head.appendChild(s);
   }
 
-  // Checks if a provider supports a given feature
   function cap(obj, key) {
     try { return !!(obj && obj.features && obj.features[key]); } catch (_) { return false; }
   }
 
-  // Rebuilds provider cards in the overlay
   function rebuildProviders() {
     ensureStyles();
     const host = document.getElementById("providers_list");
@@ -195,19 +191,19 @@
     wrap.innerHTML = html;
   }
 
-  // Refresh provider cards when state changes
+  // refresh on state change
   document.addEventListener("cx-state-change", function () {
     try { rebuildProviders(); } catch (_) {}
   });
 
-  // Preserve original renderConnections behavior and extend with overlay logic
+  // glue original
   const _origRender = window.renderConnections;
   window.renderConnections = function () {
     try { if (typeof _origRender === "function") _origRender(); } catch {}
     rebuildProviders();
   };
 
-  // Preserve original cxStartConnect behavior and extend with overlay logic
+  // Keep originals working
   const _origStart = window.cxStartConnect;
   window.cxStartConnect = function (name) {
     try { if (typeof _origStart === "function") _origStart(name); } catch {}
@@ -216,7 +212,6 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
-  // Handles picking a target provider after source is set
   window.cxPickTarget = window.cxPickTarget || function (name) {
     if (!window.cx || !window.cx.connect || !window.cx.connect.source) return;
     window.cx.connect.target = String(name);
@@ -234,7 +229,6 @@
     }
   };
 
-  // Toggles source/target selection for provider connection
   window.cxToggleConnect = function (name) {
     name = String(name || "");
     window.cx = window.cx || { providers: [], pairs: [], connect: { source: null, target: null } };
@@ -245,7 +239,7 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
-  // ---- Drag & Drop logic, prevents button conflict ----
+  // ---- Drag & Drop without button conflict ----
   document.addEventListener("click", (e) => {
     if (!isDragging) return;
     if (e.target.closest && e.target.closest(".prov-action")) {
@@ -300,7 +294,7 @@
     document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok','dragging'));
   });
 
-  // Keyboard accessibility for provider cards
+  // keyboard helpers stay the same
   document.addEventListener("keydown", (e)=>{
     const card = e.target.closest && e.target.closest(".prov-card");
     if (!card) return;
@@ -316,7 +310,6 @@
     }
   });
 
-  // Initialize overlay on DOMContentLoaded
   document.addEventListener("DOMContentLoaded", () => {
     try { window.renderConnections && window.renderConnections(); } catch (_) {}
   });

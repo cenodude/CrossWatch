@@ -8,10 +8,10 @@
 
   const elProgress = document.getElementById("ux-progress");
   const elLanes    = document.getElementById("ux-lanes");
-  const elSpot     = document.getElementById("ux-spotlight"); // Reserved for future use; currently not utilized
+  const elSpot     = document.getElementById("ux-spotlight"); // intentionally unused
   if (!elProgress || !elLanes || !elSpot) return;
 
-  // ---------- UI Styles ----------
+  // ---------- Styles ----------
   const css = `
   #ux-progress, #ux-lanes { margin-top: 12px; }
 
@@ -59,7 +59,7 @@
   styleEl.textContent = css;
   document.head.appendChild(styleEl);
 
-  // ---------- State Management ----------
+  // ---------- State ----------
   let timeline = { start:false, pre:false, post:false, done:false };
   let progressPct = 0;
   let status = null;
@@ -67,18 +67,18 @@
   let _prevTL = { start:false, done:false };
   let _prevRunning = false;
 
-  // Optimistic user experience state
+  // Optimistic UX
   let optimistic = false;
   let lastServerUpdate = 0;
 
-  // Map of enabled lanes, sourced from /api/pairs
+  // Lanes enable map (from /api/pairs)
   let enabledFromPairs = null;
   let lastPairsAt = 0;
 
-  // Tracks previous lane counts for shake animation detection
+  // Shake detection
   const lastCounts = Object.create(null);
 
-  // ---------- Utility Functions ----------
+  // ---------- Utils ----------
   const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
   function asPctFromTimeline(tl) {
     if (!tl) return 0;
@@ -109,7 +109,7 @@
     return summary?.enabled || defaultEnabledMap();
   }
 
-  // ---------- Rendering Functions ----------
+  // ---------- Rendering ----------
   function renderProgress() {
     elProgress.innerHTML = "";
     const rail = document.createElement("div");
@@ -179,7 +179,7 @@
       const lane = document.createElement("div"); lane.className = "lane";
       if (!isEnabled) lane.classList.add("disabled");
 
-  // Apply shake animation if lane totals increase during a run
+      // Shake if new totals increased during a run
       const total = (added||0) + (removed||0) + (updated||0);
       const prev  = lastCounts[f.key] ?? 0;
       if (running && total > prev && isEnabled) {
@@ -236,15 +236,15 @@
   }
 
   function renderSpotlightSummary() {
-    elSpot.innerHTML = ""; // Intentionally left blank; no sync complete line
+    elSpot.innerHTML = ""; // deliberately empty (no “Sync complete” line)
   }
 
-  // ---------- Fetch enabled lanes from pairs API ----------
+  // ---------- Pairs → enabled lanes ----------
   async function pullPairs() {
     const arr = await fetchJSON("/api/pairs", null);
     if (!Array.isArray(arr)) return;
 
-  // Build union of enabled features from pairs; fallback to summary/defaults if none
+    // If there are pairs, build union of enabled features; if none, leave it null (fallback to summary/defaults)
     if (arr.length === 0) { enabledFromPairs = null; return; }
 
     const enabled = { watchlist:false, ratings:false, history:false, playlists:false };
@@ -258,7 +258,7 @@
     enabledFromPairs = enabled;
   }
 
-  // ---------- Data Fallbacks ----------
+  // ---------- Fallbacks ----------
   async function hydrateFromInsights(startTsEpoch) {
     const src = await fetchFirstJSON(
       ["/api/insights", "/api/statistics", "/statistics.json", "/data/statistics.json"],
@@ -400,7 +400,7 @@ async function pullSummary() {
   if (justFinished) {
     optimistic = false; // clear optimistic mode
 
-  // Refresh left preview UI elements
+    // refresh left preview bits
     try {
       window.wallLoaded = false;
       if (typeof updatePreviewVisibility === "function") updatePreviewVisibility();
@@ -408,24 +408,24 @@ async function pullSummary() {
       if (typeof refreshSchedulingBanner === "function") refreshSchedulingBanner();
     } catch (e) {}
 
-  // Refresh right-side statistics panel
+    // refresh right-side Statistics
     try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch (e) {}
 
-  // Broadcast sync completion event for other listeners
+    // broadcast for any other listeners
     try {
       window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary } }));
     } catch (e) {}
   }
 
-  // Store previous timeline and running state for next update
+  // keep prev markers for next tick
   _prevTL = { start: timeline.start, done: timeline.done };
   _prevRunning = !!running;
 
-  // Ensure enabled map is set and render UI
+  // ensure enabled map & render
   if (!summary.enabled) summary.enabled = defaultEnabledMap();
   renderAll();
 
-  // Fallback: hydrate feature data if missing after sync
+  // feature hydration fallback
   const hasFeatures =
     summary?.features && Object.keys(summary.features).length > 0 &&
     Object.values(summary.features).some(v =>
@@ -445,12 +445,12 @@ async function pullSummary() {
     renderSpotlightSummary();
   }
 
-  // ---------- Polling and optimistic progress updates ----------
+  // ---------- Poll + optimistic auto-bump ----------
   function tick() {
     const running = !timeline?.done || (summary?.running === true);
     pullSummary();
 
-  // Periodically refresh pairs to keep enabled lanes synchronized
+    // periodically refresh pairs (so enabled lanes stay in sync)
     if ((Date.now() - lastPairsAt) > 10000) { pullPairs().finally(() => { lastPairsAt = Date.now(); renderLanes(); }); }
 
     if ((tick._lastStatusAt || 0) + 5000 < Date.now()) { pullStatus(); tick._lastStatusAt = Date.now(); }
@@ -469,7 +469,7 @@ async function pullSummary() {
     tick._t = setTimeout(tick, running ? 1000 : 2500);
   }
 
-  // ---------- Optimistic progress bar on run button click ----------
+  // ---------- Optimistic start on button click ----------
   function wireRunButton() {
     const btn = document.getElementById("run");
     if (!btn || wireRunButton._done) return;
@@ -488,7 +488,7 @@ async function pullSummary() {
     }, { capture:true });
   }
 
-  // ---------- Legacy event bridges ----------
+  // ---------- Legacy bridges ----------
   window.addEventListener("ux:timeline", (e) => {
     const tl = e.detail || {};
     timeline = { start: !!tl.start, pre: !!tl.pre, post: !!tl.post, done: !!tl.done };
@@ -506,8 +506,8 @@ async function pullSummary() {
     refresh: () => pullSummary().then(renderAll)
   };
 
-  // ---------- Initialization ----------
-  pullPairs(); // Initialize enabled lanes
+  // ---------- Boot ----------
+  pullPairs(); // initialize enabled lanes
   renderAll();
   wireRunButton();
   tick();

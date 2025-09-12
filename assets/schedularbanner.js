@@ -1,10 +1,10 @@
 // /assets/schedularbanner.js
-// Displays scheduler status in the SYNC OUTPUT area (bottom-right). Calculates next run time if not provided by the API.
+// Scheduler status in SYNC OUTPUT (bottom-right). Computes next-run if API doesn't provide it.
 
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // ---------- Locate SYNC OUTPUT container ----------
+  // ---------- find SYNC OUTPUT ----------
   function findSyncOutputBox() {
     const picks = ['#ops-out','#ops_log','#ops-card','#sync-output','.sync-output','#ops'];
     for (const sel of picks) { const n = $(sel); if (n) return n; }
@@ -14,7 +14,7 @@
     return null;
   }
 
-  // ---------- Ensure scheduler status footer exists ----------
+  // ---------- footer inside box ----------
   function ensureFooter() {
     const host = findSyncOutputBox();
     if (!host) return null;
@@ -32,7 +32,7 @@
     return f;
   }
 
-  // ---------- Time formatting helpers ----------
+  // ---------- time helpers ----------
   function fmtClock(dt) {
     try { return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
     catch { return dt.toISOString().slice(11,16); }
@@ -45,7 +45,7 @@
     return `${s}s`;
   }
 
-  // Returns the timezone offset (in minutes) for a given date
+  // Get the offset (in minutes) of a timezone at a given date
   function tzOffsetMin(timeZone, date = new Date()) {
     // Format the date in the target TZ, then reconstruct a UTC date and diff
     const dtf = new Intl.DateTimeFormat('en-US', {
@@ -61,7 +61,7 @@
     return Math.round((tzEpoch - date.getTime()) / 60000);
   }
 
-  // Calculates the next run epoch (seconds) from config if the API does not provide it
+  // Compute next run epoch (seconds) from config when API doesn’t give one
   function computeNextFromConfig(cfg) {
     const mode = (cfg?.mode || 'hourly').toLowerCase();
     const n = parseInt(cfg?.every_n_hours || '2', 10) || 2;
@@ -99,7 +99,7 @@
     return Math.floor(candidate.getTime() / 1000);
   }
 
-  // ---------- State variables and render function ----------
+  // ---------- state + render ----------
   let enabledFlag = false;
   let nextEpochSec = 0;
   let runningFlag = false;
@@ -116,7 +116,7 @@
     el.style.display = 'block';
   }
 
-  // ---------- Poll backend for scheduler status ----------
+  // ---------- backend poll ----------
   async function fetchStatus() {
     try {
       const r = await fetch('/api/scheduling/status', { cache: 'no-store' });

@@ -1,10 +1,10 @@
 /* ==================================================================
-  CrossWatch UI Stylesheet — Defines all styles for the CrossWatch web interface.
-  ================================================================== */
+   CrossWatch UI Stylesheet
+   ================================================================== */
 
 /* ==================================================================
-  Design tokens and base variables for consistent theming
-  ================================================================== */
+   Design Tokens & Base
+   ================================================================== */
 :root {
   --bg: #000;
   --panel: #0b0b0f;
@@ -65,8 +65,8 @@ code {
 }
 
 /* ==================================================================
-  Layout styles for main containers and grid structure
-  ================================================================== */
+   Layout
+   ================================================================== */
 #ops-card.card {
   padding-block: 20px 38px
 }
@@ -214,8 +214,8 @@ main.single #stats-card {
 }
 
 /* ==================================================================
-  Utility classes for common UI patterns
-  ================================================================== */
+   Utilities
+   ================================================================== */
 .hidden {
   display: none
 }
@@ -321,8 +321,8 @@ main.single #stats-card {
 }
 
 /* ==================================================================
-  Styles for header, navigation tabs, and branding
-  ================================================================== */
+   Header & Navigation
+   ================================================================== */
 header {
   position: sticky;
   top: 0;
@@ -533,8 +533,8 @@ header {
 }
 
 /* ==================================================================
-  Styles for cards, panels, and content containers
-  ================================================================== */
+   Cards & Panels
+   ================================================================== */
 .meta-card {
   background: linear-gradient(180deg,rgba(255,255,255,.02),transparent),var(--panel);
   border: 1px solid var(--border);
@@ -615,8 +615,8 @@ header {
 }
 
 /* ==================================================================
-  Button styles for actions and controls
-  ================================================================== */
+   Buttons
+   ================================================================== */
 .iconbtn {
   display: inline-flex;
   align-items: center;
@@ -936,8 +936,8 @@ header {
 }
 
 /* ==================================================================
-  Styles for badges, chips, and pill indicators
-  ================================================================== */
+   Badges, Chips & Pills
+   ================================================================== */
 .badges {
   display: flex;
   gap: 8px;
@@ -1098,13 +1098,11 @@ header {
   border: 1px solid rgba(255,255,255,.08);
   color: #fff;
   -webkit-text-fill-color: #fff;
-  -webkit-background-clip: initial;
-  background-clip: initial;
+  -webkit-background-clip: initial
 }
 .stat-block .pill {
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
   -webkit-background-clip: text;
-  background-clip: text;
   -webkit-text-fill-color: transparent;
   border: 0;
   background-color: transparent;
@@ -1119,8 +1117,6 @@ header {
 .pill.plain {
   background: none !important;
   -webkit-background-clip: unset !important;
-    -webkit-background-clip: unset !important;
-    background-clip: unset !important;
   -webkit-text-fill-color: unset !important;
   color: #fff !important
 }
@@ -1131,8 +1127,6 @@ header {
   letter-spacing: .2px;
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
   -webkit-background-clip: text;
-    -webkit-background-clip: text;
-    background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: 700
 }
@@ -1158,8 +1152,8 @@ header {
 }
 
 /* ==================================================================
-  Styles for form elements and input fields
-  ================================================================== */
+   Forms & Inputs
+   ================================================================== */
 label {
   font-weight: 650;
   color: var(--muted);
@@ -1188,8 +1182,8 @@ select {
 }
 
 /* ==================================================================
-  Styles for sync status indicators and stepper UI
-  ================================================================== */
+   Sync & Status UI
+   ================================================================== */
 .sync-status {
   display: flex;
   align-items: center;
@@ -1243,8 +1237,8 @@ select {
 }
 
 /* ==================================================================
-  Styles for watchlist grid and poster cards
-  ================================================================== */
+   Watchlist & Posters
+   ================================================================== */
 .wl-grid {
   --gap: 12px;
   display: grid;
@@ -1408,8 +1402,6 @@ select {
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 4;
-    -webkit-line-clamp: 4;
-    line-clamp: 4;
   -webkit-box-orient: vertical
 }
 #page-watchlist .wl-cap {
@@ -1459,8 +1451,8 @@ select {
 }
 
 /* ==================================================================
-  Styles for modal dialogs and provider cards
-  ================================================================== */
+   Modals & Providers
+   ================================================================== */
 .section>.head {
   display: flex;
   align-items: center;
@@ -1713,8 +1705,8 @@ select {
 }
 
 /* ==================================================================
-  Styles for log display and scrubber controls
-  ================================================================== */
+   Logs & Scrubbers
+   ================================================================== */
 .log {
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   background: #05060b;
@@ -1887,8 +1879,8 @@ select {
 }
 
 /* ==================================================================
-  Styles for statistics panels and tiles
-  ================================================================== */
+   Statistics
+   ================================================================== */
 .stats-modern {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2308,8 +2300,6 @@ select {
   letter-spacing: .2px;
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
   -webkit-background-clip: text;
-    -webkit-background-clip: text;
-    background-clip: text;
   -webkit-text-fill-color: transparent
 }
 .watchtime .units {
@@ -4004,6 +3994,6 @@ select {
 .history-badges .sep { display:inline-block; width: 8px; }
 
 /* Keep header clickable; only body looks dimmed */
-/* Removed empty ruleset for .section.disabled */
+.section.disabled { }
 .section.disabled .head { opacity: 1; }
 .section.disabled .body { opacity: .55; }

@@ -1,4 +1,4 @@
-// Initializes tab navigation and page visibility on load
+/* Global showTab bootstrap (runs first) */
 (function(){
   if (typeof window.showTab !== "function") {
     window.showTab = function(id){
@@ -17,7 +17,7 @@
   }
 })();
 
-// Core utility functions for DOM and state management
+/* ==== BEGIN crosswatch.core. ==== */
 
 function _el(id) {
   return document.getElementById(id);
@@ -33,6 +33,11 @@ function _boolSel(id) {
 function _text(id, d = "") {
   const el = _el(id);
   return el ? el.textContent ?? d : d;
+}
+
+function _setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val ?? "";
 }
 function _setText(id, val) {
   const el = document.getElementById(id);
@@ -61,9 +66,9 @@ function stateAsBool(v) {
   return !!v;
 }
 
-// Helpers for managing secret fields and masking
+// --- secret field helpers (masking + safe flags)
 function applyServerSecret(inputId, hasValue) {
-  // Remove Trakt tokens and pending information from config and UI
+  const el = document.getElementById(inputId);
   if (!el) return;
   el.value = hasValue ? "••••••••" : "";
   el.dataset.masked = hasValue ? "1" : "0";
@@ -82,7 +87,7 @@ function finishSecretLoad(inputId, hasValue) {
   applyServerSecret(inputId, !!hasValue);
 }
 
-// Returns a set of configured authentication providers
+// --- Determine which auth providers are configured
 function getConfiguredProviders(cfg = window._cfgCache || {}) {
   const S = new Set();
   const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
@@ -94,20 +99,21 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   return S;
 }
 
-      try { notify && notify("Trakt credentials cleared"); } catch(_) {}
+// Try to resolve provider key from a dynamic card/row
 function resolveProviderKeyFromNode(node) {
-  // Prefer explicit data attribute for provider detection
-      try { notify && notify("Clearing failed"); } catch(_) {}
+  // Prefer an explicit attribute if you can add it in your renderer:
+  // <div data-sync-prov="PLEX">...</div>
+  const attr = (node.getAttribute?.("data-sync-prov") || node.dataset?.syncProv || "").toUpperCase();
   if (attr) return attr;
 
-  // Detect provider by logo alt text
+  // Logo-based detection (common patterns)
   const img = node.querySelector?.('img[alt], .logo img[alt], [data-logo]');
   const alt = (img?.getAttribute?.('alt') || img?.dataset?.logo || "").toUpperCase();
   if (alt.includes("PLEX"))  return "PLEX";
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
 
-  // Fallback: detect provider by text content
+  // Text fallback: look at usual title/name containers, else full text
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
   const txt = (tnode?.textContent || node.textContent || "").toUpperCase();
   if (/\bPLEX\b/.test(txt))  return "PLEX";
@@ -161,32 +167,32 @@ function applySyncVisibility() {
       if (!allowed.has(k)) return;
       const o = document.createElement("option");
       o.value = k; o.textContent = LABEL[k] || k;
-// --- Bootstrap shims to prevent console errors if modals are not loaded
+      sel.appendChild(o);
     });
 
     if (prev && allowed.has(prev)) sel.value = prev;
     else if (hadPlaceholder) sel.value = "";
-// --- Secret field helpers: masking and touch flags
-// Ensures saveSettings only updates tokens when the user has actually changed them
+  });
+}
 
 
 // Debounced scheduler for applySyncVisibility (no thrash, safe if function not yet defined)
 let __syncVisTick = 0;
 function scheduleApplySyncVisibility() {
   if (__syncVisTick) return;
-  __syncVisTick = 1;
-  const raf = window.requestAnimationFrame || ((f) => setTimeout(f, 0));
-  raf(() => {
+  const run = () => {
     __syncVisTick = 0;
     if (typeof applySyncVisibility === "function") {
       try { applySyncVisibility(); } catch (e) { console.warn("[sync-vis] apply failed", e); }
     }
-  });
+  };
+  const raf = window.requestAnimationFrame || ((f) => setTimeout(f, 0));
+  __syncVisTick = raf(run);
 }
 
 // Observe dynamic rendering and re-apply (debounced)
 function bindSyncVisibilityObservers() {
-  const list = document.querySelector("#sec-sync .list");
+  const list = document.getElementById("providers_list");
   if (list && !list.__syncObs) {
     const obs = new MutationObserver(() => scheduleApplySyncVisibility());
     obs.observe(list, { childList: true, subtree: true });
@@ -199,32 +205,32 @@ function bindSyncVisibilityObservers() {
     footer.__syncObs = obs2;
   }
   if (!window.__syncVisEvt) {
-    window.addEventListener("settings-changed", () => {
-      scheduleApplySyncVisibility();
+    window.addEventListener("settings-changed", (e) => {
+      if (e?.detail?.scope === "settings") scheduleApplySyncVisibility();
     });
     window.__syncVisEvt = true;
   }
+  // First pass
   scheduleApplySyncVisibility();
 }
 
 
-// Controls watchlist preview visibility based on API pairs
-const PAIRS_TTL_MS = 15000;
+// ---- Watchlist Preview visibility based on /api/pairs ----
+const PAIRS_CACHE_KEY = "cw.pairs.v1";
+const PAIRS_TTL_MS    = 15_000;
 
 function _invalidatePairsCache(){ try { localStorage.removeItem(PAIRS_CACHE_KEY); } catch {} }
 
 function _savePairsCache(pairs) {
   try { localStorage.setItem(PAIRS_CACHE_KEY, JSON.stringify({ pairs, t: Date.now() })); } catch {}
 }
-
- // --- Sensitive fields: inject raw values from config (do not mark as touched)
 function _loadPairsCache() {
   try { return JSON.parse(localStorage.getItem(PAIRS_CACHE_KEY) || "null"); } catch { return null; }
 }
 
 async function _getPairsFresh() {
   try {
-    // Ensure saveSettings does not treat this as a user edit
+    const r = await fetch("/api/pairs", { cache: "no-store" });
     if (!r.ok) return null;
     const arr = await r.json();
     _savePairsCache(arr);
@@ -233,43 +239,43 @@ async function _getPairsFresh() {
 }
 
 async function isWatchlistEnabledInPairs(){
-  // PLEX token
+  const freshWithin = (obj) => obj && (Date.now() - (obj.t || 0) < PAIRS_TTL_MS);
   const anyWL = (arr) => Array.isArray(arr) && arr.some(p => !!(p?.features?.watchlist?.enable));
 
   // Try cache first
-  // SIMKL credentials
+  const cached = _loadPairsCache();
   if (freshWithin(cached)) {
     const cachedEnabled = anyWL(cached.pairs);
     if (!cachedEnabled) return false;        // trust "false" immediately
     // cached says true → confirm with live before returning true
     const live = await _getPairsFresh();
-  // TMDB API key
+    return anyWL(live);
   }
 
   // No fresh cache → go live
-  // TRAKT credentials
+  const live = await _getPairsFresh();
   return anyWL(live);
 }
 
-// Exposes updatePreviewVisibility for external calls
+// expose so other modules can call after settings/sync
 window.updatePreviewVisibility = updatePreviewVisibility;
 
-  // --- Basic scheduling (advanced UI may extend this in the future)
+// run once on load
 document.addEventListener("DOMContentLoaded", () => { updatePreviewVisibility(); });
 
 // ---- END   Watchlist Preview visibility based on /api/pairs ----
 
-// Connection status logic and provider badge management
+// ========================== CONNECTION STATUS -- BEGIN   ============================================
 const AUTO_STATUS = false; // DISABLE by default
 let lastStatusMs = 0;
 const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
-  // UI hints for SIMKL and TMDB
+
 let busy = false,
   esDet = null,
   esSum = null,
   plexPoll = null,
   simklPoll = null,
-  // Final visibility pass after UI fields may have re-rendered
+  appDebug = false,
   currentSummary = null;
 let detStickBottom = true; 
 let wallLoaded = false,
@@ -280,7 +286,7 @@ window._ui = { status: null, summary: null };
 
 const STATUS_CACHE_KEY = "cw.status.v1";
 
-// Normalizes provider status to a standard format
+// --- status normalizer (zet alles naar {PLEX|SIMKL|TRAKT: {connected:boolean}})
 function normalizeProviders(input) {
   const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
   const normOne = (v) => {
@@ -299,7 +305,7 @@ function normalizeProviders(input) {
   };
 }
 
-// Local storage helpers for status caching
+// cache helpers
 function saveStatusCache(providers) {
   try {
     const normalized = normalizeProviders(providers);
@@ -354,7 +360,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
   return active;
 }
 
-// Toggles provider badges based on active status
+// Hide/show badges by provider
 function toggleProviderBadges(active) {
   const map = { PLEX: "badge-plex", SIMKL: "badge-simkl", TRAKT: "badge-trakt" };
   for (const [prov, id] of Object.entries(map)) {
@@ -364,7 +370,7 @@ function toggleProviderBadges(active) {
   }
 }
 
-// Normalizes connection state to tri-state value
+// Tri-state normalizer: "ok" | "no" | "unknown" (fallback)
 function connState(v) {
   if (v == null) return "unknown";
 
@@ -402,7 +408,7 @@ function connState(v) {
   return "unknown";
 }
 
-// Picks object property case-insensitively
+// Case-insensitive picker
 function pickCase(obj, k) {
   return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
 }
@@ -440,7 +446,7 @@ async function refreshStatus(force = false) {
   try {
     // 1) Make sure we know which providers are used in pairs (throttled)
     await refreshPairedProviders(force ? 0 : 5000);
-    // Merge scheduling into config.json (not /api/scheduling)
+
     // 2) Fetch live status
     const r = await fetch("/api/status" + (force ? "?fresh=1" : ""), { cache: "no-store" }).then(r => r.json());
     if (typeof appDebug !== "undefined") appDebug = !!r.debug;
@@ -1517,6 +1523,7 @@ function openDetailsLog() {
     el.scrollTop = el.scrollHeight;
     updateSlider();
   });
+  }
 
   function closeDetailsLog() {
     try { esDet?.close(); } catch (_) {}
@@ -3054,7 +3061,7 @@ async function loadProviders() {
       return;
     }
 
-  // Normalize provider key for visibility filtering
+    // Normalize to a stable provider key used by the visibility filter
     const normKey = (s = "") => {
       s = String(s).toUpperCase();
       if (/\bPLEX\b/.test(s)) return "PLEX";
@@ -3086,11 +3093,11 @@ async function loadProviders() {
 
     div.innerHTML = html;
 
-  // Cache provider list for use in other UI components
+    // Cache providers for other parts of the UI
     window.cx = window.cx || {};
     window.cx.providers = Array.isArray(arr) ? arr : [];
 
-  // Re-render connections if the function is available
+    // Re-render connections if available
     try {
       if (typeof renderConnections === "function") renderConnections();
     } catch (e) {
@@ -3100,7 +3107,7 @@ async function loadProviders() {
     div.innerHTML = '<div class="muted">Failed to load providers.</div>';
     console.warn("loadProviders error", e);
   } finally {
-  // Always apply visibility filter after rendering
+    // Always apply visibility filter after (re)render
     try {
       if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
       else if (typeof applySyncVisibility === "function") applySyncVisibility();
@@ -3217,12 +3224,15 @@ function renderConnections() {
 
 (function () {
   
-// [Moved to modals.js]
+/* [moved to modals.js] */
+
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
 
   
-  // Opens the configuration modal for a sync pair
   window.cxOpenModalFor = function (pair, editingId) {
-    try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
+  try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
   function pick() {
     return {
@@ -3237,10 +3247,8 @@ function renderConnections() {
     };
   }
 
-  // Collects modal UI elements
   var ui = pick();
 
-  // Ensure all required modal inputs are present
   if (!ui.src || !ui.dst || !ui.one || !ui.two || !ui.enabled) {
     try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
     ui = pick();
@@ -3251,7 +3259,6 @@ function renderConnections() {
   }
 
   
-  // Enable/disable two-way sync option based on provider capabilities
   try {
     var _src = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
     var _dst = typeof _byName === "function" ? _byName(window.cx.providers, pair.target) : null;
@@ -3261,11 +3268,9 @@ function renderConnections() {
     if (twoLabel) twoLabel.classList.toggle("muted", !twoOk);
   } catch (_) {}
 
-  // Set modal input values for source and target
   ui.src.value = pair.source; try { ui.src.dispatchEvent(new Event("change")); } catch(_){};
   ui.dst.value = pair.target; try { ui.dst.dispatchEvent(new Event("change")); } catch(_){};
 
-  // Set sync mode and enabled state
   var mode = pair.mode || "one-way";
   if (mode === "one") mode = "one-way";
   if (mode === "two") mode = "two-way";
@@ -3273,7 +3278,6 @@ function renderConnections() {
   ui.one.checked = !ui.two.checked;
   ui.enabled.checked = pair.enabled !== false;
 
-  // Set watchlist feature controls in modal
   try {
     var wf = (pair.features && pair.features.watchlist) || { add: true, remove: false };
     var srcObj = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
@@ -3288,7 +3292,6 @@ function renderConnections() {
     if (ui.wlNote) ui.wlNote.textContent = wlOk ? "" : "Watchlist is not supported on one of the providers.";
   } catch (_) {}
 
-  // Show the modal dialog
   var modal = document.getElementById("cx-modal");
   if (modal) modal.classList.remove("hidden");
 };
@@ -3655,19 +3658,18 @@ function fixFormLabels(root = document) {
     lab.setAttribute("for", ctrl.id);
   });
 }
-  // Automatically associate labels with form controls for accessibility
-  document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
+document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
 
-// ==== END crosswatch.core.fixed4.js ====
+/* ==== END crosswatch.core.fixed4.js ==== */
 
-// Smoke-check: ensure essential APIs exist on window
+/* Smoke-check: ensure essential APIs exist on window */
 (function(){
   const need = ["openAbout","cxEnsureCfgModal","renderConnections","loadProviders"];
   need.forEach(n => { if (typeof window[n] !== "function") { console.warn("[crosswatch] missing", n); } });
   document.dispatchEvent(new Event("cx-state-change"));
 })();
 
-// Global shim: showTab for legacy inline onclick handlers
+/* Global shim: showTab for legacy inline onclick= */
 (function(){
   if (typeof window.showTab !== "function") {
     window.showTab = function(id){
@@ -3692,6 +3694,6 @@ function fixFormLabels(root = document) {
 })();
 
 
-// Ensure showTab is available globally at the end
+/* Ensure showTab is global at end */
 try{ window.showTab = window.showTab || showTab; }catch(_){}
 

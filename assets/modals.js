@@ -1,4 +1,4 @@
-// modals.js — Modal logic for configuring connections
+// modals.js — Configure Connection modal
 
 function _cxGetState() {
   const el = document.getElementById('cx-modal');
