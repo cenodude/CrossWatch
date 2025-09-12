@@ -53,8 +53,12 @@ main() {
     # Custom command path
     run_as "$*"
   else
-    # Default server
-    run_as "uvicorn crosswatch:app --host ${WEB_HOST} --port ${WEB_PORT} ${RELOAD_FLAG}"
+    # Default server (use crosswatch.py:main() so startup info prints)
+    if [[ "${RELOAD:-no}" == "yes" ]]; then
+      run_as "watchmedo auto-restart --pattern='*.py' --recursive -- python -m crosswatch --host ${WEB_HOST} --port ${WEB_PORT}"
+    else
+      run_as "python -m crosswatch --host ${WEB_HOST} --port ${WEB_PORT}"
+    fi
   fi
 }
 
