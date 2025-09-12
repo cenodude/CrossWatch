@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="/images/CrossWatch-transparant.png" alt="CrossWatch" style="max-height: 200px; width: auto;">
+  <img src="/images/CrossWatch-transparant.png" alt="CrossWatch" style="max-height: 10px; width: auto;">
   <p align="center">
 </p>
 
