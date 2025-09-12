@@ -3,8 +3,8 @@
   <img src="images/CrossWatch-showcase.png" alt="CrossWatch" width="400">
 </p>
 
-CrossWatch is a lightweight sync engine that keeps your Plex, SIMKL, and TRAKT libraries in harmony.
-It offers a web-based control panel with a modular design for easily adding new providers.
+CrossWatch is a lightweight synchronization engine that keeps providers like Plex, SIMKL, and TRAKT libraries in harmony.
+It offers a web-based control panel with a modular design for easily adding new providers in the feature.
 Use its clean UI to link accounts, create sync pairs, run them manually or on a schedule, and monitor stats and history.
 
 ## 🚀 Features
@@ -30,8 +30,7 @@ docker run -d \
   -v /path/to/config:/config \
   -e TZ=Europe/Amsterdam \
   ghcr.io/cenodude/crosswatch:latest
-
-
+```
 > The container exposes the web UI at:  
 > 👉 http://localhost:8787
 
