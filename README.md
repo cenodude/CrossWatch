@@ -6,9 +6,6 @@ CrossWatch is a lightweight sync engine that keeps your Plex, SIMKL, and TRAKT l
 It offers a web-based control panel with a modular design for easily adding new providers.
 Use its clean UI to link accounts, create sync pairs, run them manually or on a schedule, and monitor stats and history.
 
-
----
-
 ## 🚀 Features
 - Create sync pairs with advanced if/else scheduling support
 - Sync watchlists (one-way or two-way)
