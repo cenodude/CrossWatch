@@ -23,9 +23,14 @@ Use its clean UI to link accounts, create sync pairs, run them manually or on a 
 
 ## 🐳 Run as Container
 
-```bash
-docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=Europe/Amsterdam   ghcr.io/cenodude/crosswatch:latest
-```
+```shell
+docker run -d \
+  --name crosswatch \
+  -p 8787:8787 \
+  -v /path/to/config:/config \
+  -e TZ=Europe/Amsterdam \
+  ghcr.io/cenodude/crosswatch:latest
+
 
 > The container exposes the web UI at:  
 > 👉 http://localhost:8787
