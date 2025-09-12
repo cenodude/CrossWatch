@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-_secheduling.py (spelling as requested)
+_scheduling.py
 
 A tiny background scheduler driven by config callbacks, not file paths.
 This avoids coupling with JSON vs YAML details in the host app.
