@@ -1,39 +1,22 @@
 #!/usr/bin/env bash
-set -Euo pipefail
-: "${RUNTIME_DIR:=/config}"
-: "${PROFILE_ID:=}"
+# Run all configured sync pairs using the Orchestrator
+# Exits non-zero on failure and prints full output
+
+set -Eeuo pipefail
+export PYTHONUNBUFFERED=1
+export PYTHONPATH="${PYTHONPATH:-/app}"
 
 python - <<'PY'
-import os, json, sys
-from pathlib import Path
-
-def load_config():
-    for p in ("/config/config.json","/app/config.json"):
-        try:
-            return json.load(open(p,"r",encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-def save_config(cfg):
-    Path("/config").mkdir(parents=True, exist_ok=True)
-    with open("/config/config.json","w",encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+import sys, json, traceback
+from cw_platform.orchestrator import Orchestrator
 
 try:
-    from platform.manager import PlatformManager
-    from platform.orchestrator import Orchestrator
+    orc = Orchestrator()
+    result = orc.run_pairs(write_state_json=True)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    sys.exit(int(result.get("exit_code", 0)) if isinstance(result, dict) else 0)
 except Exception as e:
-    print(f"[RUN] missing platform modules: {e}")
+    print(f"[RUN] Sync failed: {e}", file=sys.stderr)
+    traceback.print_exc()
     sys.exit(1)
-
-pm = PlatformManager(load_config, save_config, profiles_path=Path(os.environ.get("RUNTIME_DIR","/config")) / "profiles.json")
-profs = pm.sync_profiles()
-pid = os.environ.get("PROFILE_ID") or next((p.get("id") for p in profs if p.get("id")=="PLEX→SIMKL"), None) or (profs[0]["id"] if profs else None)
-if not pid:
-    print("[RUN] no profiles available"); sys.exit(0)
-
-orc = Orchestrator(load_config, save_config, pm)
-rep = orc.run_profile(pid)
-print(json.dumps(rep, indent=2))
 PY
