@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 """
-Provider-agnostic Orchestrator
-------------------------------
+Orchestrator module for provider-agnostic synchronization and management.
 """
 
-# -------------------- imports
+# -------------------- Standard library imports
 import json
 import time
 import inspect
@@ -13,16 +12,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
-# -------------------- config base
+# -------------------- Configuration base import
 try:
-    from . import config_base
+    try:
+        import importlib
+        config_base = importlib.import_module('.config_base', __package__)
+    except ImportError:
+        import config_base
 except Exception:
-    class config_base:  # type: ignore
+    class _ConfigBaseFallback:
         @staticmethod
         def CONFIG_BASE() -> str:
             return "./"
+    config_base = _ConfigBaseFallback()
 
-# -------------------- logging shim
+# -------------------- Logging shim
 class _Logger:
     def __call__(self, *a): print(*a)
     def info(self, *a): print(*a)
@@ -32,7 +36,7 @@ class _Logger:
     def success(self, *a): print(*a)
 log = _Logger()
 
-# -------------------- statistics (provider-agnostic)
+# -------------------- Statistics (provider-agnostic)
 try:
     from _statistics import Stats  # type: ignore
 except Exception:  # pragma: no cover
@@ -42,7 +46,7 @@ except Exception:  # pragma: no cover
         def overview(self, *a, **k): return {}
         def http_overview(self, *a, **k): return {}
 
-# -------------------- provider protocol
+# -------------------- Provider protocol definition
 class InventoryOps(Protocol):
     def name(self) -> str: ...
     def label(self) -> str: ...
@@ -53,7 +57,7 @@ class InventoryOps(Protocol):
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
     # Optional: modules may expose activities(cfg) → dict with timestamps
 
-# -------------------- module loader
+# -------------------- Module loader for sync providers
 def _iter_sync_modules():
     import importlib, pkgutil
     import providers.sync as syncpkg  # type: ignore
@@ -86,7 +90,7 @@ def load_sync_providers() -> Dict[str, InventoryOps]:
             continue
     return out
 
-# -------------------- canonical helpers
+# -------------------- Canonical key helpers
 _ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug")
 
 def _first_id(d: Mapping[str, Any]) -> Optional[Tuple[str, str]]:
@@ -117,7 +121,7 @@ def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
         out["rating"] = item.get("rating")
     return out
 
-# -------------------- state files
+# -------------------- State file management
 class _Files:
     def __init__(self, base: Path):
         self.base = base
@@ -141,7 +145,7 @@ class _Files:
         tmp.replace(p)
 
     def load_state(self) -> Dict[str, Any]:
-        # providers.<NAME>.<feature>.baseline.items ; checkpoint
+        # Loads provider baseline items and checkpoint from state file
         return self._read(self.state, {"providers": {}, "wall": [], "last_sync_epoch": None})
 
     def save_state(self, data: Mapping[str, Any]):
@@ -162,19 +166,19 @@ class _Files:
             if self.hide.exists():
                 self.hide.unlink()
         except Exception:
-            # Fall back: truncate to an empty array
+            # If unable to delete, truncate to an empty array
             try:
                 self.hide.write_text("[]", encoding="utf-8")
             except Exception:
                 pass
 
 
-# -------------------- policy
+# -------------------- Conflict policy dataclass
 @dataclass
 class ConflictPolicy:
     prefer: str = "source"  # used only for true conflicts
 
-# -------------------- orchestrator
+# -------------------- Orchestrator main class
 @dataclass
 class Orchestrator:
     config: Mapping[str, Any]
@@ -234,9 +238,9 @@ class Orchestrator:
             self._emit_info(f"[DEBUG] {msg}")
 
     def _post_feature_success(self, feature: str) -> None:
-        # After a successful sync for a given feature, run any cleanups.
+        # Runs post-sync cleanups for a given feature.
         if feature == "watchlist":
-            # Basic rule: clear watchlist_hide.json so hidden entries are reset after sync
+            # Clears watchlist_hide.json so hidden entries are reset after sync
             self.files.clear_watchlist_hide()
             self._dbg("hidefile.cleared", feature=feature)
 
@@ -264,6 +268,8 @@ class Orchestrator:
             return None
         try:
             acts = acts_fn(self.cfg) or {}
+            if not isinstance(acts, dict):
+                return None
             if feature == "watchlist":
                 return acts.get("watchlist") or acts.get("ptw") or acts.get("updated_at")
             if feature == "ratings":
@@ -286,7 +292,7 @@ class Orchestrator:
                 self._emit_info(f"[!] snapshot.failed provider={name} feature={feature} error={e}")
                 idx = {}
             if isinstance(idx, list):
-                canon = {canonical_key(v): v for v in idx}
+                canon = {canonical_key(v) if isinstance(v, dict) else str(v): v for v in idx}
             else:
                 canon = {canonical_key(v): v for v in idx.values()} if idx else {}
             snaps[name] = canon
@@ -364,7 +370,7 @@ class Orchestrator:
         return out
 
     def _tomb_hits_item(self, tomb: set[str], item: Mapping[str, Any]) -> bool:
-        """Return True if any tombstone key (canonical or alias) matches this item."""
+        """Returns True if any tombstone key (canonical or alias) matches this item."""
         if not tomb:
             return False
         ck = canonical_key(item)
@@ -381,7 +387,7 @@ class Orchestrator:
         return f"{t}|title:{ttl}|year:{yr}" in tomb
 
     def _keys_hit_item(self, keys: set[str], item: Mapping[str, Any]) -> bool:
-        """True if any canonical/alias key in `keys` matches this item (used for observed deletions)."""
+        """Returns True if any canonical/alias key in `keys` matches this item (used for observed deletions)."""
         if not keys:
             return False
         ck = canonical_key(item)

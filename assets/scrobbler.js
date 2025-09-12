@@ -1,7 +1,7 @@
-// scrobbler.js — CrossWatch Scrobbler UI (Webhook + Watcher + Plex Server)
+// scrobbler.js — CrossWatch Scrobbler UI for Webhook, Watcher, and Plex Server integration
 
 (function (w, d) {
-  // -------- HTTP --------
+  // -------- HTTP request helpers --------
   async function fetchJSON(url, opt) {
     const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {}));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -13,7 +13,7 @@
     return r.text();
   }
 
-  // -------- DOM --------
+  // -------- DOM utility functions --------
   const $    = (sel, root) => (root || d).querySelector(sel);
   const $all = (sel, root) => Array.from((root || d).querySelectorAll(sel));
   const el   = (tag, attrs) => { const x = d.createElement(tag); if (attrs) Object.assign(x, attrs); return x; };
@@ -29,7 +29,7 @@
     n.style.opacity = "0.9";
   }
 
-  // -------- Tiny CSS for alignment/look --------
+  // -------- Inject minimal CSS for UI alignment and appearance --------
   function injectStyles() {
     if (d.getElementById("sc-styles")) return;
     const css = `
@@ -49,7 +49,7 @@
     s.id = "sc-styles"; s.textContent = css; d.head.appendChild(s);
   }
 
-  // -------- State --------
+  // -------- State management --------
   const STATE = {
     mount: null,
     webhookHost: null,
@@ -60,7 +60,7 @@
     pollTimer: null,
   };
 
-  // -------- Config helpers --------
+  // -------- Configuration helpers --------
   function deepSet(obj, path, val) {
     const parts = path.split(".");
     let o = obj;
@@ -96,7 +96,7 @@
   }
   const asArray = (v) => Array.isArray(v) ? v.slice() : (v == null || v === "" ? [] : [String(v)]);
 
-  // -------- API map --------
+  // -------- API endpoint map --------
   const API = {
     cfgGet: () => fetchJSON("/api/config"),
     users: async () => {
@@ -120,7 +120,7 @@
       fetchText(`/api/logs/dump?channel=${encodeURIComponent(channel)}&n=${n}`)
   };
 
-  // -------- UI bits --------
+  // -------- UI rendering helpers --------
   function chip(label, onRemove) {
     const c = el("span", { className: "chip" });
     const t = el("span"); t.textContent = label;
@@ -185,7 +185,7 @@
     } catch { return false; }
   }
 
-  // -------- Layout (Server card left, Status card right) --------
+  // -------- Layout: Server card (left), Status card (right) --------
   function buildUI() {
     injectStyles();
 
@@ -374,7 +374,7 @@
     on($("#sc-server-uuid", STATE.mount), "input",  e => write("scrobble.watch.filters.server_uuid", String(e.target.value || "").trim()));
   }
 
-  // Hidden input helpers (for root save)
+  // Hidden input helpers for root save
   function ensureHiddenServerUrlInput() {
     let hidden = d.getElementById("cfg-plex-server-url");
     const form = d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount || d.body);
@@ -392,7 +392,7 @@
     if (h) h.value = String(read("plex.server_url", "") || "");
   }
 
-  // -------- Populate from cfg --------
+  // -------- Populate UI from configuration --------
   function populate() {
     const enabled   = !!read("scrobble.enabled", false);
     const mode      = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -438,7 +438,7 @@
     loadPmsList().catch(() => {});
   }
 
-  // -------- Actions --------
+  // -------- Action handlers --------
   async function refreshWatcher() {
     try {
       const s = await API.watch.status();
@@ -448,7 +448,7 @@
     }
   }
 
-  // pull last 5 log lines from /api/logs/dump?channel=TRAKT&n=5
+  // Pull last 5 log lines from /api/logs/dump?channel=TRAKT&n=5
   async function refreshWatchLogs(channel = "TRAKT") {
     const box = $("#sc-status-logs", STATE.mount);
     if (!box) return;
@@ -596,7 +596,7 @@
     }
   }
 
-  // -------- Public API --------
+  // -------- Public API exposure --------
   function init(opts = {}) {
     STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
     STATE.cfg = opts.cfg || w._cfgCache || {};

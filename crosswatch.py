@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-"""CrossWatch Web API (FastAPI): backend for status, auth, scheduling, sync, and state."""
+"""CrossWatch Web API (FastAPI): backend for status, authentication, scheduling, synchronization, and state management."""
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -57,7 +57,7 @@ from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
 from cw_platform import config_base
 
-# Paths & globals
+## Paths and global variables
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -80,7 +80,7 @@ _DEBUG_CACHE = {"ts": 0.0, "val": False}
 RUNNING_PROCS: Dict[str, threading.Thread] = {}
 SYNC_PROC_LOCK = threading.Lock()
 
-# API models
+## API models
 class MetadataResolveIn(BaseModel):
     entity: str
     ids: dict
@@ -95,13 +95,13 @@ class PairIn(BaseModel):
     enabled: bool | None = None
     features: dict | None = None
 
-# App dirs derived from config
+## Application directories derived from configuration
 REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
 HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
 
-# Utilities
+## Utility functions
 
 def _get_orchestrator() -> Orchestrator:
     cfg = load_config()
@@ -154,7 +154,7 @@ def _is_debug_enabled() -> bool:
     except Exception:
         return False
 
-# App lifecycle
+## Application lifecycle management
 @asynccontextmanager
 async def _lifespan(app):
     try:
@@ -219,7 +219,7 @@ ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
-# Logging
+## Logging configuration and helpers
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
 
@@ -324,7 +324,7 @@ class _UIHostLogger:
     def child(self, name: str):
         return _UIHostLogger(self._tag, name, dict(self._ctx))
 
-# Orchestrator progress & worker state
+## Orchestrator progress and worker state
 SUMMARY_LOCK = threading.Lock()
 SUMMARY: Dict[str, Any] = {}
 
@@ -485,7 +485,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     finally:
         RUNNING_PROCS.pop("SYNC", None)
 
-# Progress parsing
+## Progress parsing
 
 def _parse_epoch(v: Any) -> int:
     if v is None: return 0
@@ -693,7 +693,7 @@ def _parse_sync_line(line: str) -> None:
         except Exception:
             pass
 
-# Misc
+## Miscellaneous helpers
 
 def _load_hide_set() -> set:
     return set()
@@ -923,7 +923,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
 
-# Watch/scrobble wiring
+## Watch and scrobble service wiring
 
 def _ensure_dispatcher() -> Dispatcher:
     global DISPATCHER
@@ -964,8 +964,8 @@ async def _watch_stop():
     if WATCH:
         WATCH.stop()
 
-# Plex users & identity
-# --- PlexAPI helpers (no HTTP fallbacks) ---
+## Plex users and identity
+## PlexAPI helpers (no HTTP fallbacks)
 
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -1109,7 +1109,7 @@ def _filter_users_with_server_access(cfg: Dict[str, Any], users: List[dict], ser
             out.append(v)
     return out
 
-# --- PlexAPI helpers (no HTTP fallbacks) ---
+## PlexAPI helpers (no HTTP fallbacks)
 
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -1306,7 +1306,7 @@ def _list_pms_servers(cfg: Dict[str, Any]) -> List[dict]:
 
     return servers
 
-# --- Routes ---
+## API route definitions
 
 @app.get("/api/plex/server_uuid")
 def api_plex_server_uuid() -> JSONResponse:
@@ -1338,7 +1338,7 @@ def api_plex_pms() -> JSONResponse:
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
 
-# Scrobbler controls
+## Scrobbler control endpoints
 
 @app.get("/debug/watch/status")
 def debug_watch_status():
@@ -1365,7 +1365,7 @@ def debug_watch_stop():
         w.stop()
     return {"ok": True, "alive": False}
 
-# Trakt webhook
+## Trakt webhook endpoint
 
 @app.post("/webhook/trakt")
 async def webhook_trakt(request: Request):
@@ -1426,7 +1426,7 @@ async def webhook_trakt(request: Request):
     log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
-# Metadata resolver
+## Metadata resolver endpoint
 
 @app.post("/api/metadata/resolve")
 def api_metadata_resolve(payload: MetadataResolveIn):
@@ -1452,12 +1452,12 @@ def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAK
     lines = buf[-tail:]
     return JSONResponse({"tag": tag.upper(), "tail": tail, "lines": lines}, headers={"Cache-Control": "no-store"})
 
-# Insights & stats
+## Insights and statistics
 STATS = Stats()
 
 
 # -----------------------------------------------------------------------------
-# Stats & insights (provider-agnostic)
+# Provider-agnostic statistics and insights
 # -----------------------------------------------------------------------------
 STATS = Stats()
 
@@ -1472,7 +1472,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
       - providers_active:{ plex, simkl, trakt } booleans (from configured pairs)
       - now/week/month: optional high-level counters (if available)
     """
-    # Samples
+    # Sample data
     with STATS.lock:
         samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -1480,7 +1480,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         samples = samples[-int(limit_samples):]
     series = [{"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)} for r in samples]
 
-    # Recent sync history (read recent reports)
+    # Recent synchronization history (read recent reports)
     rows: list[dict] = []
     try:
         files = sorted(
@@ -1555,7 +1555,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     except Exception:
         pass
 
-    # Watchtime (and capture state for provider totals)
+    # Watch time calculation (and capture state for provider totals)
     wall = _load_wall_snapshot()
     state = None
     if not wall:
@@ -1615,7 +1615,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         "method":  method,
     }
 
-    # Active providers from configured pairs
+    # Active providers derived from configured pairs
     active = {"plex": False, "simkl": False, "trakt": False}
     try:
         cfg = load_config() or {}
@@ -1664,8 +1664,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
 
     return JSONResponse(payload)
 
-# -----------------------------------------------------------------------------
-# Middleware
+## Middleware
 # -----------------------------------------------------------------------------
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
@@ -1696,8 +1695,7 @@ def api_stats() -> Dict[str, Any]:
     # Zorg dat frontend doorloopt
     return {"ok": True, **base}
 
-# -----------------------------------------------------------------------------
-# Logs
+## Log endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/logs/dump")
 def logs_dump(channel: str = "TRAKT", n: int = 50):
@@ -1726,8 +1724,7 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control":"no-store"})
 
-# -----------------------------------------------------------------------------
-# Watchlist endpoints
+## Watchlist endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/watchlist")
 def api_watchlist() -> JSONResponse:
@@ -1799,8 +1796,7 @@ def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
         _append_log("TRBL", f"[WATCHLIST] ERROR: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
-# -----------------------------------------------------------------------------
-# Icons
+## Icon endpoints
 # -----------------------------------------------------------------------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
@@ -1822,8 +1818,7 @@ def favicon_svg():
 def favicon_ico():
     return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
-# -----------------------------------------------------------------------------
-# Version/update
+## Version and update endpoints
 # -----------------------------------------------------------------------------
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
@@ -1913,8 +1908,7 @@ def api_version_check():
         "notes": "",
         "published_at": None,
     }
-# -----------------------------------------------------------------------------
-# Status & connectivity
+## Status and connectivity endpoints
 # -----------------------------------------------------------------------------
 _PROBE_CACHE: Dict[str, Tuple[float, bool]] = {"plex": (0.0, False), "simkl": (0.0, False), "trakt": (0.0, False)}
 
@@ -2028,8 +2022,7 @@ INDEX_HTML = get_index_html()
 def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
 
-# -----------------------------------------------------------------------------
-# Trakt device auth
+## Trakt device authentication endpoints
 # -----------------------------------------------------------------------------
 def trakt_request_pin() -> dict:
     try:
@@ -2117,8 +2110,7 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
         _append_log("TRAKT", f"[TRAKT] ERROR: {e}")
         return {"ok": False, "error": str(e)}
 
-# -----------------------------------------------------------------------------
-# App status
+## Application status endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/status")
 def api_status(fresh: int = Query(0)):
@@ -2146,8 +2138,7 @@ def api_status(fresh: int = Query(0)):
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-# -----------------------------------------------------------------------------
-# Config endpoints
+## Configuration endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/config")
 def api_config() -> JSONResponse:
@@ -2179,8 +2170,7 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     _PROBE_CACHE["plex"] = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
     return {"ok": True}
-# -----------------------------------------------------------------------------
-# Plex PIN auth
+## Plex PIN authentication endpoints
 # -----------------------------------------------------------------------------
 def plex_request_pin() -> dict:
     cfg = load_config(); plex = cfg.setdefault('plex', {})
@@ -2277,8 +2267,7 @@ def api_plex_pin_new() -> Dict[str, Any]:
         _append_log("PLEX", f"[PLEX] ERROR: {e}")
         return {"ok": False, "error": str(e)}
 
-# -----------------------------------------------------------------------------
-# SIMKL OAuth
+## SIMKL OAuth endpoints
 # -----------------------------------------------------------------------------
 SIMKL_STATE: Dict[str, Any] = {}
 
@@ -2373,8 +2362,7 @@ def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_
         out["expires_in"] = expires_in
     return out
 
-# -----------------------------------------------------------------------------
-# Run summary endpoints
+## Run summary endpoints
 # -----------------------------------------------------------------------------
 @app.post("/api/run")
 def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
@@ -2453,8 +2441,7 @@ def api_run_summary_stream() -> StreamingResponse:
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream")
 
-# -----------------------------------------------------------------------------
-# Wall/state endpoints
+## Wall and state endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/state/wall")
 def api_state_wall(
@@ -2499,8 +2486,7 @@ def api_state_wall(
         "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
     }
 
-# -----------------------------------------------------------------------------
-# Providers manifes
+## Providers manifest endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/sync/providers")
 def api_sync_providers() -> JSONResponse:
@@ -2641,7 +2627,7 @@ def api_sync_providers() -> JSONResponse:
     return JSONResponse(items)
 
 
-# -------------------- Pairs CRUD --------------------
+## Pairs CRUD endpoints
 @app.get("/api/pairs")
 def api_pairs_list() -> JSONResponse:
     try:
@@ -2759,8 +2745,7 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
     
-# -----------------------------------------------------------------------------
-# TMDb artwork & metadata (via MetadataManager)
+## TMDb artwork and metadata endpoints (via MetadataManager)
 # -----------------------------------------------------------------------------
 def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> dict:
     if _METADATA is None:
@@ -2823,8 +2808,7 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     path, mime = _cache_download(src_url, dest)
     return str(path), mime
 
-# -----------------------------------------------------------------------------
-# Scheduling API
+## Scheduling API endpoints
 # -----------------------------------------------------------------------------
 @app.get("/api/scheduling")
 def api_sched_get():
@@ -2847,8 +2831,7 @@ def api_sched_post(payload: dict = Body(...)):
 def api_sched_status():
     return scheduler.status()
 
-# -----------------------------------------------------------------------------
-# Troubleshooting
+## Troubleshooting endpoints
 # -----------------------------------------------------------------------------
 def _safe_remove_path(p: Path) -> bool:
     try:
@@ -2939,8 +2922,7 @@ def api_trbl_reset_state(
         _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}
 
-# -----------------------------------------------------------------------------
-# Auth providers & metadata providers (UI helpers)
+## Auth providers and metadata providers (UI helpers)
 # -----------------------------------------------------------------------------
 try:
     from providers.auth.registry import auth_providers_html, auth_providers_manifests
@@ -2970,8 +2952,7 @@ def api_metadata_providers():
 def api_metadata_providers_html():
     return HTMLResponse(metadata_providers_html())
 
-# -----------------------------------------------------------------------------
-# Platform/Metadata managers (optional)
+## Platform and Metadata managers (optional)
 # -----------------------------------------------------------------------------
 try:
     from cw_platform.manager import PlatformManager as _PlatformMgr
@@ -2987,8 +2968,7 @@ except Exception as _e:
     _METADATA = None
     print("MetadataManager not available:", _e)
 
-# -----------------------------------------------------------------------------
-# Helpers: counts via Orchestrator
+## Helper functions: counts via Orchestrator
 # -----------------------------------------------------------------------------
 def _count_provider(cfg: dict, provider: str, feature: str = "watchlist") -> int:
     try:
@@ -3014,8 +2994,7 @@ def _count_simkl(cfg: Dict[str, Any]) -> int:
 def _count_trakt(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "TRAKT", feature="watchlist")
 
-# -----------------------------------------------------------------------------
-# Main
+## Main entry point
 # -----------------------------------------------------------------------------
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()

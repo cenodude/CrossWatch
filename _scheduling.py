@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-_secheduling.py (spelling as requested)
+_scheduling.py (spelling as requested)
 
-A tiny background scheduler driven by config callbacks, not file paths.
-This avoids coupling with JSON vs YAML details in the host app.
+Minimal background scheduler managed by configuration callbacks, not file paths.
+This design prevents dependency on JSON or YAML formats in the host application.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from typing import Any, Callable, Dict, Optional
 
 DEFAULT_SCHEDULING = {
     "enabled": False,
-    "mode": "disabled",              # "disabled" | "hourly" | "every_n_hours" | "daily_time"
+    "mode": "disabled",              # Options: "disabled", "hourly", "every_n_hours", "daily_time"
     "every_n_hours": 2,
-    "daily_time": "03:30",           # HH:MM (24h)
+    "daily_time": "03:30",           # Format: HH:MM (24-hour)
     "timezone": "Europe/Amsterdam",
 }
 
@@ -30,7 +30,7 @@ def merge_defaults(s: Dict[str, Any]) -> Dict[str, Any]:
 def compute_next_run(now: datetime, sch: Dict[str, Any]) -> datetime:
     mode = (sch.get("mode") or "disabled").lower()
     if not sch.get("enabled") or mode == "disabled":
-        return now + timedelta(days=365*100)  # effectively never
+    return now + timedelta(days=365*100)  # Schedules for a distant future; effectively disables execution
     if mode == "hourly":
         return (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
     if mode == "every_n_hours":
@@ -75,7 +75,7 @@ class SyncScheduler:
             "next_run_at": 0,
         }
 
-    # ---- config helpers ----
+    # ---- Configuration helpers ----
     def _get_sched_cfg(self) -> Dict[str, Any]:
         cfg = self.load_config_cb() or {}
         sch = merge_defaults(cfg.get("scheduling") or {})
@@ -98,7 +98,7 @@ class SyncScheduler:
         st["config"] = self._get_sched_cfg()
         return st
 
-    # ---- control ----
+    # ---- Control methods ----
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
@@ -113,14 +113,14 @@ class SyncScheduler:
             t.join(timeout=2.0)
 
     def refresh(self) -> None:
-        # nudge loop
+    # Restart the loop to refresh scheduling
         self._stop.set()
         time.sleep(0.02)
         self._stop.clear()
         if not self._thread or not self._thread.is_alive():
             self.start()
 
-    # ---- internals ----
+    # ---- Internal methods ----
     def _loop(self) -> None:
         with self._lock:
             self._status["running"] = True

@@ -1,12 +1,12 @@
 // /assets/scheduler.js
-// Scheduler UI: simple "run all pairs" + optional Advanced (sequential plan).
+// Scheduler UI for running all pairs, with optional advanced sequential plan.
 // No local save buttons; global Save uses window.getSchedulingPatch().
 
 (() => {
   const $  = (sel, root = document) => root.querySelector(sel);
   const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
 
-  // --- Stable ID generator
+  // --- Generates stable unique IDs
   const genId = (() => {
     function withCrypto() {
       try {
@@ -22,7 +22,7 @@
     return () => (crypto?.randomUUID?.() || withCrypto() || `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`);
   })();
 
-  // --- Minimal CSS
+  // --- Inject minimal CSS for scheduler UI
   const CSS = `
   .sch-adv{margin-top:12px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--panel2)}
   .sch-adv summary{font-weight:700;letter-spacing:.02em;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between}
@@ -41,7 +41,7 @@
   `;
   document.head.appendChild(Object.assign(el('style'), { textContent: CSS }));
 
-  // --- State
+  // --- State variables
   let _pairs = [];
   let _jobs  = [];
   let _advEnabled = false;
@@ -59,7 +59,7 @@
     if (hit) selectEl.value = hit.value;
   }
 
-  // --- Data
+  // --- Data fetching and helpers
   async function fetchPairs() {
     try {
       const r = await fetch('/api/pairs', { cache: 'no-store' });
@@ -76,7 +76,7 @@
   }
   const isEnabled = (pid) => !!_pairs.find(p => String(p.id) === String(pid) && p.enabled);
 
-  // --- UI
+  // --- UI rendering functions
   function jobRow(j) {
     const tr = el('tr');
     if (j.active !== false && j.pair_id && !isEnabled(j.pair_id)) tr.classList.add('row-disabled');
@@ -218,7 +218,7 @@
     else st.textContent = '';
   }
 
-  // --- Load
+  // --- Load scheduler configuration and initialize UI
   async function loadScheduling() {
     ensureUI();
     await fetchPairs();
@@ -251,7 +251,7 @@
     try { window.refreshSchedulingBanner?.(); } catch {}
   }
 
-  // --- Serialize (for global Save)
+  // --- Serialize advanced plan for global Save
   function serializeAdvanced() {
     return {
       enabled: !!_advEnabled,
@@ -266,7 +266,7 @@
     };
   }
 
-  // Public patch
+  // Public patch: returns current scheduler configuration
   window.getSchedulingPatch = function() {
     const enabled = ($('#schEnabled')?.value || '').trim() === 'true';
     const mode = $('#schMode')?.value || 'hourly';
@@ -276,7 +276,7 @@
     return { enabled, mode, every_n_hours, daily_time, advanced };
   };
 
-  // Bootstrap
+  // Bootstrap: initialize scheduler on DOMContentLoaded
   document.addEventListener('DOMContentLoaded', () => {
     loadScheduling().catch(e => console.warn('scheduler load failed', e));
   });

@@ -1,10 +1,10 @@
 from __future__ import annotations
 """
-Lightweight statistics tracker for CrossWatch.
-- Builds a de-duplicated "current" map from state.json
-- Records add/remove events and rolling samples.
-- Tracks HTTP metrics per provider/endpoint (ring buffer)  <-- NEW
-- Exposes simple counters and overview.
+Minimal statistics tracker for CrossWatch.
+- Constructs a de-duplicated "current" map from state.json.
+- Records add and remove events, and maintains rolling samples.
+- Tracks HTTP metrics per provider and endpoint (ring buffer).
+- Provides simple counters and summary overview.
 """
 
 from pathlib import Path
@@ -16,7 +16,7 @@ from cw_platform.config_base import CONFIG
 
 STATS_PATH = CONFIG / "statistics.json"
 
-# Accept common GUID formats
+# Accepts common GUID formats
 _GUID_TMDB_RE = re.compile(r"^tmdb://(?:movie|tv)/(\d+)$", re.IGNORECASE)
 _GUID_IMDB_RE = re.compile(r"^imdb://(tt?\d+)$", re.IGNORECASE)
 _GUID_TVDB_RE = re.compile(r"^tvdb://(\d+)$", re.IGNORECASE)
@@ -73,7 +73,7 @@ class Stats:
     
     @staticmethod
     def _provider_items(state: Dict[str, Any], prov: str) -> Dict[str, Any]:
-        """Read items from new snapshot layout with legacy fallback."""
+        # Fetch items from the new snapshot layout, with legacy fallback.
         if not isinstance(state, dict):
             return {}
         P = (state.get("providers") or {}).get(prov.upper(), {}) or {}
@@ -108,7 +108,7 @@ class Stats:
 
     @staticmethod
     def _extract_ids(d: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract common ids from nested/flat structures + Plex GUID."""
+        # Extract common identifiers from nested or flat structures, including Plex GUID.
         out: Dict[str, Any] = {}
         ids = d.get("ids") or d.get("external_ids") or {}
         if isinstance(ids, dict):
@@ -159,7 +159,7 @@ class Stats:
 
     @staticmethod
     def _canon_from_ids(ids: Dict[str, Any], typ: str) -> Optional[str]:
-        """Canonical key: prefer TMDb, then IMDb, then TVDb, then slug; else None."""
+        # Return canonical key: prefer TMDb, then IMDb, then TVDb, then slug; otherwise None.
         tmdb = ids.get("tmdb")
         if tmdb is not None:
             try:
@@ -185,7 +185,7 @@ class Stats:
 
     @staticmethod
     def _aliases(d: Dict[str, Any]) -> List[str]:
-        """All identities this item could match on (tmdb/imdb/tvdb/slug + title/year)."""
+        # Return all possible identities for this item (tmdb, imdb, tvdb, slug, title/year).
         typ = (d.get("type") or "").lower()
         if typ in ("show", "tv"):
             typ = "tv"
@@ -222,11 +222,9 @@ class Stats:
     # ---------- union & counting ----------
     @staticmethod
     def _build_union_map(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-        """
-        De-duplicated map van huidige items. Merge PLEX + SIMKL + TRAKT.
-        Compat: we houden een 'src' string aan voor bestaande consumers:
-        'plex' | 'simkl' | 'both' | 'trakt'
-        """
+        # Build a de-duplicated map of current items by merging PLEX, SIMKL, and TRAKT.
+        # For compatibility, maintain a 'src' string for existing consumers:
+        # 'plex', 'simkl', 'both', or 'trakt'.
         plex  = Stats._provider_items(state, "PLEX")
         simkl = Stats._provider_items(state, "SIMKL")
         trakt = Stats._provider_items(state, "TRAKT")
@@ -345,7 +343,7 @@ class Stats:
     # ---------- public API: state-based ----------
 
     def refresh_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Update stats from a full snapshot (state.json)."""
+        # Update statistics from a full snapshot (state.json).
         now = int(time.time())
         with self.lock:
             prev = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
@@ -380,7 +378,7 @@ class Stats:
             return {"now": len(cur), "week": self._count_at(now - 7 * 86400), "month": self._count_at(now - 30 * 86400)}
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
-        """Append a custom event to the log."""
+        # Append a custom event to the event log.
         now = int(time.time())
         with self.lock:
             ev = self.data.get("events") or []
@@ -389,7 +387,7 @@ class Stats:
             self._save()
 
     def record_summary(self, added: int = 0, removed: int = 0) -> None:
-        """Update last_run counters without a full refresh (optional)."""
+        # Update last_run counters without a full refresh (optional).
         now = int(time.time())
         with self.lock:
             c = self._ensure_counters()
@@ -400,7 +398,7 @@ class Stats:
             self._save()
 
     def reset(self) -> None:
-        """Clear all stats safely."""
+        # Safely clear all statistics.
         with self.lock:
             self.data = {
                 "events": [],
@@ -413,7 +411,7 @@ class Stats:
             self._save()
 
     def overview(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Return a summary for dashboards."""
+        # Return a summary for dashboard display.
         now_epoch = int(time.time())
         week_floor = now_epoch - 7 * 86400
         month_floor = now_epoch - 30 * 86400
@@ -443,7 +441,7 @@ class Stats:
                 },
             }
 
-    # ---------- public API: HTTP telemetry (NEW) ----------
+    # ---------- Public API: HTTP telemetry ----------
 
     def record_http(
         self,
@@ -459,7 +457,7 @@ class Stats:
         rate_remaining: Optional[int] = None,
         rate_reset_iso: Optional[str] = None,
     ) -> None:
-        """Record a single HTTP call; safe and lightweight."""
+        # Record a single HTTP call; safe and efficient.
         now = int(time.time())
         evt = {
             "ts": now,

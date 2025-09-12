@@ -4,11 +4,13 @@ from typing import Any, Dict, Optional
 from _logging import log
 
 class MetadataManager:
+    """Manages metadata providers and resolves metadata for entities."""
     def __init__(self, load_cfg, save_cfg):
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
         self.providers = self._discover()
     
+    # ---- Provider discovery ----
     def _discover(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
         try:
@@ -48,6 +50,7 @@ class MetadataManager:
         return out
 
     
+    # ---- Resolve metadata for an entity ----
     def resolve(self, *, entity: str, ids: dict, locale: Optional[str] = None,
                 need: Optional[dict] = None, strategy: str = "first_success") -> dict:
         cfg = self.load_cfg() or {}
@@ -80,6 +83,7 @@ class MetadataManager:
 
         return self._merge(results) if strategy == "merge" else results[0]
 
+    # ---- Merge results from multiple providers ----
     def _merge(self, results: list[dict]) -> dict:
         out: dict = {}
         for r in results:

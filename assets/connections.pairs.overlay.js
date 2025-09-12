@@ -1,25 +1,25 @@
-// connections.pairs.overlay.js
+// connections.pairs.overlay.js — Manages provider pair board UI, drag-and-drop, and actions.
 (function () {
-  // Render lock
+  // Prevents concurrent rendering of the pairs board
   let _pairsRenderBusy = false;
 
-  // Provider icons and helpers
+  // Provider icon paths and utility functions
   const ICONS = { PLEX: "/assets/PLEX.svg", SIMKL: "/assets/SIMKL.svg", TRAKT: "/assets/TRAKT.svg" };
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt" }[key(k)] || "x");
 
-  // Inject component-scoped styles (prefixed with #pairs_list)
+  // Injects scoped styles for the pairs board and cards
   function ensureStyles() {
     const css = `
-/* ===== Pairs board (scoped) ===== */
+  /* Styles for the pairs board container */
 #pairs_list .pairs-board{
   display:flex!important;flex-direction:row!important;flex-wrap:wrap!important;
   align-items:flex-start!important;gap:12px!important;padding:6px 0 12px!important;overflow:visible!important;
 }
-/* Kill legacy widths */
+  /* Removes legacy width constraints from pair cards */
 #pairs_list .pair-card{flex:0 0 auto!important;width:auto!important;margin:0!important}
 
-/* ===== Card: one-line layout ===== */
+  /* Styles for pair cards with single-row layout */
 #pairs_list .pair-card{
   --chip-w:128px;            /* fixed chip width for alignment */
   --btn:30px;                /* icon button size */
@@ -34,14 +34,14 @@
 #pairs_list .pair-row{display:flex;align-items:center;gap:16px;position:relative;z-index:3}
 #pairs_list .pair-left{display:flex;align-items:center;gap:12px;min-width:0}
 
-/* Index badge */
+  /* Styles for the index badge on each card */
 #pairs_list .ord-badge{
   min-width:24px;height:24px;border-radius:999px;background:linear-gradient(135deg,#7b68ee,#a78bfa);
   color:#fff;font-size:13px;font-weight:850;display:flex;align-items:center;justify-content:center;
   box-shadow:0 0 10px rgba(124,92,255,.45)
 }
 
-/* Chips (renamed to avoid global .pill collisions) */
+  /* Styles for pair chips, renamed to avoid global conflicts */
 #pairs_list .pair-pill{
   display:inline-block;width:var(--chip-w);padding:6px 12px;border-radius:999px;
   font-weight:800;font-size:.9rem;letter-spacing:.02em;color:#f4f6ff;text-align:center;white-space:nowrap;
@@ -50,7 +50,7 @@
 #pairs_list .pair-pill.mode{width:var(--chip-w)}
 #pairs_list .arrow{color:#cfd3e1;opacity:.75;width:18px;text-align:center}
 
-/* Action rail (fixed width so rows align) */
+  /* Styles for the action button rail, ensures row alignment */
 #pairs_list .pair-actions{
   display:flex;align-items:center;gap:var(--btn-gap);
   width:var(--actions-w);justify-content:flex-end;margin-left:8px;
@@ -66,7 +66,7 @@
 #pairs_list .icon-btn.danger:hover{color:#ff5a5e}
 #pairs_list .icon-btn.power.off{opacity:.55}
 
-/* Subtle watermarks */
+  /* Adds subtle watermark backgrounds for source and target logos */
 #pairs_list .cx-conn{position:relative}
 #pairs_list .cx-conn::before,#pairs_list .cx-conn::after{
   content:"";position:absolute;top:0;bottom:0;pointer-events:none;z-index:0;opacity:.05;
@@ -79,13 +79,13 @@
   background:linear-gradient(90deg, rgba(13,15,20,1) 0%, rgba(13,15,20,0) 18%, rgba(13,15,20,0) 82%, rgba(13,15,20,1) 100%);
 }
 
-/* Drag & drop */
+  /* Styles for drag-and-drop functionality on pair cards */
 #pairs_list .pair-card[draggable=true]{cursor:grab}
 #pairs_list .pair-card.dragging{opacity:.85;transform:scale(.985) rotate(.6deg);animation:cx-wiggle .35s ease-in-out infinite;z-index:10}
 #pairs_list .drag-placeholder{border-radius:16px;outline:2px dashed rgba(255,255,255,.24);outline-offset:-2px;min-height:44px;margin:6px 0;background:rgba(255,255,255,.04)}
 @keyframes cx-wiggle{0%{transform:scale(.985) rotate(-.6deg)}50%{transform:scale(.985) rotate(.6deg)}100%{transform:scale(.985) rotate(-.6deg)}
 
-/* Remove transition */
+  /* Styles for smooth removal animation of pair cards */
 #pairs_list .pair-card.removing{
   opacity:0;transform:translateY(-10px) scale(.98);height:0!important;margin:0!important;padding:0!important;overflow:hidden!important;
   transition:opacity .25s ease,transform .25s ease,height .25s ease,margin .25s ease,padding .25s ease
@@ -100,7 +100,7 @@
     s.textContent = css;
   }
 
-  // Ensure host container exists
+  // Ensures the host container and board exist in the DOM
   function ensureHost() {
     const host = document.getElementById("pairs_list");
     if (!host) return null;
@@ -114,7 +114,7 @@
     return { host, board };
   }
 
-  // Lazy-load pairs if not present
+  // Loads pairs data if not already available
   async function loadPairsIfNeeded() {
     if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return;
     if (typeof window.loadPairs === "function") {
@@ -129,7 +129,7 @@
     }
   }
 
-  // Edit callback (respects your existing edit handlers)
+  // Handles edit button clicks, integrates with existing edit handlers
   window.cxPairsEditClick = function (btn) {
     try {
       const id = btn.closest(".pair-card")?.dataset?.id;
@@ -148,7 +148,7 @@
     }
   };
 
-  // Enable/disable toggle
+  // Handles enabling or disabling a pair card
   if (typeof window.cxToggleEnable !== "function") {
     window.cxToggleEnable = async function (id, on, inputEl) {
       try {
@@ -171,7 +171,7 @@
     };
   }
 
-  // Delete card (optimistic UI)
+  // Handles deletion of a pair card with optimistic UI update
   async function deletePairCard(id) {
     const board = document.querySelector("#pairs_list .pairs-board");
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`);
@@ -187,7 +187,7 @@
   }
   window.deletePairCard = deletePairCard;
 
-  // Render all pairs
+  // Renders all provider pairs in the overlay
   function renderPairsOverlay() {
     ensureStyles();
     const containers = ensureHost();
@@ -265,7 +265,7 @@
     refreshBadges(board);
   }
 
-  // Re-number badges
+  // Updates index badges after reordering
   function refreshBadges(board) {
     [...board.querySelectorAll(".pair-card")].forEach((el, i) => {
       const b = el.querySelector(".ord-badge");
@@ -273,7 +273,7 @@
     });
   }
 
-  // DnD reordering with persistence
+  // Enables drag-and-drop reordering of pair cards and persists order
   function enableReorder(board) {
     let dragging = null;
     const placeholder = document.createElement("div");
@@ -335,7 +335,7 @@
     }
   }
 
-  // Move one step left/right + persist (no full re-render)
+  // Moves a pair card left or right and persists the new order
   if (typeof window.movePair !== "function") {
     window.movePair = async function (id, dir) {
       try {
@@ -377,7 +377,7 @@
     };
   }
 
-  // Render once and on state changes
+  // Renders the overlay on initial load and state changes
   async function renderOrEnhance() {
     if (_pairsRenderBusy) return;
     _pairsRenderBusy = true;
@@ -388,13 +388,13 @@
   document.addEventListener("DOMContentLoaded", renderOrEnhance);
   document.addEventListener("cx-state-change", renderOrEnhance);
 
-  // Chain original renderer, keep this overlay in sync
+  // Chains the original renderer to keep overlay in sync
   const _origRender = window.renderConnections;
   window.renderConnections = function () {
     try { if (typeof _origRender === "function") _origRender(); } catch {}
     renderOrEnhance();
   };
 
-  // Expose manual refresh
+  // Exposes manual refresh function for the pairs overlay
   window.cxRenderPairsOverlay = renderOrEnhance;
 })();

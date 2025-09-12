@@ -1,5 +1,5 @@
 # _FastAPI.py
-# Renders the full HTML for the web UI. Keep this file self-contained 
+# Generates the complete HTML for the web user interface. This file is designed to be self-contained.
 
 def get_index_html() -> str:
     return r"""<!doctype html><html><head>
@@ -30,7 +30,6 @@ button[onclick="runAllBatches()"] {
 }
 </style>
 </head><body>
-
 
 <header>
   <div class="brand">
