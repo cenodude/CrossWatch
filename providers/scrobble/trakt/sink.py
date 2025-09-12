@@ -28,7 +28,6 @@ def _load_config() -> Dict[str, Any]:
 def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
     t = (cfg.get("trakt") or {})
     client_id = t.get("client_id") or t.get("api_key") or ""
-    # accept both locations for access token
     token = t.get("access_token") or ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or ""
     return {
         "Content-Type": "application/json",
@@ -55,8 +54,10 @@ def _extract_show_ids(event: ScrobbleEvent) -> Dict[str, Any]:
     return show
 
 def _clamp_progress(p: int) -> int:
-    try: p = int(p)
-    except Exception: p = 0
+    try:
+        p = int(p)
+    except Exception:
+        p = 0
     return max(0, min(100, p))
 
 # ---- sink ----
@@ -65,7 +66,6 @@ class TraktSink(ScrobbleSink):
 
     def __init__(self, logger=None):
         self._logger = (logger or (BASE_LOG.child("TRAKT") if BASE_LOG else None))
-        # hard set INFO if supported
         try:
             self._logger.set_level("INFO")
         except Exception:
@@ -81,8 +81,8 @@ class TraktSink(ScrobbleSink):
                 pass
         print(f"{level} [TRAKT] {msg}")
 
-    def _debounced(self, event: ScrobbleEvent) -> bool:
-        key = f"{event.session_key}:{event.action}"
+    def _debounced(self, session_key: Optional[str], action: str) -> bool:
+        key = f"{session_key}:{action}"
         now = time.time()
         last = self._last_sent.get(key, 0)
         if now - last < 5:
@@ -128,7 +128,8 @@ class TraktSink(ScrobbleSink):
             if r.status_code == 429:
                 ra = r.headers.get("Retry-After")
                 wait = float(ra) if ra and str(ra).isdigit() else backoff
-                time.sleep(wait); backoff = min(8.0, backoff * 2)
+                time.sleep(wait)
+                backoff = min(8.0, backoff * 2)
                 continue
             if r.status_code >= 400:
                 return {"ok": False, "status": r.status_code, "resp": (r.text or "")[:200]}
@@ -139,10 +140,21 @@ class TraktSink(ScrobbleSink):
         return {"ok": False, "status": 429, "resp": "rate_limited"}
 
     def send(self, event: ScrobbleEvent) -> None:
-        if self._debounced(event):
+        # Map early stop (<80%) to pause to match Trakt semantics
+        effective_action = event.action
+        if event.action == "stop" and _clamp_progress(event.progress) < 80:
+            effective_action = "pause"
+
+        if self._debounced(event.session_key, effective_action):
             return
+
         cfg = _load_config()
-        path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[event.action]
+        path = {
+            "start": "/scrobble/start",
+            "pause": "/scrobble/pause",
+            "stop": "/scrobble/stop",
+        }[effective_action]
+
         body = self._build_body(event)
         res = self._send_with_retries(path, body, cfg)
         if res.get("ok"):
