@@ -65,18 +65,10 @@ Then open:
 ## 📋 Usage
 
 1. Open the web UI
-2. Connect at least two Authentication providers, Plex, SIMKL and/or TRakt under
-3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way)
+2. Connect at least two **Authentication providers** Plex, SIMKL and/or TRAKT
+3. Create one or more **Sync Pairs** 
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
-
----
-
-## 🛠 Troubleshooting
-
-- Clear cache: `POST /api/troubleshoot/clear-cache`
-- Reset stats: `POST /api/troubleshoot/reset-stats`
-- Reset state: `POST /api/troubleshoot/reset-state`
 
 ---
 # 🎬 Live Scrobbling (Plex → Trakt)
