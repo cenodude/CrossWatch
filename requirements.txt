@@ -1,0 +1,9 @@
+fastapi
+pydantic
+uvicorn
+requests
+plexapi
+websocket-client
+websockets
+python-multipart
+packaging
