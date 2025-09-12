@@ -1,7 +1,6 @@
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="400">
 </p>
-# CrossWatch
 
 **CrossWatch** is a lightweight web-based control panel and sync engine that keeps your **Plex**,**SIMKL** and **TRAKT**  in sync.  
 It provides a clean UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.
