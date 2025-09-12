@@ -2,19 +2,18 @@
   <img src="images/CrossWatch.png" alt="CrossWatch" width="400">
 </p>
 
-**CrossWatch** is a lightweight web-based control panel and sync engine that keeps your **Plex**,**SIMKL** and **TRAKT**  in sync.  
-It provides a clean UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.
-
+**CrossWatch** is a lightweight sync engine that keeps your Plex, SIMKL, and TRAKT libraries in harmony.
+It offers a web-based control panel with a modular design for easily adding new providers.
+Use its clean UI to link accounts, create sync pairs, run them manually or on a schedule, and monitor stats and history.
 ---
 
 ## 🚀 Features
-
+- Create sync pairs with advanced if/else scheduling support
 - Sync watchlists (one-way or two-way)
 - Live Scrobbling (Plex → Trakt)
-- Sync Ratings (one-way or two-way - currently disabled in alpha version)
-- Sync Watch history (one-way or two-way - currently disabled in alpha version)
-- Sync Playlists (one-way or two-way - currently disabled in alpha version)
-
+- Sync Ratings (one-way or two-way — currently disabled in alpha version)
+- Sync Watch history (one-way or two-way — currently disabled in alpha version)
+- Sync Playlists (one-way or two-way — currently disabled in alpha version)
 - Simple web UI — no external DB, just JSON state files
 - Rich metadata & posters via TMDb
 - Stats, history, and live logs built-in
