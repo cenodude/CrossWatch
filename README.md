@@ -1,5 +1,6 @@
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="400">
+  <img src="images/CrossWatch-showcase.png" alt="CrossWatch" width="400">
 </p>
 
 CrossWatch is a lightweight sync engine that keeps your Plex, SIMKL, and TRAKT libraries in harmony.
