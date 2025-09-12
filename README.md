@@ -56,8 +56,9 @@ Then open:
 ## 📋 Usage
 
 1. Open the web UI
-2. Connect at least two **Authentication providers** Plex, SIMKL and/or TRAKT
-3. Create one or more **Sync Pairs** 
+2. Connect at least two **Authentication providers** Plex, SIMKL and/or TRAKT [required]
+3. Connect Metadata provier (TMDb) [optional]
+3. Create one or more **Sync Pairs** [required]
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
 
