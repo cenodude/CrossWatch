@@ -11,9 +11,9 @@ Use its clean UI to link accounts, create sync pairs, run them manually or on a 
 - Create sync pairs with advanced if/else scheduling support
 - Sync watchlists (one-way or two-way)
 - Live Scrobbling (Plex → Trakt)
-- Sync Ratings (one-way or two-way — currently disabled in alpha version)
-- Sync Watch history (one-way or two-way — currently disabled in alpha version)
-- Sync Playlists (one-way or two-way — currently disabled in alpha version)
+- Sync Ratings (one-way or two-way — currently disabled)
+- Sync Watch history (one-way or two-way — currently disabled)
+- Sync Playlists (one-way or two-way — currently disable)
 - Simple web UI — no external DB, just JSON state files
 - Rich metadata & posters via TMDb
 - Stats, history, and live logs built-in
