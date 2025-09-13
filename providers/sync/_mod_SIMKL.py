@@ -1,4 +1,6 @@
 from __future__ import annotations
+# providers/sync/_mod_SIMKL.py
+# Unified OPS provider for Plex: watchlist, ratings, history
 
 __VERSION__ = "1.1.1"
 __all__ = ["OPS", "SIMKLModule", "get_manifest"]
