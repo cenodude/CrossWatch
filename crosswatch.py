@@ -1328,24 +1328,40 @@ def debug_watch_status():
     w = WATCH
     if w is None:
         return {"has_watch": False, "alive": False, "stop_set": False}
-    alive = bool(w._thr and w._thr.is_alive())
-    stop_set = bool(getattr(w, "_stop", None) and w._stop.is_set())
-    return {"has_watch": True, "alive": alive, "stop_set": stop_set}
+    return {
+        "has_watch": True,
+        "alive": bool(getattr(w, "is_alive", lambda: False)()),
+        "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
+    }
 
+def _ensure_watch_started():
+    global WATCH
+    if WATCH is None:
+        from providers.scrobble.trakt.sink import TraktSink
+        from providers.scrobble.plex.watch import make_default_watch
+        WATCH = make_default_watch(sinks=[TraktSink()])
+    # start in background if not running
+    if not WATCH.is_alive():
+        # plexapi variant: gebruik start_async()
+        if hasattr(WATCH, "start_async"):
+            WATCH.start_async()
+        else:
+            # fallback (zou je niet nodig moeten hebben)
+            import threading
+            t = threading.Thread(target=WATCH.start, daemon=True)
+            t.start()
+    return WATCH
 
 @app.post("/debug/watch/start")
 def debug_watch_start():
     w = _ensure_watch_started()
-    alive = bool(w._thr and w._thr.is_alive())
-    return {"ok": True, "alive": alive}
-
+    return {"ok": True, "alive": w.is_alive()}
 
 @app.post("/debug/watch/stop")
 def debug_watch_stop():
     global WATCH
-    w = WATCH
-    if w is not None:
-        w.stop()
+    if WATCH is not None:
+        WATCH.stop()
     return {"ok": True, "alive": False}
 
 # Trakt webhook

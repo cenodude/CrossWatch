@@ -13,6 +13,7 @@
     try { var el = _el("trakt_msg"); if (el) el.classList.toggle("hidden", !show); } catch (_) {}
   }
 
+
   // --- CONFIG fetch (single place) -----------------------------------------
   async function fetchConfig() {
     try {
@@ -63,7 +64,7 @@
     try { await hydrateAuthFromConfig(); } catch (_) {}
   }
 
-  // --- Trakt hint -----------------------------------------------------------
+  // --- Trakt hint and copy--------------------------------------------------
   function updateTraktHint() {
     try {
       var cid  = _str((_el("trakt_client_id")    || {}).value);
@@ -75,6 +76,69 @@
       hint.style.display = show ? "" : "none";
     } catch (_) {}
   }
+
+  // Robust copy helpers + auto-bind for copy buttons
+async function _copyText(text, btn) {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    if (btn) {
+      btn.classList.add("copied");
+      setTimeout(() => btn.classList.remove("copied"), 1200);
+    }
+    return true;
+  } catch (e) {
+    console.warn("Copy failed", e);
+    return false;
+  }
+}
+
+window.copyInputValue = async function (inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  await _copyText(el.value || "", btn);
+};
+
+// For the hint buttons:
+window.copyTraktRedirect = async function () {
+  const code = document.getElementById("trakt_redirect_uri_preview");
+  const text = (code?.textContent || "urn:ietf:wg:oauth:2.0:oob").trim();
+  await _copyText(text);
+};
+window.copyRedirect = async function () {
+  const code = document.getElementById("redirect_uri_preview");
+  const text = (code?.textContent || code?.value || "").trim();
+  await _copyText(text);
+};
+
+// Bind listeners in case inline onclicks are off or 'self' was used somewhere
+document.addEventListener("DOMContentLoaded", function () {
+  [
+    ["btn-copy-trakt-pin",   "trakt_pin"],
+    ["btn-copy-trakt-token", "trakt_token"],
+    ["btn-copy-plex-pin",    "plex_pin"],
+    ["btn-copy-plex-token",  "plex_token"]
+  ].forEach(([btnId, inputId]) => {
+    const b = document.getElementById(btnId);
+    if (b && !b._copyHooked) {
+      b.addEventListener("click", function () { window.copyInputValue(inputId, this); });
+      b._copyHooked = true;
+    }
+  });
+});
+
 
   // --- Flush Trakt creds from cfg (new + legacy location) -------------------
   async function flushTraktCreds() {

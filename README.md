@@ -1,26 +1,22 @@
 <p align="center">
-  <img src="images/CrossWatch.png" alt="CrossWatch" width="400"><br>
-  <img src="images/CrossWatch-showcase.png" alt="CrossWatch" width="400">
+  <img src="/image/CrossWatch-transparant.png" alt="CrossWatch" width="500">
 </p>
 
-CrossWatch is a lightweight synchronization engine that keeps providers like Plex, SIMKL, and TRAKT libraries in harmony.
-It offers a web-based control panel with a modular design for easily adding new providers in the feature.
-Use its clean UI to link accounts, create sync pairs, run them manually or on a schedule, and monitor stats and history.
+# CrossWatch
 
-**Goal**
-CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
+**CrossWatch** is a lightweight web-based control panel and sync engine that keeps your **Plex**,**SIMKL** and **TRAKT**  in sync.  
+It provides a clean UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.
 
----
-> :warning:  Before using this software ALWAYS make backups
 ---
 
 ## 🚀 Features
-- Create sync pairs with advanced if/else scheduling support
+
 - Sync watchlists (one-way or two-way)
 - Live Scrobbling (Plex → Trakt)
-- Sync Ratings (one-way or two-way — currently disabled)
-- Sync Watch history (one-way or two-way — currently disabled)
-- Sync Playlists (one-way or two-way — currently disable)
+- Sync Ratings (one-way or two-way - currently disabled in alpha version)
+- Sync Watch history (one-way or two-way - currently disabled in alpha version)
+- Sync Playlists (one-way or two-way - currently disabled in alpha version)
+
 - Simple web UI — no external DB, just JSON state files
 - Rich metadata & posters via TMDb
 - Stats, history, and live logs built-in
@@ -30,14 +26,10 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
 
 ## 🐳 Run as Container
 
-```shell
-docker run -d \
-  --name crosswatch \
-  -p 8787:8787 \
-  -v /path/to/config:/config \
-  -e TZ=Europe/Amsterdam \
-  ghcr.io/cenodude/crosswatch:latest
+```bash
+docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=Europe/Amsterdam   ghcr.io/cenodude/crosswatch:latest
 ```
+
 > The container exposes the web UI at:  
 > 👉 http://localhost:8787
 
@@ -45,6 +37,19 @@ By default `CONFIG_BASE` will be `/config` inside the container.
 Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored there.
 
 ---
+
+## 🧩 Architecture
+
+- **FastAPI** backend (`crosswatch.py`) at port `8787`
+- **Vanilla JS/CSS** UI served from `/assets/`
+- Pluggable **providers**:  
+  - `auth` (Plex device PIN, SIMKL OAuth)
+  - `sync` (PLEX ⇄ SIMKL)
+  - `metadata` (TMDb enrichment)
+- All state/config stored as JSON in `CONFIG_BASE`
+
+---
+
 
 ## ⚡ Local Development
 
@@ -63,11 +68,18 @@ Then open:
 ## 📋 Usage
 
 1. Open the web UI
-2. Connect at least two **Authentication providers** Plex, SIMKL and/or TRAKT [required]
-3. Connect Metadata provier (TMDb) [optional]
-3. Create one or more **Sync Pairs** [required]
+2. Connect at least two Authentication providers, Plex, SIMKL and/or TRakt under
+3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way)
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
+
+---
+
+## 🛠 Troubleshooting
+
+- Clear cache: `POST /api/troubleshoot/clear-cache`
+- Reset stats: `POST /api/troubleshoot/reset-stats`
+- Reset state: `POST /api/troubleshoot/reset-state`
 
 ---
 # 🎬 Live Scrobbling (Plex → Trakt)

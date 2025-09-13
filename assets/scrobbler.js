@@ -115,9 +115,7 @@
       start:  () => fetchText("/debug/watch/start", { method: "POST" }),
       stop:   () => fetchText("/debug/watch/stop",  { method: "POST" }),
     },
-    // Default channel set to "TRAKT" as per your last note; change to "WATCH" if you prefer
-    logs: (channel = "TRAKT", n = 5) =>
-      fetchText(`/api/logs/dump?channel=${encodeURIComponent(channel)}&n=${n}`)
+
   };
 
   // -------- UI bits --------
@@ -268,18 +266,6 @@
             <div id="sc-status-last" class="micro-note" style="margin-top:8px"></div>
             <div id="sc-status-up" class="micro-note"></div>
 
-            <div id="sc-status-logs" style="
-              margin-top:10px;
-              padding:8px;
-              background:rgba(255,255,255,.03);
-              border-radius:8px;
-              font-family:monospace;
-              font-size:12px;
-              line-height:1.4;
-              max-height:140px;
-              overflow:auto;
-              white-space:pre-wrap;
-            "></div>
           </div>
 
         <!-- Advanced -->
@@ -433,8 +419,6 @@
     syncHiddenServerUrl();
     applyModeDisable();
     refreshWatcher();
-    refreshWatchLogs();           // initial logs
-    startStatusPolling();         // 15s poll (status + logs)
     loadPmsList().catch(() => {});
   }
 
@@ -446,35 +430,6 @@
     } catch {
       setWatcherStatus({ alive: false });
     }
-  }
-
-  // pull last 5 log lines from /api/logs/dump?channel=TRAKT&n=5
-  async function refreshWatchLogs(channel = "TRAKT") {
-    const box = $("#sc-status-logs", STATE.mount);
-    if (!box) return;
-    try {
-      const raw = await API.logs(channel, 5);
-      let lines;
-      try {
-        const arr = JSON.parse(raw);
-        lines = Array.isArray(arr) ? arr.map(String) : String(raw).split("\n");
-      } catch {
-        lines = String(raw).split("\n");
-      }
-      lines = lines.filter(Boolean).slice(-5);
-      box.textContent = lines.length ? lines.join("\n") : "No recent logs.";
-    } catch {
-      box.textContent = "Failed to load logs.";
-    }
-  }
-
-  function startStatusPolling() {
-    if (STATE.pollTimer) clearInterval(STATE.pollTimer);
-    const tick = () => {
-      refreshWatcher();
-      refreshWatchLogs(); // channel "TRAKT" by default
-    };
-    STATE.pollTimer = setInterval(tick, 15000);
   }
 
   function setStatusMsg(msg, ok = true) {
@@ -496,7 +451,6 @@
       setNote("sc-pms-note", "Start failed", "err");
     }
     refreshWatcher();
-    refreshWatchLogs();
   }
 
   async function onWatchStop() {
@@ -506,7 +460,6 @@
       setNote("sc-pms-note", "Stop failed", "err");
     }
     refreshWatcher();
-    refreshWatchLogs();
   }
 
   async function fetchServerUUID() {

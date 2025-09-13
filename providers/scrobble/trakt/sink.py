@@ -15,17 +15,18 @@ from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 TRAKT_API = "https://api.trakt.tv"
 APP_AGENT = "CrossWatch/Scrobble/1.0"
 
-# ---- config ----
+# ---- config --------------------------------------------------------------------
 def _load_config() -> Dict[str, Any]:
+    """Prefer crosswatch.load_config(); fall back to local config.json."""
     try:
         from crosswatch import load_config
         return load_config()
     except Exception:
-        import json as _json
         with open("config.json", "r", encoding="utf-8") as f:
-            return _json.load(f)
+            return json.load(f)
 
 def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """Build Trakt headers (strict casing for Authorization)."""
     t = (cfg.get("trakt") or {})
     client_id = t.get("client_id") or t.get("api_key") or ""
     token = t.get("access_token") or ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or ""
@@ -33,14 +34,14 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
         "Content-Type": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": client_id,
-        "authorization": f"Bearer {token}" if token else "",
+        "Authorization": f"Bearer {token}" if token else "",
         "User-Agent": APP_AGENT,
     }
 
 def _post(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
     return requests.post(f"{TRAKT_API}{path}", headers=_headers(cfg), json=body, timeout=10)
 
-# ---- id utils ----
+# ---- id utils ------------------------------------------------------------------
 def _extract_ids(event: ScrobbleEvent) -> Dict[str, Any]:
     ids = event.ids or {}
     return {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "trakt") if k in ids and ids[k]}
@@ -60,26 +61,38 @@ def _clamp_progress(p: int) -> int:
         p = 0
     return max(0, min(100, p))
 
-# ---- sink ----
+def _stop_pause_threshold(cfg: Dict[str, Any]) -> int:
+    """Early stop -> pause threshold in percent. Default 80."""
+    try:
+        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80))
+    except Exception:
+        return 80
+
+# ---- sink ----------------------------------------------------------------------
 class TraktSink(ScrobbleSink):
-    """Scrobble to Trakt with PT-like id strategy. Quiet logs (INFO only)."""
+    """Scrobbles to Trakt with resilient retries and early-stop→pause semantics."""
 
     def __init__(self, logger=None):
-        self._logger = (logger or (BASE_LOG.child("TRAKT") if BASE_LOG else None))
+        # Route to /api/logs/dump?channel=TRAKT
+        self._logger = logger
+        if not self._logger and BASE_LOG and hasattr(BASE_LOG, "child"):
+            self._logger = BASE_LOG.child("TRAKT")
         try:
-            self._logger.set_level("INFO")
+            if self._logger and hasattr(self._logger, "set_level"):
+                self._logger.set_level("INFO")
         except Exception:
             pass
         self._last_sent: Dict[str, float] = {}  # debounce key -> ts
 
     def _log(self, msg: str, level: str = "INFO"):
-        if self._logger:
+        if BASE_LOG:
             try:
-                self._logger(str(msg), level=level.lower())
+                BASE_LOG("TRAKT", level.upper(), str(msg))
                 return
             except Exception:
                 pass
         print(f"{level} [TRAKT] {msg}")
+
 
     def _debounced(self, session_key: Optional[str], action: str) -> bool:
         key = f"{session_key}:{action}"
@@ -92,11 +105,17 @@ class TraktSink(ScrobbleSink):
 
     def _build_body(self, event: ScrobbleEvent) -> Dict[str, Any]:
         p = _clamp_progress(event.progress)
-        body: Dict[str, Any] = {"progress": max(1, p)}  # avoid 0%
+        body: Dict[str, Any] = {"progress": max(1, p)}
 
         if event.media_type == "movie":
             ids = _extract_ids(event)
-            body["movie"] = {"ids": ids} if ids else {"title": event.title, "year": event.year}
+            if ids:
+                body["movie"] = {"ids": ids}
+            else:
+                m = {"title": event.title}
+                if event.year is not None:
+                    m["year"] = event.year
+                body["movie"] = m
             return body
 
         # episode
@@ -114,41 +133,72 @@ class TraktSink(ScrobbleSink):
             return body
 
         if has_sn:
-            body["show"] = {"title": event.title, "year": event.year}
+            s = {"title": event.title}
+            if event.year is not None:
+                s["year"] = event.year
+            body["show"] = s
             body["episode"] = {"season": event.season, "number": event.number}
             return body
 
+        # last resort
         body["episode"] = {"ids": ep_ids} if ep_ids else {"season": event.season, "number": event.number}
         return body
 
     def _send_with_retries(self, path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Retry policy:
+        - 429: respect Retry-After if present; exponential backoff otherwise.
+        - 5xx or network errors: retry with backoff.
+        - 4xx (except 429): don't retry.
+        """
         backoff = 1.0
-        for _ in range(3):
-            r = _post(path, body, cfg)
-            if r.status_code == 429:
-                ra = r.headers.get("Retry-After")
-                wait = float(ra) if ra and str(ra).isdigit() else backoff
-                time.sleep(wait)
+        for _ in range(4):
+            try:
+                r = _post(path, body, cfg)
+            except Exception:
+                time.sleep(backoff)
                 backoff = min(8.0, backoff * 2)
                 continue
+
+            if r.status_code == 429:
+                ra = r.headers.get("Retry-After")
+                try:
+                    wait = float(ra) if ra is not None else backoff
+                except Exception:
+                    wait = backoff
+                time.sleep(max(0.5, min(30.0, wait)))
+                backoff = min(8.0, backoff * 2)
+                continue
+
+            if 500 <= r.status_code < 600:
+                time.sleep(backoff)
+                backoff = min(8.0, backoff * 2)
+                continue
+
             if r.status_code >= 400:
-                return {"ok": False, "status": r.status_code, "resp": (r.text or "")[:200]}
+                short = (r.text or "")[:400]
+                if r.status_code == 404:
+                    short += " (Trakt couldn’t match the item; missing IDs or mismatched title/year)"
+                return {"ok": False, "status": r.status_code, "resp": short}
+
             try:
                 return {"ok": True, "status": r.status_code, "resp": r.json()}
             except Exception:
-                return {"ok": True, "status": r.status_code, "resp": (r.text or "")[:200]}
+                return {"ok": True, "status": r.status_code, "resp": (r.text or "")[:400]}
         return {"ok": False, "status": 429, "resp": "rate_limited"}
 
     def send(self, event: ScrobbleEvent) -> None:
-        # Map early stop (<80%) to pause to match Trakt semantics
-        effective_action = event.action
-        if event.action == "stop" and _clamp_progress(event.progress) < 80:
-            effective_action = "pause"
+        cfg = _load_config()
 
+        p = _clamp_progress(event.progress)
+        threshold = _stop_pause_threshold(cfg)  # default 80
+        effective_action = event.action
+        if event.action == "stop" and p < threshold:
+            self._log(f"convert STOP->PAUSE at {p}% (<{threshold}%) to avoid watched", "INFO")
+            effective_action = "pause"
         if self._debounced(event.session_key, effective_action):
             return
 
-        cfg = _load_config()
         path = {
             "start": "/scrobble/start",
             "pause": "/scrobble/pause",
@@ -156,8 +206,10 @@ class TraktSink(ScrobbleSink):
         }[effective_action]
 
         body = self._build_body(event)
+        self._log(f"→ {path} body={body}")
         res = self._send_with_retries(path, body, cfg)
         if res.get("ok"):
-            self._log(f"{path} {res['status']}", "INFO")
+            self._log(f"{path} {res['status']}")
         else:
             self._log(f"{path} {res['status']} err={res.get('resp')}", "ERROR")
+
