@@ -1827,7 +1827,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.1")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.2")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
