@@ -1,5 +1,4 @@
 # _FastAPI.py
-# Renders the full HTML for the web UI. Keep this file self-contained 
 
 def get_index_html() -> str:
     return r"""<!doctype html><html><head>

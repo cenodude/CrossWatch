@@ -3224,13 +3224,6 @@ function renderConnections() {
 
 (function () {
   
-/* [moved to modals.js] */
-
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-
-  
   window.cxOpenModalFor = function (pair, editingId) {
   try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
@@ -3659,8 +3652,6 @@ function fixFormLabels(root = document) {
   });
 }
 document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
-
-/* ==== END crosswatch.core.fixed4.js ==== */
 
 /* Smoke-check: ensure essential APIs exist on window */
 (function(){
