@@ -3997,3 +3997,10 @@ select {
 .section.disabled { }
 .section.disabled .head { opacity: 1; }
 .section.disabled .body { opacity: .55; }
+
+.lane-ico .material-symbol {
+  font-family: 'Material Symbols Rounded';
+  font-size: 22px;      /* a bit larger than text */
+  line-height: 1;
+  font-variation-settings: 'FILL' 1;
+}

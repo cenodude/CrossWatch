@@ -1,35 +1,48 @@
 # _FastAPI.py
+# Renders the full HTML for the web UI. Keep this file self-contained
 
 def get_index_html() -> str:
-    return r"""<!doctype html><html><head>
+    return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
+
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/assets/crosswatch.css">
+
+<!-- Base app styles -->
+<link rel="stylesheet" href="/assets/crosswatch.css">
+
+<!-- Google Material Symbols (rounded) for iconography across the app -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
 <style>
-/* cw hard hide */
-.pair-selectors,
-button[onclick="addPair()"],
-#batches_list,
-button[onclick="addBatch()"],
-button[onclick="runAllBatches()"] { 
-  display: none !important; 
-}
+  /* Material Symbols helper */
+  .material-symbol {
+    font-family: 'Material Symbols Rounded';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 1em; /* scales with text unless overridden inline */
+    line-height: 1;
+    display: inline-block;
+    vertical-align: middle;
+    letter-spacing: normal; text-transform: none; white-space: nowrap; direction: ltr;
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
 
-#providers_list.grid2 { 
-  display: block !important; 
-}
-
-#providers_list .pairs-board { 
-  display: flex; 
-  flex-direction: column; 
-  align-items: flex-start; 
-  text-align: left; 
-}
+  /* CW overrides (publication-ready; keep minimal & scoped) */
+  .pair-selectors,
+  button[onclick="addPair()"],
+  #batches_list,
+  button[onclick="addBatch()"],
+  button[onclick="runAllBatches()"] {
+    display: none !important;
+  }
+  #providers_list.grid2 { display: block !important; }
+  #providers_list .pairs-board {
+    display: flex; flex-direction: column; align-items: flex-start; text-align: left;
+  }
 </style>
 </head><body>
-
 
 <header>
   <div class="brand">
@@ -77,19 +90,17 @@ button[onclick="runAllBatches()"] {
         </button>
       </div>
     </div>
-    
+
     <div class="sync-status" style="display:none">
       <div id="sync-icon"></div>
       <div id="sync-status-text"></div>
       <span id="sched-inline" style="display:none"></span>
     </div>
 
-
     <div id="ux-progress"></div>
     <div id="ux-lanes"></div>
     <div id="ux-spotlight"></div>
 
-    <!-- ACTION BUTTONS (restored) -->
     <div class="action-row">
       <div class="action-buttons">
         <button id="run" class="btn acc" onclick="runSync()">
@@ -129,7 +140,7 @@ button[onclick="runAllBatches()"] {
     </div>
   </section>
 
-  <!-- MAIN: Statistics card -->
+  <!-- MAIN: Statistics -->
   <section id="stats-card" class="card collapsed">
     <div class="title">Statistics</div>
 
@@ -161,7 +172,6 @@ button[onclick="runAllBatches()"] {
       <div class="tile trakt" id="tile-trakt"><div class="k">Trakt</div><div class="n" id="stat-trakt">0</div></div>
     </div>
 
-    <!-- Insights: Recent syncs -->
     <div class="stat-block">
       <div class="stat-block-header">
         <span class="pill plain">Recent syncs</span>
@@ -169,27 +179,8 @@ button[onclick="runAllBatches()"] {
       </div>
       <div id="sync-history" class="history-list"></div>
     </div>
-
-    <!-- Insights: Trend 
-    <div class="stat-block">
-      <div class="stat-block-header">
-        <span class="pill plain">Trend</span>
-        <span class="muted">Last 30 samples</span>
-      </div>
-      <div id="sparkline" class="sparkline"></div>
-    </div>
-    -->
-	
-    <!-- TMDB estimated watch time
-    Insights: Estimated watch time 
-    <div class="stat-block">
-      <div class="stat-block-header"><span class="pill plain">Estimated watch time</span></div>
-      <div id="watchtime" class="watchtime"></div>
-      <div class="micro-note" id="watchtime-note"></div>
-    </div>
-    -->
-
   </section>
+
 
   <!-- MAIN: Watchlist Preview (carousel) -->
   <section id="placeholder-card" class="card hidden">
@@ -218,134 +209,131 @@ button[onclick="runAllBatches()"] {
     <div id="wl-grid" class="wl-grid hidden"></div>
   </section>
 
+
   <!-- SETTINGS -->
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
 
-<!-- AUTHENTICATION (settings) -->
-  <div class="section" id="sec-auth">
-    <div class="head" onclick="toggleSection('sec-auth')">
-     <span class="chev">▶</span><strong>Authentication Providers</strong>
-   </div>
-    <div class="body">
-      <!-- Dynamic auth providers will mount here -->
-      <div id="auth-providers"></div>
-      </div>
-     </div>
-     
-<!-- SYNCHRONIZATION (settings) -->
-<div class="section" id="sec-sync">
-  <div class="head" onclick="toggleSection('sec-sync')">
-    <span class="chev">▶</span><strong>Synchronization Providers</strong>
-  </div>
-  <div class="body">
+    <!-- Two-column layout: left = existing settings, right = insights -->
+    <div id="cw-settings-grid">
+      <div id="cw-settings-left">
 
-    <div class="sub">Providers</div>
-    <div id="providers_list" class="grid2"></div>
-
-    <div class="sep"></div>
-    <div class="sub">Pairs</div>
-    <div id="pairs_list"></div>
-
-    <div class="footer">
-      <div class="pair-selectors" style="margin-top:1em;">
-        <label style="margin-right:1em;">
-          Source:
-          <select id="source-provider" style="margin-left:0.5em;"></select>
-        </label>
-        <label>
-          Target:
-          <select id="target-provider" style="margin-left:0.5em;"></select>
-        </label>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-  
-        <!-- Metadata -->
-<div class="section" id="sec-meta">
-  <div class="head" onclick="toggleSection('sec-meta')">
-    <span class="chev">▶</span><strong>Metadata Providers</strong>
-  </div>
-  <div class="body">
-    <!-- Dynamic metadata providers -->
-    <div id="metadata-providers"></div>
-  </div>
-</div>
-    
-  <div class="section" id="sec-scheduling">
-      <div class="head" onclick="toggleSection('sec-scheduling')"><span class="chev">▶</span><strong>Scheduling</strong></div>
-      <div class="body">
-        <div class="grid2">
-          <div><label>Enable</label>
-            <select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select>
+        <!-- AUTHENTICATION -->
+        <div class="section" id="sec-auth">
+          <div class="head" onclick="toggleSection('sec-auth')">
+            <span class="chev">▶</span><strong>Authentication Providers</strong>
           </div>
-          <div><label>Frequency</label>
-            <select id="schMode">
-              <option value="hourly">Every hour</option>
-              <option value="every_n_hours">Every N hours</option>
-              <option value="daily_time">Daily at…</option>
-            </select>
+          <div class="body"><div id="auth-providers"></div></div>
+        </div>
+
+        <!-- SYNCHRONIZATION -->
+        <div class="section" id="sec-sync">
+          <div class="head" onclick="toggleSection('sec-sync')">
+            <span class="chev">▶</span><strong>Synchronization Providers</strong>
           </div>
-          <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
-          <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
-        </div>
-      </div>
-    </div>
+          <div class="body">
+            <div class="sub">Providers</div>
+            <div id="providers_list" class="grid2"></div>
 
-<!-- SCROBBLER (settings) -->
-<div class="section" id="sec-scrobbler">
-  <div class="head" onclick="toggleSection('sec-scrobbler')">
-    <span class="chev">▶</span><strong>Scrobbler</strong>
-  </div>
-  <div class="body">
-    <div id="scrobble-mount">
-      <div class="section" id="sc-sec-webhook">
-        <div class="head" onclick="toggleSection('sc-sec-webhook')">
-          <span class="chev">▶</span><strong>Webhook</strong>
-        </div>
-        <div class="body"><div id="scrob-webhook"></div></div>
-      </div>
-
-      <div class="section" id="sc-sec-watch">
-        <div class="head" onclick="toggleSection('sc-sec-watch')">
-          <span class="chev">▶</span><strong>Watcher</strong>
-        </div>
-        <div class="body"><div id="scrob-watcher"></div></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-
-    <div class="section" id="sec-troubleshoot">
-      <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Troubleshoot</strong></div>
-      <div class="body">
-        <div class="sub">Use these actions to reset application state. They are safe but cannot be undone.</div>
-        <div><label>Debug</label><select id="debug"><option value="false">off</option><option value="true">on</option></select></div>
-        <div class="chiprow">
-          <button class="btn danger" onclick="clearState()">Clear State</button>
-          <button class="btn danger" onclick="clearCache()">Clear Cache</button>
-          <button class="btn danger" onclick="resetStats()">Reset Statistics</button>
-        </div>
-        <div id="tb_msg" class="msg ok hidden">Done ✓</div>
-      </div>
-    </div>
-
-
-            </div>
             <div class="sep"></div>
+            <div class="sub">Pairs</div>
+            <div id="pairs_list"></div>
+
+            <div class="footer">
+              <div class="pair-selectors" style="margin-top:1em;">
+                <label style="margin-right:1em;">Source:
+                  <select id="source-provider" style="margin-left:0.5em;"></select>
+                </label>
+                <label>Target:
+                  <select id="target-provider" style="margin-left:0.5em;"></select>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 
+        <!-- METADATA -->
+        <div class="section" id="sec-meta">
+          <div class="head" onclick="toggleSection('sec-meta')">
+            <span class="chev">▶</span><strong>Metadata Providers</strong>
+          </div>
+          <div class="body"><div id="metadata-providers"></div></div>
+        </div>
+
+        <!-- SCHEDULING -->
+        <div class="section" id="sec-scheduling">
+          <div class="head" onclick="toggleSection('sec-scheduling')">
+            <span class="chev">▶</span><strong>Scheduling</strong>
+          </div>
+          <div class="body">
+            <div class="grid2">
+              <div><label>Enable</label>
+                <select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select>
+              </div>
+              <div><label>Frequency</label>
+                <select id="schMode">
+                  <option value="hourly">Every hour</option>
+                  <option value="every_n_hours">Every N hours</option>
+                  <option value="daily_time">Daily at…</option>
+                </select>
+              </div>
+              <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
+              <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCROBBLER -->
+        <div class="section" id="sec-scrobbler">
+          <div class="head" onclick="toggleSection('sec-scrobbler')">
+            <span class="chev">▶</span><strong>Scrobbler</strong>
+          </div>
+          <div class="body">
+            <div id="scrobble-mount">
+              <div class="section" id="sc-sec-webhook">
+                <div class="head" onclick="toggleSection('sc-sec-webhook')">
+                  <span class="chev">▶</span><strong>Webhook</strong>
+                </div>
+                <div class="body"><div id="scrob-webhook"></div></div>
+              </div>
+
+              <div class="section" id="sc-sec-watch">
+                <div class="head" onclick="toggleSection('sc-sec-watch')">
+                  <span class="chev">▶</span><strong>Watcher</strong>
+                </div>
+                <div class="body"><div id="scrob-watcher"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TROUBLESHOOT -->
+        <div class="section" id="sec-troubleshoot">
+          <div class="head" onclick="toggleSection('sec-troubleshoot')">
+            <span class="chev">▶</span><strong>Troubleshoot</strong>
+          </div>
+          <div class="body">
+            <div class="sub">Use these actions to reset application state. They are safe but cannot be undone.</div>
+            <div><label>Debug</label><select id="debug"><option value="false">off</option><option value="true">on</option></select></div>
+            <div class="chiprow">
+              <button class="btn danger" onclick="clearState()">Clear State</button>
+              <button class="btn danger" onclick="clearCache()">Clear Cache</button>
+              <button class="btn danger" onclick="resetStats()">Reset Statistics</button>
+            </div>
+            <div id="tb_msg" class="msg ok hidden">Done ✓</div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <button class="btn btn-save" onclick="saveSettings()"><span class="btn-ic">✔</span> Save</button>
+          <button class="btn btn-exit" onclick="showTab('main')"><span class="btn-ic">↩</span> Exit</button>
+          <span id="save_msg" class="msg ok hidden">Settings saved ✓</span>
+        </div>
+
       </div>
-    </div>
-    <div class="footer">
-      <button class="btn btn-save" onclick="saveSettings()"><span class="btn-ic">✔</span> Save</button>
-      <button class="btn btn-exit" onclick="showTab('main')"><span class="btn-ic">↩</span> Exit</button>
-      <span id="save_msg" class="msg ok hidden">Settings saved ✓</span>
+
+      <!-- Right column: Settings Insight mounts here -->
+      <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
     </div>
   </section>
 
@@ -365,18 +353,9 @@ button[onclick="runAllBatches()"] {
 
       <div class="modal-body">
         <div class="about-grid">
-          <div class="about-item">
-            <div class="k">Repository</div>
-            <div class="v"><a id="about-repo" href="https://github.com/cenodude/plex-simkl-watchlist-sync" target="_blank" rel="noopener">GitHub</a></div>
-          </div>
-          <div class="about-item">
-            <div class="k">Latest Release</div>
-            <div class="v"><a id="about-latest" href="#" target="_blank" rel="noopener">—</a></div>
-          </div>
-          <div class="about-item">
-            <div class="k">Update</div>
-            <div class="v"><span id="about-update" class="badge upd hidden"></span></div>
-          </div>
+          <div class="about-item"><div class="k">Repository</div><div class="v"><a id="about-repo" href="https://github.com/cenodude/plex-simkl-watchlist-sync" target="_blank" rel="noopener">GitHub</a></div></div>
+          <div class="about-item"><div class="k">Latest Release</div><div class="v"><a id="about-latest" href="#" target="_blank" rel="noopener">—</a></div></div>
+          <div class="about-item"><div class="k">Update</div><div class="v"><span id="about-update" class="badge upd hidden"></span></div></div>
         </div>
 
         <div class="sep"></div>
@@ -395,25 +374,32 @@ button[onclick="runAllBatches()"] {
   </div>
 
 </main>
-  <script src="/assets/client-formatter.js" defer></script>
-  <script src="/assets/crosswatch.js" defer></script>
-  <script src="/assets/scrobbler.js" defer></script>
-  <script src="/assets/auth.trakt.js" defer></script>
 
-  <script src="/assets/main.js" defer></script>
+<!-- Core app scripts (order matters a bit less now, but keep tidy) -->
+<script src="/assets/client-formatter.js" defer></script>
+<script src="/assets/crosswatch.js" defer></script>
+<script src="/assets/scrobbler.js" defer></script>
+<script src="/assets/auth.trakt.js" defer></script>
 
-  <script src="/assets/insights.js" defer></script>
-  <script src="/assets/modals.js" defer></script>
-  <script src="/assets/connections.overlay.js" defer></script>
-  <script src="/assets/connections.pairs.overlay.js" defer></script>
-  <script src="/assets/scheduler.js" defer></script>
-  <script src="/assets/schedularbanner.js" defer></script>
+<!-- Insights & Settings Insight -->
+<script src="/assets/insights.js" defer></script>
+<script src="/assets/settings-insight.js" defer></script>
 
-  <script>
+<!-- Operational UI -->
+<script src="/assets/main.js" defer></script>
+<script src="/assets/modals.js" defer></script>
+<script src="/assets/connections.overlay.js" defer></script>
+<script src="/assets/connections.pairs.overlay.js" defer></script>
+
+<!-- Scheduler widgets -->
+<script src="/assets/scheduler.js" defer></script>
+<script src="/assets/schedulerbanner.js" defer></script>
+
+<script>
   document.addEventListener('DOMContentLoaded', () => {
     try { if (typeof openSummaryStream === 'function') openSummaryStream(); } catch (e) {}
   });
-  </script>
+</script>
 
 </body></html>
 """

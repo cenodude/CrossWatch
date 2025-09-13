@@ -206,14 +206,17 @@
       if (/^•\s*feature=/i.test(t)) return null;
     }
 
-    // maak host "Done. Total ..." een mooi blok
     const mDone = t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)/i);
     if (mDone) {
       const adds = Number(mDone[1]||0), rems = Number(mDone[2]||0);
       return htmlBlock("complete", `${ICON.complete} Sync complete`, `+${adds} / -${rems}`);
     }
 
-    // banners klein houden (exit code)
+    // pretty scheduler line
+    if (/^\s*(?:\[?INFO]?)\s*scheduler:\s*started\s*(?:&|&amp;)\s*refreshed\s*$/i.test(t)) {
+      return htmlBlock("start", `⏱️ Scheduler`, `started & refreshed`);
+    }
+    
     if (/^\[SYNC]\s*exit code/i.test(t)) {
       return `<div class="cf-line cf-fade-in">${esc(t)}</div>`;
     }

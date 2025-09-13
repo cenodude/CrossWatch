@@ -1,6 +1,4 @@
 // /assets/scheduler.js
-// Scheduler UI: simple "run all pairs" + optional Advanced (sequential plan).
-// No local save buttons; global Save uses window.getSchedulingPatch().
 
 (() => {
   const $  = (sel, root = document) => root.querySelector(sel);
@@ -220,11 +218,15 @@
 
   // --- Load
   async function loadScheduling() {
+    // Build/ensure UI elements, then load current server config
     ensureUI();
     await fetchPairs();
 
     let saved = {};
-    try { saved = await fetch('/api/scheduling', { cache:'no-store' }).then(r => r.json()); } catch {}
+    try {
+      // cache-bust to avoid stale reads
+      saved = await fetch('/api/scheduling?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json());
+    } catch {}
 
     setBooleanSelect($('#schEnabled'), !!saved.enabled);
     if ($('#schMode')) $('#schMode').value = saved.mode || 'hourly';
@@ -240,16 +242,19 @@
           id: j.id || genId(),
           pair_id: j.pair_id || null,
           at: j.at || null,
-          days: Array.isArray(j.days) ? j.days.filter(n => n>=1 && n<=7) : [],
+          days: Array.isArray(j.days) ? j.days.filter(n => n >= 1 && n <= 7) : [],
           after: j.after || null,
           active: j.active !== false
         }))
       : [];
     renderJobs();
 
-    // Nudge the banner (safe if it exists)
-    try { window.refreshSchedulingBanner?.(); } catch {}
+    // Nudge the inline banner (safe if it exists)
+    try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
   }
+
+  // Expose for other scripts (e.g. crosswatch.js showTab/settings)
+  window.loadScheduling = loadScheduling;
 
   // --- Serialize (for global Save)
   function serializeAdvanced() {
@@ -279,5 +284,7 @@
   // Bootstrap
   document.addEventListener('DOMContentLoaded', () => {
     loadScheduling().catch(e => console.warn('scheduler load failed', e));
+    try { window.dispatchEvent(new Event('sched-banner-ready')); } catch {}
+    try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
   });
 })();

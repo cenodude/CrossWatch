@@ -1,9 +1,9 @@
 (() => {
   const FEATS = [
-    { key: "watchlist", icon: "🎞️", label: "Watchlist" },
-    { key: "ratings",   icon: "⭐",  label: "Ratings"   },
-    { key: "history",   icon: "▶",  label: "History"   },
-    { key: "playlists", icon: "🎵",  label: "Playlists" },
+    { key: "watchlist", icon: "movie",       label: "Watchlist" },
+    { key: "ratings",   icon: "star",        label: "Ratings"   },
+    { key: "history",   icon: "play_arrow",  label: "History"   },
+    { key: "playlists", icon: "queue_music", label: "Playlists" },
   ];
 
   const elProgress = document.getElementById("ux-progress");
@@ -189,7 +189,8 @@
       lastCounts[f.key] = total;
 
       const h = document.createElement("div"); h.className = "lane-h";
-      const ico = document.createElement("div"); ico.className = "lane-ico"; ico.textContent = f.icon;
+      const ico = document.createElement("div"); ico.className = "lane-ico"; ico.innerHTML = `<span class="material-symbol">${f.icon}</span>`;
+
       const ttl = document.createElement("div"); ttl.className = "lane-title"; ttl.textContent = f.label;
 
       const badges = document.createElement("div"); badges.className = "lane-badges";

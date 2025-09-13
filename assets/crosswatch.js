@@ -714,7 +714,15 @@ async function showTab(n) {
     updateSimklButtonState?.(); 
     updateTraktHint?.();
     startTraktTokenPoll?.();
-    loadScheduling?.();
+
+    // --- Safe call: scheduler UI loader may not be defined yet
+    if (typeof window.loadScheduling === 'function') {
+      await window.loadScheduling();
+    } else {
+      window.addEventListener('sched-banner-ready', () => {
+        try { window.loadScheduling?.(); } catch {}
+      }, { once: true });
+    }
 
     // Mount Scrobbler UI (timing-safe, only once)
     ensureScrobbler();
@@ -722,6 +730,7 @@ async function showTab(n) {
   }
 }
 
+// --- Scrobbler UI mount (only once, when settings tab is shown and both PLEX+TRAKT are configured)
 let __scrobInit = false;
 function ensureScrobbler() {
   if (__scrobInit) return;
@@ -1730,6 +1739,7 @@ function _getVal(id) {
 }
 
 async function saveSettings() {
+  let schedChanged = false;
   const toast = document.getElementById("save_msg");
   const showToast = (text, ok = true) => {
     if (!toast) return;
@@ -1887,7 +1897,7 @@ async function saveSettings() {
       console.warn("saveSettings: plex.server_url merge failed", e);
     }
 
-    // 🟢 Merge scheduling into config.json (not /api/scheduling)
+    // scheduling merge
     try {
       let sched = {};
       if (typeof window.getSchedulingPatch === "function") {
@@ -1905,6 +1915,7 @@ async function saveSettings() {
       if (JSON.stringify(sched) !== JSON.stringify(prevSched)) {
         cfg.scheduling = sched;
         changed = true;
+        schedChanged = true; // NEW
       }
     } catch (e) {
       console.warn("saveSettings: scheduling merge failed", e);
@@ -1917,23 +1928,57 @@ async function saveSettings() {
         body: JSON.stringify(cfg),
       });
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
-      try { await loadConfig(); } catch {}
-      try { _invalidatePairsCache?.(); } catch {}
+
+      // refresh caches after save
+      try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
+      try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
+
+      // If scheduling changed, hit the scheduler endpoint (does real stop/start).
+      // Otherwise just nudge a replan.
+      if (schedChanged) {
+        try {
+          await fetch("/api/scheduling", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cfg.scheduling),
+            cache: "no-store"
+          });
+        } catch (e) {
+          console.warn("POST /api/scheduling failed", e);
+        }
+      } else {
+        try { await fetch("/api/scheduling/replan_now", { method: "POST", cache: "no-store" }); } catch {}
+      }
     }
 
+    // downstream UI refreshes (guard everything)
     try {
-      await refreshPairedProviders?.(0);
-      const cached = typeof loadStatusCache === "function" ? loadStatusCache() : null;
-      if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
-      await refreshStatus(true);
+      if (typeof refreshPairedProviders === "function") await refreshPairedProviders(0);
+      const cached = (typeof loadStatusCache === "function") ? loadStatusCache() : null;
+      if (cached?.providers && typeof renderConnectorStatus === "function") {
+        renderConnectorStatus(cached.providers, { stale: true });
+      }
+      if (typeof refreshStatus === "function") await refreshStatus(true);
     } catch {}
 
-    try { await updatePreviewVisibility?.(); } catch {}
-    try { updateTmdbHint?.(); } catch {}
-    try { updateSimklState?.(); } catch {}
-    try { await updateWatchlistTabVisibility?.(); } catch {}
-    try { await loadScheduling?.(); } catch {}
-    try { updateTraktHint?.(); } catch {}
+    try { if (typeof updatePreviewVisibility === "function") await updatePreviewVisibility(); } catch {}
+    try { if (typeof updateTmdbHint === "function") updateTmdbHint(); } catch {}
+    try { if (typeof updateSimklState === "function") updateSimklState(); } catch {}
+    try { if (typeof updateWatchlistTabVisibility === "function") await updateWatchlistTabVisibility(); } catch {}
+
+    // loadScheduling may not exist → guard it, use the global
+    try {
+      if (typeof window.loadScheduling === "function") {
+        await window.loadScheduling();
+      } else {
+        document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } }));
+        document.dispatchEvent(new Event("scheduling-status-refresh"));
+      }
+    } catch (e) {
+      console.warn("loadScheduling failed:", e);
+    }
+
+    try { if (typeof updateTraktHint === "function") updateTraktHint(); } catch {}
 
     try {
       window.dispatchEvent(new CustomEvent("settings-changed", {
@@ -1941,8 +1986,13 @@ async function saveSettings() {
       }));
     } catch {}
 
-    try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch {}
-    try { window.UX?.refresh?.(); } catch {}
+    // explicit broadcasts for scheduler consumers
+    try { document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } })); } catch {}
+    try { document.dispatchEvent(new Event("scheduling-status-refresh")); } catch {}
+
+    // banners / side insight (cache-busted fetches happen inside)
+    try { if (typeof window.refreshSchedulingBanner === "function") await window.refreshSchedulingBanner(); } catch {}
+    try { if (typeof window.refreshSettingsInsight === "function") window.refreshSettingsInsight(); } catch {}
 
     showToast("Settings saved", true);
   } catch (err) {
@@ -3224,6 +3274,13 @@ function renderConnections() {
 
 (function () {
   
+/* [moved to modals.js] */
+
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
+/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
+
+  
   window.cxOpenModalFor = function (pair, editingId) {
   try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
@@ -3653,6 +3710,8 @@ function fixFormLabels(root = document) {
 }
 document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
 
+/* ==== END crosswatch.core.fixed4.js ==== */
+
 /* Smoke-check: ensure essential APIs exist on window */
 (function(){
   const need = ["openAbout","cxEnsureCfgModal","renderConnections","loadProviders"];
@@ -3663,7 +3722,7 @@ document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } c
 /* Global shim: showTab for legacy inline onclick= */
 (function(){
   if (typeof window.showTab !== "function") {
-    window.showTab = function(id){
+    window._showTabBootstrap = function(id){
       try {
         // Prefer explicit pages: #page-main/#page-watchlist/#page-settings
         var pages = document.querySelectorAll("#page-main, #page-watchlist, #page-settings, .tab-page");
@@ -3684,7 +3743,7 @@ document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } c
   }
 })();
 
-
 /* Ensure showTab is global at end */
-try{ window.showTab = window.showTab || showTab; }catch(_){}
+/* try{ window.showTab = window.showTab || showTab; }catch(_){} */
+window.showTab = showTab;
 

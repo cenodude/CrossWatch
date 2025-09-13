@@ -57,6 +57,52 @@ from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
 from cw_platform import config_base
 
+import time
+from datetime import datetime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
+
+
+# Hint used to immediately reflect a fresh next_run_at in status after a config save.
+_SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
+
+def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
+    now = int(time.time()) if now_ts is None else int(now_ts)
+    if not scfg or not scfg.get("enabled"):
+        return 0
+
+    mode = (scfg.get("mode") or "every_n_hours").lower()
+
+    if mode == "every_n_hours":
+        n = max(1, int(scfg.get("every_n_hours") or 1))
+        return now + n * 3600
+
+    if mode == "daily_time":
+        hh, mm = ("03", "30")
+        try:
+            hh, mm = (scfg.get("daily_time") or "03:30").split(":")
+        except Exception:
+            pass
+
+        tz = None
+        try:
+            tzname = scfg.get("timezone")
+            if tzname and ZoneInfo:
+                tz = ZoneInfo(tzname)
+        except Exception:
+            tz = None
+
+        base = datetime.fromtimestamp(now, tz) if tz else datetime.fromtimestamp(now)
+        target = base.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        if target.timestamp() <= now:
+            target = target + timedelta(days=1)
+        return int(target.timestamp())
+
+    # fallback
+    return now + 3600
+
 # Paths & globals
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -154,9 +200,10 @@ def _is_debug_enabled() -> bool:
     except Exception:
         return False
 
-# App lifecycle
+# -------------App lifecycle--------------
 @asynccontextmanager
 async def _lifespan(app):
+    # 1) optional custom startup hook (kept as-is)
     try:
         fn = globals().get("_on_startup")
         if callable(fn):
@@ -173,6 +220,7 @@ async def _lifespan(app):
         except Exception:
             pass
 
+    # 2) start Watcher if configured
     try:
         cfg = load_config()
         if ((cfg.get("features") or {}).get("watch") or {}).get("enabled"):
@@ -184,9 +232,25 @@ async def _lifespan(app):
         except Exception:
             pass
 
+    # 3) start and prime the Scheduler (no .apply, just start/refresh)
+    try:
+        global scheduler
+        if scheduler is not None:
+            scheduler.start()  # idempotent
+            scfg = (load_config().get("scheduling") or {})
+            if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
+                scheduler.refresh()  # compute next_run_at immediately
+            _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+
     try:
         yield
     finally:
+        # optional custom shutdown hook (kept as-is)
         try:
             fn2 = globals().get("_on_shutdown")
             if callable(fn2):
@@ -203,6 +267,7 @@ async def _lifespan(app):
             except Exception:
                 pass
 
+        # stop Watcher
         try:
             if 'WATCH' in globals() and WATCH:
                 WATCH.stop()
@@ -214,6 +279,7 @@ async def _lifespan(app):
                 pass
 
 app = FastAPI(lifespan=_lifespan)
+
 
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1827,7 +1893,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.2")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.3")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -2145,39 +2211,77 @@ def api_status(fresh: int = Query(0)):
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Config endpoints
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 @app.get("/api/config")
 def api_config() -> JSONResponse:
     return JSONResponse(load_config())
 
 @app.post("/api/config")
 def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    """Persist configuration, enforce scrobble mode exclusivity, and map to features.watch.enabled."""
+    """
+    Persist configuration, normalize scrobble mode, derive features.watch.enabled,
+    and (re)plan the scheduler using start/stop/refresh only (no .apply()).
+    """
     cfg = dict(cfg or {})
+
+    # --- scrobble normalize ---
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
     mode = (sc.get("mode") or "").strip().lower()
     if mode not in ("webhook", "watch"):
-        legacy_webhook = bool((cfg.get("webhook") or {}).get("enabled"))
-        mode = "webhook" if legacy_webhook else ("watch" if sc_enabled else "")
-        if mode:
-            sc["mode"] = mode
+      legacy_webhook = bool((cfg.get("webhook") or {}).get("enabled"))
+      mode = "webhook" if legacy_webhook else ("watch" if sc_enabled else "")
+      if mode:
+          sc["mode"] = mode
     if mode == "webhook":
-        sc.setdefault("watch", {}).setdefault("autostart", bool(sc.get("watch", {}).get("autostart", False)))
+      sc.setdefault("watch", {}).setdefault("autostart", bool(sc.get("watch", {}).get("autostart", False)))
     elif mode == "watch":
-        pass
+      pass
     else:
-        sc["enabled"] = False
+      sc["enabled"] = False
+
+    # --- map to features.watch.enabled ---
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
     autostart = bool(sc.get("watch", {}).get("autostart", False))
     watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and autostart)
+
+    # --- persist ---
     save_config(cfg)
-    _PROBE_CACHE["plex"] = (0.0, False)
+
+    # --- force badges to re-probe quickly ---
+    _PROBE_CACHE["plex"]  = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
+
+    # --- (re)plan scheduler: start/stop + refresh (NO apply) ---
+    try:
+        global scheduler
+        if scheduler is not None:
+            s = (cfg.get("scheduling") or {})
+            if bool(s.get("enabled")):
+                if hasattr(scheduler, "start"):   scheduler.start()    # idempotent
+                if hasattr(scheduler, "refresh"): scheduler.refresh()  # recompute next_run_at now
+                try:
+                    _UIHostLogger("SYNC", "SCHED")("scheduler refreshed (enabled)", level="INFO")
+                except Exception:
+                    pass
+            else:
+                if hasattr(scheduler, "stop"):    scheduler.stop()
+                try:
+                    _UIHostLogger("SYNC", "SCHED")("scheduler stopped (disabled)", level="INFO")
+                except Exception:
+                    pass
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC", "SCHED")(f"scheduler refresh on save failed: {e}", level="ERROR")
+        except Exception:
+            pass
+
     return {"ok": True}
+
+
 # -----------------------------------------------------------------------------
 # Plex PIN auth
 # -----------------------------------------------------------------------------
@@ -2825,6 +2929,39 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
 # -----------------------------------------------------------------------------
 # Scheduling API
 # -----------------------------------------------------------------------------
+@app.post("/api/scheduling/replan_now")
+def api_scheduling_replan_now() -> Dict[str, Any]:
+    cfg = load_config()
+    scfg = cfg.get("scheduling") or {}
+    nxt = _compute_next_run_from_cfg(scfg)
+
+    _SCHED_HINT["next_run_at"] = int(nxt)
+    _SCHED_HINT["last_saved_at"] = int(time.time())
+
+    try:
+        global scheduler
+        if scheduler is not None:
+            if hasattr(scheduler, "stop"):    scheduler.stop()
+            if hasattr(scheduler, "start"):   scheduler.start()
+            if hasattr(scheduler, "refresh"): scheduler.refresh()
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC","SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
+        except Exception:
+            pass
+
+    st = {}
+    try:
+        st = scheduler.status()
+        st["config"] = scfg
+        if _SCHED_HINT.get("next_run_at"):
+            st["next_run_at"] = int(_SCHED_HINT["next_run_at"])
+    except Exception:
+        st = {"next_run_at": int(nxt)}
+
+    return {"ok": True, **st}
+
+    
 @app.get("/api/scheduling")
 def api_sched_get():
     cfg = load_config()
@@ -2835,16 +2972,38 @@ def api_sched_post(payload: dict = Body(...)):
     cfg = load_config()
     cfg["scheduling"] = (payload or {})
     save_config(cfg)
+    try:
+        nxt = _compute_next_run_from_cfg(cfg["scheduling"] or {})
+        _SCHED_HINT["next_run_at"] = int(nxt)
+        _SCHED_HINT["last_saved_at"] = int(time.time())
+    except Exception:
+        nxt = 0
+
     if (cfg["scheduling"] or {}).get("enabled"):
         scheduler.start(); scheduler.refresh()
     else:
         scheduler.stop()
+
     st = scheduler.status()
-    return {"ok": True, "next_run_at": st.get("next_run_at", 0)}
+    try:
+        if _SCHED_HINT.get("next_run_at"):
+            st["next_run_at"] = int(_SCHED_HINT["next_run_at"])
+        st["config"] = cfg.get("scheduling") or {}
+    except Exception:
+        pass
+
+    return {"ok": True, "next_run_at": st.get("next_run_at", int(nxt) if nxt else 0)}
 
 @app.get("/api/scheduling/status")
 def api_sched_status():
-    return scheduler.status()
+    st = scheduler.status()
+    try:
+        st["config"] = load_config().get("scheduling") or {}
+        if _SCHED_HINT.get("next_run_at"):
+            st["next_run_at"] = int(_SCHED_HINT["next_run_at"])
+    except Exception:
+        pass
+    return st
 
 # -----------------------------------------------------------------------------
 # Troubleshooting
