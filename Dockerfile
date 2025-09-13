@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.description="A lightweight tool to synchronize your watchlists and playlists across Plex, SIMKL, Trakt, and more."
+
 # --- env ---
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
