@@ -9,7 +9,6 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs
 
-import traceback
 import json
 import os
 import re
@@ -57,7 +56,6 @@ from _watchlist import build_watchlist, delete_watchlist_item
 from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
 from cw_platform import config_base
-from _watchlist import delete_watchlist_item
 
 import time
 from datetime import datetime, timedelta
@@ -66,12 +64,6 @@ try:
 except Exception:
     ZoneInfo = None
 
-def _state_path() -> Path:
-    try:
-        p = Path(CONFIG) / "state.json"
-    except Exception:
-        p = Path("./state.json")
-    return p
 
 # Hint used to immediately reflect a fresh next_run_at in status after a config save.
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
@@ -1883,62 +1875,47 @@ def api_watchlist_providers():
 @app.post("/api/watchlist/delete")
 def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Payload: { "keys": ["imdb:tt123", ...], "provider": "PLEX"|"SIMKL"|"TRAKT" }
-    Returns per-key results; never raises (no 500).
+    JSON: { "keys": [ "imdb:tt123", ... ], "provider": "PLEX"|"SIMKL"|"TRAKT" }
+    Returns per-key results and a summary.
     """
+    keys = payload.get("keys") or []
+    provider = (payload.get("provider") or "PLEX").upper()
+
+    if not isinstance(keys, list) or not keys:
+        return {"ok": False, "error": "keys must be a non-empty array"}
+
+    # read config once
     try:
-        keys = payload.get("keys") or []
-        provider = (payload.get("provider") or "PLEX").upper()
-
-        if not isinstance(keys, list) or not keys:
-            return {"ok": False, "error": "keys must be a non-empty array"}
-
-        if provider not in ("PLEX", "SIMKL", "TRAKT"):
-            return {"ok": False, "error": f"unknown provider '{provider}'"}
-
-        # load config once
-        try:
-            from cw_platform.config_base import load_config
-            cfg = load_config()
-        except Exception as e:
-            return {"ok": False, "error": f"failed to load config: {e}"}
-
-        state_file = _state_path()
-
-        results: List[Dict[str, Any]] = []
-        ok_count = 0
-
-        for k in keys:
-            try:
-                r = delete_watchlist_item(
-                    key=str(k),
-                    state_path=state_file,
-                    cfg=cfg,
-                    provider=provider,
-                    log=None,
-                )
-                results.append({"key": k, **r})
-                if r.get("ok"):
-                    ok_count += 1
-            except Exception as e:
-                # never let an exception escape -> no 500s
-                tb = traceback.format_exc()
-                print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
-                results.append({"key": k, "ok": False, "error": str(e)})
-
-        return {
-            "ok": ok_count == len(keys),
-            "provider": provider,
-            "deleted_ok": ok_count,
-            "deleted_total": len(keys),
-            "results": results,
-        }
-
+        from cw_platform.config_base import load_config
+        cfg = load_config()
     except Exception as e:
-        # last-resort guard (still no 500)
-        tb = traceback.format_exc()
-        print(f"[watchlist:delete] FATAL: {e}\n{tb}")
-        return {"ok": False, "error": f"fatal: {e}"}
+        return {"ok": False, "error": f"failed to load config: {e}"}
+
+    # run deletes
+    results: List[Dict[str, Any]] = []
+    ok = 0
+    for k in keys:
+        try:
+            r = delete_watchlist_item(
+                key=str(k),
+                state_path=STATE_FILE,
+                cfg=cfg,
+                provider=provider,
+                log=None,
+            )
+            results.append({"key": k, **r})
+            if r.get("ok"):
+                ok += 1
+        except Exception as e:
+            results.append({"key": k, "ok": False, "error": str(e)})
+
+    return {
+        "ok": ok == len(keys),
+        "provider": provider,
+        "deleted_ok": ok,
+        "deleted_total": len(keys),
+        "results": results,
+
 # -----------------------------------------------------------------------------
 # Icons
 # -----------------------------------------------------------------------------
