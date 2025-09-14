@@ -133,30 +133,29 @@ def _ids_from_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
 
 def _progress_from_psn(state: str, view_offset: int, duration: int) -> Tuple[int, ScrobbleAction]:
     try:
-        duration_i = int(duration or 0)
-        view_i = int(view_offset or 0)
+        duration = int(duration or 0)
     except Exception:
-        duration_i, view_i = 0, 0
+        duration = 0
+    try:
+        view_offset = int(view_offset or 0)
+    except Exception:
+        view_offset = 0
 
-    if duration_i <= 0:
-        pct = 0
-    else:
-        pct = int(round(100.0 * max(0, min(view_i, duration_i)) / float(duration_i)))
-        pct = max(0, min(100, pct))
+    duration = max(1, duration)
+    view_offset = max(0, min(view_offset, duration))
+    pct = int(round((view_offset / float(duration)) * 100))
 
-    st = (state or "").lower()
-    if st in ("playing", "buffering"):
+    s = (state or "").lower()
+    if s == "playing":
         act: ScrobbleAction = "start"
-    elif st == "paused":
+    elif s == "paused":
         act = "pause"
-    elif st in ("stopped", "bufferingstopped"):
+    elif s in ("stopped", "bufferingstopped"):
         act = "stop"
     else:
-        # Unknown/odd states: be conservative; never mark watched
-        act = "pause"
+        act = "start"
 
-    return (pct, act)
-
+    return (max(0, min(100, pct)), act)
 
 def _safe_int(x: Any) -> Optional[int]:
     try:

@@ -1,9 +1,4 @@
 # _watchlist.py
-# Watchlist logic for Plex ⇄ SIMKL ⇄ Trakt Web UI
-# - Merge grid
-# - Delete per provider (Plex via PlexAPI; SIMKL/Trakt via HTTP)
-# - Local "hide" overlay
-# - Batch delete + provider detection
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -18,7 +13,7 @@ from cw_platform.config_base import CONFIG
 HIDE_PATH = CONFIG / "watchlist_hide.json"
 
 # ======================================================================
-# Local "hide" overlay
+# Local "hide" overlay helpers
 # ======================================================================
 
 def _load_hide_set() -> Set[str]:
@@ -39,7 +34,7 @@ def _save_hide_set(hide: Set[str]) -> None:
         pass
 
 # ======================================================================
-# Generic helpers (state / ids / type)
+# Generic helpers (ids / type / state)
 # ======================================================================
 
 def _load_state_dict(state_path: Path) -> Dict[str, Any]:
@@ -50,15 +45,24 @@ def _load_state_dict(state_path: Path) -> Dict[str, Any]:
         pass
     return {}
 
+def _get_provider_items(state: Dict[str, Any], provider: str) -> Dict[str, Any]:
+    P = (state.get("providers") or {}).get(provider.upper(), {}) or {}
+    wl = (((P.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
+    if wl:
+        return wl
+    return (P.get("items") or {})
+
 def _find_item_in_state(state: Dict[str, Any], key: str) -> Dict[str, Any]:
-    def _g(st, prov):
-        P = (st.get("providers") or {}).get(prov, {}) or {}
-        return (((P.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
+    # Legacy: first hit across providers (PLEX → SIMKL → TRAKT)
     for prov in ("PLEX", "SIMKL", "TRAKT"):
-        x = _g(state, prov).get(key)
-        if x:
-            return dict(x)
+        it = _get_provider_items(state, prov).get(key)
+        if it:
+            return dict(it)
     return {}
+
+def _find_item_in_state_for_provider(state: Dict[str, Any], key: str, provider: str) -> Dict[str, Any]:
+    it = _get_provider_items(state, provider).get(key)
+    return dict(it) if it else {}
 
 def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
     ids = dict(item.get("ids") or {})
@@ -68,18 +72,28 @@ def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
         ids.setdefault(pref, val)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
-    return {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "trakt", "slug") if ids.get(k)}
+    # include simkl; exclude trakt for SIMKL requests later
+    return {k: ids[k] for k in ("simkl", "imdb", "tmdb", "tvdb", "slug") if ids.get(k)}
 
 def _type_from_item_or_guess(item: Dict[str, Any], key: str) -> str:
     typ = (item.get("type") or "").lower()
-    if typ in ("movie", "show", "tv"):
+    if typ in ("movie", "show", "tv", "series"):
         return "movie" if typ == "movie" else "show"
-    if (key or "").lower().startswith("tvdb:"):
+    ids = (item.get("ids") or {})
+    if ids.get("tvdb") or ids.get("thetvdb"):
+        return "show"
+    pref = (key or "").split(":", 1)[0].lower().strip()
+    if pref in ("tvdb", "thetvdb"):
         return "show"
     return "movie"
 
+_SIMKL_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
+
+def _simkl_filter_ids(ids: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: str(v) for k, v in ids.items() if k in _SIMKL_ID_KEYS and v}
+
 # ======================================================================
-# Plex GUID helpers (for PlexAPI)
+# Plex GUID helpers (for PlexAPI matching)
 # ======================================================================
 
 def _pick_added(d: Dict[str, Any]) -> Optional[str]:
@@ -164,15 +178,11 @@ def _extract_plex_identifiers(item: Dict[str, Any]) -> Tuple[Optional[str], Opti
     return (str(guid) if guid else None, str(ratingKey) if ratingKey else None)
 
 # ======================================================================
-# Merge watchlist view for UI
+# Build merged watchlist view (for UI)
 # ======================================================================
 
 def _get_items(state: Dict[str, Any], prov: str) -> Dict[str, Any]:
-    P = (state.get("providers") or {}).get(prov.upper(), {}) or {}
-    wl = (((P.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
-    if wl:
-        return wl
-    return (P.get("items") or {})
+    return _get_provider_items(state, prov)
 
 def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[Dict[str, Any]]:
     plex_items  = _get_items(state, "PLEX")
@@ -236,19 +246,18 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
     return out
 
 # ======================================================================
-# Provider deletes
+# Provider-specific deletes (single + batch)
 # ======================================================================
 
-# ---- Plex (single) ----------------------------------------------------
-
+# ---- Plex (single only) -----------------------------------------------
 def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any]) -> None:
     token = ((cfg.get("plex", {}) or {}).get("account_token") or "").strip()
     if not token:
         raise RuntimeError("missing plex token")
     account = MyPlexAccount(token=token)
 
-    plex_items = (((state.get("providers") or {}).get("PLEX", {}) or {}).get("watchlist") or {}).get("baseline", {}).get("items") or {}
-    simkl_items = (((state.get("providers") or {}).get("SIMKL", {}) or {}).get("watchlist") or {}).get("baseline", {}).get("items") or {}
+    plex_items = _get_provider_items(state, "PLEX")
+    simkl_items = _get_provider_items(state, "SIMKL")
 
     item = plex_items.get(key) or simkl_items.get(key) or {}
     guid, _ = _extract_plex_identifiers(item)
@@ -283,8 +292,8 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     account.removeFromWatchlist([found])
 
 # ---- SIMKL (batch) ----------------------------------------------------
-
-_SIMKL_REMOVE = "https://api.simkl.com/sync/watchlist/remove"
+_SIMKL_HISTORY_REMOVE = "https://api.simkl.com/sync/history/remove"
+_SIMKL_WATCHLIST_REMOVE = "https://api.simkl.com/sync/watchlist/remove"
 
 def _simkl_headers(simkl_cfg: Dict[str, Any]) -> Dict[str, str]:
     return {
@@ -295,57 +304,68 @@ def _simkl_headers(simkl_cfg: Dict[str, Any]) -> Dict[str, str]:
         "simkl-api-key": simkl_cfg.get("client_id",""),
     }
 
+def _post_simkl_delete(url: str, hdrs: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+    r = requests.post(url, headers=hdrs, json=payload, timeout=45)
+    if not r.ok:
+        raise RuntimeError(f"SIMKL delete failed: {r.status_code} {getattr(r,'text','')}")
+    try:
+        data = r.json()
+    except Exception:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+def _simkl_deleted_count(resp: Dict[str, Any]) -> int:
+    d = resp.get("deleted") or {}
+    if not isinstance(d, dict):
+        return 0
+    return sum(int(d.get(k, 0) or 0) for k in ("movies", "shows", "episodes", "seasons"))
+
 def _delete_on_simkl_batch(items: List[Dict[str, Any]], simkl_cfg: Dict[str, Any]) -> None:
     token = (simkl_cfg.get("access_token") or "").strip()
     client_id = (simkl_cfg.get("client_id") or "").strip()
     if not token or not client_id:
         raise RuntimeError("SIMKL not configured")
 
-    def _maybe_int(v):
-        try:
-            return int(v) if str(v).isdigit() else v
-        except Exception:
-            return v
-
     payload = {"movies": [], "shows": []}
     for it in items:
         ids = _ids_from_key_or_item(it["key"], it["item"])
-        if not ids:
-            continue
-        entry_ids = {}
-        for k in ("imdb", "tmdb", "tvdb", "slug"):
-            if ids.get(k) is not None:
-                entry_ids[k] = _maybe_int(ids[k])
+        entry_ids = _simkl_filter_ids(ids)
         if not entry_ids:
             continue
-        (payload["movies"] if it["type"] == "movie" else payload["shows"]).append({"ids": entry_ids})
+        target = payload["movies"] if it["type"] == "movie" else payload["shows"]
+        target.append({"ids": entry_ids})
 
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
-        return
+        raise RuntimeError("SIMKL delete: no resolvable IDs for requested items")
 
-    r = requests.post(_SIMKL_REMOVE, headers=_simkl_headers(simkl_cfg), json=payload, timeout=45)
-    if not r or not r.ok:
-        msg = f"HTTP {getattr(r,'status_code','??')}"
-        try:
-            txt = r.text
-            if txt:
-                msg += f": {txt[:400]}"
-        except Exception:
-            pass
-        raise RuntimeError(f"SIMKL delete failed: {msg}")
+    hdr = _simkl_headers(simkl_cfg)
 
-    try:
-        data = r.json()
-        nf_movies = bool(data.get("not_found", {}).get("movies"))
-        nf_shows  = bool(data.get("not_found", {}).get("shows"))
-        if nf_movies or nf_shows:
-            raise RuntimeError("SIMKL reported not_found for some items")
-    except Exception:
-        pass
+    resp = _post_simkl_delete(_SIMKL_HISTORY_REMOVE, hdr, payload)
+    if _simkl_deleted_count(resp) == 0:
+        resp2 = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, payload)
+        if _simkl_deleted_count(resp2) == 0:
+            # flip bucket once as a last resort
+            reb = {}
+            if payload.get("movies"):
+                reb["shows"] = payload["movies"]
+            if payload.get("shows"):
+                reb["movies"] = payload["shows"]
+            if reb:
+                resp3 = _post_simkl_delete(_SIMKL_HISTORY_REMOVE, hdr, reb)
+                if _simkl_deleted_count(resp3) == 0:
+                    resp4 = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, reb)
+                    if _simkl_deleted_count(resp4) == 0:
+                        raise RuntimeError(
+                            f"SIMKL delete matched 0 items. Payload={payload} "
+                            f"Resp1={resp} Resp2={resp2} Reb={reb} Resp3={resp3} Resp4={resp4}"
+                        )
+            else:
+                raise RuntimeError(
+                    f"SIMKL delete matched 0 items (history+watchlist). Payload={payload} Resp1={resp} Resp2={resp2}"
+                )
 
-# ---- Trakt (batch) ----------------------------------------------------
-
+# ---- TRAKT (batch) ----------------------------------------------------
 _TRAKT_REMOVE = "https://api.trakt.tv/sync/watchlist/remove"
 
 def _trakt_headers(trakt_cfg: Dict[str, Any]) -> Dict[str, str]:
@@ -373,21 +393,13 @@ def _delete_on_trakt_batch(items: List[Dict[str, Any]], trakt_cfg: Dict[str, Any
         if not entry_ids:
             continue
         (payload["movies"] if it["type"] == "movie" else payload["shows"]).append({"ids": entry_ids})
-
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
-        return
+        raise RuntimeError("TRAKT delete: no resolvable IDs for requested items")
 
     r = requests.post(_TRAKT_REMOVE, headers=hdr, json=payload, timeout=45)
     if not r or not r.ok:
-        msg = f"HTTP {getattr(r,'status_code','??')}"
-        try:
-            txt = r.text
-            if txt:
-                msg += f": {txt[:400]}"
-        except Exception:
-            pass
-        raise RuntimeError(f"TRAKT delete failed: {msg}")
+        raise RuntimeError(f"TRAKT delete failed: {getattr(r,'text','no response')}")
 
 # ======================================================================
 # Public: single delete
@@ -407,20 +419,20 @@ def delete_watchlist_item(
         if provider == "PLEX":
             _delete_on_plex_single(key=key, state=state, cfg=cfg)
         elif provider == "SIMKL":
-            item = _find_item_in_state(state, key)
+            item = _find_item_in_state_for_provider(state, key, "SIMKL")
             if not item:
-                raise RuntimeError("SIMKL delete: item not found in state")
+                raise RuntimeError("SIMKL delete: item not found in SIMKL state")
             _delete_on_simkl_batch(
                 [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-                cfg.get("simkl") or {}
+                (cfg.get("simkl") or {})
             )
         elif provider == "TRAKT":
-            item = _find_item_in_state(state, key)
+            item = _find_item_in_state_for_provider(state, key, "TRAKT")
             if not item:
-                raise RuntimeError("TRAKT delete: item not found in state")
+                raise RuntimeError("TRAKT delete: item not found in TRAKT state")
             _delete_on_trakt_batch(
                 [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-                cfg.get("trakt") or {}
+                (cfg.get("trakt") or {})
             )
         else:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
@@ -457,32 +469,52 @@ def delete_watchlist_items(
 
     items: List[Dict[str, Any]] = []
     missing: List[str] = []
-    for k in keys:
-        it = _find_item_in_state(state, k)
-        if it:
-            items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
-        else:
-            missing.append(k)
 
-    try:
-        if provider == "PLEX":
+    if provider == "PLEX":
+        for k in keys:
+            it = _find_item_in_state(state, k)  # Plex path tolerates cross-provider ids
+            if it:
+                items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
+            else:
+                missing.append(k)
+        try:
             for it in items:
                 _delete_on_plex_single(it["key"], state, cfg)
-        elif provider == "SIMKL":
-            _delete_on_simkl_batch(items, cfg.get("simkl") or {})
-        elif provider == "TRAKT":
-            _delete_on_trakt_batch(items, cfg.get("trakt") or {})
-        else:
-            return {"ok": False, "error": f"unknown provider '{provider}'"}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "provider": provider}
 
-        hide = _load_hide_set()
-        hide |= {it["key"] for it in items}
-        _save_hide_set(hide)
+    elif provider == "SIMKL":
+        for k in keys:
+            it = _find_item_in_state_for_provider(state, k, "SIMKL")
+            if it:
+                items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
+            else:
+                missing.append(k)
+        try:
+            _delete_on_simkl_batch(items, (cfg.get("simkl") or {}))
+        except Exception as e:
+            return {"ok": False, "error": str(e), "provider": provider}
 
-        return {"ok": True, "deleted": [it["key"] for it in items], "missing": missing, "provider": provider}
+    elif provider == "TRAKT":
+        for k in keys:
+            it = _find_item_in_state_for_provider(state, k, "TRAKT")
+            if it:
+                items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
+            else:
+                missing.append(k)
+        try:
+            _delete_on_trakt_batch(items, (cfg.get("trakt") or {}))
+        except Exception as e:
+            return {"ok": False, "error": str(e), "provider": provider}
 
-    except Exception as e:
-        return {"ok": False, "error": str(e), "provider": provider}
+    else:
+        return {"ok": False, "error": f"unknown provider '{provider}'"}
+
+    hide = _load_hide_set()
+    hide |= {it["key"] for it in items}
+    _save_hide_set(hide)
+
+    return {"ok": True, "deleted": [it["key"] for it in items], "missing": missing, "provider": provider}
 
 # ======================================================================
 # Public: provider detection for UI

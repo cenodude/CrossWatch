@@ -32,7 +32,7 @@ SIMKL_RATINGS_GET          = f"{SIMKL_BASE}/sync/ratings"
 SIMKL_RATINGS_SET          = f"{SIMKL_BASE}/sync/ratings"
 SIMKL_RATINGS_REMOVE       = f"{SIMKL_BASE}/sync/ratings/remove"
 
-_ID_KEYS = ("imdb", "tmdb", "tvdb", "slug")
+_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
 
 # Optional host integrations
 try:

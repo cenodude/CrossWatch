@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time, requests
 from typing import Any, Mapping, MutableMapping
+from urllib.parse import urlencode
 from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 from _logging import log
 
@@ -47,9 +48,39 @@ class SimklAuth(AuthProvider):
             scopes=s.get("scopes") or None,
         )
 
+    def _apply_token_response(self, cfg: MutableMapping[str, Any], j: dict) -> None:
+        s = cfg.setdefault("simkl", {})
+        if j.get("access_token"):
+            s["access_token"] = j["access_token"]
+        if "refresh_token" in j and j.get("refresh_token") is not None:
+            s["refresh_token"] = j["refresh_token"]
+        exp_in = j.get("expires_in")
+        if isinstance(exp_in, (int, float)) and exp_in > 0:
+            s["token_expires_at"] = int(time.time()) + int(exp_in)
+        else:
+            # fallbacks if API returns absolute
+            if "token_expires_at" in j:
+                try:
+                    s["token_expires_at"] = int(j["token_expires_at"])
+                except Exception:
+                    pass
+            if "expires_at" in j:
+                try:
+                    s["token_expires_at"] = int(j["expires_at"])
+                except Exception:
+                    pass
+        if j.get("scope"):
+            s["scopes"] = j["scope"]
+
     def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, str]:
         client_id = (cfg.get("simkl") or {}).get("client_id") or ""
-        url = f"{SIMKL_AUTH}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
+        params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "public write offline_access",
+        }
+        url = f"{SIMKL_AUTH}?{urlencode(params)}"
         log("SIMKL: start OAuth", level="INFO", module="AUTH", extra={"redirect_uri": redirect_uri})
         return {"url": url}
 
@@ -62,13 +93,17 @@ class SimklAuth(AuthProvider):
             "redirect_uri": payload.get("redirect_uri", ""),
             "code": payload.get("code", ""),
         }
+        headers = {
+            "User-Agent": UA,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "simkl-api-key": s.get("client_id", ""),
+        }
         log("SIMKL: exchange code", level="INFO", module="AUTH")
-        r = requests.post(SIMKL_TOKEN, json=data, headers={"User-Agent": UA, "Accept": "application/json"}, timeout=12)
+        r = requests.post(SIMKL_TOKEN, json=data, headers=headers, timeout=12)
         r.raise_for_status()
-        j = r.json()
-        s["access_token"] = j.get("access_token", "")
-        s["refresh_token"] = j.get("refresh_token", "")
-        s["token_expires_at"] = int(time.time()) + int(j.get("expires_in", 0) or 0)
+        j = r.json() or {}
+        self._apply_token_response(cfg, j)
         log("SIMKL: tokens stored", level="SUCCESS", module="AUTH")
         return self.get_status(cfg)
 
@@ -83,13 +118,17 @@ class SimklAuth(AuthProvider):
             "client_secret": s.get("client_secret", ""),
             "refresh_token": s.get("refresh_token", ""),
         }
+        headers = {
+            "User-Agent": UA,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "simkl-api-key": s.get("client_id", ""),
+        }
         log("SIMKL: refresh token", level="INFO", module="AUTH")
-        r = requests.post(SIMKL_TOKEN, json=data, headers={"User-Agent": UA, "Accept": "application/json"}, timeout=12)
+        r = requests.post(SIMKL_TOKEN, json=data, headers=headers, timeout=12)
         r.raise_for_status()
-        j = r.json()
-        s["access_token"] = j.get("access_token", "")
-        s["refresh_token"] = j.get("refresh_token", "") or s.get("refresh_token", "")
-        s["token_expires_at"] = int(time.time()) + int(j.get("expires_in", 0) or 0)
+        j = r.json() or {}
+        self._apply_token_response(cfg, j)
         log("SIMKL: refresh ok", level="SUCCESS", module="AUTH")
         return self.get_status(cfg)
 
@@ -148,4 +187,3 @@ def html() -> str:
   </div>
 </div>
 '''
-

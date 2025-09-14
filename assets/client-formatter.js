@@ -76,14 +76,9 @@
   };
 
   // ---------- state ----------
-  // run_id uit eerste plain regel; toevoegen aan run:start
   let pendingRunId = null;
-
-  // aggregatie voor apply-steps
   let opCounts = { add: { PLEX:0, SIMKL:0 }, remove: { PLEX:0, SIMKL:0 } };
   const dstNameFrom = (ev) => ev.dst || (ev.event.includes(":A:") ? "PLEX" : "SIMKL");
-
-  // squelch voor vervolgregels van gedropte meta
   let squelchPlain = 0;
 
   // ---------- pretty JSON ----------
@@ -100,7 +95,6 @@
         if (pendingRunId) { meta += ` · run_id=${pendingRunId}`; pendingRunId = null; }
         return htmlBlock("start", `${ICON.start} Sync started`, meta);
       }
-      // Toon juist run:pair (met index); onderdruk pair:start om dubbele tegels te voorkomen
       case "run:pair": {
         const i = ev.i|0, n = ev.n|0;
         const src = badge(ev.src), dst = badge(ev.dst), arr = arrowFor(ev.mode);
@@ -109,24 +103,19 @@
         return htmlBlock("pair", `${ICON.pair} Pair${idx}: ${src} <span class="cf-arrow">${arr}</span> ${dst}`, meta);
       }
       case "pair:start": return null;
-
       case "two:start":
         return htmlBlock("start", `⇄ Two-way sync`, `feature=${esc(ev.feature)} · removals=${!!ev.removals}`);
-
-      // Snapshot zonder provider-badges (dus geen logo’s)
       case "snapshot:start": {
         const a = esc(ev.a || "");
         const b = esc(ev.b || "");
         const feat = esc(ev.feature || "");
         return htmlBlock("plan", `📸 Snapshot`, `${a} vs ${b} · ${feat}`);
       }
-
       case "debug": {
         const msg = esc(ev.msg || "debug");
         const meta = Object.entries(ev).filter(([k]) => k !== "event" && k !== "msg").map(([k,v]) => `${k}=${v}`).join(", ");
         return htmlBlock("plan", `🐞 ${msg}`, meta, "cf-muted");
       }
-
       case "two:plan": {
         const aA = ev.add_to_A|0, aB = ev.add_to_B|0, rA = ev.rem_from_A|0, rB = ev.rem_from_B|0;
         const has = aA + aB + rA + rB;
@@ -134,15 +123,11 @@
           has ? `add A=${aA}, add B=${aB}, remove A=${rA}, remove B=${rB}` : `nothing to do`,
           has ? "" : "cf-muted");
       }
-
-      // verberg starts
       case "two:apply:add:A:start":
       case "two:apply:add:B:start":
       case "two:apply:remove:A:start":
       case "two:apply:remove:B:start":
         return null;
-
-      // done → tel op; render pas bij two:done
       case "two:apply:add:A:done":
       case "two:apply:add:B:done":
       case "two:apply:remove:A:done":
@@ -154,13 +139,11 @@
         opCounts[kind][who] = (opCounts[kind][who] || 0) + cnt;
         return null;
       }
-
       case "two:done": {
         const rP = Number(opCounts.remove.PLEX || 0);
         const rS = Number(opCounts.remove.SIMKL || 0);
         const aP = Number(opCounts.add.PLEX || 0);
         const aS = Number(opCounts.add.SIMKL || 0);
-
         const row = (kind, p, s) => {
           const ico  = kind === "add" ? ICON.add : ICON.remove;
           const type = kind === "add" ? "add" : "remove";
@@ -168,20 +151,14 @@
           const meta = `PLEX·${p} / SIMKL·${s}`;
           return htmlBlock(type, `${ico} ${capitalize(kind)}`, meta, muted);
         };
-
         const out = [ row("remove", rP, rS), row("add", aP, aS) ].join("");
-
-        // reset voor volgende pair
         opCounts = { add:{PLEX:0,SIMKL:0}, remove:{PLEX:0,SIMKL:0} };
-
         return out;
       }
-
       case "run:done": {
         const adds = ev.added|0, rems = ev.removed|0, pairs = ev.pairs|0;
         return htmlBlock("complete", `${ICON.complete} Sync complete`, `+${adds} / -${rems} · pairs=${pairs}`);
       }
-
       default: return null;
     }
   }
@@ -192,7 +169,15 @@
     const t = String(line).trim();
     if (!t) return null;
 
-    // vang SYNC start; pak run_id en render niet
+    // pretty: the orchestrator start line -> "Start: orchestrator PAIR: <run_id>"
+    const mOrch = t.match(/^>\s*SYNC start:\s*orchestrator\s+pairs\s+run_id=(\d+)/i);
+    if (mOrch) {
+      const id = mOrch[1];
+      pendingRunId = id; // keep for JSON 'run:start' enrichment
+      return htmlBlock("start", `${ICON.start} Start: orchestrator PAIR: ${id}`);
+    }
+
+    // capture other SYNC start lines (no render)
     const mRun = t.match(/^>\s*SYNC start:.*?\brun_id=(\d+)/i);
     if (mRun) { pendingRunId = mRun[1]; return null; }
 
@@ -212,11 +197,19 @@
       return htmlBlock("complete", `${ICON.complete} Sync complete`, `+${adds} / -${rems}`);
     }
 
-    // pretty scheduler line
-    if (/^\s*(?:\[?INFO]?)\s*scheduler:\s*started\s*(?:&|&amp;)\s*refreshed\s*$/i.test(t)) {
-      return htmlBlock("start", `⏱️ Scheduler`, `started & refreshed`);
+    // scheduler pretty lines
+    const mSched1 = t.match(/^\s*(?:\[?INFO]?)\s*\[?SCHED]?\s*scheduler\s+(started|stopped|refreshed)\s*\((enabled|disabled)\)/i);
+    if (mSched1) {
+      const state = mSched1[1].toLowerCase();
+      const mode  = mSched1[2].toLowerCase();
+      const cls   = mode === "enabled" ? "start" : "remove";
+      return htmlBlock(cls, `⏱️ Scheduler`, `${state} · ${mode}`);
     }
-    
+    const mSched2 = t.match(/^\s*(?:\[?INFO]?)\s*scheduler:\s*started\s*(?:&|&amp;)\s*refreshed\s*$/i);
+    if (mSched2) {
+      return htmlBlock("start", `⏱️ Scheduler`, `started · refreshed`);
+    }
+
     if (/^\[SYNC]\s*exit code/i.test(t)) {
       return `<div class="cf-line cf-fade-in">${esc(t)}</div>`;
     }
@@ -302,21 +295,18 @@
   function renderInto(el, line, isDebug) {
     if (!el || !line) return;
 
-    // Neem globale vlag als fallback als 3e arg niet is meegegeven
     isDebug = !!(isDebug ?? (typeof window !== "undefined" && window.appDebug));
 
     if (isDebug) {
-      // RAW: niets formatteren / filteren
       const raw = String(line);
       if (!raw) return;
       const div = document.createElement("div");
       div.className = "cf-line";
-      div.textContent = raw; // exact zoals binnenkomt
+      div.textContent = raw;
       el.appendChild(div);
       return;
     }
 
-    // Normal mode: pretty blocks + filters
     const html = formatFriendlyLog(line);
     if (html != null) { el.insertAdjacentHTML("beforeend", html); return; }
 
