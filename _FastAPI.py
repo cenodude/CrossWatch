@@ -1,5 +1,6 @@
 # _FastAPI.py
-# Renders the full HTML for the web UI. Keep this file self-contained
+#-------------- renders the full HTML for the web UI (self-contained)
+#-------------- changes: full-width frosted footer, single sticky save, label flip, watchlist prehide
 
 def get_index_html() -> str:
     return r"""<!doctype html><html lang="en"><head>
@@ -8,62 +9,23 @@ def get_index_html() -> str:
 
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
-
-<!-- Base app styles -->
 <link rel="stylesheet" href="/assets/crosswatch.css">
-
-<!-- Google Material Symbols (rounded) for iconography across the app -->
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
+
 <style>
-  /* Material Symbols helper */
-  .material-symbol {
-    font-family: 'Material Symbols Rounded';
-    font-weight: normal;
-    font-style: normal;
-    font-size: 1em; /* scales with text unless overridden inline */
-    line-height: 1;
-    display: inline-block;
-    vertical-align: middle;
-    letter-spacing: normal; text-transform: none; white-space: nowrap; direction: ltr;
-    -webkit-font-feature-settings: 'liga';
-    -webkit-font-smoothing: antialiased;
-  }
+  /*-------------- icon font helper */
+  .material-symbol{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:1em;line-height:1;display:inline-block;vertical-align:middle;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
 
-  /* CW overrides (publication-ready; keep minimal & scoped) */
-  .pair-selectors,
-  button[onclick="addPair()"],
-  #batches_list,
-  button[onclick="addBatch()"],
-  button[onclick="runAllBatches()"] {
-    display: none !important;
-  }
-  #providers_list.grid2 { display: block !important; }
-  #providers_list .pairs-board {
-    display: flex; flex-direction: column; align-items: flex-start; text-align: left;
-  }
+  /*-------------- publication tidy */
+  .pair-selectors,button[onclick="addPair()"],#batches_list,button[onclick="addBatch()"],button[onclick="runAllBatches()"]{display:none!important}
+  #providers_list.grid2{display:block!important}
+  #providers_list .pairs-board{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
 
-  /* Sticky SAVE button (shows only on the Settings tab) */
-  #save-fab {
-    position: fixed;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: max(12px, env(safe-area-inset-bottom));
-    z-index: 10000;
-    pointer-events: none; /* container ignores clicks; button handles them */
-  }
-  #save-fab .btn {
-    pointer-events: auto;
-    padding: 14px 22px;
-    border-radius: 14px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: .02em;
-    background: linear-gradient(135deg,#ff4d4f,#ff7a7a);
-    border: 1px solid #ff9a9a55;
-    box-shadow: 0 10px 28px rgba(0,0,0,.35), 0 0 14px #ff4d4f55;
-  }
-  #save-fab .btn:active { transform: translateY(1px); }
-  #save-fab.hidden { display: none; }
+  /*-------------- frosted footer + sticky Save (full viewport width) */
+  #save-frost{position:fixed;left:0;right:0;bottom:0;height:84px;background:linear-gradient(0deg,rgba(10,10,14,.85) 0%,rgba(10,10,14,.60) 35%,rgba(10,10,14,0) 100%);border-top:1px solid var(--border);backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%);pointer-events:none;z-index:9998}
+  #save-fab{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));z-index:10000;display:flex;justify-content:center;align-items:center;pointer-events:none;background:transparent}
+  #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
+  #save-fab.hidden,#save-frost.hidden{display:none}
 </style>
 </head><body>
 
@@ -89,24 +51,18 @@ def get_index_html() -> str:
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
-  
-<style id="prehide-wl">#tab-watchlist{display:none!important}</style>
-<script>
-(function(){
-  // Remove pre-hide only when TMDB api_key is present
-  fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).then(cfg=>{
-    if ((cfg?.tmdb?.api_key || "").trim()) {
-      const s = document.getElementById("prehide-wl");
-      if (s) s.remove();
-    }
-  }).catch(()=>{ /* keep hidden on error */ });
-})();
-</script>
 
+  <style id="prehide-wl">#tab-watchlist{display:none!important}</style>
+  <script>
+  (function(){
+    fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).then(cfg=>{
+      if ((cfg?.tmdb?.api_key||"").trim()) document.getElementById("prehide-wl")?.remove();
+    }).catch(()=>{});
+  })();
+  </script>
 </header>
 
 <main id="layout">
-  <!-- MAIN: Synchronization -->
   <section id="ops-card" class="card">
     <div class="title">Synchronization</div>
     <div class="ops-header">
@@ -116,8 +72,7 @@ def get_index_html() -> str:
         <span id="badge-trakt" class="badge no"><span class="dot no"></span>Trakt: Not connected</span>
         <div id="update-banner" class="hidden">
           <span id="update-text">A new version is available.</span>
-          <a id="update-link" href="https://github.com/cenodude/crosswatch/releases"
-            target="_blank" rel="noopener noreferrer">Get update</a>
+          <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener noreferrer">Get update</a>
         </div>
         <button id="btn-status-refresh" class="iconbtn" title="Re-check Plex &amp; SIMKL status" aria-label="Refresh status" onclick="manualRefreshStatus()">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -177,7 +132,6 @@ def get_index_html() -> str:
     </div>
   </section>
 
-  <!-- MAIN: Statistics -->
   <section id="stats-card" class="card collapsed">
     <div class="title">Statistics</div>
 
@@ -218,43 +172,33 @@ def get_index_html() -> str:
     </div>
   </section>
 
-
-  <!-- MAIN: Watchlist Preview (carousel) -->
   <section id="placeholder-card" class="card hidden">
     <div class="title">Watchlist Preview</div>
 
     <div id="wall-msg" class="wall-msg">Loading…</div>
 
     <div class="wall-wrap">
-      <!-- gradient edges -->
       <div id="edgeL" class="edge left"></div>
       <div id="edgeR" class="edge right"></div>
 
-      <!-- posters row -->
       <div id="poster-row" class="row-scroll" aria-label="Watchlist preview"></div>
 
-      <!-- nav buttons -->
       <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left">‹</button>
       <button class="nav next" type="button" onclick="scrollWall(1)"  aria-label="Scroll right">›</button>
     </div>
   </section>
 
-  <!-- WATCHLIST (new module mountpoint) -->
   <section id="page-watchlist" class="card hidden">
     <div class="title">Watchlist</div>
     <div id="watchlist-root"></div>
   </section>
 
-
-  <!-- SETTINGS -->
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
 
-    <!-- Two-column layout: left = existing settings, right = insights -->
     <div id="cw-settings-grid">
       <div id="cw-settings-left">
 
-        <!-- AUTHENTICATION -->
         <div class="section" id="sec-auth">
           <div class="head" onclick="toggleSection('sec-auth')">
             <span class="chev">▶</span><strong>Authentication Providers</strong>
@@ -262,7 +206,6 @@ def get_index_html() -> str:
           <div class="body"><div id="auth-providers"></div></div>
         </div>
 
-        <!-- SYNCHRONIZATION -->
         <div class="section" id="sec-sync">
           <div class="head" onclick="toggleSection('sec-sync')">
             <span class="chev">▶</span><strong>Synchronization Providers</strong>
@@ -288,7 +231,6 @@ def get_index_html() -> str:
           </div>
         </div>
 
-        <!-- METADATA -->
         <div class="section" id="sec-meta">
           <div class="head" onclick="toggleSection('sec-meta')">
             <span class="chev">▶</span><strong>Metadata Providers</strong>
@@ -296,7 +238,6 @@ def get_index_html() -> str:
           <div class="body"><div id="metadata-providers"></div></div>
         </div>
 
-        <!-- SCHEDULING -->
         <div class="section" id="sec-scheduling">
           <div class="head" onclick="toggleSection('sec-scheduling')">
             <span class="chev">▶</span><strong>Scheduling</strong>
@@ -319,7 +260,6 @@ def get_index_html() -> str:
           </div>
         </div>
 
-        <!-- SCROBBLER -->
         <div class="section" id="sec-scrobbler">
           <div class="head" onclick="toggleSection('sec-scrobbler')">
             <span class="chev">▶</span><strong>Scrobbler</strong>
@@ -343,7 +283,6 @@ def get_index_html() -> str:
           </div>
         </div>
 
-        <!-- TROUBLESHOOT -->
         <div class="section" id="sec-troubleshoot">
           <div class="head" onclick="toggleSection('sec-troubleshoot')">
             <span class="chev">▶</span><strong>Troubleshoot</strong>
@@ -360,16 +299,12 @@ def get_index_html() -> str:
           </div>
         </div>
 
-        <!-- NOTE: old footer Save + save_msg removed on purpose -->
-
       </div>
 
-      <!-- Right column: Settings Insight mounts here -->
       <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
     </div>
   </section>
 
-  <!-- About modal -->
   <div id="about-backdrop" class="modal-backdrop hidden" onclick="closeAbout(event)">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -407,24 +342,17 @@ def get_index_html() -> str:
 
 </main>
 
-<!-- Core app scripts (order matters a bit less now, but keep tidy) -->
 <script src="/assets/client-formatter.js" defer></script>
 <script src="/assets/crosswatch.js" defer></script>
 <script src="/assets/scrobbler.js" defer></script>
 <script src="/assets/auth.trakt.js" defer></script>
 <script src="/assets/watchlist.js" defer></script>
-
-<!-- Insights & Settings Insight -->
 <script src="/assets/insights.js" defer></script>
 <script src="/assets/settings-insight.js" defer></script>
-
-<!-- Operational UI -->
 <script src="/assets/main.js" defer></script>
 <script src="/assets/modals.js" defer></script>
 <script src="/assets/connections.overlay.js" defer></script>
 <script src="/assets/connections.pairs.overlay.js" defer></script>
-
-<!-- Scheduler widgets -->
 <script src="/assets/scheduler.js" defer></script>
 <script src="/assets/schedulerbanner.js" defer></script>
 
@@ -434,29 +362,38 @@ def get_index_html() -> str:
   });
 </script>
 
-<!-- Sticky Save -->
+<!---------------- frosted footer layer + sticky button -->
+<div id="save-frost" class="hidden" aria-hidden="true"></div>
 <div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save">
-  <button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button>
+  <button id="save-fab-btn" class="btn" onclick="saveSettings(this)">
+    <span class="btn-ic">✔</span> <span class="btn-label">Save</span>
+  </button>
 </div>
 
 <script>
-/* Show/hide the sticky Save on the Settings tab */
 (function(){
-  const fab = document.getElementById('save-fab');
+  const fab  = document.getElementById('save-fab');
+  const frost= document.getElementById('save-frost');
   const settings = document.getElementById('page-settings');
+
   function visibleOnSettings(){ return settings && !settings.classList.contains('hidden'); }
-  function updateFab(){ fab.classList.toggle('hidden', !visibleOnSettings()); }
-  if (settings){
-    const mo = new MutationObserver(updateFab);
-    mo.observe(settings, { attributes:true, attributeFilter:['class'] });
+  function updateFooter(){
+    const show = visibleOnSettings();
+    fab.classList.toggle('hidden', !show);
+    frost.classList.toggle('hidden', !show);
   }
-  document.addEventListener('DOMContentLoaded', updateFab, { once:true });
-  document.addEventListener('click', e => { const t=e.target; if(t && t.id && t.id.startsWith('tab-')) setTimeout(updateFab,0); });
+
+  if (settings){
+    new MutationObserver(updateFooter).observe(settings,{attributes:true,attributeFilter:['class']});
+  }
+  document.addEventListener('DOMContentLoaded', updateFooter, { once:true });
+  document.addEventListener('click', (e) => {
+    const t=e.target; if(t && t.id && t.id.startsWith('tab-')) setTimeout(updateFooter,0);
+  });
 })();
 </script>
 
 <script>
-/* Flip the clicked Save button text to "Settings saved ✓" then back */
 (function(){
   function install(){
     const orig = window.saveSettings;

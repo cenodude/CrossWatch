@@ -4004,3 +4004,41 @@ select {
   line-height: 1;
   font-variation-settings: 'FILL' 1;
 }
+/* Accent ONLY on the section header (no bleed in body) */
+#cw-settings-left .section { position: relative; overflow: hidden; }
+
+/* kill previous section-level bars if present */
+#cw-settings-left .section::before,
+#cw-settings-left .section::after { display: none !important; }
+
+/* header anchor */
+#cw-settings-left .section > .head {
+  position: relative;
+  padding-left: 22px; /* room for the accent bar */
+}
+
+/* the accent bar */
+#cw-settings-left .section > .head::before{
+  content:"";
+  position:absolute;
+  left:8px;                /* pulled in from rounded corner */
+  top:8px; bottom:8px;     /* only spans header */
+  width:4px;
+  border-radius:6px;
+  background:linear-gradient(180deg,var(--accent,#7c5cff),var(--accent2,#ff7ae0));
+  opacity:.95;
+  pointer-events:none;
+}
+
+/* soft glow for the bar */
+#cw-settings-left .section > .head::after{
+  content:"";
+  position:absolute;
+  left:6px; top:10px; bottom:10px;
+  width:8px;
+  border-radius:10px;
+  background:linear-gradient(180deg,var(--accent,#7c5cff),var(--accent2,#ff7ae0));
+  filter:blur(10px);
+  opacity:.35;
+  pointer-events:none;
+}

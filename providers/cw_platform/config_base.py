@@ -97,24 +97,6 @@ DEFAULT_CFG: Dict[str, Any] = {
         },
     },
 
-    # --- Feature flags -------------------------------------------------------
-    "features": {
-        "watch": {
-            "enabled": False,
-            "options": {
-                "allow_self_signed": True,
-                "reconnect_backoff_min_seconds": 2,
-                "reconnect_backoff_max_seconds": 60,
-            },
-        },
-        "webhook": {"enabled": False},
-        "scrobble": {
-            "enabled": False,
-            "providers": {"trakt": {"enabled": False}},
-            "filters": {"username_whitelist": [""], "server_uuid": ""},
-        },
-    },
-
     # --- Runtime / Diagnostics ----------------------------------------------
     "runtime": {
         "debug": False,

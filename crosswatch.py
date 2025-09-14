@@ -26,6 +26,7 @@ import uuid
 import shlex
 import requests
 import uvicorn
+
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
 from fastapi.responses import (
     FileResponse,
@@ -49,7 +50,7 @@ from pydantic import BaseModel
 
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
-from providers.scrobble.plex.watch import WatchService
+from providers.scrobble.plex.watch import WatchService, autostart_from_config
 
 from _FastAPI import get_index_html
 from _scheduling import SyncScheduler
@@ -269,62 +270,15 @@ class PairIn(BaseModel):
 
 
 # --------------- Orchestrator helpers ---------------
-def _get_orchestrator() -> Orchestrator:
-    cfg = load_config()
-    return Orchestrator(config=cfg)
+# ------------------------- lifespan
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 
-
-def _json_safe(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(x) for x in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    return str(obj)
-
-
-def _normalize_features(f: dict | None) -> dict:
-    f = dict(f or {})
-    for k in FEATURE_KEYS:
-        v = f.get(k)
-        if isinstance(v, bool):
-            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
-        elif isinstance(v, dict):
-            v.setdefault("enable", True)
-            v.setdefault("add", True)
-            v.setdefault("remove", False)
-    return f
-
-
-def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    arr = cfg.get("pairs")
-    if not isinstance(arr, list):
-        arr = []
-        cfg["pairs"] = arr
-    return arr
-
-
-def _gen_id(prefix: str = "pair") -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
-
-
-def _is_debug_enabled() -> bool:
-    try:
-        now = time.time()
-        if now - _DEBUG_CACHE["ts"] > 2.0:
-            cfg = load_config()
-            _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
-            _DEBUG_CACHE["ts"] = now
-        return _DEBUG_CACHE["val"]
-    except Exception:
-        return False
-
-
-# --------------- App lifespan (startup/shutdown) ---------------
 @asynccontextmanager
-async def _lifespan(app):
-    # --------------- Startup hook ---------------
+async def _lifespan(app: FastAPI):
+    app.state.watch = None
+
+    # --- Startup hook ---
     try:
         fn = globals().get("_on_startup")
         if callable(fn):
@@ -341,26 +295,28 @@ async def _lifespan(app):
         except Exception:
             pass
 
-    # --------------- Start Watcher if enabled ---------------
+    # --- Start Watcher via scrobble config ---
     try:
-        cfg = load_config()
-        if ((cfg.get("features") or {}).get("watch") or {}).get("enabled"):
-            _UIHostLogger("TRAKT", "WATCH")("lifespan: ensure_watch_started()", level="INFO")
-            _ensure_watch_started()
+        w = autostart_from_config()  # honors scrobble.enabled/mode/watch.autostart
+        app.state.watch = w
+        if w and w.is_alive():
+            _UIHostLogger("TRAKT", "WATCH")("watch autostarted", level="INFO")
+        else:
+            _UIHostLogger("TRAKT", "WATCH")("watch autostart skipped (disabled/mode/flag)", level="INFO")
     except Exception as e:
         try:
-            _UIHostLogger("TRAKT", "WATCH")(f"lifespan start failed: {e}", level="ERROR")
+            _UIHostLogger("TRAKT", "WATCH")(f"lifespan watch autostart failed: {e}", level="ERROR")
         except Exception:
             pass
 
-    # --------------- Start & refresh Scheduler ---------------
+    # --- Start & refresh Scheduler ---
     try:
         global scheduler
         if scheduler is not None:
-            scheduler.start()  # idempotent
+            scheduler.start()
             scfg = (load_config().get("scheduling") or {})
             if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
-                scheduler.refresh()  # compute next_run_at immediately
+                scheduler.refresh()
             _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
     except Exception as e:
         try:
@@ -371,7 +327,7 @@ async def _lifespan(app):
     try:
         yield
     finally:
-        # --------------- Shutdown hook ---------------
+        # --- Shutdown hook ---
         try:
             fn2 = globals().get("_on_shutdown")
             if callable(fn2):
@@ -388,10 +344,12 @@ async def _lifespan(app):
             except Exception:
                 pass
 
-        # --------------- Stop Watcher ---------------
+        # --- Stop Watcher ---
         try:
-            if 'WATCH' in globals() and WATCH:
-                WATCH.stop()
+            w = getattr(app.state, "watch", None)
+            if w:
+                w.stop()
+                app.state.watch = None
                 _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
         except Exception as e:
             try:
@@ -399,9 +357,11 @@ async def _lifespan(app):
             except Exception:
                 pass
 
-
-# --------------- Static assets mount ---------------
-# (already mounted above with app.mount)
+# bind lifespan after definition
+try:
+    app.router.lifespan_context = _lifespan
+except Exception:
+    pass
 
 
 # --------------- Orchestrator progress & summary ---------------
@@ -1281,47 +1241,54 @@ def api_plex_pms() -> JSONResponse:
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
 
+#----------------watch scrobble
+#----------------watch scrobble
 @app.get("/debug/watch/status")
 def debug_watch_status():
-    w = WATCH
-    if w is None:
-        return {"has_watch": False, "alive": False, "stop_set": False}
+    w = getattr(app.state, "watch", None) or WATCH
     return {
-        "has_watch": True,
+        "has_watch": bool(w),
         "alive": bool(getattr(w, "is_alive", lambda: False)()),
         "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
     }
 
 def _ensure_watch_started():
     global WATCH
-    if WATCH is None:
+    w = getattr(app.state, "watch", None) or WATCH
+    if w and getattr(w, "is_alive", lambda: False)():
+        WATCH = w
+        return w
+    try:
+        w = autostart_from_config()  # honors scrobble.enabled/mode/watch.autostart
+    except Exception:
+        w = None
+    if not w:
         from providers.scrobble.trakt.sink import TraktSink
         from providers.scrobble.plex.watch import make_default_watch
-        WATCH = make_default_watch(sinks=[TraktSink()])
-    # start in background if not running
-    if not WATCH.is_alive():
-        # plexapi variant: gebruik start_async()
-        if hasattr(WATCH, "start_async"):
-            WATCH.start_async()
+        w = make_default_watch(sinks=[TraktSink()])
+        if hasattr(w, "start_async"):
+            w.start_async()
         else:
-            # fallback (zou je niet nodig moeten hebben)
             import threading
-            t = threading.Thread(target=WATCH.start, daemon=True)
-            t.start()
-    return WATCH
+            threading.Thread(target=w.start, daemon=True).start()
+    app.state.watch = w
+    WATCH = w
+    return w
 
 @app.post("/debug/watch/start")
 def debug_watch_start():
     w = _ensure_watch_started()
-    return {"ok": True, "alive": w.is_alive()}
+    return {"ok": True, "alive": bool(getattr(w, "is_alive", lambda: False)())}
 
 @app.post("/debug/watch/stop")
 def debug_watch_stop():
     global WATCH
-    if WATCH is not None:
-        WATCH.stop()
+    w = getattr(app.state, "watch", None) or WATCH
+    if w:
+        w.stop()
+    app.state.watch = None
+    WATCH = None
     return {"ok": True, "alive": False}
-
 
 # --------------- Trakt webhook ---------------
 @app.post("/webhook/trakt")

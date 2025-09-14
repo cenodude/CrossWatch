@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 import threading
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
+from pathlib import Path
+import json, os
 
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
@@ -20,14 +22,28 @@ from providers.scrobble.scrobble import (
     from_plex_flat_playing,
 )
 
+
+def _config_paths() -> list[Path]:
+    env = os.getenv("CROSSWATCH_CONFIG")
+    if env:
+        p = Path(env)
+        return [p / "config.json" if p.is_dir() else p]
+    return [Path("/config/config.json")]
+
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
-        return load_config()
+        cfg = load_config()
+        if cfg:
+            return cfg
     except Exception:
-        import json, pathlib
-        p = pathlib.Path("config.json")
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        pass
+
+    for p in _config_paths():
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    return {}
+
 
 def _plex_base_and_token(cfg: Dict[str, Any]) -> Tuple[str, str]:
     plex = cfg.get("plex") or {}
@@ -408,3 +424,37 @@ class WatchService:
 
 def make_default_watch(sinks: Iterable[ScrobbleSink]) -> WatchService:
     return WatchService(sinks=sinks)
+
+# --- Autostart glue ------------------------------------------------------------
+
+_AUTO_WATCH: Optional[WatchService] = None
+
+def autostart_from_config() -> Optional[WatchService]:
+    """
+    Start watcher on boot iff:
+      scrobble.enabled = true
+      scrobble.mode    = "watch"
+      scrobble.watch.autostart = true
+    """
+    global _AUTO_WATCH
+    cfg = _load_config() or {}
+    sc = (cfg.get("scrobble") or {})
+    if not (sc.get("enabled") and str(sc.get("mode") or "").lower() == "watch"):
+        return None
+    if not ((sc.get("watch") or {}).get("autostart")):
+        return None
+
+    if _AUTO_WATCH and _AUTO_WATCH.is_alive():
+        return _AUTO_WATCH
+
+    sinks: list[ScrobbleSink] = []
+    try:
+        from providers.scrobble.sink import TraktSink
+        sinks.append(TraktSink())
+    except Exception:
+        pass
+
+    _AUTO_WATCH = WatchService(sinks=sinks)
+    _AUTO_WATCH.start_async()
+    return _AUTO_WATCH
+
