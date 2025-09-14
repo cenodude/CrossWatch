@@ -1,8 +1,13 @@
-<p align="center">
-  <img src="/images/CrossWatch.png" alt="CrossWatch" width="400" style="margin-right:40px;">
-  <img src="/images/CrossWatch-showcase.png" alt="CrossWatch Showcase" width="400">
-</p>
-
+<table width="100%">
+  <tr>
+    <td align="left" width="50%">
+      <img src="/images/CrossWatch.png" alt="CrossWatch" width="400">
+    </td>
+    <td align="right" width="50%">
+      <img src="/images/CrossWatch-showcase.png" alt="CrossWatch Showcase" width="400">
+    </td>
+  </tr>
+</table>
 
 # CrossWatch
 
