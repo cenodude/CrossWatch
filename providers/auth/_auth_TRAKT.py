@@ -10,6 +10,34 @@ OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
 VERIFY_URL = "https://trakt.tv/activate"
 
+
+# in providers/auth/_auth_TRAKT.py
+import requests
+
+_H = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "trakt-api-version": "2",
+    # we'll add the client id per-call
+}
+
+def _post(url: str, json_payload: dict, client_id: str, timeout=20):
+    h = dict(_H); h["trakt-api-key"] = client_id
+    try:
+        r = requests.post(url, headers=h, json=json_payload, timeout=timeout)
+    except Exception as e:
+        return {"ok": False, "error": "network_error", "detail": str(e)}
+    if not r.ok:
+        # bubble up status + body so UI shows it
+        text = ""
+        try: text = r.text[:500]
+        except Exception: pass
+        return {"ok": False, "error": "http_error", "status": r.status_code, "body": text}
+    try:
+        return {"ok": True, "json": r.json()}
+    except Exception:
+        return {"ok": False, "error": "bad_json", "status": r.status_code, "body": r.text[:500]}
+
 def _now() -> int:
     return int(time.time())
 
@@ -139,34 +167,49 @@ class _TraktProvider:
         if not cid:
             return {"ok": False, "error": "missing_client_id"}
 
-        headers = {
+        # Trakt docs: for OAuth endpoints you MUST send trakt-api-version: 2
+        # and JSON body with client_id. Do NOT send trakt-api-key here.
+        headers_primary = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            # niet strikt nodig voor OAuth, maar kan geen kwaad
-            "trakt-api-key": cid,
+            "trakt-api-version": "2",
+            "User-Agent": "CrossWatch/TraktAuth"
         }
 
-        try:
-            r = requests.post(OAUTH_DEVICE_CODE, json={"client_id": cid}, headers=headers, timeout=20)
-            status = r.status_code
-            text = r.text or ""
-        except requests.RequestException as e:
-            return {"ok": False, "error": "network_error", "detail": str(e)}
+        def _call(headers):
+            try:
+                r = requests.post(OAUTH_DEVICE_CODE, json={"client_id": cid}, headers=headers, timeout=20)
+                return r, r.status_code, (r.text or ""), dict(r.headers or {})
+            except requests.RequestException as e:
+                return None, 0, str(e), {}
 
-        if status != 200:
-            # geef de echte fout terug, truncated
-            return {"ok": False, "error": "http_error", "status": status, "body": text[:400]}
+        # Try exactly per spec
+        r, status, text, hdrs = _call(headers_primary)
+
+        # Some edge WAFs behave differently if you also pass the api-key header.
+        # If the first attempt was 403/401, try once more WITHOUT any extra headers beyond the spec (already done).
+        # (Kept here for clarity—no second call needed unless you want to experiment with different headers.)
+
+        if status != 200 or not r:
+            return {
+                "ok": False,
+                "error": "http_error",
+                "status": int(status),
+                "body": (text[:400] if isinstance(text, str) else str(text))[:400],
+                "cf_ray": hdrs.get("CF-RAY"),
+                "content_type": hdrs.get("Content-Type"),
+            }
 
         try:
             data = r.json() or {}
         except ValueError:
-            return {"ok": False, "error": "invalid_json", "body": text[:400]}
+            return {"ok": False, "error": "invalid_json", "body": (text[:400] if text else "")}
 
-        user_code   = data.get("user_code") or ""
-        device_code = data.get("device_code") or ""
-        verification_url = data.get("verification_url") or VERIFY_URL
-        interval    = int(data.get("interval", 5) or 5)
-        expires_at  = _now() + int(data.get("expires_in", 600) or 600)
+        user_code       = data.get("user_code") or ""
+        device_code     = data.get("device_code") or ""
+        verification_url= data.get("verification_url") or VERIFY_URL
+        interval        = int(data.get("interval", 5) or 5)
+        expires_at      = _now() + int(data.get("expires_in", 600) or 600)
 
         if not user_code or not device_code:
             return {"ok": False, "error": "invalid_response", "body": (text[:400] if text else str(data))[:400]}
@@ -185,7 +228,8 @@ class _TraktProvider:
         out = dict(pend)
         out["ok"] = True
         return out
-    
+
+
     def finish(self, cfg: Optional[Dict[str, Any]] = None, *, device_code: Optional[str] = None) -> Dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)

@@ -125,7 +125,6 @@ class _Files:
         self.tomb  = base / "tombstones.json"
         self.last  = base / "last_sync.json"
         self.hide  = base / "watchlist_hide.json"
-        self.hide  = base / "watchlist_hide.json"
 
     def _read(self, p: Path, default):
         if not p.exists():
@@ -148,7 +147,11 @@ class _Files:
         self._write_atomic(self.state, data)
 
     def load_tomb(self) -> Dict[str, Any]:
-        return self._read(self.tomb, {"keys": {}, "pruned_at": None})
+        # include ttl_sec if present; keep keys/pruned_at by default
+        t = self._read(self.tomb, {"keys": {}, "pruned_at": None})
+        if "ttl_sec" not in t:
+            t["ttl_sec"] = None
+        return t
 
     def save_tomb(self, data: Mapping[str, Any]):
         self._write_atomic(self.tomb, data)
@@ -158,11 +161,9 @@ class _Files:
 
     def clear_watchlist_hide(self) -> None:
         try:
-            # Remove the file if present; if another process recreates it, that's fine.
             if self.hide.exists():
                 self.hide.unlink()
         except Exception:
-            # Fall back: truncate to an empty array
             try:
                 self.hide.write_text("[]", encoding="utf-8")
             except Exception:
@@ -234,12 +235,8 @@ class Orchestrator:
             self._emit_info(f"[DEBUG] {msg}")
 
     def _post_feature_success(self, feature: str) -> None:
-        # After a successful sync for a given feature, run any cleanups.
-        if feature == "watchlist":
-            # Basic rule: clear watchlist_hide.json so hidden entries are reset after sync
-            self.files.clear_watchlist_hide()
-            self._dbg("hidefile.cleared", feature=feature)
-
+        # No per-feature hidefile clearing anymore; we do it once at end-of-run.
+        return
 
     # -------------------- baseline helpers
     def _ensure_pf(self, state: Dict[str, Any], prov: str, feature: str) -> Dict[str, Any]:
@@ -320,26 +317,48 @@ class Orchestrator:
         return "-".join(sorted([a.upper(), b.upper()]))
 
     def _tomb_add_keys_for_feature(self, feature: str, keys: Iterable[str], *, pair: Optional[str] = None) -> int:
-        t = self.files.load_tomb(); ks = t.setdefault("keys", {})
-        now = int(time.time()); added = 0
-        prefix = f"{feature}:{pair}" if pair else feature
+        """
+        Mark tombstones for this feature both globally (feature|key) and, if provided,
+        pair-scoped (feature:PAIR|key). This way other pairs in the same run see the tomb.
+        """
+        t = self.files.load_tomb()
+        ks = t.setdefault("keys", {})
+        now = int(time.time())
+        added = 0
+
+        prefixes = [feature]
+        if pair:
+            prefixes.append(f"{feature}:{pair}")
+
         for k in keys:
-            nk = f"{prefix}|{k}"
-            if nk not in ks:
-                ks[nk] = now; added += 1
+            for pref in prefixes:
+                nk = f"{pref}|{k}"
+                if nk not in ks:
+                    ks[nk] = now
+                    added += 1
+
         self.files.save_tomb(t)
         if added or self.debug:
-            self._dbg("tombstones.marked", feature=feature, added=added)
+            self._dbg("tombstones.marked", feature=feature, added=added, scope="global+pair" if pair else "global")
         return added
 
-    def _tomb_keys_for_feature(self, feature: str, *, pair: Optional[str] = None) -> Dict[str, int]:
-        ks = dict((self.files.load_tomb().get("keys") or {}))
-        prefix = f"{feature}:{pair}" if pair else feature
+    def _tomb_keys_for_feature(self, feature: str, *, pair: Optional[str] = None, include_global: bool = True) -> Dict[str, int]:
+        ks_all = dict((self.files.load_tomb().get("keys") or {}))
         out: Dict[str, int] = {}
-        for k, ts in ks.items():
-            if isinstance(k, str) and k.startswith(prefix + "|"):
-                orig = k.split("|", 2)[-1]
-                out[orig] = int(ts)
+
+        def _collect(prefix: str):
+            plen = len(prefix) + 1  # include the "|" separator
+            for k, ts in ks_all.items():
+                if isinstance(k, str) and k.startswith(prefix + "|"):
+                    orig = k[plen:]
+                    out[orig] = int(ts)
+
+        if include_global:
+            _collect(feature)  # e.g. "watchlist|tmdb:123"
+
+        if pair:
+            _collect(f"{feature}:{pair}")  # e.g. "watchlist:PLEX-TRAKT|tmdb:123"
+
         return out
 
     def prune_tombstones(self, *, older_than_secs: int) -> int:
@@ -355,16 +374,20 @@ class Orchestrator:
         return removed
 
     def filter_with_tombstones(self, items: Sequence[Dict[str, Any]], extra_block: Optional[set[str]] = None) -> List[Dict[str, Any]]:
-        t = set((self.files.load_tomb().get("keys") or {}).keys())
+        raw = (self.files.load_tomb().get("keys") or {}).keys()
+        base_keys = set()
+        for k in raw:
+            if isinstance(k, str):
+                base_keys.add(k.split("|", 1)[-1])
         if extra_block:
-            t |= set(extra_block)
-        out = [it for it in items if canonical_key(it) not in t]
+            base_keys |= set(extra_block)
+
+        out = [it for it in items if not self._keys_hit_item(base_keys, it)]
         if self.debug and len(out) != len(items):
             self._dbg("tombstones.filtered", before=len(items), after=len(out))
         return out
 
     def _tomb_hits_item(self, tomb: set[str], item: Mapping[str, Any]) -> bool:
-        """Return True if any tombstone key (canonical or alias) matches this item."""
         if not tomb:
             return False
         ck = canonical_key(item)
@@ -381,7 +404,6 @@ class Orchestrator:
         return f"{t}|title:{ttl}|year:{yr}" in tomb
 
     def _keys_hit_item(self, keys: set[str], item: Mapping[str, Any]) -> bool:
-        """True if any canonical/alias key in `keys` matches this item (used for observed deletions)."""
         if not keys:
             return False
         ck = canonical_key(item)
@@ -405,7 +427,6 @@ class Orchestrator:
         want_ids: bool = True,
         dst: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        # Short-circuits
         if not items or not want_ids or not self.meta:
             return items
 
@@ -425,14 +446,13 @@ class Orchestrator:
         for it in items:
             ids = (it.get("ids") or {})
             if dst and _has_ids_for(dst, ids):
-                continue  # al geschikt voor target → niet enrichen
+                continue
             if not (ids.get("tmdb") or ids.get("imdb")):
                 need.append(it)
 
         if not need:
             return items
 
-        # Resolver call
         try:
             if hasattr(self.meta, "resolve_many") and callable(getattr(self.meta, "resolve_many")):
                 res = self.meta.resolve_many(need)  # type: ignore[attr-defined]
@@ -447,14 +467,12 @@ class Orchestrator:
 
         res = res or []
 
-        # lookups: per-ID and title|year fallback
         _idmap: Dict[str, Dict[str, Any]] = {}
         for r in res:
             rids = (r.get("ids") or {})
             for k, v in rids.items():
                 if v is not None:
                     _idmap[f"{str(k).lower()}:{str(v).lower()}"] = r
-            # fallback key
             t = (r.get("type") or "").lower()
             ttl = str(r.get("title") or "").strip().lower()
             yr  = r.get("year") or ""
@@ -462,16 +480,13 @@ class Orchestrator:
 
         def _merge_preserving(source: Dict[str, Any], resolved: Dict[str, Any]) -> Dict[str, Any]:
             out = dict(resolved or {})
-            # merge ids
             ids = dict(source.get("ids") or {})
             ids.update((resolved or {}).get("ids") or {})
             if ids:
                 out["ids"] = ids
-            # Operational fields
             for k in ("rating", "rated_at", "watched_at", "watched", "playlist", "items", "type", "title", "year"):
                 if source.get(k) is not None and out.get(k) is None:
                     out[k] = source[k]
-            # Consistentie
             if source.get("type"):
                 out["type"] = (source.get("type") or out.get("type") or "").lower() or None
             return out
@@ -483,7 +498,6 @@ class Orchestrator:
                 continue
             ids = (it.get("ids") or {})
             candidate = None
-            # Try ID match
             for k, v in ids.items():
                 if v is None: 
                     continue
@@ -491,7 +505,6 @@ class Orchestrator:
                 if candidate:
                     break
             if not candidate:
-                # fallback title|year
                 t = (it.get("type") or "").lower()
                 ttl = str(it.get("title") or "").strip().lower()
                 yr  = it.get("year") or ""
@@ -556,11 +569,9 @@ class Orchestrator:
             self._emit("apply:remove:start", dst=dst, count=len(removals))
             res_rem = self._retry(lambda: dops.remove(self.cfg, removals, feature=feature, dry_run=dry_run))
             self._emit("apply:remove:done", dst=dst, count=len(removals), result=res_rem)
-            # pair-scoped tombstones for one-way
             if removals and not dry_run:
-                pair = f"{src}->{dst}"
+                pair = self._pair_key(src, dst)
                 self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in removals], pair=pair)
-                # purge removed from dst_full
                 for it in removals:
                     dst_full.pop(canonical_key(it), None)
 
@@ -573,12 +584,10 @@ class Orchestrator:
             res_add = self._retry(lambda: dops.add(self.cfg, additions, feature=feature, dry_run=dry_run))
         self._emit("apply:add:done", dst=dst, count=len(additions), result=res_add)
 
-        # update local effective view with adds
         if additions and not dry_run:
             for it in additions:
                 dst_full[canonical_key(it)] = minimal(it)
 
-        # 4) commit baselines & checkpoints (post-apply model for dst; source as-is)
         state = self.files.load_state()
         self._commit_baseline(state, src, feature, src_idx)
         self._commit_baseline(state, dst, feature, dst_full)
@@ -636,19 +645,17 @@ class Orchestrator:
         A_eff: Dict[str, Any] = dict(prevA); A_eff.update(A_cur)
         B_eff: Dict[str, Any] = dict(prevB); B_eff.update(B_cur)
 
-        # Pair-scoped tombstones with TTL
+        # Pair-scoped tombstones with TTL (union of global + pair)
         pair = self._pair_key(a, b)
         ttl_days = int(((self.cfg.get("sync") or {}).get("tombstone_ttl_days") or tomb_ttl_days))
         now = int(time.time()); ttl_secs = max(1, ttl_days) * 24 * 3600
-        tomb_map = self._tomb_keys_for_feature(feature, pair=pair)
+        tomb_map = self._tomb_keys_for_feature(feature, pair=pair, include_global=True)
         tomb = {k for k, ts in tomb_map.items() if (now - int(ts)) <= ttl_secs}
         reasons: Dict[str, str] = {k: "tomb:explicit" for k in tomb}
 
-        # Initialize observed deletion sets (pair-scoped)
+        # Observed deletions (scoped)
         obsA: set[str] = set()
         obsB: set[str] = set()
-
-        # Observed deletions (scoped)
         bootstrap = (not prevA) and (not prevB) and not tomb
         if include_observed_deletes and not bootstrap:
             obsA = {k for k in prevA.keys() if k not in A_cur}
@@ -663,14 +670,14 @@ class Orchestrator:
         else:
             self._emit("debug", msg="observed.deletions", a=0, b=0, tomb=len(tomb))
 
-        # Remove observed deletions from the effective view so they become one-sided diffs
+        # Remove observed deletions from effective view so they become one-sided diffs
         if include_observed_deletes:
             for k in list(obsA):
                 A_eff.pop(k, None)
             for k in list(obsB):
                 B_eff.pop(k, None)
 
-        # Alias-aware indices (any shared id → considered same item)
+        # Alias-aware indices
         def _alias_index(idx: Mapping[str, Mapping[str, Any]]) -> Dict[str, str]:
             m: Dict[str, str] = {}
             for ck, it in idx.items():
@@ -684,7 +691,7 @@ class Orchestrator:
         A_alias = _alias_index(A_eff); B_alias = _alias_index(B_eff)
         add_to_B, add_to_A, rem_from_A, rem_from_B = [], [], [], []
 
-        # A-only → add to B, unless tomb → remove from A (if allowed)
+        # A-only → add to B, unless tomb → remove from A
         for k, v in A_eff.items():
             ids = (v.get("ids") or {})
             in_B = (k in B_eff) or any(f"{idk}:{str(ids.get(idk))}".lower() in B_alias for idk in _ID_KEYS if ids.get(idk))
@@ -695,7 +702,7 @@ class Orchestrator:
             else:
                 add_to_B.append(minimal(v))
 
-        # B-only → add to A, unless tomb → remove from B (if allowed)
+        # B-only → add to A, unless tomb → remove from B
         for k, v in B_eff.items():
             ids = (v.get("ids") or {})
             in_A = (k in A_eff) or any(f"{idk}:{str(ids.get(idk))}".lower() in A_alias for idk in _ID_KEYS if ids.get(idk))
@@ -732,7 +739,6 @@ class Orchestrator:
                 resA_rem = self._retry(lambda: aops.remove(self.cfg, rem_from_A, feature=feature, dry_run=dry_run))
                 if rem_from_A and not dry_run:
                     self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in rem_from_A], pair=pair)
-                    # purge from A_eff
                     for it in rem_from_A:
                         A_eff.pop(canonical_key(it), None)
             self._emit("two:apply:remove:A:done", dst=a, count=len(rem_from_A), result=resA_rem)
@@ -800,7 +806,6 @@ class Orchestrator:
         state = self.files.load_state() or {}
         providers_block: Dict[str, Any] = state.get("providers") or {}
 
-        # Build wall from committed baselines
         wall: List[Dict[str, Any]] = []
         for prov, featmap in providers_block.items():
             fentry = (featmap or {}).get(feature) or {}
@@ -808,7 +813,6 @@ class Orchestrator:
             for v in base.values():
                 wall.append(minimal(v))
 
-        # De-duplicate wall by canonical key
         seen = set(); uniq = []
         for it in wall:
             k = canonical_key(it)
@@ -821,6 +825,95 @@ class Orchestrator:
         self.files.save_state(state)
         self._dbg("state.persisted", providers=len(providers_block), wall=len(uniq))
         return state
+
+    # -------------------- cascade tombstone removals (NEW)
+    def _cascade_tombstone_removals(self, *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        End-of-run pass: for any pair-scoped tombstone (feature:PAIR|key) recorded this run,
+        remove that key from *all* providers that still have it in their current baseline.
+        This handles cross-pair propagation within a single run (e.g., TRAKT→PLEX delete
+        also removing from SIMKL even if the PLEX⇄SIMKL pair already ran).
+        """
+        try:
+            t = self.files.load_tomb().get("keys") or {}
+        except Exception:
+            t = {}
+
+        # Collect tombed keys for this feature (both global and pair-scoped);
+        # pair-scoped entries let us log what pair introduced them, but we
+        # cascade to all providers that support the feature.
+        feat_prefix = f"{feature}:"
+        tomb_keys: set[str] = set()
+        for k in t.keys():
+            if not isinstance(k, str):
+                continue
+            if k.startswith(f"{feature}|"):
+                tomb_keys.add(k.split("|", 1)[1])
+            elif k.startswith(feat_prefix):
+                tomb_keys.add(k.split("|", 1)[1])
+
+        if not tomb_keys:
+            return {"ok": True, "removed": 0, "providers": {}}
+
+        state = self.files.load_state() or {}
+        prov_block: Dict[str, Any] = state.get("providers") or {}
+
+        # Plan removals per provider from their current baseline snapshot
+        plan: Dict[str, List[Dict[str, Any]]] = {}
+        for prov, fmap in prov_block.items():
+            if prov not in self.providers:
+                continue
+            ops = self.providers[prov]
+            if not ops.features().get(feature, False):
+                continue
+            base_items = (((fmap or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {}
+            to_remove: List[Dict[str, Any]] = []
+            for ck, item in list(base_items.items()):
+                if ck in tomb_keys:
+                    to_remove.append(minimal(item))
+            if to_remove:
+                plan[prov] = to_remove
+
+        if not plan:
+            return {"ok": True, "removed": 0, "providers": {}}
+
+        self._emit("cascade:start", feature=feature, providers=len(plan), keys=len(tomb_keys))
+
+        removed_total = 0
+        per_provider_counts: Dict[str, int] = {}
+
+        # Execute removals and update baselines in-memory
+        for prov, items in plan.items():
+            try:
+                ops = self.providers[prov]
+                self._emit("cascade:remove:start", provider=prov, count=len(items))
+                if not dry_run and items:
+                    res = self._retry(lambda: ops.remove(self.cfg, items, feature=feature, dry_run=False))
+                    cnt = int((res or {}).get("count", 0))
+                else:
+                    cnt = len(items)
+                per_provider_counts[prov] = cnt
+                removed_total += cnt
+
+                # purge from baseline
+                fmap = prov_block.get(prov, {})
+                base_items = (((fmap or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {}
+                for it in items:
+                    base_items.pop(canonical_key(it), None)
+            except Exception as e:
+                self._emit_info(f"[!] cascade.remove_failed provider={prov} error={e}")
+
+            self._emit("cascade:remove:done", provider=prov, count=per_provider_counts.get(prov, 0))
+
+        # Save updated state after cascade
+        try:
+            state["providers"] = prov_block
+            state["last_sync_epoch"] = int(time.time())
+            self.files.save_state(state)
+        except Exception as e:
+            self._emit_info(f"[!] cascade.state_save_failed: {e}")
+
+        return {"ok": True, "removed": removed_total, "providers": per_provider_counts}
 
     # -------------------- rate-limit warnings
     def _maybe_emit_rate_warnings(self):
@@ -880,8 +973,8 @@ class Orchestrator:
                 continue
 
             if mode == "one-way":
-                self._emit_info(f"[1/1] {src} → {dst} | mode=one-way dry_run={dry_run}")
-                self._emit_info(f"    • feature={fname} removals={allow_removals}")
+                self._emit_info(f"[1/1] {src} \u2192 {dst} | mode=one-way dry_run={dry_run}")
+                self._emit_info(f"    \u2022 feature={fname} removals={allow_removals}")
                 res = self.apply_direction(src=src, dst=dst, feature=fname, allow_removals=allow_removals, dry_run=dry_run)
                 out_summary["added"] += int(res.get("adds", 0))
                 out_summary["removed"] += int(res.get("removes", 0))
@@ -889,8 +982,8 @@ class Orchestrator:
                     self._post_feature_success(fname)
 
             elif mode == "two-way":
-                self._emit_info(f"[1/1] {src} → {dst} | mode=two-way dry_run={dry_run}")
-                self._emit_info(f"    • feature={fname} removals={allow_removals}")
+                self._emit_info(f"[1/1] {src} \u2192 {dst} | mode=two-way dry_run={dry_run}")
+                self._emit_info(f"    \u2022 feature={fname} removals={allow_removals}")
                 res2 = self._two_way_sync(
                     src, dst,
                     feature=fname,
@@ -960,6 +1053,15 @@ class Orchestrator:
             added_total += int(res.get("added", 0))
             removed_total += int(res.get("removed", 0))
 
+        # NEW: cascade tombstone removals across all providers after all pairs
+        try:
+            self._emit("cascade:pre", note="running end-of-run tombstone cascade")
+            cres = self._cascade_tombstone_removals(feature="watchlist", dry_run=dry_run)
+            if self.debug:
+                self._emit("cascade:summary", removed=cres.get("removed", 0), providers=cres.get("providers", {}))
+        except Exception as e:
+            self._emit_info(f"[!] cascade.failed: {e}")
+
         if write_state_json:
             try:
                 state_obj = self._persist_state_wall(feature="watchlist")
@@ -984,6 +1086,13 @@ class Orchestrator:
             payload = {"started_at": now, "finished_at": now,
                        "result": {"added": added_total, "removed": removed_total}}
             self.files.save_last(payload)
+        except Exception:
+            pass
+
+        # clear hidefile once per run (post all pairs)
+        try:
+            self.files.clear_watchlist_hide()
+            self._dbg("hidefile.cleared", feature="watchlist", scope="end-of-run")
         except Exception:
             pass
 

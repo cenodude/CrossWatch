@@ -1,10 +1,10 @@
+# --------------- CrossWatch Web API (FastAPI): backend for status, auth, scheduling, sync, and state ---------------
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-"""CrossWatch Web API (FastAPI): backend for status, auth, scheduling, sync, and state."""
-
+# --------------- Imports ---------------
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -36,11 +36,13 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
+
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
 except Exception:
     HAVE_PLEXAPI = False
+
 from providers.webhooks.trakt import process_webhook
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
@@ -57,25 +59,48 @@ from _watchlist import build_watchlist, delete_watchlist_item
 from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
 from cw_platform import config_base
-from _watchlist import delete_watchlist_item
 
-import time
-from datetime import datetime, timedelta
 try:
     from zoneinfo import ZoneInfo
 except Exception:
     ZoneInfo = None
 
-def _state_path() -> Path:
-    try:
-        p = Path(CONFIG) / "state.json"
-    except Exception:
-        p = Path("./state.json")
-    return p
+
+# --------------- Constants & basic paths ---------------
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+STATE_DIR = CONFIG_DIR
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+STATE_PATH      = (STATE_DIR / "state.json").resolve()
+TOMBSTONES_PATH = (STATE_DIR / "tombstones.json").resolve()
+LAST_SYNC_PATH  = (STATE_DIR / "last_sync.json").resolve()
+
+REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
+HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
+
+FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists"]
+
+_METADATA: Any = None
+WATCH: Optional[WatchService] = None
+DISPATCHER: Optional[Dispatcher] = None
+scheduler: Optional[SyncScheduler] = None  # initialized elsewhere
+
+STATS = Stats()
+
+_DEBUG_CACHE = {"ts": 0.0, "val": False}
+RUNNING_PROCS: Dict[str, threading.Thread] = {}
+SYNC_PROC_LOCK = threading.Lock()
 
 # Hint used to immediately reflect a fresh next_run_at in status after a config save.
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
+
+# --------------- Helper: compute next schedule run from config ---------------
 def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     now = int(time.time()) if now_ts is None else int(now_ts)
     if not scfg or not scfg.get("enabled"):
@@ -111,189 +136,16 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     # fallback
     return now + 3600
 
-# Paths & globals
-ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-STATE_DIR = CONFIG_DIR
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-STATE_PATH      = (STATE_DIR / "state.json").resolve()
-TOMBSTONES_PATH = (STATE_DIR / "tombstones.json").resolve()
-LAST_SYNC_PATH  = (STATE_DIR / "last_sync.json").resolve()
-
-FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists"]
-
-_METADATA: Any = None
-WATCH: Optional[WatchService] = None
-DISPATCHER: Optional[Dispatcher] = None
-
-_DEBUG_CACHE = {"ts": 0.0, "val": False}
-
-RUNNING_PROCS: Dict[str, threading.Thread] = {}
-SYNC_PROC_LOCK = threading.Lock()
-
-# API models
-class MetadataResolveIn(BaseModel):
-    entity: str
-    ids: dict
-    locale: str | None = None
-    need: dict | None = None
-    strategy: str | None = "first_success"
-
-class PairIn(BaseModel):
-    source: str
-    target: str
-    mode: str | None = None
-    enabled: bool | None = None
-    features: dict | None = None
-
-# App dirs derived from config
-REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist_ok=True)
-CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
-HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
-
-# Utilities
-
-def _get_orchestrator() -> Orchestrator:
-    cfg = load_config()
-    return Orchestrator(config=cfg)
-
-
-def _json_safe(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(x) for x in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    return str(obj)
-
-
-def _normalize_features(f: dict | None) -> dict:
-    f = dict(f or {})
-    for k in FEATURE_KEYS:
-        v = f.get(k)
-        if isinstance(v, bool):
-            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
-        elif isinstance(v, dict):
-            v.setdefault("enable", True)
-            v.setdefault("add", True)
-            v.setdefault("remove", False)
-    return f
-
-
-def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    arr = cfg.get("pairs")
-    if not isinstance(arr, list):
-        arr = []
-        cfg["pairs"] = arr
-    return arr
-
-
-def _gen_id(prefix: str = "pair") -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
-
-
-def _is_debug_enabled() -> bool:
-    try:
-        now = time.time()
-        if now - _DEBUG_CACHE["ts"] > 2.0:
-            cfg = load_config()
-            _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
-            _DEBUG_CACHE["ts"] = now
-        return _DEBUG_CACHE["val"]
-    except Exception:
-        return False
-
-# -------------App lifecycle--------------
-@asynccontextmanager
-async def _lifespan(app):
-    # 1) optional custom startup hook (kept as-is)
-    try:
-        fn = globals().get("_on_startup")
-        if callable(fn):
-            res = fn()
-            try:
-                import inspect
-                if inspect.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-    except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
-        except Exception:
-            pass
-
-    # 2) start Watcher if configured
-    try:
-        cfg = load_config()
-        if ((cfg.get("features") or {}).get("watch") or {}).get("enabled"):
-            _UIHostLogger("TRAKT", "WATCH")("lifespan: ensure_watch_started()", level="INFO")
-            _ensure_watch_started()
-    except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"lifespan start failed: {e}", level="ERROR")
-        except Exception:
-            pass
-
-    # 3) start and prime the Scheduler (no .apply, just start/refresh)
-    try:
-        global scheduler
-        if scheduler is not None:
-            scheduler.start()  # idempotent
-            scfg = (load_config().get("scheduling") or {})
-            if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
-                scheduler.refresh()  # compute next_run_at immediately
-            _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
-    except Exception as e:
-        try:
-            _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
-        except Exception:
-            pass
-
-    try:
-        yield
-    finally:
-        # optional custom shutdown hook (kept as-is)
-        try:
-            fn2 = globals().get("_on_shutdown")
-            if callable(fn2):
-                res2 = fn2()
-                try:
-                    import inspect
-                    if inspect.iscoroutine(res2):
-                        await res2
-                except Exception:
-                    pass
-        except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
-            except Exception:
-                pass
-
-        # stop Watcher
-        try:
-            if 'WATCH' in globals() and WATCH:
-                WATCH.stop()
-                _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
-        except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
-            except Exception:
-                pass
-
-app = FastAPI(lifespan=_lifespan)
-
+# --------------- App & assets ---------------
+app = FastAPI(lifespan=_lifespan if "_lifespan" in globals() else None)
 
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
-# Logging
+
+# --------------- Logging buffers & ANSI helpers ---------------
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
 
@@ -398,7 +250,161 @@ class _UIHostLogger:
     def child(self, name: str):
         return _UIHostLogger(self._tag, name, dict(self._ctx))
 
-# Orchestrator progress & worker state
+
+# --------------- API models ---------------
+class MetadataResolveIn(BaseModel):
+    entity: str
+    ids: dict
+    locale: str | None = None
+    need: dict | None = None
+    strategy: str | None = "first_success"
+
+
+class PairIn(BaseModel):
+    source: str
+    target: str
+    mode: str | None = None
+    enabled: bool | None = None
+    features: dict | None = None
+
+
+# --------------- Orchestrator helpers ---------------
+def _get_orchestrator() -> Orchestrator:
+    cfg = load_config()
+    return Orchestrator(config=cfg)
+
+
+def _json_safe(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(x) for x in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def _normalize_features(f: dict | None) -> dict:
+    f = dict(f or {})
+    for k in FEATURE_KEYS:
+        v = f.get(k)
+        if isinstance(v, bool):
+            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
+        elif isinstance(v, dict):
+            v.setdefault("enable", True)
+            v.setdefault("add", True)
+            v.setdefault("remove", False)
+    return f
+
+
+def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    arr = cfg.get("pairs")
+    if not isinstance(arr, list):
+        arr = []
+        cfg["pairs"] = arr
+    return arr
+
+
+def _gen_id(prefix: str = "pair") -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _is_debug_enabled() -> bool:
+    try:
+        now = time.time()
+        if now - _DEBUG_CACHE["ts"] > 2.0:
+            cfg = load_config()
+            _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
+            _DEBUG_CACHE["ts"] = now
+        return _DEBUG_CACHE["val"]
+    except Exception:
+        return False
+
+
+# --------------- App lifespan (startup/shutdown) ---------------
+@asynccontextmanager
+async def _lifespan(app):
+    # --------------- Startup hook ---------------
+    try:
+        fn = globals().get("_on_startup")
+        if callable(fn):
+            res = fn()
+            try:
+                import inspect
+                if inspect.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+    except Exception as e:
+        try:
+            _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
+        except Exception:
+            pass
+
+    # --------------- Start Watcher if enabled ---------------
+    try:
+        cfg = load_config()
+        if ((cfg.get("features") or {}).get("watch") or {}).get("enabled"):
+            _UIHostLogger("TRAKT", "WATCH")("lifespan: ensure_watch_started()", level="INFO")
+            _ensure_watch_started()
+    except Exception as e:
+        try:
+            _UIHostLogger("TRAKT", "WATCH")(f"lifespan start failed: {e}", level="ERROR")
+        except Exception:
+            pass
+
+    # --------------- Start & refresh Scheduler ---------------
+    try:
+        global scheduler
+        if scheduler is not None:
+            scheduler.start()  # idempotent
+            scfg = (load_config().get("scheduling") or {})
+            if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
+                scheduler.refresh()  # compute next_run_at immediately
+            _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+
+    try:
+        yield
+    finally:
+        # --------------- Shutdown hook ---------------
+        try:
+            fn2 = globals().get("_on_shutdown")
+            if callable(fn2):
+                res2 = fn2()
+                try:
+                    import inspect
+                    if inspect.iscoroutine(res2):
+                        await res2
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
+            except Exception:
+                pass
+
+        # --------------- Stop Watcher ---------------
+        try:
+            if 'WATCH' in globals() and WATCH:
+                WATCH.stop()
+                _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
+        except Exception as e:
+            try:
+                _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
+            except Exception:
+                pass
+
+
+# --------------- Static assets mount ---------------
+# (already mounted above with app.mount)
+
+
+# --------------- Orchestrator progress & summary ---------------
 SUMMARY_LOCK = threading.Lock()
 SUMMARY: Dict[str, Any] = {}
 
@@ -518,11 +524,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         except Exception:
             pass
 
-        Orchestrator = getattr(orch_mod, "Orchestrator")
+        OrchestratorClass = getattr(orch_mod, "Orchestrator")
         _sync_progress_ui(f"[i] Orchestrator module: {getattr(orch_mod, '__file__', '?')}")
 
         cfg = load_config()
-        mgr = Orchestrator(config=cfg)
+        mgr = OrchestratorClass(config=cfg)
 
         dry_cfg = bool(((cfg.get("sync") or {}).get("dry_run") or False))
         dry_ovr = bool((overrides or {}).get("dry_run"))
@@ -533,8 +539,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             progress=_sync_progress_ui,
             write_state_json=True,
             state_path=STATE_PATH,
-            use_snapshot=True,
-            snapshot_guard_delete=True,
+            use_snapshot=True,            # kept for API compatibility (ignored by orchestrator)
         )
 
         added = int(result.get("added", 0))
@@ -559,8 +564,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     finally:
         RUNNING_PROCS.pop("SYNC", None)
 
-# Progress parsing
 
+# --------------- Progress parsing helpers ---------------
 def _parse_epoch(v: Any) -> int:
     if v is None: return 0
     try:
@@ -767,8 +772,8 @@ def _parse_sync_line(line: str) -> None:
         except Exception:
             pass
 
-# Misc
 
+# --------------- Misc state & wall helpers ---------------
 def _load_hide_set() -> set:
     return set()
 
@@ -997,8 +1002,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
 
-# Watch/scrobble wiring
-
+# --------------- Watch / scrobble wiring ---------------
 def _ensure_dispatcher() -> Dispatcher:
     global DISPATCHER
     if DISPATCHER is None:
@@ -1007,6 +1011,10 @@ def _ensure_dispatcher() -> Dispatcher:
 
 
 def _ensure_watch_started() -> WatchService:
+    """
+    Ensure a background Plex WatchService is running, wired to the Dispatcher.
+    Idempotent: safe to call multiple times.
+    """
     global WATCH
     _ensure_dispatcher()
     w = WATCH
@@ -1023,12 +1031,15 @@ def _watch_is_alive() -> bool:
     w = WATCH
     return bool(w and w._thr and w._thr.is_alive())
 
-# Plex users & identity
+
+# --------------- Plex users & identity ---------------
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
 
+
 def _plex_client_id(cfg: Dict[str, Any]) -> str:
     return (cfg.get("plex") or {}).get("client_id") or "crosswatch"
+
 
 def _account(cfg: Dict[str, Any]):
     tok = _plex_token(cfg)
@@ -1038,6 +1049,7 @@ def _account(cfg: Dict[str, Any]):
         return MyPlexAccount(token=tok)
     except Exception:
         return None
+
 
 def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
     # 1) explicit in config
@@ -1061,6 +1073,7 @@ def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
     try:
         servers = [r for r in acc.resources() if "server" in (r.provides or "") and (r.product or "") == "Plex Media Server"]
         owned = [r for r in servers if getattr(r, "owned", False)]
+
         def matches_host(res) -> bool:
             if not host_hint:
                 return False
@@ -1079,6 +1092,7 @@ def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
         return servers[0].clientIdentifier if servers else ""
     except Exception:
         return ""
+
 
 def _fetch_owner_and_managed(cfg: Dict[str, Any]) -> Tuple[Optional[dict], List[dict]]:
     acc = _account(cfg)
@@ -1116,6 +1130,7 @@ def _fetch_owner_and_managed(cfg: Dict[str, Any]) -> Tuple[Optional[dict], List[
 
     return owner, managed
 
+
 def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
     users: List[dict] = []
     acc = _account(cfg)
@@ -1148,13 +1163,16 @@ def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
         if not uid:
             continue
         cur = out.get(uid)
-        if not cur or rank.get(u.get("type","friend"),0) >= rank.get(cur.get("type","friend"),0):
+        if not cur or rank.get(u.get("type", "friend"), 0) >= rank.get(cur.get("type", "friend"), 0):
             out[uid] = u
     return list(out.values())
 
+
 def _filter_users_with_server_access(cfg: Dict[str, Any], users: List[dict], server_uuid: str) -> List[dict]:
-    # Simplified: friends returned by acc.users() are shared with you (likely have access);
-    # managed are your home users (treat as having access). Keep both.
+    """
+    Lightweight heuristic: friends returned by acc.users() are shared with you (likely have access);
+    managed are your home users (treat as having access). Keep both.
+    """
     if not users:
         return users
     allowed_types = {"owner", "managed", "friend"}
@@ -1166,140 +1184,6 @@ def _filter_users_with_server_access(cfg: Dict[str, Any], users: List[dict], ser
             out.append(v)
     return out
 
-# --- PlexAPI helpers (no HTTP fallbacks) ---
-
-def _plex_token(cfg: Dict[str, Any]) -> str:
-    return ((cfg.get("plex") or {}).get("account_token") or "").strip()
-
-def _plex_client_id(cfg: Dict[str, Any]) -> str:
-    return (cfg.get("plex") or {}).get("client_id") or "crosswatch"
-
-def _account(cfg: Dict[str, Any]):
-    tok = _plex_token(cfg)
-    if not HAVE_PLEXAPI or not tok:
-        return None
-    try:
-        return MyPlexAccount(token=tok)
-    except Exception:
-        return None
-
-def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
-    plex = cfg.get("plex") or {}
-    if plex.get("server_uuid"):
-        return str(plex["server_uuid"]).strip()
-
-    acc = _account(cfg)
-    if not acc:
-        return ""
-
-    host_hint = ""
-    base = (plex.get("server_url") or "").strip()
-    if base:
-        try:
-            host_hint = urllib.parse.urlparse(base).hostname or ""
-        except Exception:
-            host_hint = ""
-
-    try:
-        servers = [r for r in acc.resources()
-                   if "server" in (r.provides or "") and (r.product or "") == "Plex Media Server"]
-        owned = [r for r in servers if getattr(r, "owned", False)]
-
-        def matches_host(res) -> bool:
-            if not host_hint:
-                return False
-            for c in (res.connections or []):
-                if host_hint in (c.uri or "") or host_hint == (c.address or ""):
-                    return True
-            return False
-
-        for res in owned:
-            if matches_host(res):
-                return res.clientIdentifier or ""
-
-        if owned:
-            return owned[0].clientIdentifier or ""
-
-        return servers[0].clientIdentifier if servers else ""
-    except Exception:
-        return ""
-
-def _fetch_owner_and_managed(cfg: Dict[str, Any]) -> Tuple[Optional[dict], List[dict]]:
-    acc = _account(cfg)
-    if not acc:
-        return None, []
-
-    owner = {
-        "id": str(getattr(acc, "id", "") or ""),
-        "username": (getattr(acc, "username", "") or getattr(acc, "title", "") or getattr(acc, "email", "") or "").strip(),
-        "title": (getattr(acc, "title", "") or getattr(acc, "username", "") or "").strip(),
-        "email": (getattr(acc, "email", "") or "").strip(),
-        "type": "owner",
-    }
-
-    managed: List[dict] = []
-    try:
-        home = getattr(acc, "home", None)
-        if home:
-            for u in home.users():
-                uid = str(getattr(u, "id", "") or "").strip()
-                if not uid:
-                    continue
-                uname = (getattr(u, "username", "") or getattr(u, "title", "") or "").strip()
-                managed.append({
-                    "id": uid,
-                    "username": uname,
-                    "title": (getattr(u, "title", "") or uname).strip(),
-                    "email": (getattr(u, "email", "") or "").strip(),
-                    "type": "managed",
-                })
-    except Exception:
-        pass
-
-    return owner, managed
-
-def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
-    users: List[dict] = []
-    acc = _account(cfg)
-
-    if acc:
-        try:
-            for u in acc.users():
-                users.append({
-                    "id": str(getattr(u, "id", "") or ""),
-                    "username": (u.username or u.title or u.email or "").strip(),
-                    "title": (u.title or u.username or "").strip(),
-                    "email": (getattr(u, "email", "") or "").strip(),
-                    "type": "friend",
-                })
-        except Exception:
-            pass
-
-    owner, managed = _fetch_owner_and_managed(cfg)
-    if owner:
-        users.append(owner)
-    users.extend(managed)
-
-    rank = {"owner": 3, "managed": 2, "friend": 1}
-    out: Dict[str, dict] = {}
-    for u in users:
-        uid = str(u.get("id") or "")
-        if not uid:
-            continue
-        cur = out.get(uid)
-        if not cur or rank.get(u.get("type","friend"),0) >= rank.get(cur.get("type","friend"),0):
-            out[uid] = u
-    return list(out.values())
-
-def _filter_users_with_server_access(cfg: Dict[str, Any], users: List[dict], server_uuid: str) -> List[dict]:
-    if not users:
-        return users
-    out = []
-    for u in users:
-        v = dict(u)
-        v["has_access"] = True
-        out.append(v)
-    return out
 
 def _list_pms_servers(cfg: Dict[str, Any]) -> List[dict]:
     acc = _account(cfg)
@@ -1363,13 +1247,14 @@ def _list_pms_servers(cfg: Dict[str, Any]) -> List[dict]:
 
     return servers
 
-# --- Routes ---
 
+# --------------- Routes: Plex ---------------
 @app.get("/api/plex/server_uuid")
 def api_plex_server_uuid() -> JSONResponse:
     cfg = load_config()
     uid = _resolve_plex_server_uuid(cfg)
     return JSONResponse({"server_uuid": uid or None}, headers={"Cache-Control": "no-store"})
+
 
 @app.get("/api/plex/users")
 def api_plex_users(
@@ -1388,14 +1273,13 @@ def api_plex_users(
 
     return JSONResponse({"users": users, "count": len(users)}, headers={"Cache-Control": "no-store"})
 
+
 @app.get("/api/plex/pms")
 def api_plex_pms() -> JSONResponse:
     cfg = load_config()
     servers = _list_pms_servers(cfg)
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
-
-# Scrobbler controls
 
 @app.get("/debug/watch/status")
 def debug_watch_status():
@@ -1438,14 +1322,17 @@ def debug_watch_stop():
         WATCH.stop()
     return {"ok": True, "alive": False}
 
-# Trakt webhook
 
+# --------------- Trakt webhook ---------------
 @app.post("/webhook/trakt")
 async def webhook_trakt(request: Request):
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
+
     def log(msg, level="INFO"):
-        try: logger(msg, level=level, module="SCROBBLE")
-        except: pass
+        try:
+            logger(msg, level=level, module="SCROBBLE")
+        except:
+            pass
 
     ct = (request.headers.get("content-type") or "").lower()
     payload = None
@@ -1459,7 +1346,8 @@ async def webhook_trakt(request: Request):
             try:
                 data = await part.read()
             except Exception:
-                try: data = part.file.read()
+                try:
+                    data = part.file.read()
                 except Exception:
                     data = str(part).encode()
             payload = json.loads(data.decode("utf-8", errors="replace"))
@@ -1486,7 +1374,7 @@ async def webhook_trakt(request: Request):
 
     acc = ((payload.get("Account") or {}).get("title") or "").strip()
     srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
-    md  = payload.get("Metadata") or {}
+    md = payload.get("Metadata") or {}
     title = md.get("title") or md.get("grandparentTitle") or "?"
     log(f"payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
 
@@ -1499,8 +1387,8 @@ async def webhook_trakt(request: Request):
     log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
-# Metadata resolver
 
+# --------------- Metadata resolver ---------------
 @app.post("/api/metadata/resolve")
 def api_metadata_resolve(payload: MetadataResolveIn):
     if _METADATA is None:
@@ -1518,6 +1406,7 @@ def api_metadata_resolve(payload: MetadataResolveIn):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+# --------------- Watch logs ---------------
 @app.get("/debug/watch/logs")
 def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAKT")) -> JSONResponse:
     buf = LOG_BUFFERS.get(tag.upper(), [])
@@ -1525,15 +1414,8 @@ def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAK
     lines = buf[-tail:]
     return JSONResponse({"tag": tag.upper(), "tail": tail, "lines": lines}, headers={"Cache-Control": "no-store"})
 
-# Insights & stats
-STATS = Stats()
 
-
-# -----------------------------------------------------------------------------
-# Stats & insights (provider-agnostic)
-# -----------------------------------------------------------------------------
-STATS = Stats()
-
+# --------------- Insights & stats (provider-agnostic) ---------------
 @app.get("/api/insights")
 def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
     """
@@ -1737,9 +1619,8 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
 
     return JSONResponse(payload)
 
-# -----------------------------------------------------------------------------
-# Middleware
-# -----------------------------------------------------------------------------
+
+# --------------- Middleware ---------------
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
@@ -1749,10 +1630,13 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
+
+# --------------- Stats endpoints ---------------
 @app.get("/api/stats/raw")
 def api_stats_raw():
     with STATS.lock:
         return JSONResponse(json.loads(json.dumps(STATS.data)))
+
 
 @app.get("/api/stats")
 def api_stats() -> Dict[str, Any]:
@@ -1765,21 +1649,20 @@ def api_stats() -> Dict[str, Any]:
                 base["now"] = now_calc
     except Exception:
         pass
-
-    # Zorg dat frontend doorloopt
     return {"ok": True, **base}
 
-# -----------------------------------------------------------------------------
-# Logs
-# -----------------------------------------------------------------------------
+
+# --------------- Logs ---------------
 @app.get("/api/logs/dump")
 def logs_dump(channel: str = "TRAKT", n: int = 50):
     return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
+
 
 @app.get("/__log_test")
 def __log_test():
     _UIHostLogger("TRAKT", "TEST")("manual test")
     return {"ok": True}
+
 
 @app.get("/api/logs/stream")
 def api_logs_stream_initial(tag: str = Query("SYNC")):
@@ -1797,11 +1680,16 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
                 idx += 1
             time.sleep(0.25)
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control":"no-store"})
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
-# -----------------------------------------------------------------------------
-# Watchlist endpoints
-# -----------------------------------------------------------------------------
+
+# --------------- Watchlist endpoints ---------------
+import urllib.parse
+import traceback
+from typing import Any, Dict, List
+from fastapi import Body
+from fastapi.responses import JSONResponse
+
 @app.get("/api/watchlist")
 def api_watchlist() -> JSONResponse:
     cfg = load_config()
@@ -1837,9 +1725,11 @@ def api_watchlist() -> JSONResponse:
         status_code=200,
     )
 
+
 @app.delete("/api/watchlist/{key}")
 def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
-    sp = STATE_PATH
+    # single-delete by key (provider = PLEX default)
+    sp = STATE_PATH  # <-- use global, no _state_path()
     try:
         if "%" in (key or ""):
             key = urllib.parse.unquote(key)
@@ -1871,20 +1761,22 @@ def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
     except Exception as e:
         _append_log("TRBL", f"[WATCHLIST] ERROR: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    
-# providers for UI
+
+
+# Providers for UI
 @app.get("/api/watchlist/providers")
 def api_watchlist_providers():
     cfg = load_config()
     from _watchlist import detect_available_watchlist_providers
     return {"providers": detect_available_watchlist_providers(cfg)}
 
-# delete (single or batch)
+
+# Delete (batch)
 @app.post("/api/watchlist/delete")
-def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
     Payload: { "keys": ["imdb:tt123", ...], "provider": "PLEX"|"SIMKL"|"TRAKT" }
-    Returns per-key results; never raises (no 500).
+    Returns aggregated result; never raises (no 500).
     """
     try:
         keys = payload.get("keys") or []
@@ -1898,12 +1790,11 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
         # load config once
         try:
-            from cw_platform.config_base import load_config
             cfg = load_config()
         except Exception as e:
             return {"ok": False, "error": f"failed to load config: {e}"}
 
-        state_file = _state_path()
+        state_file = STATE_PATH  # <-- fix
 
         results: List[Dict[str, Any]] = []
         ok_count = 0
@@ -1915,16 +1806,22 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
                     state_path=state_file,
                     cfg=cfg,
                     provider=provider,
-                    log=None,
+                    log=_append_log,
                 )
                 results.append({"key": k, **r})
                 if r.get("ok"):
                     ok_count += 1
             except Exception as e:
-                # never let an exception escape -> no 500s
                 tb = traceback.format_exc()
                 print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
                 results.append({"key": k, "ok": False, "error": str(e)})
+
+        # try to refresh stats after batch
+        try:
+            state = _load_state()
+            STATS.refresh_from_state(state)
+        except Exception:
+            pass
 
         return {
             "ok": ok_count == len(keys),
@@ -1935,13 +1832,11 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # last-resort guard (still no 500)
         tb = traceback.format_exc()
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
-# -----------------------------------------------------------------------------
-# Icons
-# -----------------------------------------------------------------------------
+
+# --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
 <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
@@ -1954,26 +1849,29 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <path d="M20 30 L32 26 L44 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>"""
 
+
 @app.get("/favicon.svg", include_in_schema=False)
 def favicon_svg():
     return Response(content=FAVICON_SVG, media_type="image/svg+xml")
+
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon_ico():
     return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
-# -----------------------------------------------------------------------------
-# Version/update
-# -----------------------------------------------------------------------------
+
+# --------------- Version / update ---------------
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.4")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.5")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
+
 def _norm(v: str) -> str:
     return re.sub(r"^\s*v", "", v.strip(), flags=re.IGNORECASE)
+
 
 @lru_cache(maxsize=1)
 def _cached_latest_release(_marker: int) -> dict:
@@ -1991,8 +1889,10 @@ def _cached_latest_release(_marker: int) -> dict:
     except Exception:
         return {"latest": None, "html_url": f"https://github.com/{REPO}/releases", "body": "", "published_at": None}
 
+
 def _ttl_marker(seconds=300) -> int:
     return int(time.time() // seconds)
+
 
 def _is_update_available(current: str, latest: str) -> bool:
     if not latest:
@@ -2001,6 +1901,7 @@ def _is_update_available(current: str, latest: str) -> bool:
         return Version(_norm(latest)) > Version(_norm(current))
     except InvalidVersion:
         return latest != current
+
 
 @app.get("/api/update")
 def api_update():
@@ -2019,6 +1920,7 @@ def api_update():
         "published_at": cache.get("published_at"),
     }
 
+
 @app.get("/api/version")
 def get_version():
     cur = _norm(CURRENT_VERSION)
@@ -2032,11 +1934,13 @@ def get_version():
         "html_url": html_url,
     }
 
+
 def _ver_tuple(s: str):
     try:
         return tuple(int(p) for p in re.split(r"[^\d]+", s.strip()) if p != "")
     except Exception:
         return (0,)
+
 
 @app.get("/api/version/check")
 def api_version_check():
@@ -2053,10 +1957,14 @@ def api_version_check():
         "notes": "",
         "published_at": None,
     }
-# -----------------------------------------------------------------------------
-# Status & connectivity
-# -----------------------------------------------------------------------------
-_PROBE_CACHE: Dict[str, Tuple[float, bool]] = {"plex": (0.0, False), "simkl": (0.0, False), "trakt": (0.0, False)}
+
+# --------------- Status & connectivity ---------------
+_PROBE_CACHE: Dict[str, Tuple[float, bool]] = {
+    "plex":  (0.0, False),
+    "simkl": (0.0, False),
+    "trakt": (0.0, False),
+}
+
 
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
@@ -2068,59 +1976,70 @@ def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int,
     except Exception:
         return 0, b""
 
+
 def probe_plex(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["plex"]
     now = time.time()
     if now - ts < max_age_sec:
         return ok
+
     token = (cfg.get("plex", {}) or {}).get("account_token") or ""
     if not token:
-        _PROBE_CACHE["plex"] = (now, False); return False
+        _PROBE_CACHE["plex"] = (now, False)
+        return False
+
     headers = {
         "X-Plex-Token": token,
-        "X-Plex-Client-Identifier": "plex-simkl-sync-webui",
-        "X-Plex-Product": "PlexSimklSync",
+        "X-Plex-Client-Identifier": "crosswatch",
+        "X-Plex-Product": "CrossWatch",
         "X-Plex-Version": "1.0",
         "Accept": "application/xml",
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "CrossWatch/1.0",
     }
     code, _ = _http_get("https://plex.tv/users/account", headers=headers, timeout=8)
     ok = (code == 200)
     _PROBE_CACHE["plex"] = (now, ok)
     return ok
 
+
 def probe_simkl(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["simkl"]
     now = time.time()
     if now - ts < max_age_sec:
         return ok
+
     simkl = cfg.get("simkl", {}) or {}
     cid = (simkl.get("client_id") or "").strip()
     tok = (simkl.get("access_token") or "").strip()
     if not cid or not tok:
-        _PROBE_CACHE["simkl"] = (now, False); return False
+        _PROBE_CACHE["simkl"] = (now, False)
+        return False
+
     headers = {
         "Authorization": f"Bearer {tok}",
         "simkl-api-key": cid,
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "CrossWatch/1.0",
     }
     code, _ = _http_get("https://api.simkl.com/users/settings", headers=headers, timeout=8)
     ok = (code == 200)
     _PROBE_CACHE["simkl"] = (now, ok)
     return ok
 
+
 def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["trakt"]
     now = time.time()
     if now - ts < max_age_sec:
         return ok
+
     tr = cfg.get("trakt", {}) or {}
     cid = (tr.get("client_id") or "").strip()
     tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or (tr.get("access_token") or "").strip()
     if not cid or not tok:
         _PROBE_CACHE["trakt"] = (now, False)
         return False
+
     headers = {
         "Authorization": f"Bearer {tok}",
         "trakt-api-key": cid,
@@ -2133,6 +2052,7 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     _PROBE_CACHE["trakt"] = (now, ok)
     return ok
 
+
 def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
     plex_ok  = probe_plex(cfg)
     simkl_ok = probe_simkl(cfg)
@@ -2140,12 +2060,12 @@ def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
     debug    = bool(cfg.get("runtime", {}).get("debug"))
     return plex_ok, simkl_ok, trakt_ok, debug
 
-# -----------------------------------------------------------------------------
-# Start/stop/schedule sync
-# -----------------------------------------------------------------------------
+
+# --------------- Start/stop/schedule sync ---------------
 def _is_sync_running() -> bool:
     t = RUNNING_PROCS.get("SYNC")
     return bool(t and t.is_alive())
+
 
 def _start_sync_from_scheduler() -> bool:
     if _is_sync_running():
@@ -2156,21 +2076,23 @@ def _start_sync_from_scheduler() -> bool:
     RUNNING_PROCS["SYNC"] = th
     return True
 
+
 scheduler = SyncScheduler(
     load_config, save_config,
     run_sync_fn=_start_sync_from_scheduler,
     is_sync_running_fn=_is_sync_running,
 )
 
+
 INDEX_HTML = get_index_html()
+
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
 
-# -----------------------------------------------------------------------------
-# Trakt device auth
-# -----------------------------------------------------------------------------
+
+# --------------- Trakt device auth ---------------
 def trakt_request_pin() -> dict:
     try:
         from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
@@ -2180,21 +2102,135 @@ def trakt_request_pin() -> dict:
         raise RuntimeError("Trakt provider not available")
 
     cfg = load_config()
-    res = _TRAKT_PROVIDER.start(cfg, redirect_uri="")
-    save_config(cfg)
+
+    # Ensure we at least have a client_id before calling Trakt
+    tr = cfg.setdefault("trakt", {})
+    if not str(tr.get("client_id") or "").strip():
+        raise RuntimeError("Missing Trakt Client ID")
+
+    # Kick off device flow
+    res = _TRAKT_PROVIDER.start(cfg, redirect_uri="") or {}
+    # Some providers write pending into cfg, others only return it — normalize:
     pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
-    user_code = (pend.get("user_code") or (res or {}).get("user_code"))
-    device_code = (pend.get("device_code") or (res or {}).get("device_code"))
-    verification_url = (pend.get("verification_url") or (res or {}).get("verification_url") or "https://trakt.tv/activate")
-    exp_epoch = int((pend.get("expires_at") or 0) or (time.time() + 600))
+
+    user_code    = pend.get("user_code")      or res.get("user_code")
+    device_code  = pend.get("device_code")    or res.get("device_code")
+    verification = pend.get("verification_url") or res.get("verification_url") or "https://trakt.tv/activate"
+    interval     = int(pend.get("interval") or res.get("interval") or 5)
+    expires_in   = int(res.get("expires_in") or 600)
+    expires_at   = int(time.time()) + max(60, expires_in)
+
+    # If provider didn’t persist, store a normalized pending block ourselves
+    if user_code and device_code and not (cfg.get("trakt") or {}).get("_pending_device"):
+        cfg.setdefault("trakt", {})["_pending_device"] = {
+            "user_code": user_code,
+            "device_code": device_code,
+            "verification_url": verification,
+            "interval": interval,
+            "expires_at": expires_at,
+        }
+    save_config(cfg)
+
     if not user_code or not device_code:
-        raise RuntimeError("Trakt PIN could not be issued")
+        # Surface Trakt’s error if provided
+        detail = (res.get("error_description")
+                  or res.get("error")
+                  or res.get("body")
+                  or "Trakt PIN could not be issued")
+        raise RuntimeError(str(detail))
+
     return {
         "user_code": user_code,
         "device_code": device_code,
-        "verification_url": verification_url,
-        "expires_epoch": exp_epoch
+        "verification_url": verification,
+        "interval": interval,
+        "expires_epoch": expires_at,
     }
+
+@app.post("/api/trakt/pin/poll")
+def api_trakt_pin_poll() -> Dict[str, Any]:
+    """
+    Poll for Trakt device flow completion.
+    - ok=false, pending=true  -> keep polling
+    - ok=true,  data.access_token present -> success
+    - ok=false with error -> hard error (stop polling)
+    """
+    try:
+        cfg = load_config()
+
+        # If token is already present, return it
+        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
+              or (cfg.get("trakt") or {}).get("access_token")
+        if tok:
+            return {"ok": True, "data": {"access_token": tok}}
+
+        pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
+        device_code = pend.get("device_code")
+        expires_at  = int(pend.get("expires_at") or 0)
+
+        if not device_code:
+            return {"ok": False, "error": "no_device_code", "pending": False}
+
+        # If expired, tell the UI to stop and request a new PIN
+        if expires_at and time.time() >= expires_at:
+            return {"ok": False, "error": "expired", "pending": False}
+
+        # Try to finish the device flow once
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
+        except Exception:
+            _TRAKT_PROVIDER = None
+
+        if _TRAKT_PROVIDER is None:
+            return {"ok": False, "error": "provider_unavailable", "pending": False}
+
+        try:
+            _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
+            save_config(cfg)
+        except Exception as e:
+            # Trakt may respond with authorization_pending / slow_down — treat as pending
+            msg = str(e)
+            if "authorization_pending" in msg or "slow_down" in msg:
+                return {"ok": False, "pending": True, "error": "authorization_pending"}
+            # Unknown error: surface it and stop polling
+            return {"ok": False, "error": msg or "finish_failed", "pending": False}
+
+        # Re-check token after finish()
+        cfg = load_config()
+        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
+              or (cfg.get("trakt") or {}).get("access_token")
+
+        if tok:
+            return {"ok": True, "data": {"access_token": tok}}
+
+        # Still pending
+        return {"ok": False, "pending": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "pending": False}
+    
+@app.post("/api/trakt/pin/finish")
+def api_trakt_pin_finish(payload: dict = Body(...)):
+    # accepts either device_code or user_code+device_code
+    code = str(payload.get("device_code") or "").strip()
+    if not code:
+        return {"ok": False, "error": "no_device_code"}
+    from providers.auth._auth_TRAKT import PROVIDER as TRAKT
+    cfg = load_config()
+    # stash as pending so finish() has context
+    pend = cfg.setdefault("trakt", {}).setdefault("_pending_device", {})
+    pend["device_code"] = code
+    save_config(cfg)
+
+    try:
+        res = TRAKT.finish(cfg, device_code=code)
+        save_config(cfg)
+    except Exception as e:
+        return {"ok": False, "error": "finish_failed", "detail": str(e)}
+
+    # mirror final token state
+    tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token")
+    return {"ok": True, "finished": bool(tok), "result": res}
+
 
 def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: float = 2.0) -> str | None:
     try:
@@ -2222,7 +2258,6 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
 @app.post("/api/trakt/pin/new")
 def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
     try:
-        # 1) optioneel: credenties uit request in config zetten
         if payload:
             cid  = str(payload.get("client_id") or "").strip()
             secr = str(payload.get("client_secret") or "").strip()
@@ -2233,12 +2268,17 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
                 if secr: tr["client_secret"] = secr
                 save_config(cfg)
 
-        # 2) PIN aanvragen + waiter starten
         info = trakt_request_pin()
+        if not info or not info.get("user_code"):
+            # trakt_request_pin() already raises on deep errors; but if it returned a dict with ok=False, surface it
+            if isinstance(info, dict) and not info.get("ok", True):
+                return {"ok": False, **{k: v for k, v in info.items() if k != "ok"}}
+            return {"ok": False, "error": "pin_failed"}
+
         user_code = info["user_code"]
-        verification_url = info["verification_url"]
-        exp_epoch = int(info["expires_epoch"])
-        device_code = info["device_code"]
+        verification_url = info.get("verification_url") or "https://trakt.tv/activate"
+        exp_epoch = int(info.get("expires_epoch") or (time.time() + 600))
+        device_code = info.get("device_code")
 
         def waiter(_device_code: str):
             token = trakt_wait_for_token(_device_code, timeout_sec=600, interval=2.0)
@@ -2248,18 +2288,23 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
             else:
                 _append_log("TRAKT", "\x1b[91m[TRAKT]\x1b[0m Device code expired or not authorized.")
 
-        threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
-        expires_in = max(0, exp_epoch - int(time.time()))
+        if device_code:
+            threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
 
-        # let op: je frontend gebruikt 'expiresIn' (camelCase). Dit laten we zo.
-        return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": expires_in}
+        expires_in = max(0, int(exp_epoch - time.time()))
+        return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": int(expires_in)}
+
     except Exception as e:
-        _append_log("TRAKT", f"[TRAKT] ERROR: {e}")
-        return {"ok": False, "error": str(e)}
+        # If trakt_request_pin() raised with a dict-ish error, try to surface it
+        try:
+            msg = str(e)
+        except Exception:
+            msg = "unknown_error"
+        _append_log("TRAKT", f"[TRAKT] ERROR: {msg}")
+        return {"ok": False, "error": msg}
 
-# -----------------------------------------------------------------------------
-# App status
-# -----------------------------------------------------------------------------
+
+# --------------- App status ---------------
 @app.get("/api/status")
 def api_status(fresh: int = Query(0)):
     now = time.time()
@@ -2274,24 +2319,25 @@ def api_status(fresh: int = Query(0)):
     simkl_ok = probe_simkl(cfg, max_age_sec=STATUS_TTL)
     trakt_ok = probe_trakt(cfg, max_age_sec=STATUS_TTL)
     debug    = bool(cfg.get("runtime", {}).get("debug"))
+
     data = {
-        "plex_connected": plex_ok,
+        "plex_connected":  plex_ok,
         "simkl_connected": simkl_ok,
         "trakt_connected": trakt_ok,
-        "debug": debug,
-        "can_run": bool((plex_ok or trakt_ok) and simkl_ok),
-        "ts": int(now),
+        "debug":           debug,
+        "can_run":         bool((plex_ok or trakt_ok) and simkl_ok),
+        "ts":              int(now),
     }
-    STATUS_CACHE["ts"] = now
+    STATUS_CACHE["ts"]   = now
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-# --------------------------------------------------------------------------
-# Config endpoints
-# --------------------------------------------------------------------------
+
+# --------------- Config endpoints ---------------
 @app.get("/api/config")
 def api_config() -> JSONResponse:
     return JSONResponse(load_config())
+
 
 @app.post("/api/config")
 def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -2301,49 +2347,50 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
     cfg = dict(cfg or {})
 
-    # --- scrobble normalize ---
+    # Normalize scrobble settings
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
     mode = (sc.get("mode") or "").strip().lower()
     if mode not in ("webhook", "watch"):
-      legacy_webhook = bool((cfg.get("webhook") or {}).get("enabled"))
-      mode = "webhook" if legacy_webhook else ("watch" if sc_enabled else "")
-      if mode:
-          sc["mode"] = mode
-    if mode == "webhook":
-      sc.setdefault("watch", {}).setdefault("autostart", bool(sc.get("watch", {}).get("autostart", False)))
-    elif mode == "watch":
-      pass
-    else:
-      sc["enabled"] = False
+        legacy_webhook = bool((cfg.get("webhook") or {}).get("enabled"))
+        mode = "webhook" if legacy_webhook else ("watch" if sc_enabled else "")
+        if mode:
+            sc["mode"] = mode
 
-    # --- map to features.watch.enabled ---
+    if mode == "webhook":
+        sc.setdefault("watch", {}).setdefault("autostart", bool(sc.get("watch", {}).get("autostart", False)))
+    elif mode == "watch":
+        pass
+    else:
+        sc["enabled"] = False
+
+    # Map to features.watch.enabled
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
     autostart = bool(sc.get("watch", {}).get("autostart", False))
     watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and autostart)
 
-    # --- persist ---
+    # Persist
     save_config(cfg)
 
-    # --- force badges to re-probe quickly ---
+    # Force probes to refresh quickly
     _PROBE_CACHE["plex"]  = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
 
-    # --- (re)plan scheduler: start/stop + refresh (NO apply) ---
+    # (Re)plan scheduler: start/stop + refresh (no apply)
     try:
         global scheduler
         if scheduler is not None:
             s = (cfg.get("scheduling") or {})
             if bool(s.get("enabled")):
-                if hasattr(scheduler, "start"):   scheduler.start()    # idempotent
-                if hasattr(scheduler, "refresh"): scheduler.refresh()  # recompute next_run_at now
+                if hasattr(scheduler, "start"):    scheduler.start()   # idempotent
+                if hasattr(scheduler, "refresh"):  scheduler.refresh() # recompute next_run_at now
                 try:
                     _UIHostLogger("SYNC", "SCHED")("scheduler refreshed (enabled)", level="INFO")
                 except Exception:
                     pass
             else:
-                if hasattr(scheduler, "stop"):    scheduler.stop()
+                if hasattr(scheduler, "stop"):     scheduler.stop()
                 try:
                     _UIHostLogger("SYNC", "SCHED")("scheduler stopped (disabled)", level="INFO")
                 except Exception:
@@ -2357,31 +2404,31 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     return {"ok": True}
 
 
-# -----------------------------------------------------------------------------
-# Plex PIN auth
-# -----------------------------------------------------------------------------
+# --------------- Plex PIN auth ---------------
 def plex_request_pin() -> dict:
-    cfg = load_config(); plex = cfg.setdefault('plex', {})
-    cid = plex.get('client_id')
+    cfg = load_config()
+    plex = cfg.setdefault("plex", {})
+    cid = plex.get("client_id")
     if not cid:
         import secrets as _secrets
         cid = _secrets.token_hex(12)
-        plex['client_id'] = cid
+        plex["client_id"] = cid
         save_config(cfg)
+
     headers = {
-        'Accept': 'application/json',
-        'User-Agent': 'CrossWatch/1.0',
-        'X-Plex-Product': 'CrossWatch',
-        'X-Plex-Version': '1.0',
-        'X-Plex-Client-Identifier': cid,
-        'X-Plex-Platform': 'Web',
+        "Accept": "application/json",
+        "User-Agent": "CrossWatch/1.0",
+        "X-Plex-Product": "CrossWatch",
+        "X-Plex-Version": "1.0",
+        "X-Plex-Client-Identifier": cid,
+        "X-Plex-Platform": "Web",
     }
+
     try:
         from providers.auth._auth_PLEX import PROVIDER as _PLEX_PROVIDER
     except Exception:
         _PLEX_PROVIDER = None
 
-    cfg = load_config()
     code = None
     pin_id = None
     try:
@@ -2400,6 +2447,7 @@ def plex_request_pin() -> dict:
     expires_epoch = int(time.time()) + 300
     return {"id": pin_id, "code": code, "expires_epoch": expires_epoch, "headers": headers}
 
+
 def plex_wait_for_token(pin_id: int, headers: dict | None = None, timeout_sec: int = 300, interval: float = 1.0) -> str | None:
     try:
         from providers.auth._auth_PLEX import PROVIDER as _PLEX_PROVIDER
@@ -2408,19 +2456,21 @@ def plex_wait_for_token(pin_id: int, headers: dict | None = None, timeout_sec: i
 
     deadline = time.time() + max(0, int(timeout_sec))
     sleep_s = max(0.2, float(interval))
+
+    # Ensure pending pin id is present in config (safety when restarting waiter)
     try:
-        cfg0 = load_config(); plex0 = cfg0.setdefault('plex', {})
-        pend = plex0.get('_pending_pin') or {}
-        if not pend.get('id') and pin_id:
-            pend = {'id': pin_id}
-            plex0['_pending_pin'] = pend
+        cfg0 = load_config()
+        plex0 = cfg0.setdefault("plex", {})
+        pend = plex0.get("_pending_pin") or {}
+        if not pend.get("id") and pin_id:
+            plex0["_pending_pin"] = {"id": pin_id}
             save_config(cfg0)
     except Exception:
         pass
 
     while time.time() < deadline:
         cfg = load_config()
-        token = (cfg.get('plex') or {}).get('account_token')
+        token = (cfg.get("plex") or {}).get("account_token")
         if token:
             return token
         try:
@@ -2432,22 +2482,33 @@ def plex_wait_for_token(pin_id: int, headers: dict | None = None, timeout_sec: i
         time.sleep(sleep_s)
     return None
 
+
 @app.post("/api/plex/pin/new")
 def api_plex_pin_new() -> Dict[str, Any]:
     try:
         info = plex_request_pin()
-        pin_id = info["id"]; code = info["code"]; exp_epoch = int(info["expires_epoch"]); headers = info["headers"]
-        cfg2 = load_config(); plex2 = cfg2.setdefault('plex', {})
-        plex2['_pending_pin'] = {'id': pin_id, 'code': code}; save_config(cfg2)
+        pin_id = info["id"]
+        code = info["code"]
+        exp_epoch = int(info["expires_epoch"])
+        headers = info["headers"]
+
+        # Persist pending pin info (id + code)
+        cfg2 = load_config()
+        plex2 = cfg2.setdefault("plex", {})
+        plex2["_pending_pin"] = {"id": pin_id, "code": code}
+        save_config(cfg2)
 
         def waiter(_pin_id: int, _headers: Dict[str, str]):
             token = plex_wait_for_token(_pin_id, headers=_headers, timeout_sec=360, interval=1.0)
             if token:
-                cfg = load_config(); cfg.setdefault("plex", {})["account_token"] = token; save_config(cfg)
+                cfg = load_config()
+                cfg.setdefault("plex", {})["account_token"] = token
+                save_config(cfg)
                 _append_log("PLEX", "\x1b[92m[PLEX]\x1b[0m Token acquired and saved.")
                 _PROBE_CACHE["plex"] = (0.0, False)
             else:
                 _append_log("PLEX", "\x1b[91m[PLEX]\x1b[0m PIN expired or not authorized.")
+
         threading.Thread(target=waiter, args=(pin_id, headers), daemon=True).start()
         expires_in = max(0, exp_epoch - int(time.time()))
         return {"ok": True, "code": code, "pin_id": pin_id, "expiresIn": expires_in}
@@ -2455,10 +2516,10 @@ def api_plex_pin_new() -> Dict[str, Any]:
         _append_log("PLEX", f"[PLEX] ERROR: {e}")
         return {"ok": False, "error": str(e)}
 
-# -----------------------------------------------------------------------------
-# SIMKL OAuth
-# -----------------------------------------------------------------------------
+
+# --------------- SIMKL OAuth ---------------
 SIMKL_STATE: Dict[str, Any] = {}
+
 
 @app.post("/api/simkl/authorize")
 def api_simkl_authorize(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -2466,49 +2527,74 @@ def api_simkl_authorize(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         origin = (payload or {}).get("origin") or ""
         if not origin:
             return {"ok": False, "error": "origin missing"}
-        cfg = load_config(); simkl = cfg.get("simkl", {}) or {}
-        client_id = (simkl.get("client_id") or "").strip(); client_secret = (simkl.get("client_secret") or "").strip()
+
+        cfg = load_config()
+        simkl = cfg.get("simkl", {}) or {}
+        client_id = (simkl.get("client_id") or "").strip()
+        client_secret = (simkl.get("client_secret") or "").strip()
         bad_cid = (not client_id) or (client_id.upper() == "YOUR_SIMKL_CLIENT_ID")
         bad_sec = (not client_secret) or (client_secret.upper() == "YOUR_SIMKL_CLIENT_SECRET")
         if bad_cid or bad_sec:
             return {"ok": False, "error": "SIMKL client_id and client_secret must be set in settings first"}
-        state = secrets.token_urlsafe(24); redirect_uri = f"{origin}/callback"
-        SIMKL_STATE["state"] = state; SIMKL_STATE["redirect_uri"] = redirect_uri
+
+        state = secrets.token_urlsafe(24)
+        redirect_uri = f"{origin}/callback"
+        SIMKL_STATE["state"] = state
+        SIMKL_STATE["redirect_uri"] = redirect_uri
+
         url = simkl_build_authorize_url(client_id, redirect_uri, state)
         return {"ok": True, "authorize_url": url}
     except Exception as e:
         _append_log("SIMKL", f"[SIMKL] ERROR: {e}")
         return {"ok": False, "error": str(e)}
 
+
 @app.get("/callback")
 def oauth_simkl_callback(request: Request) -> PlainTextResponse:
     try:
-        params = dict(request.query_params); code = params.get("code"); state = params.get("state")
-        if not code or not state: return PlainTextResponse("Missing code or state.", status_code=400)
-        if state != SIMKL_STATE.get("state"): return PlainTextResponse("State mismatch.", status_code=400)
+        params = dict(request.query_params)
+        code = params.get("code")
+        state = params.get("state")
+        if not code or not state:
+            return PlainTextResponse("Missing code or state.", status_code=400)
+        if state != SIMKL_STATE.get("state"):
+            return PlainTextResponse("State mismatch.", status_code=400)
+
         redirect_uri = str(SIMKL_STATE.get("redirect_uri") or f"{request.base_url}callback")
-        cfg = load_config(); simkl_cfg = cfg.setdefault("simkl", {})
-        client_id = (simkl_cfg.get("client_id") or "").strip(); client_secret = (simkl_cfg.get("client_secret") or "").strip()
+        cfg = load_config()
+        simkl_cfg = cfg.setdefault("simkl", {})
+        client_id = (simkl_cfg.get("client_id") or "").strip()
+        client_secret = (simkl_cfg.get("client_secret") or "").strip()
         bad_cid = (not client_id) or (client_id.upper() == "YOUR_SIMKL_CLIENT_ID")
         bad_sec = (not client_secret) or (client_secret.upper() == "YOUR_SIMKL_CLIENT_SECRET")
-        if bad_cid or bad_sec: return PlainTextResponse("SIMKL client_id/secret missing or placeholders in config.", status_code=400)
+        if bad_cid or bad_sec:
+            return PlainTextResponse("SIMKL client_id/secret missing or placeholders in config.", status_code=400)
+
         tokens = simkl_exchange_code(client_id, client_secret, code, redirect_uri)
-        if not tokens or "access_token" not in tokens: return PlainTextResponse("SIMKL token exchange failed.", status_code=400)
+        if not tokens or "access_token" not in tokens:
+            return PlainTextResponse("SIMKL token exchange failed.", status_code=400)
+
         simkl_cfg["access_token"] = tokens["access_token"]
-        if tokens.get("refresh_token"): simkl_cfg["refresh_token"] = tokens["refresh_token"]
-        if tokens.get("expires_in"): simkl_cfg["token_expires_at"] = int(time.time()) + int(tokens["expires_in"])
-        save_config(cfg); _append_log("SIMKL", "\x1b[92m[SIMKL]\x1b[0m Access token saved.")
+        if tokens.get("refresh_token"):
+            simkl_cfg["refresh_token"] = tokens["refresh_token"]
+        if tokens.get("expires_in"):
+            simkl_cfg["token_expires_at"] = int(time.time()) + int(tokens["expires_in"])
+        save_config(cfg)
+
+        _append_log("SIMKL", "\x1b[92m[SIMKL]\x1b[0m Access token saved.")
         _PROBE_CACHE["simkl"] = (0.0, False)
         return PlainTextResponse("SIMKL authorized. You can close this tab and return to the app.", status_code=200)
     except Exception as e:
         _append_log("SIMKL", f"[SIMKL] ERROR: {e}")
         return PlainTextResponse(f"Error: {e}", status_code=500)
 
+
 def simkl_build_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
     try:
         from providers.auth._auth_SIMKL import PROVIDER as _SIMKL_PROVIDER
     except Exception:
         _SIMKL_PROVIDER = None
+
     cfg = load_config()
     cfg.setdefault("simkl", {})["client_id"] = (client_id or cfg.get("simkl", {}).get("client_id") or "").strip()
     url = f"https://simkl.com/oauth/authorize?response_type=code&client_id={cfg['simkl']['client_id']}&redirect_uri={redirect_uri}"
@@ -2519,16 +2605,19 @@ def simkl_build_authorize_url(client_id: str, redirect_uri: str, state: str) -> 
             save_config(cfg)
     except Exception:
         pass
+
     if "state=" not in url:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}state={state}"
     return url
+
 
 def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
     try:
         from providers.auth._auth_SIMKL import PROVIDER as _SIMKL_PROVIDER
     except Exception:
         _SIMKL_PROVIDER = None
+
     cfg = load_config()
     s = cfg.setdefault("simkl", {})
     s["client_id"] = client_id.strip()
@@ -2539,11 +2628,13 @@ def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_
             save_config(cfg)
     except Exception:
         pass
+
     s = load_config().get("simkl", {}) or {}
     access = s.get("access_token", "")
     refresh = s.get("refresh_token", "")
     exp_at = int(s.get("token_expires_at", 0) or 0)
     expires_in = max(0, exp_at - int(time.time())) if exp_at else 0
+
     out = {"access_token": access}
     if refresh:
         out["refresh_token"] = refresh
@@ -2551,9 +2642,8 @@ def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_
         out["expires_in"] = expires_in
     return out
 
-# -----------------------------------------------------------------------------
-# Run summary endpoints
-# -----------------------------------------------------------------------------
+
+# --------------- Run summary endpoints ---------------
 @app.post("/api/run")
 def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
     with SYNC_PROC_LOCK:
@@ -2578,44 +2668,55 @@ def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
         _append_log("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
 
+
 @app.get("/api/run/summary")
 def api_run_summary() -> JSONResponse:
     snap = _summary_snapshot()
 
-    # venster bepalen
+    # Compute time window
     since = _parse_epoch(snap.get("raw_started_ts") or snap.get("started_at"))
     until = _parse_epoch(snap.get("finished_at"))
     if not until and snap.get("running"):
         until = int(time.time())
 
-    # alleen berekenen als ontbreekt of leeg
+    # Compute features if missing or empty
     need = not isinstance(snap.get("features"), dict)
     if not need:
-        need = not any(isinstance(v, dict) and ((v.get("added") or v.get("removed") or v.get("updated") or 0) > 0
-               or (v.get("spotlight_add") or v.get("spotlight_remove") or v.get("spotlight_update"))) 
-               for v in snap.get("features", {}).values())
+        need = not any(
+            isinstance(v, dict)
+            and (
+                (v.get("added") or v.get("removed") or v.get("updated") or 0) > 0
+                or (v.get("spotlight_add") or v.get("spotlight_remove") or v.get("spotlight_update"))
+            )
+            for v in snap.get("features", {}).values()
+        )
 
     if need:
         feats, enabled = _compute_lanes_from_stats(since, until)
         snap["features"] = feats
-        snap["enabled"]  = enabled
+        snap["enabled"] = enabled
     else:
-        # zorg dat enabled altijd aanwezig is
         snap.setdefault("enabled", _lanes_enabled_defaults())
 
-    # defensief: timeline consistent
+    # Defensive timeline consistency
     tl = snap.get("timeline") or {}
     if tl.get("done") and not tl.get("post"):
         tl["post"] = True
-        tl["pre"]  = True
+        tl["pre"] = True
         snap["timeline"] = tl
 
     return JSONResponse(snap)
 
+
 @app.get("/api/run/summary/file")
 def api_run_summary_file() -> Response:
     js = json.dumps(_summary_snapshot(), indent=2)
-    return Response(content=js, media_type="application/json", headers={"Content-Disposition": 'attachment; filename="last_sync.json"'})
+    return Response(
+        content=js,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="last_sync.json"'},
+    )
+
 
 @app.get("/api/run/summary/stream")
 def api_run_summary_stream() -> StreamingResponse:
@@ -2624,28 +2725,34 @@ def api_run_summary_stream() -> StreamingResponse:
         while True:
             time.sleep(0.25)
             snap = _summary_snapshot()
-            key = (snap.get("running"), snap.get("exit_code"), snap.get("plex_post"), snap.get("simkl_post"),
-                   snap.get("result"), snap.get("duration_sec"), (snap.get("timeline", {}) or {}).get("done"))
+            key = (
+                snap.get("running"),
+                snap.get("exit_code"),
+                snap.get("plex_post"),
+                snap.get("simkl_post"),
+                snap.get("result"),
+                snap.get("duration_sec"),
+                (snap.get("timeline", {}) or {}).get("done"),
+            )
             if key != last_key:
                 last_key = key
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"
+
     return StreamingResponse(gen(), media_type="text/event-stream")
 
-# -----------------------------------------------------------------------------
-# Wall/state endpoints
-# -----------------------------------------------------------------------------
+
+# --------------- Wall/state endpoints ---------------
 @app.get("/api/state/wall")
 def api_state_wall(
     both_only: bool = Query(False),    # keep only status == "both"
     active_only: bool = Query(False),  # drop *_only items for inactive providers
 ) -> Dict[str, Any]:
-    # Load basics
     cfg = load_config()
     api_key = ((cfg.get("tmdb") or {}).get("api_key") or "")
     st = _load_state()
     items = _wall_items_from_state() or []
 
-    # Build active providers map from pairs
+    # Build active providers map from configured pairs
     active = {"plex": False, "simkl": False, "trakt": False}
     try:
         pairs = (cfg.get("pairs") or cfg.get("connections") or []) or []
@@ -2657,7 +2764,7 @@ def api_state_wall(
     except Exception:
         pass
 
-    # Apply filters
+    # Filters
     def keep_item(it: Dict[str, Any]) -> bool:
         status = str(it.get("status") or "").lower()
         if both_only and status != "both":
@@ -2677,9 +2784,7 @@ def api_state_wall(
         "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
     }
 
-# -----------------------------------------------------------------------------
-# Providers manifes
-# -----------------------------------------------------------------------------
+# --------------- Providers manifests ---------------
 @app.get("/api/sync/providers")
 def api_sync_providers() -> JSONResponse:
     """
@@ -2704,10 +2809,7 @@ def api_sync_providers() -> JSONResponse:
         out = {}
         for k in FEATURE_KEYS:
             v = f.get(k, False)
-            if isinstance(v, dict):
-                out[k] = bool(v.get("enable", False))
-            else:
-                out[k] = bool(v)
+            out[k] = bool(v.get("enable", False)) if isinstance(v, dict) else bool(v)
         return out
 
     def _norm_caps(caps: dict | None) -> dict:
@@ -2815,17 +2917,18 @@ def api_sync_providers() -> JSONResponse:
                 seen.add(mf["name"])
                 items.append(mf)
 
-    items.sort(key=lambda x: x.get("label", x.get("name", "")))
+    items.sort(key=lambda x: (x.get("label") or x.get("name") or "").lower())
     return JSONResponse(items)
 
 
-# -------------------- Pairs CRUD --------------------
+# --------------- Pairs CRUD ---------------
 @app.get("/api/pairs")
 def api_pairs_list() -> JSONResponse:
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
-        # migrate/normalize features on the fly
+
+        # normalize features in-place if needed
         dirty = False
         for it in arr:
             newf = _normalize_features(it.get("features"))
@@ -2836,8 +2939,10 @@ def api_pairs_list() -> JSONResponse:
             save_config(cfg)
         return JSONResponse(arr)
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs GET failed: {e}")
-        except: pass
+        try:
+            _append_log("TRBL", f"/api/pairs GET failed: {e}")
+        except Exception:
+            pass
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
@@ -2862,8 +2967,10 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         save_config(cfg)
         return {"ok": True, "id": item["id"]}
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs POST failed: {e}")
-        except: pass
+        try:
+            _append_log("TRBL", f"/api/pairs POST failed: {e}")
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
 
@@ -2890,11 +2997,18 @@ def api_pairs_reorder(order: List[str] = Body(...)) -> dict:
             save_config(cfg)
 
         unknown_ids = [pid for pid in (order or []) if pid not in index_map]
-        return {"ok": True, "reordered": changed, "count": len(new_arr), "unknown_ids": unknown_ids,
-                "final_order": [str(p.get("id")) for p in new_arr]}
+        return {
+            "ok": True,
+            "reordered": changed,
+            "count": len(new_arr),
+            "unknown_ids": unknown_ids,
+            "final_order": [str(p.get("id")) for p in new_arr],
+        }
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs/reorder failed: {e}")
-        except: pass
+        try:
+            _append_log("TRBL", f"/api/pairs/reorder failed: {e}")
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
 
@@ -2917,8 +3031,10 @@ def api_pairs_update(pair_id: str, payload: PairIn) -> Dict[str, Any]:
                 return {"ok": True}
         return {"ok": False, "error": "not_found"}
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs PUT failed: {e}")
-        except: pass
+        try:
+            _append_log("TRBL", f"/api/pairs PUT failed: {e}")
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
 
@@ -2932,25 +3048,31 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
         save_config(cfg)
         return {"ok": True, "deleted": before - len(arr)}
     except Exception as e:
-        try: _append_log("TRBL", f"/api/pairs DELETE failed: {e}")
-        except: pass
+        try:
+            _append_log("TRBL", f"/api/pairs DELETE failed: {e}")
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
 
-    
-# -----------------------------------------------------------------------------
-# TMDb artwork & metadata (via MetadataManager)
-# -----------------------------------------------------------------------------
+
+# --------------- TMDb artwork & metadata (via MetadataManager) ---------------
 def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> dict:
     if _METADATA is None:
         raise RuntimeError("MetadataManager not available")
     entity = "movie" if str(typ).lower() == "movie" else "show"
-    res = _METADATA.resolve(entity=entity, ids={"tmdb": str(tmdb_id)}, locale=None,
-                            need={"poster": True, "backdrop": True, "logo": False})
+    res = _METADATA.resolve(
+        entity=entity,
+        ids={"tmdb": str(tmdb_id)},
+        locale=None,
+        need={"poster": True, "backdrop": True, "logo": False},
+    )
     return res or {}
+
 
 def get_runtime(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> int | None:
     meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
     return meta.get("runtime_minutes")
+
 
 def _cache_download(url: str, dest_path: Path, timeout: float = 15.0) -> Tuple[Path, str]:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2965,17 +3087,22 @@ def _cache_download(url: str, dest_path: Path, timeout: float = 15.0) -> Tuple[P
     mime = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "application/octet-stream")
     return dest_path, mime
 
+
 @app.get("/art/tmdb/{typ}/{tmdb_id}")
 def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Query("w342")):
-    typ = typ.lower()
-    if typ == "show": typ = "tv"
-    if typ not in {"movie", "tv"}:
+    t = typ.lower()
+    if t == "show":
+        t = "tv"
+    if t not in {"movie", "tv"}:
         return PlainTextResponse("Bad type", status_code=400)
-    cfg = load_config(); api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
+
+    cfg = load_config()
+    api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
     if not api_key:
         return PlainTextResponse("TMDb key missing", status_code=404)
+
     try:
-        local_path, mime = get_poster_file(api_key, typ, tmdb_id, size, CACHE_DIR)
+        local_path, mime = get_poster_file(api_key, t, tmdb_id, size, CACHE_DIR)
         return FileResponse(
             path=str(local_path),
             media_type=mime,
@@ -2988,22 +3115,22 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
     except Exception as e:
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
 
+
 def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache_dir: Path | str) -> tuple[str, str]:
     meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
     posters = ((meta.get("images") or {}).get("poster") or [])
     if not posters:
         raise FileNotFoundError("No poster found")
     src_url = posters[0]["url"]
-    ext = ".jpg" if ".jpg" in src_url or ".jpeg" in src_url else ".png"
+    ext = ".jpg" if (".jpg" in src_url or ".jpeg" in src_url) else ".png"
     size_tag = (size or "w780").lower().strip()
     cache_root = Path(cache_dir or "./.cache") / "posters"
     dest = cache_root / f"{typ}_{tmdb_id}_{size_tag}{ext}"
     path, mime = _cache_download(src_url, dest)
     return str(path), mime
 
-# -----------------------------------------------------------------------------
-# Scheduling API
-# -----------------------------------------------------------------------------
+
+# --------------- Scheduling API ---------------
 @app.post("/api/scheduling/replan_now")
 def api_scheduling_replan_now() -> Dict[str, Any]:
     cfg = load_config()
@@ -3021,7 +3148,7 @@ def api_scheduling_replan_now() -> Dict[str, Any]:
             if hasattr(scheduler, "refresh"): scheduler.refresh()
     except Exception as e:
         try:
-            _UIHostLogger("SYNC","SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
+            _UIHostLogger("SYNC", "SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
         except Exception:
             pass
 
@@ -3036,11 +3163,12 @@ def api_scheduling_replan_now() -> Dict[str, Any]:
 
     return {"ok": True, **st}
 
-    
+
 @app.get("/api/scheduling")
 def api_sched_get():
     cfg = load_config()
     return (cfg.get("scheduling") or {})
+
 
 @app.post("/api/scheduling")
 def api_sched_post(payload: dict = Body(...)):
@@ -3055,7 +3183,8 @@ def api_sched_post(payload: dict = Body(...)):
         nxt = 0
 
     if (cfg["scheduling"] or {}).get("enabled"):
-        scheduler.start(); scheduler.refresh()
+        scheduler.start()
+        scheduler.refresh()
     else:
         scheduler.stop()
 
@@ -3069,6 +3198,7 @@ def api_sched_post(payload: dict = Body(...)):
 
     return {"ok": True, "next_run_at": st.get("next_run_at", int(nxt) if nxt else 0)}
 
+
 @app.get("/api/scheduling/status")
 def api_sched_status():
     st = scheduler.status()
@@ -3080,9 +3210,8 @@ def api_sched_status():
         pass
     return st
 
-# -----------------------------------------------------------------------------
-# Troubleshooting
-# -----------------------------------------------------------------------------
+
+# --------------- Troubleshooting ---------------
 def _safe_remove_path(p: Path) -> bool:
     try:
         if p.is_dir():
@@ -3092,6 +3221,7 @@ def _safe_remove_path(p: Path) -> bool:
         return True
     except Exception:
         return False
+
 
 @app.post("/api/troubleshoot/clear-cache")
 def api_trbl_clear_cache() -> Dict[str, Any]:
@@ -3112,6 +3242,7 @@ def api_trbl_clear_cache() -> Dict[str, Any]:
     _append_log("TRBL", "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared cache folder.")
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
+
 @app.post("/api/troubleshoot/reset-stats")
 def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
     try:
@@ -3124,6 +3255,7 @@ def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
 @app.post("/api/troubleshoot/reset-state")
 def api_trbl_reset_state(
     mode: str = Body("rebuild"),        # rebuild | clear_both | clear_state | clear_tombstones | clear_tombstone_entries
@@ -3133,79 +3265,114 @@ def api_trbl_reset_state(
 ) -> Dict[str, Any]:
     """
     Provider-agnostic reset via Orchestrator.
+    Also clears SIMKL cursor/shadow files under /config when clearing state.
     """
     try:
         cfg = load_config()
         orc = Orchestrator(config=cfg)
 
         state_path = orc.files.state
-        tomb_path = orc.files.tomb
+        tomb_path  = orc.files.tomb
+        last_path  = orc.files.last            # last_sync.json
+        hide_path  = getattr(orc.files, "hide", None)
+
+        # SIMKL per-module runtime files (forced to /config)
+        simkl_cursors = Path("/config/simkl_cursors.json")
+        simkl_shadow  = Path("/config/simkl_watchlist.shadow.json")
+
+        # statistics.json (best-effort)
+        try:
+            stats_path = CONFIG_DIR / "statistics.json"  # type: ignore[name-defined]
+        except Exception:
+            stats_path = Path("/config/statistics.json")
+
+        removed_files: List[str] = []
+
+        def _rm(p: Optional[Path]):
+            if not isinstance(p, Path):
+                return
+            try:
+                if _safe_remove_path(p):
+                    removed_files.append(str(p))
+            except Exception:
+                pass
 
         if mode in ("clear_state", "clear_both"):
-            try: state_path.unlink(missing_ok=True)
-            except Exception: pass
+            _rm(state_path)
+            _rm(last_path)
+            _rm(hide_path)
+            _rm(simkl_cursors)
+            _rm(simkl_shadow)
+            _rm(stats_path)
 
         if mode in ("clear_tombstones", "clear_both"):
-            try: tomb_path.unlink(missing_ok=True)
-            except Exception: pass
+            _rm(tomb_path)
 
         if mode == "clear_tombstone_entries":
-            t = orc.load_tombstones()
+            # Clear only the entries, preserve (or override) TTL
+            t = orc.files.load_tomb()
             t["keys"] = {}
             if isinstance(ttl_override, int) and ttl_override > 0:
                 t["ttl_sec"] = ttl_override
             elif not keep_ttl:
-                t["ttl_sec"] = 172800
+                t["ttl_sec"] = 172800  # 2 days
             orc.files.save_tomb(t)
             _append_log("TRBL", f"[i] Tombstones cleared (ttl={t.get('ttl_sec', 'n/a')})")
 
         if mode == "rebuild":
             state = _persist_state_via_orc(orc, feature=feature)
-            STATS.refresh_from_state(state)
+            try:
+                STATS.refresh_from_state(state)
+            except Exception:
+                pass
             _append_log("TRBL", f"[i] Snapshot rebuilt via Orchestrator (feature={feature})")
 
         if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
             return {"ok": False, "error": f"Unknown mode: {mode}"}
 
-        return {"ok": True, "mode": mode}
+        return {"ok": True, "mode": mode, "removed": removed_files}
+
     except Exception as e:
         _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}
 
-# -----------------------------------------------------------------------------
-# Auth providers & metadata providers (UI helpers)
-# -----------------------------------------------------------------------------
+
+# --------------- Auth providers & metadata providers (UI helpers) ---------------
 try:
     from providers.auth.registry import auth_providers_html, auth_providers_manifests
 except Exception:
-    auth_providers_html = lambda : "<div class='sub'>No providers found.</div>"
-    auth_providers_manifests = lambda : []
+    auth_providers_html = lambda: "<div class='sub'>No providers found.</div>"
+    auth_providers_manifests = lambda: []
+
 
 @app.get("/api/auth/providers")
 def api_auth_providers():
     return JSONResponse(auth_providers_manifests())
 
+
 @app.get("/api/auth/providers/html")
 def api_auth_providers_html():
     return HTMLResponse(auth_providers_html())
 
+
 try:
     from providers.metadata.registry import metadata_providers_html, metadata_providers_manifests
 except Exception:
-    metadata_providers_html = lambda : "<div class='sub'>No metadata providers found.</div>"
-    metadata_providers_manifests = lambda : []
+    metadata_providers_html = lambda: "<div class='sub'>No metadata providers found.</div>"
+    metadata_providers_manifests = lambda: []
+
 
 @app.get("/api/metadata/providers")
 def api_metadata_providers():
     return JSONResponse(metadata_providers_manifests())
 
+
 @app.get("/api/metadata/providers/html")
 def api_metadata_providers_html():
     return HTMLResponse(metadata_providers_html())
 
-# -----------------------------------------------------------------------------
-# Platform/Metadata managers (optional)
-# -----------------------------------------------------------------------------
+
+# --------------- Platform/Metadata managers (optional) ---------------
 try:
     from cw_platform.manager import PlatformManager as _PlatformMgr
     _PLATFORM = _PlatformMgr(load_config, save_config)
@@ -3220,9 +3387,8 @@ except Exception as _e:
     _METADATA = None
     print("MetadataManager not available:", _e)
 
-# -----------------------------------------------------------------------------
-# Helpers: counts via Orchestrator
-# -----------------------------------------------------------------------------
+
+# --------------- Helpers: counts via Orchestrator ---------------
 def _count_provider(cfg: dict, provider: str, feature: str = "watchlist") -> int:
     try:
         orc = Orchestrator(config=cfg)
@@ -3231,25 +3397,29 @@ def _count_provider(cfg: dict, provider: str, feature: str = "watchlist") -> int
     except Exception:
         return 0
 
+
 def _safe_get(d: dict, *path, default=None):
     cur = d
     for k in path:
-        if not isinstance(cur, dict): return default
+        if not isinstance(cur, dict):
+            return default
         cur = cur.get(k, default)
     return cur
+
 
 def _count_plex(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "PLEX", feature="watchlist")
 
+
 def _count_simkl(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "SIMKL", feature="watchlist")
+
 
 def _count_trakt(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "TRAKT", feature="watchlist")
 
-# -----------------------------------------------------------------------------
-# Main
-# -----------------------------------------------------------------------------
+
+# --------------- Main ---------------
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()
     print("\nCrossWatch Engine running:")
@@ -3260,6 +3430,7 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     print(f"  Cache:   {CACHE_DIR}")
     print(f"  Reports: {REPORT_DIR}\n")
     uvicorn.run(app, host=host, port=port)
+
 
 if __name__ == "__main__":
     main()

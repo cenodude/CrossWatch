@@ -1695,6 +1695,7 @@ async function loadConfig() {
   // Fetch and cache config first; visibility helpers read from _cfgCache
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
   window._cfgCache = cfg;
+  try { updateWatchlistTabVisibility?.(); } catch {}
 
   // Bind observers once, then schedule initial visibility pass
   try { bindSyncVisibilityObservers?.(); } catch {}
@@ -2006,13 +2007,18 @@ async function saveSettings() {
       console.warn("loadScheduling failed:", e);
     }
 
+    // Dependent UI updates
     try { if (typeof updateTraktHint === "function") updateTraktHint(); } catch {}
+    try { if (typeof updateWatchlistTabVisibility === "function") await updateWatchlistTabVisibility(); } catch {}
+    try { if (typeof updatePreviewVisibility === "function") updatePreviewVisibility(); } catch {}
 
+    // Broadcast once at the end
     try {
       window.dispatchEvent(new CustomEvent("settings-changed", {
         detail: { scope: "settings", reason: "save" }
       }));
     } catch {}
+
 
     // explicit broadcasts for scheduler consumers
     try { document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } })); } catch {}
@@ -2671,6 +2677,26 @@ async function hasTmdbKey() {
     return !!(cfg.tmdb?.api_key || "").trim();
   } catch {
     return false;
+  }
+}
+
+async function updateWatchlistTabVisibility() {
+  const tab  = document.getElementById("tab-watchlist");
+  const page = document.getElementById("page-watchlist");
+  if (!tab) return;
+
+  let ok = false;
+  try {
+    const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+    ok = !!String(cfg?.tmdb?.api_key || "").trim();
+  } catch (_) { ok = false; }
+
+  if (!ok) {
+    tab.classList.add("hidden");
+    page?.classList.add("hidden");
+    if (tab.classList.contains("active")) showTab("main");
+  } else {
+    tab.classList.remove("hidden");
   }
 }
 

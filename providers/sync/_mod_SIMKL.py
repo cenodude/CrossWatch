@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-__VERSION__ = "1.1.1"
+__VERSION__ = "1.1.3"
 __all__ = ["OPS", "SIMKLModule", "get_manifest"]
 
 import json
@@ -8,7 +8,7 @@ import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 import requests
 
@@ -46,6 +46,49 @@ try:
     _stats = Stats()
 except Exception:
     _stats = None
+
+# ---------------------------------------------------------------------------
+# Global Tombstones (optional)
+# ---------------------------------------------------------------------------
+
+_GMT_ENABLED_DEFAULT = True
+
+try:
+    from providers.gmt_hooks import suppress_check as _gmt_suppress, record_negative as _gmt_record  # type: ignore
+    from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
+    _HAS_GMT = True
+except Exception:  # pragma: no cover
+    _HAS_GMT = False
+    GlobalTombstoneStore = None  # type: ignore
+    def _gmt_suppress(**_kwargs) -> bool:  # type: ignore
+        return False
+    def _gmt_record(**_kwargs) -> None:  # type: ignore
+        return
+
+def _gmt_is_enabled(cfg: Mapping[str, Any]) -> bool:
+    sync = dict(cfg.get("sync") or {})
+    val = sync.get("gmt_enable")
+    if val is None:
+        return _GMT_ENABLED_DEFAULT
+    return bool(val)
+
+def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
+    f = (feature or "").lower()
+    if f == "ratings":
+        return "rate", "unrate"
+    if f == "history":
+        return "scrobble", "unscrobble"
+    # watchlist behaves like add/remove
+    return "add", "remove"
+
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
+    if not _HAS_GMT or not _gmt_is_enabled(cfg):
+        return None
+    try:
+        ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
+        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +159,45 @@ def _simkl_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[s
     _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="POST", payload=json_payload)
     return r
 
+def _json_or_empty_list(r: Optional[requests.Response], list_key: Optional[str] = None) -> List[Any]:
+    """
+    Parse a SIMKL response that should be a list (or dict with a list inside).
+    Treat shapes like {"type":"null","body":null} or None as empty list.
+    """
+    if not r or not getattr(r, "ok", False):
+        return []
+    try:
+        data = r.json()
+    except Exception:
+        return []
+    if data is None:
+        return []
+    if isinstance(data, dict) and data.get("type") == "null" and data.get("body") is None:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and list_key:
+        arr = data.get(list_key)
+        return arr if isinstance(arr, list) else []
+    return []
+
+def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
+    """
+    Parse a SIMKL response that should be a dict.
+    Treat shapes like {"type":"null","body":null} or None as empty dict.
+    """
+    if not r or not getattr(r, "ok", False):
+        return {}
+    try:
+        data = r.json()
+    except Exception:
+        return {}
+    if data is None:
+        return {}
+    if isinstance(data, dict) and data.get("type") == "null" and data.get("body") is None:
+        return {}
+    return data if isinstance(data, dict) else {}
+
 
 # ---------------------------------------------------------------------------
 # Provider protocol
@@ -137,14 +219,15 @@ class InventoryOps(Protocol):
 
 class _CursorStore:
     def __init__(self, root_cfg: Mapping[str, Any]):
-        runtime = dict(root_cfg.get("runtime") or {})
-        base_dir = runtime.get("state_dir") or os.environ.get("CROSSWATCH_STATE_DIR") or str(Path.home() / ".crosswatch")
+        base_dir = Path("/config")
         try:
-            p = Path(base_dir); p.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            p = Path.cwd()
-        self.file = p / "simkl_cursors.json"
-        self.shadow_file = p / "simkl_watchlist.shadow.json"
+            # /config should already exist; ignore if it does
+            pass
+
+        self.file = base_dir / "simkl_cursors.json"
+        self.shadow_file = base_dir / "simkl_watchlist.shadow.json"
 
     def _read(self) -> Dict[str, Any]:
         try:
@@ -158,10 +241,10 @@ class _CursorStore:
         tmp.replace(self.file)
 
     def get(self, feature: str) -> Optional[str]:
-        return self._read().get(feature)
+        return (self._read() or {}).get(feature)
 
     def set(self, feature: str, iso_ts: str) -> None:
-        data = self._read()
+        data = self._read() or {}
         data[feature] = iso_ts
         self._write(data)
 
@@ -172,11 +255,10 @@ class _CursorStore:
             return {"items": {}, "last_sync_ts": 0}
 
     def save_shadow(self, items: Mapping[str, Any], last_sync_ts: int) -> None:
-        data = {"items": items, "last_sync_ts": int(last_sync_ts)}
+        data = {"items": dict(items or {}), "last_sync_ts": int(last_sync_ts)}
         tmp = self.shadow_file.with_suffix(self.shadow_file.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
         tmp.replace(self.shadow_file)
-
 
 # ---------------------------------------------------------------------------
 # Helpers for IDs and shapes
@@ -217,6 +299,9 @@ def _read_as_list(j: Any, key: str) -> List[dict]:
     if isinstance(j, list):
         return j
     if isinstance(j, dict):
+        # treat {"type":"null","body":null} as empty
+        if j.get("type") == "null" and j.get("body") is None:
+            return []
         arr = j.get(key)
         if isinstance(arr, list):
             return arr
@@ -246,11 +331,9 @@ def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     try:
         r = _simkl_get(SIMKL_SYNC_ACTIVITIES, headers=simkl_headers(simkl_cfg), timeout=30)
-        if not r or not r.ok:
-            return {}
-        data = r.json() or {}
+        data = _json_or_empty_dict(r)
     except Exception:
-        return {}
+        data = {}
     out: Dict[str, Any] = {}
     for k in ("watchlist", "ratings", "history", "completed", "lists", "episodes", "movies", "shows"):
         if isinstance(data.get(k), (str, int)):
@@ -271,19 +354,8 @@ def _ptw_fetch_delta(hdr: Mapping[str, str], date_from_iso: str) -> Dict[str, Li
     params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": date_from_iso}
 
     def _get(url: str, key: str) -> List[dict]:
-        try:
-            r = _simkl_get(url, headers=hdr, params=params, timeout=45)
-            if not r or not r.ok:
-                return []
-            j = r.json() or {}
-            if isinstance(j, list):
-                return j
-            if isinstance(j, dict):
-                arr = j.get(key)
-                return arr if isinstance(arr, list) else []
-            return []
-        except Exception:
-            return []
+        r = _simkl_get(url, headers=hdr, params=params, timeout=45)
+        return _json_or_empty_list(r, key)
 
     movies = _get(SIMKL_ALL_ITEMS_MOVIES_PTW, "movies")
     shows  = _get(SIMKL_ALL_ITEMS_SHOWS_PTW,  "shows")
@@ -306,6 +378,16 @@ def _ptw_key_for(kind: str, node: Mapping[str, Any]) -> str:
     return f"{kind}|title:{t}|year:{y}"
 
 
+def _looks_removed(it: Mapping[str, Any]) -> bool:
+    """
+    SIMKL deltas can flag removals via various fields/values.
+    """
+    action = str(it.get("action") or "").strip().lower()
+    status = str(it.get("status") or "").strip().lower()
+    removed_flag = bool(it.get("removed"))
+    return removed_flag or action in {"remove", "removed", "delete", "deleted", "unwatch", "unlisted", "unsave", "un-save"} or status in {"removed", "deleted", "unlisted"}
+
+
 def _ptw_apply_delta(shadow: Dict[str, Any], delta: Dict[str, List[dict]]) -> Dict[str, Any]:
     items = dict(shadow)
     for kind, arr in (delta or {}).items():
@@ -313,8 +395,7 @@ def _ptw_apply_delta(shadow: Dict[str, Any], delta: Dict[str, List[dict]]) -> Di
         for it in arr or []:
             node = _ptw_flatten_item(k, it)
             key = _ptw_key_for(k, node)
-            removed = bool(it.get("removed") or it.get("action") in ("remove", "deleted", "unlisted"))
-            if removed:
+            if _looks_removed(it):
                 items.pop(key, None)
             else:
                 items[key] = node
@@ -338,6 +419,34 @@ def _ptw_bootstrap_using_windows(hdr: Mapping[str, str], start_iso: str, window_
             items = _ptw_apply_delta(items, delta)
         cursor_ts = since_ts
     return items
+
+
+def _ptw_fetch_present(hdr: Mapping[str, str]) -> Tuple[Dict[str, Any], bool]:
+    """
+    Build a present-time PTW snapshot by sweeping from epoch (SIMKL needs date_from).
+    Returns (items_map, ok_flag). ok_flag indicates we got a meaningful answer.
+    """
+    params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
+
+    r_m = _simkl_get(SIMKL_ALL_ITEMS_MOVIES_PTW, headers=hdr, params=params, timeout=45)
+    r_s = _simkl_get(SIMKL_ALL_ITEMS_SHOWS_PTW,  headers=hdr, params=params, timeout=45)
+
+    movies = _json_or_empty_list(r_m, "movies")
+    shows  = _json_or_empty_list(r_s, "shows")
+
+    ok = (r_m is not None and getattr(r_m, "ok", False)) or (r_s is not None and getattr(r_s, "ok", False))
+    items: Dict[str, Any] = {}
+    for it in movies or []:
+        node = _ptw_flatten_item("movie", it)
+        key = _ptw_key_for("movie", node)
+        if not _looks_removed(it):
+            items[key] = node
+    for it in shows or []:
+        node = _ptw_flatten_item("show", it)
+        key = _ptw_key_for("show", node)
+        if not _looks_removed(it):
+            items[key] = node
+    return items, ok
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +486,13 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     except Exception:
         pass
 
+    # --- Present-state reconciliation (authoritative current list) ---
+    present_items, ok_present = _ptw_fetch_present(hdr)
+    if ok_present:
+        # If present snapshot is smaller than our view, trust present (drop ghosts)
+        # If it is larger, it simply adds any missing new entries.
+        items = dict(present_items)
+
     # Advance cursor using server perspective if available
     try:
         acts2 = _activities(cfg_root)
@@ -397,8 +513,14 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
+    # GMT: suppress re-add attempts
     items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("watchlist")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="watchlist", write_op=op_add)]
+
+    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     for it in items_list:
         ids = dict((it.get("ids") or {}))
         typ = (it.get("type") or "movie").lower()
@@ -427,8 +549,9 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
 
 
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     items_list = list(items)
+
+    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     for it in items_list:
         ids = dict((it.get("ids") or {}))
         typ = (it.get("type") or "movie").lower()
@@ -452,6 +575,11 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
             k = canonical_key({"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year"), "type": (it.get("type") or "movie").lower()})
             m.pop(k, None)
         store.save_shadow(m, int(time.time()))
+        # GMT: record negatives for successful removes
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="SIMKL")
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -470,13 +598,8 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     if df:
         params["date_from"] = df
 
-    try:
-        r = _simkl_get(SIMKL_RATINGS_GET, headers=hdr, params=params, timeout=45)
-        if not r or not r.ok:
-            return {}
-        data = r.json() or {}
-    except Exception:
-        return {}
+    r = _simkl_get(SIMKL_RATINGS_GET, headers=hdr, params=params, timeout=45)
+    data = _json_or_empty_dict(r)
 
     idx: Dict[str, Dict[str, Any]] = {}
 
@@ -499,11 +622,14 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                 key = f"{kind}|title:{t}|year:{y}"
             idx[key] = {"type": kind, "title": node.get("title"), "year": node.get("year"), "ids": ids, "rating": rating}
 
-    handle(_read_as_list(data, "movies"), "movie")
-    handle(_read_as_list(data, "shows"), "show")
+    def _read_as_list2(j: Any, key: str) -> List[dict]:
+        return _read_as_list(j, key)
+
+    handle(_read_as_list2(data, "movies"), "movie")
+    handle(_read_as_list2(data, "shows"), "show")
 
     try:
-        srv_now = r.headers.get("Date")
+        srv_now = r.headers.get("Date") if r else None
     except Exception:
         srv_now = None
     new_cursor = srv_now or ts_to_iso(int(time.time()))
@@ -516,10 +642,16 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    # GMT: suppress re-rate attempts if quarantined
+    items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("ratings")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="ratings", write_op=op_add)]
+
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     hdr = simkl_headers(simkl_cfg)
 
-    items_list = list(items)
     if not items_list:
         return 0
 
@@ -587,6 +719,12 @@ def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
         if r and r.ok:
             total += len(chunk)
 
+    # GMT: record negatives (unrate) after successful removals
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and total:
+        for it in items_list:
+            _gmt_record(store=store_gmt, item=it, feature="ratings", op="unrate", origin="SIMKL")
+
     return total
 
 
@@ -606,13 +744,8 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     if date_from:
         params["date_from"] = date_from
 
-    try:
-        r = _simkl_get(SIMKL_HISTORY_ADD, headers=hdr, params=params, timeout=45)
-        if not r or not r.ok:
-            return {}
-        data = r.json() or {}
-    except Exception:
-        return {}
+    r = _simkl_get(SIMKL_HISTORY_ADD, headers=hdr, params=params, timeout=45)
+    data = _json_or_empty_dict(r)
 
     idx: Dict[str, Dict[str, Any]] = {}
 
@@ -638,10 +771,17 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    # GMT: suppress re-scrobbles if quarantined
+    items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("history")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="history", write_op=op_add)]
+
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
     now_iso = ts_to_iso(int(time.time()))
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         entry = {"watched_at": it.get("watched_at") or now_iso, "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
@@ -660,9 +800,11 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
 
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    items_list = list(items)
+
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
@@ -676,6 +818,11 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
     r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
     if r and r.ok:
         _CursorStore(cfg_root).set("history", ts_to_iso(int(time.time())))
+        # GMT: record negatives (unscrobble) after successful removes
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="history", op="unscrobble", origin="SIMKL")
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -789,6 +936,13 @@ class SIMKLModule(SyncModule):
                             "date_from": {"type": "string"},
                         },
                         "required": ["client_id", "access_token"],
+                    },
+                    "sync": {
+                        "type": "object",
+                        "properties": {
+                            "gmt_enable": {"type": "boolean"},
+                            "gmt_quarantine_days": {"type": "integer", "minimum": 1},
+                        },
                     },
                     "runtime": {
                         "type": "object",

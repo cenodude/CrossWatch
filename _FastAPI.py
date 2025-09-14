@@ -41,6 +41,29 @@ def get_index_html() -> str:
   #providers_list .pairs-board {
     display: flex; flex-direction: column; align-items: flex-start; text-align: left;
   }
+
+  /* Sticky SAVE button (shows only on the Settings tab) */
+  #save-fab {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 10000;
+    pointer-events: none; /* container ignores clicks; button handles them */
+  }
+  #save-fab .btn {
+    pointer-events: auto;
+    padding: 14px 22px;
+    border-radius: 14px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+    background: linear-gradient(135deg,#ff4d4f,#ff7a7a);
+    border: 1px solid #ff9a9a55;
+    box-shadow: 0 10px 28px rgba(0,0,0,.35), 0 0 14px #ff4d4f55;
+  }
+  #save-fab .btn:active { transform: translateY(1px); }
+  #save-fab.hidden { display: none; }
 </style>
 </head><body>
 
@@ -66,6 +89,20 @@ def get_index_html() -> str:
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
+  
+<style id="prehide-wl">#tab-watchlist{display:none!important}</style>
+<script>
+(function(){
+  // Remove pre-hide only when TMDB api_key is present
+  fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).then(cfg=>{
+    if ((cfg?.tmdb?.api_key || "").trim()) {
+      const s = document.getElementById("prehide-wl");
+      if (s) s.remove();
+    }
+  }).catch(()=>{ /* keep hidden on error */ });
+})();
+</script>
+
 </header>
 
 <main id="layout">
@@ -323,11 +360,7 @@ def get_index_html() -> str:
           </div>
         </div>
 
-        <div class="footer">
-          <button class="btn btn-save" onclick="saveSettings()"><span class="btn-ic">✔</span> Save</button>
-          <button class="btn btn-exit" onclick="showTab('main')"><span class="btn-ic">↩</span> Exit</button>
-          <span id="save_msg" class="msg ok hidden">Settings saved ✓</span>
-        </div>
+        <!-- NOTE: old footer Save + save_msg removed on purpose -->
 
       </div>
 
@@ -399,6 +432,64 @@ def get_index_html() -> str:
   document.addEventListener('DOMContentLoaded', () => {
     try { if (typeof openSummaryStream === 'function') openSummaryStream(); } catch (e) {}
   });
+</script>
+
+<!-- Sticky Save -->
+<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save">
+  <button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button>
+</div>
+
+<script>
+/* Show/hide the sticky Save on the Settings tab */
+(function(){
+  const fab = document.getElementById('save-fab');
+  const settings = document.getElementById('page-settings');
+  function visibleOnSettings(){ return settings && !settings.classList.contains('hidden'); }
+  function updateFab(){ fab.classList.toggle('hidden', !visibleOnSettings()); }
+  if (settings){
+    const mo = new MutationObserver(updateFab);
+    mo.observe(settings, { attributes:true, attributeFilter:['class'] });
+  }
+  document.addEventListener('DOMContentLoaded', updateFab, { once:true });
+  document.addEventListener('click', e => { const t=e.target; if(t && t.id && t.id.startsWith('tab-')) setTimeout(updateFab,0); });
+})();
+</script>
+
+<script>
+/* Flip the clicked Save button text to "Settings saved ✓" then back */
+(function(){
+  function install(){
+    const orig = window.saveSettings;
+    if (typeof orig !== 'function' || orig._wrapped) return;
+
+    async function wrapped(){
+      let btn = (arguments[0] instanceof HTMLElement) ? arguments[0] : document.getElementById('save-fab-btn');
+      if (btn && !btn.dataset.defaultHtml) btn.dataset.defaultHtml = btn.innerHTML;
+      if (btn) btn.disabled = true;
+
+      try{
+        const ret = orig.apply(this, arguments);
+        await (ret && typeof ret.then === 'function' ? ret : Promise.resolve());
+        if (btn){
+          btn.innerHTML = 'Settings saved ✓';
+          setTimeout(()=>{ btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>'; btn.disabled = false; }, 1600);
+        }
+        return ret;
+      }catch(err){
+        if (btn){
+          btn.innerHTML = 'Save failed';
+          setTimeout(()=>{ btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>'; btn.disabled = false; }, 2000);
+        }
+        throw err;
+      }
+    }
+    wrapped._wrapped = true;
+    window.saveSettings = wrapped;
+  }
+
+  if (document.readyState === 'complete') install();
+  window.addEventListener('load', install);
+})();
 </script>
 
 </body></html>

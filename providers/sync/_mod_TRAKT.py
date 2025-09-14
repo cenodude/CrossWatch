@@ -2,15 +2,14 @@ from __future__ import annotations
 # providers/sync/_mod_TRAKT.py
 # Unified OPS provider for Trakt: watchlist, ratings, history, playlists (custom lists)
 
-__VERSION__ = "1.1.1"
+__VERSION__ = "1.1.2"
 
 import json
 import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol
-
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 import requests
 
@@ -140,6 +139,47 @@ def _trakt_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[s
     _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="POST", payload=json_payload)
     return r
 
+# ---- Global Tombstones (optional) -------------------------------------------
+# --------------- Optional Global Tombstones integration: feature-scoped suppression + negative records ---------------
+_GMT_ENABLED_DEFAULT = True
+
+try:
+    from providers.gmt_hooks import suppress_check as _gmt_suppress, record_negative as _gmt_record  # type: ignore
+    from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
+    _HAS_GMT = True
+except Exception:  # pragma: no cover
+    _HAS_GMT = False
+    GlobalTombstoneStore = None  # type: ignore
+    def _gmt_suppress(**_kwargs) -> bool:  # type: ignore
+        return False
+    def _gmt_record(**_kwargs) -> None:  # type: ignore
+        return
+
+def _gmt_is_enabled(cfg: Mapping[str, Any]) -> bool:
+    sync = dict(cfg.get("sync") or {})
+    val = sync.get("gmt_enable")
+    if val is None:
+        return _GMT_ENABLED_DEFAULT
+    return bool(val)
+
+def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
+    f = (feature or "").lower()
+    if f == "ratings":
+        return "rate", "unrate"
+    if f == "history":
+        return "scrobble", "unscrobble"
+    # watchlist behaves like add/remove
+    return "add", "remove"
+
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
+    if not _HAS_GMT or not _gmt_is_enabled(cfg):
+        return None
+    try:
+        ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
+        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
+    except Exception:
+        return None
+
 # ---- Helpers -----------------------------------------------------------------
 _ID_KEYS = ("trakt", "imdb", "tmdb", "tvdb", "slug")
 
@@ -262,8 +302,15 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     return idx
 
 def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    # --------------- GMT suppression for watchlist adds ---------------
+    items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("watchlist")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="watchlist", write_op=op_add)]
+
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         kind = (it.get("type") or "movie").lower()
         entry = {"ids": {k: ids.get(k) for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}}
@@ -279,8 +326,10 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     return 0
 
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    items_list = list(items)
+
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         kind = (it.get("type") or "movie").lower()
         entry = {"ids": {k: ids.get(k) for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}}
@@ -292,6 +341,11 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     r = _trakt_post(TRAKT_SYNC_WATCHLIST_REMOVE, headers=_headers(cfg_root), json_payload=payload, timeout=45)
     if r and r.ok:
         _CursorStore(cfg_root).set("watchlist", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # --------------- GMT negative record for removals ---------------
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="TRAKT")
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -330,6 +384,13 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     return idx
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    # --------------- GMT suppression for rating sets ---------------
+    items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("ratings")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="ratings", write_op=op_add)]
+
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -340,7 +401,7 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
         except Exception:
             return None
 
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         rating = _coerce(it.get("rating"))
         if rating is None:
@@ -369,8 +430,10 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
 
 
 def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    items_list = list(items)
+
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         kind = (it.get("type") or "movie").lower()
         entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
@@ -382,6 +445,11 @@ def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
     r = _trakt_post(TRAKT_SYNC_RATINGS_REMOVE, headers=_headers(cfg_root), json_payload=payload, timeout=45)
     if r and r.ok:
         _CursorStore(cfg_root).set("ratings", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # --------------- GMT negative record for rating removals ---------------
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="ratings", op="unrate", origin="TRAKT")
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -436,10 +504,17 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     return idx
 
 def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    # --------------- GMT suppression for scrobbles ---------------
+    items_list = list(items)
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt and items_list:
+        op_add, _op_neg = _gmt_ops_for_feature("history")
+        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="history", write_op=op_add)]
+
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         kind = (it.get("type") or "movie").lower()
         if kind == "movie":
@@ -458,9 +533,11 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
     return 0
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    items_list = list(items)
+
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
-    for it in items:
+    for it in items_list:
         ids = dict((it.get("ids") or {}))
         kind = (it.get("type") or "movie").lower()
         entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
@@ -473,6 +550,11 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
     r = _trakt_post(TRAKT_SYNC_HISTORY + "/remove", headers=_headers(cfg_root), json_payload=payload, timeout=45)
     if r and r.ok:
         _CursorStore(cfg_root).set("history", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # --------------- GMT negative record for unscrobbles ---------------
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="history", op="unscrobble", origin="TRAKT")
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -660,6 +742,13 @@ class TRAKTModule(SyncModule):
                                 "required": ["access_token"]
                             }
                         }
+                    },
+                    "sync": {
+                        "type": "object",
+                        "properties": {
+                            "gmt_enable": {"type": "boolean"},
+                            "gmt_quarantine_days": {"type": "integer", "minimum": 1},
+                        },
                     },
                     "runtime": {
                         "type": "object",

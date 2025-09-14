@@ -1,29 +1,72 @@
 (function(){
   // ---------- styles ----------
   const css = `
-  .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+  .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
   .wl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .wl-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
-  .wl-side{display:flex;flex-direction:column;gap:10px}
   .wl-input{background:#15151c;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px;color:#fff;width:100%}
   .wl-btn{background:#1d1d26;border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;padding:8px 10px;cursor:pointer}
   .wl-btn.danger{background:#2a1113;border-color:#57252a}
   .wl-chip{display:inline-flex;align-items:center;gap:6px;border-radius:16px;padding:6px 10px;background:#171720;border:1px solid rgba(255,255,255,.1);white-space:nowrap}
-  .wl-chip input{accent-color:#6cf}
   .wl-muted{opacity:.7}
   .wl-row{display:flex;gap:10px}
   .wl-actions{display:flex;gap:10px}
-  .wl-grid{min-height:240px}
-  .wl-card{position:relative;border-radius:12px;overflow:hidden;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
-  .wl-card img{width:100%;height:100%;object-fit:cover;display:block}
-  .wl-card .wl-top{position:absolute;inset:8px 8px auto auto;display:flex;gap:6px;align-items:center}
-  .wl-card .wl-top input[type="checkbox"]{width:18px;height:18px;opacity:0;pointer-events:none;transition:.18s ease}
-  .wl-card:hover .wl-top input[type="checkbox"]{opacity:1;pointer-events:auto}
-  .wl-card .wl-tags{position:absolute;left:8px;top:8px;display:flex;gap:6px;flex-wrap:wrap}
-  .wl-tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);backdrop-filter:blur(4px)}
-  .wl-hidden{display:none!important}
   .wl-empty{padding:24px;border:1px dashed rgba(255,255,255,.12);border-radius:12px;text-align:center}
-  #wl-providers{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto}
+
+  /* Posters view */
+  .wl-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));min-height:240px}
+  .wl-card{position:relative;border-radius:12px;overflow:hidden;background:#0f0f13;border:1px solid rgba(255,255,255,.08);transition:box-shadow .15s ease,border-color .15s ease}
+  .wl-card img{width:100%;height:100%;object-fit:cover;display:block}
+  .wl-card .wl-tags{position:absolute;left:8px;top:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:2}
+  .wl-tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);backdrop-filter:blur(4px)}
+  .wl-card.selected{box-shadow:0 0 0 3px #6f6cff,0 0 0 5px rgba(111,108,255,.35)}
+
+  /* List view */
+  .wl-table-wrap{border:1px solid rgba(255,255,255,.12);border-radius:10px;overflow:auto}
+  .wl-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+  .wl-table col.c-sel{width:44px}
+  .wl-table col.c-title{width:auto}
+  .wl-table col.c-type{width:120px}
+  .wl-table col.c-sync{width:190px}
+  .wl-table col.c-sources{width:220px}
+  .wl-table col.c-poster{width:80px}
+  .wl-table th,.wl-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left}
+  .wl-table th{position:sticky;top:0;background:#101018;font-weight:600;z-index:1;text-transform:none;letter-spacing:0}
+  .wl-table tr:last-child td{border-bottom:none}
+  .wl-table .title{white-space:normal}
+  .wl-table input[type=checkbox]{width:18px;height:18px}
+
+  /* Sources */
+  .wl-srcs{display:flex;gap:10px;align-items:center}
+  .wl-src{display:inline-flex;align-items:center;justify-content:center;height:20px}
+  .wl-src img{height:16px;display:block;opacity:.95}
+  .wl-badge{padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);font-size:11px}
+
+  /* Sync matrix */
+  .wl-matrix{display:flex;gap:10px;align-items:center}
+  .wl-mat{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#14141c}
+  .wl-mat img{height:14px}
+  .wl-mat .material-symbol{font-size:16px}
+  .wl-mat.ok{border-color:rgba(120,255,180,.35)}
+  .wl-mat.miss{opacity:.6}
+
+  .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
+
+  /* Sidebar cards */
+  .wl-side{display:flex;flex-direction:column;gap:12px}
+  .ins-card{background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:14px}
+  .ins-row{display:flex;align-items:center;gap:12px;padding:10px 6px;border-top:1px solid rgba(255,255,255,.06)}
+  .ins-row:first-child{border-top:none}
+  .ins-icon{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#13131b;border:1px solid rgba(255,255,255,.06)}
+  .ins-title{font-weight:700}
+  .ins-kv{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center}
+  .ins-kv label{opacity:.85}
+
+  .ins-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .metric{display:flex;align-items:center;gap:8px;background:#12121a;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px}
+  .metric .material-symbol{font-size:18px;opacity:.9}
+  .metric .m-val{font-weight:700}
+  .metric .m-lbl{font-size:12px;opacity:.75}
+
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
   .wl-snack .wl-btn{padding:6px 10px}
   `;
@@ -35,90 +78,161 @@
   if (!host) return;
 
   host.innerHTML = `
-    <div class="title">Watchlist</div>
+    <div class="title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <span>Watchlist</span>
+    </div>
+
     <div class="wl-wrap" id="watchlist-root">
       <div>
         <div class="wl-controls">
           <label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"> <span>Select all</span></label>
           <span id="wl-count" class="wl-muted">0 selected</span>
         </div>
-        <div id="wl-grid" class="wl-grid"></div>
+
+        <div id="wl-posters" class="wl-grid" style="display:none"></div>
+        <div id="wl-list" class="wl-table-wrap" style="display:none">
+          <table class="wl-table">
+            <colgroup>
+              <col class="c-sel">
+              <col class="c-title">
+              <col class="c-type">
+              <col class="c-sync">
+              <col class="c-sources">
+              <col class="c-poster">
+            </colgroup>
+            <thead>
+              <tr>
+                <th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Sync</th>
+                <th>Sources</th>
+                <th>Poster</th>
+              </tr>
+            </thead>
+            <tbody id="wl-tbody"></tbody>
+          </table>
+        </div>
+
         <div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items</div>
       </div>
+
       <aside class="wl-side">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-weight:700">Filters</div>
-          <button id="wl-clear" class="wl-btn">Reset</button>
-        </div>
-        <div style="display:grid;gap:10px">
-          <input id="wl-q" class="wl-input" placeholder="Search title…">
-          <div class="wl-row">
-            <input id="wl-year" class="wl-input" placeholder="Year" style="max-width:140px">
-            <select id="wl-type" class="wl-input">
-              <option value="">All types</option>
-              <option value="movie">Movie</option>
-              <option value="tv">TV</option>
-              <option value="show">TV</option>
-            </select>
+        <!-- Filters -->
+        <div class="ins-card">
+          <div class="ins-row">
+            <div class="ins-icon"><span class="material-symbol">tune</span></div>
+            <div class="ins-title">Filters</div>
           </div>
-          <div>
-            <div class="wl-muted" style="font-size:12px;margin-bottom:6px">Provider</div>
-            <div id="wl-providers"></div>
+          <div class="ins-row">
+            <div class="ins-kv" style="width:100%">
+              <label>View</label>
+              <select id="wl-view" class="wl-input" style="width:auto;padding:6px 10px">
+                <option value="posters" selected>Posters</option>
+                <option value="list">List</option>
+              </select>
+
+              <label>Search</label>
+              <input id="wl-q" class="wl-input" placeholder="Search title…">
+
+              <label>Type</label>
+              <select id="wl-type" class="wl-input">
+                <option value="">All types</option>
+                <option value="movie">Movie</option>
+                <option value="tv">TV</option>
+                <option value="show">TV</option>
+              </select>
+
+              <label>Provider</label>
+              <select id="wl-provider" class="wl-input">
+                <option value="">All</option>
+                <option value="PLEX">PLEX</option>
+                <option value="SIMKL">SIMKL</option>
+                <option value="TRAKT">TRAKT</option>
+              </select>
+            </div>
+          </div>
+          <div class="ins-row" style="justify-content:flex-end">
+            <button id="wl-clear" class="wl-btn">Reset</button>
           </div>
         </div>
 
-        <div style="height:10px"></div>
-        <div style="font-weight:700;margin-bottom:6px">Actions</div>
-        <div class="wl-actions">
-          <select id="wl-delete-provider" class="wl-input" style="flex:1">
-            <option value="">Delete from…</option>
-          </select>
-          <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
+        <!-- Actions -->
+        <div class="ins-card">
+          <div class="ins-row">
+            <div class="ins-icon"><span class="material-symbol">flash_on</span></div>
+            <div class="ins-title">Actions</div>
+          </div>
+          <div class="ins-row">
+            <div class="ins-kv" style="width:100%">
+              <label>Delete</label>
+              <div class="wl-actions">
+                <select id="wl-delete-provider" class="wl-input" style="flex:1">
+                  <option value="">Delete from…</option>
+                  <option value="PLEX">PLEX</option>
+                </select>
+                <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
+              </div>
+
+              <label>Visibility</label>
+              <div class="wl-actions">
+                <button id="wl-hide" class="wl-btn" disabled>Hide (local)</button>
+                <button id="wl-unhide" class="wl-btn">Unhide all</button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="wl-actions">
-          <button id="wl-hide" class="wl-btn" disabled>Hide (local)</button>
-          <button id="wl-unhide" class="wl-btn">Unhide all</button>
+
+        <!-- List Insight -->
+        <div class="ins-card">
+          <div class="ins-row">
+            <div class="ins-icon"><span class="material-symbol">insights</span></div>
+            <div class="ins-title">List Insight</div>
+          </div>
+          <div class="ins-row">
+            <div id="wl-metrics" class="ins-metrics" style="width:100%"></div>
+          </div>
         </div>
       </aside>
     </div>
+
     <div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>
   `;
 
-  const grid = document.getElementById("wl-grid");
+  // ---------- refs ----------
+  const postersEl = document.getElementById("wl-posters");
+  const listWrapEl = document.getElementById("wl-list");
+  const listBodyEl = document.getElementById("wl-tbody");
+  const listSelectAll = document.getElementById("wl-list-select-all");
   const empty = document.getElementById("wl-empty");
   const selAll = document.getElementById("wl-select-all");
   const selCount = document.getElementById("wl-count");
   const qEl = document.getElementById("wl-q");
-  const yEl = document.getElementById("wl-year");
   const tEl = document.getElementById("wl-type");
-  const provWrap = document.getElementById("wl-providers");
+  const providerSel = document.getElementById("wl-provider");
   const delProv = document.getElementById("wl-delete-provider");
   const clearBtn = document.getElementById("wl-clear");
   const hideBtn = document.getElementById("wl-hide");
   const unhideBtn = document.getElementById("wl-unhide");
+  const viewSel = document.getElementById("wl-view");
   const snack = document.getElementById("wl-snack");
+  const metricsEl = document.getElementById("wl-metrics");
 
   // ---------- state ----------
   let items = [];
   let filtered = [];
   const selected = new Set();
-  const allProviders = ["PLEX","SIMKL","TRAKT"]; // show all in filters
   const hiddenSet = loadHidden();
-  let lastClickedKey = null;
+  let viewMode = "posters"; // "posters" | "list"
 
   // ---------- utils ----------
-  function loadHidden(){
-    try { return new Set(JSON.parse(localStorage.getItem("wl.hidden")||"[]")); }
-    catch { return new Set(); }
-  }
-  function persistHidden(){
-    try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {}
-  }
+  function loadHidden(){ try { return new Set(JSON.parse(localStorage.getItem("wl.hidden")||"[]")); } catch { return new Set(); } }
+  function persistHidden(){ try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} }
 
   const artUrl = (it, size) => {
     const typ = (it.type === "tv" || it.type === "show") ? "tv" : "movie";
     const tmdb = it.tmdb || (it.ids && it.ids.tmdb);
-    return tmdb ? `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size||"w342")}` : "";
+    return tmdb ? `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size||"w92")}` : "";
   };
 
   const normKey = (it) =>
@@ -136,96 +250,170 @@
     return Array.isArray(j?.items) ? j.items : [];
   };
 
+  const SRC_LOGOS = {
+    PLEX: "/assets/PLEX-log.svg",
+    SIMKL: "/assets/SIMKL-log.svg",
+    TRAKT: "/assets/TRAKT-log.svg",
+  };
+
+  // ---------- filters & render ----------
   function applyFilters(){
     const q = (qEl.value||"").toLowerCase().trim();
-    const yr = (yEl.value||"").trim();
     const ty = (tEl.value||"").trim();
-    const prov = [...provWrap.querySelectorAll("input[type=checkbox]:checked")].map(x=>x.value.toUpperCase());
+    const provider = (providerSel.value||"").toUpperCase();
 
     filtered = items.filter(it=>{
       const key = normKey(it);
       if (!document.getElementById("wl-show-hidden")?.checked && hiddenSet.has(key)) return false;
-
       if (q && !String(it.title||"").toLowerCase().includes(q)) return false;
-      if (yr && String(it.year||"") !== yr) return false;
 
       const t = String(it.type||"").toLowerCase();
       const normType = (t === "show" ? "tv" : t);
       if (ty && normType !== ty) return false;
 
-      const have = providersOf(it);
-      if (prov.length && !prov.some(p => have.includes(p))) return false;
+      if (provider){
+        const have = providersOf(it);
+        if (!have.includes(provider)) return false;
+      }
 
       return true;
     });
-    renderGrid();
+
+    render();
+    updateMetrics();
   }
 
-  function renderProviders(){
-    // provider chips: show all three
-    provWrap.innerHTML = "";
-    allProviders.forEach(p=>{
-      const id = `wl-prov-${p.toLowerCase()}`;
-      provWrap.insertAdjacentHTML("beforeend",
-        `<label class="wl-chip"><input type="checkbox" id="${id}" value="${p}"><span>${p}</span></label>`);
-    });
+  // ---- INSIGHT: counts per provider
+  function updateMetrics(){
+    const onPlex  = filtered.filter(it => providersOf(it).includes("PLEX")).length;
+    const onSimkl = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
+    const onTrakt = filtered.filter(it => providersOf(it).includes("TRAKT")).length;
 
-    // delete dropdown: only PLEX
-    delProv.innerHTML = `<option value="">Delete from…</option><option value="PLEX">PLEX</option>`;
+    metricsEl.innerHTML = `
+      ${metric('movie_filter','PLEX', onPlex)}
+      ${metric('playlist_add','SIMKL', onSimkl)}
+      ${metric('featured_play_list','TRAKT', onTrakt)}
+    `;
+  }
+  function metric(icon, label, val){
+    return `<div class="metric">
+      <span class="material-symbol">${icon}</span>
+      <div>
+        <div class="m-val">${val}</div>
+        <div class="m-lbl">${label}</div>
+      </div>
+    </div>`;
   }
 
-  function renderGrid(){
-    grid.innerHTML = "";
+  function render(){
+    postersEl.style.display = (viewMode === "posters") ? "" : "none";
+    listWrapEl.style.display = (viewMode === "list") ? "" : "none";
+
     if (!filtered.length){
       empty.style.display = "";
       selAll.checked = false;
-      selected.clear();
+      listSelectAll.checked = false;
+      postersEl.innerHTML = "";
+      listBodyEl.innerHTML = "";
       updateSelCount();
       return;
     }
     empty.style.display = "none";
 
+    if (viewMode === "posters") renderPosters();
+    else renderList();
+
+    updateSelCount();
+  }
+
+  function renderPosters(){
+    postersEl.innerHTML = "";
     const frag = document.createDocumentFragment();
+
     filtered.forEach(it=>{
       const img = artUrl(it, "w342");
       const provHtml = providersOf(it).map(p=>`<span class="wl-tag">${p}</span>`).join("");
       const key = normKey(it);
-      const chk = selected.has(key) ? "checked" : "";
-      const hiddenCls = hiddenSet.has(key) && !document.getElementById("wl-show-hidden")?.checked ? "wl-hidden" : "";
       const card = document.createElement("div");
-      card.className = `wl-card ${hiddenCls}`;
+      card.className = `wl-card ${selected.has(key) ? "selected": ""}`;
       card.innerHTML = `
-        <div class="wl-top"><input type="checkbox" ${chk}></div>
         <div class="wl-tags">${provHtml}</div>
         ${img ? `<img loading="lazy" src="${img}" alt="">` : `<div style="height:225px"></div>`}
       `;
-      card.addEventListener("click", (e)=>{
-        const cb = card.querySelector("input[type=checkbox]");
-        if (e.shiftKey && lastClickedKey){
-          const keys = filtered.map(normKey);
-          const i1 = keys.indexOf(lastClickedKey);
-          const i2 = keys.indexOf(key);
-          if (i1 >=0 && i2 >= 0){
-            const [a,b] = i1 < i2 ? [i1,i2] : [i2,i1];
-            for (let i=a;i<=b;i++) selected.add(keys[i]);
-            document.querySelectorAll(".wl-card input[type=checkbox]").forEach((el,idx)=>{
-              const k = keys[idx]; el.checked = selected.has(k);
-            });
-          }
-        } else {
-          if (cb) {
-            cb.checked = !cb.checked;
-            if (cb.checked) selected.add(key); else selected.delete(key);
-          }
-        }
-        lastClickedKey = key;
+      card.addEventListener("click", ()=>{
+        if (selected.has(key)) selected.delete(key); else selected.add(key);
+        card.classList.toggle("selected");
         updateSelCount();
       });
       frag.appendChild(card);
     });
-    grid.appendChild(frag);
-    updateSelCount();
+    postersEl.appendChild(frag);
   }
+
+  function providerChip(name, ok){
+    const src = SRC_LOGOS[name];
+    const icon = ok ? 'check_circle' : 'cancel';
+    const cls = ok ? 'ok' : 'miss';
+    return `<span class="wl-mat ${cls}" title="${name}${ok?' present':' missing'}">
+      ${src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`}
+      <span class="material-symbol">${icon}</span>
+    </span>`;
+  }
+
+  function renderList(){
+    listBodyEl.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    filtered.forEach(it=>{
+      const key = normKey(it);
+      const tr = document.createElement("tr");
+
+      const typeRaw = String(it.type||"").toLowerCase();
+      const type = (typeRaw === "show" ? "tv" : typeRaw) || "";
+
+      const logos = providersOf(it).map(s=>{
+        const src = SRC_LOGOS[s];
+        if (src) return `<span class="wl-src" title="${s}"><img src="${src}" alt="${s} logo"></span>`;
+        return `<span class="wl-badge">${s}</span>`;
+      }).join("");
+
+      const thumb = artUrl(it, "w92");
+
+      const have = {
+        PLEX: providersOf(it).includes("PLEX"),
+        SIMKL: providersOf(it).includes("SIMKL"),
+        TRAKT: providersOf(it).includes("TRAKT")
+      };
+
+      const matrix = `
+        <div class="wl-matrix">
+          ${providerChip('PLEX', have.PLEX)}
+          ${providerChip('SIMKL', have.SIMKL)}
+          ${providerChip('TRAKT', have.TRAKT)}
+        </div>`;
+
+      tr.innerHTML = `
+        <td style="text-align:center"><input type="checkbox" data-k="${key}" ${selected.has(key)?"checked":""}></td>
+        <td class="title">${esc(it.title||"")}</td>
+        <td>${esc(type)}</td>
+        <td>${matrix}</td>
+        <td><div class="wl-srcs">${logos}</div></td>
+        <td>${thumb ? `<img class="wl-mini" src="${thumb}" alt="">` : ""}</td>
+      `;
+      tr.querySelector('input[type=checkbox]').addEventListener("change", (e)=>{
+        if (e.target.checked) selected.add(key); else selected.delete(key);
+        updateSelCount();
+      });
+      frag.appendChild(tr);
+    });
+
+    listBodyEl.appendChild(frag);
+
+    const allKeys = filtered.map(normKey);
+    listSelectAll.checked = allKeys.length>0 && allKeys.every(k => selected.has(k));
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
   function updateSelCount(){
     selCount.textContent = `${selected.size} selected`;
@@ -235,7 +423,6 @@
   }
 
   function snackbar(html, actions=[]) {
-    const snack = document.getElementById("wl-snack");
     snack.innerHTML = html + actions.map(a=>` <button class="wl-btn" data-k="${a.key}">${a.label}</button>`).join("");
     snack.classList.remove("wl-hidden");
     const handler = (e)=>{
@@ -249,26 +436,32 @@
     setTimeout(()=> snack.classList.add("wl-hidden"), 4000);
   }
 
-  // ---------- actions ----------
-  [qEl,yEl,tEl].forEach(el => el.addEventListener("input", applyFilters));
-  provWrap.addEventListener("change", applyFilters);
+  // ---------- actions & events ----------
+  [qEl,tEl,providerSel].forEach(el => el.addEventListener("input", applyFilters));
 
-  document.getElementById("wl-select-all").addEventListener("change", ()=>{
+  selAll.addEventListener("change", ()=>{
     selected.clear();
     if (selAll.checked) filtered.forEach(it => { const key = normKey(it); if (key) selected.add(key); });
-    grid.querySelectorAll(".wl-card input[type=checkbox]").forEach(cb => cb.checked = selAll.checked);
+    if (viewMode === "posters") renderPosters(); else renderList();
+    updateSelCount();
+  });
+
+  listSelectAll.addEventListener("change", ()=>{
+    selected.clear();
+    if (listSelectAll.checked) filtered.forEach(it => { const key = normKey(it); if (key) selected.add(key); });
+    renderList();
+    selAll.checked = listSelectAll.checked;
     updateSelCount();
   });
 
   clearBtn.addEventListener("click", ()=>{
-    qEl.value = ""; yEl.value=""; tEl.value="";
-    provWrap.querySelectorAll("input[type=checkbox]").forEach(cb => cb.checked = false);
+    qEl.value = ""; tEl.value=""; providerSel.value="";
     applyFilters();
   });
 
   delProv.addEventListener("change", updateSelCount);
 
-  // Delete (PLEX only visible)
+  // Delete (PLEX only)
   document.getElementById("wl-delete").addEventListener("click", async ()=>{
     const provider = delProv.value || "";
     if (!provider || !selected.size) return;
@@ -276,8 +469,9 @@
     const keys = [...selected];
     const backup = items.slice();
 
-    // optimistic
-    items = items.filter(it => !selected.has(normKey(it)));
+    // optimistic remove
+    const toRemove = new Set(keys);
+    items = items.filter(it => !toRemove.has(normKey(it)));
     selected.clear(); applyFilters();
 
     document.getElementById("wl-delete").disabled = true;
@@ -292,10 +486,10 @@
         });
         if (!r.ok) throw new Error("delete failed");
       }
-      // hard refetch
       items = await fetchWatchlist();
       filtered = items.slice();
-      renderGrid();
+      render();
+      updateMetrics();
       snackbar(`Deleted ${keys.length} from <b>${provider}</b>`);
     } catch (e) {
       items = backup; applyFilters();
@@ -306,7 +500,7 @@
   });
 
   // Hide / Unhide
-  document.getElementById("wl-hide").addEventListener("click", ()=>{
+  hideBtn.addEventListener("click", ()=>{
     const keys = [...selected];
     keys.forEach(k => hiddenSet.add(k));
     persistHidden();
@@ -316,7 +510,7 @@
       { key:"undo", label:"Undo", onClick:()=>{ keys.forEach(k=>hiddenSet.delete(k)); persistHidden(); applyFilters(); } }
     ]);
   });
-  document.getElementById("wl-unhide").addEventListener("click", ()=>{
+  unhideBtn.addEventListener("click", ()=>{
     const prev = [...hiddenSet];
     hiddenSet.clear(); persistHidden(); applyFilters();
     snackbar(`Unhid ${prev.length}`, [
@@ -329,16 +523,25 @@
     if (e.key === "Delete" && !document.getElementById("wl-delete").disabled) document.getElementById("wl-delete").click();
   }, true);
 
+  // View mode toggle
+  viewSel.addEventListener("change", ()=>{
+    viewMode = viewSel.value === "list" ? "list" : "posters";
+    render();
+  });
+
   // ---------- init ----------
   (async function init(){
-    renderProviders(); // show PLEX/SIMKL/TRAKT as filters; delete dropdown only PLEX
+    viewMode = "posters";
+    viewSel.value = "posters";
+    postersEl.style.display = "";
     items = await fetchWatchlist();
     filtered = items.slice();
-    renderGrid();
+    render();
+    updateMetrics();
   })();
 
-  // Periodic auto-refresh (visible tab only)
-  const AUTO_REFRESH_MS = 15000;
+  // Auto-refresh (visible tab only)
+  const AUTO_REFRESH_MS = 60000; // 1 minute
   setInterval(async ()=>{
     if (document.visibilityState !== "visible") return;
     try {
@@ -348,7 +551,8 @@
     } catch {}
   }, AUTO_REFRESH_MS);
 
-  // legacy adapter (no-op mount; manual refresh event hook)
+
+  // Legacy adapter
   window.Watchlist = {
     async mount(_host) {},
     async refresh() {

@@ -2,7 +2,7 @@ from __future__ import annotations
 # providers/sync/_mod_PLEX.py
 # Unified OPS provider for Plex: watchlist, ratings, history, playlists
 
-__VERSION__ = "1.0.2"
+__VERSION__ = "1.0.3"
 
 import re
 from dataclasses import dataclass
@@ -23,6 +23,46 @@ try:
     _stats = Stats()
 except Exception:
     _stats = None
+
+# ----- Global Tombstones (optional) --------------------------------------------
+_GMT_ENABLED_DEFAULT = True
+
+try:
+    from providers.gmt_hooks import suppress_check as _gmt_suppress, record_negative as _gmt_record  # type: ignore
+    from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
+    _HAS_GMT = True
+except Exception:  # pragma: no cover
+    _HAS_GMT = False
+    GlobalTombstoneStore = None  # type: ignore
+    def _gmt_suppress(**_kwargs) -> bool:  # type: ignore
+        return False
+    def _gmt_record(**_kwargs) -> None:  # type: ignore
+        return
+
+def _gmt_is_enabled(cfg: Mapping[str, Any]) -> bool:
+    sync = dict(cfg.get("sync") or {})
+    val = sync.get("gmt_enable")
+    if val is None:
+        return _GMT_ENABLED_DEFAULT
+    return bool(val)
+
+def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
+    f = (feature or "").lower()
+    if f == "ratings":
+        return "rate", "unrate"
+    if f == "history":
+        return "scrobble", "unscrobble"
+    # watchlist & playlists behave like add/remove
+    return "add", "remove"
+
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
+    if not _HAS_GMT or not _gmt_is_enabled(cfg):
+        return None
+    try:
+        ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
+        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
+    except Exception:
+        return None
 
 # ----- PlexAPI dependency ------------------------------------------------------
 try:
@@ -593,6 +633,13 @@ class _PlexOPS:
         env = _env_from_config(cfg)
         items_list = list(items)
 
+        # GMT: suppress re-adds for watchlist/ratings/history
+        if feature in ("watchlist", "ratings", "history"):
+            store = _gmt_store_from_cfg(cfg)
+            if store:
+                op_add, _op_neg = _gmt_ops_for_feature(feature)
+                items_list = [it for it in items_list if not _gmt_suppress(store=store, item=it, feature=feature, write_op=op_add)]
+
         if feature == "watchlist":
             if dry_run:
                 return {"ok": True, "count": len(items_list), "dry_run": True}
@@ -612,6 +659,7 @@ class _PlexOPS:
             return {"ok": True, "count": cnt}
 
         if feature == "playlists":
+            # Note: playlist semantics are implementation-specific; GMT is not enforced here.
             if dry_run:
                 return {"ok": True, "count": sum(len(it.get("items", [])) for it in items_list), "dry_run": True}
             removed = 0
@@ -637,21 +685,36 @@ class _PlexOPS:
             if dry_run:
                 return {"ok": True, "count": len(items_list), "dry_run": True}
             cnt = _watchlist_remove(acct, items_list)
+            # GMT: record negatives after successful remove
+            store = _gmt_store_from_cfg(cfg)
+            if store and cnt:
+                _gmt_record(store=store, item={}, feature="watchlist", op="remove", origin="PLEX")
+                for it in items_list:
+                    _gmt_record(store=store, item=it, feature="watchlist", op="remove", origin="PLEX")
             return {"ok": True, "count": cnt}
 
         if feature == "ratings":
             if dry_run:
                 return {"ok": True, "count": len(items_list), "dry_run": True}
             cnt = _ratings_remove(env, items_list)
+            store = _gmt_store_from_cfg(cfg)
+            if store and cnt:
+                for it in items_list:
+                    _gmt_record(store=store, item=it, feature="ratings", op="unrate", origin="PLEX")
             return {"ok": True, "count": cnt}
 
         if feature == "history":
             if dry_run:
                 return {"ok": True, "count": len(items_list), "dry_run": True}
             cnt = _history_apply(env, items_list, watched=False)
+            store = _gmt_store_from_cfg(cfg)
+            if store and cnt:
+                for it in items_list:
+                    _gmt_record(store=store, item=it, feature="history", op="unscrobble", origin="PLEX")
             return {"ok": True, "count": cnt}
 
         if feature == "playlists":
+            # Note: playlist semantics are implementation-specific; GMT is not enforced here.
             if dry_run:
                 return {"ok": True, "count": sum(len(it.get("items", [])) for it in items_list), "dry_run": True}
             removed = 0
@@ -719,6 +782,13 @@ class PLEXModule(SyncModule):
                             },
                         },
                         "required": ["account_token"],
+                    },
+                    "sync": {
+                        "type": "object",
+                        "properties": {
+                            "gmt_enable": {"type": "boolean"},
+                            "gmt_quarantine_days": {"type": "integer", "minimum": 1},
+                        },
                     },
                     "runtime": {
                         "type": "object",

@@ -12,14 +12,21 @@ import time
 # Base dir resolution
 # ------------------------------------------------------------
 def CONFIG_BASE() -> Path:
+    """
+    Resolve the writable config root. In containers, this is `/config`.
+    Outside containers (dev), fall back to the repo root.
+    """
     env = os.getenv("CONFIG_BASE")
     if env:
         return Path(env)
 
+    # Container image layout: /app exists, /config is the bind-mounted RW volume
     if Path("/app").exists():
         return Path("/config")
 
+    # Dev fallback: project root (two levels up from this file)
     return Path(__file__).resolve().parents[1]
+
 
 # Ready-to-use Path
 CONFIG = CONFIG_BASE()
@@ -36,7 +43,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "account_token": "",
         "client_id": "",
         "username": "",
-        "servers": { "machine_ids": [] },
+        "servers": {"machine_ids": []},
     },
     "simkl": {
         "access_token": "",
@@ -62,8 +69,8 @@ DEFAULT_CFG: Dict[str, Any] = {
             "expires_at": 0,
             "created_at": 0,
         },
-    },   
-    "tmdb": { "api_key": "" },
+    },
+    "tmdb": {"api_key": ""},
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
@@ -74,8 +81,14 @@ DEFAULT_CFG: Dict[str, Any] = {
         "dry_run": False,
         "drop_guard": False,
         "allow_mass_delete": False,
+
+        # Tombstones (pair-scoped in orchestrator) + observed deletes
         "tombstone_ttl_days": 30,
         "include_observed_deletes": True,
+
+        # --------------- Global Tombstones: feature-agnostic suppression window ---------------
+        "gmt_enable": False,            # opt-in; orchestrator/providers behave fine if left False
+        "gmt_quarantine_days": 7,       # days to suppress re-adds for items explicitly removed elsewhere
 
         "bidirectional": {
             "enabled": False,
@@ -94,19 +107,20 @@ DEFAULT_CFG: Dict[str, Any] = {
                 "reconnect_backoff_max_seconds": 60,
             },
         },
-        "webhook": { "enabled": False },
+        "webhook": {"enabled": False},
         "scrobble": {
             "enabled": False,
-            "providers": { "trakt": { "enabled": False } },
-            "filters": { "username_whitelist": [""], "server_uuid": "" },
+            "providers": {"trakt": {"enabled": False}},
+            "filters": {"username_whitelist": [""], "server_uuid": ""},
         },
     },
 
     # --- Runtime / Diagnostics ----------------------------------------------
     "runtime": {
         "debug": False,
-        "state_dir": "",
-        "telemetry": { "enabled": True },
+        # --------------- Ensure SIMKL/TRAKT cursors & shadows live under /config by default ---------------
+        "state_dir": "/config",
+        "telemetry": {"enabled": True},
     },
 
     # --- Scheduling -----------------------------------------------------------
@@ -173,6 +187,7 @@ def _normalize_features_map(f: dict | None) -> dict:
 def load_config() -> Dict[str, Any]:
     """
     Read /config/config.json if present and merge it over DEFAULT_CFG.
+    Also normalizes pairs->features and ensures runtime.state_dir is set.
     """
     p = _cfg_file()
     user_cfg: Dict[str, Any] = {}
@@ -190,17 +205,44 @@ def load_config() -> Dict[str, Any]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))
 
+    # --------------- Default state_dir to /config if missing/empty ---------------
+    rt = cfg.get("runtime") or {}
+    state_dir = str(rt.get("state_dir") or "").strip()
+    if not state_dir:
+        # honor CONFIG (which already points to /config in containers)
+        rt["state_dir"] = str(CONFIG)
+        cfg["runtime"] = rt
+
+    # best-effort: ensure the state_dir directory exists
+    try:
+        Path(rt["state_dir"]).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
     return cfg
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
     """
-    Write to /config/config.json automically.
-    Performs the same normalization as load_config (but does not inject defaults).
+    Write to /config/config.json atomically.
+    Performs the same normalization as load_config (but does not inject all defaults).
     """
     data = dict(cfg or {})
+
+    # normalize pair feature flags to stable shape
     if isinstance(data.get("pairs"), list):
         for it in data["pairs"]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))
+
+    # ensure runtime.state_dir is non-empty and points to a writable path
+    rt = data.get("runtime") or {}
+    if not str(rt.get("state_dir") or "").strip():
+        rt["state_dir"] = str(CONFIG)
+        data["runtime"] = rt
+    try:
+        Path(rt["state_dir"]).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
     _write_json_atomic(_cfg_file(), data)
