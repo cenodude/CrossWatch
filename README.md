@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="/images/CrossWatch.png" alt="CrossWatch" width="500">
+  <img src="/images/CrossWatch.png" alt="CrossWatch" width="400" style="margin-right:40px;">
+  <img src="/images/CrossWatch-showcase.png" alt="CrossWatch Showcase" width="400">
 </p>
+
 
 # CrossWatch
 
