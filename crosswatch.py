@@ -269,11 +269,7 @@ class PairIn(BaseModel):
     features: dict | None = None
 
 
-# --------------- Orchestrator helpers ---------------
-# ------------------------- lifespan
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-
+# --------------- Lifespan ---------------
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     app.state.watch = None
@@ -2887,6 +2883,27 @@ def api_sync_providers() -> JSONResponse:
     items.sort(key=lambda x: (x.get("label") or x.get("name") or "").lower())
     return JSONResponse(items)
 
+# ---------- pairs helpers ----------
+
+def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    arr = cfg.get("pairs")
+    if not isinstance(arr, list):
+        arr = []
+        cfg["pairs"] = arr
+    return arr
+
+def _normalize_features(f: dict | None) -> dict:
+    keys = FEATURE_KEYS if "FEATURE_KEYS" in globals() else ["watchlist", "ratings", "history", "playlists"]
+    f = dict(f or {})
+    for k in keys:
+        v = f.get(k)
+        if isinstance(v, bool):
+            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
+        elif isinstance(v, dict):
+            v.setdefault("enable", True)
+            v.setdefault("add", True)
+            v.setdefault("remove", False)
+    return f
 
 # --------------- Pairs CRUD ---------------
 @app.get("/api/pairs")
