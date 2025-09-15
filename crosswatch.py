@@ -1760,7 +1760,8 @@ def api_watchlist() -> JSONResponse:
 
 @app.delete("/api/watchlist/{key}")
 def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
-    sp = STATE_PATH
+    # single-delete by key (provider = PLEX default)
+    sp = STATE_PATH  # <-- use global, no _state_path()
     try:
         if "%" in (key or ""):
             key = urllib.parse.unquote(key)
@@ -1802,12 +1803,12 @@ def api_watchlist_providers():
     return {"providers": detect_available_watchlist_providers(cfg)}
 
 
-# Delete (single or batch)
+# Delete (batch)
 @app.post("/api/watchlist/delete")
-def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
     Payload: { "keys": ["imdb:tt123", ...], "provider": "PLEX"|"SIMKL"|"TRAKT" }
-    Returns per-key results; never raises (no 500).
+    Returns aggregated result; never raises (no 500).
     """
     try:
         keys = payload.get("keys") or []
@@ -1821,12 +1822,11 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
         # load config once
         try:
-            from cw_platform.config_base import load_config
             cfg = load_config()
         except Exception as e:
             return {"ok": False, "error": f"failed to load config: {e}"}
 
-        state_file = _state_path()
+        state_file = STATE_PATH  # <-- fix
 
         results: List[Dict[str, Any]] = []
         ok_count = 0
@@ -1838,16 +1838,22 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
                     state_path=state_file,
                     cfg=cfg,
                     provider=provider,
-                    log=None,
+                    log=_append_log,
                 )
                 results.append({"key": k, **r})
                 if r.get("ok"):
                     ok_count += 1
             except Exception as e:
-                # never let an exception escape -> no 500s
                 tb = traceback.format_exc()
                 print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
                 results.append({"key": k, "ok": False, "error": str(e)})
+
+        # try to refresh stats after batch
+        try:
+            state = _load_state()
+            STATS.refresh_from_state(state)
+        except Exception:
+            pass
 
         return {
             "ok": ok_count == len(keys),
@@ -1858,11 +1864,9 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # last-resort guard (still no 500)
         tb = traceback.format_exc()
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
-
 
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1892,7 +1896,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.6")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.7")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 

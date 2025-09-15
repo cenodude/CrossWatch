@@ -64,7 +64,10 @@
 #pairs_list .icon-btn:active{transform:none}
 #pairs_list .icon-btn .ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #pairs_list .icon-btn.danger:hover{color:#ff5a5e}
-#pairs_list .icon-btn.power.off{opacity:.55}
+#pairs_list .icon-btn.power:not(.off){color:#12d68c;background:rgba(18,214,140,.12);border-color:rgba(18,214,140,.35);box-shadow:0 4px 14px rgba(18,214,140,.18)}
+#pairs_list .icon-btn.power:not(.off):hover{background:rgba(18,214,140,.18)}
+
+#pairs_list .icon-btn.power.off{opacity:1;color:#ff5a5e;background:rgba(255,90,94,.12);border-color:rgba(255,90,94,.35);box-shadow:0 4px 14px rgba(255,90,94,.18)}
 
 /* Subtle watermarks */
 #pairs_list .cx-conn{position:relative}
@@ -151,24 +154,37 @@
   // Enable/disable toggle
   if (typeof window.cxToggleEnable !== "function") {
     window.cxToggleEnable = async function (id, on, inputEl) {
-      try {
+            try {
         const card = (inputEl && inputEl.closest(".pair-card")) || document.querySelector(`#pairs_list .pair-card[data-id="${id}"]`);
         const btn = card?.querySelector(".icon-btn.power");
         if (btn) btn.classList.toggle("off", !on);
 
+        // Update client cache if present
         const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
         const it = list.find((p) => String(p.id) === String(id));
         if (it) it.enabled = !!on;
 
+        // Build payload that satisfies backend PairIn (source/target required)
+        const src = card?.dataset?.source || (it && it.source) || "";
+        const tgt = card?.dataset?.target || (it && it.target) || "";
+        let mode = (card?.dataset?.mode || (it && it.mode) || "").toString().toLowerCase().replace(/\s+/g, "-");
+        if (mode !== "one-way" && mode !== "two-way") mode = undefined;
+
+        const payload = { enabled: !!on };
+        if (src) payload.source = src;
+        if (tgt) payload.target = tgt;
+        if (mode) payload.mode = mode;
+
         await fetch(`/api/pairs/${id}`, {
-          method: "POST",
+          method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled: !!on }),
-        }).catch(() => {});
+          body: JSON.stringify(payload),
+        })
+        .then(() => { try { document.dispatchEvent(new Event("cx-state-change")); } catch (_) {} })
+        .catch(() => {});
       } catch (e) {
         console.warn("toggle failed", e);
-      }
-    };
+      }};
   }
 
   // Delete card (optimistic UI)

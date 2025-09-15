@@ -4042,3 +4042,22 @@ select {
   opacity:.35;
   pointer-events:none;
 }
+#save-frost{
+  position:fixed; left:0; right:0; bottom:0; height:84px;
+  background:linear-gradient(0deg,rgba(10,10,14,.85) 0%,rgba(10,10,14,.60) 35%,rgba(10,10,14,0) 100%);
+  border-top:1px solid var(--border);
+  backdrop-filter:blur(6px) saturate(110%); -webkit-backdrop-filter:blur(6px) saturate(110%);
+  pointer-events:none; z-index:9998;
+}
+#save-fab{
+  position:fixed; left:0; right:0; bottom:max(12px, env(safe-area-inset-bottom));
+  z-index:10000; display:flex; justify-content:center; align-items:center;
+  pointer-events:none; background:transparent;
+}
+#save-fab .btn{
+  pointer-events:auto; position:relative; z-index:10001;
+  padding:14px 22px; border-radius:14px; font-weight:800; text-transform:uppercase; letter-spacing:.02em;
+  background:linear-gradient(135deg,#ff4d4f,#ff7a7a);
+  border:1px solid #ff9a9a55; box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55;
+}
+#save-fab.hidden, #save-frost.hidden{ display:none; }
