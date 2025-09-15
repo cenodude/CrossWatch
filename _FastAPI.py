@@ -343,6 +343,9 @@ def get_index_html() -> str:
 </main>
 
 <script src="/assets/client-formatter.js" defer></script>
+<script src="/assets/auth.plex-simkl.js" defer></script>
+<script src="/assets/auth.trakt.js" defer></script>
+<script src="/assets/client-formatter.js" defer></script>
 <script src="/assets/crosswatch.js" defer></script>
 <script src="/assets/scrobbler.js" defer></script>
 <script src="/assets/auth.trakt.js" defer></script>

@@ -26,7 +26,6 @@ import uuid
 import shlex
 import requests
 import uvicorn
-
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
 from fastapi.responses import (
     FileResponse,
@@ -139,7 +138,8 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
 
 
 # --------------- App & assets ---------------
-app = FastAPI(lifespan=_lifespan if "_lifespan" in globals() else None)
+# app = FastAPI(lifespan=_lifespan if "_lifespan" in globals() else None)
+app = FastAPI()
 
 ASSETS_DIR = ROOT / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -269,12 +269,65 @@ class PairIn(BaseModel):
     features: dict | None = None
 
 
-# --------------- Lifespan ---------------
+# --------------- Orchestrator helpers ---------------
+def _get_orchestrator() -> Orchestrator:
+    cfg = load_config()
+    return Orchestrator(config=cfg)
+
+
+def _json_safe(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(x) for x in obj]
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def _normalize_features(f: dict | None) -> dict:
+    f = dict(f or {})
+    for k in FEATURE_KEYS:
+        v = f.get(k)
+        if isinstance(v, bool):
+            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
+        elif isinstance(v, dict):
+            v.setdefault("enable", True)
+            v.setdefault("add", True)
+            v.setdefault("remove", False)
+    return f
+
+
+def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    arr = cfg.get("pairs")
+    if not isinstance(arr, list):
+        arr = []
+        cfg["pairs"] = arr
+    return arr
+
+
+def _gen_id(prefix: str = "pair") -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _is_debug_enabled() -> bool:
+    try:
+        now = time.time()
+        if now - _DEBUG_CACHE["ts"] > 2.0:
+            cfg = load_config()
+            _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
+            _DEBUG_CACHE["ts"] = now
+        return _DEBUG_CACHE["val"]
+    except Exception:
+        return False
+
+
+# --------------- App lifespan (startup/shutdown) ---------------
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(app):
     app.state.watch = None
 
-    # --- Startup hook ---
+    # --- Startup hook (onveranderd) ---
     try:
         fn = globals().get("_on_startup")
         if callable(fn):
@@ -286,39 +339,70 @@ async def _lifespan(app: FastAPI):
             except Exception:
                 pass
     except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
-        except Exception:
-            pass
+        try: _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
+        except Exception: pass
 
-    # --- Start Watcher via scrobble config ---
+    # --- Prefer NEW-style autostart (scrobble.enabled/mode/watch.autostart) ---
+    started = False
     try:
-        w = autostart_from_config()  # honors scrobble.enabled/mode/watch.autostart
-        app.state.watch = w
-        if w and w.is_alive():
-            _UIHostLogger("TRAKT", "WATCH")("watch autostarted", level="INFO")
+        w = autostart_from_config()  # same entrypoint as in NEW
+        if w:
+            app.state.watch = w
+            globals()['WATCH'] = w    # keep old debug endpoints happy
+            started = bool(getattr(w, "is_alive", lambda: False)())
+            _UIHostLogger("TRAKT", "WATCH")(
+                "watch autostarted" if started else "watch autostart returned but not alive",
+                level="INFO"
+            )
         else:
-            _UIHostLogger("TRAKT", "WATCH")("watch autostart skipped (disabled/mode/flag)", level="INFO")
+            _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
     except Exception as e:
-        try:
-            _UIHostLogger("TRAKT", "WATCH")(f"lifespan watch autostart failed: {e}", level="ERROR")
-        except Exception:
-            pass
+        try: _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
+        except Exception: pass
 
-    # --- Start & refresh Scheduler ---
+    # --- Hard fallback: if scrobble says 'watch+autostart', start a default watch anyway ---
+    if not started:
+        try:
+            cfg = load_config()
+            sc = (cfg.get("scrobble") or {})
+            if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
+                from providers.scrobble.trakt.sink import TraktSink
+                from providers.scrobble.plex.watch import make_default_watch  # available in NEW fallback too
+                w2 = make_default_watch(sinks=[TraktSink()])
+                # Apply optional filters if your provider supports it
+                try:
+                    filters = ((sc.get("watch") or {}).get("filters") or {})
+                    if hasattr(w2, "set_filters") and isinstance(filters, dict):
+                        w2.set_filters(filters)
+                except Exception:
+                    pass
+
+                if hasattr(w2, "start_async"):
+                    w2.start_async()
+                else:
+                    import threading
+                    threading.Thread(target=w2.start, daemon=True).start()
+
+                app.state.watch = w2
+                globals()['WATCH'] = w2
+                started = True
+                _UIHostLogger("TRAKT", "WATCH")("fallback default watch started", level="INFO")
+        except Exception as e:
+            try: _UIHostLogger("TRAKT", "WATCH")(f"fallback start failed: {e}", level="ERROR")
+            except Exception: pass
+
+    # --- Scheduler (zoals NEW) ---
     try:
         global scheduler
         if scheduler is not None:
-            scheduler.start()
+            scheduler.start()  # idempotent
             scfg = (load_config().get("scheduling") or {})
             if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
                 scheduler.refresh()
             _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
     except Exception as e:
-        try:
-            _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
-        except Exception:
-            pass
+        try: _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
+        except Exception: pass
 
     try:
         yield
@@ -335,31 +419,23 @@ async def _lifespan(app: FastAPI):
                 except Exception:
                     pass
         except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
-            except Exception:
-                pass
+            try: _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
+            except Exception: pass
 
-        # --- Stop Watcher ---
+        # --- Stop watcher (supports both storages) ---
         try:
-            w = getattr(app.state, "watch", None)
+            w = getattr(app.state, "watch", None) or (WATCH if 'WATCH' in globals() else None)
             if w:
                 w.stop()
-                app.state.watch = None
                 _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
+            app.state.watch = None
+            if 'WATCH' in globals():
+                globals()['WATCH'] = None
         except Exception as e:
-            try:
-                _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
-            except Exception:
-                pass
+            try: _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
+            except Exception: pass
 
-# bind lifespan after definition
-try:
-    app.router.lifespan_context = _lifespan
-except Exception:
-    pass
-
-
+app.router.lifespan_context = _lifespan
 # --------------- Orchestrator progress & summary ---------------
 SUMMARY_LOCK = threading.Lock()
 SUMMARY: Dict[str, Any] = {}
@@ -1238,7 +1314,6 @@ def api_plex_pms() -> JSONResponse:
 
 
 #----------------watch scrobble
-#----------------watch scrobble
 @app.get("/debug/watch/status")
 def debug_watch_status():
     w = getattr(app.state, "watch", None) or WATCH
@@ -1647,12 +1722,6 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
 
 
 # --------------- Watchlist endpoints ---------------
-import urllib.parse
-import traceback
-from typing import Any, Dict, List
-from fastapi import Body
-from fastapi.responses import JSONResponse
-
 @app.get("/api/watchlist")
 def api_watchlist() -> JSONResponse:
     cfg = load_config()
@@ -1691,8 +1760,7 @@ def api_watchlist() -> JSONResponse:
 
 @app.delete("/api/watchlist/{key}")
 def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
-    # single-delete by key (provider = PLEX default)
-    sp = STATE_PATH  # <-- use global, no _state_path()
+    sp = STATE_PATH
     try:
         if "%" in (key or ""):
             key = urllib.parse.unquote(key)
@@ -1734,12 +1802,12 @@ def api_watchlist_providers():
     return {"providers": detect_available_watchlist_providers(cfg)}
 
 
-# Delete (batch)
+# Delete (single or batch)
 @app.post("/api/watchlist/delete")
-def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
     Payload: { "keys": ["imdb:tt123", ...], "provider": "PLEX"|"SIMKL"|"TRAKT" }
-    Returns aggregated result; never raises (no 500).
+    Returns per-key results; never raises (no 500).
     """
     try:
         keys = payload.get("keys") or []
@@ -1753,11 +1821,12 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
 
         # load config once
         try:
+            from cw_platform.config_base import load_config
             cfg = load_config()
         except Exception as e:
             return {"ok": False, "error": f"failed to load config: {e}"}
 
-        state_file = STATE_PATH  # <-- fix
+        state_file = _state_path()
 
         results: List[Dict[str, Any]] = []
         ok_count = 0
@@ -1769,22 +1838,16 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
                     state_path=state_file,
                     cfg=cfg,
                     provider=provider,
-                    log=_append_log,
+                    log=None,
                 )
                 results.append({"key": k, **r})
                 if r.get("ok"):
                     ok_count += 1
             except Exception as e:
+                # never let an exception escape -> no 500s
                 tb = traceback.format_exc()
                 print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
                 results.append({"key": k, "ok": False, "error": str(e)})
-
-        # try to refresh stats after batch
-        try:
-            state = _load_state()
-            STATS.refresh_from_state(state)
-        except Exception:
-            pass
 
         return {
             "ok": ok_count == len(keys),
@@ -1795,9 +1858,11 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         }
 
     except Exception as e:
+        # last-resort guard (still no 500)
         tb = traceback.format_exc()
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
+
 
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1827,7 +1892,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.5")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.6")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -2065,134 +2130,24 @@ def trakt_request_pin() -> dict:
         raise RuntimeError("Trakt provider not available")
 
     cfg = load_config()
-
-    # Ensure we at least have a client_id before calling Trakt
-    tr = cfg.setdefault("trakt", {})
-    if not str(tr.get("client_id") or "").strip():
-        raise RuntimeError("Missing Trakt Client ID")
-
-    # Kick off device flow
-    res = _TRAKT_PROVIDER.start(cfg, redirect_uri="") or {}
-    # Some providers write pending into cfg, others only return it — normalize:
-    pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
-
-    user_code    = pend.get("user_code")      or res.get("user_code")
-    device_code  = pend.get("device_code")    or res.get("device_code")
-    verification = pend.get("verification_url") or res.get("verification_url") or "https://trakt.tv/activate"
-    interval     = int(pend.get("interval") or res.get("interval") or 5)
-    expires_in   = int(res.get("expires_in") or 600)
-    expires_at   = int(time.time()) + max(60, expires_in)
-
-    # If provider didn’t persist, store a normalized pending block ourselves
-    if user_code and device_code and not (cfg.get("trakt") or {}).get("_pending_device"):
-        cfg.setdefault("trakt", {})["_pending_device"] = {
-            "user_code": user_code,
-            "device_code": device_code,
-            "verification_url": verification,
-            "interval": interval,
-            "expires_at": expires_at,
-        }
+    res = _TRAKT_PROVIDER.start(cfg, redirect_uri="")
     save_config(cfg)
 
+    pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
+    user_code = (pend.get("user_code") or (res or {}).get("user_code"))
+    device_code = (pend.get("device_code") or (res or {}).get("device_code"))
+    verification_url = (pend.get("verification_url") or (res or {}).get("verification_url") or "https://trakt.tv/activate")
+    exp_epoch = int((pend.get("expires_at") or 0) or (time.time() + 600))
+
     if not user_code or not device_code:
-        # Surface Trakt’s error if provided
-        detail = (res.get("error_description")
-                  or res.get("error")
-                  or res.get("body")
-                  or "Trakt PIN could not be issued")
-        raise RuntimeError(str(detail))
+        raise RuntimeError("Trakt PIN could not be issued")
 
     return {
         "user_code": user_code,
         "device_code": device_code,
-        "verification_url": verification,
-        "interval": interval,
-        "expires_epoch": expires_at,
+        "verification_url": verification_url,
+        "expires_epoch": exp_epoch,
     }
-
-@app.post("/api/trakt/pin/poll")
-def api_trakt_pin_poll() -> Dict[str, Any]:
-    """
-    Poll for Trakt device flow completion.
-    - ok=false, pending=true  -> keep polling
-    - ok=true,  data.access_token present -> success
-    - ok=false with error -> hard error (stop polling)
-    """
-    try:
-        cfg = load_config()
-
-        # If token is already present, return it
-        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
-              or (cfg.get("trakt") or {}).get("access_token")
-        if tok:
-            return {"ok": True, "data": {"access_token": tok}}
-
-        pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
-        device_code = pend.get("device_code")
-        expires_at  = int(pend.get("expires_at") or 0)
-
-        if not device_code:
-            return {"ok": False, "error": "no_device_code", "pending": False}
-
-        # If expired, tell the UI to stop and request a new PIN
-        if expires_at and time.time() >= expires_at:
-            return {"ok": False, "error": "expired", "pending": False}
-
-        # Try to finish the device flow once
-        try:
-            from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
-        except Exception:
-            _TRAKT_PROVIDER = None
-
-        if _TRAKT_PROVIDER is None:
-            return {"ok": False, "error": "provider_unavailable", "pending": False}
-
-        try:
-            _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
-            save_config(cfg)
-        except Exception as e:
-            # Trakt may respond with authorization_pending / slow_down — treat as pending
-            msg = str(e)
-            if "authorization_pending" in msg or "slow_down" in msg:
-                return {"ok": False, "pending": True, "error": "authorization_pending"}
-            # Unknown error: surface it and stop polling
-            return {"ok": False, "error": msg or "finish_failed", "pending": False}
-
-        # Re-check token after finish()
-        cfg = load_config()
-        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") \
-              or (cfg.get("trakt") or {}).get("access_token")
-
-        if tok:
-            return {"ok": True, "data": {"access_token": tok}}
-
-        # Still pending
-        return {"ok": False, "pending": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "pending": False}
-    
-@app.post("/api/trakt/pin/finish")
-def api_trakt_pin_finish(payload: dict = Body(...)):
-    # accepts either device_code or user_code+device_code
-    code = str(payload.get("device_code") or "").strip()
-    if not code:
-        return {"ok": False, "error": "no_device_code"}
-    from providers.auth._auth_TRAKT import PROVIDER as TRAKT
-    cfg = load_config()
-    # stash as pending so finish() has context
-    pend = cfg.setdefault("trakt", {}).setdefault("_pending_device", {})
-    pend["device_code"] = code
-    save_config(cfg)
-
-    try:
-        res = TRAKT.finish(cfg, device_code=code)
-        save_config(cfg)
-    except Exception as e:
-        return {"ok": False, "error": "finish_failed", "detail": str(e)}
-
-    # mirror final token state
-    tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token")
-    return {"ok": True, "finished": bool(tok), "result": res}
 
 
 def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: float = 2.0) -> str | None:
@@ -2205,6 +2160,7 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
 
     deadline = time.time() + max(0, int(timeout_sec))
     sleep_s = max(0.5, float(interval))
+
     while time.time() < deadline:
         cfg = load_config()
         tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or (cfg.get("trakt") or {}).get("access_token")
@@ -2218,9 +2174,11 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
         time.sleep(sleep_s)
     return None
 
+
 @app.post("/api/trakt/pin/new")
 def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
     try:
+        # Optional: accept client credentials from request and persist
         if payload:
             cid  = str(payload.get("client_id") or "").strip()
             secr = str(payload.get("client_secret") or "").strip()
@@ -2231,17 +2189,12 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
                 if secr: tr["client_secret"] = secr
                 save_config(cfg)
 
+        # Request PIN and start background waiter
         info = trakt_request_pin()
-        if not info or not info.get("user_code"):
-            # trakt_request_pin() already raises on deep errors; but if it returned a dict with ok=False, surface it
-            if isinstance(info, dict) and not info.get("ok", True):
-                return {"ok": False, **{k: v for k, v in info.items() if k != "ok"}}
-            return {"ok": False, "error": "pin_failed"}
-
         user_code = info["user_code"]
-        verification_url = info.get("verification_url") or "https://trakt.tv/activate"
-        exp_epoch = int(info.get("expires_epoch") or (time.time() + 600))
-        device_code = info.get("device_code")
+        verification_url = info["verification_url"]
+        exp_epoch = int(info["expires_epoch"])
+        device_code = info["device_code"]
 
         def waiter(_device_code: str):
             token = trakt_wait_for_token(_device_code, timeout_sec=600, interval=2.0)
@@ -2251,20 +2204,14 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
             else:
                 _append_log("TRAKT", "\x1b[91m[TRAKT]\x1b[0m Device code expired or not authorized.")
 
-        if device_code:
-            threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
+        threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
+        expires_in = max(0, exp_epoch - int(time.time()))
 
-        expires_in = max(0, int(exp_epoch - time.time()))
-        return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": int(expires_in)}
-
+        # Note: frontend expects 'expiresIn' (camelCase)
+        return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": expires_in}
     except Exception as e:
-        # If trakt_request_pin() raised with a dict-ish error, try to surface it
-        try:
-            msg = str(e)
-        except Exception:
-            msg = "unknown_error"
-        _append_log("TRAKT", f"[TRAKT] ERROR: {msg}")
-        return {"ok": False, "error": msg}
+        _append_log("TRAKT", f"[TRAKT] ERROR: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 # --------------- App status ---------------
@@ -2883,27 +2830,6 @@ def api_sync_providers() -> JSONResponse:
     items.sort(key=lambda x: (x.get("label") or x.get("name") or "").lower())
     return JSONResponse(items)
 
-# ---------- pairs helpers ----------
-
-def _cfg_pairs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    arr = cfg.get("pairs")
-    if not isinstance(arr, list):
-        arr = []
-        cfg["pairs"] = arr
-    return arr
-
-def _normalize_features(f: dict | None) -> dict:
-    keys = FEATURE_KEYS if "FEATURE_KEYS" in globals() else ["watchlist", "ratings", "history", "playlists"]
-    f = dict(f or {})
-    for k in keys:
-        v = f.get(k)
-        if isinstance(v, bool):
-            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
-        elif isinstance(v, dict):
-            v.setdefault("enable", True)
-            v.setdefault("add", True)
-            v.setdefault("remove", False)
-    return f
 
 # --------------- Pairs CRUD ---------------
 @app.get("/api/pairs")
@@ -3249,73 +3175,45 @@ def api_trbl_reset_state(
 ) -> Dict[str, Any]:
     """
     Provider-agnostic reset via Orchestrator.
-    Also clears SIMKL cursor/shadow files under /config when clearing state.
     """
     try:
         cfg = load_config()
         orc = Orchestrator(config=cfg)
 
         state_path = orc.files.state
-        tomb_path  = orc.files.tomb
-        last_path  = orc.files.last            # last_sync.json
-        hide_path  = getattr(orc.files, "hide", None)
+        tomb_path = orc.files.tomb
 
-        # SIMKL per-module runtime files (forced to /config)
-        simkl_cursors = Path("/config/simkl_cursors.json")
-        simkl_shadow  = Path("/config/simkl_watchlist.shadow.json")
-
-        # statistics.json (best-effort)
-        try:
-            stats_path = CONFIG_DIR / "statistics.json"  # type: ignore[name-defined]
-        except Exception:
-            stats_path = Path("/config/statistics.json")
-
-        removed_files: List[str] = []
-
-        def _rm(p: Optional[Path]):
-            if not isinstance(p, Path):
-                return
+        if mode in ("clear_state", "clear_both"):
             try:
-                if _safe_remove_path(p):
-                    removed_files.append(str(p))
+                state_path.unlink(missing_ok=True)
             except Exception:
                 pass
 
-        if mode in ("clear_state", "clear_both"):
-            _rm(state_path)
-            _rm(last_path)
-            _rm(hide_path)
-            _rm(simkl_cursors)
-            _rm(simkl_shadow)
-            _rm(stats_path)
-
         if mode in ("clear_tombstones", "clear_both"):
-            _rm(tomb_path)
+            try:
+                tomb_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         if mode == "clear_tombstone_entries":
-            # Clear only the entries, preserve (or override) TTL
-            t = orc.files.load_tomb()
+            t = orc.load_tombstones()
             t["keys"] = {}
             if isinstance(ttl_override, int) and ttl_override > 0:
                 t["ttl_sec"] = ttl_override
             elif not keep_ttl:
-                t["ttl_sec"] = 172800  # 2 days
+                t["ttl_sec"] = 172800
             orc.files.save_tomb(t)
             _append_log("TRBL", f"[i] Tombstones cleared (ttl={t.get('ttl_sec', 'n/a')})")
 
         if mode == "rebuild":
             state = _persist_state_via_orc(orc, feature=feature)
-            try:
-                STATS.refresh_from_state(state)
-            except Exception:
-                pass
+            STATS.refresh_from_state(state)
             _append_log("TRBL", f"[i] Snapshot rebuilt via Orchestrator (feature={feature})")
 
         if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
             return {"ok": False, "error": f"Unknown mode: {mode}"}
 
-        return {"ok": True, "mode": mode, "removed": removed_files}
-
+        return {"ok": True, "mode": mode}
     except Exception as e:
         _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}

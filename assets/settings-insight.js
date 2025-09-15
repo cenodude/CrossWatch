@@ -58,7 +58,6 @@
   .si-row{ display:flex; align-items:center; gap:12px; padding:10px 6px; }
   .si-row + .si-row{ border-top:1px solid rgba(120,128,160,0.10); }
 
-  /* clean bigger icons */
   .si-ic {
     display: flex;
     align-items: center;
@@ -86,13 +85,8 @@
     padding: 26px 22px 28px 22px;
     text-align: left;
   }
-  .si-empty .hero-ic {
-    flex: 0 0 auto;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .si-empty .hero-ic .material-symbols-rounded {
-    font-size: 42px; color: #e6eaff; opacity: 0.95;
-  }
+  .si-empty .hero-ic { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+  .si-empty .hero-ic .material-symbols-rounded { font-size: 42px; color: #e6eaff; opacity: 0.95; }
   .si-empty .hero-text { display: flex; flex-direction: column; gap: 6px; }
   .si-empty .h1 { color:#E8ECFF; font-size:18px; font-weight:800; margin:0; }
   .si-empty .p  { color:#C3CAE3; font-size:14px; line-height:1.45; margin:0; }
@@ -144,7 +138,17 @@
     const traktOK = !!(cfg?.trakt?.access_token);
     return { detected: 3, configured: [plexOK,simklOK,traktOK].filter(Boolean).length };
   }
-  async function getPairsSummary(cfg){ const a=cfg?.pairs||cfg?.connections||[]; return { count:Array.isArray(a)?a.length:0 }; }
+
+  // NEW: pairs from /api/pairs with config fallback
+  async function getPairsSummary(cfg){
+    let list = await fetchJSON("/api/pairs?t=" + Date.now());
+    if (!Array.isArray(list)) {
+      const a = cfg?.pairs || cfg?.connections || [];
+      list = Array.isArray(a) ? a : [];
+    }
+    return { count: list.length };
+  }
+
   async function getMetadataSummary(){
     const mans=(await fetchJSON("/api/metadata/providers"))||[];
     let configured=0; for(const m of mans) configured += (m?.enabled===false)?0:1;
@@ -177,6 +181,7 @@
     return el;
   }
 
+  // Existing auth empty state
   function renderWizard() {
     const body = $("#cw-si-body"); if (!body) return;
     body.innerHTML = `
@@ -192,10 +197,29 @@
     `;
   }
 
+  // NEW: pairs empty state
+  function renderPairsWizard() {
+    const body = $("#cw-si-body"); if (!body) return;
+    body.innerHTML = `
+      <div class="si-empty">
+        <div class="hero-ic">${I("link", 42)}</div>
+        <div class="hero-text">
+          <div class="h1">No synchronization pairs configured</div>
+          <p class="p">Authentication looks good. Next step: create at least one pair under <b>Synchronization providers</b>.</p>
+          <div class="tip">💡 Tip: pick a source and a target (e.g., <b>Plex → Trakt</b> or <b>Plex → SIMKL</b>), then save.</div>
+        </div>
+      </div>
+    `;
+  }
+
   function render(data){
     const body=$("#cw-si-body"); if(!body) return;
-    if (!data.auth.configured) return renderWizard();
 
+    // Show the right empty state
+    if (!data.auth.configured) return renderWizard();
+    if (data.auth.configured && data.pairs.count === 0) return renderPairsWizard();
+
+    // Normal info rows
     body.innerHTML="";
     body.appendChild(row("lock","Authentication Providers",
       `Detected providers: ${data.auth.detected}, Configured: ${data.auth.configured}`));
@@ -243,10 +267,12 @@
     if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
     d.addEventListener("tab-changed",(e)=>{ if(e?.detail?.id==="settings") setTimeout(()=>{ tick(); syncHeight(); },150); });
 
-    // instant refresh hooks
+    // Refresh on saves (now also pairs/connections/sync)
     d.addEventListener("config-saved", (e) => {
       const sec = e?.detail?.section;
-      if (!sec || sec === "scheduling" || sec === "auth") tick();
+      if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections") {
+        tick();
+      }
     });
     d.addEventListener("scheduling-status-refresh", () => tick());
     d.addEventListener("visibilitychange", () => { if (!d.hidden) tick(); });
@@ -257,7 +283,7 @@
     w.addEventListener("resize", syncHeight);
     w.addEventListener("scroll", syncHeight, { passive:true });
 
-    // expose a manual hook if other modules want to force-refresh
+    // manual hook
     w.refreshSettingsInsight = () => tick();
   })();
 })(window, document);

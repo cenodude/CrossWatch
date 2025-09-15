@@ -932,69 +932,38 @@ async function fetchJSON(){ if (window.Insights && window.Insights.fetchJSON) re
 
 function scheduleInsights(){ if (window.Insights && window.Insights.scheduleInsights) return window.Insights.scheduleInsights.apply(this, arguments); }
 
-
 /* Insights: Fetch & Render */
 async function refreshInsights(){ if (window.Insights && window.Insights.refreshInsights) return window.Insights.refreshInsights.apply(this, arguments); }
 
-
-/* Insights: Sparkline Chart */
-/* #-------------PASCAL----BEGIN----- insights */
 function renderSparkline(){ if (window.Insights && window.Insights.renderSparkline) return window.Insights.renderSparkline.apply(this, arguments); }
 document.addEventListener("DOMContentLoaded", refreshInsights);
 
-/* #-------------PASCAL----END----- insights */
 
-/* Update Check (uses /api/version) */
-async function checkForUpdate() {
-  try {
-    const r = await fetch("/api/version", { cache: "no-store" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
+// --- once-only bootstrap (no double timers) ---
+(() => {
+  // Use existing interval if defined; else 1 hour
+  const INTERVAL =
+    typeof UPDATE_CHECK_INTERVAL_MS === "number"
+      ? UPDATE_CHECK_INTERVAL_MS
+      : 60 * 60 * 1000;
 
-    const j = await r.json();
-    const cur    = String(j.current ?? "0.0.0").trim();
-    const latest = (j.latest ? String(j.latest).trim() : null) || null;
-    const url    = j.html_url || "https://github.com/cenodude/CrossWatch/releases";
-    const hasUpdate = !!j.update_available;
+  // Prevent duplicate init if script loads twice
+  if (window.__cwUpdateInitDone) return;
+  window.__cwUpdateInitDone = true;
 
-    // Header version label
-    const vEl = document.getElementById("app-version");
-    if (vEl) vEl.textContent = `Version ${cur}`;
+  const run = () => { try { checkForUpdate(); } catch (e) { console.debug("checkForUpdate failed:", e); } };
 
-    // Update badge
-    const updEl = document.getElementById("st-update");
-    if (!updEl) return;
-    updEl.classList.add("badge", "upd");
-
-    if (hasUpdate && latest) {
-      const changed = latest !== (updEl.dataset.lastLatest || "");
-      updEl.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">Update ${latest} available</a>`;
-      updEl.setAttribute("aria-label", `Update ${latest} available`);
-      updEl.classList.remove("hidden");
-
-      if (changed) {
-        updEl.dataset.lastLatest = latest;
-        updEl.classList.remove("reveal");
-        void updEl.offsetWidth; // restart animation
-        updEl.classList.add("reveal");
-      }
-    } else {
-      updEl.classList.add("hidden");
-      updEl.classList.remove("reveal");
-      updEl.removeAttribute("aria-label");
-      updEl.textContent = "";
-      delete updEl.dataset.lastLatest;
-    }
-  } catch (err) {
-    console.debug("Version check failed:", err);
+  // Run on DOM ready (or immediately if already ready)
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", run, { once: true });
+  } else {
+    run();
   }
-}
 
-document.addEventListener("DOMContentLoaded", () => {
-  checkForUpdate();
-});
+  // Periodic checks
+  setInterval(run, INTERVAL);
+})();
 
-checkForUpdate(true);
-setInterval(() => checkForUpdate(false), UPDATE_CHECK_INTERVAL_MS);
 
 // Find the actions row and insert the pill right after it
 function ensureMainUpdateSlot() {
@@ -1095,10 +1064,6 @@ async function checkForUpdate() {
     console.debug('Version check failed:', err);
   }
 }
-
-// Init + hourly poll
-document.addEventListener('DOMContentLoaded', () => { checkForUpdate(); });
-setInterval(checkForUpdate, 60 * 60 * 1000);
 
 /* END Update Check (uses /api/version) */
 
@@ -1341,7 +1306,6 @@ async function refreshStats(force = false) {
     setTile("tile-new", "stat-new", lastAdd);
     setTile("tile-del", "stat-del", lastRem);
 
-    
     const plexVal = Number.isFinite(by.plex_total)
       ? by.plex_total
       : (by.plex ?? 0) + (by.both ?? 0);
@@ -1350,10 +1314,17 @@ async function refreshStats(force = false) {
       ? by.simkl_total
       : (by.simkl ?? 0) + (by.both ?? 0);
 
+    const traktVal = Number.isFinite(by.trakt_total)
+      ? by.trakt_total
+      : (by.trakt ?? 0) + (by.both ?? 0);
+
     const elP = document.getElementById("stat-plex");
     const elS = document.getElementById("stat-simkl");
+    const elT = document.getElementById("stat-trakt");
+
     const curP = Number(elP?.textContent || 0);
     const curS = Number(elS?.textContent || 0);
+    const curT = Number(elT?.textContent || 0);
 
     const pop = (el) => {
       if (!el) return;
@@ -1380,9 +1351,19 @@ async function refreshStats(force = false) {
       }
     }
 
+    if (elT) {
+      if (traktVal !== curT) {
+        animateNumber(elT, traktVal);
+        pop(elT);
+      } else {
+        elT.textContent = String(traktVal);
+      }
+    }
+
     
     document.getElementById("tile-plex")?.removeAttribute("hidden");
     document.getElementById("tile-simkl")?.removeAttribute("hidden");
+    document.getElementById("tile-trakt")?.removeAttribute("hidden");
   } catch (_) {}
 }
 
@@ -2136,165 +2117,12 @@ function setTraktSuccess(show) {
   if (el) el.classList.toggle("hidden", !show);
 }
 
-// Wis tokens + pending info uit config en uit UI
-async function flushTraktCreds() {
-  try {
-    const r = await fetch("/api/config", { cache: "no-store" });
-    const cfg = await r.json();
-    cfg.trakt = cfg.trakt || {};
-    cfg.auth = cfg.auth || {};
-    cfg.auth.trakt = cfg.auth.trakt || {};
 
-    delete cfg.trakt.access_token;
-    delete cfg.trakt.refresh_token;
-    delete cfg.trakt.scope;
-    delete cfg.trakt.token_type;
-    delete cfg.trakt.expires_at;
-    delete cfg.trakt._pending_device;
-
-    delete cfg.auth.trakt.access_token;
-    delete cfg.auth.trakt.refresh_token;
-    delete cfg.auth.trakt.scope;
-    delete cfg.auth.trakt.token_type;
-    delete cfg.auth.trakt.expires_at;
-
-    await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cfg),
-    });
-
-    try { const t = document.getElementById("trakt_token"); if (t) t.value = ""; } catch(_) {}
-    try { const p = document.getElementById("trakt_pin");   if (p) p.value = ""; } catch(_) {}
-    try { setTraktSuccess(false); } catch(_) {}
-    try { notify && notify("Trakt-gegevens gewist"); } catch(_) {}
-  } catch (e) {
-    console.warn("flushTraktCreds failed", e);
-    try { notify && notify("Wissen mislukt"); } catch(_) {}
-  }
-}
-
-
-function setPlexSuccess(show) {
-  document.getElementById("plex_msg").classList.toggle("hidden", !show);
-}
-async function requestPlexPin() {
-  try {
-    setPlexSuccess && setPlexSuccess(false);
-  } catch (_) {}
-  let win = null;
-  try {
-    win = window.open("https://plex.tv/link", "_blank");
-  } catch (_) {}
-  let resp, data;
-  try {
-    resp = await fetch("/api/plex/pin/new", { method: "POST" });
-  } catch (e) {
-    console.warn("plex pin fetch failed", e);
-    try {
-      notify && notify("Failed to request PIN");
-    } catch (_) {}
-
-    return;
-  }
-
-  try {
-    data = await resp.json();
-  } catch (e) {
-    console.warn("plex pin json parse failed", e);
-    try {
-      notify && notify("Invalid response");
-    } catch (_) {}
-    return;
-  }
-
-  if (!data || data.ok === false) {
-    console.warn("plex pin error payload", data);
-
-    try {
-      notify && notify(data && data.error ? data.error : "PIN request failed");
-    } catch (_) {}
-    return;
-  }
-
-  try {
-    const pin = data.code || data.pin || data.id || "";
-    const pinEl = document.getElementById("plex_pin");
-
-    if (pinEl) pinEl.value = pin;
-    try {
-      console.debug("Plex PIN received", data);
-      document
-        .querySelectorAll('#plex_pin, input[name="plex_pin"]')
-        .forEach((el) => {
-          try {
-            el.value = pin;
-          } catch (_) {}
-        });
-
-      const msg = document.getElementById("plex_msg");
-
-      if (msg) {
-        msg.textContent = pin ? "PIN: " + pin : "PIN request ok";
-        msg.classList.remove("hidden");
-      }
-    } catch (_) {}
-
-    if (pin) {
-      try {
-        await navigator.clipboard.writeText(pin);
-      } catch (_) {}
-    }
-  } catch (e) {
-    console.warn("pin ui update failed", e);
-  }
-
-  try {
-    
-
-    if (win && !win.closed) {
-      win.focus();
-    }
-  } catch (_) {}
-
-  try {
-    
-
-    if (typeof startPlexTokenPoll === "function") startPlexTokenPoll(data);
-  } catch (e) {
-    console.warn("startPlexTokenPoll error", e);
-  }
-}
-
-function setSimklSuccess(show) {
-  document.getElementById("simkl_msg").classList.toggle("hidden", !show);
-}
 
 function isPlaceholder(v, ph) {
   return (v || "").trim().toUpperCase() === ph.toUpperCase();
 }
 
-function updateSimklButtonState() {
-  try {
-    const cid  = (document.getElementById("simkl_client_id")?.value || "").trim();
-    const sec  = (document.getElementById("simkl_client_secret")?.value || "").trim();
-    const btn  = document.getElementById("simkl_start_btn");
-    const hint = document.getElementById("simkl_hint");
-    const rid  = document.getElementById("redirect_uri_preview");
-    if (rid) rid.textContent = location.origin + "/callback";
-    const ok = cid.length > 0 && sec.length > 0;
-    if (btn)  btn.disabled = !ok;
-    if (hint) hint.classList.toggle("hidden", ok);
-  } catch (e) {
-    console.warn("updateSimklButtonState failed", e);
-  }
-}
-
-async function copyRedirect() {
-  try {
-    await navigator.clipboard.writeText(computeRedirectURI());
-  } catch (_) {}
-}
 
 function isSettingsVisible() {
   const el = document.getElementById("page-settings");
@@ -2305,67 +2133,6 @@ function setBtnBusy(id, busy) {
   if (!el) return;
   el.disabled = !!busy;
   el.classList.toggle("opacity-50", !!busy);
-}
-
-let simklPollTimer = null;
-let simklCountdownTimer = null;
-
-async function startSimkl() {
-  try { setSimklSuccess && setSimklSuccess(false); } catch (_) {}
-
-  // persist current Client ID/Secret first (no-op if unchanged)
-  if (typeof saveSettings === "function") {
-    try { await saveSettings(); } catch (_) {}
-  }
-
-  const origin = window.location.origin;
-  const j = await fetch("/api/simkl/authorize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ origin }),
-    cache: "no-store",
-  }).then(r => r.json()).catch(() => null);
-
-  if (!j?.ok || !j.authorize_url) return;
-
-  // open consent
-  window.open(j.authorize_url, "_blank");
-
-  // clear any previous poll
-  if (simklPoll) { clearTimeout(simklPoll); simklPoll = null; }
-
-  const MAX_MS = 120000;  // 2 minutes
-  const deadline = Date.now() + MAX_MS;
-  const backoff = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
-  let i = 0;
-
-  const poll = async () => {
-    if (Date.now() >= deadline) { simklPoll = null; return; }
-
-    const settingsVisible = !!(document.getElementById("page-settings") &&
-                               !document.getElementById("page-settings").classList.contains("hidden"));
-    if (document.hidden || !settingsVisible) {
-      simklPoll = setTimeout(poll, 5000);
-      return;
-    }
-
-    let cfg = null;
-    try { cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json()); } catch (_){}
-
-    const tok = (cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token || "").trim();
-    if (tok) {
-      try { const el = document.getElementById("simkl_access_token"); if (el) el.value = tok; } catch (_){}
-      try { setSimklSuccess && setSimklSuccess(true); } catch (_){}
-      simklPoll = null;
-      return;
-    }
-
-    const delay = backoff[Math.min(i, backoff.length - 1)];
-    i++;
-    simklPoll = setTimeout(poll, delay);
-  };
-
-  simklPoll = setTimeout(poll, 1000);
 }
 
 function flashBtnOK(btnEl) {
@@ -2822,74 +2589,31 @@ async function mountMetadataProviders() {
 
 
 document.addEventListener("DOMContentLoaded", () => {
-  try {
-    mountMetadataProviders();
-  } catch (_) {}
+  try { mountMetadataProviders(); } catch (e) {}
 });
 
 try {
-  Object.assign(window, { showTab, requestPlexPin, renderConnections });
+  const exportsObj = { showTab, renderConnections };
+  if (typeof window.requestPlexPin === "function") {
+    exportsObj.requestPlexPin = window.requestPlexPin; // passthrough from the other file
+  }
+  Object.assign(window, exportsObj);
 } catch (e) {
   console.warn("Global export failed", e);
 }
 
-
-function copyTraktRedirect() {
-  try {
-    const uri = "urn:ietf:wg:oauth:2.0:oob"; 
-    navigator.clipboard.writeText(uri);
-    const codeEl = document.getElementById("trakt_redirect_uri_preview");
-    if (codeEl) codeEl.textContent = uri;
-    notify?.("Redirect URI copied ✓");
-  } catch (e) {
-    console.warn("copyTraktRedirect failed", e);
-  }
+if (typeof window.requestPlexPin !== "function") {
+  window.requestPlexPin = function () {
+    console.warn("requestPlexPin is not available yet — ensure auth.plex-simkl.js is loaded before crosswatch.js or call it later.");
+  };
 }
+
 
 if (typeof updateSimklHint !== "function") {
   function updateSimklHint() {}
 }
 
-function startPlexTokenPoll() {
-  try { if (plexPoll) clearTimeout(plexPoll); } catch (_) {}
-  const MAX_MS = 120000; 
-  const deadline = Date.now() + MAX_MS;
-  const backoff = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
-  let i = 0;
 
-  const poll = async () => {
-    if (Date.now() >= deadline) { plexPoll = null; return; }
-
-    
-    const settingsVisible = !!(document.getElementById("page-settings") && !document.getElementById("page-settings").classList.contains("hidden"));
-    if (document.hidden || !settingsVisible) {
-      plexPoll = setTimeout(poll, 5000);
-      return;
-    }
-
-    let cfg = null;
-    try {
-      cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
-    } catch (_) {}
-
-    const tok = cfg?.plex?.account_token || "";
-    if (tok) {
-      try {
-        const el = document.getElementById("plex_token");
-        if (el) el.value = tok;
-      } catch (_) {}
-      try { setPlexSuccess && setPlexSuccess(true); } catch (_) {}
-      plexPoll = null;
-      return;
-    }
-
-    const delay = backoff[Math.min(i, backoff.length - 1)];
-    i++;
-    plexPoll = setTimeout(poll, delay);
-  };
-
-  plexPoll = setTimeout(poll, 1000);
-}
 
 try {
   window.addPair = addPair;
@@ -3586,6 +3310,7 @@ document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } c
     };
   }
 })();
+
 
 /* Ensure showTab is global at end */
 window.showTab = showTab;

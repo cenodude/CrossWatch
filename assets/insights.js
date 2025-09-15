@@ -1,16 +1,17 @@
 /* Insights module: provider-agnostic stats, history, and sparkline. */
 (function (w, d) {
+  // --- tiny utils ---
   function $(sel, root) { return (root || d).querySelector(sel); }
   function txt(el, v) { if (el) el.textContent = v == null ? "—" : String(v); }
   function toLocal(iso) { if (!iso) return "—"; var t = new Date(iso); return isNaN(t) ? "—" : t.toLocaleString(undefined, { hour12: false }); }
 
-  /* HTTP */
+  // --- HTTP ---
   async function fetchJSON(url) {
     try { const res = await fetch(url, { cache: "no-store" }); return res.ok ? res.json() : null; }
     catch (_) { return null; }
   }
 
-  /* Sparkline (compact SVG) */
+  // --- Sparkline (compact SVG) ---
   function renderSparkline(id, points) {
     var el = d.getElementById(id);
     if (!el) return;
@@ -26,19 +27,64 @@
     el.innerHTML = '<svg viewBox="0 0 '+wv+' '+hv+'" preserveAspectRatio="none"><path class="line" d="'+dStr+'"></path>'+dots+'</svg>';
   }
 
-  /* Provider tiles (Plex, Simkl, Trakt). Creates tiles if missing. */
+  // --- Number & bar animations (ported from crosswatch.js) ---
+  function _ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
+  function animateNumber(el, to) {
+    if (!el) return;
+    const from = parseInt(el.dataset?.v || "0", 10) || 0;
+    if (from === to) { el.textContent = String(to); el.dataset.v = String(to); return; }
+    const dur = 600, t0 = performance.now();
+    function step(now) {
+      const p = Math.min(1, (now - t0) / dur);
+      const v = Math.round(from + (to - from) * _ease(p));
+      el.textContent = String(v);
+      if (p < 1) requestAnimationFrame(step); else el.dataset.v = String(to);
+    }
+    requestAnimationFrame(step);
+  }
+  function animateChart(now, week, month) {
+    const bars = {
+      now: d.querySelector(".bar.now"),
+      week: d.querySelector(".bar.week"),
+      month: d.querySelector(".bar.month"),
+    };
+    const max = Math.max(1, now, week, month);
+    const h = (v) => Math.max(0.04, v / max);
+    if (bars.week)  bars.week.style.transform  = `scaleY(${h(week)})`;
+    if (bars.month) bars.month.style.transform = `scaleY(${h(month)})`;
+    if (bars.now)   bars.now.style.transform   = `scaleY(${h(now)})`;
+  }
+
+  // --- Provider tiles (Plex, Simkl, Trakt). Ensure wrappers + value spans exist. ---
   function ensureProviderTiles() {
-    var container = d.getElementById("stat-providers") || d.querySelector("[data-role='stat-providers']") || d.body;
+    var container =
+      d.getElementById("stat-providers") ||
+      d.querySelector("[data-role='stat-providers']") ||
+      d.body;
+
     ["plex","simkl","trakt"].forEach(function(name){
-      var id = "stat-" + name;
-      if (!d.getElementById(id) && container) {
-        var el = d.createElement("div");
-        el.id = id;
-        el.className = "prov-tile";
-        el.innerHTML = '<div class="title">'+name.toUpperCase()+'</div><div class="big">0</div>';
-        container.appendChild(el);
+      var tileId = "tile-" + name;
+      var valId  = "stat-" + name;
+
+      // create tile wrapper if missing
+      var tile = d.getElementById(tileId);
+      if (!tile && container) {
+        tile = d.createElement("div");
+        tile.id = tileId;
+        tile.className = "tile";
+        tile.innerHTML =
+          '<div class="k">'+name.toUpperCase()+'</div>' +
+          '<div class="n" id="'+valId+'">0</div>';
+        container.appendChild(tile);
+      } else if (tile && !d.getElementById(valId)) {
+        // ensure inner value node exists
+        var n = d.createElement("div");
+        n.className = "n";
+        n.id = valId;
+        tile.appendChild(n);
       }
     });
+
     return {
       plex:  d.getElementById("stat-plex"),
       simkl: d.getElementById("stat-simkl"),
@@ -46,27 +92,77 @@
     };
   }
 
-  /* Render provider totals + active flags */
-  function renderProviderStats(provTotals, provActive) {
-    var totals = { plex:0, simkl:0, trakt:0 };
-    if (provTotals && typeof provTotals === "object") {
-      totals.plex  = +(provTotals.plex?.total ?? provTotals.plex ?? 0) || 0;
-      totals.simkl = +(provTotals.simkl?.total ?? provTotals.simkl ?? 0) || 0;
-      totals.trakt = +(provTotals.trakt?.total ?? provTotals.trakt ?? 0) || 0;
+  // --- Totals/active derivation (handles multiple API shapes) ---
+  function deriveProviderTotals(data) {
+    // preferred: server-provided aggregates
+    var by = data && (data.providers || data.provider_stats);
+    if (by) return by;
+
+    // fallback: count p/s/t flags in `current`
+    var cur = data && data.current;
+    if (cur && typeof cur === "object") {
+      var out = { plex: 0, simkl: 0, trakt: 0 };
+      Object.keys(cur).forEach(function (k) {
+        var x = cur[k] || {};
+        if (x.p) out.plex++;
+        if (x.s) out.simkl++;
+        if (x.t) out.trakt++;
+      });
+      return out;
     }
+    return null;
+  }
+
+  function deriveProviderActive(data, totals) {
+    if (data && data.providers_active) return data.providers_active;
+    totals = totals || {};
+    return {
+      plex:  !!(totals.plex  || 0),
+      simkl: !!(totals.simkl || 0),
+      trakt: !!(totals.trakt || 0),
+    };
+  }
+
+  // --- Render provider totals + active flags ---
+  function renderProviderStats(provTotals, provActive) {
+    // Accept shapes: {plex_total,...,both}, {plex:{total:...}}, simple numbers, or counts from derive().
+    var by = provTotals || {};
+    var n = (x) => (+x || 0);
+
+    function pickTotal(key) {
+      if (by && typeof by === "object") {
+        if (Number.isFinite(+by[key + "_total"])) return n(by[key + "_total"]);
+        var maybe = by[key];
+        if (maybe && typeof maybe === "object" && "total" in maybe) return n(maybe.total);
+        // last resort: direct + shared 'both'
+        return n(maybe) + n(by.both);
+      }
+      return 0;
+    }
+
+    var totals = {
+      plex:  pickTotal("plex"),
+      simkl: pickTotal("simkl"),
+      trakt: pickTotal("trakt"),
+    };
+
     var active = Object.assign({ plex:false, simkl:false, trakt:false }, provActive || {});
+
+    // Make sure tiles exist
+    ensureProviderTiles();
 
     [["plex","stat-plex","tile-plex"],
      ["simkl","stat-simkl","tile-simkl"],
      ["trakt","stat-trakt","tile-trakt"]].forEach(([k, valId, tileId])=>{
-      var v = document.getElementById(valId);
-      var t = document.getElementById(tileId);
-      if (v) v.textContent = totals[k] | 0;
+      var v = d.getElementById(valId);
+      var t = d.getElementById(tileId);
+      if (v) v.textContent = (totals[k] | 0);
       if (t) t.classList.toggle("inactive", !active[k]);
+      t?.removeAttribute("hidden");
     });
   }
 
-  /* Recent syncs */
+  // --- Recent syncs ---
   function renderHistory(hist) {
     var wrap = d.getElementById("sync-history") || d.querySelector("[data-role='sync-history']") || d.querySelector(".sync-history");
     if (!wrap) return;
@@ -133,17 +229,24 @@
     }).join("");
   }
 
-  /* Top counters */
+  // --- Top counters ---
   function renderTopStats(s) {
     var now = +((s && s.now) || 0), week = +((s && s.week) || 0), month = +((s && s.month) || 0);
-    txt(d.getElementById("stat-now"), now | 0);
-    txt(d.getElementById("stat-week"), week | 0);
-    txt(d.getElementById("stat-month"), month | 0);
+    var elNow = d.getElementById("stat-now");
+    var elW   = d.getElementById("stat-week");
+    var elM   = d.getElementById("stat-month");
+    if (elNow) animateNumber(elNow, now | 0); else txt(elNow, now | 0);
+    if (elW)   animateNumber(elW,   week | 0); else txt(elW,   week | 0);
+    if (elM)   animateNumber(elM,   month| 0); else txt(elM,   month| 0);
+
     var fill = d.getElementById("stat-fill");
     if (fill) { var max = Math.max(1, now, week, month); fill.style.width = Math.round((now / max) * 100) + "%"; }
+
+    // optional: animate mini bars if present
+    animateChart(now, week, month);
   }
 
-  /* Fetch + render */
+  // --- Fetch + render (full) ---
   async function refreshInsights() {
     var data = await fetchJSON("/api/insights?limit_samples=60&history=3");
     if (!data) return;
@@ -152,10 +255,9 @@
     renderHistory(data.history || []);
     renderTopStats({ now: data.now, week: data.week, month: data.month });
 
-    renderProviderStats(
-      data.providers || data.provider_stats || null,
-      data.providers_active || null
-    );
+    var provTotals = deriveProviderTotals(data);
+    var provActive = deriveProviderActive(data, provTotals);
+    renderProviderStats(provTotals, provActive);
 
     var wt = data.watchtime || null;
     if (wt) {
@@ -166,7 +268,24 @@
     }
   }
 
-  /* Mount scheduler */
+  // --- Lightweight stats-only refresh (for legacy callers) ---
+  var _lastStatsFetch = 0;
+  async function refreshStats(force=false) {
+    var nowT = Date.now();
+    if (!force && nowT - _lastStatsFetch < 900) return; // debounce
+    _lastStatsFetch = nowT;
+
+    var data = await fetchJSON("/api/insights?limit_samples=0&history=0");
+    if (!data) return;
+
+    renderTopStats({ now: data.now, week: data.week, month: data.month });
+
+    var provTotals = deriveProviderTotals(data);
+    var provActive = deriveProviderActive(data, provTotals);
+    renderProviderStats(provTotals, provActive);
+  }
+
+  // --- Mount scheduler ---
   function scheduleInsights(max) {
     var tries = 0, limit = max || 20;
     (function tick(){
@@ -176,127 +295,57 @@
     })();
   }
 
-  /* Expose */
-  w.Insights = Object.assign(w.Insights || {}, { renderSparkline, refreshInsights, scheduleInsights, fetchJSON });
+  // --- Expose ---
+  w.Insights = Object.assign(w.Insights || {}, {
+    renderSparkline, refreshInsights, refreshStats, scheduleInsights, fetchJSON,
+    animateNumber, animateChart
+  });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
+  w.refreshStats = refreshStats;          // keep global for other modules
   w.scheduleInsights = scheduleInsights;
   w.fetchJSON = fetchJSON;
 
-  /* Boot */
+  // compat shim for older callers
+  w.animateNumber = w.animateNumber || animateNumber;
+
+  // --- Boot ---
   d.addEventListener("DOMContentLoaded", function(){ scheduleInsights(); });
   d.addEventListener("tab-changed", function(ev){ if (ev && ev.detail && ev.detail.id === "main") refreshInsights(); });
 })(window, document);
 
 
-/* Inject compact provider layout styles (once) */
+/* Inject compact provider layout styles (once, no duplicates) */
 (function injectInsightStyles() {
   var id = "insights-provider-styles";
-  if (document.getElementById(id)) return; // avoid duplicates
+  if (document.getElementById(id)) return;
   var css = `
   /* Provider tiles: force a single 3-column row */
   #stat-providers {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: .5rem;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: .5rem !important;
+    width: 100% !important;
     margin-top: .5rem;
   }
   /* Neutralize legacy 2-col rules */
   .stat-tiles { grid-template-columns: unset; }
 
   #stat-providers .tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: .5rem .75rem;
-    min-height: 64px;
-    border-radius: .6rem;
-    background: rgba(255,255,255,0.05);
-    border: 0;
-    box-shadow: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: .5rem .75rem; min-height: 64px;
+    border-radius: .6rem; background: rgba(255,255,255,0.05);
+    border: 0; box-shadow: none;
+    float: none; flex: none; width: auto; min-width: 0; max-width: none; box-sizing: border-box;
   }
-  #stat-providers .tile .k {
-    font-size: .75rem;
-    font-weight: 600;
-    opacity: .8;
-    margin-bottom: .15rem;
-  }
-  #stat-providers .tile .n {
-    font-size: 1rem;
-    font-weight: 700;
-    line-height: 1;
-  }
+  #stat-providers .tile .k { font-size: .75rem; font-weight: 600; opacity: .8; margin-bottom: .15rem; }
+  #stat-providers .tile .n { font-size: 1rem; font-weight: 700; line-height: 1; }
   /* Dim providers not part of any current pair */
-  #stat-providers .tile.inactive {
-    opacity: .55;
-    filter: saturate(.7);
-  }
+  #stat-providers .tile.inactive { opacity: .55; filter: saturate(.7); }
+
   /* Responsive fallback */
-  @media (max-width: 560px) {
-    #stat-providers { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  }
-  @media (max-width: 380px) {
-    #stat-providers { grid-template-columns: 1fr; }
-  }`;
-  var style = document.createElement("style");
-  style.id = id;
-  style.textContent = css;
-  document.head.appendChild(style);
-})();
-
-/* Inject CSS for provider tiles (3 columns fixed) */
-(function addProviderCss() {
-  var id = "insights-provider-css";
-  if (document.getElementById(id)) return;
-  var css = `
-  #stat-providers {
-    display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: .5rem !important;
-    width: 100% !important;
-    margin-top: .5rem;
-  }
-  #stat-providers .tile {
-    float: none !important;
-    flex: none !important;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    padding: .5rem .75rem;
-    min-height: 64px;
-    border-radius: .6rem;
-    background: rgba(255,255,255,0.05);
-    border: 0;
-    box-shadow: none;
-  }
-  #stat-providers .tile .k {
-    font-size: .75rem;
-    font-weight: 600;
-    opacity: .8;
-    margin-bottom: .15rem;
-  }
-  #stat-providers .tile .n {
-    font-size: 1rem;
-    font-weight: 700;
-    line-height: 1;
-  }
-  #stat-providers .tile.inactive {
-    opacity: .55;
-    filter: saturate(.7);
-  }
-
-  @media (max-width: 560px) {
-    #stat-providers { grid-template-columns: repeat(2, 1fr) !important; }
-  }
-  @media (max-width: 380px) {
-    #stat-providers { grid-template-columns: 1fr !important; }
-  }`;
+  @media (max-width: 560px) { #stat-providers { grid-template-columns: repeat(2, 1fr) !important; } }
+  @media (max-width: 380px) { #stat-providers { grid-template-columns: 1fr !important; } }`;
   var style = document.createElement("style");
   style.id = id;
   style.textContent = css;

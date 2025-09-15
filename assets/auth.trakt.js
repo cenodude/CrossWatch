@@ -76,7 +76,7 @@
     } catch (_) {}
   }
 
-  // Robust copy helpers + auto-bind for copy buttons
+  // Copy helpers + auto-bind for copy buttons
   async function _copyText(text, btn) {
     if (!text) return false;
     try {
