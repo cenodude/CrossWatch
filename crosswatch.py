@@ -1,5 +1,4 @@
 # --------------- CrossWatch Web API (FastAPI): backend for status, auth, scheduling, sync, and state ---------------
-CrossWatch Web API (FastAPI):
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
