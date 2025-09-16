@@ -35,37 +35,122 @@ function dismissUpdate(){
   closeUpdateModal();
 }
 
-
 async function openAbout(){
   try{
-    const r=await fetch("/api/version?cb="+Date.now(),{cache:"no-store"});
-    const j=r.ok?await r.json():{};
-    const cur=(j.current??"0.0.0").toString().trim();
-    const latest=(j.latest??"").toString().trim()||null;
-    const url=j.html_url||"https://github.com/cenodude/crosswatch/releases";
-    const upd=!!j.update_available;
+    // --- App version ---
+    const r = await fetch("/api/version?cb=" + Date.now(), { cache: "no-store" });
+    const j = r.ok ? await r.json() : {};
+    const cur = (j.current ?? "0.0.0").toString().trim();
+    const latest = (j.latest ?? "").toString().trim() || null;
+    const url = j.html_url || "https://github.com/cenodude/crosswatch/releases";
+    const upd = !!j.update_available;
 
     document.getElementById("about-version")?.append?.();
-    const verEl=document.getElementById("about-version"); if(verEl){verEl.textContent=`Version ${j.current}`;verEl.dataset.version=cur;}
-    const headerVer=document.getElementById("app-version"); if(headerVer){headerVer.textContent=`Version ${cur}`;headerVer.dataset.version=cur;}
+    const verEl = document.getElementById("about-version");
+    if (verEl){ verEl.textContent = `Version ${j.current}`; verEl.dataset.version = cur; }
 
-    const relEl=document.getElementById("about-latest");
-    if(relEl){relEl.href=url;relEl.textContent=latest?`v${latest}`:"Releases";relEl.setAttribute("aria-label",latest?`Latest release v${latest}`:"Releases");}
+    const headerVer = document.getElementById("app-version");
+    if (headerVer){ headerVer.textContent = `Version ${cur}`; headerVer.dataset.version = cur; }
 
-    const updEl=document.getElementById("about-update");
-    if(updEl){
+    const relEl = document.getElementById("about-latest");
+    if (relEl){
+      relEl.href = url;
+      relEl.textContent = latest ? `v${latest}` : "Releases";
+      relEl.setAttribute("aria-label", latest ? `Latest release v${latest}` : "Releases");
+    }
+
+    const updEl = document.getElementById("about-update");
+    if (updEl){
       updEl.classList.add("badge","upd");
-      if(upd&&latest){
-        updEl.textContent=`Update ${latest} available`;
+      if (upd && latest){
+        updEl.textContent = `Update ${latest} available`;
         updEl.classList.remove("hidden","reveal"); void updEl.offsetWidth; updEl.classList.add("reveal");
-      }else{
-        updEl.textContent=""; updEl.classList.add("hidden"); updEl.classList.remove("reveal");
+      } else {
+        updEl.textContent = ""; updEl.classList.add("hidden"); updEl.classList.remove("reveal");
       }
     }
-  }catch(_){}
+
+    // --- Module versions (idempotent + pretty) ---
+    try{
+      const mr = await fetch("/api/modules/versions?cb=" + Date.now(), { cache: "no-store" });
+      if (!mr.ok) throw new Error(String(mr.status));
+      const mv = await mr.json();
+
+      const body = document.querySelector('#about-backdrop .modal-card .modal-body');
+      const firstGrid = body?.querySelector('.about-grid');
+      if (!body || !firstGrid) throw new Error("about body/grid missing");
+
+      // Remove previous render so it never duplicates
+      body.querySelector("#about-mods")?.remove();
+
+      // Ensure styles once
+      if (!document.getElementById("about-mods-style")){
+        const style = document.createElement("style");
+        style.id = "about-mods-style";
+        style.textContent = `
+          .mods-card{margin-top:16px;border:1px solid rgba(255,255,255,.12);
+            border-radius:12px;padding:12px;background:rgba(255,255,255,.03)}
+          .mods-header{font-weight:600;opacity:.9;margin:0 0 8px 2px}
+          .mods-grid{display:grid;grid-template-columns:minmax(120px,160px) 1fr auto;
+            gap:8px 12px;align-items:center}
+          .mods-group{grid-column:1/-1;margin-top:8px;font-weight:600;opacity:.8;
+            border-top:1px solid rgba(255,255,255,.08);padding-top:8px}
+          .mods-name{opacity:.9}
+          .mods-key{opacity:.7}
+          .mods-ver{justify-self:end;font-variant-numeric:tabular-nums;opacity:.95}
+          @media (max-width:520px){ .mods-grid{grid-template-columns:1fr auto} .mods-key{display:none} }
+        `;
+        document.head.appendChild(style);
+      }
+
+      // Build card
+      const wrap = document.createElement("div");
+      wrap.id = "about-mods";
+      wrap.className = "mods-card";
+      wrap.innerHTML = `
+        <div class="mods-header">Modules</div>
+        <div class="mods-grid" role="table" aria-label="Module versions"></div>
+      `;
+      const grid = wrap.querySelector(".mods-grid");
+
+      const addGroup = (label) => {
+        const g = document.createElement("div");
+        g.className = "mods-group";
+        g.textContent = label;
+        grid.appendChild(g);
+      };
+      const addRow = (label, key, ver) => {
+        const n = document.createElement("div"); n.className = "mods-name"; n.textContent = label.replace(/^_+/, "");
+        const k = document.createElement("div"); k.className = "mods-key";  k.textContent = key;
+        const v = document.createElement("div"); v.className = "mods-ver";  v.textContent = ver ? `v${ver}` : "v0.0.0";
+        grid.appendChild(n); grid.appendChild(k); grid.appendChild(v);
+      };
+
+      const groups = mv?.groups || {};
+      addGroup("Authentication Providers");
+      Object.entries(groups.AUTH || {}).forEach(([name, ver]) => addRow(name, name, ver));
+      addGroup("Synchronization Providers");
+      Object.entries(groups.SYNC || {}).forEach(([name, ver]) => addRow(name, name, ver));
+
+
+      // Insert right after the first about-grid
+      firstGrid.insertAdjacentElement("afterend", wrap);
+    }catch(e){
+      console.warn("[about] modules render failed", e);
+    }
+
+  }catch(e){
+    console.warn("[about] openAbout failed", e);
+  }
+
   document.getElementById("about-backdrop")?.classList.remove("hidden");
 }
-function closeAbout(ev){if(ev&&ev.type==="click"&&ev.currentTarget!==ev.target)return;document.getElementById("about-backdrop")?.classList.add("hidden")}
+
+function closeAbout(ev){
+  if (ev && ev.type === "click" && ev.currentTarget !== ev.target) return;
+  document.getElementById("about-backdrop")?.classList.add("hidden");
+}
+
 
 // Ensure: create once, hydrate, wire sticky bridge
 async function cxEnsureCfgModal() {

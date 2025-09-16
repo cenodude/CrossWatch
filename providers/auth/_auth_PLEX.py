@@ -7,6 +7,8 @@ from _logging import log
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
 UA = "Crosswatch/1.0"
 
+__VERSION__ = "1.0.0"
+
 class PlexAuth(AuthProvider):
     name = "PLEX"
 

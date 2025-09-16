@@ -10,6 +10,8 @@ OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
 VERIFY_URL = "https://trakt.tv/activate"
 
+__VERSION__ = "1.0.1"
+
 
 # in providers/auth/_auth_TRAKT.py
 import requests

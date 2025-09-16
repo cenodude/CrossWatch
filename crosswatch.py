@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs
+from importlib import import_module
 
 import traceback
 import json
@@ -64,7 +65,6 @@ try:
     from zoneinfo import ZoneInfo
 except Exception:
     ZoneInfo = None
-
 
 # --------------- Constants & basic paths ---------------
 ROOT = Path(__file__).resolve().parent
@@ -250,6 +250,42 @@ class _UIHostLogger:
 
     def child(self, name: str):
         return _UIHostLogger(self._tag, name, dict(self._ctx))
+    
+    
+# --- Module versions API ------------------------------------------------------
+from importlib import import_module
+
+_MODULES = {
+    "AUTH": {
+        "_auth_PLEX":  "providers.auth._auth_PLEX",
+        "_auth_SIMKL": "providers.auth._auth_SIMKL",
+        "_auth_TRAKT": "providers.auth._auth_TRAKT",
+    },
+    "SYNC": {
+        "_mod_PLEX":   "providers.sync._mod_PLEX",
+        "_mod_SIMKL":  "providers.sync._mod_SIMKL",
+        "_mod_TRAKT":  "providers.sync._mod_TRAKT",
+    },
+}
+
+def _get_module_version(mod_path: str) -> str:
+    """Return __VERSION__ (fallback to VERSION/__version__/0.0.0)."""
+    try:
+        m = import_module(mod_path)
+        return str(
+            getattr(m, "__VERSION__", getattr(m, "VERSION", getattr(m, "__version__", "0.0.0")))
+        )
+    except Exception:
+        return "0.0.0"
+
+@app.get("/api/modules/versions")
+def get_module_versions():
+    groups = {}
+    for group, mods in _MODULES.items():
+        groups[group] = {name: _get_module_version(path) for name, path in mods.items()}
+    flat = {name: ver for mods in groups.values() for name, ver in mods.items()}
+    return {"groups": groups, "flat": flat}
+# ----------------------------------------------------------------------------- 
 
 
 # --------------- API models ---------------
@@ -327,7 +363,6 @@ def _is_debug_enabled() -> bool:
 async def _lifespan(app):
     app.state.watch = None
 
-    # --- Startup hook (onveranderd) ---
     try:
         fn = globals().get("_on_startup")
         if callable(fn):
@@ -342,7 +377,6 @@ async def _lifespan(app):
         try: _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
         except Exception: pass
 
-    # --- Prefer NEW-style autostart (scrobble.enabled/mode/watch.autostart) ---
     started = False
     try:
         w = autostart_from_config()  # same entrypoint as in NEW
@@ -1803,7 +1837,7 @@ def api_watchlist_providers():
     return {"providers": detect_available_watchlist_providers(cfg)}
 
 
-# Delete (batch)
+# Delete
 @app.post("/api/watchlist/delete")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
@@ -1870,6 +1904,51 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
 
+# Delete Batch
+@app.post("/api/watchlist/delete_batch")
+def api_watchlist_delete_batch(payload: dict = Body(...)):
+    """
+    JSON body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|ALL" }
+    Deletes selected items on the given provider(s) in one shot.
+    """
+    try:
+        keys = payload.get("keys") or []
+        provider = (payload.get("provider") or "ALL").upper().strip()
+        if not isinstance(keys, list) or not keys:
+            raise HTTPException(status_code=400, detail="keys array required")
+
+        cfg = load_config()
+        state = _load_state()
+
+        from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import keeps imports tidy
+
+        results = []
+        targets = ["PLEX", "SIMKL", "TRAKT"] if provider == "ALL" else [provider]
+        for prov in targets:
+            try:
+                res = _wl_delete_batch(keys, prov, state, cfg)
+                results.append(res)
+                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: OK")
+            except Exception as e:
+                msg = f"[WL] batch-delete on {prov} failed: {e}"
+                _append_log("SYNC", msg)
+                # Keep going for other providers, but include error in response
+                results.append({"provider": prov, "error": str(e)})
+
+        # Persist any state changes already done inside batch helper; also refresh summary/stats if desired
+        try:
+            if state:
+                STATS.refresh_from_state(state)
+        except Exception:
+            pass
+
+        return {"ok": True, "results": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">

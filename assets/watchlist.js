@@ -638,13 +638,47 @@
     prefs.posterMin = px; savePrefs();
   });
 
+  // --- helpers used by Delete flow ---
+  function partitionKeysByProvider(keys){
+    const map = mapProvidersByKey(items); // existing helper in your file
+    const buckets = { PLEX: [], SIMKL: [], TRAKT: [] };
+    for (const k of keys){
+      const provs = map.get(k) || new Set();
+      for (const p of provs){
+        if (p === "PLEX" || p === "SIMKL" || p === "TRAKT") buckets[p].push(k);
+      }
+    }
+    return buckets;
+  }
+
+  // Call backend batch delete; returns counts for UI
+  async function postDelete(keys, provider){
+    try {
+      const r = await fetch("/api/watchlist/delete_batch", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ keys, provider })
+      });
+      if (!r.ok) return { okCount: 0, anySuccess: false };
+
+      const out = await r.json();
+      const results = Array.isArray(out?.results) ? out.results : [];
+      const okCount = results.reduce((n, it) => n + (parseInt(it?.deleted || 0) || 0), 0);
+      const anySuccess = okCount > 0 && results.some(it => !it?.error);
+      return { okCount, anySuccess };
+    } catch {
+      return { okCount: 0, anySuccess: false };
+    }
+  }
+
   // Delete (ALL/PLEX/SIMKL/TRAKT)
   document.getElementById("wl-delete").addEventListener("click", async ()=>{
     const provider = delProv.value || "ALL";
     if (!selected.size) return;
 
     const keys = [...selected];
-    document.getElementById("wl-delete").disabled = true;
+    const btn = document.getElementById("wl-delete");
+    btn.disabled = true;
 
     const beforeProv = mapProvidersByKey(items);
     let totalOk = 0;
@@ -658,8 +692,8 @@
         for (const p of ["PLEX","SIMKL","TRAKT"]) {
           const list = buckets[p];
           if (!list.length) continue;
-          for (let i=0;i<list.length;i+=CHUNK) {
-            const part = list.slice(i,i+CHUNK);
+          for (let i = 0; i < list.length; i += CHUNK) {
+            const part = list.slice(i, i + CHUNK);
             const { okCount, anySuccess } = await postDelete(part, p);
             totalOk += okCount;
             anyRequestSent = anyRequestSent || anySuccess;
@@ -667,14 +701,14 @@
         }
       } else {
         const buckets = partitionKeysByProvider(keys);
-        const subset = buckets[provider] || [];
+        const subset = buckets[provider.toUpperCase()] || [];
         if (!subset.length) {
           snackbar(`Nothing to delete on <b>${provider}</b>`);
-          document.getElementById("wl-delete").disabled = false;
+          btn.disabled = false;
           return;
         }
-        for (let i=0;i<subset.length;i+=CHUNK) {
-          const part = subset.slice(i,i+CHUNK);
+        for (let i = 0; i < subset.length; i += CHUNK) {
+          const part = subset.slice(i, i + CHUNK);
           const { okCount, anySuccess } = await postDelete(part, provider);
           totalOk += okCount;
           anyRequestSent = anyRequestSent || anySuccess;
@@ -693,17 +727,16 @@
           const after2 = mapProvidersByKey(items);
           deltaOk = computeDelta(keys, provider, beforeProv, after2);
         }
-      } catch { /* ignore refresh errors */ }
+      } catch { /* ignore */ }
 
       const effectiveOk = Math.max(totalOk, deltaOk);
 
-      // Optimistic UI: reflect deletion now (don’t wait for backend state to settle)
+      // Optimistic UI
       applyOptimisticDeletion(keys, provider);
       selected.clear();
-      applyFilters();                // re-renders posters/list
+      applyFilters();
       updateMetrics();
       rebuildDeleteProviderOptions();
-
 
       if (effectiveOk > 0) {
         if (provider === "ALL") {
@@ -719,7 +752,7 @@
     } catch {
       snackbar(`Delete failed`);
     } finally {
-      document.getElementById("wl-delete").disabled = false;
+      btn.disabled = false;
     }
   });
 

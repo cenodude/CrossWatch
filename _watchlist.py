@@ -424,6 +424,40 @@ def _delete_on_trakt_batch(items: List[Dict[str, Any]], trakt_cfg: Dict[str, Any
     r = requests.post(_TRAKT_REMOVE, headers=hdr, json=payload, timeout=45)
     if not r or not r.ok:
         raise RuntimeError(f"TRAKT delete failed: {getattr(r,'text','no response')}")
+    
+# === Batch facade used by the API ===
+def delete_watchlist_batch(keys: list[str], provider: str, state: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Delete multiple items from a single provider in one go.
+    Returns a small result dict for logging/UI.
+    """
+    prov = (provider or "").upper().strip()
+    keys = [k for k in (keys or []) if isinstance(k, str) and k.strip()]
+    if not keys:
+        return {"deleted": 0, "provider": prov, "note": "no-keys"}
+
+    if prov == "SIMKL":
+        items = [_find_item_in_state_for_provider(state, k, "SIMKL") for k in keys]
+        _delete_on_simkl_batch(items, cfg.get("simkl", {}) or {})
+    elif prov == "TRAKT":
+        items = [_find_item_in_state_for_provider(state, k, "TRAKT") for k in keys]
+        _delete_on_trakt_batch(items, cfg.get("trakt", {}) or {})
+    elif prov == "PLEX":
+        for k in keys:
+            _delete_on_plex_single(k, state, cfg)
+    else:
+        raise RuntimeError(f"unknown provider: {prov}")
+
+    # prune local state for this provider so the UI updates instantly
+    changed = False
+    for k in keys:
+        changed |= _del_key_from_provider_items(state, prov, k)
+
+    if changed:
+        _save_state_dict(_state_path(), state)
+
+    return {"deleted": len(keys), "provider": prov, "status": "ok"}
+
 
 # ======================================================================
 # Public: single delete
