@@ -1,8 +1,7 @@
 from __future__ import annotations
-# providers/sync/_mod_TRAKT.py
-# Unified OPS provider for Trakt: watchlist, ratings, history, playlists (custom lists)
 
-__VERSION__ = "1.1.2"
+__VERSION__ = "1.0.0"
+__all__ = ["OPS", "TRAKTModule", "get_manifest"]
 
 import json
 import time
@@ -13,60 +12,128 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 import requests
 
-# ---- Public provider OPS protocol (for clarity) -----------------------------
-class InventoryOps(Protocol):
-    def name(self) -> str: ...
-    def label(self) -> str: ...
-    def features(self) -> Mapping[str, bool]: ...
-    def capabilities(self) -> Mapping[str, Any]: ...
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]: ...
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
+# -----------------------------------------------------------------------------
+# Trakt constants
+# -----------------------------------------------------------------------------
 
-# ---- Trakt constants ---------------------------------------------------------
-UA = "CrossWatch/Module"
+UA = "CrossWatch/TraktModule"
 TRAKT_BASE = "https://api.trakt.tv"
-API_VERSION = "2"
 
-# Activities
+# Activities (server-side clocks to decide if anything moved)
 TRAKT_LAST_ACTIVITIES = f"{TRAKT_BASE}/sync/last_activities"
 
 # Watchlist
-TRAKT_SYNC_WATCHLIST        = f"{TRAKT_BASE}/sync/watchlist"
-TRAKT_SYNC_WATCHLIST_REMOVE = f"{TRAKT_BASE}/sync/watchlist/remove"
-TRAKT_USERS_WATCHLIST_MOV   = f"{TRAKT_BASE}/users/me/watchlist/movies"
-TRAKT_USERS_WATCHLIST_SHOW  = f"{TRAKT_BASE}/users/me/watchlist/shows"
+TRAKT_WATCHLIST_MOVIES = f"{TRAKT_BASE}/sync/watchlist/movies"
+TRAKT_WATCHLIST_SHOWS  = f"{TRAKT_BASE}/sync/watchlist/shows"
 
 # Ratings
-TRAKT_SYNC_RATINGS          = f"{TRAKT_BASE}/sync/ratings"
-TRAKT_SYNC_RATINGS_REMOVE   = f"{TRAKT_BASE}/sync/ratings/remove"
+TRAKT_RATINGS_MOVIES   = f"{TRAKT_BASE}/sync/ratings/movies"
+TRAKT_RATINGS_SHOWS    = f"{TRAKT_BASE}/sync/ratings/shows"
+TRAKT_RATINGS_POST     = f"{TRAKT_BASE}/sync/ratings"
+TRAKT_RATINGS_REMOVE   = f"{TRAKT_BASE}/sync/ratings/remove"
 
 # History
-TRAKT_SYNC_HISTORY          = f"{TRAKT_BASE}/sync/history"
-TRAKT_SYNC_HISTORY_GET_MOV  = f"{TRAKT_BASE}/sync/history/movies"
-TRAKT_SYNC_HISTORY_GET_EP   = f"{TRAKT_BASE}/sync/history/episodes"
+TRAKT_HISTORY_BASE     = f"{TRAKT_BASE}/sync/history"           # POST add
+TRAKT_HISTORY_GET_MOV  = f"{TRAKT_BASE}/sync/history/movies"
+TRAKT_HISTORY_GET_EP   = f"{TRAKT_BASE}/sync/history/episodes"
+TRAKT_HISTORY_REMOVE   = f"{TRAKT_BASE}/sync/history/remove"
 
-# Lists (playlists)
-TRAKT_USERS_LISTS           = f"{TRAKT_BASE}/users/me/lists"
-TRAKT_USERS_LIST_ITEMS      = lambda slug: f"{TRAKT_BASE}/users/me/lists/{slug}/items"
-TRAKT_USERS_LIST_ITEMS_ADD  = lambda slug: f"{TRAKT_BASE}/users/me/lists/{slug}/items"
-TRAKT_USERS_LIST_ITEMS_RM   = lambda slug: f"{TRAKT_BASE}/users/me/lists/{slug}/items/remove"
+_ID_KEYS = ("trakt", "imdb", "tmdb", "tvdb", "slug")
 
-# ---- Optional statistics hook ------------------------------------------------
+# -----------------------------------------------------------------------------
+# Optional host integrations
+# -----------------------------------------------------------------------------
+
+try:
+    from _logging import log as host_log
+except Exception:  # pragma: no cover
+    def host_log(*_a, **_k):  # type: ignore
+        pass
+
 try:
     from _statistics import Stats  # type: ignore
     _stats = Stats()
 except Exception:
     _stats = None
 
+# -----------------------------------------------------------------------------
+# Global call counters (debug visibility)
+# -----------------------------------------------------------------------------
+
+_CALLS = getattr(globals(), "_CALLS", {"GET": 0, "POST": 0})
+globals()["_CALLS"] = _CALLS
+
+# -----------------------------------------------------------------------------
+# Storage roots: ALWAYS write to /config as requested
+# -----------------------------------------------------------------------------
+
+def _state_root() -> Path:
+    """
+    State lives under /config. This is the only writable folder in the user's setup.
+    """
+    base = Path("/config")
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Last resort: still try to use /config even if mkdir fails (container may mount it)
+        pass
+    return base / ".cw_state"
+
+# Files we keep:
+# - trakt_activities.cache.json       (TTL 5 min)
+# - trakt_etags.json                  (ETag per endpoint)
+# - trakt_watchlist.shadow.json       (last full normalized snapshot)
+# - trakt_ratings.shadow.json         (last full normalized snapshot)
+# - trakt_history.cursor.json         (per-feature cursors/timestamps)
+
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+
+def iso_to_ts(s: str) -> int:
+    """Parse ISO-8601 string into epoch seconds. Returns 0 on failure."""
+    if not s:
+        return 0
+    try:
+        import datetime as dt
+        # Trakt returns e.g. "2024-09-01T10:20:30.000Z" or without millis
+        s2 = s.replace("Z", "+0000").split(".")[0]
+        return int(dt.datetime.strptime(s2, "%Y-%m-%dT%H:%M:%S%z").timestamp())
+    except Exception:
+        try:
+            import datetime as dt
+            return int(dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            return 0
+
+
+def ts_to_iso(ts: int) -> str:
+    """Format epoch seconds into UTC ISO-8601."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
 def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method: str, payload: Any = None) -> None:
-    """Best-effort telemetry to _statistics; safe if Stats is absent."""
+    """
+    Record HTTP telemetry if host statistics are available.
+    Also increments global GET/POST counters for debug analysis.
+    """
+    try:
+        if method == "GET":
+            _CALLS["GET"] = _CALLS.get("GET", 0) + 1
+        elif method == "POST":
+            _CALLS["POST"] = _CALLS.get("POST", 0) + 1
+    except Exception:
+        pass
+
     if not _stats:
         return
+
     try:
         status = int(getattr(r, "status_code", 0) or 0)
-        ok     = bool(getattr(r, "ok", False))
+        ok = bool(getattr(r, "ok", False))
         bytes_in = len(getattr(r, "content", b"") or b"") if r is not None else 0
+
+        # Estimate outgoing payload size
         if isinstance(payload, (bytes, bytearray)):
             bytes_out = len(payload)
         elif payload is None:
@@ -76,19 +143,26 @@ def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method:
                 bytes_out = len(json.dumps(payload))
             except Exception:
                 bytes_out = 0
+
         ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
 
-        # Rate-limit headers (Trakt v2)
-        rem: Optional[int] = _int_header(r, "X-RateLimit-Remaining")
-        reset_hdr = r.headers.get("X-RateLimit-Reset") if r is not None else None
-        reset_iso: Optional[str] = str(reset_hdr) if reset_hdr is not None else None
-        if r is not None:
-            try:
-                rem = int(r.headers.get("X-RateLimit-Remaining")) if r.headers.get("X-RateLimit-Remaining") else None
-            except Exception:
-                rem = None
-            reset_hdr = r.headers.get("X-RateLimit-Reset")
-            reset_iso = str(reset_hdr) if reset_hdr else None
+        # Rate headers (Trakt sends X-RateLimit fields)
+        rate_remaining = None
+        rate_reset_iso = None
+        try:
+            if r is not None:
+                rem = r.headers.get("X-RateLimit-Remaining")
+                rst = r.headers.get("X-RateLimit-Reset")
+                if rem is not None:
+                    rate_remaining = int(rem)
+                if rst:
+                    try:
+                        rst_i = int(rst)
+                        rate_reset_iso = ts_to_iso(rst_i) if rst_i > 0 else None
+                    except Exception:
+                        rate_reset_iso = None
+        except Exception:
+            pass
 
         _stats.record_http(
             provider="TRAKT",
@@ -99,543 +173,867 @@ def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method:
             bytes_in=bytes_in,
             bytes_out=bytes_out,
             ms=ms,
-            rate_remaining=rem,
-            rate_reset_iso=reset_iso,
+            rate_remaining=rate_remaining,
+            rate_reset_iso=rate_reset_iso,
         )
     except Exception:
         pass
-    
-def _int_header(r: Optional[requests.Response], name: str) -> Optional[int]:
-    if r is None:
-        return None
+
+
+# -----------------------------------------------------------------------------
+# HTTP helpers with backoff, memoization, and ETag support
+# -----------------------------------------------------------------------------
+
+# In-run GET memo to collapse identical calls
+_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...], str], Optional[requests.Response]] = {}
+
+def _norm_params(p: Optional[dict]) -> Tuple[Tuple[str, str], ...]:
+    if not p:
+        return tuple()
+    items = []
+    for k, v in p.items():
+        if isinstance(v, (list, tuple)):
+            items.append((str(k), ",".join(map(str, v))))
+        else:
+            items.append((str(k), str(v)))
+    items.sort()
+    return tuple(items)
+
+
+def trakt_headers(trakt_cfg: Mapping[str, Any]) -> Dict[str, str]:
+    """Build standard Trakt headers."""
+    return {
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {trakt_cfg.get('access_token','')}",
+        "trakt-api-key": trakt_cfg.get("client_id",""),
+        "trakt-api-version": "2",
+    }
+
+
+def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
+    """
+    Defensive retries with exponential backoff.
+    Retries on network errors, 429, and 5xx. Respects X-RateLimit-Remaining/Reset if provided.
+    """
+    delay = 1.0
+    last: Optional[requests.Response] = None
+    for _ in range(5):
+        try:
+            r: requests.Response = req_fn(*a, **kw)
+            last = r
+        except Exception:
+            r = None  # type: ignore
+
+        if r is not None:
+            try:
+                rem = r.headers.get("X-RateLimit-Remaining")
+                if rem is not None and int(rem) <= 0:
+                    rst = r.headers.get("X-RateLimit-Reset")
+                    if rst:
+                        try:
+                            wait = max(0, int(rst) - int(time.time()))
+                            time.sleep(min(wait, 10))
+                        except Exception:
+                            time.sleep(delay)
+                    else:
+                        time.sleep(delay)
+                if r.status_code in (429,) or (500 <= r.status_code < 600):
+                    time.sleep(delay)
+                    delay = min(delay * 2, 10)
+                    continue
+                return r
+            except Exception:
+                time.sleep(delay)
+                delay = min(delay * 2, 10)
+                continue
+        else:
+            time.sleep(delay)
+            delay = min(delay * 2, 10)
+    return last
+
+
+def _etag_store_path() -> Path:
+    return _state_root() / "trakt_etags.json"
+
+
+def _load_etags() -> Dict[str, str]:
     try:
-        raw: Any = r.headers.get(name)
-        if raw is None:
-            return None
-        if isinstance(raw, int):
-            return raw
-        s = str(raw).strip()
-        # strikt numeriek; Trakt zet soms epoch in string
-        return int(s) if s.isdigit() else None
+        return json.loads(_etag_store_path().read_text("utf-8"))
     except Exception:
-        return None
+        return {}
 
 
-def _trakt_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] = None, timeout: int = 45) -> Optional[requests.Response]:
+def _save_etags(d: Mapping[str, str]) -> None:
     try:
-        r = requests.get(url, headers=headers, params=params or {}, timeout=timeout)
+        root = _state_root()
+        root.mkdir(parents=True, exist_ok=True)
+        p = _etag_store_path()
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(dict(d), ensure_ascii=False, indent=2), "utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        pass
+
+
+def _trakt_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] = None, use_etag_key: Optional[str] = None, timeout: int = 45) -> Optional[requests.Response]:
+    """
+    GET with in-run memoization and optional ETag.
+    If use_etag_key is set, we will send If-None-Match and store the ETag when 200.
+    """
+    params_norm = _norm_params(params)
+    memo_key = (url, params_norm, use_etag_key or "")
+    if memo_key in _RUN_GET_CACHE:
+        r = _RUN_GET_CACHE[memo_key]
+        _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
+        return r
+
+    hdr = dict(headers)
+    if use_etag_key:
+        etags = _load_etags()
+        etag = etags.get(use_etag_key)
+        if etag:
+            hdr["If-None-Match"] = etag
+
+    try:
+        r = _with_backoff(
+            requests.get, url, headers=hdr, params=(params or {}), timeout=timeout
+        )
     except Exception:
         _record_http_trakt(None, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
+        _RUN_GET_CACHE[memo_key] = None
         return None
+
+    # Save new ETag if present and 200
+    if use_etag_key and r is not None and r.status_code == 200:
+        new_etag = r.headers.get("ETag")
+        if new_etag:
+            etags = _load_etags()
+            if etags.get(use_etag_key) != new_etag:
+                etags[use_etag_key] = new_etag
+                _save_etags(etags)
+
+    _RUN_GET_CACHE[memo_key] = r
     _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
     return r
 
+
 def _trakt_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[str, Any], timeout: int = 45) -> Optional[requests.Response]:
     try:
-        r = requests.post(url, headers=headers, json=json_payload, timeout=timeout)
+        r = _with_backoff(
+            requests.post, url, headers=headers, json=json_payload, timeout=timeout
+        )
     except Exception:
         _record_http_trakt(None, endpoint=url.replace(TRAKT_BASE, ""), method="POST", payload=json_payload)
         return None
     _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="POST", payload=json_payload)
     return r
 
-# ---- Global Tombstones (optional) -------------------------------------------
-# --------------- Optional Global Tombstones integration: feature-scoped suppression + negative records ---------------
-_GMT_ENABLED_DEFAULT = True
 
-try:
-    from providers.gmt_hooks import suppress_check as _gmt_suppress, record_negative as _gmt_record  # type: ignore
-    from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
-    _HAS_GMT = True
-except Exception:  # pragma: no cover
-    _HAS_GMT = False
-    GlobalTombstoneStore = None  # type: ignore
-    def _gmt_suppress(**_kwargs) -> bool:  # type: ignore
-        return False
-    def _gmt_record(**_kwargs) -> None:  # type: ignore
-        return
-
-def _gmt_is_enabled(cfg: Mapping[str, Any]) -> bool:
-    sync = dict(cfg.get("sync") or {})
-    val = sync.get("gmt_enable")
-    if val is None:
-        return _GMT_ENABLED_DEFAULT
-    return bool(val)
-
-def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
-    f = (feature or "").lower()
-    if f == "ratings":
-        return "rate", "unrate"
-    if f == "history":
-        return "scrobble", "unscrobble"
-    # watchlist behaves like add/remove
-    return "add", "remove"
-
-def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
-    if not _HAS_GMT or not _gmt_is_enabled(cfg):
-        return None
+def _json_or_empty_list(r: Optional[requests.Response]) -> List[Any]:
+    """Parse a response that should be a list. 304 or bad → empty list."""
+    if not r:
+        return []
+    if r.status_code == 304:
+        # Not modified; caller should use shadow
+        return []
+    if not getattr(r, "ok", False):
+        return []
     try:
-        ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
-        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
+        data = r.json()
     except Exception:
-        return None
+        return []
+    return data if isinstance(data, list) else []
 
-# ---- Helpers -----------------------------------------------------------------
-_ID_KEYS = ("trakt", "imdb", "tmdb", "tvdb", "slug")
 
-def _headers(root_cfg: Mapping[str, Any]) -> Dict[str, str]:
-    trakt_cfg = dict(root_cfg.get("trakt") or {})
-    auth_cfg = dict(root_cfg.get("auth", {})).get("trakt", {})
-    token = auth_cfg.get("access_token") or trakt_cfg.get("access_token")
-    return {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": UA,
-        "trakt-api-version": API_VERSION,
-        "trakt-api-key": trakt_cfg.get("client_id", ""),
-        "Authorization": f"Bearer {token}" if token else "",
-    }
-
-class _CursorStore:
-    """Lightweight cursor storage for date_from/start_at per feature (state_dir or ~/.crosswatch)."""
-    def __init__(self, root_cfg: Mapping[str, Any]):
-        runtime = dict(root_cfg.get("runtime") or {})
-        base_dir = runtime.get("state_dir") or os.environ.get("CROSSWATCH_STATE_DIR") or str(Path.home() / ".crosswatch")
-        try:
-            p = Path(base_dir); p.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            p = Path.cwd()
-        self.file = p / "trakt_cursors.json"
-
-    def _read(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.file.read_text("utf-8"))
-        except Exception:
-            return {}
-
-    def _write(self, data: Mapping[str, Any]) -> None:
-        tmp = self.file.with_suffix(self.file.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-        tmp.replace(self.file)
-
-    def get(self, feature: str) -> Optional[str]:
-        return self._read().get(feature)
-
-    def set(self, feature: str, iso_ts: str) -> None:
-        data = self._read(); data[feature] = iso_ts; self._write(data)
-
-def _ids_from_trakt_node(node: Mapping[str, Any]) -> Dict[str, Any]:
-    ids = dict((node.get("ids") or {}))
-    out: Dict[str, Any] = {}
-    for k in _ID_KEYS:
-        v = ids.get(k)
-        if v is not None:
-            out[k] = v
-    return out
-
-# ---- Activities (per-run cache ~60s) ----------------------------------------
-_RUN_ACT: Dict[str, Any] = {"ts": 0.0, "data": None}
-
-def _activities(root_cfg: Mapping[str, Any]) -> Dict[str, Any]:
-    now = time.time()
-    cached_ts = float(_RUN_ACT.get("ts") or 0.0)
-    cached = _RUN_ACT.get("data")
-    if (now - cached_ts) < 60 and isinstance(cached, dict):
-        return dict(cached)
-
+def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
+    """Parse a response that should be a dict. 304 or bad → empty dict."""
+    if not r:
+        return {}
+    if r.status_code == 304:
+        return {}
+    if not getattr(r, "ok", False):
+        return {}
     try:
-        r = _trakt_get(TRAKT_LAST_ACTIVITIES, headers=_headers(root_cfg), timeout=30)
-        if not r or not r.ok:
-            return {}
-        data = r.json() or {}
+        data = r.json()
     except Exception:
         return {}
+    return data if isinstance(data, dict) else {}
 
+
+# -----------------------------------------------------------------------------
+# Shadows + cursors (persisted snapshots & timestamps under /config/.cw_state)
+# -----------------------------------------------------------------------------
+
+def _shadow_path(name: str) -> Path:
+    return _state_root() / name
+
+def _read_json(path: Path, fallback: Any) -> Any:
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except Exception:
+        return fallback
+
+def _write_json(path: Path, data: Any) -> None:
+    try:
+        root = path.parent
+        root.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _watchlist_shadow_load() -> Dict[str, Any]:
+    return _read_json(_shadow_path("trakt_watchlist.shadow.json"), {"items": {}, "ts": 0})
+
+def _watchlist_shadow_save(items: Mapping[str, Any]) -> None:
+    _write_json(_shadow_path("trakt_watchlist.shadow.json"), {"items": dict(items), "ts": int(time.time())})
+
+def _ratings_shadow_load() -> Dict[str, Any]:
+    return _read_json(_shadow_path("trakt_ratings.shadow.json"), {"items": {}, "ts": 0})
+
+def _ratings_shadow_save(items: Mapping[str, Any]) -> None:
+    _write_json(_shadow_path("trakt_ratings.shadow.json"), {"items": dict(items), "ts": int(time.time())})
+
+def _cursor_store_load() -> Dict[str, Any]:
+    return _read_json(_shadow_path("trakt_history.cursor.json"), {})
+
+def _cursor_store_save(d: Mapping[str, Any]) -> None:
+    _write_json(_shadow_path("trakt_history.cursor.json"), dict(d))
+
+
+# -----------------------------------------------------------------------------
+# Activities (file-cached; process-agnostic)
+# -----------------------------------------------------------------------------
+
+_RUN_ACT: Dict[str, Any] = {"ts": 0.0, "data": None}
+_ACT_TTL_SEC = 300  # 5 minutes
+
+def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
+    """
+    Fetch Trakt activities with a file-backed cache.
+    Many features can piggyback on these timestamps to skip heavy calls.
+    """
+    now = time.time()
+    # 1) in-run cache
+    if (now - float(_RUN_ACT.get("ts") or 0)) < _ACT_TTL_SEC and (_RUN_ACT.get("data") is not None):
+        return dict(_RUN_ACT["data"])
+
+    # 2) file cache
+    cache_file = _shadow_path("trakt_activities.cache.json")
+    try:
+        j = json.loads(cache_file.read_text("utf-8"))
+        ts = float(j.get("ts") or 0)
+        if (now - ts) < _ACT_TTL_SEC and isinstance(j.get("data"), dict):
+            _RUN_ACT.update(ts=ts, data=j["data"])
+            return dict(j["data"])
+    except Exception:
+        pass
+
+    # 3) real call
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or cfg_root.get("Trakt") or {})
+    hdr = trakt_headers(trakt_cfg)
+    r = _trakt_get(TRAKT_LAST_ACTIVITIES, headers=hdr, params=None, use_etag_key="last_activities", timeout=30)
+    data = _json_or_empty_dict(r)
+
+    flat: Dict[str, Any] = {}
+    # Known keys: all, movies, episodes, shows, seasons, lists, comments, watchlist, recommendations, account, lists, ratings, history
+    def _copy_ts(d: Dict[str, Any], root: str) -> None:
+        sub = data.get(root) or {}
+        if isinstance(sub, dict):
+            for k, v in sub.items():
+                if isinstance(v, str):
+                    flat[f"{root}.{k}"] = v
+        # Also store top-level updated_at if exists
+        if isinstance(data.get(root), str):
+            flat[root] = data[root]
+
+    for key in ("watchlist", "ratings", "history", "movies", "shows", "episodes", "lists"):
+        _copy_ts(flat, key)
+
+    # Persist both caches
+    _RUN_ACT.update(ts=now, data=flat)
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps({"ts": now, "data": flat}, ensure_ascii=False), "utf-8")
+    except Exception:
+        pass
+
+    return flat
+
+
+# -----------------------------------------------------------------------------
+# Shapes & helpers
+# -----------------------------------------------------------------------------
+
+def canonical_key(kind: str, node: Mapping[str, Any]) -> str:
+    """
+    Produce a deterministic key based on IDs, falling back to title/year/ids.
+    """
+    ids = dict(node.get("ids") or {})
+    for k in _ID_KEYS:
+        v = ids.get(k)
+        if v:
+            return f"{k}:{v}".lower()
+    t = (node.get("title") or "").strip().lower()
+    y = node.get("year") or ""
+    return f"{kind}|title:{t}|year:{y}"
+
+
+def minimal_node(kind: str, node: Mapping[str, Any]) -> Dict[str, Any]:
+    ids = dict(node.get("ids") or {})
+    return {
+        "type": kind,
+        "title": node.get("title"),
+        "year": node.get("year"),
+        "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}
+    }
+
+
+def _flatten_watchlist(arr: List[dict], kind: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
-    if isinstance(data.get("watchlist"), dict) and data["watchlist"].get("updated_at"):
-        out["watchlist"] = data["watchlist"]["updated_at"]
-    if isinstance(data.get("lists"), dict) and data["lists"].get("updated_at"):
-        out["lists"] = data["lists"]["updated_at"]
-    if isinstance(data.get("ratings"), dict) and data["ratings"].get("updated_at"):
-        out["ratings"] = data["ratings"]["updated_at"]
-    # Optional hints for history
-    for k in ("movies", "episodes", "shows"):
-        sec = data.get(k)
-        if isinstance(sec, dict) and sec.get("watched_at"):
-            out[f"history.{k}"] = sec["watched_at"]
-
-    _RUN_ACT["ts"] = now
-    _RUN_ACT["data"] = dict(out)
+    for it in arr or []:
+        node = it.get(kind) or {}
+        key = canonical_key(kind, node)
+        out[key] = minimal_node(kind, node)
     return out
 
-# ---- Watchlist ---------------------------------------------------------------
+
+def _flatten_ratings(arr: List[dict], kind: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for it in arr or []:
+        node = it.get(kind) or {}
+        key = canonical_key(kind, node)
+        rating = None
+        # Trakt rating can be under 'rating'
+        if isinstance(it.get("rating"), (int, float)):
+            rating = int(it.get("rating"))
+        row = minimal_node(kind, node)
+        row["rating"] = rating
+        out[key] = row
+    return out
+
+
+def _flatten_history(arr: List[dict], kind: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for it in arr or []:
+        node = it.get(kind) or {}
+        key = canonical_key(kind, node)
+        row = minimal_node(kind, node)
+        row["watched"] = True
+        out[key] = row
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Provider protocol
+# -----------------------------------------------------------------------------
+
+class InventoryOps(Protocol):
+    def name(self) -> str: ...
+    def label(self) -> str: ...
+    def features(self) -> Mapping[str, bool]: ...
+    def capabilities(self) -> Mapping[str, Any]: ...
+    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]: ...
+    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
+    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
+
+
+# -----------------------------------------------------------------------------
+# Indexers with guards + ETag + shadows
+# -----------------------------------------------------------------------------
+
 def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    hdr = _headers(cfg_root)
-    params = {"extended": "full"}
+    """
+    Build a Trakt watchlist snapshot with minimal API cost.
+    - If activities show no movement since last cursor, return last shadow.
+    - Otherwise GET with ETag; if 304 → use shadow; if 200 → refresh shadow.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
 
-    def _get(url: str) -> List[dict]:
-        try:
-            r = _trakt_get(url, headers=hdr, params=params, timeout=45)
-            if not r or not r.ok:
-                return []
-            data = r.json() or []
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
+    acts = _activities(cfg_root)
+    # Cursor: last seen watchlist.updated_at
+    cursors = _cursor_store_load()
+    last_cur = str(cursors.get("watchlist") or "")
+    act_updated = str(acts.get("watchlist.updated_at") or acts.get("watchlist") or "")
 
-    movies = _get(TRAKT_USERS_WATCHLIST_MOV)
-    shows  = _get(TRAKT_USERS_WATCHLIST_SHOW)
+    shadow = _watchlist_shadow_load()
+    items = dict(shadow.get("items") or {})
 
-    idx: Dict[str, Dict[str, Any]] = {}
-    for kind, arr in (("movie", movies), ("show", shows)):
-        for it in arr:
-            node = it.get(kind) or {}
-            ids = _ids_from_trakt_node(node)
-            key = None
-            for k in ("trakt", "imdb", "tmdb", "tvdb"):
-                if ids.get(k):
-                    key = f"{k}:{ids[k]}".lower(); break
-            if not key:
-                t = str(node.get("title") or "").strip().lower(); y = node.get("year") or ""
-                key = f"{kind}|title:{t}|year:{y}"
-            idx[key] = {"type": kind, "title": node.get("title"), "year": node.get("year"), "ids": ids}
-    return idx
+    # Guard: if activities did not move, keep shadow
+    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur):
+        return items
+
+    # Fetch with ETag per endpoint and combine
+    m = _trakt_get(TRAKT_WATCHLIST_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="wl.movies", timeout=45)
+    s = _trakt_get(TRAKT_WATCHLIST_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="wl.shows",  timeout=45)
+
+    mov = _json_or_empty_list(m)
+    sho = _json_or_empty_list(s)
+
+    # If both were 304 or empty but we have a shadow, keep it
+    if (m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items:
+        # no change
+        pass
+    else:
+        # Rebuild from fresh pulls (if any returned 200)
+        got_any = False
+        out: Dict[str, Any] = {}
+        if mov:
+            out.update(_flatten_watchlist(mov, "movie"))
+            got_any = True
+        if sho:
+            out.update(_flatten_watchlist(sho, "show"))
+            got_any = True
+        if got_any:
+            items = out
+            _watchlist_shadow_save(items)
+
+    # Advance cursor to activities point (server-side truth) if present
+    if act_updated:
+        cursors["watchlist"] = act_updated
+        _cursor_store_save(cursors)
+
+    return items
+
+
+def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a Trakt ratings snapshot.
+    Use activities guard + ETag + shadow.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
+
+    acts = _activities(cfg_root)
+    cursors = _cursor_store_load()
+    last_cur = str(cursors.get("ratings") or "")
+    act_updated = str(acts.get("ratings.updated_at") or acts.get("ratings") or "")
+
+    shadow = _ratings_shadow_load()
+    items = dict(shadow.get("items") or {})
+
+    # Guard: if nothing moved since last cursor, keep shadow
+    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur):
+        return items
+
+    m = _trakt_get(TRAKT_RATINGS_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="rt.movies", timeout=45)
+    s = _trakt_get(TRAKT_RATINGS_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="rt.shows",  timeout=45)
+
+    mov = _json_or_empty_list(m)
+    sho = _json_or_empty_list(s)
+
+    if (m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items:
+        pass
+    else:
+        got_any = False
+        out: Dict[str, Any] = {}
+        if mov:
+            out.update(_flatten_ratings(mov, "movie")); got_any = True
+        if sho:
+            out.update(_flatten_ratings(sho, "show"));  got_any = True
+        if got_any:
+            items = out
+            _ratings_shadow_save(items)
+
+    if act_updated:
+        cursors["ratings"] = act_updated
+        _cursor_store_save(cursors)
+
+    return items
+def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a Trakt history snapshot since last cursor (start_at).
+    This one benefits less from ETag, but we still guard with activities.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
+
+    acts = _activities(cfg_root)
+    cursors = _cursor_store_load()
+    last_cur = str(cursors.get("history") or "")
+    act_updated = str(acts.get("history.updated_at") or acts.get("history") or "")
+
+    params: Dict[str, Any] = {}
+    if last_cur:
+        params["start_at"] = last_cur
+
+    r_mov = _trakt_get(TRAKT_HISTORY_GET_MOV, headers=hdr, params=params or None, use_etag_key=None, timeout=45)
+    r_ep  = _trakt_get(TRAKT_HISTORY_GET_EP,  headers=hdr, params=params or None, use_etag_key=None, timeout=45)
+
+    mov = _json_or_empty_list(r_mov)
+    eps = _json_or_empty_list(r_ep)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    if mov:
+        out.update(_flatten_history(mov, "movie"))
+    if eps:
+        out.update(_flatten_history(eps, "episode"))
+
+    # Advance cursor to activities time (server view) if available; else "now"
+    new_cursor = act_updated or ts_to_iso(int(time.time()))
+    if new_cursor:
+        cursors["history"] = new_cursor
+        _cursor_store_save(cursors)
+
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Mutations (add/remove ratings/history, add/remove watchlist)
+# -----------------------------------------------------------------------------
 
 def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    # --------------- GMT suppression for watchlist adds ---------------
-    items_list = list(items)
-    store_gmt = _gmt_store_from_cfg(cfg_root)
-    if store_gmt and items_list:
-        op_add, _op_neg = _gmt_ops_for_feature("watchlist")
-        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="watchlist", write_op=op_add)]
+    """
+    Trakt watchlist add goes through /sync/watchlist (POST by type).
+    We accept mixed items and split into movies/shows.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
 
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}}
-        if entry["ids"]:
-            payload["movies" if kind == "movie" else "shows"].append(entry)
-    payload = {k: v for k, v in payload.items() if v}
+    movies: List[Dict[str, Any]] = []
+    shows:  List[Dict[str, Any]] = []
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        typ = (it.get("type") or "movie").lower()
+        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        if not entry["ids"]:
+            continue
+        if typ == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
+
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["shows"]  = shows
     if not payload:
         return 0
-    r = _trakt_post(TRAKT_SYNC_WATCHLIST, headers=_headers(cfg_root), json_payload=payload, timeout=45)
+
+    # Trakt watchlist add/remove uses /sync/watchlist and /sync/watchlist/remove, but the
+    # v2 combined endpoint is typically /sync/watchlist.
+    url = f"{TRAKT_BASE}/sync/watchlist"
+    r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("watchlist", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # Bust ETags for watchlist and advance cursor to "now" (activities will shortly reflect)
+        et = _load_etags()
+        changed = False
+        for k in ("wl.movies", "wl.shows"):
+            if k in et:
+                et.pop(k, None)
+                changed = True
+        if changed:
+            _save_etags(et)
+
+        cursors = _cursor_store_load()
+        cursors["watchlist"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
+
+        # Refresh local shadow best-effort (append-only)
+        sh = _watchlist_shadow_load()
+        m = dict(sh.get("items") or {})
+        for it in items or []:
+            typ = (it.get("type") or "movie").lower()
+            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
+            key = canonical_key(typ, node)
+            m[key] = {
+                "type": typ,
+                "title": node["title"],
+                "year": node["year"],
+                "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}
+            }
+        _watchlist_shadow_save(m)
         return sum(len(v) for v in payload.values())
     return 0
+
 
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    items_list = list(items)
+    """
+    Remove items from Trakt watchlist.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
 
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}}
-        if entry["ids"]:
-            payload["movies" if kind == "movie" else "shows"].append(entry)
-    payload = {k: v for k, v in payload.items() if v}
+    movies: List[Dict[str, Any]] = []
+    shows:  List[Dict[str, Any]] = []
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        typ = (it.get("type") or "movie").lower()
+        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        if not entry["ids"]:
+            continue
+        if typ == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
+
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["shows"]  = shows
     if not payload:
         return 0
-    r = _trakt_post(TRAKT_SYNC_WATCHLIST_REMOVE, headers=_headers(cfg_root), json_payload=payload, timeout=45)
+
+    url = f"{TRAKT_BASE}/sync/watchlist/remove"
+    r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("watchlist", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        # --------------- GMT negative record for removals ---------------
-        store_gmt = _gmt_store_from_cfg(cfg_root)
-        if store_gmt:
-            for it in items_list:
-                _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="TRAKT")
+        # Bust ETags for watchlist and advance cursor
+        et = _load_etags()
+        changed = False
+        for k in ("wl.movies", "wl.shows"):
+            if k in et:
+                et.pop(k, None); changed = True
+        if changed:
+            _save_etags(et)
+
+        cursors = _cursor_store_load()
+        cursors["watchlist"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
+
+        # Update shadow: remove keys
+        sh = _watchlist_shadow_load()
+        m = dict(sh.get("items") or {})
+        for it in items or []:
+            typ = (it.get("type") or "movie").lower()
+            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
+            key = canonical_key(typ, node)
+            m.pop(key, None)
+        _watchlist_shadow_save(m)
         return sum(len(v) for v in payload.values())
     return 0
 
-# ---- Ratings -----------------------------------------------------------------
-def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    hdr = _headers(cfg_root)
-    params = {"extended": "full"}
-
-    def _get(url: str) -> List[dict]:
-        try:
-            r = _trakt_get(url, headers=hdr, params=params, timeout=45)
-            if not r or not r.ok:
-                return []
-            data = r.json() or []
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
-    movies = _get(f"{TRAKT_SYNC_RATINGS}/movies")
-    shows  = _get(f"{TRAKT_SYNC_RATINGS}/shows")
-
-    idx: Dict[str, Dict[str, Any]] = {}
-    for kind, arr in (("movie", movies), ("show", shows)):
-        for it in arr:
-            node = it.get(kind) or {}
-            ids = _ids_from_trakt_node(node)
-            rating = it.get("rating")
-            key = None
-            for k in ("trakt", "imdb", "tmdb", "tvdb"):
-                if ids.get(k):
-                    key = f"{k}:{ids[k]}".lower(); break
-            if not key:
-                t = str(node.get("title") or "").strip().lower(); y = node.get("year") or ""
-                key = f"{kind}|title:{t}|year:{y}"
-            idx[key] = {"type": kind, "title": node.get("title"), "year": node.get("year"), "ids": ids, "rating": rating}
-    return idx
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    # --------------- GMT suppression for rating sets ---------------
-    items_list = list(items)
-    store_gmt = _gmt_store_from_cfg(cfg_root)
-    if store_gmt and items_list:
-        op_add, _op_neg = _gmt_ops_for_feature("ratings")
-        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="ratings", write_op=op_add)]
+    """
+    Set ratings on Trakt (/sync/ratings).
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
 
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    movies: List[Dict[str, Any]] = []
+    shows:  List[Dict[str, Any]] = []
 
-    def _coerce(v):
-        try:
-            n = int(round(float(v)))
-            return min(10, max(1, n))
-        except Exception:
-            return None
-
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        rating = _coerce(it.get("rating"))
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        rating = it.get("rating")
         if rating is None:
             continue
-        entry_ids = {k: ids.get(k) for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}
-        if not entry_ids:
+        entry = {"rating": int(rating), "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        if not entry["ids"]:
             continue
+        if (it.get("type") or "movie") == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
 
-        kind = (it.get("type") or "movie").lower()
-        entry = {
-            "rating": rating,
-            "rated_at": it.get("rated_at") or now_iso,
-            "ids": entry_ids,
-        }
-        (payload["movies"] if kind == "movie" else payload["shows"]).append(entry)
-
-    payload = {k: v for k, v in payload.items() if v}
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["shows"]  = shows
     if not payload:
         return 0
 
-    r = _trakt_post(TRAKT_SYNC_RATINGS, headers=_headers(cfg_root), json_payload=payload, timeout=45)
+    r = _trakt_post(TRAKT_RATINGS_POST, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("ratings", now_iso)
+        # Bust ETags (ratings lists) and advance cursor
+        et = _load_etags()
+        changed = False
+        for k in ("rt.movies", "rt.shows"):
+            if k in et:
+                et.pop(k, None); changed = True
+        if changed:
+            _save_etags(et)
+
+        cursors = _cursor_store_load()
+        cursors["ratings"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
+
+        # Update shadow (best-effort)
+        sh = _ratings_shadow_load()
+        m = dict(sh.get("items") or {})
+        for it in items or []:
+            typ = (it.get("type") or "movie").lower()
+            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
+            key = canonical_key(typ, node)
+            row = m.get(key) or {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}}
+            if it.get("rating") is not None:
+                row["rating"] = int(it.get("rating"))
+            m[key] = row
+        _ratings_shadow_save(m)
+
         return sum(len(v) for v in payload.values())
     return 0
 
 
 def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    items_list = list(items)
-
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
-        if entry["ids"]:
-            payload["movies" if kind == "movie" else "shows"].append(entry)
-    payload = {k: v for k, v in payload.items() if v}
-    if not payload:
-        return 0
-    r = _trakt_post(TRAKT_SYNC_RATINGS_REMOVE, headers=_headers(cfg_root), json_payload=payload, timeout=45)
-    if r and r.ok:
-        _CursorStore(cfg_root).set("ratings", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        # --------------- GMT negative record for rating removals ---------------
-        store_gmt = _gmt_store_from_cfg(cfg_root)
-        if store_gmt:
-            for it in items_list:
-                _gmt_record(store=store_gmt, item=it, feature="ratings", op="unrate", origin="TRAKT")
-        return sum(len(v) for v in payload.values())
-    return 0
-
-# ---- History (watched / unwatch) --------------------------------------------
-def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    hdr = _headers(cfg_root)
-    store = _CursorStore(cfg_root)
-    acts = _activities(cfg_root)
-    start_at = store.get("history") or acts.get("history") or acts.get("history.movies") or acts.get("history.episodes")
-
-    params = {"extended": "full"}
-    if start_at:
-        params["start_at"] = start_at
-
-    def _get(url: str) -> List[dict]:
-        try:
-            r = _trakt_get(url, headers=hdr, params=params, timeout=45)
-            if not r or not r.ok:
-                return []
-            data = r.json() or []
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
-    movies   = _get(TRAKT_SYNC_HISTORY_GET_MOV)
-    episodes = _get(TRAKT_SYNC_HISTORY_GET_EP)
-
-    idx: Dict[str, Dict[str, Any]] = {}
-    for it in movies:
-        node = it.get("movie") or {}
-        ids = _ids_from_trakt_node(node)
-        key = None
-        for k in ("trakt","imdb","tmdb","tvdb"):
-            if ids.get(k):
-                key = f"{k}:{ids[k]}".lower(); break
-        if not key:
-            t = str(node.get("title") or "").strip().lower(); y = node.get("year") or ""
-            key = f"movie|title:{t}|year:{y}"
-        idx[key] = {"type": "movie", "title": node.get("title"), "year": node.get("year"), "ids": ids, "watched": True}
-
-    # Roll up episode history to show level (best-effort)
-    for it in episodes:
-        show = (it.get("show") or {})
-        sids = _ids_from_trakt_node(show)
-        skey = None
-        for k in ("trakt","imdb","tmdb","tvdb"):
-            if sids.get(k):
-                skey = f"{k}:{sids[k]}".lower(); break
-        if skey and skey not in idx:
-            idx[skey] = {"type": "show", "title": show.get("title"), "year": show.get("year"), "ids": sids, "watched": True}
-
-    return idx
-
-def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    # --------------- GMT suppression for scrobbles ---------------
-    items_list = list(items)
-    store_gmt = _gmt_store_from_cfg(cfg_root)
-    if store_gmt and items_list:
-        op_add, _op_neg = _gmt_ops_for_feature("history")
-        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="history", write_op=op_add)]
-
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    movies: List[Dict[str, Any]] = []
-    shows:  List[Dict[str, Any]] = []
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or "movie").lower()
-        if kind == "movie":
-            movies.append({"watched_at": it.get("watched_at") or now_iso,
-                           "ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}})
-        else:
-            shows.append({"watched_at": it.get("watched_at") or now_iso,
-                          "ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}})
-    payload = {k: v for k, v in {"movies": movies, "shows": shows}.items() if v}
-    if not payload:
-        return 0
-    r = _trakt_post(TRAKT_SYNC_HISTORY, headers=_headers(cfg_root), json_payload=payload, timeout=45)
-    if r and r.ok:
-        _CursorStore(cfg_root).set("history", now_iso)
-        return sum(len(v) for v in payload.values())
-    return 0
-
-def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    items_list = list(items)
+    """
+    Remove ratings on Trakt.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
 
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        (movies if kind == "movie" else shows).append(entry)
-    payload = {k: v for k, v in {"movies": movies, "shows": shows}.items() if v}
+        if (it.get("type") or "movie") == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
+
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["shows"]  = shows
     if not payload:
         return 0
-    r = _trakt_post(TRAKT_SYNC_HISTORY + "/remove", headers=_headers(cfg_root), json_payload=payload, timeout=45)
+
+    r = _trakt_post(TRAKT_RATINGS_REMOVE, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("history", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        # --------------- GMT negative record for unscrobbles ---------------
-        store_gmt = _gmt_store_from_cfg(cfg_root)
-        if store_gmt:
-            for it in items_list:
-                _gmt_record(store=store_gmt, item=it, feature="history", op="unscrobble", origin="TRAKT")
+        et = _load_etags()
+        changed = False
+        for k in ("rt.movies", "rt.shows"):
+            if k in et:
+                et.pop(k, None); changed = True
+        if changed:
+            _save_etags(et)
+
+        cursors = _cursor_store_load()
+        cursors["ratings"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
+
+        # Update shadow (best-effort)
+        sh = _ratings_shadow_load()
+        m = dict(sh.get("items") or {})
+        for it in items or []:
+            typ = (it.get("type") or "movie").lower()
+            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
+            key = canonical_key(typ, node)
+            row = m.get(key)
+            if row:
+                row.pop("rating", None)
+                m[key] = row
+        _ratings_shadow_save(m)
+
         return sum(len(v) for v in payload.values())
     return 0
 
-# ---- Playlists (custom lists) ------------------------------------------------
-def _lists_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    hdr = _headers(cfg_root)
-    def _get(url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Any]:
-        try:
-            r = _trakt_get(url, headers=hdr, params=params or {}, timeout=45)
-            if not r or not r.ok:
-                return None
-            return r.json()
-        except Exception:
-            return None
 
-    lists = _get(TRAKT_USERS_LISTS) or []
-    idx: Dict[str, Dict[str, Any]] = {}
-    for lst in lists:
-        slug = (lst.get("ids") or {}).get("slug") or lst.get("slug")
-        if not slug:
+def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    """
+    Add history entries (scrobbles) to Trakt.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
+
+    movies: List[Dict[str, Any]] = []
+    shows:  List[Dict[str, Any]] = []
+    now_iso = ts_to_iso(int(time.time()))
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        entry = {"watched_at": it.get("watched_at") or now_iso, "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        if not entry["ids"]:
             continue
-        title = lst.get("name") or lst.get("title")
-        key = f"playlist:{slug}".lower()
-        idx[key] = {"type": "playlist", "title": title, "ids": {"slug": slug}}
-    return idx
+        if (it.get("type") or "movie") == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
 
-def _list_add_items(cfg_root: Mapping[str, Any], slug: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None) -> int:
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or mtype_hint or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
-        if entry["ids"]:
-            payload["movies" if kind == "movie" else "shows"].append(entry)
-    payload = {k: v for k, v in payload.items() if v}
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["episodes"] = shows   # Trakt expects episodes under "episodes"
     if not payload:
         return 0
-    r = _trakt_post(TRAKT_USERS_LIST_ITEMS_ADD(slug), headers=_headers(cfg_root), json_payload=payload, timeout=45)
+
+    r = _trakt_post(TRAKT_HISTORY_BASE, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("playlists", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        cursors = _cursor_store_load()
+        cursors["history"] = now_iso
+        _cursor_store_save(cursors)
         return sum(len(v) for v in payload.values())
     return 0
 
-def _list_remove_items(cfg_root: Mapping[str, Any], slug: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None) -> int:
-    payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
-        ids = dict((it.get("ids") or {}))
-        kind = (it.get("type") or mtype_hint or "movie").lower()
-        entry = {"ids": {k: ids.get(k) for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k)}}
-        if entry["ids"]:
-            payload["movies" if kind == "movie" else "shows"].append(entry)
-    payload = {k: v for k, v in payload.items() if v}
+
+def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    """
+    Remove history entries from Trakt.
+    """
+    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
+    hdr = trakt_headers(trakt_cfg)
+
+    movies: List[Dict[str, Any]] = []
+    shows:  List[Dict[str, Any]] = []
+    for it in items or []:
+        ids = dict(it.get("ids") or {})
+        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        if not entry["ids"]:
+            continue
+        if (it.get("type") or "movie") == "movie":
+            movies.append(entry)
+        else:
+            shows.append(entry)
+
+    payload = {}
+    if movies: payload["movies"] = movies
+    if shows:  payload["episodes"] = shows
     if not payload:
         return 0
-    r = _trakt_post(TRAKT_USERS_LIST_ITEMS_RM(slug), headers=_headers(cfg_root), json_payload=payload, timeout=45)
+
+    r = _trakt_post(TRAKT_HISTORY_REMOVE, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("playlists", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        cursors = _cursor_store_load()
+        cursors["history"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
         return sum(len(v) for v in payload.values())
     return 0
 
-# ---- OPS implementation ------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# OPS adapter
+# -----------------------------------------------------------------------------
+
 class _TraktOPS:
     def name(self) -> str: return "TRAKT"
     def label(self) -> str: return "Trakt"
     def features(self) -> Mapping[str, bool]:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+        return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
     def capabilities(self) -> Mapping[str, Any]:
         return {"bidirectional": True}
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         if feature == "watchlist":
-            return _watchlist_index(cfg)
+            res = _watchlist_index(cfg)
+            try:
+                if (cfg.get("runtime") or {}).get("debug"):
+                    host_log("TRAKT.calls", {"feature": "watchlist", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
+            except Exception:
+                pass
+            return res
         if feature == "ratings":
-            return _ratings_index(cfg)
+            res = _ratings_index(cfg)
+            try:
+                if (cfg.get("runtime") or {}).get("debug"):
+                    host_log("TRAKT.calls", {"feature": "ratings", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
+            except Exception:
+                pass
+            return res
         if feature == "history":
-            return _history_index(cfg)
+            res = _history_index(cfg)
+            try:
+                if (cfg.get("runtime") or {}).get("debug"):
+                    host_log("TRAKT.calls", {"feature": "history", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
+            except Exception:
+                pass
+            return res
         if feature == "playlists":
-            return _lists_index(cfg)
+            return {}
         return {}
 
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
+    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
         items_list = list(items)
         if dry_run:
             return {"ok": True, "count": len(items_list), "dry_run": True}
@@ -649,16 +1047,10 @@ class _TraktOPS:
             cnt = _history_add(cfg, items_list)
             return {"ok": True, "count": cnt}
         if feature == "playlists":
-            applied = 0
-            for pl in items_list:
-                slug = (pl.get("playlist") or pl.get("slug") or "").strip()
-                if not slug:
-                    continue
-                applied += _list_add_items(cfg, slug, pl.get("items") or [], mtype_hint=pl.get("type"))
-            return {"ok": True, "count": applied}
+            return {"ok": False, "count": 0, "error": "Trakt playlists API not supported"}
         return {"ok": True, "count": 0}
 
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
+    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
         items_list = list(items)
         if dry_run:
             return {"ok": True, "count": len(items_list), "dry_run": True}
@@ -672,18 +1064,17 @@ class _TraktOPS:
             cnt = _history_remove(cfg, items_list)
             return {"ok": True, "count": cnt}
         if feature == "playlists":
-            removed = 0
-            for pl in items_list:
-                slug = (pl.get("playlist") or pl.get("slug") or "").strip()
-                if not slug:
-                    continue
-                removed += _list_remove_items(cfg, slug, pl.get("items") or [], mtype_hint=pl.get("type"))
-            return {"ok": True, "count": removed}
+            return {"ok": False, "count": 0, "error": "Trakt playlists API not supported"}
         return {"ok": True, "count": 0}
+
 
 OPS: InventoryOps = _TraktOPS()
 
-# ---- Module manifest for /api/sync/providers --------------------------------
+
+# -----------------------------------------------------------------------------
+# Module manifest
+# -----------------------------------------------------------------------------
+
 try:
     from providers.sync._base import SyncModule, ModuleInfo, ModuleCapabilities  # type: ignore
 except Exception:  # pragma: no cover
@@ -695,7 +1086,7 @@ except Exception:  # pragma: no cover
         supports_timeout: bool = True
         status_stream: bool = True
         bidirectional: bool = True
-        config_schema: dict = None  # type: ignore
+        config_schema: dict | None = None
     @dataclass
     class ModuleInfo:
         name: str
@@ -704,11 +1095,12 @@ except Exception:  # pragma: no cover
         vendor: str
         capabilities: ModuleCapabilities
 
+
 class TRAKTModule(SyncModule):
     info = ModuleInfo(
         name="TRAKT",
         version=__VERSION__,
-        description="Reads/writes Trakt watchlist, ratings, history, and custom lists via Trakt API v2.",
+        description="Trakt connector with activities guards, ETag caching under /config, and low-call indexing.",
         vendor="community",
         capabilities=ModuleCapabilities(
             supports_dry_run=True,
@@ -723,48 +1115,24 @@ class TRAKTModule(SyncModule):
                         "type": "object",
                         "properties": {
                             "client_id": {"type": "string", "minLength": 1},
-                            "client_secret": {"type": "string", "minLength": 1}
+                            "access_token": {"type": "string", "minLength": 1},
                         },
-                        "required": ["client_id"]
-                    },
-                    "auth": {
-                        "type": "object",
-                        "properties": {
-                            "trakt": {
-                                "type": "object",
-                                "properties": {
-                                    "access_token": {"type": "string", "minLength": 1},
-                                    "refresh_token": {"type": "string"},
-                                    "expires_at": {"type": "integer"},
-                                    "scope": {"type": "string"},
-                                    "token_type": {"type": "string"}
-                                },
-                                "required": ["access_token"]
-                            }
-                        }
-                    },
-                    "sync": {
-                        "type": "object",
-                        "properties": {
-                            "gmt_enable": {"type": "boolean"},
-                            "gmt_quarantine_days": {"type": "integer", "minimum": 1},
-                        },
+                        "required": ["client_id", "access_token"],
                     },
                     "runtime": {
                         "type": "object",
-                        "properties": {
-                            "state_dir": {"type": "string"}
-                        }
-                    }
+                        "properties": {"debug": {"type": "boolean"}},
+                    },
                 },
-                "required": ["trakt", "auth"]
+                "required": ["trakt"],
             },
         ),
     )
 
     @staticmethod
     def supported_features() -> dict:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+        return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+
 
 def get_manifest() -> dict:
     return {

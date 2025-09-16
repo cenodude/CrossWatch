@@ -328,7 +328,7 @@ def get_index_html() -> str:
         <div class="sep"></div>
         <div class="sub" role="note">
           <strong>Disclaimer:</strong> This is open-source software provided “as is,” without any warranties or guarantees. Use at your own risk.
-          This project is not affiliated with, sponsored by, or endorsed by Plex, Inc., SIMKL, or The Movie Database (TMDb).
+          This project is not affiliated with, sponsored by, or endorsed by Plex, Inc., TRAKT, SIMKL, or The Movie Database (TMDb).
           All product names, logos, and brands are property of their respective owners.
         </div>
       </div>
@@ -375,26 +375,64 @@ def get_index_html() -> str:
 
 <script>
 (function(){
-  const fab  = document.getElementById('save-fab');
-  const frost= document.getElementById('save-frost');
-  const settings = document.getElementById('page-settings');
+  const fab   = document.getElementById('save-fab');
+  const frost = document.getElementById('save-frost');
 
-  function visibleOnSettings(){ return settings && !settings.classList.contains('hidden'); }
+  // Always query fresh in case the node was replaced
+  function getSettingsEl(){ return document.getElementById('page-settings'); }
+
+  function visibleOnSettings(){
+    const s = getSettingsEl();
+    // Extra guard: also check the tab state
+    const tabActive = !!document.getElementById('tab-settings')?.classList.contains('active');
+    return !!(s && !s.classList.contains('hidden') && tabActive);
+  }
+
   function updateFooter(){
     const show = visibleOnSettings();
-    fab.classList.toggle('hidden', !show);
-    frost.classList.toggle('hidden', !show);
+    fab?.classList.toggle('hidden', !show);
+    frost?.classList.toggle('hidden', !show);
   }
 
-  if (settings){
-    new MutationObserver(updateFooter).observe(settings,{attributes:true,attributeFilter:['class']});
+  // (Re)attach a MutationObserver to the current #page-settings
+  let mo = null;
+  function bindObserver(){
+    try { mo?.disconnect(); } catch {}
+    const s = getSettingsEl();
+    if (!s) return;
+    mo = new MutationObserver(updateFooter);
+    mo.observe(s, { attributes: true, attributeFilter: ['class'] });
   }
-  document.addEventListener('DOMContentLoaded', updateFooter, { once:true });
-  document.addEventListener('click', (e) => {
-    const t=e.target; if(t && t.id && t.id.startsWith('tab-')) setTimeout(updateFooter,0);
-  });
+
+  // Boot
+  document.addEventListener('DOMContentLoaded', () => {
+    bindObserver();
+    updateFooter();
+  }, { once:true });
+
+  // When tabs change via app events (not only clicks)
+  document.addEventListener('tab-changed', updateFooter);
+
+  // Fallback for hash navigation / programmatic DOM swaps
+  window.addEventListener('hashchange', updateFooter);
+  window.addEventListener('sched-banner-ready', updateFooter);
+
+  // If something replaces #page-settings later, try to rebind
+  const rebinder = setInterval(() => {
+    const s = getSettingsEl();
+    if (!s) return;               // wait until exists
+    if (mo && mo._target === s) return;
+    // Tag current target so we don't rebind too often
+    if (mo) mo._target = s;
+    bindObserver();
+    updateFooter();
+  }, 1000);
+
+  // Optional: stop the rebinder when page unloads
+  window.addEventListener('beforeunload', () => clearInterval(rebinder));
 })();
 </script>
+
 
 <script>
 (function(){

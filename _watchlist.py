@@ -361,14 +361,14 @@ def _delete_on_simkl_batch(items: List[Dict[str, Any]], simkl_cfg: Dict[str, Any
     if not token or not client_id:
         raise RuntimeError("SIMKL not configured")
 
+    # Build compact payload once
     payload = {"movies": [], "shows": []}
     for it in items:
         ids = _ids_from_key_or_item(it["key"], it["item"])
         entry_ids = _simkl_filter_ids(ids)
         if not entry_ids:
             continue
-        target = payload["movies"] if it["type"] == "movie" else payload["shows"]
-        target.append({"ids": entry_ids})
+        (payload["movies"] if it["type"] == "movie" else payload["shows"]).append({"ids": entry_ids})
 
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
@@ -376,28 +376,18 @@ def _delete_on_simkl_batch(items: List[Dict[str, Any]], simkl_cfg: Dict[str, Any
 
     hdr = _simkl_headers(simkl_cfg)
 
-    resp = _post_simkl_delete(_SIMKL_HISTORY_REMOVE, hdr, payload)
-    if _simkl_deleted_count(resp) == 0:
-        resp2 = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, payload)
-        if _simkl_deleted_count(resp2) == 0:
-            reb = {}
-            if payload.get("movies"):
-                reb["shows"] = payload["movies"]
-            if payload.get("shows"):
-                reb["movies"] = payload["shows"]
-            if reb:
-                resp3 = _post_simkl_delete(_SIMKL_HISTORY_REMOVE, hdr, reb)
-                if _simkl_deleted_count(resp3) == 0:
-                    resp4 = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, reb)
-                    if _simkl_deleted_count(resp4) == 0:
-                        raise RuntimeError(
-                            f"SIMKL delete matched 0 items. Payload={payload} "
-                            f"Resp1={resp} Resp2={resp2} Reb={reb} Resp3={resp3} Resp4={resp4}"
-                        )
-            else:
-                raise RuntimeError(
-                    f"SIMKL delete matched 0 items (history+watchlist). Payload={payload} Resp1={resp} Resp2={resp2}"
-                )
+    # Try watchlist first (most common); fallback to history once — no re-balance
+    resp_wl = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, payload)
+    if _simkl_deleted_count(resp_wl) > 0:
+        return
+
+    resp_hist = _post_simkl_delete(_SIMKL_HISTORY_REMOVE, hdr, payload)
+    if _simkl_deleted_count(resp_hist) > 0:
+        return
+
+    # If both reported 0, fail clearly
+    raise RuntimeError(f"SIMKL delete matched 0 items. Payload={payload} WL={resp_wl} HIST={resp_hist}")
+
 
 # ---- TRAKT (batch) ----------------------------------------------------
 _TRAKT_REMOVE = "https://api.trakt.tv/sync/watchlist/remove"
@@ -446,112 +436,204 @@ def delete_watchlist_item(
     log=None,
     provider: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Delete a single watchlist item by key from one provider or ALL."""
     provider = (provider or "PLEX").upper()
     state = _load_state_dict(state_path)
+
+    def _log(level: str, msg: str):
+        if log:
+            try:
+                log(level, msg)
+            except Exception:
+                pass
+
+    def _present_any_prov() -> bool:
+        return any(_get_provider_items(state, p).get(key) for p in ("PLEX", "SIMKL", "TRAKT"))
+
+    # SIMKL delete without relying on a pre-populated SIMKL provider-state
+    def _delete_simkl_any():
+        item = _find_item_in_state(state, key) or {}
+        _delete_on_simkl_batch(
+            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
+            (cfg.get("simkl") or {}),
+        )
+        _del_key_from_provider_items(state, "SIMKL", key)
+
+    # TRAKT delete without relying on a pre-populated TRAKT provider-state
+    def _delete_trakt_any():
+        item = _find_item_in_state(state, key) or {}
+        _delete_on_trakt_batch(
+            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
+            (cfg.get("trakt") or {}),
+        )
+        _del_key_from_provider_items(state, "TRAKT", key)
 
     try:
         if provider == "PLEX":
             _delete_on_plex_single(key=key, state=state, cfg=cfg)
             _del_key_from_provider_items(state, "PLEX", key)
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
+
         elif provider == "SIMKL":
-            item = _find_item_in_state_for_provider(state, key, "SIMKL")
-            if not item:
-                raise RuntimeError("SIMKL delete: item not found in SIMKL state")
-            _delete_on_simkl_batch(
-                [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-                (cfg.get("simkl") or {})
-            )
-            _del_key_from_provider_items(state, "SIMKL", key)
+            _delete_simkl_any()
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
+
         elif provider == "TRAKT":
-            item = _find_item_in_state_for_provider(state, key, "TRAKT")
-            if not item:
-                raise RuntimeError("TRAKT delete: item not found in TRAKT state")
-            _delete_on_trakt_batch(
-                [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-                (cfg.get("trakt") or {})
-            )
-            _del_key_from_provider_items(state, "TRAKT", key)
+            _delete_trakt_any()
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
+
+        elif provider == "ALL":
+            details = {}
+
+            try:
+                _delete_on_plex_single(key=key, state=state, cfg=cfg)
+                _del_key_from_provider_items(state, "PLEX", key)
+                details["PLEX"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] PLEX delete failed: {e}")
+                details["PLEX"] = {"ok": False, "error": str(e)}
+
+            try:
+                _delete_simkl_any()
+                details["SIMKL"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] SIMKL delete failed: {e}")
+                details["SIMKL"] = {"ok": False, "error": str(e)}
+
+            try:
+                _delete_trakt_any()
+                details["TRAKT"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] TRAKT delete failed: {e}")
+                details["TRAKT"] = {"ok": False, "error": str(e)}
+
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+
+            _save_state_dict(state_path, state)
+            any_ok = any(v.get("ok") for v in details.values())
+            return {"ok": any_ok, "deleted": key, "provider": "ALL", "details": details}
+
         else:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        # Server-side hide (UI gebruikt eigen localStorage; dit is optioneel)
-        hide = _load_hide_set()
-        if key not in hide:
-            hide.add(key)
-            _save_hide_set(hide)
-
-        _save_state_dict(state_path, state)
-        return {"ok": True, "deleted": key, "provider": provider}
-
     except Exception as e:
-        if log:
-            try:
-                log("TRBL", f"[WATCHLIST] ERROR [{provider}]: {e}")
-            except Exception:
-                pass
+        _log("TRBL", f"[WATCHLIST] {provider} delete failed: {e}")
         return {"ok": False, "error": str(e), "provider": provider}
+
 
 # ======================================================================
 # Public: batch delete
 # ======================================================================
 
-def delete_watchlist_items(
-    keys: List[str],
-    provider: str,
+def delete_watchlist_item(
+    key: str,
     state_path: Path,
     cfg: Dict[str, Any],
+    log=None,
+    provider: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Delete a single watchlist item by key from one provider or ALL."""
+    provider = (provider or "PLEX").upper()
     state = _load_state_dict(state_path)
-    provider = (provider or "").upper()
-    if not provider:
-        return {"ok": False, "error": "missing provider"}
 
-    items: List[Dict[str, Any]] = []
-    missing: List[str] = []
+    def _log(level: str, msg: str):
+        if log:
+            try:
+                log(level, msg)
+            except Exception:
+                pass
+
+    def _present_any_prov() -> bool:
+        return any(_get_provider_items(state, p).get(key) for p in ("PLEX", "SIMKL", "TRAKT"))
+
+    def _delete_simkl_any():
+        item = _find_item_in_state(state, key) or {}
+        _delete_on_simkl_batch(
+            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
+            (cfg.get("simkl") or {}),
+        )
+        _del_key_from_provider_items(state, "SIMKL", key)
+
+    def _delete_trakt_any():
+        item = _find_item_in_state(state, key) or {}
+        _delete_on_trakt_batch(
+            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
+            (cfg.get("trakt") or {}),
+        )
+        _del_key_from_provider_items(state, "TRAKT", key)
 
     try:
         if provider == "PLEX":
-            for k in keys:
-                it = _find_item_in_state(state, k)
-                if it:
-                    items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
-                else:
-                    missing.append(k)
-            for it in items:
-                _delete_on_plex_single(it["key"], state, cfg)
-                _del_key_from_provider_items(state, "PLEX", it["key"])
+            _delete_on_plex_single(key=key, state=state, cfg=cfg)
+            _del_key_from_provider_items(state, "PLEX", key)
+
+            # Hide only if the item is gone from all providers.
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
 
         elif provider == "SIMKL":
-            for k in keys:
-                it = _find_item_in_state_for_provider(state, k, "SIMKL")
-                if it:
-                    items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
-                else:
-                    missing.append(k)
-            _delete_on_simkl_batch(items, (cfg.get("simkl") or {}))
-            for it in items:
-                _del_key_from_provider_items(state, "SIMKL", it["key"])
+            _delete_simkl_any()
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
 
         elif provider == "TRAKT":
-            for k in keys:
-                it = _find_item_in_state_for_provider(state, k, "TRAKT")
-                if it:
-                    items.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
-                else:
-                    missing.append(k)
-            _delete_on_trakt_batch(items, (cfg.get("trakt") or {}))
-            for it in items:
-                _del_key_from_provider_items(state, "TRAKT", it["key"])
+            _delete_trakt_any()
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
+
+        elif provider == "ALL":
+            details = {}
+
+            try:
+                _delete_on_plex_single(key=key, state=state, cfg=cfg)
+                _del_key_from_provider_items(state, "PLEX", key)
+                details["PLEX"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] PLEX delete failed: {e}")
+                details["PLEX"] = {"ok": False, "error": str(e)}
+
+            try:
+                _delete_simkl_any()
+                details["SIMKL"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] SIMKL delete failed: {e}")
+                details["SIMKL"] = {"ok": False, "error": str(e)}
+
+            try:
+                _delete_trakt_any()
+                details["TRAKT"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] TRAKT delete failed: {e}")
+                details["TRAKT"] = {"ok": False, "error": str(e)}
+
+            # Hide only if the item is fully gone after the fan-out.
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+
+            _save_state_dict(state_path, state)
+            any_ok = any(v.get("ok") for v in details.values())
+            return {"ok": any_ok, "deleted": key, "provider": "ALL", "details": details}
 
         else:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        hide = _load_hide_set()
-        hide |= {it["key"] for it in items}
-        _save_hide_set(hide)
-        _save_state_dict(state_path, state)
-
-        return {"ok": True, "deleted": [it["key"] for it in items], "missing": missing, "provider": provider}
-
     except Exception as e:
+        _log("TRBL", f"[WATCHLIST] {provider} delete failed: {e}")
         return {"ok": False, "error": str(e), "provider": provider}

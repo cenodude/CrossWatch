@@ -149,11 +149,54 @@
     return { count: list.length };
   }
 
+  //  getMetadataSummary()
   async function getMetadataSummary(){
-    const mans=(await fetchJSON("/api/metadata/providers"))||[];
-    let configured=0; for(const m of mans) configured += (m?.enabled===false)?0:1;
-    return { detected: mans.length, configured };
+    const [cfg, mansRaw] = await Promise.all([
+      fetchJSON("/api/config"),
+      fetchJSON("/api/metadata/providers")
+    ]);
+
+    const mans = Array.isArray(mansRaw) ? mansRaw : [];
+    const detected = mans.length;
+
+    // TMDB key can be real or masked as "••••••••"
+    const rawKey   = String(cfg?.tmdb?.api_key ?? "").trim();
+    const isMasked = rawKey.length > 0 && /^[•]+$/.test(rawKey);
+    const hasTmdbKey = rawKey.length > 0 || isMasked;
+
+    // Default: if manifests don't load at all, still count TMDB when key exists
+    let configured = hasTmdbKey ? 1 : 0;
+
+    if (detected > 0) {
+      configured = 0;
+      let hasTmdbProvider = false;
+
+      for (const m of mans) {
+        const id     = String(m?.id || m?.name || "").toLowerCase();
+        const isTmdb = id.includes("tmdb");
+        if (isTmdb) hasTmdbProvider = true;
+
+        // Treat TMDB as enabled if a key exists (ignore provider's enabled flag)
+        const enabled = isTmdb && hasTmdbKey ? true : (m?.enabled !== false);
+
+        // Derive readiness; then force TMDB ready if a key exists
+        let ready = (typeof m?.ready === "boolean") ? m.ready
+                : (typeof m?.ok    === "boolean") ? m.ok
+                : undefined;
+
+        if (isTmdb && hasTmdbKey) ready = true;
+
+        if (enabled && ready === true) configured++;
+      }
+
+      if (hasTmdbKey && !hasTmdbProvider) configured += 1;
+    }
+
+    return { detected: detected || (hasTmdbKey ? 1 : 0), configured };
   }
+
+
+
   async function getSchedulingSummary(){
     const cfg = await fetchJSON("/api/scheduling?t=" + Date.now());
     const st  = await fetchJSON("/api/scheduling/status?t=" + Date.now());
@@ -224,8 +267,19 @@
     body.appendChild(row("lock","Authentication Providers",
       `Detected providers: ${data.auth.detected}, Configured: ${data.auth.configured}`));
     body.appendChild(row("link","Synchronization Pairs",  `Pairs: ${data.pairs.count}`));
-    body.appendChild(row("image","Metadata Providers",
-      `Detected providers: ${data.meta.detected}, Configured: ${data.meta.configured}`));
+    if (data.meta.configured === 0) {
+      body.appendChild(row(
+        "image",
+        "Metadata Providers",
+        `You're missing out on some great stuff.<br><b>Configure a Metadata Provider</b> ✨`
+      ));
+    } else {
+      body.appendChild(row(
+        "image",
+        "Metadata Providers",
+        `Detected providers: ${data.meta.detected}, Configured: ${data.meta.configured}`
+      ));
+    }
     body.appendChild(row("schedule","Scheduling",
       data.sched.enabled ? `Enabled | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
     const mode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");

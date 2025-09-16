@@ -1807,26 +1807,27 @@ def api_watchlist_providers():
 @app.post("/api/watchlist/delete")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Payload: { "keys": ["imdb:tt123", ...], "provider": "PLEX"|"SIMKL"|"TRAKT" }
-    Returns aggregated result; never raises (no 500).
+    Payload: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT" }
+    Semantics:
+      - ok == True if at least one key deleted successfully (partial success allowed)
+      - partial == True if some keys failed
     """
     try:
         keys = payload.get("keys") or []
-        provider = (payload.get("provider") or "PLEX").upper()
+        provider = (payload.get("provider") or "ALL").upper()
 
         if not isinstance(keys, list) or not keys:
             return {"ok": False, "error": "keys must be a non-empty array"}
 
-        if provider not in ("PLEX", "SIMKL", "TRAKT"):
+        if provider not in ("ALL", "PLEX", "SIMKL", "TRAKT"):
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        # load config once
         try:
             cfg = load_config()
         except Exception as e:
             return {"ok": False, "error": f"failed to load config: {e}"}
 
-        state_file = STATE_PATH  # <-- fix
+        state_file = STATE_PATH
 
         results: List[Dict[str, Any]] = []
         ok_count = 0
@@ -1848,7 +1849,7 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
                 print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
                 results.append({"key": k, "ok": False, "error": str(e)})
 
-        # try to refresh stats after batch
+        # Best-effort stats refresh
         try:
             state = _load_state()
             STATS.refresh_from_state(state)
@@ -1856,7 +1857,8 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
             pass
 
         return {
-            "ok": ok_count == len(keys),
+            "ok": ok_count > 0,
+            "partial": ok_count != len(keys),
             "provider": provider,
             "deleted_ok": ok_count,
             "deleted_total": len(keys),
@@ -1896,7 +1898,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.7")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.8")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -3156,6 +3158,22 @@ def api_trbl_clear_cache() -> Dict[str, Any]:
     _append_log("TRBL", "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared cache folder.")
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
+def _clear_simkl_state_files() -> list[str]:
+    """Remove SIMKL on-disk cache/shadow files under /config/.cw_state."""
+    base = Path("/config/.cw_state")
+    targets = [
+        base / "simkl_http_cache.json",
+        base / "simkl_watchlist.shadow.json",
+        base / "simkl_cursors.json",
+    ]
+    cleared: list[str] = []
+    for p in targets:
+        try:
+            p.unlink(missing_ok=True)
+            cleared.append(p.name)
+        except Exception:
+            pass
+    return cleared
 
 @app.post("/api/troubleshoot/reset-stats")
 def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
@@ -3188,8 +3206,16 @@ def api_trbl_reset_state(
         tomb_path = orc.files.tomb
 
         if mode in ("clear_state", "clear_both"):
+            # Clear orchestrator state
             try:
                 state_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            # Clear SIMKL caches/shadow state under /config/.cw_state
+            try:
+                cleared = _clear_simkl_state_files()
+                if cleared:
+                    _append_log("TRBL", f"[i] SIMKL state cleared: {', '.join(cleared)}")
             except Exception:
                 pass
 
@@ -3210,6 +3236,14 @@ def api_trbl_reset_state(
             _append_log("TRBL", f"[i] Tombstones cleared (ttl={t.get('ttl_sec', 'n/a')})")
 
         if mode == "rebuild":
+            # Optional: also clear SIMKL cache before rebuild to avoid stale snapshots
+            try:
+                cleared = _clear_simkl_state_files()
+                if cleared:
+                    _append_log("TRBL", f"[i] SIMKL state cleared pre-rebuild: {', '.join(cleared)}")
+            except Exception:
+                pass
+
             state = _persist_state_via_orc(orc, feature=feature)
             STATS.refresh_from_state(state)
             _append_log("TRBL", f"[i] Snapshot rebuilt via Orchestrator (feature={feature})")
@@ -3221,6 +3255,7 @@ def api_trbl_reset_state(
     except Exception as e:
         _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}
+
 
 
 # --------------- Auth providers & metadata providers (UI helpers) ---------------
