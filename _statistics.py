@@ -1,10 +1,11 @@
 from __future__ import annotations
-"""
-Lightweight statistics tracker for CrossWatch.
-- Builds a de-duplicated "current" map from state.json
-- Records add/remove events and rolling samples.
-- Tracks HTTP metrics per provider/endpoint (ring buffer)  <-- NEW
-- Exposes simple counters and overview.
+"""CrossWatch statistics tracker.
+
+Provides a thread-safe, low-overhead store to:
+- Build a de-duplicated "current" map from a state snapshot
+- Record add/remove events and maintain rolling samples over time
+- Track HTTP call metrics per provider/endpoint using a small ring buffer
+- Expose lightweight counters and a high-level overview for dashboards
 """
 
 from pathlib import Path
@@ -23,6 +24,7 @@ _GUID_TVDB_RE = re.compile(r"^tvdb://(\d+)$", re.IGNORECASE)
 
 
 def _read_json(p: Path) -> Dict[str, Any]:
+    """Read a JSON object from disk; return an empty dict on failure."""
     try:
         with p.open("r", encoding="utf-8") as f:
             data = json.load(f)
@@ -32,6 +34,7 @@ def _read_json(p: Path) -> Dict[str, Any]:
 
 
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
+    """Atomically write a JSON object, creating parent directories if needed."""
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -40,7 +43,12 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
 
 
 class Stats:
-    """Thread-safe statistics with minimal I/O."""
+    """Thread-safe statistics with minimal I/O.
+
+    The store keeps a compact structure on disk backed by a lock for safe
+    concurrent access. It focuses on simple counters, recent events, and a
+    small window of samples to power UI summaries without heavy computation.
+    """
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else STATS_PATH
@@ -51,17 +59,19 @@ class Stats:
     # ---------- persistence ----------
 
     def _load(self) -> None:
+        """Load or initialize the on-disk JSON state."""
         d = _read_json(self.path)
         d.setdefault("events", [])               # recent add/remove events
         d.setdefault("samples", [])              # rolling total over time
         d.setdefault("current", {})              # current union map
         d.setdefault("counters", {"added": 0, "removed": 0})
         d.setdefault("last_run", {"added": 0, "removed": 0, "ts": 0})
-        # NEW: HTTP telemetry container
+        # HTTP telemetry container (ring buffer, per-provider counters, last call snapshot)
         d.setdefault("http", {"events": [], "counters": {}, "last": {}})
         self.data = d
 
     def _save(self) -> None:
+        """Persist the in-memory state to disk with an updated timestamp."""
         self.data["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         _write_json_atomic(self.path, self.data)
 
@@ -222,10 +232,12 @@ class Stats:
     # ---------- union & counting ----------
     @staticmethod
     def _build_union_map(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-        """
-        De-duplicated map van huidige items. Merge PLEX + SIMKL + TRAKT.
-        Compat: we houden een 'src' string aan voor bestaande consumers:
-        'plex' | 'simkl' | 'both' | 'trakt'
+        """Build a de-duplicated map of current items across providers.
+
+        Merges PLEX, SIMKL, and TRAKT watchlist snapshots into buckets keyed by
+        canonical IDs (TMDb, IMDb, TVDb, or slug) with a title/year fallback.
+        For compatibility, keeps a simple `src` label for existing consumers:
+        'plex' | 'simkl' | 'both' | 'trakt'.
         """
         plex  = Stats._provider_items(state, "PLEX")
         simkl = Stats._provider_items(state, "SIMKL")
@@ -287,6 +299,7 @@ class Stats:
         return buckets
         
     def _counts_by_source(self, cur: Dict[str, Any]) -> Dict[str, int]:
+        """Summarize how many items come from each provider and overlaps."""
         plex_only = simkl_only = both = 0
         trakt_total = 0
         for v in (cur or {}).values():
@@ -308,12 +321,14 @@ class Stats:
 
 
     def _totals_from_events(self) -> Dict[str, int]:
+        """Compute totals by scanning the recent event list (fallback)."""
         ev = list(self.data.get("events") or [])
         adds = sum(1 for e in ev if (e or {}).get("action") == "add")
         rems = sum(1 for e in ev if (e or {}).get("action") == "remove")
         return {"added": adds, "removed": rems}
 
     def _ensure_counters(self) -> Dict[str, int]:
+        """Ensure counters exist and are well-formed; initialize if missing."""
         c = self.data.get("counters")
         if not isinstance(c, dict):
             c = self._totals_from_events()
@@ -324,6 +339,7 @@ class Stats:
         return self.data["counters"]
 
     def _count_at(self, ts_floor: int) -> int:
+        """Return the sample count at or before the given timestamp."""
         samples: List[Dict[str, Any]] = list(self.data.get("samples") or [])
         if not samples:
             return 0
@@ -345,7 +361,7 @@ class Stats:
     # ---------- public API: state-based ----------
 
     def refresh_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Update stats from a full snapshot (state.json)."""
+        """Update stats from a full snapshot (`state.json`)."""
         now = int(time.time())
         with self.lock:
             prev = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
@@ -380,7 +396,7 @@ class Stats:
             return {"now": len(cur), "week": self._count_at(now - 7 * 86400), "month": self._count_at(now - 30 * 86400)}
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
-        """Append a custom event to the log."""
+        """Append a custom event to the log (lightweight helper)."""
         now = int(time.time())
         with self.lock:
             ev = self.data.get("events") or []
@@ -413,7 +429,7 @@ class Stats:
             self._save()
 
     def overview(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Return a summary for dashboards."""
+        """Return a summary suitable for dashboards and UIs."""
         now_epoch = int(time.time())
         week_floor = now_epoch - 7 * 86400
         month_floor = now_epoch - 30 * 86400

@@ -2,7 +2,7 @@
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // ---------- locate SYNC OUTPUT ----------
+  // ---------- locate the Sync Output container ----------
   function findSyncOutputBox() {
     const picks = ['#ops-out', '#ops_log', '#ops-card', '#sync-output', '.sync-output', '#ops'];
     for (const sel of picks) { const n = $(sel); if (n) return n; }
@@ -12,11 +12,11 @@
     return null;
   }
 
-  // ---------- footer inside box ----------
+  // ---------- ensure an inline footer inside the output box ----------
   function ensureFooter() {
     const host = findSyncOutputBox();
     if (!host) return null;
-    // make sure we can absolutely position our little label
+  // Ensure the host can be positioned so our label can be absolutely positioned
     const st = getComputedStyle(host);
     if (st.position === 'static') host.style.position = 'relative';
 
@@ -34,7 +34,7 @@
     return f;
   }
 
-  // ---------- formatters ----------
+  // ---------- format helpers ----------
   function fmtClockFromEpochSec(epochSec) {
     if (!epochSec) return '—';
     const ms = epochSec < 10_000_000_000 ? epochSec * 1000 : epochSec;
@@ -77,7 +77,7 @@
     el.style.display = 'block';
   }
 
-  // ---------- backend poll ----------
+  // ---------- backend poll (status endpoint) ----------
   let _inFlight = false;
   async function fetchStatus() {
     if (_inFlight) return;
@@ -110,37 +110,37 @@
         clearInterval(wait);
         fetchStatus();
 
-        // Poll: refresh data every 30s; tick countdown every second
+  // Poll: refresh status every 30s; update countdown every second
         try { clearInterval(window._schedPoll); } catch {}
         window._schedPoll = setInterval(fetchStatus, 30000);
 
         try { clearInterval(window._schedTick); } catch {}
         window._schedTick = setInterval(render, 1000);
 
-        // Announce readiness to other modules (e.g., crosswatch.js showTab/settings)
+  // Announce readiness to other modules (for example: crosswatch.js showTab/settings)
         try { window.dispatchEvent(new Event('sched-banner-ready')); } catch {}
       }
     }, 300);
 
-    // Refresh when tab becomes visible again
+  // Refresh when the document becomes visible again
     document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchStatus(); });
 
-    // React instantly after settings are saved (from saveSettings())
+  // React immediately after settings are saved (triggered by saveSettings())
     document.addEventListener('config-saved', (e) => {
       const sec = e?.detail?.section;
       if (!sec || sec === 'scheduling') fetchStatus();
     });
 
-    // Optional broadcast event some modules may emit
+  // Optional broadcast event that other modules may emit
     document.addEventListener('scheduling-status-refresh', fetchStatus);
 
-    // If your app emits a tab change event, refresh when entering main/settings
+  // If the app emits tab-change events, refresh when switching to main or settings
     document.addEventListener('tab-changed', (e) => {
       const id = e?.detail?.id;
       if (id === 'main' || id === 'settings') fetchStatus();
     });
 
-    // On window focus (alt-tab back)
+  // On window focus (Alt+Tab back)
     window.addEventListener('focus', fetchStatus);
   });
 })();

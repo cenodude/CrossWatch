@@ -1,6 +1,6 @@
-// modals.js - Configure Connection modal
+// modals.js — Configure Connection modal UI and helpers
 
-// Get modal state
+// Retrieve current modal state (from DOM or global cache)
 function _cxGetState() {
   const el = document.getElementById('cx-modal');
   return (el && el.__state) || window.__cxState || null;
@@ -37,7 +37,7 @@ function dismissUpdate(){
 
 async function openAbout(){
   try{
-    // --- App version ---
+  // --- Fetch and render app version info ---
     const r = await fetch("/api/version?cb=" + Date.now(), { cache: "no-store" });
     const j = r.ok ? await r.json() : {};
     const cur = (j.current ?? "0.0.0").toString().trim();
@@ -70,7 +70,7 @@ async function openAbout(){
       }
     }
 
-    // --- Module versions (idempotent + pretty) ---
+  // --- Fetch and render module versions (idempotent) ---
     try{
       const mr = await fetch("/api/modules/versions?cb=" + Date.now(), { cache: "no-store" });
       if (!mr.ok) throw new Error(String(mr.status));
@@ -80,10 +80,10 @@ async function openAbout(){
       const firstGrid = body?.querySelector('.about-grid');
       if (!body || !firstGrid) throw new Error("about body/grid missing");
 
-      // Remove previous render so it never duplicates
+  // Remove any previous render to avoid duplicates
       body.querySelector("#about-mods")?.remove();
 
-      // Ensure styles once
+  // Ensure module styles are injected once
       if (!document.getElementById("about-mods-style")){
         const style = document.createElement("style");
         style.id = "about-mods-style";
@@ -103,7 +103,7 @@ async function openAbout(){
         document.head.appendChild(style);
       }
 
-      // Build card
+  // Build modules card
       const wrap = document.createElement("div");
       wrap.id = "about-mods";
       wrap.className = "mods-card";
@@ -133,7 +133,7 @@ async function openAbout(){
       Object.entries(groups.SYNC || {}).forEach(([name, ver]) => addRow(name, name, ver));
 
 
-      // Insert right after the first about-grid
+  // Insert the modules card after the first .about-grid
       firstGrid.insertAdjacentElement("afterend", wrap);
     }catch(e){
       console.warn("[about] modules render failed", e);
@@ -152,9 +152,9 @@ function closeAbout(ev){
 }
 
 
-// Ensure: create once, hydrate, wire sticky bridge
+// Ensure modal exists: create once, hydrate UI, and wire sticky footer bridge
 async function cxEnsureCfgModal() {
-  // de-dup
+  // Remove duplicate modal elements if present
   const dups=[...document.querySelectorAll('#cx-modal')]; for(let i=1;i<dups.length;i++){try{dups[i].remove();}catch(_){}}
 
   let wrap=document.querySelector('#cx-modal');
@@ -244,7 +244,7 @@ async function cxEnsureCfgModal() {
       </div>`;
     document.body.appendChild(wrap);
 
-    // state
+  // Local modal state
     wrap.__state={
       providers:[], src:null, dst:null, feature:'globals',
       options:{
@@ -260,7 +260,7 @@ async function cxEnsureCfgModal() {
     if(typeof cxBindCfgEvents==='function') cxBindCfgEvents();
   }
 
-  // helpers on the modal
+  // Helper functions attached to the modal
   wrap.__persistCurrentFeature = function persistCurrentFeature(){
     const state=wrap.__state||{};
     const f=state.feature;
@@ -294,7 +294,7 @@ async function cxEnsureCfgModal() {
     return payload;
   };
 
-  // Globals: safe read-modify-write
+  // Globals: safe read/modify/write helpers
   wrap.__saveGlobalsIfPresent = async function saveGlobalsIfPresent(){
     try{
       if(document.getElementById('gl-dry')){
@@ -317,7 +317,7 @@ async function cxEnsureCfgModal() {
   };
 
 
-  // Snapshot all feature toggles from the DOM (only overrides if inputs exist)
+  // Snapshot all feature toggles from the DOM (override only when inputs present)
   wrap.__snapshotAll = function snapshotAll(){
     const st = wrap.__state || {};
     const pick = (on,add,rem)=>({enable:!!on?.checked, add:!!add?.checked, remove:!!rem?.checked});
@@ -343,25 +343,25 @@ async function cxEnsureCfgModal() {
     if(pl_on||pl_add||pl_rem) st.options.playlists = pick(pl_on, pl_add, pl_rem);
   };
 
-  // Save: only via window.cxSavePair to protect config.json, then close on success
+  // Save flow: use host-provided window.cxSavePair as the authoritative writer, then close on success
   wrap.__doSave = async function doSave(){
     if(wrap.__saving) return;
     wrap.__saving = true;
     try{
-      // Capture latest UI state
+  // Capture current UI state
       wrap.__persistCurrentFeature && wrap.__persistCurrentFeature();
       wrap.__snapshotAll && wrap.__snapshotAll();
 
       const payload = wrap.__buildPairPayload ? wrap.__buildPairPayload() : null;
       if(!payload){ console.warn('[cx] no payload to save'); return; }
 
-      // Persist globals safely (if visible)
+  // Persist global settings safely when visible
       await (wrap.__saveGlobalsIfPresent && wrap.__saveGlobalsIfPresent());
 
-      // Persist pair through host handler (authoritative writer to config.json)
+  // Persist pair configuration via the host handler (authoritative write)
       if(typeof window.cxSavePair === 'function'){
         const res = await Promise.resolve(window.cxSavePair(payload, payload.id||''));
-        // If host returns a boolean or {ok}, treat truthy as success
+  // Treat truthy host response (boolean or {ok}) as success
         const ok = (typeof res === 'object') ? (res?.ok !== false) : (res !== false);
         if(ok) cxCloseModal(true);
         else console.warn('[cx] cxSavePair indicated failure; modal left open for review.');
@@ -376,13 +376,13 @@ async function cxEnsureCfgModal() {
   };
 
 
-  // Feature gating + defaults
+  // Feature gating and defaults
   const __TEMP_DISABLED=new Set(["ratings","history","playlists"]);
   const DEFAULT_GLOBALS={dry_run:false,verify_after_write:false,drop_guard:false,allow_mass_delete:true,tombstone_ttl_days:30,include_observed_deletes:true};
   const state=wrap.__state;
   state.globals={...DEFAULT_GLOBALS};
 
-  // Hydrate globals from config
+  // Hydrate UI globals from provided configuration
   try{
     const cfg=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json());
     const s=cfg?.sync||{};
@@ -396,7 +396,7 @@ async function cxEnsureCfgModal() {
     };
   }catch(_){}
 
-  // Providers
+  // Provider rendering helpers
   async function loadProviders(){
     try{
       const res=await fetch('/api/sync/providers');
@@ -423,7 +423,7 @@ async function cxEnsureCfgModal() {
     return state.options[key];
   }
 
-  // UI renderers
+  // UI render helper functions
   function renderProviderSelects(){
     const srcSel=wrap.querySelector('#cx-src');
     const dstSel=wrap.querySelector('#cx-dst');
@@ -449,17 +449,17 @@ async function cxEnsureCfgModal() {
     updateLabels();
   }
 
-  // Flow animation: toggle classes to restart CSS animation
+  // Flow animation helpers: toggle classes to restart CSS animations
   function restartFlowAnimation(mode){
     const rail=wrap.querySelector('#cx-flow-rail');
     if(!rail) return;
     const arrow=rail.querySelector('.arrow');
     const dots=[...rail.querySelectorAll('.dot.flow')];
-    // reset classes to re-trigger CSS animations
+  // Reset classes to re-trigger CSS animations
     rail.classList.remove('anim-one','anim-two');
     arrow?.classList.remove('anim-one','anim-two');
     dots.forEach(d=>d.classList.remove('anim-one','anim-two'));
-    void rail.offsetWidth; // reflow
+  void rail.offsetWidth; // Force reflow to restart animation
     const animCls=mode==='two'?'anim-two':'anim-one';
     rail.classList.add(animCls);
     arrow?.classList.add(animCls);
@@ -628,7 +628,7 @@ async function cxEnsureCfgModal() {
     const notes=wrap.querySelector('#cx-notes'); if(notes) notes.textContent=`Selected: ${state.feature}.`;
   }
 
-  // Changes watcher -> refresh flow + rules + animation
+  // Watch for changes: refresh flow, validation rules, and animations
   wrap.addEventListener('change',(e)=>{
     const id=e.target.id;
     const map={"cx-wl-enable":"cx-wl-remove","cx-rt-enable":"cx-rt-remove","cx-hs-enable":"cx-hs-remove","cx-pl-enable":"cx-pl-remove"};
@@ -652,20 +652,20 @@ async function cxEnsureCfgModal() {
     document.getElementById("cx-dst")?.addEventListener("change",updateFlowRailLogos);
   }catch(_){}
 
-  // Expose internals
+  // Expose internal API for external use
   wrap.__refreshTabs = refreshTabs;
   wrap.__renderProviderSelects = renderProviderSelects;
   wrap.__updateFlow = updateFlow;
   wrap.__updateFlowClasses = updateFlowClasses;
   wrap.__renderFeaturePanel = renderFeaturePanel;
 
-  // Always use sticky Save/Cancel
+  // Use a sticky Save/Cancel footer while modal is open
   try{ installStickyBridge && installStickyBridge(wrap); }catch(_){}
 
   return wrap;
 }
 
-// Sticky Save/Cancel
+// Sticky Save/Cancel footer implementation
 function ensureModalFooterCSS(){
   if(document.getElementById('cx-modal-footer-css')) return;
   const css = `
@@ -703,7 +703,7 @@ function installStickyBridge(modalEl){
   const BODY_CLASS = 'cx-modal-open';
   const GLOBAL_SEL = '#save-fab,#save-frost,.savebar,.actions.sticky';
 
-  // Temporarily detach FastAPI footer to avoid visual/click conflicts during modal
+  // Temporarily detach FastAPI footer to avoid visual or click conflicts while modal is open
   function suspendFastAPIFooter(){
     try{
       if(modalEl.__cxSuspendedFooter) return;
@@ -735,7 +735,7 @@ function installStickyBridge(modalEl){
       if(st.anchorFab && st.anchorFab.parentNode && st.fabNode){
         st.anchorFab.replaceWith(st.fabNode);
       }else if(st.anchorFab){ try{ st.anchorFab.remove(); }catch(_){} }
-      // Force reflow + visibility in case other code hid it
+  // Force reflow and ensure visibility if other code hid the element
       requestAnimationFrame(()=>{ try{
         const fab = document.getElementById('save-fab');
         const frost = document.getElementById('save-frost');
@@ -745,7 +745,7 @@ function installStickyBridge(modalEl){
       modalEl.__cxSuspendedFooter = null;
     }catch(_){}
   }
-// Ensure FastAPI footer re-appears (never rely solely on their observers)
+// Ensure FastAPI footer reappears (do not rely solely on external observers)
   function restoreGlobalFooters(){
   try{
     const fab = document.getElementById('save-fab');
@@ -773,7 +773,7 @@ function postCloseRepair(){
 }
 const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.classList.contains('hidden');
 
-  // Inject CSS once to hide global bars while modal is open
+  // Inject modal-related CSS once to hide global bars while modal is open
   (function ensureStyle(){
     if(document.getElementById('cx-modal-sticky-style')) return;
     const css = `
@@ -791,12 +791,12 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
   function addBodyClass(){ document.body.classList.add(BODY_CLASS); }
   function removeBodyClass(){ document.body.classList.remove(BODY_CLASS); }
 
-  // Repair: clear stale inline display:none from previous crashes/versions
+  // Repair stale inline styles (clear display:none from previous versions/crashes)
   function repairGlobals(){
     try{
       document.querySelectorAll(GLOBAL_SEL).forEach(n=>{
         if(n && n.style && n.style.display === 'none'){
-          n.style.display = ''; // reset
+          n.style.display = ''; // Reset display to default
         }
       });
     }catch(_){}
@@ -804,9 +804,9 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
 
   
   function ensureLocalBar(){
-    // Ensure modal footer CSS present
+  // Ensure modal footer CSS exists
     try{ ensureModalFooterCSS && ensureModalFooterCSS(); }catch(_){}
-    // Create or reveal the frost strip
+  // Create or show the modal frost (visual backdrop) strip
     let frost = document.getElementById('cx-save-frost');
     if(!frost){
       frost = document.createElement('div');
@@ -815,7 +815,7 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
     } else {
       frost.classList.remove('hidden');
     }
-    // Create or reveal the centered FAB
+  // Create or reveal the centered floating action button (FAB)
     let fab = document.getElementById('cx-save-fab');
     if(!fab){
       fab = document.createElement('div');
@@ -836,7 +836,7 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
         try{ await modalEl.__doSave?.(); }catch(err){ console.warn('[cx] modal save failed:', err); }
       }, true);
 
-      // Inner group to keep center alignment
+  // Inner container to keep centered alignment
       const group = document.createElement('div');
       group.style.cssText = 'display:flex;gap:16px;align-items:center;pointer-events:auto;';
       group.appendChild(btnCancel);
@@ -871,20 +871,20 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
     }catch(_){}
 }
 
-  // Debounced ensure on any modal mutation
+  // Debounced ensure: respond to modal DOM mutations without thrashing
   let raf = 0;
   function scheduleEnsure(){
     if(raf) return;
     raf = requestAnimationFrame(()=>{ raf=0;
       if(isOpen()){
-        repairGlobals();      // fix any stale inline style
-        addBodyClass();       // hide globals via CSS (no inline mutation)
-        try{ ensureModalFooterCSS && ensureModalFooterCSS(); }catch(_){} ensureLocalBar();     // show our own centered sticky
+  repairGlobals();      // Fix stale inline styles
+  addBodyClass();       // Hide global UI via CSS (avoid inline mutations)
+  try{ ensureModalFooterCSS && ensureModalFooterCSS(); }catch(_){} ensureLocalBar();     // Show our centered sticky footer
       }
     });
   }
 
-  // Observe only the modal
+  // Observe only the modal element for mutations
   const mo = new MutationObserver(()=>{
     if(!isOpen()){ teardown(); return; }
     scheduleEnsure();
@@ -892,10 +892,10 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
   mo.observe(modalEl, { attributes:true, attributeFilter:['class'], childList:true, subtree:true });
   modalEl.__stickyMO = mo;
 
-  // Initial activation
+  // Initial activation of modal behaviors
   if(isOpen()){ repairGlobals(); addBodyClass(); suspendFastAPIFooter(); try{ ensureModalFooterCSS && ensureModalFooterCSS(); }catch(_){} ensureLocalBar(); }
 
-  // Failsafe watchdog: ensure body class is cleared if modal vanishes unexpectedly
+  // Failsafe watchdog: clear body class if the modal unexpectedly disappears
   (function cxModalBodyWatchdog(){
     try {
       const tidy = ()=>{
@@ -910,7 +910,7 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
       document.addEventListener('visibilitychange', tidy);
       const bw = new MutationObserver(tidy);
       bw.observe(document.body, { childList: true, subtree: false });
-      // Patch history navigation to tidy after SPA route changes
+  // Patch history navigation to clean up modal state after SPA route changes
       try{
         const _push = history.pushState; const _replace = history.replaceState;
         history.pushState = function(){ const r=_push.apply(this, arguments); try{ tidy(); }catch(_){} return r; };
@@ -924,7 +924,7 @@ const isOpen = ()=> !!modalEl && document.body.contains(modalEl) && !modalEl.cla
 }
 
 
-// Lightweight bind helper (unchanged behavior)
+// Lightweight bind helper (behavior preserved)
 function cxBindCfgEvents(){
   
 
@@ -954,7 +954,7 @@ const ids=["cx-src","cx-dst","cx-mode-one","cx-mode-two","cx-wl-enable","cx-wl-a
   });
 }
 
-// Open editor for an existing pair (uses sticky Save/Cancel)
+// Open the editor for an existing pair (uses sticky Save/Cancel footer)
 async function cxOpenModalFor(pair, editingId){
   await cxEnsureCfgModal();
   const el = document.getElementById('cx-modal');
@@ -964,14 +964,14 @@ async function cxOpenModalFor(pair, editingId){
   st.src = pair?.source || pair?.src || null;
   st.dst = pair?.target || pair?.dst || null;
 
-  // Mode/enabled
+  // Mode and enabled/disabled UI
   document.getElementById('cx-mode-two')?.removeAttribute('checked');
   document.getElementById('cx-mode-one')?.removeAttribute('checked');
   if((pair?.mode||'').toLowerCase().startsWith('two')) document.getElementById('cx-mode-two').checked=true;
   else document.getElementById('cx-mode-one').checked=true;
   const enEl=document.getElementById('cx-enabled'); if(enEl) enEl.checked = (pair && typeof pair.enabled !== 'undefined') ? !!pair.enabled : true;
 
-  // Features
+  // Feature toggles
   const fx = pair?.features || {};
   st.options.watchlist = Object.assign({enable:true,add:true,remove:false}, fx.watchlist||{});
   st.options.ratings   = Object.assign({enable:false,add:false,remove:false}, fx.ratings||{});
@@ -979,7 +979,7 @@ async function cxOpenModalFor(pair, editingId){
   st.options.playlists = Object.assign({enable:false,add:true,remove:false}, fx.playlists||{});
   st.visited = new Set(['watchlist','ratings','history','playlists']);
 
-  // Hydrate UI
+  // Populate UI fields with the pair data
   const reSel = ()=>{
     const srcSel=el.querySelector('#cx-src'); const dstSel=el.querySelector('#cx-dst');
     if(srcSel) srcSel.value = st.src||'';
@@ -994,23 +994,23 @@ async function cxOpenModalFor(pair, editingId){
   reSel();
   el.__updateFlow?.(true);
 
-  // Remember editing id and show
+  // Remember the editing ID and show the modal
   el.dataset.editingId = editingId || (pair?.id || '');
   el.classList.remove('hidden');
 
-  // Reinstall sticky bridge on each open (observer may have been disconnected on close)
+  // Reinstall sticky footer bridge on each open (observer may be disconnected on close)
   try{ el.__stickyBridgeInstalled = false; }catch(_){}
   try{ installStickyBridge && installStickyBridge(el); }catch(_){}
 }
 
-// Close modal and unhook sticky listeners
+// Close modal and remove sticky footer listeners
 function cxCloseModal(persist=false){
   const mod=document.getElementById('cx-modal');
   if(!mod) return;
-  if(persist){try{mod.__persistCurrentFeature&&mod.__persistCurrentFeature();}catch(_){}} // best-effort
+  if(persist){try{mod.__persistCurrentFeature&&mod.__persistCurrentFeature();}catch(_){}} // Best-effort persistence
   mod.classList.add('hidden');
 
-  // 👇 add this line here
+  // Note: placeholder line retained for clarity
   try{ mod.__cxStickyUnwire && mod.__cxStickyUnwire(); }catch(_){}
 
   try{
@@ -1028,7 +1028,7 @@ function cxCloseModal(persist=false){
 }
 
 
-// Barebones fallback (rare)
+// Barebones fallback (rare execution path)
 function _ensureCfgModal(){
   if(document.getElementById("cx-modal")) return true;
   if(typeof cxEnsureCfgModal==="function"){cxEnsureCfgModal();return !!document.getElementById("cx-modal");}
@@ -1041,7 +1041,7 @@ function _ensureCfgModal(){
   return true;
 }
 
-// --- UPDATED: Flow animation CSS (fixed stray char; keeps one-way/two-way animations)
+// --- UPDATED: Flow animation CSS (fix stray char; preserves one-way/two-way animations)
 function ensureFlowAnimCSS(){
   if(document.getElementById('cx-flow-anim-css')) return;
   const css = `  /* full-width animated rail */
@@ -1068,11 +1068,11 @@ function ensureFlowAnimCSS(){
   document.head.appendChild(st);
 }
 
-// Ensure animation CSS exists
+// Ensure animation CSS is present
 try{ ensureFlowAnimCSS(); }catch(_){}
 
 
-// Public exports
+// Public exports (functions attached to window)
 window.Modals=Object.assign(window.Modals||{},{
   openAbout,closeAbout,openUpdateModal,closeUpdateModal,dismissUpdate,
   cxEnsureCfgModal,cxBindCfgEvents,cxCloseModal,openPairModal,closePairModal,cxEditPair: (id)=>{const pr=(window.cx?.pairs||[]).find(p=>p.id===id);if(!pr)return;cxOpenModalFor(pr,id);}, cxOpenModalFor

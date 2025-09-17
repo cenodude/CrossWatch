@@ -1,17 +1,17 @@
 /* Insights module: provider-agnostic stats, history, and sparkline. */
 (function (w, d) {
-  // --- tiny utils ---
+  // --- Small utility helpers ---
   function $(sel, root) { return (root || d).querySelector(sel); }
   function txt(el, v) { if (el) el.textContent = v == null ? "—" : String(v); }
   function toLocal(iso) { if (!iso) return "—"; var t = new Date(iso); return isNaN(t) ? "—" : t.toLocaleString(undefined, { hour12: false }); }
 
-  // --- HTTP ---
+  // --- Simple HTTP helper ---
   async function fetchJSON(url) {
     try { const res = await fetch(url, { cache: "no-store" }); return res.ok ? res.json() : null; }
     catch (_) { return null; }
   }
 
-  // --- Sparkline (compact SVG) ---
+  // --- Sparkline renderer (compact SVG) ---
   function renderSparkline(id, points) {
     var el = d.getElementById(id);
     if (!el) return;
@@ -27,7 +27,7 @@
     el.innerHTML = '<svg viewBox="0 0 '+wv+' '+hv+'" preserveAspectRatio="none"><path class="line" d="'+dStr+'"></path>'+dots+'</svg>';
   }
 
-  // --- Number & bar animations (ported from crosswatch.js) ---
+  // --- Number and bar animations (from crosswatch.js) ---
   function _ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
   function animateNumber(el, to) {
     if (!el) return;
@@ -55,7 +55,7 @@
     if (bars.now)   bars.now.style.transform   = `scaleY(${h(now)})`;
   }
 
-  // --- Provider tiles (Plex, Simkl, Trakt). Ensure wrappers + value spans exist. ---
+  // --- Provider tiles (Plex, SIMKL, Trakt): ensure wrapper and value elements exist ---
   function ensureProviderTiles() {
     var container =
       d.getElementById("stat-providers") ||
@@ -66,7 +66,7 @@
       var tileId = "tile-" + name;
       var valId  = "stat-" + name;
 
-      // create tile wrapper if missing
+  // Create a tile wrapper if it's missing
       var tile = d.getElementById(tileId);
       if (!tile && container) {
         tile = d.createElement("div");
@@ -77,7 +77,7 @@
           '<div class="n" id="'+valId+'">0</div>';
         container.appendChild(tile);
       } else if (tile && !d.getElementById(valId)) {
-        // ensure inner value node exists
+  // Ensure the inner value node exists
         var n = d.createElement("div");
         n.className = "n";
         n.id = valId;
@@ -92,13 +92,13 @@
     };
   }
 
-  // --- Totals/active derivation (handles multiple API shapes) ---
+  // --- Derive totals and active flags (supports multiple API response shapes) ---
   function deriveProviderTotals(data) {
-    // preferred: server-provided aggregates
+  // Prefer server-provided aggregate totals when available
     var by = data && (data.providers || data.provider_stats);
     if (by) return by;
 
-    // fallback: count p/s/t flags in `current`
+  // Fallback: derive counts from current entries using p/s/t flags
     var cur = data && data.current;
     if (cur && typeof cur === "object") {
       var out = { plex: 0, simkl: 0, trakt: 0 };
@@ -123,9 +123,9 @@
     };
   }
 
-  // --- Render provider totals + active flags ---
+  // --- Render provider totals and active state ---
   function renderProviderStats(provTotals, provActive) {
-    // Accept shapes: {plex_total,...,both}, {plex:{total:...}}, simple numbers, or counts from derive().
+  // Supported shapes: {plex_total,...,both}, {plex:{total:...}}, plain numbers, or derived counts
     var by = provTotals || {};
     var n = (x) => (+x || 0);
 
@@ -134,7 +134,7 @@
         if (Number.isFinite(+by[key + "_total"])) return n(by[key + "_total"]);
         var maybe = by[key];
         if (maybe && typeof maybe === "object" && "total" in maybe) return n(maybe.total);
-        // last resort: direct + shared 'both'
+  // Last resort: use direct value plus shared 'both' count
         return n(maybe) + n(by.both);
       }
       return 0;
@@ -148,7 +148,7 @@
 
     var active = Object.assign({ plex:false, simkl:false, trakt:false }, provActive || {});
 
-    // Make sure tiles exist
+  // Ensure provider tiles are present in the DOM
     ensureProviderTiles();
 
     [["plex","stat-plex","tile-plex"],
@@ -162,7 +162,7 @@
     });
   }
 
-  // --- Recent syncs ---
+  // --- Render recent sync history ---
   function renderHistory(hist) {
     var wrap = d.getElementById("sync-history") || d.querySelector("[data-role='sync-history']") || d.querySelector(".sync-history");
     if (!wrap) return;
@@ -203,12 +203,12 @@
       if (exit != null && exit !== 0) badgeClass = "err";
       else if (String(result).toUpperCase() === "EQUAL" || ((totals.a|0)===0 && (totals.r|0)===0)) badgeClass = "ok";
 
-      // per-lane micro chips
+  // Per-lane micro chips for added/removed/updated counts
       var feats = row && row.features || {};
       var en = row && row.features_enabled || {};
       var chips = [];
       Object.keys(labelMap).forEach(function(k){
-        if (k === "watchlist") return;  // hide WL chip
+  if (k === "watchlist") return;  // Hide watchlist chip
         if (en && en[k] === false) return;
         var f = feats[k] || {};
         var a = +f.added || 0, r = +f.removed || 0, u = +f.updated || 0;
@@ -229,7 +229,7 @@
     }).join("");
   }
 
-  // --- Top counters ---
+  // --- Top-level counters ---
   function renderTopStats(s) {
     var now = +((s && s.now) || 0), week = +((s && s.week) || 0), month = +((s && s.month) || 0);
     var elNow = d.getElementById("stat-now");
@@ -242,11 +242,11 @@
     var fill = d.getElementById("stat-fill");
     if (fill) { var max = Math.max(1, now, week, month); fill.style.width = Math.round((now / max) * 100) + "%"; }
 
-    // optional: animate mini bars if present
+  // Optional: animate mini bars if present
     animateChart(now, week, month);
   }
 
-  // --- Fetch + render (full) ---
+  // --- Fetch and render full insights ---
   async function refreshInsights() {
     var data = await fetchJSON("/api/insights?limit_samples=60&history=3");
     if (!data) return;
@@ -268,11 +268,11 @@
     }
   }
 
-  // --- Lightweight stats-only refresh (for legacy callers) ---
+  // --- Lightweight stats-only refresh (legacy callers) ---
   var _lastStatsFetch = 0;
   async function refreshStats(force=false) {
     var nowT = Date.now();
-    if (!force && nowT - _lastStatsFetch < 900) return; // debounce
+  if (!force && nowT - _lastStatsFetch < 900) return; // Debounce: skip if recently fetched
     _lastStatsFetch = nowT;
 
     var data = await fetchJSON("/api/insights?limit_samples=0&history=0");
@@ -285,7 +285,7 @@
     renderProviderStats(provTotals, provActive);
   }
 
-  // --- Mount scheduler ---
+  // --- Mount scheduler UI (if provided) ---
   function scheduleInsights(max) {
     var tries = 0, limit = max || 20;
     (function tick(){
@@ -295,7 +295,7 @@
     })();
   }
 
-  // --- Expose ---
+  // --- Expose API to global scope ---
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, scheduleInsights, fetchJSON,
     animateNumber, animateChart
@@ -306,10 +306,10 @@
   w.scheduleInsights = scheduleInsights;
   w.fetchJSON = fetchJSON;
 
-  // compat shim for older callers
+  // Compatibility shim for older callers
   w.animateNumber = w.animateNumber || animateNumber;
 
-  // --- Boot ---
+  // --- Boot: initial load ---
   d.addEventListener("DOMContentLoaded", function(){ scheduleInsights(); });
   d.addEventListener("tab-changed", function(ev){ if (ev && ev.detail && ev.detail.id === "main") refreshInsights(); });
 })(window, document);

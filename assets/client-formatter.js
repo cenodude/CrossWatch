@@ -1,5 +1,11 @@
 (function (w, d) {
+  // Client-side log formatter used by the UI to render server log streams.
+  // It injects lightweight styles, prettifies known JSON events, filters
+  // unhelpful plain lines, and outputs concise, readable HTML blocks. The
+  // implementation is side-effect free aside from DOM insertion.
+
   // ---------- styles (once) ----------
+  // Insert a small stylesheet exactly once to style the rendered log output.
   if (!d.getElementById("cf-styles")) {
     const style = d.createElement("style");
     style.id = "cf-styles";
@@ -51,12 +57,34 @@
   }
 
   // ---------- utils ----------
+  // Small helpers for HTML-escaping and generating consistent labels/icons.
+  /**
+   * Escape a string for safe HTML insertion.
+   * @param {any} s
+   * @returns {string}
+   */
   const esc = s => String(s ?? "").replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  // Map provider keys to badge CSS classes.
   const BADGE_CLASS = { PLEX: "cf-plex", SIMKL: "cf-simkl", TRAKT: "cf-trakt" };
+  // Map provider keys to small logo images.
   const LOGO_SRC    = { PLEX: "/assets/PLEX-log.svg", SIMKL: "/assets/SIMKL-log.svg", TRAKT: "/assets/TRAKT-log.svg" };
+  // Simple icon set used across event types.
   const ICON        = { start:"▶", pair:"🔗", plan:"📝", add:"➕", remove:"➖", done:"✅", complete:"🏁" };
+  /**
+   * Choose an arrow based on mode (two-way uses a bidirectional glyph).
+   * @param {string} m
+   */
   const arrowFor = m => (String(m||"").toLowerCase().startsWith("two") ? "⇄" : "→");
+  /**
+   * Capitalize the first character (for labels).
+   * @param {string} s
+   */
   const capitalize = s => String(s||"").replace(/^./, c => c.toUpperCase());
+  /**
+   * Render a small provider badge with optional logo.
+   * @param {string} name
+   * @returns {string} HTML string
+   */
   const badge = name => {
     const key = String(name||"").toUpperCase();
     const cls = BADGE_CLASS[key] || "cf-generic";
@@ -64,6 +92,14 @@
     const icon = src ? `<img src="${src}" alt="" aria-hidden="true">` : "";
     return `<span class="cf-badge ${cls}">${icon}${esc(key)}</span>`;
   };
+  /**
+   * Build a standardized HTML block for a log event.
+   * @param {"start"|"pair"|"plan"|"add"|"remove"|"done"|"complete"} type
+   * @param {string} titleHTML already-escaped title HTML
+   * @param {string} metaText plain metadata text (escaped internally)
+   * @param {string=} extra optional extra class names
+   * @returns {string}
+   */
   const htmlBlock = (type, titleHTML, metaText, extra) => {
     const add = (extra ? ` ${extra}` : "");
     const base = type === "start" ? "cf-slide-in cf-pulse" :
@@ -76,12 +112,24 @@
   };
 
   // ---------- state ----------
+  // Local state tracking to enrich summaries across multiple events.
   let pendingRunId = null;
   let opCounts = { add: { PLEX:0, SIMKL:0 }, remove: { PLEX:0, SIMKL:0 } };
+  /**
+   * Infer destination provider name from an event when not explicitly given.
+   * @param {any} ev
+   * @returns {"PLEX"|"SIMKL"}
+   */
   const dstNameFrom = (ev) => ev.dst || (ev.event.includes(":A:") ? "PLEX" : "SIMKL");
   let squelchPlain = 0;
 
   // ---------- pretty JSON ----------
+  /**
+   * Convert a structured JSON event line into a styled HTML fragment.
+   * Returns null for unknown/unhandled events so callers can fallback to plain rendering.
+   * @param {string} line
+   * @returns {string|null}
+   */
   function formatFriendlyLog(line) {
     if (!line || line[0] !== "{") return null;
     let ev; try { ev = JSON.parse(line); } catch { return null; }
@@ -164,6 +212,13 @@
   }
 
   // ---------- host/plain filtering ----------
+  /**
+   * Render plain text lines into friendlier output when possible (non-JSON path).
+   * Applies small heuristics to detect orchestrator/scheduler milestones.
+   * @param {string} line
+   * @param {boolean} isDebug when true, bypasses filters (handled upstream)
+   * @returns {string|null} HTML or plain text; null if the line should be dropped
+   */
   function filterPlainLine(line, isDebug) {
     if (!line) return null;
     const t = String(line).trim();
@@ -218,6 +273,11 @@
   }
 
   // ---------- chunk split + JSON extract ----------
+  /**
+   * Split host buffer into separate lines while keeping known markers on their own lines.
+   * @param {string} s
+   * @returns {string[]} lines
+   */
   function splitHost(s) {
     return String(s)
       .replace(/\r\n/g, "\n")
@@ -233,6 +293,13 @@
       .split(/\n+/);
   }
 
+  /**
+   * Extract JSON tokens from a streaming chunk while preserving any trailing buffer.
+   * The parser is tolerant to plain text around JSON objects.
+   * @param {string} buf prior trailing buffer
+   * @param {string} chunk new appended data
+   * @returns {{tokens: string[], buf: string}}
+   */
   function processChunk(buf, chunk) {
     let s = (buf || "") + String(chunk || "");
     const tokens = [];
@@ -272,12 +339,23 @@
   }
 
   // ---------- squelch helpers ----------
+  /**
+   * Heuristic: whether a line looks like a continuation (part of a block),
+   * used to drop follow-up lines after a "providers:" or "features:" header.
+   * @param {string} t
+   */
   const isContinuationLine = t =>
     /^[\{\[]/.test(t) ||
     /^['"]?[A-Za-z0-9_]+['"]?\s*:/.test(t) ||
     /^\s{2,}\S/.test(t) ||
     /[}\]]$/.test(t);
 
+  /**
+   * Decide whether to drop a line and potentially squelch subsequent lines.
+   * @param {string} t
+   * @param {boolean} isDebug
+   * @returns {boolean}
+   */
   function shouldDropAndMaybeSquelch(t, isDebug) {
     if (isDebug) return false;
     if (/^\[i]\s*providers:/i.test(t)) { squelchPlain = 2; return true; }
@@ -292,6 +370,14 @@
   }
 
   // ---------- render helper ----------
+  /**
+   * Render a line into a container element, using friendly formatting for
+   * known JSON events and filtered plain text for others. In debug mode, emits
+   * raw lines to aid troubleshooting.
+   * @param {HTMLElement} el container element to insert into
+   * @param {string} line a log line or HTML fragment
+   * @param {boolean=} isDebug force debug rendering
+   */
   function renderInto(el, line, isDebug) {
     if (!el || !line) return;
 
@@ -333,5 +419,6 @@
   }
 
   // ---------- export ----------
+  // Public API: used by the UI to format incoming log streams and render them.
   w.ClientFormatter = { formatFriendlyLog, filterPlainLine, splitHost, processChunk, renderInto };
 })(window, document);

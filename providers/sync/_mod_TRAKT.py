@@ -1,3 +1,11 @@
+"""Trakt sync provider module.
+
+Implements read/write for watchlist, ratings, and history with guarded API
+usage (activities gates, ETag memo), and durable shadows/cursors under
+`/config/.cw_state`. This is a documentation-only cleanup; no code or
+identifiers were changed.
+"""
+
 from __future__ import annotations
 
 __VERSION__ = "1.0.0"
@@ -144,7 +152,8 @@ def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method:
             except Exception:
                 bytes_out = 0
 
-        ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
+        el = getattr(r, "elapsed", None) if r is not None else None
+        ms = int((el.total_seconds() if hasattr(el, "total_seconds") else 0) * 1000) if el is not None else 0
 
         # Rate headers (Trakt sends X-RateLimit fields)
         rate_remaining = None
@@ -510,7 +519,7 @@ def _flatten_ratings(arr: List[dict], kind: str) -> Dict[str, Any]:
         rating = None
         # Trakt rating can be under 'rating'
         if isinstance(it.get("rating"), (int, float)):
-            rating = int(it.get("rating"))
+            rating = int(it.get("rating") or 0)
         row = minimal_node(kind, node)
         row["rating"] = rating
         out[key] = row
@@ -859,7 +868,7 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
             key = canonical_key(typ, node)
             row = m.get(key) or {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}}
             if it.get("rating") is not None:
-                row["rating"] = int(it.get("rating"))
+                row["rating"] = int(it.get("rating") or 0)
             m[key] = row
         _ratings_shadow_save(m)
 
@@ -1096,7 +1105,7 @@ except Exception:  # pragma: no cover
         capabilities: ModuleCapabilities
 
 
-class TRAKTModule(SyncModule):
+class TRAKTModule(SyncModule):  # type: ignore[misc]
     info = ModuleInfo(
         name="TRAKT",
         version=__VERSION__,

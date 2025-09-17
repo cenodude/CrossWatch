@@ -98,8 +98,10 @@
   }
   `;
 
+  // Ensure the settings insight stylesheet is present
   function ensureStyle(){ if($("#cw-settings-insight-style")) return; const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 
+  // Create a two-column settings grid and an aside for the insight card if needed
   function ensureGrid(){
     const page=$("#page-settings"); if(!page) return null;
     let left=page.querySelector("#cw-settings-left, .settings-wrap, .settings, .accordion, .content, .page-inner");
@@ -118,6 +120,7 @@
     return { grid, left, right:aside };
   }
 
+  // Ensure the insight card exists in the aside (creates markup if missing)
   function ensureCard(){
     const nodes=ensureGrid(); if(!nodes) return null;
     const { right }=nodes;
@@ -132,6 +135,7 @@
   }
 
   async function readConfig(){ return (await fetchJSON("/api/config"))||{}; }
+  // Summarize authentication providers (detected vs configured)
   async function getAuthSummary(cfg){
     const plexOK  = !!(cfg?.plex?.account_token);
     const simklOK = !!(cfg?.simkl?.access_token);
@@ -139,7 +143,7 @@
     return { detected: 3, configured: [plexOK,simklOK,traktOK].filter(Boolean).length };
   }
 
-  // NEW: pairs from /api/pairs with config fallback
+  // Retrieve synchronization pairs (try /api/pairs; fall back to config if needed)
   async function getPairsSummary(cfg){
     let list = await fetchJSON("/api/pairs?t=" + Date.now());
     if (!Array.isArray(list)) {
@@ -149,7 +153,7 @@
     return { count: list.length };
   }
 
-  //  getMetadataSummary()
+  // Summarize metadata providers and TMDB key readiness
   async function getMetadataSummary(){
     const [cfg, mansRaw] = await Promise.all([
       fetchJSON("/api/config"),
@@ -159,12 +163,12 @@
     const mans = Array.isArray(mansRaw) ? mansRaw : [];
     const detected = mans.length;
 
-    // TMDB key can be real or masked as "••••••••"
+  // TMDB key may be present or masked (e.g., "••••••••")
     const rawKey   = String(cfg?.tmdb?.api_key ?? "").trim();
     const isMasked = rawKey.length > 0 && /^[•]+$/.test(rawKey);
     const hasTmdbKey = rawKey.length > 0 || isMasked;
 
-    // Default: if manifests don't load at all, still count TMDB when key exists
+  // Default: if provider manifests fail to load, still count TMDB when an API key exists
     let configured = hasTmdbKey ? 1 : 0;
 
     if (detected > 0) {
@@ -197,6 +201,7 @@
 
 
 
+  // Get scheduling enabled state and next run time
   async function getSchedulingSummary(){
     const cfg = await fetchJSON("/api/scheduling?t=" + Date.now());
     const st  = await fetchJSON("/api/scheduling/status?t=" + Date.now());
@@ -204,6 +209,7 @@
     let next = coalesceNextRun(st); if (next===null) next = coalesceNextRun(cfg);
     return { enabled, nextRun: next };
   }
+  // Get scrobbler (webhook/watcher) summary and watcher status when applicable
   async function getScrobblerSummary(cfg){
     const sc=cfg?.scrobble||{}; const mode=(sc?.mode||"").toLowerCase(); const enabled=!!sc?.enabled;
     let watcher={ alive:false, has_watch:false, stop_set:false };
@@ -224,7 +230,7 @@
     return el;
   }
 
-  // Existing auth empty state
+  // Empty state when no authentication providers are configured
   function renderWizard() {
     const body = $("#cw-si-body"); if (!body) return;
     body.innerHTML = `
@@ -240,7 +246,7 @@
     `;
   }
 
-  // NEW: pairs empty state
+  // Empty state when no synchronization pairs exist
   function renderPairsWizard() {
     const body = $("#cw-si-body"); if (!body) return;
     body.innerHTML = `
@@ -255,6 +261,7 @@
     `;
   }
 
+  // Render the insight rows based on collected summaries
   function render(data){
     const body=$("#cw-si-body"); if(!body) return;
 
@@ -287,6 +294,7 @@
     body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}`));
   }
 
+  // Adjust the insight card height to match the left column and viewport
   function syncHeight(){
     const left=$("#cw-settings-left") || $("#page-settings .settings-wrap, #page-settings .settings, #page-settings .accordion, #page-settings .content, #page-settings .page-inner");
     const scroll=$("#cw-si-scroll");
@@ -296,9 +304,10 @@
     scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
   }
 
-  // prevent multiple overlapping loops when events trigger refreshes
+  // Prevent multiple overlapping refresh loops
   let _loopTimer = null;
 
+  // Periodic refresh loop: gather data and render when settings page is visible
   async function tick(){
     const nodes=ensureCard(); if(!nodes){ _loopTimer = setTimeout(tick,1200); return; }
     const page=$("#page-settings"); const visible=!!(page && !page.classList.contains("hidden"));
@@ -318,10 +327,13 @@
   }
 
   (async function boot(){
+    // Ensure style is present
     if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
+
+    // Refresh when user navigates to the settings tab
     d.addEventListener("tab-changed",(e)=>{ if(e?.detail?.id==="settings") setTimeout(()=>{ tick(); syncHeight(); },150); });
 
-    // Refresh on saves (now also pairs/connections/sync)
+    // Refresh on saves (including pairs/connections/sync)
     d.addEventListener("config-saved", (e) => {
       const sec = e?.detail?.section;
       if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections") {
@@ -332,12 +344,13 @@
     d.addEventListener("visibilitychange", () => { if (!d.hidden) tick(); });
     w.addEventListener("focus", () => tick());
 
+    // Wait for the settings page to exist, but don't wait forever
     let tries=0; while(!$("#page-settings") && tries<40){ tries++; await sleep(250); }
     tick();
     w.addEventListener("resize", syncHeight);
     w.addEventListener("scroll", syncHeight, { passive:true });
 
-    // manual hook
+    // Manual refresh hook for other modules
     w.refreshSettingsInsight = () => tick();
   })();
 })(window, document);

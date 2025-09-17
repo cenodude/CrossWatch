@@ -1,7 +1,9 @@
 // auth.plex-simkl.js
-// UI flows for Plex PIN + SIMKL OAuth (no server state merge here).
+// Client-side helpers for authenticating with Plex (PIN flow) and SIMKL (OAuth).
+// This file only manages UI interactions and polling; it does not merge or
+// reconcile any server-side state.
 (function (w, d) {
-  // --- tiny helpers (module-local) ---
+  // --- Small module-local helpers ---
   const $ = (s) => d.getElementById(s);
   const notify = w.notify || (msg => console.log("[notify]", msg));
   const nowIso = () => new Date().toISOString();
@@ -11,10 +13,20 @@
       : (location.origin + "/callback");
 
   // ======== PLEX ========
+  /**
+   * Toggle visibility of the Plex success message.
+   * @param {boolean} show Whether to display the message.
+   */
   function setPlexSuccess(show) {
     $("plex_msg")?.classList.toggle("hidden", !show);
   }
 
+  /**
+   * Initiate the Plex PIN linking flow:
+   * - Opens the Plex link page in a new tab.
+   * - Requests a new PIN from the server and shows it in the UI (and copies it to clipboard when possible).
+   * - Starts polling for the Plex account token to appear in the server config.
+   */
   async function requestPlexPin() {
     try { setPlexSuccess(false); } catch {}
     let win = null;
@@ -45,6 +57,12 @@
 
   // Local poll state (kept inside module)
   let plexPoll = null;
+  /**
+   * Poll for a Plex account token in the server config with exponential backoff.
+   * Stops when a token is found or after a two-minute timeout. Polling pauses
+   * when the settings page is hidden or the document is not visible to avoid
+   * unnecessary work.
+   */
   function startPlexTokenPoll() {
     try { if (plexPoll) clearTimeout(plexPoll); } catch {}
     const MAX_MS = 120000;
@@ -74,11 +92,16 @@
   }
 
   // ======== SIMKL ========
+  /**
+   * Toggle visibility of the SIMKL success message.
+   * @param {boolean} show Whether to display the message.
+   */
   function setSimklSuccess(show) {
     $("simkl_msg")?.classList.toggle("hidden", !show);
   }
 
-  // Keep the start button enabled only when ID/Secret are filled; show redirect hint.
+  // Keep the SIMKL start button enabled only when Client ID and Client Secret
+  // are both present. Also, update the redirect URI preview so users can copy it.
   function updateSimklButtonState() {
     try {
       const cid  = ($("simkl_client_id")?.value || "").trim();
@@ -97,6 +120,9 @@
   // Back-compat: some code calls updateSimklHint()
   const updateSimklHint = updateSimklButtonState;
 
+  /**
+   * Copy the computed redirect URI to the clipboard and show a confirmation.
+   */
   async function copyRedirect() {
     try { await navigator.clipboard.writeText(computeRedirect()); notify("Redirect URI copied ✓"); }
     catch { /* ignore */ }
@@ -104,6 +130,13 @@
 
   // Local poll state for SIMKL
   let simklPoll = null;
+  /**
+   * Start the SIMKL OAuth flow:
+   * - Optionally persists current settings using a host-provided save function.
+   * - Asks the server to create an authorization URL and opens it in a new tab.
+   * - Polls for an access token to appear in the server config, with backoff,
+   *   until success or a two-minute timeout.
+   */
   async function startSimkl() {
     try { setSimklSuccess(false); } catch {}
 
@@ -152,7 +185,7 @@
     simklPoll = setTimeout(poll, 1000);
   }
 
-  // --- wire basic input listeners on load (safe if IDs absent) ---
+  // --- Wire basic input listeners on load (safe if IDs are absent) ---
   d.addEventListener("DOMContentLoaded", () => {
     $("simkl_client_id")?.addEventListener("input", updateSimklButtonState);
     $("simkl_client_secret")?.addEventListener("input", updateSimklButtonState);
@@ -160,7 +193,7 @@
     updateSimklButtonState();
   });
 
-  // --- expose to global (used by existing UI) ---
+  // --- Expose a limited API on the window for the existing UI ---
   Object.assign(w, {
     // PLEX
     setPlexSuccess, requestPlexPin, startPlexTokenPoll,

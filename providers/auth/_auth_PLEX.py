@@ -1,5 +1,5 @@
 from __future__ import annotations
-import time, requests
+import time, requests, secrets
 from typing import Any, Mapping, MutableMapping
 from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 from _logging import log

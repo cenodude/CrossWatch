@@ -1,15 +1,29 @@
+"""Metadata manager facade
+
+Discovers metadata provider modules and offers a unified API to resolve
+metadata for movies and TV. Supports simple prioritization and an optional
+merge strategy to combine results.
+"""
+
 from __future__ import annotations
 import importlib, pkgutil
 from typing import Any, Dict, Optional
 from _logging import log
 
 class MetadataManager:
+    """Discover and query metadata providers.
+
+    Providers live under providers/metadata and must be named _meta_*. A
+    provider can expose either a PROVIDER instance/class or a build(load, save)
+    factory that returns an instance. Instances must implement fetch(...).
+    """
     def __init__(self, load_cfg, save_cfg):
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
         self.providers = self._discover()
     
     def _discover(self) -> dict[str, Any]:
+        """Scan providers.metadata for _meta_* modules and instantiate providers."""
         out: dict[str, Any] = {}
         try:
             import providers.metadata as md
@@ -50,6 +64,14 @@ class MetadataManager:
     
     def resolve(self, *, entity: str, ids: dict, locale: Optional[str] = None,
                 need: Optional[dict] = None, strategy: str = "first_success") -> dict:
+        """Resolve metadata using provider priority and a strategy.
+
+        - entity: "movie" or "tv" (aliases like "show"/"series" are normalized)
+        - ids: dict of known IDs (e.g., imdb, tmdb, tvdb)
+        - locale: optional locale hint for providers
+        - need: requested fields (e.g., poster/backdrop/title/year)
+        - strategy: "first_success" or "merge"
+        """
         cfg = self.load_cfg() or {}
         md_cfg = cfg.get("metadata") or {}
 
@@ -81,6 +103,11 @@ class MetadataManager:
         return self._merge(results) if strategy == "merge" else results[0]
 
     def _merge(self, results: list[dict]) -> dict:
+        """Merge multiple provider results with a simple precedence rule.
+
+        - images: union unique-by-url per kind
+        - other fields: first non-empty value wins
+        """
         out: dict = {}
         for r in results:
             for k, v in r.items():

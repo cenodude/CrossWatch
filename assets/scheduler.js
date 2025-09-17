@@ -79,7 +79,7 @@
     const tr = el('tr');
     if (j.active !== false && j.pair_id && !isEnabled(j.pair_id)) tr.classList.add('row-disabled');
 
-    // Pair
+  // Pair selector
     const tdPair = el('td');
     const sel = el('select');
     const ph = el('option'); ph.value=''; ph.textContent='— select pair —'; sel.appendChild(ph);
@@ -94,13 +94,13 @@
     sel.onchange = () => { j.pair_id = sel.value || null; };
     tdPair.appendChild(sel);
 
-    // Time
+  // Time input
     const tdTime = el('td');
     const t = el('input'); t.type = 'time'; if (j.at) t.value = j.at;
     t.onchange = () => { j.at = (t.value || '').trim() || null; };
     tdTime.appendChild(t);
 
-    // Days
+  // Days selector (Mon-Sun chips)
     const tdDays = el('td');
     const wrap = el('div','chipdays');
     const cur = new Set(Array.isArray(j.days) ? j.days : []);
@@ -117,7 +117,7 @@
     });
     tdDays.appendChild(wrap);
 
-    // After
+  // 'After' selector (sequence dependency)
     const tdAfter = el('td');
     const sa = el('select');
     const none = el('option'); none.value=''; none.textContent='— none —'; sa.appendChild(none);
@@ -130,13 +130,13 @@
     sa.onchange = () => { j.after = sa.value || null; renderJobs(); };
     tdAfter.appendChild(sa);
 
-    // Active
+  // Active toggle
     const tdOn = el('td');
     const c = el('input'); c.type='checkbox'; c.checked = (j.active !== false);
     c.onchange = () => { j.active = !!c.checked; renderJobs(); };
     tdOn.appendChild(c);
 
-    // Delete
+  // Delete step button
     const tdDel = el('td');
     const del = el('button'); del.className = 'btn ghost'; del.textContent = '✕';
     del.onclick = () => { _jobs = _jobs.filter(x => x !== j); renderJobs(); };
@@ -150,7 +150,7 @@
     const host = $('#sec-scheduling .body');
     if (!host || $('#schAdv')) return;
 
-    // Collapsed by default (no "open" attribute)
+  // Details element - collapsed by default (no "open" attribute)
     const adv = el('details','sch-adv'); adv.id = 'schAdv';
     adv.innerHTML = `
       <summary>
@@ -160,7 +160,7 @@
       <div style="margin-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <label class="mini"><input type="checkbox" id="schAdvEnabled"> Use advanced plan</label>
-          <span class="mini">Only enabled pairs are selectable; disabled pairs are greyed-out.</span>
+          <span class="mini">Only enabled pairs are selectable; disabled pairs are shown as greyed-out.</span>
         </div>
 
         <table>
@@ -188,43 +188,49 @@
     `;
     host.appendChild(adv);
 
-    $('#btnAddStep').onclick = () => {
+  // Add an empty step at the end of the plan
+  $('#btnAddStep').onclick = () => {
       _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
       renderJobs();
     };
-    $('#btnAutoFromPairs').onclick = () => {
+  // Auto-create steps from currently enabled pairs
+  $('#btnAutoFromPairs').onclick = () => {
       const eps = _pairs.filter(p => p.enabled);
       _jobs = eps.map(p => ({ id: genId(), pair_id: p.id, at: null, days: [], after: null, active: true }));
       if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
       renderJobs();
     };
-    $('#schAdvEnabled').onchange = () => { _advEnabled = !!$('#schAdvEnabled').checked; };
+  // Toggle advanced plan enabled state
+  $('#schAdvEnabled').onchange = () => { _advEnabled = !!$('#schAdvEnabled').checked; };
   }
 
   function renderJobs() {
     const tbody = $('#schJobsBody'); if (!tbody) return;
     tbody.innerHTML = '';
 
-    if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
+  // Ensure there's at least one editable step
+  if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
 
-    _jobs.forEach(j => j._blocked = j.active !== false && j.pair_id && !isEnabled(j.pair_id));
-    _jobs.forEach(j => tbody.appendChild(jobRow(j)));
+  // Mark steps that reference a disabled pair as blocked, then render rows
+  _jobs.forEach(j => j._blocked = j.active !== false && j.pair_id && !isEnabled(j.pair_id));
+  _jobs.forEach(j => tbody.appendChild(jobRow(j)));
 
-    const st = $('#schAdvStatus');
-    if (!_pairs.length) st.textContent = 'No pairs from /api/pairs.';
-    else if (_jobs.some(j => j._blocked)) st.textContent = 'Some steps reference disabled pairs.';
-    else st.textContent = '';
+  // Update status message: no pairs, or some steps reference disabled pairs
+  const st = $('#schAdvStatus');
+  if (!_pairs.length) st.textContent = 'No pairs from /api/pairs.';
+  else if (_jobs.some(j => j._blocked)) st.textContent = 'Some steps reference disabled pairs.';
+  else st.textContent = '';
   }
 
   // --- Load
   async function loadScheduling() {
-    // Build/ensure UI elements, then load current server config
+  // Build/ensure UI elements, then load current server config
     ensureUI();
     await fetchPairs();
 
     let saved = {};
     try {
-      // cache-bust to avoid stale reads
+      // Cache-bust to avoid stale reads from server
       saved = await fetch('/api/scheduling?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json());
     } catch {}
 
@@ -233,7 +239,7 @@
     if ($('#schN'))    $('#schN').value = String(saved.every_n_hours || 2);
     if ($('#schTime')) $('#schTime').value = saved.daily_time || '03:30';
 
-    // Advanced payload
+  // Advanced payload (sequential plan)
     const adv = saved?.advanced || {};
     _advEnabled = !!adv.enabled;
     if ($('#schAdvEnabled')) $('#schAdvEnabled').checked = _advEnabled;
@@ -249,8 +255,8 @@
       : [];
     renderJobs();
 
-    // Nudge the inline banner (safe if it exists)
-    try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
+  // Nudge the inline banner if present (best-effort)
+  try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
   }
 
   // Expose for other scripts (e.g. crosswatch.js showTab/settings)
@@ -271,7 +277,7 @@
     };
   }
 
-  // Public patch
+  // Public patch (used by the global Save handler)
   window.getSchedulingPatch = function() {
     const enabled = ($('#schEnabled')?.value || '').trim() === 'true';
     const mode = $('#schMode')?.value || 'hourly';

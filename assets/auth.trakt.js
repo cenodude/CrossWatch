@@ -1,19 +1,39 @@
-// auth.trakt.js — secrets hydration + Trakt device flow (idempotent, no LHS optional-chaining)
+// auth.trakt.js — Secrets hydration and Trakt device flow helpers.
+// This script populates UI fields from server config and handles the Trakt
+// device authorization flow, including PIN request and polling. It is written
+// to be idempotent and avoids optional chaining on the left-hand side for
+// maximum compatibility.
 (function () {
   if (window._traktPatched) return;
   window._traktPatched = true;
 
   // --- helpers --------------------------------------------------------------
+  /**
+   * Best-effort user notification.
+   * Uses window.notify when available, otherwise no-ops.
+   * @param {string} msg
+   */
   function _notify(msg) { try { if (typeof window.notify === "function") window.notify(msg); } catch (_) {} }
+  /** Get element by id. */
   function _el(id) { return document.getElementById(id); }
+  /** Set the value of an input by id (empty string for null/undefined). */
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
+  /** Trim a string value or return empty string. */
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
 
+  /**
+   * Toggle the Trakt success message visibility.
+   * @param {boolean} show
+   */
   function setTraktSuccess(show) {
     try { var el = _el("trakt_msg"); if (el) el.classList.toggle("hidden", !show); } catch (_) {}
   }
 
   // --- CONFIG fetch (single place) -----------------------------------------
+  /**
+   * Fetch the server config once, without caching.
+   * @returns {Promise<object|null>} Config object or null on failure.
+   */
   async function fetchConfig() {
     try {
       var r = await fetch("/api/config", { cache: "no-store" });
@@ -26,12 +46,14 @@
   }
 
   // --- RAW hydration (Plex + SIMKL + Trakt token) --------------------------
+  /** Hydrate Plex token from config into its input field. */
   async function hydratePlexFromConfigRaw() {
     var cfg = await fetchConfig(); if (!cfg) return;
     var tok = _str(cfg.plex && cfg.plex.account_token);
     if (tok) _setVal("plex_token", tok);
   }
 
+  /** Hydrate SIMKL credentials and token from config into UI inputs. */
   async function hydrateSimklFromConfigRaw() {
     var cfg = await fetchConfig(); if (!cfg) return;
     var s = cfg.simkl || {};
@@ -42,6 +64,7 @@
   }
 
   // Trakt-only (CID/Secret/Token) straight from cfg (unmasked)
+  /** Hydrate Trakt client id/secret and access token from config into UI. */
   async function hydrateAuthFromConfig() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -56,6 +79,7 @@
     }
   }
 
+  /** Hydrate all relevant provider secrets; runs each hydrator independently. */
   async function hydrateAllSecretsRaw() {
     // call raw hydrators; keep separate calls so each can succeed independently
     try { await hydratePlexFromConfigRaw(); } catch (_) {}
@@ -64,6 +88,10 @@
   }
 
   // --- Trakt hint and copy --------------------------------------------------
+  /**
+   * Update the Trakt setup hint visibility: shown unless both Client ID and
+   * Client Secret are present.
+   */
   function updateTraktHint() {
     try {
       var cid  = _str((_el("trakt_client_id")    || {}).value);
@@ -77,6 +105,7 @@
   }
 
   // Copy helpers + auto-bind for copy buttons
+  /** Copy arbitrary text to clipboard; optionally mark a button as copied. */
   async function _copyText(text, btn) {
     if (!text) return false;
     try {
@@ -104,6 +133,7 @@
     }
   }
 
+  /** Copy an input's value to the clipboard (used by several buttons). */
   window.copyInputValue = async function (inputId, btn) {
     var el = document.getElementById(inputId);
     if (!el) return;
@@ -111,11 +141,13 @@
   };
 
   // For the hint buttons:
+  /** Copy the Trakt Redirect URI preview to the clipboard. */
   window.copyTraktRedirect = async function () {
     var code = document.getElementById("trakt_redirect_uri_preview");
     var text = (code && code.textContent ? code.textContent : "urn:ietf:wg:oauth:2.0:oob").trim();
     await _copyText(text);
   };
+  /** Copy the generic Redirect URI preview to the clipboard. */
   window.copyRedirect = async function () {
     var code = document.getElementById("redirect_uri_preview");
     var text = ((code && code.textContent) || (code && code.value) || "").trim();
@@ -140,6 +172,10 @@
   });
 
   // --- Flush Trakt creds from cfg (new + legacy location) -------------------
+  /**
+   * Remove Trakt tokens from both new and legacy locations in the config,
+   * persist the change, and clear related UI fields.
+   */
   async function flushTraktCreds() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -178,6 +214,12 @@
 
   // --- Pollers --------------------------------------------------------------
   // New: poll the backend /api/trakt/pin/poll (device flow) until token is issued
+  /**
+   * Start polling the backend for a Trakt access token using the device flow.
+   * Stops after the specified timeout (default 3 minutes). Falls back to
+   * reading from config if the token is not echoed back in the API response.
+   * @param {number=} maxMs Custom maximum polling duration in milliseconds.
+   */
   function startTraktDevicePoll(maxMs) {
     try { if (window._traktPoll) clearTimeout(window._traktPoll); } catch (_){}
     var MAX_MS   = typeof maxMs === "number" ? maxMs : 180000; // 3 min
@@ -235,6 +277,10 @@
   }
 
   // Legacy: poll /api/config for the token (kept as a secondary fallback)
+  /**
+   * Legacy/fallback poller that checks /api/config for a Trakt token.
+   * Uses a backoff schedule and pauses when the settings page is hidden.
+   */
   function startTraktTokenPoll() {
     try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
     var MAX_MS   = 120000;
@@ -270,6 +316,10 @@
   }
 
   // --- Trakt: request PIN (device flow) ------------------------------------
+  /**
+   * Request a new Trakt device code (PIN), display it in the UI, and kick off
+   * polling. Opens the Trakt activation page to guide the user through consent.
+   */
   async function requestTraktPin() {
     setTraktSuccess(false);
 

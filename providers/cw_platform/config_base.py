@@ -1,4 +1,10 @@
-# cw_platform/config_base.py
+"""Config base utilities
+
+Provides a writable config root, sensible defaults, and small helpers for
+reading/writing JSON config with normalization. Designed to work both in
+containers (bind-mounted /config) and local development.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,13 +14,13 @@ import json
 import copy
 import time
 
-# ------------------------------------------------------------
-# Base dir resolution
-# ------------------------------------------------------------
+# Base directory resolution -------------------------------------------------
 def CONFIG_BASE() -> Path:
-    """
-    Resolve the writable config root. In containers, this is `/config`.
-    Outside containers (dev), fall back to the repo root.
+    """Resolve the writable config root.
+
+    - In containers: use /config (bind-mounted volume)
+    - In dev: fall back to the repository root
+    - Override with CONFIG_BASE env var
     """
     env = os.getenv("CONFIG_BASE")
     if env:
@@ -28,16 +34,14 @@ def CONFIG_BASE() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# Ready-to-use Path
+# Ready-to-use Path ---------------------------------------------------------
 CONFIG = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)  # ensure exists
 
 
-# ------------------------------------------------------------
-# Defaults (safe, comprehensive)
-# ------------------------------------------------------------
+# Defaults (safe, comprehensive) -------------------------------------------
 DEFAULT_CFG: Dict[str, Any] = {
-    # --- Providers -----------------------------------------------------------
+    # Providers --------------------------------------------------------------
     "plex": {
         "server_url": "",
         "account_token": "",
@@ -72,7 +76,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     },
     "tmdb": {"api_key": ""},
 
-    # --- Sync / Orchestrator -------------------------------------------------
+    # Sync / Orchestrator ----------------------------------------------------
     "sync": {
         "enable_add": False,
         "enable_remove": False,
@@ -82,13 +86,13 @@ DEFAULT_CFG: Dict[str, Any] = {
         "drop_guard": False,
         "allow_mass_delete": False,
 
-        # Tombstones (pair-scoped in orchestrator) + observed deletes
+        # Tombstones (pair-scoped in orchestrator) plus observed deletes
         "tombstone_ttl_days": 30,
         "include_observed_deletes": True,
 
-        # --------------- Global Tombstones: feature-agnostic suppression window ---------------
-        "gmt_enable": False,            # opt-in; orchestrator/providers behave fine if left False
-        "gmt_quarantine_days": 7,       # days to suppress re-adds for items explicitly removed elsewhere
+        # Global Tombstones (GMT): feature-agnostic suppression window
+        "gmt_enable": False,            # opt-in; safe to leave disabled
+        "gmt_quarantine_days": 7,       # suppress re-adds for items removed elsewhere (days)
 
         "bidirectional": {
             "enabled": False,
@@ -97,15 +101,15 @@ DEFAULT_CFG: Dict[str, Any] = {
         },
     },
 
-    # --- Runtime / Diagnostics ----------------------------------------------
+    # Runtime / Diagnostics --------------------------------------------------
     "runtime": {
         "debug": False,
-        # --------------- Ensure SIMKL/TRAKT cursors & shadows live under /config by default ---------------
+        # Ensure SIMKL/TRAKT cursors & shadows live under /config by default
         "state_dir": "/config",
         "telemetry": {"enabled": True},
     },
 
-    # --- Scheduling -----------------------------------------------------------
+    # Scheduling -------------------------------------------------------------
     "scheduling": {
         "enabled": False,
         "mode": "hourly",
@@ -113,26 +117,27 @@ DEFAULT_CFG: Dict[str, Any] = {
         "daily_time": "03:30",
     },
 
-    # --- airs (UI driven) ---------------------------------------------------
+    # Pairs (UI-driven) ------------------------------------------------------
     "pairs": [],
 }
 
 
-# ------------------------------------------------------------
-# Helpers: deep merge + file IO + normalization
-# ------------------------------------------------------------
+# Helpers: deep merge + file IO + normalization ----------------------------
 def _cfg_file() -> Path:
+    """Internal: path to config.json under CONFIG."""
     return CONFIG / "config.json"
 
 def config_path() -> Path:
-    """Public accessor kept for compatibility."""
+    """Public accessor for the config file path (kept for compatibility)."""
     return _cfg_file()
 
 def _read_json(p: Path) -> Dict[str, Any]:
+    """Read JSON file into a dict using UTF-8 encoding."""
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
+    """Write JSON atomically via a temp file and replace the target."""
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix("." + str(int(time.time())) + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -140,6 +145,7 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
     tmp.replace(p)
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge dictionaries; override values win, recursing on nested dicts."""
     out = copy.deepcopy(base)
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -149,6 +155,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 def _normalize_features_map(f: dict | None) -> dict:
+    """Normalize feature flags to a stable dict shape with enable/add/remove keys."""
     f = dict(f or {})
     for name, val in list(f.items()):
         if isinstance(val, bool):
@@ -163,13 +170,11 @@ def _normalize_features_map(f: dict | None) -> dict:
     return f
 
 
-# ------------------------------------------------------------
-# Public API
-# ------------------------------------------------------------
+# Public API ---------------------------------------------------------------
 def load_config() -> Dict[str, Any]:
-    """
-    Read /config/config.json if present and merge it over DEFAULT_CFG.
-    Also normalizes pairs->features and ensures runtime.state_dir is set.
+    """Load config.json and merge it over DEFAULT_CFG.
+
+    Also normalizes pair features and ensures runtime.state_dir is set/non-empty.
     """
     p = _cfg_file()
     user_cfg: Dict[str, Any] = {}
@@ -180,22 +185,22 @@ def load_config() -> Dict[str, Any]:
             user_cfg = {}
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
 
-    # normalize pair feature flags if any pairs exist
+    # Normalize pair feature flags if any pairs exist
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))
 
-    # --------------- Default state_dir to /config if missing/empty ---------------
+    # Default state_dir to /config if missing or empty
     rt = cfg.get("runtime") or {}
     state_dir = str(rt.get("state_dir") or "").strip()
     if not state_dir:
-        # honor CONFIG (which already points to /config in containers)
+        # Honor CONFIG (which already points to /config in containers)
         rt["state_dir"] = str(CONFIG)
         cfg["runtime"] = rt
 
-    # best-effort: ensure the state_dir directory exists
+    # Best effort: ensure the state_dir directory exists
     try:
         Path(rt["state_dir"]).mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -205,19 +210,19 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
-    """
-    Write to /config/config.json atomically.
-    Performs the same normalization as load_config (but does not inject all defaults).
+    """Write config.json atomically and normalize like load_config.
+
+    Does not inject all defaults; preserves existing values.
     """
     data = dict(cfg or {})
 
-    # normalize pair feature flags to stable shape
+    # Normalize pair feature flags to a stable shape
     if isinstance(data.get("pairs"), list):
         for it in data["pairs"]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))
 
-    # ensure runtime.state_dir is non-empty and points to a writable path
+    # Ensure runtime.state_dir is non-empty and points to a writable path
     rt = data.get("runtime") or {}
     if not str(rt.get("state_dir") or "").strip():
         rt["state_dir"] = str(CONFIG)

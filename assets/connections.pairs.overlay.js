@@ -1,9 +1,15 @@
-// connections.pairs.overlay.js
+// connections.pairs.overlay.js — Pairs board UI (drag/reorder, edit, delete)
+//
+// Responsibilities:
+// - Display persistent pairs (source → target) as compact cards.
+// - Provide reordering (drag), enable/disable, edit, and delete controls.
+// - Keep an in-memory client cache (window.cx.pairs) and persist reorder
+//   operations to the backend.
 (function () {
-  // Render lock
+  // Guard to avoid concurrent render runs.
   let _pairsRenderBusy = false;
 
-  // Provider icons and helpers
+  // Provider icon map and small helpers
   const ICONS = { PLEX: "/assets/PLEX.svg", SIMKL: "/assets/SIMKL.svg", TRAKT: "/assets/TRAKT.svg" };
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt" }[key(k)] || "x");
@@ -103,7 +109,7 @@
     s.textContent = css;
   }
 
-  // Ensure host container exists
+  // Ensure host container exists and return {host, board} or null
   function ensureHost() {
     const host = document.getElementById("pairs_list");
     if (!host) return null;
@@ -117,7 +123,7 @@
     return { host, board };
   }
 
-  // Lazy-load pairs if not present
+  // Lazy-load pairs from the existing client cache, a provided loader, or the API.
   async function loadPairsIfNeeded() {
     if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return;
     if (typeof window.loadPairs === "function") {
@@ -132,7 +138,7 @@
     }
   }
 
-  // Edit callback (respects your existing edit handlers)
+  // Edit callback (respects any existing handlers on the page).
   window.cxPairsEditClick = function (btn) {
     try {
       const id = btn.closest(".pair-card")?.dataset?.id;
@@ -151,7 +157,7 @@
     }
   };
 
-  // Enable/disable toggle
+  // Enable/disable toggle: optimistically update the UI and persist the change.
   if (typeof window.cxToggleEnable !== "function") {
     window.cxToggleEnable = async function (id, on, inputEl) {
             try {
@@ -203,7 +209,7 @@
   }
   window.deletePairCard = deletePairCard;
 
-  // Render all pairs
+  // Render all pairs into the board. Rebuilds the DOM and wires reorder handlers.
   function renderPairsOverlay() {
     ensureStyles();
     const containers = ensureHost();

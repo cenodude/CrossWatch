@@ -1,3 +1,11 @@
+"""SIMKL sync provider module.
+
+Provides read/write operations for SIMKL watchlist (plan-to-watch), ratings,
+and history with cautious HTTP usage (backoff, ETag/TTL cache), and durable
+cursors/shadows under the configured state directory. Documentation-only
+cleanup; no identifiers or runtime behavior changed.
+"""
+
 from __future__ import annotations
 
 __VERSION__ = "1.2.1"
@@ -8,7 +16,7 @@ import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, cast
 
 import requests
 
@@ -17,7 +25,7 @@ _CALLS = getattr(globals(), "_CALLS", {"GET": 0, "POST": 0})
 globals()["_CALLS"] = _CALLS
 
 # In-run GET memoization: collapses repeated identical GETs within the same process/run.
-_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Optional[requests.Response]] = {}
+_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Optional[Any]] = {}
 
 def _norm_params(p: Optional[dict]) -> Tuple[Tuple[str, str], ...]:
     if not p:
@@ -108,12 +116,12 @@ def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
     # watchlist behaves like add/remove
     return "add", "remove"
 
-def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[Any]:
     if not _HAS_GMT or not _gmt_is_enabled(cfg):
         return None
     try:
         ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
-        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
+        return cast(Any, GlobalTombstoneStore)(ttl_sec=max(1, ttl_days) * 24 * 3600)
     except Exception:
         return None
 
@@ -489,8 +497,9 @@ def _record_http_simkl(r: Optional[requests.Response], *, endpoint: str, method:
             except Exception:
                 bytes_out = 0
 
-        # Timing
-        ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
+        # Timing (elapsed may be missing or non-timedelta; be defensive)
+        el = getattr(r, "elapsed", None) if r is not None else None
+        ms = int(cast(Any, el).total_seconds() * 1000) if el is not None else 0
 
         # Rate headers (best-effort)
         rate_remaining = None
@@ -592,7 +601,7 @@ def _simkl_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] =
         r = _RUN_GET_CACHE[key]
         # count as a logical GET for stats, but don't double log bandwidth
         _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
-        return r
+        return cast(Optional[requests.Response], r)
 
     # 2) disk TTL cache (no network)
     ent = _http_cache_get(cfg_root or {}, url, params)
@@ -601,7 +610,7 @@ def _simkl_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] =
             r = _CachedResponse(ent)
             _RUN_GET_CACHE[key] = r
             # do NOT count a call here (no HTTP made)
-            return r
+            return cast(Optional[requests.Response], r)
         except Exception:
             pass  # fall through to network
 
@@ -636,7 +645,7 @@ def _simkl_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] =
                 r2 = _CachedResponse(prev)
                 _RUN_GET_CACHE[key] = r2
                 _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")  # counts the network 304
-                return r2
+                return cast(Optional[requests.Response], r2)
     except Exception:
         pass
 
@@ -646,7 +655,7 @@ def _simkl_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] =
 
     _RUN_GET_CACHE[key] = r
     _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
-    return r
+    return cast(Optional[requests.Response], r)
 
 
 def _simkl_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[str, Any], timeout: int = 45) -> Optional[requests.Response]:
@@ -1381,7 +1390,7 @@ except Exception:  # pragma: no cover
         capabilities: ModuleCapabilities
 
 
-class SIMKLModule(SyncModule):
+class SIMKLModule(SyncModule):  # type: ignore[misc]
     info = ModuleInfo(
         name="SIMKL",
         version=__VERSION__,

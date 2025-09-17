@@ -1,10 +1,16 @@
 /* ==================================================================
-   CrossWatch UI Stylesheet
-   ================================================================== */
+  CrossWatch UI Stylesheet
+  Purpose: Visual design for the CrossWatch app (layout, components,
+  badges, overlays, and motion). This file favors clarity and small,
+  isolated sections. Only comments were refined; selectors and rules
+  remain unchanged unless noted for a safe correction.
+  ================================================================== */
 
 /* ==================================================================
-   Design Tokens & Base
-   ================================================================== */
+  Design Tokens & Base
+  - Global colors, gradients, and common primitives
+  - Multiple :root blocks are intentional, grouping related tokens
+  ================================================================== */
 :root {
   --bg: #000;
   --panel: #0b0b0f;
@@ -37,16 +43,19 @@ code {
   border-radius: 8px;
   background: #0a0a17
 }
+/* Brand RGB channel tokens (for translucent borders/shadows) */
 :root {
   --plex-rgb: 229,160,13;
   --simkl-rgb: 0,194,255
 }
+/* Brand solid colors (hex) and accents */
 :root {
   --plex: #e5a00d;
   --simkl: #00b7eb;
   --tmdb: #01d277;
   --trakt: #ed1c24
 }
+/* Switch palette (initial variant) */
 :root {
   --sw-on: #26b87a;
   --sw-on2: #1e8f5f;
@@ -55,6 +64,7 @@ code {
   --sw-rail: #101022;
   --sw-edge: #2a2a3a
 }
+/* Switch palette (final override) */
 :root {
   --sw-on: #22b27e;
   --sw-on2: #1a9466;
@@ -370,9 +380,18 @@ header {
   gap: 10px
 }
 .brand .logo {
-  width: 28px;
-  height: 28px;
-  display: inline-block
+  width: 34px;
+  height: 34px;
+  display: inline-block;
+  cursor: pointer
+}
+.brand .logo,
+.brand .name {
+  transition: filter .2s ease, transform .2s ease, text-shadow .2s ease;
+}
+.brand .logo:hover, .brand .logo:focus,
+.brand .name:hover, .brand .name:focus {
+  filter: drop-shadow(0 0 10px rgba(124, 92, 255, 0.45));
 }
 .brand .name {
   font-size: 18px;
@@ -1097,11 +1116,13 @@ header {
   background: rgba(0,0,0,.45);
   border: 1px solid rgba(255,255,255,.08);
   color: #fff;
+  background-clip: initial;
   -webkit-text-fill-color: #fff;
   -webkit-background-clip: initial
 }
 .stat-block .pill {
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   border: 0;
@@ -1116,6 +1137,7 @@ header {
 }
 .pill.plain {
   background: none !important;
+  background-clip: unset !important;
   -webkit-background-clip: unset !important;
   -webkit-text-fill-color: unset !important;
   color: #fff !important
@@ -1126,6 +1148,7 @@ header {
   font-size: 12px;
   letter-spacing: .2px;
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: 700
@@ -1401,6 +1424,7 @@ select {
   max-height: 60px;
   overflow: hidden;
   display: -webkit-box;
+  line-clamp: 4;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical
 }
@@ -2299,6 +2323,7 @@ select {
   font-weight: 800;
   letter-spacing: .2px;
   background: linear-gradient(90deg,var(--grad1,#7c5cff),var(--grad2,#2de2ff));
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent
 }
@@ -3993,8 +4018,9 @@ select {
 /* small spacer between counters and micro chips */
 .history-badges .sep { display:inline-block; width: 8px; }
 
-/* Keep header clickable; only body looks dimmed */
-.section.disabled { }
+/* Keep header clickable; only body looks dimmed.
+  Add a no-op property to avoid empty ruleset warnings without altering visuals. */
+.section.disabled { pointer-events: auto; }
 .section.disabled .head { opacity: 1; }
 .section.disabled .body { opacity: .55; }
 

@@ -1,8 +1,10 @@
-# _FastAPI.py
-#-------------- renders the full HTML for the web UI (self-contained)
-#-------------- changes: full-width frosted footer, single sticky save, label flip, watchlist prehide
+"""
+_FastAPI.py
+Renders the complete HTML for the web UI (self-contained) served by the backend.
+"""
 
 def get_index_html() -> str:
+    """Return the full, self-contained HTML for the CrossWatch UI."""
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
@@ -13,15 +15,15 @@ def get_index_html() -> str:
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
 
 <style>
-  /*-------------- icon font helper */
+  /* Icon font helper */
   .material-symbol{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:1em;line-height:1;display:inline-block;vertical-align:middle;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
 
-  /*-------------- publication tidy */
+  /* Publication tidy: collapse legacy controls not used in this build */
   .pair-selectors,button[onclick="addPair()"],#batches_list,button[onclick="addBatch()"],button[onclick="runAllBatches()"]{display:none!important}
   #providers_list.grid2{display:block!important}
   #providers_list .pairs-board{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
 
-  /*-------------- frosted footer + sticky Save (full viewport width) */
+  /* Frosted footer + sticky Save (full viewport width) */
   #save-frost{position:fixed;left:0;right:0;bottom:0;height:84px;background:linear-gradient(0deg,rgba(10,10,14,.85) 0%,rgba(10,10,14,.60) 35%,rgba(10,10,14,0) 100%);border-top:1px solid var(--border);backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%);pointer-events:none;z-index:9998}
   #save-fab{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));z-index:10000;display:flex;justify-content:center;align-items:center;pointer-events:none;background:transparent}
   #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
@@ -31,7 +33,7 @@ def get_index_html() -> str:
 
 <header>
   <div class="brand">
-    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch" tabindex="0" role="button" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
       <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
         <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/>
       </linearGradient></defs>
@@ -42,7 +44,7 @@ def get_index_html() -> str:
       <circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
       <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <span class="name">CrossWatch</span>
+    <span class="name" role="link" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">CrossWatch</span>
   </div>
 
   <div class="tabs">
@@ -55,6 +57,7 @@ def get_index_html() -> str:
   <style id="prehide-wl">#tab-watchlist{display:none!important}</style>
   <script>
   (function(){
+    // Show the Watchlist tab when a TMDb API key is configured
     fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).then(cfg=>{
       if ((cfg?.tmdb?.api_key||"").trim()) document.getElementById("prehide-wl")?.remove();
     }).catch(()=>{});
@@ -365,7 +368,7 @@ def get_index_html() -> str:
   });
 </script>
 
-<!---------------- frosted footer layer + sticky button -->
+<!-- Frosted footer layer + sticky Save button -->
 <div id="save-frost" class="hidden" aria-hidden="true"></div>
 <div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save">
   <button id="save-fab-btn" class="btn" onclick="saveSettings(this)">

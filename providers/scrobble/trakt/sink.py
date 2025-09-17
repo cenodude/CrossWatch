@@ -1,12 +1,20 @@
 from __future__ import annotations
+
+"""Trakt scrobble sink
+
+Sends scrobble events to the Trakt API with resilient retries, token refresh
+on 401, and small quality-of-life guards (debounce, progress memory, and
+STOP→PAUSE conversion under a configurable threshold).
+"""
+
 import time, json
 from typing import Any, Dict, Optional, Tuple
 
 import requests
 
-# central logger (optional)
+# Project logger (optional)
 try:
-    from modules._logging import log as BASE_LOG
+    from _logging import log as BASE_LOG
 except Exception:
     BASE_LOG = None
 
@@ -15,11 +23,12 @@ from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 TRAKT_API = "https://api.trakt.tv"
 APP_AGENT = "CrossWatch/Scrobble/1.0"
 
-# Runtime override so a freshly refreshed token is used immediately
+# Holds a freshly refreshed token at runtime so requests use it immediately
 _TOKEN_OVERRIDE: Optional[str] = None
 
 # ---- config --------------------------------------------------------------------
 def _load_config() -> Dict[str, Any]:
+    """Load configuration from the app when available; fall back to config.json."""
     try:
         from crosswatch import load_config
         return load_config()
@@ -28,6 +37,7 @@ def _load_config() -> Dict[str, Any]:
             return json.load(f)
 
 def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """Build Trakt HTTP headers using config and any refreshed token override."""
     global _TOKEN_OVERRIDE
     t = (cfg.get("trakt") or {})
     client_id = t.get("client_id") or t.get("api_key") or ""
@@ -42,9 +52,14 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
     }
 
 def _post(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
+    """POST helper with standard headers and short timeout."""
     return requests.post(f"{TRAKT_API}{path}", headers=_headers(cfg), json=body, timeout=10)
 
 def _refresh_trakt_token(cfg: Dict[str, Any]) -> bool:
+    """Refresh the Trakt access token using the refresh_token in config.
+
+    Returns True on success (and updates runtime override + config when possible).
+    """
     global _TOKEN_OVERRIDE
     t = (cfg.get("trakt") or {})
     client_id = t.get("client_id") or t.get("api_key")
@@ -54,7 +69,7 @@ def _refresh_trakt_token(cfg: Dict[str, Any]) -> bool:
 
     if not (client_id and client_secret and refresh_token):
         if BASE_LOG:
-            BASE_LOG("TRAKT", "ERROR", "Cannot refresh token: missing client_id/client_secret/refresh_token")
+            BASE_LOG("Cannot refresh token: missing client_id/client_secret/refresh_token", level="ERROR", module="TRAKT")
         return False
 
     try:
@@ -71,13 +86,13 @@ def _refresh_trakt_token(cfg: Dict[str, Any]) -> bool:
         )
     except Exception as e:
         if BASE_LOG:
-            BASE_LOG("TRAKT", "ERROR", f"Token refresh failed (network): {e}")
+            BASE_LOG(f"Token refresh failed (network): {e}", level="ERROR", module="TRAKT")
         return False
 
     if resp.status_code != 200:
         short = (resp.text or "")[:400]
         if BASE_LOG:
-            BASE_LOG("TRAKT", "ERROR", f"Token refresh failed {resp.status_code}: {short}")
+            BASE_LOG(f"Token refresh failed {resp.status_code}: {short}", level="ERROR", module="TRAKT")
         return False
 
     try:
@@ -89,7 +104,7 @@ def _refresh_trakt_token(cfg: Dict[str, Any]) -> bool:
     new_refresh = data.get("refresh_token") or refresh_token
     if not new_access:
         if BASE_LOG:
-            BASE_LOG("TRAKT", "ERROR", "Token refresh response missing access_token")
+            BASE_LOG("Token refresh response missing access_token", level="ERROR", module="TRAKT")
         return False
 
     _TOKEN_OVERRIDE = new_access
@@ -102,18 +117,20 @@ def _refresh_trakt_token(cfg: Dict[str, Any]) -> bool:
         new_cfg["trakt"]["refresh_token"] = new_refresh
         save_config(new_cfg)
         if BASE_LOG:
-            BASE_LOG("TRAKT", "INFO", "Trakt token refreshed and saved to config")
+            BASE_LOG("Trakt token refreshed and saved to config", level="INFO", module="TRAKT")
     except Exception:
         if BASE_LOG:
-            BASE_LOG("TRAKT", "INFO", "Trakt token refreshed (runtime only)")
+            BASE_LOG("Trakt token refreshed (runtime only)", level="INFO", module="TRAKT")
     return True
 
 # ---- id utils ------------------------------------------------------------------
 def _extract_ids(event: ScrobbleEvent) -> Dict[str, Any]:
+    """Return a compact IDs dict with only the identifiers Trakt recognizes."""
     ids = event.ids or {}
     return {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "trakt") if k in ids and ids[k]}
 
 def _extract_show_ids(event: ScrobbleEvent) -> Dict[str, Any]:
+    """Extract show-level IDs for episodes, normalized to standard keys."""
     ids = event.ids or {}
     show = {}
     for k in ("imdb_show", "tmdb_show", "tvdb_show", "trakt_show"):
@@ -122,6 +139,7 @@ def _extract_show_ids(event: ScrobbleEvent) -> Dict[str, Any]:
     return show
 
 def _clamp_progress(p: int) -> int:
+    """Ensure progress is an integer between 0 and 100."""
     try:
         p = int(p)
     except Exception:
@@ -129,12 +147,14 @@ def _clamp_progress(p: int) -> int:
     return max(0, min(100, p))
 
 def _stop_pause_threshold(cfg: Dict[str, Any]) -> int:
+    """Percentage below which STOP events are converted to PAUSE to avoid watched."""
     try:
         return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80))
     except Exception:
         return 80
 
 def _regress_tolerance(cfg: Dict[str, Any]) -> int:
+    """Minimum backward jump (in percentage points) treated as a real rewind."""
     try:
         return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("regress_tolerance_percent", 5))
     except Exception:
@@ -142,12 +162,14 @@ def _regress_tolerance(cfg: Dict[str, Any]) -> int:
 
 # ---- sink ----------------------------------------------------------------------
 class TraktSink(ScrobbleSink):
-    """
-    - resilient retries & 401 token refresh
-    - STOP→PAUSE below threshold
-    - progress memory per item across sessions (fixes start-at-0 and resume)
-    - accept real rewinds; ignore tiny jitter
-    - clamp suspicious 100% on pause/stop using memory
+    """Scrobble sink that posts start/pause/stop events to Trakt.
+
+    Features:
+    - Resilient retries and token refresh on 401
+    - STOP→PAUSE conversion under a configurable threshold
+    - Progress memory per item across sessions (better resume behavior)
+    - Accepts real rewinds but ignores tiny jitter
+    - Clamps suspicious 100% on pause/stop using session memory
     """
 
     def __init__(self, logger=None):
@@ -164,9 +186,10 @@ class TraktSink(ScrobbleSink):
         self._last_prog_global: Dict[str, int] = {}              # media -> last %
 
     def _log(self, msg: str, level: str = "INFO"):
+        """Log via shared logger when present, else print to stdout."""
         if BASE_LOG:
             try:
-                BASE_LOG("TRAKT", level.upper(), str(msg))
+                BASE_LOG(str(msg), level=level.upper(), module="TRAKT")
                 return
             except Exception:
                 pass
@@ -206,6 +229,7 @@ class TraktSink(ScrobbleSink):
 
     # Build body using a specific progress
     def _body_with_progress(self, event: ScrobbleEvent, progress: int) -> Dict[str, Any]:
+        """Build the Trakt request body for the given event and progress."""
         body: Dict[str, Any] = {"progress": _clamp_progress(progress)}
 
         if event.media_type == "movie":
@@ -213,7 +237,7 @@ class TraktSink(ScrobbleSink):
             if ids:
                 body["movie"] = {"ids": ids}
             else:
-                m = {"title": event.title}
+                m: Dict[str, Any] = {"title": event.title}
                 if event.year is not None:
                     m["year"] = event.year
                 body["movie"] = m
@@ -234,7 +258,7 @@ class TraktSink(ScrobbleSink):
             return body
 
         if has_sn:
-            s = {"title": event.title}
+            s: Dict[str, Any] = {"title": event.title}
             if event.year is not None:
                 s["year"] = event.year
             body["show"] = s
@@ -246,6 +270,7 @@ class TraktSink(ScrobbleSink):
 
     # HTTP with retries & 401 refresh
     def _send_with_retries(self, path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a request with backoff, handling 401 refresh and rate limits."""
         backoff = 1.0
         tried_refresh = False
 
@@ -295,6 +320,7 @@ class TraktSink(ScrobbleSink):
 
     # Main send
     def send(self, event: ScrobbleEvent) -> None:
+        """Main entry: compute effective progress/action and post to Trakt."""
         cfg = _load_config()
 
         sk = str(event.session_key or "?")

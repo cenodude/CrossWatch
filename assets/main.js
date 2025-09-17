@@ -8,10 +8,10 @@
 
   const elProgress = document.getElementById("ux-progress");
   const elLanes    = document.getElementById("ux-lanes");
-  const elSpot     = document.getElementById("ux-spotlight"); // intentionally unused
+  const elSpot     = document.getElementById("ux-spotlight"); // intentionally unused (placeholder)
   if (!elProgress || !elLanes || !elSpot) return;
 
-  // ---------- Styles ----------
+  // ---------- Inline styles for UX controls ----------
   const css = `
   #ux-progress, #ux-lanes { margin-top: 12px; }
 
@@ -59,7 +59,7 @@
   styleEl.textContent = css;
   document.head.appendChild(styleEl);
 
-  // ---------- State ----------
+  // ---------- Component state ----------
   let timeline = { start:false, pre:false, post:false, done:false };
   let progressPct = 0;
   let status = null;
@@ -67,18 +67,18 @@
   let _prevTL = { start:false, done:false };
   let _prevRunning = false;
 
-  // Optimistic UX
+  // Optimistic UI state (assume progress until server confirms)
   let optimistic = false;
   let lastServerUpdate = 0;
 
-  // Lanes enable map (from /api/pairs)
+  // Map of enabled lanes (derived from /api/pairs)
   let enabledFromPairs = null;
   let lastPairsAt = 0;
 
-  // Shake detection
+  // Counters used for shake detection on updates
   const lastCounts = Object.create(null);
 
-  // ---------- Utils ----------
+  // ---------- Utility functions ----------
   const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
   function asPctFromTimeline(tl) {
     if (!tl) return 0;
@@ -109,7 +109,7 @@
     return summary?.enabled || defaultEnabledMap();
   }
 
-  // ---------- Rendering ----------
+  // ---------- Rendering helpers ----------
   function renderProgress() {
     elProgress.innerHTML = "";
     const rail = document.createElement("div");
@@ -179,7 +179,7 @@
       const lane = document.createElement("div"); lane.className = "lane";
       if (!isEnabled) lane.classList.add("disabled");
 
-      // Shake if new totals increased during a run
+  // Add a temporary 'shake' animation when totals increase during a run
       const total = (added||0) + (removed||0) + (updated||0);
       const prev  = lastCounts[f.key] ?? 0;
       if (running && total > prev && isEnabled) {
@@ -237,15 +237,15 @@
   }
 
   function renderSpotlightSummary() {
-    elSpot.innerHTML = ""; // deliberately empty (no “Sync complete” line)
+  elSpot.innerHTML = ""; // intentionally left blank (no "Sync complete" message)
   }
 
-  // ---------- Pairs → enabled lanes ----------
+  // ---------- Pairs → derive enabled lanes ----------
   async function pullPairs() {
     const arr = await fetchJSON("/api/pairs", null);
     if (!Array.isArray(arr)) return;
 
-    // If there are pairs, build union of enabled features; if none, leave it null (fallback to summary/defaults)
+  // If pairs exist, compute the union of enabled features; otherwise leave null to fall back to summary/defaults
     if (arr.length === 0) { enabledFromPairs = null; return; }
 
     const enabled = { watchlist:false, ratings:false, history:false, playlists:false };
@@ -259,7 +259,7 @@
     enabledFromPairs = enabled;
   }
 
-  // ---------- Fallbacks ----------
+  // ---------- Fallback helpers ----------
   async function hydrateFromInsights(startTsEpoch) {
     const src = await fetchFirstJSON(
       ["/api/insights", "/api/statistics", "/statistics.json", "/data/statistics.json"],
@@ -341,7 +341,7 @@
     );
   }
 
-  // ---------- Data pulls ----------
+  // ---------- Data fetch routines ----------
   async function pullStatus() {
     status = await fetchJSON("/api/status", status);
     try { window._ui = window._ui || {}; window._ui.status = status; } catch (e) {}
@@ -351,7 +351,7 @@ async function pullSummary() {
   const s = await fetchJSON("/api/run/summary", summary);
   if (!s) return;
 
-  // remember previous state before we update
+  // Remember previous state before updating UI
   const prevTL = _prevTL;
   const prevRunning = _prevRunning;
 
@@ -375,7 +375,7 @@ async function pullSummary() {
   timeline = mapped;
   progressPct = asPctFromTimeline(timeline);
 
-  // ---- legacy bridges (leave as-is) ---------------------------------------
+  // ---- Legacy compatibility bridges (do not alter) -------------------------
   try {
     if (typeof updateProgressFromTimeline === "function") updateProgressFromTimeline(timeline);
     const btn = document.getElementById("run");
@@ -393,15 +393,15 @@ async function pullSummary() {
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled();
   } catch (e) {}
 
-  // ---- robust phase transition detection ----------------------------------
+  // ---- Robust detection of phase transitions --------------------------------
   const wasInProgress = prevRunning || (prevTL.start && !prevTL.done) || optimistic;
   const nowInProgress = running || (timeline.start && !timeline.done);
   const justFinished  = wasInProgress && !nowInProgress && timeline.done;
 
   if (justFinished) {
-    optimistic = false; // clear optimistic mode
+  optimistic = false; // Clear optimistic mode once confirmed
 
-    // refresh left preview bits
+  // Refresh left-side preview elements
     try {
       window.wallLoaded = false;
       if (typeof updatePreviewVisibility === "function") updatePreviewVisibility();
@@ -409,24 +409,24 @@ async function pullSummary() {
       if (typeof refreshSchedulingBanner === "function") refreshSchedulingBanner();
     } catch (e) {}
 
-    // refresh right-side Statistics
+  // Refresh right-side statistics panel
     try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch (e) {}
 
-    // broadcast for any other listeners
+  // Dispatch an event for other listeners
     try {
       window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary } }));
     } catch (e) {}
   }
 
-  // keep prev markers for next tick
+  // Preserve previous markers for the next update tick
   _prevTL = { start: timeline.start, done: timeline.done };
   _prevRunning = !!running;
 
-  // ensure enabled map & render
+  // Ensure enabled map is set and re-render lanes
   if (!summary.enabled) summary.enabled = defaultEnabledMap();
   renderAll();
 
-  // feature hydration fallback
+  // Feature hydration fallback (use defaults when server data missing)
   const hasFeatures =
     summary?.features && Object.keys(summary.features).length > 0 &&
     Object.values(summary.features).some(v =>
@@ -446,12 +446,12 @@ async function pullSummary() {
     renderSpotlightSummary();
   }
 
-  // ---------- Poll + optimistic auto-bump ----------
+  // ---------- Polling and optimistic auto-bump ----------
   function tick() {
     const running = !timeline?.done || (summary?.running === true);
     pullSummary();
 
-    // periodically refresh pairs (so enabled lanes stay in sync)
+  // Periodically refresh pairs so enabled lanes remain synchronized
     if ((Date.now() - lastPairsAt) > 10000) { pullPairs().finally(() => { lastPairsAt = Date.now(); renderLanes(); }); }
 
     if ((tick._lastStatusAt || 0) + 5000 < Date.now()) { pullStatus(); tick._lastStatusAt = Date.now(); }
@@ -470,7 +470,7 @@ async function pullSummary() {
     tick._t = setTimeout(tick, running ? 1000 : 2500);
   }
 
-  // ---------- Optimistic start on button click ----------
+  // ---------- Optimistic start behavior when user clicks Start ----------
   function wireRunButton() {
     const btn = document.getElementById("run");
     if (!btn || wireRunButton._done) return;
@@ -489,7 +489,7 @@ async function pullSummary() {
     }, { capture:true });
   }
 
-  // ---------- Legacy bridges ----------
+  // ---------- Legacy bridges (compatibility) ----------
   window.addEventListener("ux:timeline", (e) => {
     const tl = e.detail || {};
     timeline = { start: !!tl.start, pre: !!tl.pre, post: !!tl.post, done: !!tl.done };
@@ -507,7 +507,7 @@ async function pullSummary() {
     refresh: () => pullSummary().then(renderAll)
   };
 
-  // ---------- Boot ----------
+  // ---------- Boot / initialization ----------
   pullPairs(); // initialize enabled lanes
   renderAll();
   wireRunButton();

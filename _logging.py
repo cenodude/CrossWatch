@@ -1,4 +1,16 @@
-# modules/_logging.py
+"""Lightweight logging utilities for CrossWatch.
+
+This module provides a fast, minimal stdout logger with:
+- ANSI colorized tags for readability (optional)
+- Timestamp prefixes (optional)
+- Structured context binding (module/name and arbitrary fields)
+- Optional newline-delimited JSON sink for file-based log collection
+- A callable adapter so code can use `log("msg", level="INFO", extra={...})`
+
+Behavior and identifiers are unchanged; comments and docstrings were polished
+for clarity and consistency.
+"""
+
 from __future__ import annotations
 import sys, datetime, json, threading
 from typing import Any, Optional, TextIO, Mapping, Dict
@@ -14,7 +26,14 @@ LEVELS = {"silent": 60, "error": 40, "warn": 30, "info": 20, "debug": 10}
 LEVEL_TAG = {"debug": "[debug]", "info": "[i]", "warn": "[!]", "error": "[!]", "success": "[✓]"}
 
 class Logger:
-    """Minimal, fast stdout logger with optional JSON file sink and context binding."""
+    """Minimal, fast stdout logger with optional JSON sink and context binding.
+
+    Designed for low overhead and simple integration:
+    - `debug/info/warn/error/success` methods format and write to stdout
+    - Optional JSON sink writes one JSON object per line for easy ingestion
+    - Context helpers (`set_context`, `bind`, `child`) attach structured fields
+    - Callable adapter supports `log("text", level="INFO", extra={...})`
+    """
     def __init__(
         self,
         stream: TextIO = sys.stdout,
@@ -46,27 +65,34 @@ class Logger:
         self._json_stream: Optional[TextIO] = _json_stream
         self._lock = _lock or threading.Lock()
 
-    # ----- config
+    # Configuration
     def set_level(self, level: str) -> None:
+        """Set the log level (silent|error|warn|info|debug)."""
         self.level_no = LEVELS.get(level, self.level_no)
 
     def enable_color(self, on: bool = True) -> None:
+        """Toggle ANSI colors for tag and timestamp rendering."""
         self.use_color = on
 
     def enable_time(self, on: bool = True) -> None:
+        """Toggle timestamp prefixes in human-readable output."""
         self.show_time = on
 
     def enable_json(self, file_path: str) -> None:
+        """Enable newline-delimited JSON logging to the given file path."""
         self._json_stream = open(file_path, "a", encoding="utf-8")
 
-    # ----- context
+    # Context
     def set_context(self, **ctx: Any) -> None:
+        """Merge fields into the logger's structured context."""
         self._context.update(ctx)
 
     def get_context(self) -> Dict[str, Any]:
+        """Return a copy of the current structured context."""
         return dict(self._context)
 
     def bind(self, **ctx: Any) -> "Logger":
+        """Create a child logger with additional context fields merged in."""
         new_ctx = dict(self._context); new_ctx.update(ctx)
         return Logger(
             stream=self.stream,
@@ -82,17 +108,20 @@ class Logger:
         )
 
     def child(self, name: str) -> "Logger":
+        """Create a namespaced child logger (adds module=name to context)."""
         return self.bind(module=name)
 
-    # ----- formatters
+    # Formatting
     @property
     def level_name(self) -> str:
+        """Return the canonical name of the current log level."""
         for k, v in LEVELS.items():
             if v == self.level_no:
                 return k
         return "info"
 
     def _fmt_text(self, level: str, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> str:
+        """Compose a human-readable line with optional color and timestamp."""
         tag = LEVEL_TAG.get(level, "[i]")
         msg = " ".join(str(p) for p in (tag, *parts))
         if self.use_color:
@@ -105,6 +134,7 @@ class Logger:
         return msg
 
     def _write_sinks(self, level: str, message_text: str, *, msg: str, extra: Optional[Mapping[str, Any]]) -> None:
+        """Write the formatted line to stdout and, if enabled, JSON to file."""
         with self._lock:
             self.stream.write(message_text + "\n")
             self.stream.flush()
@@ -120,37 +150,43 @@ class Logger:
                 self._json_stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 self._json_stream.flush()
 
-    # ----- public API
+    # Public API
     def debug(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Log a debug-level message."""
         if self.level_no <= LEVELS["debug"]:
             s = self._fmt_text("debug", *parts, extra=extra)
             self._write_sinks("debug", s, msg=" ".join(str(p) for p in parts), extra=extra)
 
     def info(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Log an info-level message."""
         if self.level_no <= LEVELS["info"]:
             s = self._fmt_text("info", *parts, extra=extra)
             self._write_sinks("info", s, msg=" ".join(str(p) for p in parts), extra=extra)
 
     def warn(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Log a warning-level message."""
         if self.level_no <= LEVELS["warn"]:
             s = self._fmt_text("warn", *parts, extra=extra)
             self._write_sinks("warn", s, msg=" ".join(str(p) for p in parts), extra=extra)
 
-    # alias for libraries that call .warning
+    # Alias for libraries that call .warning
     def warning(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Alias for warn()."""
         self.warn(*parts, extra=extra)
 
     def error(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Log an error-level message."""
         if self.level_no <= LEVELS["error"]:
             s = self._fmt_text("error", *parts, extra=extra)
             self._write_sinks("error", s, msg=" ".join(str(p) for p in parts), extra=extra)
 
     def success(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        """Log a success message (styled like info)."""
         if self.level_no <= LEVELS["info"]:
             s = self._fmt_text("success", *parts, extra=extra)
             self._write_sinks("info", s, msg=" ".join(str(p) for p in parts), extra=extra)
 
-    # callable adapter: logger("text", level="INFO", extra={...})
+    # Callable adapter: logger("text", level="INFO", extra={...})
     def __call__(
         self,
         message: str,
@@ -159,6 +195,14 @@ class Logger:
         module: Optional[str] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        """Call-style logging entry point used across the codebase.
+
+        Parameters
+        - message: text to log
+        - level: case-insensitive level name (DEBUG|INFO|WARN|ERROR)
+        - module: optional logical name added to context for this call
+        - extra: optional mapping of structured metadata to include
+        """
         if module:
             self = self.bind(module=module)
         lvl = (level or "INFO").lower()

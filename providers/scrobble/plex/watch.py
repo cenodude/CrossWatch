@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Plex WatchService
+
+Listens to Plex alert events and emits normalized scrobble events to sinks
+(e.g., Trakt). Includes lightweight filtering, enrichment via Plex lookups,
+and a small autostart helper.
+"""
+
 import time
 import threading
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
@@ -9,8 +16,9 @@ import json, os
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
 
+# Project logger
 try:
-    from modules._logging import log as BASE_LOG
+    from _logging import log as BASE_LOG
 except Exception:
     BASE_LOG = None
 
@@ -24,6 +32,7 @@ from providers.scrobble.scrobble import (
 
 
 def _config_paths() -> list[Path]:
+    """Return likely config.json paths (env override or container default)."""
     env = os.getenv("CROSSWATCH_CONFIG")
     if env:
         p = Path(env)
@@ -31,6 +40,7 @@ def _config_paths() -> list[Path]:
     return [Path("/config/config.json")]
 
 def _load_config() -> Dict[str, Any]:
+    """Load config via main app when available; otherwise read from disk."""
     try:
         from crosswatch import load_config
         cfg = load_config()
@@ -46,6 +56,7 @@ def _load_config() -> Dict[str, Any]:
 
 
 def _plex_base_and_token(cfg: Dict[str, Any]) -> Tuple[str, str]:
+    """Extract Plex base URL and token from config with sane defaults."""
     plex = cfg.get("plex") or {}
     base = (plex.get("server_url") or plex.get("base_url") or "http://127.0.0.1:32400").strip().rstrip("/")
     if "://" not in base:
@@ -73,9 +84,10 @@ class WatchService:
         self._attempt: int = 0
 
     def _log(self, msg: str, level: str = "INFO") -> None:
+        """Log to shared logger if available; otherwise stdout."""
         if BASE_LOG:
             try:
-                BASE_LOG("WATCH", level.upper(), str(msg))
+                BASE_LOG(str(msg), level=level.upper(), module="WATCH")
                 return
             except Exception:
                 pass
@@ -138,6 +150,7 @@ class WatchService:
         return False
 
     def _find_rating_key(self, raw: Dict[str, Any]) -> Optional[int]:
+        """Find a numeric ratingKey within a possibly nested Plex payload."""
         if not isinstance(raw, dict):
             return None
         psn = raw.get("PlaySessionStateNotification")
@@ -150,7 +163,8 @@ class WatchService:
         for v in raw.values():
             if isinstance(v, dict) and ("ratingKey" in v or "ratingkey" in v):
                 try:
-                    return int(v.get("ratingKey") or v.get("ratingkey"))
+                    _rk = v.get("ratingKey") or v.get("ratingkey")
+                    return int(_rk) if _rk is not None else None
                 except Exception:
                     pass
         return None
@@ -181,7 +195,9 @@ class WatchService:
             return None
         try:
             el = self._plex.query("/status/sessions")
-            for v in el.iter("Video"):
+            if not hasattr(el, "iter"):
+                return None
+            for v in el.iter("Video"):  # type: ignore[attr-defined]
                 if v.get("sessionKey") == str(session_key):
                     u = v.find("User")
                     if u is not None:
@@ -203,6 +219,8 @@ class WatchService:
                 return ev
 
             it = self._plex.fetchItem(int(rk))
+            if not it:
+                return ev
 
             media_type = getattr(it, "type", "") or ev.media_type
             title = getattr(it, "title", None)
@@ -449,10 +467,16 @@ def autostart_from_config() -> Optional[WatchService]:
 
     sinks: list[ScrobbleSink] = []
     try:
-        from providers.scrobble.sink import TraktSink
+        # Prefer modern location
+        from providers.scrobble.trakt.sink import TraktSink
         sinks.append(TraktSink())
     except Exception:
-        pass
+        try:
+            # Back-compat fallback
+            from providers.scrobble.sink import TraktSink  # type: ignore
+            sinks.append(TraktSink())
+        except Exception:
+            pass
 
     _AUTO_WATCH = WatchService(sinks=sinks)
     _AUTO_WATCH.start_async()

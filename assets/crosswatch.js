@@ -66,7 +66,7 @@ function stateAsBool(v) {
   return !!v;
 }
 
-// --- secret field helpers (masking + safe flags)
+// --- Secret-field helpers: mask tokens and track safe state
 function applyServerSecret(inputId, hasValue) {
   const el = document.getElementById(inputId);
   if (!el) return;
@@ -83,11 +83,11 @@ function startSecretLoad(inputId) {
   el.dataset.touched = "";   // ignore edits until finished (UI can disable)
 }
 function finishSecretLoad(inputId, hasValue) {
-  // Use when async token fetch completes
+  // Call when an async token fetch finishes
   applyServerSecret(inputId, !!hasValue);
 }
 
-// --- Determine which auth providers are configured
+// --- Determine which authentication providers are configured
 function getConfiguredProviders(cfg = window._cfgCache || {}) {
   const S = new Set();
   const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
@@ -99,21 +99,20 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   return S;
 }
 
-// Try to resolve provider key from a dynamic card/row
+// Resolve a provider key from a dynamic card/row element
 function resolveProviderKeyFromNode(node) {
-  // Prefer an explicit attribute if you can add it in your renderer:
-  // <div data-sync-prov="PLEX">...</div>
+  // Prefer an explicit attribute when available (e.g. <div data-sync-prov="PLEX">...)</div>
   const attr = (node.getAttribute?.("data-sync-prov") || node.dataset?.syncProv || "").toUpperCase();
   if (attr) return attr;
 
-  // Logo-based detection (common patterns)
+  // Detect provider via logo alt text or data-logo attributes
   const img = node.querySelector?.('img[alt], .logo img[alt], [data-logo]');
   const alt = (img?.getAttribute?.('alt') || img?.dataset?.logo || "").toUpperCase();
   if (alt.includes("PLEX"))  return "PLEX";
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
 
-  // Text fallback: look at usual title/name containers, else full text
+  // Fallback: inspect common title/name containers, then full text
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
   const txt = (tnode?.textContent || node.textContent || "").toUpperCase();
   if (/\bPLEX\b/.test(txt))  return "PLEX";
@@ -128,18 +127,18 @@ function applySyncVisibility() {
   const host = document.getElementById("providers_list");
   if (!host) return;
 
-  // Prefer overlay cards: .prov-card[data-prov]
+  // Prefer overlay cards when present: .prov-card[data-prov]
   let cards = host.querySelectorAll(".prov-card");
   if (!cards || cards.length === 0) {
-    // Fallback: oorspronkelijke “card” children
+  // Fallback: older renderer card children
     cards = host.querySelectorAll(":scope > .card, :scope > *");
   }
 
   cards.forEach((card) => {
-    // 1) overlay path (fast + explicit)
+  // 1) Use overlay path (fast and explicit)
     let key = (card.getAttribute?.("data-prov") || card.dataset?.prov || "").toUpperCase();
 
-    // 2) fallback: heuristics on inner content (older renderer)
+  // 2) Fallback to heuristics on inner content (legacy renderer)
     if (!key) key = resolveProviderKeyFromNode(card);
 
     if (!key) return; // unknown container: leave it alone
@@ -147,7 +146,7 @@ function applySyncVisibility() {
     card.style.display = allowed.has(key) ? "" : "none";
   });
 
-  // Rebuild pair selectors strictly from allowed
+  // Rebuild provider pair selectors using only allowed providers
   const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt" };
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
@@ -176,7 +175,7 @@ function applySyncVisibility() {
 }
 
 
-// Debounced scheduler for applySyncVisibility (no thrash, safe if function not yet defined)
+// Debounced scheduler for applySyncVisibility — avoids repeated runs and is safe if the function isn't defined yet
 let __syncVisTick = 0;
 function scheduleApplySyncVisibility() {
   if (__syncVisTick) return;
@@ -190,7 +189,7 @@ function scheduleApplySyncVisibility() {
   __syncVisTick = raf(run);
 }
 
-// Observe dynamic rendering and re-apply (debounced)
+// Observe DOM changes and re-apply visibility (debounced)
 function bindSyncVisibilityObservers() {
   const list = document.getElementById("providers_list");
   if (list && !list.__syncObs) {
@@ -210,12 +209,12 @@ function bindSyncVisibilityObservers() {
     });
     window.__syncVisEvt = true;
   }
-  // First pass
+  // Initial pass
   scheduleApplySyncVisibility();
 }
 
 
-// ---- Watchlist Preview visibility based on /api/pairs ----
+// ---- Watchlist preview visibility driven by /api/pairs ----
 const PAIRS_CACHE_KEY = "cw.pairs.v1";
 const PAIRS_TTL_MS    = 15_000;
 
@@ -242,25 +241,25 @@ async function isWatchlistEnabledInPairs(){
   const freshWithin = (obj) => obj && (Date.now() - (obj.t || 0) < PAIRS_TTL_MS);
   const anyWL = (arr) => Array.isArray(arr) && arr.some(p => !!(p?.features?.watchlist?.enable));
 
-  // Try cache first
+  // Try using cached data first
   const cached = _loadPairsCache();
   if (freshWithin(cached)) {
     const cachedEnabled = anyWL(cached.pairs);
     if (!cachedEnabled) return false;        // trust "false" immediately
-    // cached says true → confirm with live before returning true
+  // If cache indicates true, confirm with a live request before returning
     const live = await _getPairsFresh();
     return anyWL(live);
   }
 
-  // No fresh cache → go live
+  // No fresh cache: fetch live data
   const live = await _getPairsFresh();
   return anyWL(live);
 }
 
-// expose so other modules can call after settings/sync
+// Expose for other modules to call after settings or sync
 window.updatePreviewVisibility = updatePreviewVisibility;
 
-// run once on load
+// Run once during page load
 document.addEventListener("DOMContentLoaded", () => { updatePreviewVisibility(); });
 
 // ---- END   Watchlist Preview visibility based on /api/pairs ----
@@ -374,17 +373,17 @@ function toggleProviderBadges(active) {
 function connState(v) {
   if (v == null) return "unknown";
 
-  // booleans
+  // Branch: boolean values
   if (v === true)  return "ok";
   if (v === false) return "no";
 
-  // numbers
+  // Branch: numeric values
   if (typeof v === "number") {
     if (v === 1) return "ok";
     if (v === 0) return "no";
   }
 
-  // strings
+  // Branch: string values
   if (typeof v === "string") {
     const s = v.toLowerCase().trim();
     if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
@@ -393,7 +392,7 @@ function connState(v) {
     return "unknown";
   }
 
-  // objects {connected|ok|ready|active|online|status|state}
+  // Branch: objects with common status keys (connected, ok, ready, etc.)
   if (typeof v === "object") {
     if (typeof v.connected === "boolean") return v.connected ? "ok" : "no";
     const b = v.ok ?? v.ready ?? v.active ?? v.online;
@@ -494,9 +493,9 @@ async function refreshStatus(force = false) {
       renderConnectorStatus(cached.providers, { stale: true }); // voorkom rode flits
     }
   } catch {}
-  // badge-visibility naar gelang /api/pairs (als je helper hebt)
+  // Adjust badge visibility based on /api/pairs if that helper is available
   try { refreshPairedProviders?.(0); } catch {}
-  // daarna live status halen (overschrijft stale weergave + her-cachen)
+  // Then fetch live status to replace stale UI and refresh cache
   try { refreshStatus(false); } catch {}
 })();
 
@@ -665,17 +664,17 @@ async function showTab(n) {
   const statsCard     = document.getElementById("stats-card");
   const ph            = document.getElementById("placeholder-card");
 
-  // tabs
+  // Tab elements
   document.getElementById("tab-main")?.classList.toggle("active", n === "main");
   document.getElementById("tab-watchlist")?.classList.toggle("active", n === "watchlist");
   document.getElementById("tab-settings")?.classList.toggle("active", n === "settings");
 
-  // cards
+  // Card elements
   document.getElementById("ops-card")?.classList.toggle("hidden", n !== "main");
   statsCard?.classList.toggle("hidden", n !== "main");
   if (ph && n !== "main") ph.classList.add("hidden");
 
-  // pages
+  // Page elements
   pageWatchlist?.classList.toggle("hidden", n !== "watchlist");
   pageSettings?.classList.toggle("hidden", n !== "settings");
 
@@ -762,7 +761,7 @@ async function showTab(n) {
 }
 
 
-// --- Scrobbler UI mount (only once, when settings tab is shown and both PLEX+TRAKT are configured)
+// --- Scrobbler UI mount: initialize once when the settings tab is shown and both PLEX + TRAKT are available
 let __scrobInit = false;
 function ensureScrobbler() {
   if (__scrobInit) return;
@@ -785,10 +784,10 @@ function ensureScrobbler() {
     __scrobInit = true;
   };
 
-  // If already loaded by <script defer src="/assets/scrobbler.js">, just start
+  // If script is already loaded (<script defer src="/assets/scrobbler.js">), start immediately
   if (window.Scrobbler) { start(); return; }
 
-  // Otherwise load once
+  // Otherwise, load the scrobbler script once and start onload
   let s = document.getElementById("scrobbler-js");
   if (!s) {
     s = document.createElement("script");
@@ -1443,7 +1442,7 @@ function _initStatsTooltip() {
 
 document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 
-// tiny glue buffer for SSE chunks
+// Small buffer used to assemble Server-Sent Events (SSE) chunks
 let detBuf = "";
 
 function openDetailsLog() {
@@ -1486,7 +1485,7 @@ function openDetailsLog() {
 
   esDet = new EventSource("/api/logs/stream?tag=SYNC");
 
-  // helper: debug = true
+  // Helper flag: set debug = true to enable verbose output
   const appendRaw = (s) => {
     const lines = String(s).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
@@ -1507,7 +1506,7 @@ function openDetailsLog() {
       return;
     }
 
-    // DEBUG: no formatting
+  // DEBUG mode: skip all formatting
     if (window.appDebug) {
       appendRaw(ev.data);
       if (detStickBottom) el.scrollTop = el.scrollHeight;
@@ -1515,7 +1514,7 @@ function openDetailsLog() {
       return;
     }
 
-    // NORMAL: thr. ClientFormatter (tokens + pretty)
+  // NORMAL mode: pass through ClientFormatter for tokenization and pretty-print
     const { tokens, buf } = CF.processChunk(detBuf, ev.data);
     detBuf = buf;
     for (const tok of tokens) CF.renderInto(el, tok, false);
@@ -1644,12 +1643,12 @@ function setRefreshBusy(busy) {
   btn.classList.toggle("loading", !!busy);
 }
 
-// --- bootstrap shims (keep console quiet if modals not loaded yet)
+// --- Bootstrap shims: provide lightweight fallbacks so code using modal APIs doesn't throw
 window.openAbout = window.openAbout || function(){};
 window.cxEnsureCfgModal = window.cxEnsureCfgModal || function(){};
 
-// --- secret field helpers (masking + touch flags)
-// Ensures saveSettings only updates tokens when user actually changed them.
+// --- Secret-field helpers: masking, touched flags, and load state
+// Ensure saveSettings updates token fields only if the user actually edited them
 window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
   const el = document.getElementById(id);
   if (!el || el.__wiredTouch) return;
@@ -1724,7 +1723,7 @@ async function loadConfig() {
   setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
 })(cfg);
 
-  // --- Legacy/basic scheduling (advanced UI may extend this later)
+  // --- Legacy/basic scheduling (advanced UI can extend this)
   const s = cfg.scheduling || {};
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
@@ -1732,12 +1731,12 @@ async function loadConfig() {
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
-  // UI side-hints
+  // UI helper hints
   try { updateSimklButtonState?.(); } catch {}
   try { updateSimklHint?.();      } catch {}
   try { updateTmdbHint?.();       } catch {}
 
-  // Final visibility pass after fields/UI may have re-rendered
+  // Final visibility pass after the UI and fields re-render
   try {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else applySyncVisibility?.();
@@ -3250,7 +3249,7 @@ window.addEventListener('cx:open-modal', function(ev){
 });
 
 
-// a11y: auto-associate labels with controls if missing
+// Accessibility: automatically associate labels with their nearest controls when missing
 function fixFormLabels(root = document) {
   const ctrls = new Set(["INPUT","SELECT","TEXTAREA"]);
   let uid = 0;
@@ -3285,24 +3284,24 @@ document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } c
   if (typeof window.showTab !== "function") {
     window._showTabBootstrap = function(id){
       try {
-        // Prefer explicit pages: #page-main/#page-watchlist/#page-settings
+  // Prefer explicit page IDs when available: #page-main, #page-watchlist, #page-settings
         var pages = document.querySelectorAll("#page-main, #page-watchlist, #page-settings, .tab-page");
         pages.forEach(function(el){ el.classList.add("hidden"); });
         var target = document.getElementById("page-" + id) || document.getElementById(id);
         if (target) target.classList.remove("hidden");
 
-        // Toggle tab headers if present
+  // Toggle tab header active state if tab headers exist
         ["main","watchlist","settings"].forEach(function(name){
           var th = document.getElementById("tab-" + name);
           if (th) th.classList.toggle("active", name === id);
         });
 
-        // Mount new Watchlist UI when needed
+  // Mount the Watchlist UI dynamically when required
         if (id === "watchlist") {
           try { window.Watchlist?.mount?.(document.getElementById("page-watchlist")); } catch (e) { console.warn(e); }
         }
 
-        // Fire optional hook
+  // Call optional hook if provided
         document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id } }));
       } catch(e) {
         console.warn("showTab fallback failed:", e);

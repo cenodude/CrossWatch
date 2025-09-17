@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Scrobble core primitives and helpers.
+
+Defines the normalized ScrobbleEvent, the sink protocol, Plex-specific
+parsers (PlaySessionStateNotification and flat "playing" structures), and a
+Dispatcher that filters/forwards events to sinks.
+"""
+
 import json
 import re
 import time
@@ -7,25 +14,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Protocol, Set, Tuple
 
+# Project logger (optional)
 try:
-    from modules._logging import log as BASE_LOG
+    from _logging import log as BASE_LOG
 except Exception:
     BASE_LOG = None
 
 
 def _log(msg: str, lvl: str = "INFO") -> None:
+    """Shared lightweight logger that falls back to stdout."""
     if BASE_LOG:
-        BASE_LOG("SCROBBLE", lvl, msg)
-    else:
-        print(f"{lvl} [SCROBBLE] {msg}")
+        try:
+            BASE_LOG(str(msg), level=lvl, module="SCROBBLE")
+            return
+        except Exception:
+            pass
+    print(f"{lvl} [SCROBBLE] {msg}")
 
 
 def _load_config() -> Dict[str, Any]:
-    """
-    Load configuration from common locations. If crosswatch.load_config is
-    available elsewhere in your project and you prefer that, feel free to
-    swap this loader for a direct import.
-    """
+    """Load configuration from common locations with a small fallback list."""
     for p in (
         Path("/app/config/config.json"),
         Path("./config.json"),
@@ -53,10 +61,11 @@ _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)"
 
 @dataclass(frozen=True)
 class ScrobbleEvent:
-    """
-    Normalized playback event forwarded to sinks (e.g., Trakt).
-    - progress: integer 0..100
-    - raw: original payload for diagnostics / extra filter context
+    """Normalized playback event forwarded to sinks (e.g., Trakt).
+
+    Notes:
+    - progress is an integer in 0..100
+    - raw contains the original payload for diagnostics and filtering context
     """
     action: ScrobbleAction
     media_type: MediaType
@@ -79,13 +88,12 @@ class ScrobbleSink(Protocol):
 # ---- webhook (compat) ----------------------------------------------------------
 
 def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
-    """
-    Back-compat parser for Plex webhooks.
+    """Back-compat parser for Plex webhooks.
 
     Accepts:
-      - dict with key "payload" (JSON string)
-      - raw JSON string/bytes
-      - already-parsed dict
+    - dict with key "payload" (JSON string)
+    - raw JSON string/bytes
+    - already-parsed dict
 
     If a PlaySessionStateNotification list is present, defer to PSN parsing.
     Otherwise we cannot reliably normalize a full event here.
@@ -112,7 +120,7 @@ def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -
 # ---- id & progress helpers -----------------------------------------------------
 
 def _ids_from_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract IMDB/TMDB/TVDB IDs from Plex GUIDs, plus show-level IDs for episodes."""
+    """Extract IMDB/TMDB/TVDB IDs from Plex GUIDs, including show IDs for episodes."""
     def _grab(value: str, pat: re.Pattern):
         m = pat.search(value or "")
         return m.group(1) if m else None
@@ -132,6 +140,7 @@ def _ids_from_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _progress_from_psn(state: str, view_offset: int, duration: int) -> Tuple[int, ScrobbleAction]:
+    """Compute progress percent and action from PSN state + offsets."""
     try:
         duration = int(duration or 0)
     except Exception:
@@ -158,6 +167,7 @@ def _progress_from_psn(state: str, view_offset: int, duration: int) -> Tuple[int
     return (max(0, min(100, pct)), act)
 
 def _safe_int(x: Any) -> Optional[int]:
+    """Coerce to int when possible; otherwise return None."""
     try:
         return int(x)
     except Exception:
@@ -167,9 +177,9 @@ def _safe_int(x: Any) -> Optional[int]:
 # ---- PSN / flat parsers --------------------------------------------------------
 
 def from_plex_pssn(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
-    """
-    Parse PlaySessionStateNotification payloads into a ScrobbleEvent.
-    Accept a list of PSN entries and use the first one (Plex may batch).
+    """Parse PlaySessionStateNotification payloads into a ScrobbleEvent.
+
+    Accepts a list of PSN entries and uses the first one (Plex may batch).
     """
     defaults = defaults or {}
     arr = payload.get("PlaySessionStateNotification")
@@ -218,8 +228,9 @@ def from_plex_pssn(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] =
 
 
 def from_plex_flat_playing(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
-    """
-    Parse a flattened "playing" container (XML→dict style). Less rich than PSN, but usable.
+    """Parse a flattened "playing" container (XML→dict style).
+
+    This shape is less rich than PSN but still usable to form an event.
     """
     defaults = defaults or {}
     size = int(payload.get("size") or 0)
@@ -280,8 +291,8 @@ def from_plex_flat_playing(payload: Dict[str, Any], defaults: Optional[Dict[str,
 # ---- dispatcher ---------------------------------------------------------------
 
 class Dispatcher:
-    """
-    Filters and forwards events to sinks.
+    """Filter and forward events to sinks.
+
     - Username whitelist supports plain names plus "id:<accountID>" and "uuid:<accountUUID>".
     - Once a session passes filters, it’s allowlisted so later pause/stop won’t be dropped.
     - Debounces 'pause' for 5 seconds per session; suppresses no-op duplicates.

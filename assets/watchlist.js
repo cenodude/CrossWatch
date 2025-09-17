@@ -1,5 +1,5 @@
 (function(){
-  // ---------- styles ----------
+  // ---------- Styles (component scoped) ----------
   const css = `
   .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
   .wl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -12,7 +12,7 @@
   .wl-actions{display:flex;gap:10px}
   .wl-empty{padding:24px;border:1px dashed rgba(255,255,255,.12);border-radius:12px;text-align:center}
 
-  /* Posters view */
+  /* Posters view styles */
   .wl-grid{--wl-min:150px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(var(--wl-min),1fr));min-height:240px}
   .wl-card{position:relative;border-radius:12px;overflow:hidden;background:#0f0f13;border:1px solid rgba(255,255,255,.08);transition:box-shadow .15s ease,border-color .15s ease;aspect-ratio:2/3}
   .wl-card img{width:100%;height:100%;object-fit:cover;display:block}
@@ -20,7 +20,7 @@
   .wl-tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);backdrop-filter:blur(4px)}
   .wl-card.selected{box-shadow:0 0 0 3px #6f6cff,0 0 0 5px rgba(111,108,255,.35)}
 
-  /* List view */
+  /* List view styles */
   .wl-table-wrap{border:1px solid rgba(255,255,255,.12);border-radius:10px;overflow:auto}
   .wl-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
   .wl-table col.c-sel{width:44px}
@@ -35,13 +35,13 @@
   .wl-table .title{white-space:normal}
   .wl-table input[type=checkbox]{width:18px;height:18px}
 
-  /* Sources */
+  /* Provider source icons */
   .wl-srcs{display:flex;gap:10px;align-items:center}
   .wl-src{display:inline-flex;align-items:center;justify-content:center;height:20px}
   .wl-src img{height:16px;display:block;opacity:.95}
   .wl-badge{padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);font-size:11px}
 
-  /* Sync matrix */
+  /* Sync status matrix (provider presence) */
   .wl-matrix{display:flex;gap:10px;align-items:center}
   .wl-mat{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#14141c}
   .wl-mat img{height:14px}
@@ -51,7 +51,7 @@
 
   .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
 
-  /* Sidebar cards (compact spacing) */
+  /* Sidebar cards (compact layout) */
   .wl-side{display:flex;flex-direction:column;gap:6px}
   .ins-card{background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:10px 12px}
   .ins-row{display:flex;align-items:center;gap:12px;padding:8px 6px;border-top:1px solid rgba(255,255,255,.06)}
@@ -88,13 +88,13 @@
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
   .wl-snack .wl-btn{padding:6px 10px}
 
-  /* Auto-hide helper */
+  /* Helper utility: auto-hide */
   .wl-hidden{display:none !important}
   `;
   const st = document.createElement("style"); st.id = "watchlist-styles"; st.textContent = css;
   document.head.appendChild(st);
 
-  // ---------- elements ----------
+  // ---------- DOM elements / initial markup ----------
   const host = document.getElementById("page-watchlist");
   if (!host) return;
 
@@ -226,7 +226,7 @@
     <div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>
   `;
 
-  // ---------- refs ----------
+  // ---------- References to important elements ----------
   const postersEl = document.getElementById("wl-posters");
   const listWrapEl = document.getElementById("wl-list");
   const listBodyEl = document.getElementById("wl-tbody");
@@ -247,7 +247,7 @@
   const snack = document.getElementById("wl-snack");
   const metricsEl = document.getElementById("wl-metrics");
 
-  // ---------- state ----------
+  // ---------- Component state ----------
   let items = [];
   let filtered = [];
   const selected = new Set();
@@ -255,14 +255,14 @@
   let viewMode = "posters"; // "posters" | "list"
   let snackTimer = null;    // auto-hide timer
 
-  // ---------- prefs ----------
+  // ---------- Local preferences (persisted) ----------
   function loadPrefs(){ try { return JSON.parse(localStorage.getItem("wl.prefs")||"{}"); } catch { return {}; } }
   function savePrefs(){ try { localStorage.setItem("wl.prefs", JSON.stringify(prefs)); } catch {} }
   const prefs = loadPrefs();
   if (typeof prefs.posterMin !== "number") prefs.posterMin = 150;
   if (!prefs.view) prefs.view = "posters";
 
-  // ---------- utils ----------
+  // ---------- Utility helpers ----------
   function loadHidden(){ try { return new Set(JSON.parse(localStorage.getItem("wl.hidden")||"[]")); } catch { return new Set(); } }
   function persistHidden(){ try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} }
 
@@ -293,7 +293,7 @@
     TRAKT: "/assets/TRAKT.svg",
   };
 
-  // Map key -> Set(providers) for before/after diffing and option logic
+  // Build a map from item key -> Set of providers (used for diffing and option logic)
   function mapProvidersByKey(list){
     const m = new Map();
     for (const it of list){
@@ -304,7 +304,7 @@
     return m;
   }
 
-  // Rebuild Delete provider dropdown based on current selection (union of providers)
+  // Rebuild the Delete provider dropdown based on the union of providers for current selection
   function rebuildDeleteProviderOptions(){
     const map = mapProvidersByKey(items);
     const union = new Set();
@@ -325,12 +325,12 @@
     delProv.value = allowed.has(prev) ? prev : "ALL";
   }
 
-  // Apply poster size (CSS var) and persist
+  // Apply poster size to CSS variable and persist preference
   function applyPosterSize(px){
     postersEl.style.setProperty("--wl-min", `${px}px`);
   }
 
-  // ---------- filters & render ----------
+  // ---------- Filtering and rendering ----------
   function applyFilters(){
     const q = (qEl.value||"").toLowerCase().trim();
     const ty = (tEl.value||"").trim();
@@ -357,7 +357,7 @@
     updateMetrics();
   }
 
-  // ---- INSIGHT: counts per provider with watermarks
+  // ---- Insight metrics: counts per provider (visual with watermarks)
   function updateMetrics(){
     const onPlex  = filtered.filter(it => providersOf(it).includes("PLEX")).length;
     const onSimkl = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
@@ -379,6 +379,7 @@
     </div>`;
   }
 
+  // Render current view (posters or list) based on filtered items
   function render(){
     postersEl.style.display = (viewMode === "posters") ? "" : "none";
     listWrapEl.style.display = (viewMode === "list") ? "" : "none";
@@ -404,6 +405,7 @@
     updateSelCount();
   }
 
+  // Render items as poster cards
   function renderPosters(){
     postersEl.innerHTML = "";
     const frag = document.createDocumentFragment();
@@ -428,6 +430,7 @@
     postersEl.appendChild(frag);
   }
 
+  // Small UI chip showing whether a provider has the item
   function providerChip(name, ok){
     const src = SRC_LOGOS[name];
     const icon = ok ? 'check_circle' : 'cancel';
@@ -438,6 +441,7 @@
     </span>`;
   }
 
+  // Render items in a tabular list view
   function renderList(){
     listBodyEl.innerHTML = "";
     const frag = document.createDocumentFragment();
@@ -523,7 +527,7 @@
     }, 2000);
   }
 
-  // ---------- helpers ----------
+  // ---------- Helpers ----------
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
   function partitionKeysByProvider(keys){
@@ -539,7 +543,7 @@
     return buckets;
   }
 
-  // --- Resilient delete POST (lenient parsing + per-key counting)
+  // --- Resilient delete POST helper (lenient response parsing + per-key counting)
   async function postDelete(part, provider){
     try {
       const r = await fetch("/api/watchlist/delete", {
@@ -569,7 +573,7 @@
     }
   }
 
-  // Optimistically update the local items after deletion
+  // Optimistically update local items after deletion to keep UI responsive
   function applyOptimisticDeletion(keys, provider){
     const K = new Set(keys);
     items = items.reduce((acc, it) => {
@@ -606,7 +610,7 @@
     return deltaOk;
   }
 
-  // ---------- actions & events ----------
+  // ---------- Actions & event bindings ----------
   [qEl,tEl,providerSel].forEach(el => el.addEventListener("input", applyFilters));
 
   selAll.addEventListener("change", ()=>{
@@ -638,7 +642,7 @@
     prefs.posterMin = px; savePrefs();
   });
 
-  // --- helpers used by Delete flow ---
+  // --- Helpers used by delete flow ---
   function partitionKeysByProvider(keys){
     const map = mapProvidersByKey(items); // existing helper in your file
     const buckets = { PLEX: [], SIMKL: [], TRAKT: [] };
@@ -651,7 +655,7 @@
     return buckets;
   }
 
-  // Call backend batch delete; returns counts for UI
+  // Call backend batch delete endpoint; returns counts for UI
   async function postDelete(keys, provider){
     try {
       const r = await fetch("/api/watchlist/delete_batch", {
@@ -671,7 +675,7 @@
     }
   }
 
-  // Delete (ALL/PLEX/SIMKL/TRAKT)
+  // Delete items (ALL/PLEX/SIMKL/TRAKT)
   document.getElementById("wl-delete").addEventListener("click", async ()=>{
     const provider = delProv.value || "ALL";
     if (!selected.size) return;
@@ -757,7 +761,7 @@
   });
 
 
-  // Hide / Unhide (local-only visibility)
+  // Hide / Unhide items (local-only visibility)
   hideBtn.addEventListener("click", ()=>{
     const keys = [...selected];
     keys.forEach(k => hiddenSet.add(k));
@@ -776,19 +780,19 @@
     ]);
   });
 
-  // Keyboard shortcut: Delete key triggers the action
+  // Keyboard shortcut: press Delete to trigger deletion
   document.addEventListener("keydown", (e)=>{
     if (e.key === "Delete" && !document.getElementById("wl-delete").disabled) document.getElementById("wl-delete").click();
   }, true);
 
-  // View mode toggle (persist)
+  // View mode toggle (persist preference)
   viewSel.addEventListener("change", ()=>{
     viewMode = viewSel.value === "list" ? "list" : "posters";
     prefs.view = viewMode; savePrefs();
     render();
   });
 
-  // Always refresh when entering the Watchlist view
+  // Refresh watchlist when navigating to its view
   const navCandidates = [
     '#nav-watchlist',
     '[data-nav="watchlist"]',
@@ -804,7 +808,7 @@
     }
   });
 
-  // ---------- init ----------
+  // ---------- Initialization ----------
   (async function init(){
     // Restore prefs
     viewMode = (prefs.view === "list") ? "list" : "posters";
@@ -822,7 +826,7 @@
     rebuildDeleteProviderOptions(); // initialize dropdown
   })();
 
-  // Auto-refresh (visible tab only)
+  // Auto-refresh while tab is visible
   const AUTO_REFRESH_MS = 60000; // 1 minute
   setInterval(async ()=>{
     if (document.visibilityState !== "visible") return;
@@ -834,7 +838,7 @@
     } catch {}
   }, AUTO_REFRESH_MS);
 
-  // Legacy adapter for external triggers
+  // Legacy adapter for external triggers (external modules can call refresh)
   window.Watchlist = {
     async mount(_host) {},
     async refresh() {

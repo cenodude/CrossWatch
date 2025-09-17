@@ -9,11 +9,14 @@ import requests
 from plexapi.myplex import MyPlexAccount
 from cw_platform.config_base import CONFIG
 
+# Path for server-side "hidden items" overlay persisted on disk.
+HIDE_PATH: Path = CONFIG / "watchlist_hide.json"
+
 def _state_path() -> Path:
     return CONFIG / "watchlist_state.json"
 
 # ======================================================================
-# Local "hide" overlay helpers (server-side; UI gebruikt localStorage)
+# Local "hide" overlay helpers (server-side). The UI uses localStorage.
 # ======================================================================
 
 def _load_hide_set() -> Set[str]:
@@ -34,7 +37,7 @@ def _save_hide_set(hide: Set[str]) -> None:
         pass
 
 # ======================================================================
-# Generic helpers (ids / type / state)
+# Generic helpers (IDs, types, and state access)
 # ======================================================================
 
 def _load_state_dict(state_path: Path) -> Dict[str, Any]:
@@ -108,7 +111,7 @@ def _simkl_filter_ids(ids: Dict[str, Any]) -> Dict[str, Any]:
     return {k: str(v) for k, v in ids.items() if k in _SIMKL_ID_KEYS and v}
 
 # ======================================================================
-# Plex GUID helpers (for PlexAPI matching)
+# Plex GUID helpers (assist with PlexAPI matching)
 # ======================================================================
 
 def _pick_added(d: Dict[str, Any]) -> Optional[str]:
@@ -190,7 +193,7 @@ def _extract_plex_identifiers(item: Dict[str, Any]) -> Tuple[Optional[str], Opti
     return (str(guid) if guid else None, str(ratingKey) if ratingKey else None)
 
 # ======================================================================
-# Build merged watchlist view (for UI)
+# Build merged watchlist view (for the UI)
 # ======================================================================
 
 def _get_items(state: Dict[str, Any], prov: str) -> Dict[str, Any]:
@@ -247,7 +250,7 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
             "type": typ,
             "title": title,
             "year": year,
-            "tmdb": int(tmdb_id) if str(tmdb_id).isdigit() else tmdb_id,
+            "tmdb": int(str(tmdb_id)) if str(tmdb_id).isdigit() else tmdb_id,
             "status": status,
             "sources": sources,
             "added_epoch": added_epoch,
@@ -261,7 +264,7 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
     return out
 
 # ======================================================================
-# Provider-specific deletes (single + batch)
+# Provider-specific deletes (single and batch)
 # ======================================================================
 
 # ---- Plex (single only) -----------------------------------------------
@@ -282,7 +285,7 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     targets = {_norm_guid(v) for v in variants if v}
     rk = str(ratingKey or "").strip()
 
-    # 1) laad volledige lijst
+    # 1) Load the full Plex online watchlist
     watchlist = account.watchlist(maxresults=100000)
 
     def matches(media) -> bool:
@@ -297,18 +300,18 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
                     cand.add(gid.split("?", 1)[0])
         except Exception:
             pass
-        # GUID-match
+        # Match on GUID (primary or alternates)
         if any(_norm_guid(cg) in targets for cg in cand):
             return True
-        # fallback: ratingKey als Plex ‘watchlist’ die expose’t
+        # Fallback: match by ratingKey if Plex exposes it for watchlist
         m_rk = str(getattr(media, "ratingKey", "") or getattr(media, "id", "") or "").strip()
-        return rk and m_rk and (rk == m_rk)
+        return bool(rk and m_rk and (rk == m_rk))
 
     found = next((m for m in watchlist if matches(m)), None)
     if not found:
         raise RuntimeError("item not found in Plex online watchlist")
 
-    # 2) verwijder via item-methode als die bestaat, anders via account
+    # 2) Remove via the item method if available; otherwise via the account
     removed = False
     try:
         rm = getattr(found, "removeFromWatchlist", None)
@@ -320,7 +323,7 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     if not removed:
         account.removeFromWatchlist([found])
 
-    # 3) verificatie (volle lijst opnieuw)
+    # 3) Verify removal by reloading the full list
     wl2 = account.watchlist(maxresults=100000)
     if any(matches(m) for m in wl2):
         raise RuntimeError("PlexAPI reported removal but item is still present")
@@ -376,7 +379,7 @@ def _delete_on_simkl_batch(items: List[Dict[str, Any]], simkl_cfg: Dict[str, Any
 
     hdr = _simkl_headers(simkl_cfg)
 
-    # Try watchlist first (most common); fallback to history once — no re-balance
+    # Try watchlist first (most common); if nothing was removed, try history once (no re-balance)
     resp_wl = _post_simkl_delete(_SIMKL_WATCHLIST_REMOVE, hdr, payload)
     if _simkl_deleted_count(resp_wl) > 0:
         return
@@ -568,106 +571,3 @@ def delete_watchlist_item(
 # ======================================================================
 # Public: batch delete
 # ======================================================================
-
-def delete_watchlist_item(
-    key: str,
-    state_path: Path,
-    cfg: Dict[str, Any],
-    log=None,
-    provider: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Delete a single watchlist item by key from one provider or ALL."""
-    provider = (provider or "PLEX").upper()
-    state = _load_state_dict(state_path)
-
-    def _log(level: str, msg: str):
-        if log:
-            try:
-                log(level, msg)
-            except Exception:
-                pass
-
-    def _present_any_prov() -> bool:
-        return any(_get_provider_items(state, p).get(key) for p in ("PLEX", "SIMKL", "TRAKT"))
-
-    def _delete_simkl_any():
-        item = _find_item_in_state(state, key) or {}
-        _delete_on_simkl_batch(
-            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-            (cfg.get("simkl") or {}),
-        )
-        _del_key_from_provider_items(state, "SIMKL", key)
-
-    def _delete_trakt_any():
-        item = _find_item_in_state(state, key) or {}
-        _delete_on_trakt_batch(
-            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
-            (cfg.get("trakt") or {}),
-        )
-        _del_key_from_provider_items(state, "TRAKT", key)
-
-    try:
-        if provider == "PLEX":
-            _delete_on_plex_single(key=key, state=state, cfg=cfg)
-            _del_key_from_provider_items(state, "PLEX", key)
-
-            # Hide only if the item is gone from all providers.
-            if not _present_any_prov():
-                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
-
-            _save_state_dict(state_path, state)
-            return {"ok": True, "deleted": key, "provider": provider}
-
-        elif provider == "SIMKL":
-            _delete_simkl_any()
-            if not _present_any_prov():
-                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
-            _save_state_dict(state_path, state)
-            return {"ok": True, "deleted": key, "provider": provider}
-
-        elif provider == "TRAKT":
-            _delete_trakt_any()
-            if not _present_any_prov():
-                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
-            _save_state_dict(state_path, state)
-            return {"ok": True, "deleted": key, "provider": provider}
-
-        elif provider == "ALL":
-            details = {}
-
-            try:
-                _delete_on_plex_single(key=key, state=state, cfg=cfg)
-                _del_key_from_provider_items(state, "PLEX", key)
-                details["PLEX"] = {"ok": True}
-            except Exception as e:
-                _log("TRBL", f"[WATCHLIST] PLEX delete failed: {e}")
-                details["PLEX"] = {"ok": False, "error": str(e)}
-
-            try:
-                _delete_simkl_any()
-                details["SIMKL"] = {"ok": True}
-            except Exception as e:
-                _log("TRBL", f"[WATCHLIST] SIMKL delete failed: {e}")
-                details["SIMKL"] = {"ok": False, "error": str(e)}
-
-            try:
-                _delete_trakt_any()
-                details["TRAKT"] = {"ok": True}
-            except Exception as e:
-                _log("TRBL", f"[WATCHLIST] TRAKT delete failed: {e}")
-                details["TRAKT"] = {"ok": False, "error": str(e)}
-
-            # Hide only if the item is fully gone after the fan-out.
-            if not _present_any_prov():
-                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
-
-            _save_state_dict(state_path, state)
-            any_ok = any(v.get("ok") for v in details.values())
-            return {"ok": any_ok, "deleted": key, "provider": "ALL", "details": details}
-
-        else:
-            return {"ok": False, "error": f"unknown provider '{provider}'"}
-
-    except Exception as e:
-        _log("TRBL", f"[WATCHLIST] {provider} delete failed: {e}")
-        return {"ok": False, "error": str(e), "provider": provider}

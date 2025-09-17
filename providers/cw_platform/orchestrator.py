@@ -11,16 +11,16 @@ import time
 import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, cast
+from types import SimpleNamespace as _SNS
 
 # -------------------- config base
 try:
     from . import config_base
 except Exception:
-    class config_base:  # type: ignore
-        @staticmethod
-        def CONFIG_BASE() -> str:
-            return "./"
+    # Fallback: provide a lightweight module-like object exposing CONFIG_BASE()
+    # Use a SimpleNamespace and cast to Any to satisfy static typing while preserving runtime behavior.
+    config_base = cast(Any, _SNS(CONFIG_BASE=lambda: "./"))
 
 # -------------------- logging shim
 class _Logger:
@@ -44,6 +44,11 @@ except Exception:  # pragma: no cover
 
 # -------------------- provider protocol
 class InventoryOps(Protocol):
+    """Minimal protocol that a sync provider must implement for orchestration.
+
+    The orchestrator relies only on these methods and avoids any provider-specific
+    assumptions beyond declared features and capabilities.
+    """
     def name(self) -> str: ...
     def label(self) -> str: ...
     def features(self) -> Mapping[str, bool]: ...
@@ -177,6 +182,13 @@ class ConflictPolicy:
 # -------------------- orchestrator
 @dataclass
 class Orchestrator:
+    """Coordinates one-way and two-way sync across providers in a provider-agnostic way.
+
+    Inputs
+    - config: Global configuration mapping containing provider configs and pair definitions.
+    - on_progress: Optional line-oriented progress sink; receives human and JSON lines.
+    - conflict: Conflict policy (currently a placeholder; useful for future merges).
+    """
     config: Mapping[str, Any]
     on_progress: Optional[Callable[[str], None]] = None
     conflict: ConflictPolicy = field(default_factory=ConflictPolicy)
@@ -263,7 +275,8 @@ class Orchestrator:
         if not callable(acts_fn):
             return None
         try:
-            acts = acts_fn(self.cfg) or {}
+            # Narrow type for static analysis; providers are expected to return a mapping.
+            acts = cast(Mapping[str, Any], acts_fn(self.cfg) or {})
             if feature == "watchlist":
                 return acts.get("watchlist") or acts.get("ptw") or acts.get("updated_at")
             if feature == "ratings":
@@ -276,6 +289,11 @@ class Orchestrator:
 
     # -------------------- snapshots (modules may implement internal delta)
     def build_snapshots(self, *, feature: str) -> Dict[str, Dict[str, Any]]:
+        """Build canonicalized snapshots per provider for a given feature.
+
+        Providers may return either a mapping of canonical-ish keys to payloads or a list
+        of payloads; we normalize to a dict keyed by a stable canonical key.
+        """
         snaps: Dict[str, Dict[str, Any]] = {}
         for name, ops in self.providers.items():
             if not ops.features().get(feature, False):
@@ -286,15 +304,20 @@ class Orchestrator:
                 self._emit_info(f"[!] snapshot.failed provider={name} feature={feature} error={e}")
                 idx = {}
             if isinstance(idx, list):
-                canon = {canonical_key(v): v for v in idx}
+                canon = {canonical_key(cast(Mapping[str, Any], v)): cast(Dict[str, Any], v) for v in idx}
             else:
-                canon = {canonical_key(v): v for v in idx.values()} if idx else {}
+                idx_map = cast(Mapping[str, Mapping[str, Any]], idx)
+                canon = {canonical_key(v): v for v in idx_map.values()} if idx_map else {}
             snaps[name] = canon
             self._dbg("snapshot", provider=name, feature=feature, count=len(canon))
         return snaps
 
     @staticmethod
     def diff(src_idx: Mapping[str, Any], dst_idx: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Compute additions/removals required to transform dst_idx into src_idx.
+
+        Returns a tuple: (to_add_in_dst, to_remove_from_dst)
+        """
         add, rem = [], []
         for k, v in src_idx.items():
             if k not in dst_idx:
@@ -405,6 +428,12 @@ class Orchestrator:
         want_ids: bool = True,
         dst: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        """Optionally enrich items with IDs using the metadata manager.
+
+        If want_ids is False or no metadata resolver is available, the input is returned.
+        When a destination provider is specified, ensure the enriched results carry IDs
+        acceptable to that provider.
+        """
         # Short-circuits
         if not items or not want_ids or not self.meta:
             return items
@@ -520,6 +549,11 @@ class Orchestrator:
 
     # -------------------- one-way
     def apply_direction(self, *, src: str, dst: str, feature: str, allow_removals: bool, dry_run: bool=False) -> Dict[str, Any]:
+        """Apply a one-way sync from src to dst for a single feature.
+
+        Builds snapshots, computes a plan, performs removals (optional) and additions,
+        then commits baselines and checkpoints for both providers.
+        """
         src = src.upper(); dst = dst.upper()
         sops = self.providers[src]; dops = self.providers[dst]
         if not sops.features().get(feature) or not dops.features().get(feature):
@@ -613,6 +647,11 @@ class Orchestrator:
         include_observed_deletes: bool=True,
         tomb_ttl_days: int = 30,
     ) -> Dict[str, Any]:
+        """Perform a two-way sync with pair-scoped tombstones and observed deletions.
+
+        Uses prior baselines plus current deltas to determine asymmetric adds/removes.
+        Observed deletions are recorded as tombstones to avoid re-adding across sides.
+        """
         a = a.upper(); b = b.upper()
         aops = self.providers[a]; bops = self.providers[b]
         if not aops.features().get(feature) or not bops.features().get(feature):
@@ -839,6 +878,7 @@ class Orchestrator:
 
     # -------------------- run one pair
     def run_pair(self, pair: Mapping[str, Any], *, dry_run: bool=False) -> Dict[str, Any]:
+        """Run sync for a single pair configuration across one or multiple features."""
         src = str(pair.get("source") or pair.get("src") or "").upper()
         dst = str(pair.get("target") or pair.get("dst") or "").upper()
         if not src or not dst:
@@ -920,6 +960,7 @@ class Orchestrator:
         use_snapshot: bool = True,  # retained for API compatibility
         **_kwargs,
     ) -> Dict[str, Any]:
+        """Run all configured pairs and optionally persist the merged wall to state JSON."""
         if progress is not None:
             self.on_progress = progress
 

@@ -1,10 +1,24 @@
-// connections.overlay.js (providers DnD: drag to set source → drop on target, no button conflict)
-// - Provider titles uppercase (PLEX, SIMKL, TRAKT)
-// - Subtle glass look on provider cards (matching connectors vibe, minimal changes)
+// connections.overlay.js — Providers connection UI with drag-and-drop.
+//
+// Purpose
+// - Lets users pick a Source provider and then a Target provider to connect
+//   via either button clicks or drag-and-drop (drag source → drop on target).
+// - Keeps provider titles uppercase (PLEX, SIMKL, TRAKT) for visual consistency.
+// - Applies a subtle glass look to provider cards to match the connectors vibe.
+//
+// Behavior notes
+// - Dragging temporarily disables button interactions to avoid accidental clicks.
+// - Original global functions (renderConnections, cxStartConnect) are preserved
+//   and wrapped so existing flows keep working.
 (function () {
-  let dragSrc = null;           // transient drag source (provider name)
-  let isDragging = false;       // blocks button clicks while dragging
+  let dragSrc = null;           // Transient drag source (provider name)
+  let isDragging = false;       // Blocks button clicks while dragging
 
+  /**
+   * Brand details (class + icon) for a provider name.
+   * @param {string} name
+   * @returns {{cls:string, icon:string}}
+   */
   function _brandInfo(name) {
     const key = String(name || "").trim().toUpperCase();
     if (key === "PLEX") return { cls: "brand-plex", icon: "/assets/PLEX.svg" };
@@ -13,6 +27,7 @@
     return { cls: "", icon: "" };
   }
 
+  /** Ensure the overlay CSS is injected exactly once. */
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
@@ -128,10 +143,17 @@
     document.head.appendChild(s);
   }
 
+  /**
+   * Safe capability check for a provider object.
+   * @param {any} obj provider manifest-like object
+   * @param {string} key capability key (e.g., "watchlist")
+   * @returns {boolean}
+   */
   function cap(obj, key) {
     try { return !!(obj && obj.features && obj.features[key]); } catch (_) { return false; }
   }
 
+  /** (Re)build the providers list UI based on current state in window.cx. */
   function rebuildProviders() {
     ensureStyles();
     const host = document.getElementById("providers_list");
@@ -212,6 +234,10 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
+  /**
+   * Set the target provider for an in-progress connect action. If a modal
+   * opener is available, it is used; otherwise, a custom event is dispatched.
+   */
   window.cxPickTarget = window.cxPickTarget || function (name) {
     if (!window.cx || !window.cx.connect || !window.cx.connect.source) return;
     window.cx.connect.target = String(name);
@@ -229,6 +255,10 @@
     }
   };
 
+  /**
+   * Toggle connect state: no source → set source; other provider → set target;
+   * same source → cancel selection.
+   */
   window.cxToggleConnect = function (name) {
     name = String(name || "");
     window.cx = window.cx || { providers: [], pairs: [], connect: { source: null, target: null } };
@@ -240,6 +270,7 @@
   };
 
   // ---- Drag & Drop without button conflict ----
+  // Disable button clicks during drag so a drop can be performed cleanly.
   document.addEventListener("click", (e) => {
     if (!isDragging) return;
     if (e.target.closest && e.target.closest(".prov-action")) {
@@ -295,6 +326,7 @@
   });
 
   // keyboard helpers stay the same
+  // Enter = toggle or set source; Shift+Enter = pick as target.
   document.addEventListener("keydown", (e)=>{
     const card = e.target.closest && e.target.closest(".prov-card");
     if (!card) return;

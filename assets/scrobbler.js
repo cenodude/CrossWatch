@@ -1,7 +1,7 @@
-// scrobbler.js — CrossWatch Scrobbler UI (Webhook + Watcher + Plex Server)
+// scrobbler.js — CrossWatch Scrobbler UI (Webhook, Watcher, and Plex Server helpers)
 
 (function (w, d) {
-  // -------- HTTP --------
+  // -------- HTTP helpers --------
   async function fetchJSON(url, opt) {
     const r = await fetch(url, Object.assign({ cache: "no-store" }, opt || {}));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -13,7 +13,7 @@
     return r.text();
   }
 
-  // -------- DOM --------
+  // -------- DOM helpers --------
   const $    = (sel, root) => (root || d).querySelector(sel);
   const $all = (sel, root) => Array.from((root || d).querySelectorAll(sel));
   const el   = (tag, attrs) => { const x = d.createElement(tag); if (attrs) Object.assign(x, attrs); return x; };
@@ -29,7 +29,7 @@
     n.style.opacity = "0.9";
   }
 
-  // -------- Tiny CSS for alignment/look --------
+  // -------- Tiny CSS for basic alignment and appearance --------
   function injectStyles() {
     if (d.getElementById("sc-styles")) return;
     const css = `
@@ -49,7 +49,7 @@
     s.id = "sc-styles"; s.textContent = css; d.head.appendChild(s);
   }
 
-  // -------- State --------
+  // -------- Component state --------
   const STATE = {
     mount: null,
     webhookHost: null,
@@ -60,7 +60,7 @@
     pollTimer: null,
   };
 
-  // -------- Config helpers --------
+  // -------- Configuration helpers --------
   function deepSet(obj, path, val) {
     const parts = path.split(".");
     let o = obj;
@@ -96,7 +96,7 @@
   }
   const asArray = (v) => Array.isArray(v) ? v.slice() : (v == null || v === "" ? [] : [String(v)]);
 
-  // -------- API map --------
+  // -------- API helpers (server endpoints) --------
   const API = {
     cfgGet: () => fetchJSON("/api/config"),
     users: async () => {
@@ -118,7 +118,7 @@
 
   };
 
-  // -------- UI bits --------
+  // -------- UI helpers / small components --------
   function chip(label, onRemove) {
     const c = el("span", { className: "chip" });
     const t = el("span"); t.textContent = label;
@@ -187,7 +187,7 @@
   function buildUI() {
     injectStyles();
 
-    // Webhook (unchanged)
+  // Webhook section (UI for webhook mode)
     if (STATE.webhookHost) {
       STATE.webhookHost.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -206,7 +206,7 @@
       `;
     }
 
-    // Watcher container row
+  // Watcher section (Plex server discovery and watcher controls)
     if (STATE.watcherHost) {
       STATE.watcherHost.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -268,7 +268,7 @@
 
           </div>
 
-        <!-- Advanced -->
+  <!-- Advanced settings -->
         <details style="margin-top:14px">
           <summary>Advanced</summary>
 
@@ -292,16 +292,16 @@
       `;
     }
 
-    // Hidden input so generic savers persist root plex.server_url
+  // Add a hidden input so generic savers will persist root-level plex.server_url
     ensureHiddenServerUrlInput();
 
-    // Interactions — webhook
+  // Interactions — webhook controls
     on($("#sc-copy-endpoint", STATE.mount), "click", () => {
       try { navigator.clipboard.writeText(`${location.origin}/webhook/trakt`); setNote("sc-users-note", "Endpoint copied"); }
       catch { setNote("sc-users-note", "Copy failed", "err"); }
     });
 
-    // Watcher actions
+  // Watcher action bindings
     on($("#sc-add-user", STATE.mount), "click", onAddUser);
     on($("#sc-load-users", STATE.mount), "click", loadUsers);
     on($("#sc-watch-start", STATE.mount), "click", onWatchStart);
@@ -309,7 +309,7 @@
     on($("#sc-watch-refresh", STATE.mount), "click", () => { refreshWatcher(); refreshWatchLogs(); });
     on($("#sc-fetch-uuid", STATE.mount), "click", fetchServerUUID);
 
-    // PMS interactions
+  // Plex Media Server (PMS) interactions
     on($("#sc-pms-refresh", STATE.mount), "click", loadPmsList);
     on($("#sc-pms-select", STATE.mount), "change", e => {
       const v = String(e.target.value || "").trim();
@@ -343,7 +343,7 @@
       applyModeDisable();
     });
 
-    // Mutually exclusive enables
+  // Make webhook and watcher mutually exclusive (only one active at a time)
     const wh = $("#sc-enable-webhook", STATE.mount);
     const wa = $("#sc-enable-watcher", STATE.mount);
     const syncExclusive = (src) => {
@@ -360,7 +360,7 @@
     on($("#sc-server-uuid", STATE.mount), "input",  e => write("scrobble.watch.filters.server_uuid", String(e.target.value || "").trim()));
   }
 
-  // Hidden input helpers (for root save)
+  // Hidden input helpers (used by root-level save)
   function ensureHiddenServerUrlInput() {
     let hidden = d.getElementById("cfg-plex-server-url");
     const form = d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount || d.body);
@@ -378,7 +378,7 @@
     if (h) h.value = String(read("plex.server_url", "") || "");
   }
 
-  // -------- Populate from cfg --------
+  // -------- Populate UI from configuration --------
   function populate() {
     const enabled   = !!read("scrobble.enabled", false);
     const mode      = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -422,7 +422,7 @@
     loadPmsList().catch(() => {});
   }
 
-  // -------- Actions --------
+  // -------- Actions / event handlers --------
   async function refreshWatcher() {
     try {
       const s = await API.watch.status();
@@ -573,7 +573,7 @@
     populate();
   }
 
-  // Back-compat: legacy mount(targetEl, cfg)
+  // Backwards-compatibility: legacy mount(targetEl, cfg)
   function mountLegacy(targetEl, initialCfg) {
     STATE.mount = targetEl || d;
     STATE.cfg = initialCfg || (w._cfgCache || {});
@@ -583,7 +583,7 @@
     populate();
   }
 
-  // Return ONLY scrobble block (do not nest plex here)
+  // Return only the scrobble config block (do not nest plex here)
   function getScrobbleConfig() {
     const enabled   = !!read("scrobble.enabled", false);
     const mode      = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -605,7 +605,7 @@
     };
   }
 
-  // Root patch for saver to merge into config.json (ensures plex.server_url at root)
+  // Root patch for saver to merge into config.json (ensures plex.server_url lives at root)
   function getRootPatch() {
     const serverUrl = String(read("plex.server_url", "") || "");
     return { plex: { server_url: serverUrl } };
