@@ -27,6 +27,8 @@ import uuid
 import shlex
 import requests
 import uvicorn
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
 from fastapi.responses import (
     FileResponse,
@@ -1446,7 +1448,184 @@ def api_metadata_resolve(payload: MetadataResolveIn):
         return JSONResponse({"ok": True, "result": res})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    
+@app.post("/api/metadata/bulk")
+def api_metadata_bulk(
+    payload: Dict[str, Any] = Body(
+        ...,
+        description=(
+            "JSON body with items to resolve and optional 'need' flags.\n"
+            "Example:\n"
+            "{\n"
+            '  "items": [{"type":"movie","tmdb":123},{"type":"tv","tmdb":456}],\n'
+            '  "need": {"overview": true, "tagline": true, "runtime_minutes": true,'
+            '           "videos": true, "genres": true, "score": true,'
+            '           "certification": true, "release": true},\n'
+            '  "concurrency": 6\n'
+            "}"
+        ),
+    ),
+    overview: Literal["none", "short", "full"] = Query(
+        "full", description="Override overview handling: none|short|full"
+    ),
+    locale: Optional[str] = Query(
+        None, description="Override metadata locale (e.g., 'nl-NL')"
+    ),
+) -> JSONResponse:
+    """
+    Resolve metadata for many TMDb items in one call.
+    - Input  : payload.items[] of {type|entity, tmdb}
+    - Filters: payload.need (truthy flags) to request only specific fields
+    - Limits : respects metadata.bulk_max (default 300) and caps concurrency
+    - Output : map keyed by '<type>:<tmdb>' with requested fields
+    """
+    cfg = load_config()
+    st = _load_state()  # optional; only for last_sync_epoch
+    api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
+    md_cfg = (cfg.get("metadata") or {})
+    bulk_max = int(md_cfg.get("bulk_max", 300))
+    default_workers = 6
 
+    # Validate input
+    items = (payload or {}).get("items") or []
+    if not isinstance(items, list) or not items:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Body must include a non-empty 'items' array.",
+                "missing_tmdb_key": not bool(api_key),
+            },
+            status_code=200,
+        )
+
+    # Clamp to bulk_max
+    items = items[:bulk_max]
+
+    # Determine need flags
+    req_need = (payload or {}).get("need") or {
+        "overview": True,
+        "tagline": True,
+        "runtime_minutes": True,
+    }
+    if overview == "none":
+        req_need = dict(req_need, overview=False)
+    elif overview in ("short", "full"):
+        req_need = dict(req_need, overview=True)
+
+    # Determine locale (explicit -> metadata.locale -> ui.locale)
+    eff_locale = (
+        locale
+        or md_cfg.get("locale")
+        or (cfg.get("ui") or {}).get("locale")
+        or None
+    )
+
+    # Concurrency tuning
+    try:
+        requested_workers = int((payload or {}).get("concurrency") or default_workers)
+    except Exception:
+        requested_workers = default_workers
+    workers = max(1, min(requested_workers, 12))
+
+    # Helper: safe shortener
+    def _shorten(txt: str, limit: int = 280) -> str:
+        if not txt or len(txt) <= limit:
+            return txt or ""
+        cut = txt[:limit].rsplit(" ", 1)[0].rstrip(",.;:!-–—")
+        return f"{cut}…"
+
+    # Worker
+    def _fetch_one(item: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        typ = (item.get("type") or item.get("entity") or "movie").lower()
+        if typ == "show":
+            typ = "tv"
+        if typ not in ("movie", "tv"):
+            typ = "movie"
+        tmdb_id = str(item.get("tmdb") or item.get("id") or "").strip()
+        key = f"{'show' if typ=='tv' else 'movie'}:{tmdb_id or 'UNKNOWN'}"
+
+        if not tmdb_id:
+            return key, {"ok": False, "error": "Missing tmdb id"}
+
+        try:
+            meta = get_meta(
+                api_key,
+                "movie" if typ == "movie" else "show",
+                tmdb_id,
+                CACHE_DIR,
+                need=req_need,
+                locale=eff_locale,
+            ) or {}
+        except Exception as e:
+            return key, {"ok": False, "error": f"resolver failed: {e}"}
+
+        if not meta:
+            return key, {"ok": False, "error": "no metadata"}
+
+        # Keep a broader set so the frontend can render score/genres/trailer/certs/release.
+        keep_keys = {
+            "type",
+            "title",
+            "year",
+            "ids",
+            "runtime_minutes",
+            "overview",
+            "tagline",
+            "images",
+            # new fields:
+            "genres",
+            "videos",
+            "score",
+            "certification",
+            "release",
+            "detail",
+        }
+        # Always normalize 'type' to movie|show
+        meta_out = {"type": meta.get("type") or ("movie" if typ == "movie" else "show")}
+        for k in keep_keys:
+            if k in meta and k != "type":
+                meta_out[k] = meta[k]
+
+        # Overview shaping
+        if overview == "short" and meta_out.get("overview"):
+            meta_out["overview"] = _shorten(meta_out["overview"], 280)
+
+        return key, {"ok": True, "meta": meta_out}
+
+    results: Dict[str, Any] = {}
+    fetched = 0
+
+    # Fast path: small batches run inline
+    if len(items) <= 8:
+        for it in items:
+            k, v = _fetch_one(it)
+            results[k] = v
+            if v.get("ok"):
+                fetched += 1
+    else:
+        # Threaded for larger batches
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(_fetch_one, it) for it in items]
+            for fut in as_completed(futs):
+                try:
+                    k, v = fut.result()
+                except Exception as e:
+                    k, v = "unknown:0", {"ok": False, "error": f"worker error: {e}"}
+                results[k] = v
+                if v.get("ok"):
+                    fetched += 1
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "count": len(items),
+            "fetched": fetched,
+            "missing_tmdb_key": not bool(api_key),
+            "results": results,  # "<type>:<tmdb>" -> { ok, meta | error }
+            "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
+        },
+        status_code=200,
+    )
 
 # --------------- Watch logs ---------------
 @app.get("/debug/watch/logs")
@@ -1456,8 +1635,6 @@ def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAK
     lines = buf[-tail:]
     return JSONResponse({"tag": tag.upper(), "tail": tail, "lines": lines}, headers={"Cache-Control": "no-store"})
 
-
-# --------------- Insights & stats (provider-agnostic) ---------------
 # --------------- Insights & stats (provider-agnostic) ---------------
 @app.get("/api/insights")
 def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
@@ -1730,7 +1907,27 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
 
 # --------------- Watchlist endpoints ---------------
 @app.get("/api/watchlist")
-def api_watchlist() -> JSONResponse:
+def api_watchlist(
+    overview: Literal["none", "short", "full"] = Query(
+        "none", description="Attach overview text from TMDb metadata"
+    ),
+    locale: Optional[str] = Query(
+        None, description="Override metadata locale (e.g., 'nl-NL')"
+    ),
+    limit: int = Query(
+        0, ge=0, le=5000, description="Optionally slice the returned list"
+    ),
+    max_meta: int = Query(
+        250, ge=0, le=2000, description="Cap how many items are enriched"
+    ),
+) -> JSONResponse:
+    """
+    Returns the merged watchlist. Optional metadata enrichment:
+      - overview=none  : no overview (default; fastest)
+      - overview=short : ~tweet-length summary
+      - overview=full  : full overview text
+    Applies a server-side cap (max_meta) to protect latency on large lists.
+    """
     cfg = load_config()
     st = _load_state()
     api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
@@ -1754,16 +1951,57 @@ def api_watchlist() -> JSONResponse:
             status_code=200,
         )
 
+    # Optional slice for very large lists
+    if limit and isinstance(limit, int) and limit > 0:
+        items = items[:limit]
+
+    # Optional overview enrichment using MetadataManager
+    enriched = 0
+    if overview != "none" and _METADATA is not None and api_key:
+        eff_locale = (
+            locale
+            or (cfg.get("metadata") or {}).get("locale")
+            or (cfg.get("ui") or {}).get("locale")
+            or None
+        )
+        for it in items:
+            if enriched >= int(max_meta):
+                break
+            tmdb_id = it.get("tmdb")
+            if not tmdb_id:
+                continue
+            try:
+                meta = get_meta(
+                    api_key,
+                    it.get("type") or "movie",
+                    tmdb_id,
+                    CACHE_DIR,
+                    need={"overview": True, "tagline": True, "title": True, "year": True},
+                    locale=eff_locale,
+                ) or {}
+                desc = meta.get("overview") or ""
+                if not desc:
+                    continue
+                if overview == "short":
+                    desc = _shorten(desc, 280)  # helper from metadata block
+                it["overview"] = desc
+                if overview == "short" and meta.get("tagline"):
+                    it["tagline"] = meta["tagline"]
+                enriched += 1
+            except Exception:
+                # Fail soft on resolver hiccups
+                continue
+
     return JSONResponse(
         {
             "ok": True,
             "items": items,
             "missing_tmdb_key": not bool(api_key),
             "last_sync_epoch": st.get("last_sync_epoch"),
+            "meta_enriched": enriched,
         },
         status_code=200,
     )
-
 
 @app.delete("/api/watchlist/{key}")
 def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
@@ -1950,7 +2188,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.9")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.0")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -3024,25 +3262,179 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
 
 
 # --------------- TMDb artwork & metadata (via MetadataManager) ---------------
-def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> dict:
+
+# ---- disk cache helpers
+def _cfg_meta_ttl_secs() -> int:
+    """Read TTL hours from config (metadata.ttl_hours); default 6h."""
+    try:
+        cfg = load_config() or {}
+        md = cfg.get("metadata") or {}
+        hours = int(md.get("ttl_hours", 6))
+        return max(1, hours) * 3600
+    except Exception:
+        return 6 * 3600
+
+def _meta_cache_enabled() -> bool:
+    """Toggle via metadata.meta_cache_enable (default True)."""
+    try:
+        cfg = load_config() or {}
+        md = cfg.get("metadata") or {}
+        return bool(md.get("meta_cache_enable", True))
+    except Exception:
+        return True
+
+def _meta_cache_dir() -> Path:
+    d = Path(CACHE_DIR or "./.cache") / "meta"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Path:
+    t = "movie" if str(entity).lower() == "movie" else "show"
+    loc = (locale or "en-US").replace("/", "_")
+    sub = _meta_cache_dir() / t
+    sub.mkdir(parents=True, exist_ok=True)
+    return sub / f"{tmdb_id}.{loc}.json"
+
+def _need_satisfied(meta: dict, need: dict | None) -> bool:
+    """Return True if cached meta satisfies requested fields in 'need'."""
+    if not need:
+        return True
+    if not isinstance(meta, dict):
+        return False
+    def has_img(kind: str) -> bool:
+        imgs = ((meta.get("images") or {}).get(kind) or [])
+        return bool(imgs)
+    for k, v in need.items():
+        if not v:
+            continue
+        if k in ("poster", "backdrop", "logo"):
+            if not has_img(k):
+                return False
+        else:
+            if not meta.get(k):
+                return False
+    return True
+
+def _read_meta_cache(p: Path) -> dict | None:
+    try:
+        if not p.exists():
+            return None
+        data = json.loads(p.read_text("utf-8"))
+        if not isinstance(data, dict):
+            return None
+        ts = float(data.get("fetched_at") or 0)
+        if (time.time() - ts) > _cfg_meta_ttl_secs():
+            return None
+        return data
+    except Exception:
+        return None
+
+def _write_meta_cache(p: Path, payload: dict) -> None:
+    """Atomic write to avoid partial files."""
+    try:
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        data = dict(payload)
+        data["fetched_at"] = time.time()
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
+
+def _prune_meta_cache_if_needed() -> None:
+    """Optional size cap via metadata.meta_cache_max_mb; purge oldest first."""
+    try:
+        cfg = load_config() or {}
+        md = cfg.get("metadata") or {}
+        cap_mb = int(md.get("meta_cache_max_mb", 0))
+        if cap_mb <= 0:
+            return
+        root = _meta_cache_dir()
+        files = list(root.rglob("*.json"))
+        total = sum(f.stat().st_size for f in files)
+        cap = cap_mb * 1024 * 1024
+        if total <= cap:
+            return
+        files.sort(key=lambda f: f.stat().st_mtime)  # oldest first
+        target = int(cap * 0.9)  # prune to 90% of cap to reduce churn
+        for f in files:
+            try:
+                total -= f.stat().st_size
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if total <= target:
+                break
+    except Exception:
+        pass
+
+# ---- in-memory LRU to soften bursts
+def _ttl_bucket(seconds: int) -> int:
+    return int(time.time() // max(1, seconds))
+
+@lru_cache(maxsize=4096)
+def _resolve_tmdb_cached(ttl_key: int, entity: str, tmdb_id: str, locale: str | None, need_key: tuple) -> dict:
+    """LRU wrapper; ttl_key forces periodic refresh."""
+    if _METADATA is None:
+        return {}
+    need = {k: True for k in need_key} if need_key else None
+    try:
+        return _METADATA.resolve(entity=entity, ids={"tmdb": tmdb_id}, locale=locale, need=need) or {}
+    except Exception:
+        return {}
+
+def _shorten(txt: str, limit: int = 280) -> str:
+    """Human-friendly truncation that keeps whole words."""
+    if not txt or len(txt) <= limit:
+        return txt or ""
+    cut = txt[:limit].rsplit(" ", 1)[0].rstrip(",.;:!-–—")
+    return f"{cut}…"
+
+# ---- public helpers used by endpoints
+def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str, *,
+             need: dict | None = None, locale: str | None = None) -> dict:
+    """
+    Resolve metadata with disk cache + LRU.
+    - Disk cache: CACHE_DIR/meta/{movie|tv}/{tmdb}.{locale}.json (TTL = metadata.ttl_hours)
+    - 'need' controls which fields must be present; stale or incomplete entries are refreshed.
+    """
     if _METADATA is None:
         raise RuntimeError("MetadataManager not available")
+
     entity = "movie" if str(typ).lower() == "movie" else "show"
-    res = _METADATA.resolve(
-        entity=entity,
-        ids={"tmdb": str(tmdb_id)},
-        locale=None,
-        need={"poster": True, "backdrop": True, "logo": False},
-    )
+    eff_need = need or {"poster": True, "backdrop": True, "logo": False}
+    need_key = tuple(sorted(k for k, v in eff_need.items() if v))
+    eff_locale = locale  # may be None; provider will fall back to configured locale
+
+    # Disk cache check (optional)
+    if _meta_cache_enabled():
+        p = _meta_cache_path(entity, tmdb_id, eff_locale or "en-US")
+        cached = _read_meta_cache(p)
+        if cached and _need_satisfied(cached, eff_need):
+            return cached  # fresh & satisfies need
+
+    # Miss or incomplete → resolve via providers (still behind LRU)
+    ttl_key = _ttl_bucket(_cfg_meta_ttl_secs())
+    res = _resolve_tmdb_cached(ttl_key, entity, str(tmdb_id), eff_locale, need_key) or {}
+
+    # Write-through to disk
+    if res and _meta_cache_enabled():
+        try:
+            payload = dict(res)
+            payload["locale"] = eff_locale or payload.get("locale") or None
+            _write_meta_cache(_meta_cache_path(entity, tmdb_id, eff_locale or "en-US"), payload)
+            _prune_meta_cache_if_needed()
+        except Exception:
+            pass
+
     return res or {}
 
-
 def get_runtime(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str) -> int | None:
-    meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
+    """Minimal fetch focusing on runtime; benefits from the same caches."""
+    meta = get_meta(api_key, typ, tmdb_id, cache_dir, need={"runtime_minutes": True})
     return meta.get("runtime_minutes")
 
-
 def _cache_download(url: str, dest_path: Path, timeout: float = 15.0) -> Tuple[Path, str]:
+    """Download once and serve from disk; keeps browser cache headers separate."""
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     if not dest_path.exists():
         r = requests.get(url, stream=True, timeout=timeout)
@@ -3055,9 +3447,9 @@ def _cache_download(url: str, dest_path: Path, timeout: float = 15.0) -> Tuple[P
     mime = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "application/octet-stream")
     return dest_path, mime
 
-
 @app.get("/art/tmdb/{typ}/{tmdb_id}")
 def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Query("w342")):
+    """Proxy TMDb artwork via local cache to keep the UI snappy and keys private."""
     t = typ.lower()
     if t == "show":
         t = "tv"
@@ -3075,17 +3467,18 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
             path=str(local_path),
             media_type=mime,
             headers={
-                # Cache aggressively; browser can reuse while revalidating
                 "Cache-Control": "public, max-age=86400, stale-while-revalidate=86400",
             },
         )
     except Exception as e:
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
 
-
-
 def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache_dir: Path | str) -> tuple[str, str]:
-    meta = get_meta(api_key, typ, tmdb_id, cache_dir) or {}
+    """
+    Resolve the best poster URL from metadata and persist it to disk once.
+    Uses the same cached resolver under the hood.
+    """
+    meta = get_meta(api_key, typ, tmdb_id, cache_dir, need={"poster": True}) or {}
     posters = ((meta.get("images") or {}).get("poster") or [])
     if not posters:
         raise FileNotFoundError("No poster found")
@@ -3357,7 +3750,7 @@ def api_metadata_providers_html():
     return HTMLResponse(metadata_providers_html())
 
 
-# --------------- Platform/Metadata managers (optional) ---------------
+# --------------- Platform/Metadata managers  ---------------------
 try:
     from cw_platform.manager import PlatformManager as _PlatformMgr
     _PLATFORM = _PlatformMgr(load_config, save_config)
