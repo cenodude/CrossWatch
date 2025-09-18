@@ -103,17 +103,6 @@ CrossWatch can **scrobble your real-time Plex playback to Trakt** — so episode
 - The event is enriched with TMDb/Tvdb/IMDb IDs and sent to **Trakt’s `/scrobble` API**.
 - Built-in **deduplication, retries, and fallbacks** ensure stable reporting.
 
-## 📎 API Reference
-
-The backend exposes a REST API at `http://localhost:8787`.  
-Main routes include:
-
-- `/api/status`, `/api/version`, `/api/config`
-- `/api/auth/providers`, `/api/plex/pin/new`, `/api/simkl/authorize`
-- `/api/sync/providers`, `/api/pairs`, `/api/run`
-- `/api/watchlist`, `/api/metadata/resolve`, `/api/scheduling`
-- `/api/stats`, `/api/logs/stream`, `/api/troubleshoot/*`
-
 ---
 
 ## ⚖️ License
