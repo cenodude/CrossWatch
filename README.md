@@ -88,9 +88,14 @@ Then open:
 
 ## 🛠 Troubleshooting
 
-- Clear cache: `POST /api/troubleshoot/clear-cache`
-- Reset stats: `POST /api/troubleshoot/reset-stats`
-- Reset state: `POST /api/troubleshoot/reset-state`
+Open **Settings → Troubleshoot** to access three quick-fix actions:
+
+- **Clear cache** — Purges cached data so fresh metadata is fetched next time.  
+  `POST /api/troubleshoot/clear-cache`
+- **Reset stats** — Resets usage/summary counters used for insights.  
+  `POST /api/troubleshoot/reset-stats`
+- **Reset state** — Reinitializes app state (filters, view prefs, local UI). Linked accounts are not touched.  
+  `POST /api/troubleshoot/reset-state`
 
 ---
 # 🎬 Live Scrobbling (Plex → Trakt)
