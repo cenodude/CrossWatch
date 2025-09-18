@@ -1,13 +1,15 @@
-<table width="100%">
-  <tr>
-    <td align="left" width="50%">
-      <img src="/images/CrossWatch.png" alt="CrossWatch" width="400">
-    </td>
-    <td align="right" width="50%">
-      <img src="/images/CrossWatch-showcase.png" alt="CrossWatch Showcase" width="400">
-    </td>
-  </tr>
-</table>
+<!-- Logo centered -->
+<p align="center">
+  <img src="/images/CrossWatch.png" alt="CrossWatch" width="480">
+</p>
+
+<!-- Three screenshots on one row -->
+<p align="center">
+  <img src="/images/screenshot1.jpg" alt="CrossWatch — Screenshot 1" width="32%">
+  <img src="/images/screenshot2.jpg" alt="CrossWatch — Screenshot 2" width="32%">
+  <img src="/images/screenshot3.jpg" alt="CrossWatch — Screenshot 3" width="32%">
+</p>
+
 
 
 **CrossWatch** is a lightweight synchronization engine that keeps your Plex, Simkl, and Trakt libraries in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
