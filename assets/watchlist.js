@@ -1,5 +1,5 @@
 (function(){
-  // ---------- Styles (component scoped) ----------
+  // ---------- styles ----------
   const css = `
   .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
   .wl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -12,7 +12,7 @@
   .wl-actions{display:flex;gap:10px}
   .wl-empty{padding:24px;border:1px dashed rgba(255,255,255,.12);border-radius:12px;text-align:center}
 
-  /* Posters view styles */
+  /* Posters view */
   .wl-grid{--wl-min:150px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(var(--wl-min),1fr));min-height:240px}
   .wl-card{position:relative;border-radius:12px;overflow:hidden;background:#0f0f13;border:1px solid rgba(255,255,255,.08);transition:box-shadow .15s ease,border-color .15s ease;aspect-ratio:2/3}
   .wl-card img{width:100%;height:100%;object-fit:cover;display:block}
@@ -20,7 +20,7 @@
   .wl-tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.35);backdrop-filter:blur(4px)}
   .wl-card.selected{box-shadow:0 0 0 3px #6f6cff,0 0 0 5px rgba(111,108,255,.35)}
 
-  /* List view styles */
+  /* List view */
   .wl-table-wrap{border:1px solid rgba(255,255,255,.12);border-radius:10px;overflow:auto}
   .wl-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
   .wl-table col.c-sel{width:44px}
@@ -35,13 +35,13 @@
   .wl-table .title{white-space:normal}
   .wl-table input[type=checkbox]{width:18px;height:18px}
 
-  /* Provider source icons */
+  /* Sources */
   .wl-srcs{display:flex;gap:10px;align-items:center}
   .wl-src{display:inline-flex;align-items:center;justify-content:center;height:20px}
   .wl-src img{height:16px;display:block;opacity:.95}
   .wl-badge{padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);font-size:11px}
 
-  /* Sync status matrix (provider presence) */
+  /* Sync matrix */
   .wl-matrix{display:flex;gap:10px;align-items:center}
   .wl-mat{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#14141c}
   .wl-mat img{height:14px}
@@ -51,7 +51,7 @@
 
   .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
 
-  /* Sidebar cards (compact layout) */
+  /* Sidebar cards (compact spacing) */
   .wl-side{display:flex;flex-direction:column;gap:6px}
   .ins-card{background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:10px 12px}
   .ins-row{display:flex;align-items:center;gap:12px;padding:8px 6px;border-top:1px solid rgba(255,255,255,.06)}
@@ -88,13 +88,28 @@
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
   .wl-snack .wl-btn{padding:6px 10px}
 
-  /* Helper utility: auto-hide */
+  /* Busy button state */
+  .wl-btn.is-busy{ position:relative; pointer-events:none; opacity:.85 }
+  .wl-btn.is-busy::after{
+    content:""; position:absolute; top:50%; left:50%; width:14px; height:14px; margin:-7px 0 0 -7px;
+    border-radius:50%; border:2px solid currentColor; border-top-color:transparent;
+    animation: wl-spin .9s linear infinite;
+  }
+  /* Progress bar (set via --p: 0%..100%) */
+  .wl-btn.is-busy::before{
+    content:""; position:absolute; left:0; bottom:0; height:2px;
+    width:var(--p,0%); background:currentColor; opacity:.7; transition:width .2s ease;
+  }
+  @keyframes wl-spin { to { transform: rotate(360deg); } }
+
+
+  /* Auto-hide helper */
   .wl-hidden{display:none !important}
   `;
   const st = document.createElement("style"); st.id = "watchlist-styles"; st.textContent = css;
   document.head.appendChild(st);
 
-  // ---------- DOM elements / initial markup ----------
+  // ---------- elements ----------
   const host = document.getElementById("page-watchlist");
   if (!host) return;
 
@@ -226,7 +241,7 @@
     <div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>
   `;
 
-  // ---------- References to important elements ----------
+  // ---------- refs ----------
   const postersEl = document.getElementById("wl-posters");
   const listWrapEl = document.getElementById("wl-list");
   const listBodyEl = document.getElementById("wl-tbody");
@@ -247,7 +262,7 @@
   const snack = document.getElementById("wl-snack");
   const metricsEl = document.getElementById("wl-metrics");
 
-  // ---------- Component state ----------
+  // ---------- state ----------
   let items = [];
   let filtered = [];
   const selected = new Set();
@@ -255,14 +270,14 @@
   let viewMode = "posters"; // "posters" | "list"
   let snackTimer = null;    // auto-hide timer
 
-  // ---------- Local preferences (persisted) ----------
+  // ---------- prefs ----------
   function loadPrefs(){ try { return JSON.parse(localStorage.getItem("wl.prefs")||"{}"); } catch { return {}; } }
   function savePrefs(){ try { localStorage.setItem("wl.prefs", JSON.stringify(prefs)); } catch {} }
   const prefs = loadPrefs();
   if (typeof prefs.posterMin !== "number") prefs.posterMin = 150;
   if (!prefs.view) prefs.view = "posters";
 
-  // ---------- Utility helpers ----------
+  // ---------- utils ----------
   function loadHidden(){ try { return new Set(JSON.parse(localStorage.getItem("wl.hidden")||"[]")); } catch { return new Set(); } }
   function persistHidden(){ try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} }
 
@@ -293,7 +308,7 @@
     TRAKT: "/assets/TRAKT.svg",
   };
 
-  // Build a map from item key -> Set of providers (used for diffing and option logic)
+  // Map key -> Set(providers) for before/after diffing and option logic
   function mapProvidersByKey(list){
     const m = new Map();
     for (const it of list){
@@ -304,7 +319,7 @@
     return m;
   }
 
-  // Rebuild the Delete provider dropdown based on the union of providers for current selection
+  // Rebuild Delete provider dropdown based on current selection (union of providers)
   function rebuildDeleteProviderOptions(){
     const map = mapProvidersByKey(items);
     const union = new Set();
@@ -325,12 +340,12 @@
     delProv.value = allowed.has(prev) ? prev : "ALL";
   }
 
-  // Apply poster size to CSS variable and persist preference
+  // Apply poster size (CSS var) and persist
   function applyPosterSize(px){
     postersEl.style.setProperty("--wl-min", `${px}px`);
   }
 
-  // ---------- Filtering and rendering ----------
+  // ---------- filters & render ----------
   function applyFilters(){
     const q = (qEl.value||"").toLowerCase().trim();
     const ty = (tEl.value||"").trim();
@@ -357,7 +372,7 @@
     updateMetrics();
   }
 
-  // ---- Insight metrics: counts per provider (visual with watermarks)
+  // ---- INSIGHT: counts per provider with watermarks
   function updateMetrics(){
     const onPlex  = filtered.filter(it => providersOf(it).includes("PLEX")).length;
     const onSimkl = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
@@ -379,7 +394,6 @@
     </div>`;
   }
 
-  // Render current view (posters or list) based on filtered items
   function render(){
     postersEl.style.display = (viewMode === "posters") ? "" : "none";
     listWrapEl.style.display = (viewMode === "list") ? "" : "none";
@@ -405,21 +419,26 @@
     updateSelCount();
   }
 
-  // Render items as poster cards
   function renderPosters(){
     postersEl.innerHTML = "";
     const frag = document.createDocumentFragment();
 
-    filtered.forEach(it=>{
-      const img = artUrl(it, "w342");
+    filtered.forEach((it, idx)=>{
+      const imgUrl = artUrl(it, "w342");
       const provHtml = providersOf(it).map(p=>`<span class="wl-tag">${p}</span>`).join("");
       const key = normKey(it);
       const card = document.createElement("div");
       card.className = `wl-card ${selected.has(key) ? "selected": ""}`;
-      card.innerHTML = `
-        <div class="wl-tags">${provHtml}</div>
-        ${img ? `<img loading="lazy" src="${img}" alt="">` : `<div style="height:100%"></div>`}
-      `;
+
+      const eager = idx < 24; // first screenful
+      const imgTag = imgUrl
+        ? `<img ${eager ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'}
+                decoding="async"
+                src="${imgUrl}" alt=""
+                width="342" height="513">`
+        : `<div style="height:100%"></div>`;
+
+      card.innerHTML = `<div class="wl-tags">${provHtml}</div>${imgTag}`;
       card.addEventListener("click", ()=>{
         if (selected.has(key)) selected.delete(key); else selected.add(key);
         card.classList.toggle("selected");
@@ -427,10 +446,17 @@
       });
       frag.appendChild(card);
     });
+
     postersEl.appendChild(frag);
+    // Nudge lazy images on the next frame
+    requestAnimationFrame(kickLazy);
   }
 
-  // Small UI chip showing whether a provider has the item
+  function kickLazy(){
+    // Force browsers to resolve lazy images once visible
+    postersEl.querySelectorAll('img[loading="lazy"]').forEach(img => { img.src = img.src; });
+  }
+
   function providerChip(name, ok){
     const src = SRC_LOGOS[name];
     const icon = ok ? 'check_circle' : 'cancel';
@@ -441,7 +467,6 @@
     </span>`;
   }
 
-  // Render items in a tabular list view
   function renderList(){
     listBodyEl.innerHTML = "";
     const frag = document.createDocumentFragment();
@@ -527,53 +552,55 @@
     }, 2000);
   }
 
-  // ---------- Helpers ----------
+  // ---------- helpers ----------
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-  function partitionKeysByProvider(keys){
-    const map = mapProvidersByKey(items);
-    const buckets = { PLEX: [], SIMKL: [], TRAKT: [] };
-    for (const k of keys){
-      const s = map.get(k);
-      if (!s) continue;
-      if (s.has("PLEX"))  buckets.PLEX.push(k);
-      if (s.has("SIMKL")) buckets.SIMKL.push(k);
-      if (s.has("TRAKT")) buckets.TRAKT.push(k);
-    }
-    return buckets;
+  // Hard refresh when (re)entering the Watchlist tab
+async function hardReloadWatchlist(){
+  try {
+    const list = await fetchWatchlist();
+    items = list;
+    filtered = items.slice();
+    render();
+    updateMetrics();
+    // Nudge lazy images after render (see C)
+    kickLazy();
+  } catch (e) {
+    console.warn('Watchlist hard reload failed:', e);
   }
-
-  // --- Resilient delete POST helper (lenient response parsing + per-key counting)
-  async function postDelete(part, provider){
+}
+ 
+  // Single source of truth: POST /api/watchlist/delete
+  async function postDelete(keys, provider){
     try {
       const r = await fetch("/api/watchlist/delete", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ keys: part, provider })
+        body: JSON.stringify({ keys, provider: (provider || "ALL").toUpperCase() })
       });
 
-      // Read as text first; JSON may be absent on 200/204
-      let bodyText = "";
-      try { bodyText = await r.text(); } catch {}
-      let data = null;
-      try { data = bodyText ? JSON.parse(bodyText) : null; } catch {}
+      // Lenient parse: some servers can return 204/empty
+      let txt = ""; try { txt = await r.text(); } catch {}
+      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
 
-      // Count per-key successes
+      // Accept both shapes: {deleted_ok} or {results:[...]}
       let okCount = 0;
       if (data && typeof data.deleted_ok === "number") {
         okCount = data.deleted_ok;
-      } else if (data && Array.isArray(data.results)) {
+      } else if (Array.isArray(data?.results)) {
         okCount = data.results.filter(x => x && (x.ok === true || x.status === "ok")).length;
       }
 
-      const anySuccess = okCount > 0 || (data && data.ok === true) || (r.status >= 200 && r.status < 300);
-      return { okCount, anySuccess };
+      // Treat any 2xx as "attempted" so UI doesn't say 'no attempt'
+      const anySuccess = okCount > 0 || (r.status >= 200 && r.status < 300);
+      return { okCount, anySuccess, status: r.status, networkError: false };
     } catch {
-      return { okCount: 0, anySuccess: false };
+      return { okCount: 0, anySuccess: false, status: 0, networkError: true };
     }
   }
 
-  // Optimistically update local items after deletion to keep UI responsive
+
+  // Optimistically update the local items after deletion
   function applyOptimisticDeletion(keys, provider){
     const K = new Set(keys);
     items = items.reduce((acc, it) => {
@@ -610,7 +637,7 @@
     return deltaOk;
   }
 
-  // ---------- Actions & event bindings ----------
+  // ---------- actions & events ----------
   [qEl,tEl,providerSel].forEach(el => el.addEventListener("input", applyFilters));
 
   selAll.addEventListener("change", ()=>{
@@ -642,7 +669,7 @@
     prefs.posterMin = px; savePrefs();
   });
 
-  // --- Helpers used by delete flow ---
+  // --- helpers used by Delete flow ---
   function partitionKeysByProvider(keys){
     const map = mapProvidersByKey(items); // existing helper in your file
     const buckets = { PLEX: [], SIMKL: [], TRAKT: [] };
@@ -655,83 +682,124 @@
     return buckets;
   }
 
-  // Call backend batch delete endpoint; returns counts for UI
-  async function postDelete(keys, provider){
-    try {
-      const r = await fetch("/api/watchlist/delete_batch", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ keys, provider })
-      });
-      if (!r.ok) return { okCount: 0, anySuccess: false };
+  // --- Busy button helpers (spinner + progress) -------------------------
+  (() => {
+    if (window.beginBusy) return; // avoid double define
 
-      const out = await r.json();
-      const results = Array.isArray(out?.results) ? out.results : [];
-      const okCount = results.reduce((n, it) => n + (parseInt(it?.deleted || 0) || 0), 0);
-      const anySuccess = okCount > 0 && results.some(it => !it?.error);
-      return { okCount, anySuccess };
-    } catch {
-      return { okCount: 0, anySuccess: false };
-    }
-  }
+    const style = document.createElement("style");
+    style.textContent = `
+      .btn-busy{position:relative;opacity:.85;pointer-events:none}
+      .btn-busy .btn-spinner{
+        position:absolute;left:8px;top:50%;transform:translateY(-50%);
+        width:14px;height:14px;border-radius:50%;
+        border:2px solid currentColor;border-right-color:transparent;
+        animation:btnspin .8s linear infinite
+      }
+      .btn-busy .btn-progress{
+        position:absolute;left:0;bottom:0;height:2px;width:0;
+        background:currentColor;opacity:.6;transition:width .2s ease
+      }
+      @keyframes btnspin{to{transform:translateY(-50%) rotate(360deg)}}
+    `;
+    document.head.appendChild(style);
 
-  // Delete items (ALL/PLEX/SIMKL/TRAKT)
+    window.beginBusy = function(btn, label){
+      if (!btn || btn.dataset.busy === "1") return;
+      btn.dataset.busy = "1";
+      btn.dataset.origHTML = btn.innerHTML;
+
+      const text = label || btn.textContent.trim() || "Working…";
+      btn.innerHTML =
+        `<span class="btn-spinner"></span>` +
+        `<span class="btn-label" style="margin-left:22px">${text}</span>` +
+        `<span class="btn-progress"></span>`;
+      btn.classList.add("btn-busy");
+      btn.disabled = true;
+    };
+
+    window.updateBusy = function(btn, pct){
+      if (!btn || btn.dataset.busy !== "1") return;
+      const bar = btn.querySelector(".btn-progress");
+      if (bar && isFinite(pct)) {
+        const v = Math.max(0, Math.min(100, Number(pct)));
+        bar.style.width = v + "%";
+      }
+    };
+
+    window.endBusy = function(btn){
+      if (!btn || btn.dataset.busy !== "1") return;
+      btn.classList.remove("btn-busy");
+      btn.innerHTML = btn.dataset.origHTML || btn.textContent;
+      btn.disabled = false;
+      delete btn.dataset.busy;
+      delete btn.dataset.origHTML;
+    };
+  })();
+
+
+  // Delete (ALL/PLEX/SIMKL/TRAKT)
   document.getElementById("wl-delete").addEventListener("click", async ()=>{
-    const provider = delProv.value || "ALL";
+    const provider = (delProv.value || "ALL").toUpperCase();
     if (!selected.size) return;
 
     const keys = [...selected];
     const btn = document.getElementById("wl-delete");
-    btn.disabled = true;
+    beginBusy?.(btn, `Deleting ${keys.length}…`);
 
     const beforeProv = mapProvidersByKey(items);
     let totalOk = 0;
-    let anyRequestSent = false;
+
+    // attempt diagnostics for better messaging
+    let attemptCount = 0;
+    let anyHttpAttempt = false;
+    let sawNetworkError = false;
+    let lastStatus;
 
     try {
       const CHUNK = 50;
 
       if (provider === "ALL") {
-        const buckets = partitionKeysByProvider(keys);
-        for (const p of ["PLEX","SIMKL","TRAKT"]) {
-          const list = buckets[p];
-          if (!list.length) continue;
-          for (let i = 0; i < list.length; i += CHUNK) {
-            const part = list.slice(i, i + CHUNK);
-            const { okCount, anySuccess } = await postDelete(part, p);
-            totalOk += okCount;
-            anyRequestSent = anyRequestSent || anySuccess;
-          }
+        // Always call the server; it will fan-out
+        for (let i = 0; i < keys.length; i += CHUNK) {
+          const part = keys.slice(i, i + CHUNK);
+          const res = await postDelete(part, "ALL");
+          attemptCount++;
+          anyHttpAttempt = anyHttpAttempt || (res.status > 0);
+          sawNetworkError = sawNetworkError || res.networkError;
+          lastStatus = res.status;
+          totalOk += (res.okCount || 0);
+          updateBusy?.(btn, Math.round(((i + part.length) / keys.length) * 100));
         }
       } else {
+        // Prefer bucket for provider, but NEVER bail if empty → fall back to all keys
         const buckets = partitionKeysByProvider(keys);
-        const subset = buckets[provider.toUpperCase()] || [];
-        if (!subset.length) {
-          snackbar(`Nothing to delete on <b>${provider}</b>`);
-          btn.disabled = false;
-          return;
-        }
+        const subset = (buckets[provider] && buckets[provider].length) ? buckets[provider] : keys;
+
         for (let i = 0; i < subset.length; i += CHUNK) {
           const part = subset.slice(i, i + CHUNK);
-          const { okCount, anySuccess } = await postDelete(part, provider);
-          totalOk += okCount;
-          anyRequestSent = anyRequestSent || anySuccess;
+          const res = await postDelete(part, provider);
+          attemptCount++;
+          anyHttpAttempt = anyHttpAttempt || (res.status > 0);
+          sawNetworkError = sawNetworkError || res.networkError;
+          lastStatus = res.status;
+          totalOk += (res.okCount || 0);
+          updateBusy?.(btn, Math.round(((i + part.length) / subset.length) * 100));
         }
       }
 
-      // Try to refresh, but don't mark failure if it flakes
+      // Best-effort verification (refresh and compare)
       let deltaOk = 0;
       try {
-        await hardReloadWatchlist();
+        await (hardReloadWatchlist?.());
         const afterProv = mapProvidersByKey(items);
         deltaOk = computeDelta(keys, provider, beforeProv, afterProv);
         if (deltaOk === 0 && totalOk > 0) {
-          await new Promise(res => setTimeout(res, 800));
-          await hardReloadWatchlist();
+          await new Promise(r => setTimeout(r, 800));
+          await (hardReloadWatchlist?.());
           const after2 = mapProvidersByKey(items);
           deltaOk = computeDelta(keys, provider, beforeProv, after2);
         }
-      } catch { /* ignore */ }
+      } catch {}
 
       const effectiveOk = Math.max(totalOk, deltaOk);
 
@@ -739,29 +807,34 @@
       applyOptimisticDeletion(keys, provider);
       selected.clear();
       applyFilters();
-      updateMetrics();
-      rebuildDeleteProviderOptions();
+      updateSelCount?.();
+      updateMetrics?.();
 
       if (effectiveOk > 0) {
-        if (provider === "ALL") {
-          snackbar(`Deleted on available providers for ${effectiveOk}/${keys.length} item(s)`);
-        } else {
-          snackbar(`Deleted ${effectiveOk}/${keys.length} from <b>${provider}</b>`);
-        }
-      } else if (anyRequestSent) {
-        snackbar(`Deletion requested on <b>${provider === "ALL" ? "available providers" : provider}</b>`);
+        snackbar?.(provider === "ALL"
+          ? `Deleted on available providers for ${effectiveOk}/${keys.length} item(s)`
+          : `Deleted ${effectiveOk}/${keys.length} from <b>${provider}</b>`);
       } else {
-        snackbar(`Delete failed`);
+        // precise messaging
+        if (attemptCount === 0) {
+          snackbar?.(`No delete attempted (UI gating)`);
+        } else if (!anyHttpAttempt) {
+          snackbar?.(`No delete attempted (network) — check connectivity`);
+        } else if (sawNetworkError || (lastStatus >= 400 || lastStatus === 0)) {
+          snackbar?.(`Delete failed${lastStatus ? ` (HTTP ${lastStatus})` : ""} — check credentials/providers`);
+        } else {
+          snackbar?.(`Delete completed with no visible changes`);
+        }
       }
     } catch {
-      snackbar(`Delete failed`);
+      snackbar?.(`Delete failed`);
     } finally {
-      btn.disabled = false;
+      endBusy?.(btn);
     }
   });
 
 
-  // Hide / Unhide items (local-only visibility)
+  // Hide / Unhide (local-only visibility)
   hideBtn.addEventListener("click", ()=>{
     const keys = [...selected];
     keys.forEach(k => hiddenSet.add(k));
@@ -780,19 +853,19 @@
     ]);
   });
 
-  // Keyboard shortcut: press Delete to trigger deletion
+  // Keyboard shortcut: Delete key triggers the action
   document.addEventListener("keydown", (e)=>{
     if (e.key === "Delete" && !document.getElementById("wl-delete").disabled) document.getElementById("wl-delete").click();
   }, true);
 
-  // View mode toggle (persist preference)
+  // View mode toggle (persist)
   viewSel.addEventListener("change", ()=>{
     viewMode = viewSel.value === "list" ? "list" : "posters";
     prefs.view = viewMode; savePrefs();
     render();
   });
 
-  // Refresh watchlist when navigating to its view
+  // Always refresh when entering the Watchlist view
   const navCandidates = [
     '#nav-watchlist',
     '[data-nav="watchlist"]',
@@ -808,7 +881,7 @@
     }
   });
 
-  // ---------- Initialization ----------
+  // ---------- init ----------
   (async function init(){
     // Restore prefs
     viewMode = (prefs.view === "list") ? "list" : "posters";
@@ -826,7 +899,7 @@
     rebuildDeleteProviderOptions(); // initialize dropdown
   })();
 
-  // Auto-refresh while tab is visible
+  // Auto-refresh (visible tab only)
   const AUTO_REFRESH_MS = 60000; // 1 minute
   setInterval(async ()=>{
     if (document.visibilityState !== "visible") return;
@@ -838,7 +911,7 @@
     } catch {}
   }, AUTO_REFRESH_MS);
 
-  // Legacy adapter for external triggers (external modules can call refresh)
+  // Legacy adapter for external triggers
   window.Watchlist = {
     async mount(_host) {},
     async refresh() {

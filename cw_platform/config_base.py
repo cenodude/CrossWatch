@@ -73,8 +73,8 @@ DEFAULT_CFG: Dict[str, Any] = {
 
         "dry_run": False,
         "drop_guard": False,
-        "allow_mass_delete": False,
-        "tombstone_ttl_days": 30,
+        "allow_mass_delete": True,
+        "tombstone_ttl_days": 1,
         "include_observed_deletes": True,
 
         "bidirectional": {

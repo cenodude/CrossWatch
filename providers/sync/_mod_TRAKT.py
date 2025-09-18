@@ -1,14 +1,6 @@
-"""Trakt sync provider module.
-
-Implements read/write for watchlist, ratings, and history with guarded API
-usage (activities gates, ETag memo), and durable shadows/cursors under
-`/config/.cw_state`. This is a documentation-only cleanup; no code or
-identifiers were changed.
-"""
-
 from __future__ import annotations
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0.1"
 __all__ = ["OPS", "TRAKTModule", "get_manifest"]
 
 import json
@@ -47,6 +39,29 @@ TRAKT_HISTORY_GET_EP   = f"{TRAKT_BASE}/sync/history/episodes"
 TRAKT_HISTORY_REMOVE   = f"{TRAKT_BASE}/sync/history/remove"
 
 _ID_KEYS = ("trakt", "imdb", "tmdb", "tvdb", "slug")
+_TRAKT_ETAGS: Dict[str, str] = {}
+_TRAKT_BODY_CACHE: Dict[str, Dict[str, Any]] = {}  # key -> {"status":int, "headers":dict, "body":str, "ts":float}
+
+def _bust_trakt_watchlist_cache() -> None:
+    # Invalidate the exact keys used by GET watchlist calls
+    for k in ("watchlist_movies", "watchlist_shows"):
+        _TRAKT_ETAGS.pop(k, None)
+        _TRAKT_BODY_CACHE.pop(k, None)
+
+def _bust_trakt_ratings_cache() -> None:
+    # Invalidate the exact keys used by GET ratings calls
+    for k in ("rt.movies", "rt.shows"):
+        _TRAKT_ETAGS.pop(k, None)
+        _TRAKT_BODY_CACHE.pop(k, None)
+
+def _bust_run_memo_for(use_keys: Iterable[str]) -> None:
+    """Drop any per-run memoized GETs whose use_etag_key matches one of use_keys."""
+    try:
+        bad = [k for k in list(_RUN_GET_CACHE.keys()) if len(k) >= 3 and (k[2] in set(use_keys))]
+        for k in bad:
+            _RUN_GET_CACHE.pop(k, None)
+    except Exception:
+        pass
 
 # -----------------------------------------------------------------------------
 # Optional host integrations
@@ -152,8 +167,7 @@ def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method:
             except Exception:
                 bytes_out = 0
 
-        el = getattr(r, "elapsed", None) if r is not None else None
-        ms = int((el.total_seconds() if hasattr(el, "total_seconds") else 0) * 1000) if el is not None else 0
+        ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
 
         # Rate headers (Trakt sends X-RateLimit fields)
         rate_remaining = None
@@ -187,6 +201,38 @@ def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method:
         )
     except Exception:
         pass
+
+
+class _CachedRespTR:
+    """Lightweight Response-like wrapper for cached Trakt bodies."""
+    def __init__(self, status: int, headers: Mapping[str, Any], body: str):
+        self.status_code = int(status)
+        self.ok = 200 <= self.status_code < 300
+        self.headers = dict(headers or {})
+        self.content = body.encode("utf-8")
+        self.elapsed = 0
+    def json(self) -> Any:
+        try:
+            return json.loads(self.content.decode("utf-8") or "null")
+        except Exception:
+            return None
+
+def _norm_params_trakt(p: Optional[dict]) -> Tuple[Tuple[str, str], ...]:
+    if not p:
+        return tuple()
+    out = []
+    for k, v in p.items():
+        if isinstance(v, (list, tuple)):
+            out.append((str(k), ",".join(map(str, v))))
+        else:
+            out.append((str(k), str(v)))
+    out.sort()
+    return tuple(out)
+
+def _trakt_cache_key(use_etag_key: Optional[str], url: str, params: Optional[dict]) -> str:
+    if use_etag_key:
+        return use_etag_key
+    return f"{url}::{json.dumps(dict(params or {}), sort_keys=True)}"
 
 
 # -----------------------------------------------------------------------------
@@ -286,44 +332,73 @@ def _save_etags(d: Mapping[str, str]) -> None:
         pass
 
 
-def _trakt_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] = None, use_etag_key: Optional[str] = None, timeout: int = 45) -> Optional[requests.Response]:
+def _trakt_get(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    params: Optional[dict] = None,
+    timeout: int = 45,
+    cfg_root: Optional[Mapping[str, Any]] = None,   # accepted for parity; not used here
+    force_refresh: bool = False,
+    use_etag_key: Optional[str] = None
+) -> Optional[requests.Response]:
     """
-    GET with in-run memoization and optional ETag.
-    If use_etag_key is set, we will send If-None-Match and store the ETag when 200.
+    Trakt GET with per-run memo + ETag revalidation.
+    - If force_refresh=False and we already memoized this exact call, return memo.
+    - Sends If-None-Match when we have an ETag; on 304 returns cached body wrapper.
+    - On 200 stores body+ETag; on errors returns None.
     """
-    params_norm = _norm_params(params)
-    memo_key = (url, params_norm, use_etag_key or "")
-    if memo_key in _RUN_GET_CACHE:
-        r = _RUN_GET_CACHE[memo_key]
+    key = (url, _norm_params_trakt(params), use_etag_key)
+    # 1) per-run memo
+    if not force_refresh and key in _RUN_GET_CACHE:
+        r = _RUN_GET_CACHE[key]
         _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
-        return r
+        return r  # type: ignore[return-value]
 
-    hdr = dict(headers)
-    if use_etag_key:
-        etags = _load_etags()
-        etag = etags.get(use_etag_key)
-        if etag:
-            hdr["If-None-Match"] = etag
+    # 2) network with ETag
+    hdrs = dict(headers or {})
+    ck = _trakt_cache_key(use_etag_key, url, params)
+    et = _TRAKT_ETAGS.get(ck)
+    if et:
+        hdrs["If-None-Match"] = et
 
     try:
-        r = _with_backoff(
-            requests.get, url, headers=hdr, params=(params or {}), timeout=timeout
-        )
+        r = _with_backoff(requests.get, url, headers=hdrs, params=(params or {}), timeout=timeout)
     except Exception:
+        _RUN_GET_CACHE[key] = None
         _record_http_trakt(None, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
-        _RUN_GET_CACHE[memo_key] = None
         return None
 
-    # Save new ETag if present and 200
-    if use_etag_key and r is not None and r.status_code == 200:
-        new_etag = r.headers.get("ETag")
-        if new_etag:
-            etags = _load_etags()
-            if etags.get(use_etag_key) != new_etag:
-                etags[use_etag_key] = new_etag
-                _save_etags(etags)
+    # 3) 304 -> synthesize Response from cached body (if available)
+    if r is not None and getattr(r, "status_code", 0) == 304:
+        prev = _TRAKT_BODY_CACHE.get(ck)
+        if prev:
+            r2 = _CachedRespTR(prev.get("status", 200), prev.get("headers", {}), prev.get("body", ""))
+            _RUN_GET_CACHE[key] = r2  # type: ignore[assignment]
+            _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")  # count the 304
+            return r2
+        # No cached body; treat as empty 200 so callers don't crash
+        r2 = _CachedRespTR(200, {}, "[]")
+        _RUN_GET_CACHE[key] = r2  # type: ignore[assignment]
+        _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")  # count the 304
+        return r2
 
-    _RUN_GET_CACHE[memo_key] = r
+    # 4) 2xx -> store ETag + body
+    if r is not None and getattr(r, "ok", False):
+        try:
+            et_new = r.headers.get("ETag")
+            if et_new:
+                _TRAKT_ETAGS[ck] = et_new
+            _TRAKT_BODY_CACHE[ck] = {
+                "status": int(getattr(r, "status_code", 200) or 200),
+                "headers": dict(getattr(r, "headers", {}) or {}),
+                "body": (r.content or b"").decode("utf-8", errors="ignore"),
+                "ts": time.time(),
+            }
+        except Exception:
+            pass
+
+    _RUN_GET_CACHE[key] = r  # type: ignore[assignment]
     _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
     return r
 
@@ -419,7 +494,7 @@ def _cursor_store_save(d: Mapping[str, Any]) -> None:
 # -----------------------------------------------------------------------------
 
 _RUN_ACT: Dict[str, Any] = {"ts": 0.0, "data": None}
-_ACT_TTL_SEC = 300  # 5 minutes
+_ACT_TTL_SEC = 60
 
 def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -519,7 +594,7 @@ def _flatten_ratings(arr: List[dict], kind: str) -> Dict[str, Any]:
         rating = None
         # Trakt rating can be under 'rating'
         if isinstance(it.get("rating"), (int, float)):
-            rating = int(it.get("rating") or 0)
+            rating = int(it.get("rating"))
         row = minimal_node(kind, node)
         row["rating"] = rating
         out[key] = row
@@ -536,7 +611,6 @@ def _flatten_history(arr: List[dict], kind: str) -> Dict[str, Any]:
         out[key] = row
     return out
 
-
 # -----------------------------------------------------------------------------
 # Provider protocol
 # -----------------------------------------------------------------------------
@@ -551,64 +625,65 @@ class InventoryOps(Protocol):
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
 
 
-# -----------------------------------------------------------------------------
-# Indexers with guards + ETag + shadows
-# -----------------------------------------------------------------------------
-
 def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
-    Build a Trakt watchlist snapshot with minimal API cost.
-    - If activities show no movement since last cursor, return last shadow.
-    - Otherwise GET with ETag; if 304 → use shadow; if 200 → refresh shadow.
+    Fresh Trakt watchlist snapshot with low API cost.
+    - Conditional GETs (ETag) on movies & shows; 304 keeps shadow.
+    - Never throw; on failures return last shadow.items.
+    - Advance cursor to activities timestamp if present, else to now when updated.
     """
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
-    acts = _activities(cfg_root)
-    # Cursor: last seen watchlist.updated_at
-    cursors = _cursor_store_load()
-    last_cur = str(cursors.get("watchlist") or "")
-    act_updated = str(acts.get("watchlist.updated_at") or acts.get("watchlist") or "")
-
-    shadow = _watchlist_shadow_load()
-    items = dict(shadow.get("items") or {})
-
-    # Guard: if activities did not move, keep shadow
-    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur):
-        return items
-
-    # Fetch with ETag per endpoint and combine
-    m = _trakt_get(TRAKT_WATCHLIST_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="wl.movies", timeout=45)
-    s = _trakt_get(TRAKT_WATCHLIST_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="wl.shows",  timeout=45)
-
-    mov = _json_or_empty_list(m)
-    sho = _json_or_empty_list(s)
-
-    # If both were 304 or empty but we have a shadow, keep it
-    if (m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items:
-        # no change
+    # Isolate this run from stale in-run memo
+    try:
+        _RUN_GET_CACHE.clear()
+    except Exception:
         pass
-    else:
-        # Rebuild from fresh pulls (if any returned 200)
-        got_any = False
-        out: Dict[str, Any] = {}
+
+    # Load activities (for cursor progression) and shadow (as safe fallback)
+    acts = _activities(cfg_root)
+    if not isinstance(acts, dict):
+        acts = {}
+    shadow = _watchlist_shadow_load()
+    items: Dict[str, Dict[str, Any]] = dict((shadow.get("items") or {})) if isinstance(shadow, dict) else {}
+
+    params = {"extended": "full"}
+
+    # Conditional GETs; 304 is cheap
+    r_mov = _trakt_get(TRAKT_WATCHLIST_MOVIES, headers=hdr, params=params,
+                       timeout=45, force_refresh=False, use_etag_key="watchlist_movies")
+    r_sho = _trakt_get(TRAKT_WATCHLIST_SHOWS,  headers=hdr, params=params,
+                       timeout=45, force_refresh=False, use_etag_key="watchlist_shows")
+
+    mov = _json_or_empty_list(r_mov)
+    sho = _json_or_empty_list(r_sho)
+
+    updated = False
+    if (r_mov is not None and getattr(r_mov, "status_code", 0) == 200) or \
+       (r_sho is not None and getattr(r_sho, "status_code", 0) == 200):
+        out: Dict[str, Dict[str, Any]] = {}
         if mov:
             out.update(_flatten_watchlist(mov, "movie"))
-            got_any = True
         if sho:
             out.update(_flatten_watchlist(sho, "show"))
-            got_any = True
-        if got_any:
-            items = out
-            _watchlist_shadow_save(items)
+        items = out
+        _watchlist_shadow_save(items)  # save pure items, not a wrapper
+        updated = True
 
-    # Advance cursor to activities point (server-side truth) if present
+    # Cursor: prefer server activities; else move when we updated
+    act_updated = str(acts.get("watchlist.updated_at") or acts.get("watchlist") or acts.get("lists") or "")
+    cursors = _cursor_store_load()
+    if not isinstance(cursors, dict):
+        cursors = {}
     if act_updated:
         cursors["watchlist"] = act_updated
         _cursor_store_save(cursors)
+    elif updated:
+        cursors["watchlist"] = ts_to_iso(int(time.time()))
+        _cursor_store_save(cursors)
 
     return items
-
 
 def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
@@ -654,6 +729,7 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         _cursor_store_save(cursors)
 
     return items
+
 def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
     Build a Trakt history snapshot since last cursor (start_at).
@@ -723,26 +799,22 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     if not payload:
         return 0
 
-    # Trakt watchlist add/remove uses /sync/watchlist and /sync/watchlist/remove, but the
-    # v2 combined endpoint is typically /sync/watchlist.
     url = f"{TRAKT_BASE}/sync/watchlist"
     r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        # Bust ETags for watchlist and advance cursor to "now" (activities will shortly reflect)
-        et = _load_etags()
-        changed = False
-        for k in ("wl.movies", "wl.shows"):
-            if k in et:
-                et.pop(k, None)
-                changed = True
-        if changed:
-            _save_etags(et)
+        # Invalidate caches (ETag + body + per-run memo) so next read is fresh
+        try:
+            _bust_trakt_watchlist_cache()
+            _bust_run_memo_for(["watchlist_movies", "watchlist_shows"])
+        except Exception:
+            pass
 
+        # Advance cursor immediately; activities will reflect shortly
         cursors = _cursor_store_load()
         cursors["watchlist"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
 
-        # Refresh local shadow best-effort (append-only)
+        # Refresh local shadow best-effort (append)
         sh = _watchlist_shadow_load()
         m = dict(sh.get("items") or {})
         for it in items or []:
@@ -789,15 +861,14 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     url = f"{TRAKT_BASE}/sync/watchlist/remove"
     r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        # Bust ETags for watchlist and advance cursor
-        et = _load_etags()
-        changed = False
-        for k in ("wl.movies", "wl.shows"):
-            if k in et:
-                et.pop(k, None); changed = True
-        if changed:
-            _save_etags(et)
+        # Invalidate caches and memo
+        try:
+            _bust_trakt_watchlist_cache()
+            _bust_run_memo_for(["watchlist_movies", "watchlist_shows"])
+        except Exception:
+            pass
 
+        # Advance cursor
         cursors = _cursor_store_load()
         cursors["watchlist"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
@@ -846,14 +917,12 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
 
     r = _trakt_post(TRAKT_RATINGS_POST, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        # Bust ETags (ratings lists) and advance cursor
-        et = _load_etags()
-        changed = False
-        for k in ("rt.movies", "rt.shows"):
-            if k in et:
-                et.pop(k, None); changed = True
-        if changed:
-            _save_etags(et)
+        # Bust ratings caches + memo
+        try:
+            _bust_trakt_ratings_cache()
+            _bust_run_memo_for(["rt.movies", "rt.shows"])
+        except Exception:
+            pass
 
         cursors = _cursor_store_load()
         cursors["ratings"] = ts_to_iso(int(time.time()))
@@ -868,7 +937,7 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
             key = canonical_key(typ, node)
             row = m.get(key) or {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}}
             if it.get("rating") is not None:
-                row["rating"] = int(it.get("rating") or 0)
+                row["rating"] = int(it.get("rating"))
             m[key] = row
         _ratings_shadow_save(m)
 
@@ -903,13 +972,11 @@ def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
 
     r = _trakt_post(TRAKT_RATINGS_REMOVE, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        et = _load_etags()
-        changed = False
-        for k in ("rt.movies", "rt.shows"):
-            if k in et:
-                et.pop(k, None); changed = True
-        if changed:
-            _save_etags(et)
+        try:
+            _bust_trakt_ratings_cache()
+            _bust_run_memo_for(["rt.movies", "rt.shows"])
+        except Exception:
+            pass
 
         cursors = _cursor_store_load()
         cursors["ratings"] = ts_to_iso(int(time.time()))
@@ -940,7 +1007,7 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
     hdr = trakt_headers(trakt_cfg)
 
     movies: List[Dict[str, Any]] = []
-    shows:  List[Dict[str, Any]] = []
+    episodes:  List[Dict[str, Any]] = []
     now_iso = ts_to_iso(int(time.time()))
     for it in items or []:
         ids = dict(it.get("ids") or {})
@@ -950,11 +1017,11 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
         if (it.get("type") or "movie") == "movie":
             movies.append(entry)
         else:
-            shows.append(entry)
+            episodes.append(entry)
 
     payload = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["episodes"] = shows   # Trakt expects episodes under "episodes"
+    if movies:   payload["movies"]   = movies
+    if episodes: payload["episodes"] = episodes   # Trakt expects episodes under "episodes"
     if not payload:
         return 0
 
@@ -975,7 +1042,7 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
     hdr = trakt_headers(trakt_cfg)
 
     movies: List[Dict[str, Any]] = []
-    shows:  List[Dict[str, Any]] = []
+    episodes:  List[Dict[str, Any]] = []
     for it in items or []:
         ids = dict(it.get("ids") or {})
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
@@ -984,11 +1051,11 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
         if (it.get("type") or "movie") == "movie":
             movies.append(entry)
         else:
-            shows.append(entry)
+            episodes.append(entry)
 
     payload = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["episodes"] = shows
+    if movies:   payload["movies"]   = movies
+    if episodes: payload["episodes"] = episodes
     if not payload:
         return 0
 
@@ -1105,7 +1172,7 @@ except Exception:  # pragma: no cover
         capabilities: ModuleCapabilities
 
 
-class TRAKTModule(SyncModule):  # type: ignore[misc]
+class TRAKTModule(SyncModule):
     info = ModuleInfo(
         name="TRAKT",
         version=__VERSION__,

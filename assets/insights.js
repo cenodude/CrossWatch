@@ -27,13 +27,13 @@
     el.innerHTML = '<svg viewBox="0 0 '+wv+' '+hv+'" preserveAspectRatio="none"><path class="line" d="'+dStr+'"></path>'+dots+'</svg>';
   }
 
-  // --- Number and bar animations (from crosswatch.js) ---
+  // --- Number + bar animations ---
   function _ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
-  function animateNumber(el, to) {
+  function animateNumber(el, to, duration) {
     if (!el) return;
-    const from = parseInt(el.dataset?.v || "0", 10) || 0;
+    const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0;
     if (from === to) { el.textContent = String(to); el.dataset.v = String(to); return; }
-    const dur = 600, t0 = performance.now();
+    const dur = Math.max(180, duration || 650), t0 = performance.now();
     function step(now) {
       const p = Math.min(1, (now - t0) / dur);
       const v = Math.round(from + (to - from) * _ease(p));
@@ -43,11 +43,7 @@
     requestAnimationFrame(step);
   }
   function animateChart(now, week, month) {
-    const bars = {
-      now: d.querySelector(".bar.now"),
-      week: d.querySelector(".bar.week"),
-      month: d.querySelector(".bar.month"),
-    };
+    const bars = { now: d.querySelector(".bar.now"), week: d.querySelector(".bar.week"), month: d.querySelector(".bar.month") };
     const max = Math.max(1, now, week, month);
     const h = (v) => Math.max(0.04, v / max);
     if (bars.week)  bars.week.style.transform  = `scaleY(${h(week)})`;
@@ -55,7 +51,7 @@
     if (bars.now)   bars.now.style.transform   = `scaleY(${h(now)})`;
   }
 
-  // --- Provider tiles (Plex, SIMKL, Trakt): ensure wrapper and value elements exist ---
+  // --- Provider tiles (Plex, SIMKL, Trakt) ---
   function ensureProviderTiles() {
     var container =
       d.getElementById("stat-providers") ||
@@ -66,22 +62,26 @@
       var tileId = "tile-" + name;
       var valId  = "stat-" + name;
 
-  // Create a tile wrapper if it's missing
       var tile = d.getElementById(tileId);
       if (!tile && container) {
         tile = d.createElement("div");
         tile.id = tileId;
-        tile.className = "tile";
+        tile.className = "tile provider brand-" + name;
+        tile.dataset.provider = name;
         tile.innerHTML =
           '<div class="k">'+name.toUpperCase()+'</div>' +
           '<div class="n" id="'+valId+'">0</div>';
         container.appendChild(tile);
-      } else if (tile && !d.getElementById(valId)) {
-  // Ensure the inner value node exists
-        var n = d.createElement("div");
-        n.className = "n";
-        n.id = valId;
-        tile.appendChild(n);
+      } else if (tile) {
+        tile.classList.add("provider","brand-" + name);
+        tile.dataset.provider = name;
+        if (!d.getElementById(valId)) {
+          var n = d.createElement("div");
+          n.className = "n";
+          n.id = valId;
+          n.textContent = "0";
+          tile.appendChild(n);
+        }
       }
     });
 
@@ -92,13 +92,20 @@
     };
   }
 
-  // --- Derive totals and active flags (supports multiple API response shapes) ---
+  // Pulse on change
+  function pulseTile(tile) {
+    tile.classList.remove("pulse-brand");
+    // restart animation
+    // eslint-disable-next-line no-unused-expressions
+    tile.offsetWidth;
+    tile.classList.add("pulse-brand");
+  }
+
+  // --- Derive totals and active flags ---
   function deriveProviderTotals(data) {
-  // Prefer server-provided aggregate totals when available
     var by = data && (data.providers || data.provider_stats);
     if (by) return by;
 
-  // Fallback: derive counts from current entries using p/s/t flags
     var cur = data && data.current;
     if (cur && typeof cur === "object") {
       var out = { plex: 0, simkl: 0, trakt: 0 };
@@ -112,20 +119,14 @@
     }
     return null;
   }
-
   function deriveProviderActive(data, totals) {
     if (data && data.providers_active) return data.providers_active;
     totals = totals || {};
-    return {
-      plex:  !!(totals.plex  || 0),
-      simkl: !!(totals.simkl || 0),
-      trakt: !!(totals.trakt || 0),
-    };
+    return { plex: !!(totals.plex||0), simkl: !!(totals.simkl||0), trakt: !!(totals.trakt||0) };
   }
 
   // --- Render provider totals and active state ---
   function renderProviderStats(provTotals, provActive) {
-  // Supported shapes: {plex_total,...,both}, {plex:{total:...}}, plain numbers, or derived counts
     var by = provTotals || {};
     var n = (x) => (+x || 0);
 
@@ -134,31 +135,29 @@
         if (Number.isFinite(+by[key + "_total"])) return n(by[key + "_total"]);
         var maybe = by[key];
         if (maybe && typeof maybe === "object" && "total" in maybe) return n(maybe.total);
-  // Last resort: use direct value plus shared 'both' count
         return n(maybe) + n(by.both);
       }
       return 0;
     }
 
-    var totals = {
-      plex:  pickTotal("plex"),
-      simkl: pickTotal("simkl"),
-      trakt: pickTotal("trakt"),
-    };
-
+    var totals = { plex: pickTotal("plex"), simkl: pickTotal("simkl"), trakt: pickTotal("trakt") };
     var active = Object.assign({ plex:false, simkl:false, trakt:false }, provActive || {});
 
-  // Ensure provider tiles are present in the DOM
     ensureProviderTiles();
 
     [["plex","stat-plex","tile-plex"],
      ["simkl","stat-simkl","tile-simkl"],
      ["trakt","stat-trakt","tile-trakt"]].forEach(([k, valId, tileId])=>{
-      var v = d.getElementById(valId);
-      var t = d.getElementById(tileId);
-      if (v) v.textContent = (totals[k] | 0);
-      if (t) t.classList.toggle("inactive", !active[k]);
-      t?.removeAttribute("hidden");
+      var vEl = d.getElementById(valId);
+      var tEl = d.getElementById(tileId);
+      if (!vEl || !tEl) return;
+
+      var prev = parseInt(vEl.dataset.v || vEl.textContent || 0, 10) || 0;
+      animateNumber(vEl, totals[k], 650);
+      if (prev !== totals[k]) pulseTile(tEl);
+
+      tEl.classList.toggle("inactive", !active[k]);
+      tEl.removeAttribute("hidden");
     });
   }
 
@@ -203,12 +202,11 @@
       if (exit != null && exit !== 0) badgeClass = "err";
       else if (String(result).toUpperCase() === "EQUAL" || ((totals.a|0)===0 && (totals.r|0)===0)) badgeClass = "ok";
 
-  // Per-lane micro chips for added/removed/updated counts
       var feats = row && row.features || {};
       var en = row && row.features_enabled || {};
       var chips = [];
       Object.keys(labelMap).forEach(function(k){
-  if (k === "watchlist") return;  // Hide watchlist chip
+        if (k === "watchlist") return;  // hide WL chip
         if (en && en[k] === false) return;
         var f = feats[k] || {};
         var a = +f.added || 0, r = +f.removed || 0, u = +f.updated || 0;
@@ -231,18 +229,29 @@
 
   // --- Top-level counters ---
   function renderTopStats(s) {
-    var now = +((s && s.now) || 0), week = +((s && s.week) || 0), month = +((s && s.month) || 0);
+    var now = +((s && s.now) || 0),
+        week = +((s && s.week) || 0),
+        month = +((s && s.month) || 0);
+
+    var added = +((s && s.added) || 0),
+        removed = +((s && s.removed) || 0);
+
     var elNow = d.getElementById("stat-now");
     var elW   = d.getElementById("stat-week");
     var elM   = d.getElementById("stat-month");
-    if (elNow) animateNumber(elNow, now | 0); else txt(elNow, now | 0);
-    if (elW)   animateNumber(elW,   week | 0); else txt(elW,   week | 0);
-    if (elM)   animateNumber(elM,   month| 0); else txt(elM,   month| 0);
+    var elA   = d.getElementById("stat-added");
+    var elR   = d.getElementById("stat-removed");
+
+    if (elNow) animateNumber(elNow, now|0); else txt(elNow, now|0);
+    if (elW)   animateNumber(elW,   week|0); else txt(elW,   week|0);
+    if (elM)   animateNumber(elM,   month|0); else txt(elM,   month|0);
+
+    if (elA)   animateNumber(elA,   added|0); else txt(elA,   added|0);
+    if (elR)   animateNumber(elR,   removed|0); else txt(elR, removed|0);
 
     var fill = d.getElementById("stat-fill");
     if (fill) { var max = Math.max(1, now, week, month); fill.style.width = Math.round((now / max) * 100) + "%"; }
 
-  // Optional: animate mini bars if present
     animateChart(now, week, month);
   }
 
@@ -253,7 +262,10 @@
 
     try { renderSparkline("sparkline", data.series || []); } catch (_) {}
     renderHistory(data.history || []);
-    renderTopStats({ now: data.now, week: data.week, month: data.month });
+    renderTopStats({
+      now: data.now, week: data.week, month: data.month,
+      added: data.added, removed: data.removed, new: data.new, del: data.del
+    });
 
     var provTotals = deriveProviderTotals(data);
     var provActive = deriveProviderActive(data, provTotals);
@@ -272,7 +284,7 @@
   var _lastStatsFetch = 0;
   async function refreshStats(force=false) {
     var nowT = Date.now();
-  if (!force && nowT - _lastStatsFetch < 900) return; // Debounce: skip if recently fetched
+    if (!force && nowT - _lastStatsFetch < 900) return; // debounce
     _lastStatsFetch = nowT;
 
     var data = await fetchJSON("/api/insights?limit_samples=0&history=0");
@@ -295,57 +307,164 @@
     })();
   }
 
-  // --- Expose API to global scope ---
+  // --- Expose API ---
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, scheduleInsights, fetchJSON,
     animateNumber, animateChart
   });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
-  w.refreshStats = refreshStats;          // keep global for other modules
+  w.refreshStats = refreshStats;
   w.scheduleInsights = scheduleInsights;
   w.fetchJSON = fetchJSON;
 
-  // Compatibility shim for older callers
+  // Back-compat
   w.animateNumber = w.animateNumber || animateNumber;
 
-  // --- Boot: initial load ---
+  // --- Boot ---
   d.addEventListener("DOMContentLoaded", function(){ scheduleInsights(); });
   d.addEventListener("tab-changed", function(ev){ if (ev && ev.detail && ev.detail.id === "main") refreshInsights(); });
 })(window, document);
 
-
-/* Inject compact provider layout styles (once, no duplicates) */
+/* Inject provider layout styles + subtle brand treatment + animations */
 (function injectInsightStyles() {
   var id = "insights-provider-styles";
   if (document.getElementById(id)) return;
   var css = `
-  /* Provider tiles: force a single 3-column row */
-  #stat-providers {
-    display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: .5rem !important;
-    width: 100% !important;
-    margin-top: .5rem;
+  /* Grid */
+  #stat-providers{
+    display:grid !important;
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+    gap:.5rem !important; width:100% !important; margin-top:.5rem;
   }
-  /* Neutralize legacy 2-col rules */
-  .stat-tiles { grid-template-columns: unset; }
+  .stat-tiles{ grid-template-columns: unset; }
 
-  #stat-providers .tile {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: .5rem .75rem; min-height: 64px;
-    border-radius: .6rem; background: rgba(255,255,255,0.05);
-    border: 0; box-shadow: none;
-    float: none; flex: none; width: auto; min-width: 0; max-width: none; box-sizing: border-box;
+  /* Tile */
+  #stat-providers .tile{
+    display:flex; align-items:center; justify-content:center;
+    padding:.5rem .75rem; min-height:76px;
+    border-radius:.8rem; background:rgba(255,255,255,.045);
+    border:0; box-shadow:none; position:relative; overflow:hidden; isolation:isolate;
+    animation: tile-in .6s cubic-bezier(.2,.7,.2,1) both;
   }
-  #stat-providers .tile .k { font-size: .75rem; font-weight: 600; opacity: .8; margin-bottom: .15rem; }
-  #stat-providers .tile .n { font-size: 1rem; font-weight: 700; line-height: 1; }
-  /* Dim providers not part of any current pair */
-  #stat-providers .tile.inactive { opacity: .55; filter: saturate(.7); }
 
-  /* Responsive fallback */
-  @media (max-width: 560px) { #stat-providers { grid-template-columns: repeat(2, 1fr) !important; } }
-  @media (max-width: 380px) { #stat-providers { grid-template-columns: 1fr !important; } }`;
+  /* Hide labels */
+  #stat-providers .tile .k{ display:none !important; }
+
+  /* Watermark: centered, straight, subtle */
+  #stat-providers .tile::after{
+    content:""; position:absolute; left:50%; top:50%;
+    width:90%; height:90%; transform:translate(-50%,-50%);
+    background-repeat:no-repeat; background-position:center; background-size:contain;
+    opacity:.08; mix-blend-mode:soft-light; filter:blur(.2px);
+    pointer-events:none; z-index:0; transition:opacity .25s ease;
+  }
+  #stat-providers .tile:hover::after{ opacity:.10; }
+  #stat-providers .tile.inactive::after{ opacity:.05; }
+
+  /* Feather-light brand bloom */
+  #stat-providers .tile::before{
+    content:""; position:absolute; left:50%; top:50%;
+    width:120%; height:120%; transform:translate(-50%,-50%);
+    background:radial-gradient(50% 50% at 50% 50%,
+              rgb(var(--glow,255,255,255)/.07),
+              rgb(var(--glow,255,255,255)/0) 62%);
+    filter:blur(8px); z-index:0; pointer-events:none;
+  }
+
+  /* Numbers: LARGE, neutral white/grey gradient (dim) */
+  #stat-providers .tile .n{
+    position: relative; z-index: 1;
+    margin: 0; padding: 0;
+    font-weight: 800; letter-spacing: .25px;
+    font-size: clamp(36px, 4vw, 64px);
+    line-height: 1;
+    color: rgba(255,255,255,.36); /* visible fallback if gradients unsupported */
+    text-shadow:
+      0 1px 0 rgba(0,0,0,.08),
+      0 0 4px rgba(255,255,255,.04);
+  }
+  @supports (-webkit-background-clip:text){
+    #stat-providers .tile .n{
+      background-image: linear-gradient(
+        180deg,
+        rgba(255,255,255,.76) 0%,
+        rgba(224,224,224,.38) 52%,
+        rgba(255,255,255,.16) 100%
+      );
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+  }
+  @supports (background-clip:text){
+    #stat-providers .tile .n{
+      background-image: linear-gradient(
+        180deg,
+        rgba(255,255,255,.76) 0%,
+        rgba(224,224,224,.38) 52%,
+        rgba(255,255,255,.16) 100%
+      );
+      background-clip: text;
+      color: transparent;
+    }
+  }
+
+  /* Hover shimmer (subtle) */
+  #stat-providers .tile .n::after{
+    content:""; position:absolute; inset:0;
+    background: linear-gradient(100deg,
+      transparent 0%,
+      rgba(255,255,255,.06) 46%,
+      rgba(255,255,255,.12) 50%,
+      rgba(255,255,255,.06) 54%,
+      transparent 100%);
+    transform: translateX(-120%);
+    opacity:0; pointer-events:none; z-index:2;
+  }
+  #stat-providers .tile:hover .n::after{
+    animation: shimmer 1.05s ease-out forwards;
+    opacity:1;
+  }
+
+  /* Brand color vars (used for glow/watermark only) */
+  #tile-plex,  [data-provider="plex"]  { --glow: 255,194,0;   }
+  #tile-simkl, [data-provider="simkl"] { --glow:  24,196,255; }
+  #tile-trakt, [data-provider="trakt"] { --glow: 142, 78,255; }
+
+  /* Watermark assets */
+  #tile-plex::after,  [data-provider="plex"]::after  { background-image:url("/assets/PLEX.svg");  }
+  #tile-simkl::after, [data-provider="simkl"]::after { background-image:url("/assets/SIMKL.svg"); }
+  #tile-trakt::after, [data-provider="trakt"]::after { background-image:url("/assets/TRAKT.svg"); }
+
+  /* Update pulse (brand-tinted) */
+  #stat-providers .tile.pulse-brand{ animation: brand-pulse .55s ease-out 1; }
+
+  /* Dim inactive */
+  #stat-providers .tile.inactive{ opacity:.6; filter:saturate(.85); }
+
+  /* Light themes */
+  @media (prefers-color-scheme: light) {
+    #stat-providers .tile::after { mix-blend-mode:multiply; opacity:.12; }
+  }
+
+  /* Responsive */
+  @media (max-width:560px){ #stat-providers{ grid-template-columns:repeat(2,1fr) !important; } }
+  @media (max-width:380px){ #stat-providers{ grid-template-columns:1fr !important; } }
+
+  /* --- Animations --- */
+  @keyframes tile-in{
+    from{ opacity:0; transform: translateY(6px) scale(.98); }
+    to  { opacity:1; transform: translateY(0)   scale(1); }
+  }
+  @keyframes brand-pulse{
+    0%  { box-shadow: 0 0 0 0 rgba(var(--glow), .22); }
+    100%{ box-shadow: 0 0 0 14px rgba(var(--glow), 0); }
+  }
+  @keyframes shimmer{
+    from{ transform: translateX(-120%); }
+    to  { transform: translateX(120%); }
+  }`;
   var style = document.createElement("style");
   style.id = id;
   style.textContent = css;

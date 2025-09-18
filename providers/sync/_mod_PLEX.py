@@ -2,19 +2,6 @@ from __future__ import annotations
 # providers/sync/_mod_PLEX.py
 # Unified OPS provider for Plex: watchlist, ratings, history, playlists
 
-"""Unified Plex provider used by the orchestrator.
-
-Supported features
-- Watchlist (read via plex.tv Discover; write via account)
-- Ratings (server-side)
-- History (played/unplayed; server-side)
-- Playlists (server-side)
-
-This module keeps optional runtime dependencies (like plexapi) flexible. Where
-types may not be available at analysis time, we use narrow casts or `Any` in
-annotations to satisfy static analysis without altering runtime behavior.
-"""
-
 __VERSION__ = "1.0.3"
 
 import re
@@ -68,13 +55,12 @@ def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
     # watchlist & playlists behave like add/remove
     return "add", "remove"
 
-def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[Any]:
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
     if not _HAS_GMT or not _gmt_is_enabled(cfg):
         return None
     try:
         ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
-        # Cast constructor since the symbol may be a fallback None in some environments.
-        return cast(Any, GlobalTombstoneStore)(ttl_sec=max(1, ttl_days) * 24 * 3600)
+        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
     except Exception:
         return None
 
@@ -124,7 +110,7 @@ def _plex_headers(token: str) -> dict:
     }
 
 def _discover_get(path: str, token: str, params: dict, timeout: int = 20) -> Optional[dict]:
-    """GET wrapper for plex.tv Discover with lightweight telemetry."""
+    """GET wrapper for plex.tv discover with telemetry."""
     url = f"{DISCOVER_HOST}{path}"
     try:
         r = requests.get(url, headers=_plex_headers(token), params=params, timeout=timeout)
@@ -138,8 +124,7 @@ def _discover_get(path: str, token: str, params: dict, timeout: int = 20) -> Opt
                     ok=bool(getattr(r, "ok", False)),
                     bytes_in=len(getattr(r, "content", b"") or b""),
                     bytes_out=0,
-                    # Cast elapsed to Any to avoid type issues when attribute is absent/typed loosely.
-                    ms=int(cast(Any, getattr(r, "elapsed", None)).total_seconds() * 1000) if getattr(r, "elapsed", None) else 0,
+                    ms=int(getattr(r, "elapsed", 0).total_seconds() * 1000) if getattr(r, "elapsed", None) else 0,
                 )
             except Exception:
                 pass
@@ -264,10 +249,10 @@ def _watchlist_fetch_via_discover(token: str, page_size: int = 100) -> List[Dict
 # ----- PlexAPI environment (used for writes/servers) --------------------------
 @dataclass
 class PlexEnv:
-    account: Optional[Any]
+    account: Optional[MyPlexAccount]
     servers: List[Any]  # plexapi.server.PlexServer
 
-def _ensure_account(plex_cfg: Mapping[str, Any]) -> Any:
+def _ensure_account(plex_cfg: Mapping[str, Any]) -> MyPlexAccount:
     if not HAS_PLEXAPI:
         raise RuntimeError("plexapi is required")
     token = (plex_cfg.get("account_token") or "").strip()
@@ -275,7 +260,7 @@ def _ensure_account(plex_cfg: Mapping[str, Any]) -> Any:
         raise ValueError("plex.account_token is required")
     return MyPlexAccount(token=token)  # type: ignore
 
-def _connect_servers(acct: Any, plex_cfg: Mapping[str, Any]) -> List[Any]:
+def _connect_servers(acct: MyPlexAccount, plex_cfg: Mapping[str, Any]) -> List[Any]:
     wanted_ids: List[str] = list(plex_cfg.get("servers", {}).get("machine_ids") or [])
     servers: List[Any] = []
     for res in acct.resources():
@@ -369,7 +354,7 @@ def _resolve_on_servers(env: PlexEnv, q: Mapping[str, Any], mtype: str) -> Optio
     return None
 
 # ----- Watchlist (plex.tv; read via discover, write via account) --------------
-def _resolve_discover_item(acct: Any, ids: dict, libtype: str) -> Optional[Any]:
+def _resolve_discover_item(acct: MyPlexAccount, ids: dict, libtype: str) -> Optional[Any]:
     queries: List[str] = []
     if ids.get("imdb"): queries.append(ids["imdb"])
     if ids.get("tmdb"): queries.append(str(ids["tmdb"]))
@@ -395,7 +380,7 @@ def _resolve_discover_item(acct: Any, ids: dict, libtype: str) -> Optional[Any]:
                     pass
     return None
 
-def _watchlist_add(acct: Any, items: Iterable[Mapping[str, Any]]) -> int:
+def _watchlist_add(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]]) -> int:
     added = 0
     for it in items:
         ids = dict(it.get("ids") or {})
@@ -413,7 +398,7 @@ def _watchlist_add(acct: Any, items: Iterable[Mapping[str, Any]]) -> int:
                 added += 1
     return added
 
-def _watchlist_remove(acct: Any, items: Iterable[Mapping[str, Any]]) -> int:
+def _watchlist_remove(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]]) -> int:
     removed = 0
     for it in items:
         ids = dict(it.get("ids") or {})
@@ -770,7 +755,7 @@ except Exception:  # pragma: no cover
         vendor: str
         capabilities: ModuleCapabilities
 
-class PLEXModule(SyncModule):  # type: ignore[misc]
+class PLEXModule(SyncModule):
     info = ModuleInfo(
         name="PLEX",
         version=__VERSION__,

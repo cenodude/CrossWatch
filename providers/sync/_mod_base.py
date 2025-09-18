@@ -1,27 +1,14 @@
-"""Base contracts for sync providers.
-
-Defines the lightweight logging protocol, common status enums, context and
-result models, capability metadata, and the `SyncModule` protocol that provider
-modules implement. This file intentionally contains no runtime logic.
-"""
-
 from __future__ import annotations
 from _logging import log
 
-# CrossWatch sync module base contracts
+# /providers/sync/_mod_base.py
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, Mapping, Optional, Protocol, Callable  # Includes Callable for progress callbacks
+from typing import Any, Dict, Mapping, Optional, Protocol, Callable  # <- Callable erbij
 
-# Logging
+# ---------- Logging
 
 class Logger(Protocol):
-    """Minimal structured logger interface used by sync modules.
-
-    Implementations should accept a message with optional context and produce
-    human-readable logs. Context helpers (`set_context`, `bind`, `child`) allow
-    attaching structured fields and creating namespaced loggers.
-    """
     def __call__(
         self,
         message: str,
@@ -35,10 +22,9 @@ class Logger(Protocol):
     def bind(self, **ctx: Any) -> "Logger": ...
     def child(self, name: str) -> "Logger": ...
 
-# Status & results
+# ---------- Status & results
 
 class SyncStatus(Enum):
-    """High-level lifecycle of a sync run."""
     IDLE = auto()
     RUNNING = auto()
     SUCCESS = auto()
@@ -48,14 +34,6 @@ class SyncStatus(Enum):
 
 @dataclass
 class SyncContext:
-    """Execution context passed into a sync run.
-
-    - run_id: unique identifier for correlating logs and results
-    - dry_run: when True, perform no external writes
-    - timeout_sec: optional overall timeout for cooperative checks
-    - ui_hints: free-form hints for UIs (e.g., feature labels)
-    - cancel_flag: cooperative cancel toggled by `cancel()`
-    """
     run_id: str
     dry_run: bool = False
     timeout_sec: Optional[int] = None
@@ -64,7 +42,6 @@ class SyncContext:
 
 @dataclass
 class ProgressEvent:
-    """Progress signal that modules can emit to UIs during a run."""
     stage: str
     done: int = 0
     total: int = 0
@@ -73,7 +50,6 @@ class ProgressEvent:
 
 @dataclass
 class SyncResult:
-    """Final outcome of a sync run with counters and messages."""
     status: SyncStatus
     started_at: float
     finished_at: float
@@ -86,11 +62,10 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-# Capabilities & meta
+# ---------- Capabilities & meta
 
 @dataclass(frozen=True)
 class ModuleCapabilities:
-    """Feature flags a module supports; surfaced to UIs and orchestrators."""
     supports_dry_run: bool = True
     supports_cancel: bool = True
     supports_timeout: bool = True
@@ -100,7 +75,6 @@ class ModuleCapabilities:
 
 @dataclass(frozen=True)
 class ModuleInfo:
-    """Descriptive metadata for a sync module."""
     name: str
     version: str = "0.1.0"
     description: str = ""
@@ -110,29 +84,15 @@ class ModuleInfo:
     is_template: bool = False
 
 
-# Errors
+# ---------- Errors
 
-class ModuleError(RuntimeError):
-    """Base error raised by modules for fatal conditions."""
-    ...
+class ModuleError(RuntimeError): ...
+class RecoverableModuleError(ModuleError): ...
+class ConfigError(ModuleError): ...
 
-class RecoverableModuleError(ModuleError):
-    """Error that may be retried or handled without aborting the run."""
-    ...
-
-class ConfigError(ModuleError):
-    """Configuration problems detected during validation."""
-    ...
-
-# Module protocol
+# ---------- Module protocol
 
 class SyncModule(Protocol):
-    """Protocol that all sync modules must implement.
-
-    Concrete providers expose `info`, validate configuration, run the sync,
-    report status, support cooperative cancellation, and allow runtime
-    reconfiguration and logger replacement.
-    """
     info: ModuleInfo
 
     def __init__(self, config: Mapping[str, Any], logger: Logger) -> None: ...

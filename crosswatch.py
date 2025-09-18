@@ -1,16 +1,8 @@
-"""
-CrossWatch Web API (FastAPI)
-
-Provides endpoints for:
-- Status, logs, and UI helpers
-- Provider auth flows (Plex, SIMKL, Trakt)
-- Orchestrated sync (pairs, scheduling, summaries)
-- Watchlist browsing and batch operations
-- Webhooks and lightweight scrobble/watch integration
-"""
-# --------------- Imports ---------------
+# --------------- CrossWatch Web API (FastAPI): backend for status, auth, scheduling, sync, and state ---------------
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
+
+# --------------- Imports ---------------
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -35,7 +27,7 @@ import uuid
 import shlex
 import requests
 import uvicorn
-from fastapi import Body, FastAPI, Query, Request, HTTPException, Path as FPath
+from fastapi import Body, FastAPI, Query, Request, Path as FPath
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -74,7 +66,7 @@ try:
 except Exception:
     ZoneInfo = None
 
-# --------------- Constants & paths ---------------
+# --------------- Constants & basic paths ---------------
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -108,7 +100,7 @@ SYNC_PROC_LOCK = threading.Lock()
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
 
-# --------------- Scheduling helper ---------------
+# --------------- Helper: compute next schedule run from config ---------------
 def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     now = int(time.time()) if now_ts is None else int(now_ts)
     if not scfg or not scfg.get("enabled"):
@@ -145,7 +137,7 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     return now + 3600
 
 
-# --------------- FastAPI app & static assets ---------------
+# --------------- App & assets ---------------
 # app = FastAPI(lifespan=_lifespan if "_lifespan" in globals() else None)
 app = FastAPI()
 
@@ -154,7 +146,7 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
-# --------------- Logging buffer and ANSI formatting ---------------
+# --------------- Logging buffers & ANSI helpers ---------------
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
 
@@ -260,7 +252,7 @@ class _UIHostLogger:
         return _UIHostLogger(self._tag, name, dict(self._ctx))
     
     
-# --------------- Module versions API ---------------
+# --- Module versions API ------------------------------------------------------
 from importlib import import_module
 
 _MODULES = {
@@ -293,7 +285,7 @@ def get_module_versions():
         groups[group] = {name: _get_module_version(path) for name, path in mods.items()}
     flat = {name: ver for mods in groups.values() for name, ver in mods.items()}
     return {"groups": groups, "flat": flat}
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------- 
 
 
 # --------------- API models ---------------
@@ -361,7 +353,7 @@ def _is_debug_enabled() -> bool:
             cfg = load_config()
             _DEBUG_CACHE["val"] = bool(((cfg.get("runtime") or {}).get("debug") or False))
             _DEBUG_CACHE["ts"] = now
-        return bool(_DEBUG_CACHE.get("val", False))
+        return _DEBUG_CACHE["val"]
     except Exception:
         return False
 
@@ -414,9 +406,8 @@ async def _lifespan(app):
                 # Apply optional filters if your provider supports it
                 try:
                     filters = ((sc.get("watch") or {}).get("filters") or {})
-                    fn = getattr(w2, "set_filters", None)
-                    if callable(fn) and isinstance(filters, dict):
-                        fn(filters)
+                    if hasattr(w2, "set_filters") and isinstance(filters, dict):
+                        w2.set_filters(filters)
                 except Exception:
                     pass
 
@@ -640,7 +631,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         RUNNING_PROCS.pop("SYNC", None)
 
 
-# --------------- Progress parsing ---------------
+# --------------- Progress parsing helpers ---------------
 def _parse_epoch(v: Any) -> int:
     if v is None: return 0
     try:
@@ -848,7 +839,7 @@ def _parse_sync_line(line: str) -> None:
             pass
 
 
-# --------------- State snapshot & wall helpers ---------------
+# --------------- Misc state & wall helpers ---------------
 def _load_hide_set() -> set:
     return set()
 
@@ -1077,139 +1068,6 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
 
-# --------------- Watch / scrobble wiring ---------------
-def _ensure_dispatcher() -> Dispatcher:
-    global DISPATCHER
-    if DISPATCHER is None:
-        DISPATCHER = Dispatcher([TraktSink(logger=_UIHostLogger("TRAKT", "SCROBBLE"))])
-    return DISPATCHER
-
-# --------------- Watch / scrobble debug ---------------
-@app.get("/debug/watch/status")
-def debug_watch_status():
-    w = getattr(app.state, "watch", None) or WATCH
-    return {
-        "has_watch": bool(w),
-        "alive": bool(getattr(w, "is_alive", lambda: False)()),
-        "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
-    }
-
-def _ensure_watch_started():
-    global WATCH
-    w = getattr(app.state, "watch", None) or WATCH
-    if w and getattr(w, "is_alive", lambda: False)():
-        WATCH = w
-        return w
-    try:
-        w = autostart_from_config()  # honors scrobble.enabled/mode/watch.autostart
-    except Exception:
-        w = None
-    if not w:
-        from providers.scrobble.trakt.sink import TraktSink
-        from providers.scrobble.plex.watch import make_default_watch
-        w = make_default_watch(sinks=[TraktSink()])
-        if hasattr(w, "start_async"):
-            w.start_async()
-        else:
-            import threading
-            threading.Thread(target=w.start, daemon=True).start()
-    app.state.watch = w
-    WATCH = w
-    return w
-
-@app.post("/debug/watch/start")
-def debug_watch_start():
-    w = _ensure_watch_started()
-    return {"ok": True, "alive": bool(getattr(w, "is_alive", lambda: False)())}
-
-@app.post("/debug/watch/stop")
-def debug_watch_stop():
-    global WATCH
-    w = getattr(app.state, "watch", None) or WATCH
-    if w:
-        w.stop()
-    app.state.watch = None
-    WATCH = None
-    return {"ok": True, "alive": False}
-
-
-# --------------- Trakt webhook ---------------
-@app.post("/webhook/trakt")
-async def webhook_trakt(request: Request):
-    """Trakt->Plex webhook handler; parses payload and dispatches to the processor.
-
-    Accepts JSON, x-www-form-urlencoded (payload=...), and multipart/form-data.
-    """
-    logger = _UIHostLogger("TRAKT", "SCROBBLE")
-
-    def log(msg, level="INFO"):
-        try:
-            logger(msg, level=level, module="SCROBBLE")
-        except:
-            pass
-
-    ct = (request.headers.get("content-type") or "").lower()
-    payload = None
-
-    try:
-        if "multipart/form-data" in ct:
-            form = await request.form()
-            part = form.get("payload")
-            if part is None:
-                raise ValueError("multipart: no 'payload' part")
-            data: bytes | None = None
-            if isinstance(part, (bytes, bytearray)):
-                data = bytes(part)
-            elif isinstance(part, str):
-                data = part.encode()
-            else:
-                try:
-                    data = await part.read()  # type: ignore[attr-defined]
-                except Exception:
-                    data = None
-                if data is None:
-                    try:
-                        data = part.file.read()  # type: ignore[attr-defined]
-                    except Exception:
-                        data = str(part).encode()
-            payload = json.loads((data or b"").decode("utf-8", errors="replace"))
-            log("parsed multipart payload", "DEBUG")
-        else:
-            raw = await request.body()
-            if "application/x-www-form-urlencoded" in ct:
-                d = parse_qs(raw.decode("utf-8", errors="replace"))
-                if "payload" not in d or not d["payload"]:
-                    raise ValueError("urlencoded: no 'payload' key")
-                payload = json.loads(d["payload"][0])
-                log("parsed urlencoded payload", "DEBUG")
-            else:
-                payload = json.loads(raw.decode("utf-8", errors="replace"))
-                log("parsed json payload", "DEBUG")
-    except Exception as e:
-        try:
-            raw = await request.body()
-            snippet = raw[:200].decode("utf-8", errors="replace")
-        except Exception:
-            snippet = "<no body>"
-        log(f"failed to parse webhook payload: {e} | body[:200]={snippet}", "ERROR")
-        return JSONResponse({"ok": True}, status_code=200)
-
-    acc = ((payload.get("Account") or {}).get("title") or "").strip()
-    srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
-    md = payload.get("Metadata") or {}
-    title = md.get("title") or md.get("grandparentTitle") or "?"
-    log(f"payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
-
-    try:
-        res = process_webhook(payload=payload, headers=dict(request.headers), raw=None, logger=logger)
-    except Exception as e:
-        log(f"process_webhook raised: {e}", "ERROR")
-        return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
-
-    log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
-    return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
-
-
 # --------------- Plex users & identity ---------------
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -1317,12 +1175,10 @@ def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
     if acc:
         try:
             for u in acc.users():
-                uid = str(getattr(u, "id", "") or "")
-                uname = (getattr(u, "username", "") or getattr(u, "title", "") or getattr(u, "email", "") or "").strip()
                 users.append({
-                    "id": uid,
-                    "username": uname,
-                    "title": (getattr(u, "title", "") or uname).strip(),
+                    "id": str(getattr(u, "id", "") or ""),
+                    "username": (u.username or u.title or u.email or "").strip(),
+                    "title": (u.title or u.username or "").strip(),
                     "email": (getattr(u, "email", "") or "").strip(),
                     "type": "friend",
                 })
@@ -1461,6 +1317,117 @@ def api_plex_pms() -> JSONResponse:
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
 
+#----------------watch scrobble
+@app.get("/debug/watch/status")
+def debug_watch_status():
+    w = getattr(app.state, "watch", None) or WATCH
+    return {
+        "has_watch": bool(w),
+        "alive": bool(getattr(w, "is_alive", lambda: False)()),
+        "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
+    }
+
+def _ensure_watch_started():
+    global WATCH
+    w = getattr(app.state, "watch", None) or WATCH
+    if w and getattr(w, "is_alive", lambda: False)():
+        WATCH = w
+        return w
+    try:
+        w = autostart_from_config()  # honors scrobble.enabled/mode/watch.autostart
+    except Exception:
+        w = None
+    if not w:
+        from providers.scrobble.trakt.sink import TraktSink
+        from providers.scrobble.plex.watch import make_default_watch
+        w = make_default_watch(sinks=[TraktSink()])
+        if hasattr(w, "start_async"):
+            w.start_async()
+        else:
+            import threading
+            threading.Thread(target=w.start, daemon=True).start()
+    app.state.watch = w
+    WATCH = w
+    return w
+
+@app.post("/debug/watch/start")
+def debug_watch_start():
+    w = _ensure_watch_started()
+    return {"ok": True, "alive": bool(getattr(w, "is_alive", lambda: False)())}
+
+@app.post("/debug/watch/stop")
+def debug_watch_stop():
+    global WATCH
+    w = getattr(app.state, "watch", None) or WATCH
+    if w:
+        w.stop()
+    app.state.watch = None
+    WATCH = None
+    return {"ok": True, "alive": False}
+
+# --------------- Trakt webhook ---------------
+@app.post("/webhook/trakt")
+async def webhook_trakt(request: Request):
+    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+
+    def log(msg, level="INFO"):
+        try:
+            logger(msg, level=level, module="SCROBBLE")
+        except:
+            pass
+
+    ct = (request.headers.get("content-type") or "").lower()
+    payload = None
+
+    try:
+        if "multipart/form-data" in ct:
+            form = await request.form()
+            part = form.get("payload")
+            if part is None:
+                raise ValueError("multipart: no 'payload' part")
+            try:
+                data = await part.read()
+            except Exception:
+                try:
+                    data = part.file.read()
+                except Exception:
+                    data = str(part).encode()
+            payload = json.loads(data.decode("utf-8", errors="replace"))
+            log("parsed multipart payload", "DEBUG")
+        else:
+            raw = await request.body()
+            if "application/x-www-form-urlencoded" in ct:
+                d = parse_qs(raw.decode("utf-8", errors="replace"))
+                if "payload" not in d or not d["payload"]:
+                    raise ValueError("urlencoded: no 'payload' key")
+                payload = json.loads(d["payload"][0])
+                log("parsed urlencoded payload", "DEBUG")
+            else:
+                payload = json.loads(raw.decode("utf-8", errors="replace"))
+                log("parsed json payload", "DEBUG")
+    except Exception as e:
+        try:
+            raw = await request.body()
+            snippet = raw[:200].decode("utf-8", errors="replace")
+        except Exception:
+            snippet = "<no body>"
+        log(f"failed to parse webhook payload: {e} | body[:200]={snippet}", "ERROR")
+        return JSONResponse({"ok": True}, status_code=200)
+
+    acc = ((payload.get("Account") or {}).get("title") or "").strip()
+    srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
+    md = payload.get("Metadata") or {}
+    title = md.get("title") or md.get("grandparentTitle") or "?"
+    log(f"payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
+
+    try:
+        res = process_webhook(payload=payload, headers=dict(request.headers), raw=None, logger=logger)
+    except Exception as e:
+        log(f"process_webhook raised: {e}", "ERROR")
+        return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
+
+    log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
+    return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
 
 # --------------- Metadata resolver ---------------
@@ -1491,6 +1458,7 @@ def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAK
 
 
 # --------------- Insights & stats (provider-agnostic) ---------------
+# --------------- Insights & stats (provider-agnostic) ---------------
 @app.get("/api/insights")
 def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
     """
@@ -1500,7 +1468,8 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
       - watchtime:estimated minutes/hours/days with method=tmdb|fallback|mixed
       - providers:{ plex, simkl, trakt } totals (derived from state.json)
       - providers_active:{ plex, simkl, trakt } booleans (from configured pairs)
-      - now/week/month: optional high-level counters (if available)
+      - now/week/month: high-level counts from Stats.overview()
+      - added/removed/new/del: cumulative + last-run counters from Stats.overview()
     """
     # Samples
     with STATS.lock:
@@ -1676,7 +1645,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     except Exception:
         pass
 
-    # Optional high-level counters (if available)
+    # High-level counters from Stats
     try:
         top = STATS.overview(None) or {}
     except Exception:
@@ -1689,11 +1658,12 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         "providers":         providers,
         "providers_active":  active,
     }
-    for k in ("now", "week", "month"):
-        if k in top: payload[k] = top[k]
+    # Also expose cumulative and last-run counters
+    for k in ("now", "week", "month", "added", "removed", "new", "del"):
+        if k in top:
+            payload[k] = top[k]
 
     return JSONResponse(payload)
-
 
 # --------------- Middleware ---------------
 @app.middleware("http")
@@ -1835,22 +1805,9 @@ def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
 # Providers for UI
 @app.get("/api/watchlist/providers")
 def api_watchlist_providers():
-    cfg = load_config() or {}
-    active = {"plex": False, "simkl": False, "trakt": False}
-    try:
-        for p in (cfg.get("pairs") or cfg.get("connections") or []) or []:
-            s = str(p.get("source") or "").strip().lower(); t = str(p.get("target") or "").strip().lower()
-            if s in active: active[s] = True
-            if t in active: active[t] = True
-    except Exception:
-        pass
-    tokens = {
-        "plex": bool(((cfg.get("plex") or {}).get("account_token") or ((cfg.get("auth") or {}).get("plex") or {}).get("account_token"))),
-        "simkl": bool(((cfg.get("auth") or {}).get("simkl") or {}).get("access_token")),
-        "trakt": bool(((cfg.get("auth") or {}).get("trakt") or {}).get("access_token")),
-    }
-    providers = [{"name": k.upper(), "enabled": v, "authed": bool(tokens.get(k))} for k, v in active.items()]
-    return {"providers": providers}
+    cfg = load_config()
+    from _watchlist import detect_available_watchlist_providers
+    return {"providers": detect_available_watchlist_providers(cfg)}
 
 
 # Delete
@@ -1920,7 +1877,50 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
 
-## duplicate api_watchlist_delete_batch removed: earlier implementation retained
+# Delete Batch
+@app.post("/api/watchlist/delete_batch")
+def api_watchlist_delete_batch(payload: dict = Body(...)):
+    """
+    JSON body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|ALL" }
+    Deletes selected items on the given provider(s) in one shot.
+    """
+    try:
+        keys = payload.get("keys") or []
+        provider = (payload.get("provider") or "ALL").upper().strip()
+        if not isinstance(keys, list) or not keys:
+            raise HTTPException(status_code=400, detail="keys array required")
+
+        cfg = load_config()
+        state = _load_state()
+
+        from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import keeps imports tidy
+
+        results = []
+        targets = ["PLEX", "SIMKL", "TRAKT"] if provider == "ALL" else [provider]
+        for prov in targets:
+            try:
+                res = _wl_delete_batch(keys, prov, state, cfg)
+                results.append(res)
+                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: OK")
+            except Exception as e:
+                msg = f"[WL] batch-delete on {prov} failed: {e}"
+                _append_log("SYNC", msg)
+                # Keep going for other providers, but include error in response
+                results.append({"provider": prov, "error": str(e)})
+
+        # Persist any state changes already done inside batch helper; also refresh summary/stats if desired
+        try:
+            if state:
+                STATS.refresh_from_state(state)
+        except Exception:
+            pass
+
+        return {"ok": True, "results": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1950,7 +1950,7 @@ def favicon_ico():
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.8")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.0.9")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -2779,6 +2779,7 @@ def api_sync_providers() -> JSONResponse:
             v = f.get(k, False)
             out[k] = bool(v.get("enable", False)) if isinstance(v, dict) else bool(v)
         return out
+
     def _norm_caps(caps: dict | None) -> dict:
         caps = dict(caps or {})
         return {"bidirectional": bool(caps.get("bidirectional", False))}
@@ -2787,8 +2788,7 @@ def api_sync_providers() -> JSONResponse:
         # 1) get_manifest()
         if hasattr(mod, "get_manifest") and callable(mod.get_manifest):  # type: ignore
             try:
-                mf_obj = mod.get_manifest()  # type: ignore
-                mf = dict(mf_obj) if isinstance(mf_obj, dict) else None
+                mf = dict(mod.get_manifest())  # type: ignore
             except Exception:
                 mf = None
             if mf:
@@ -2797,8 +2797,8 @@ def api_sync_providers() -> JSONResponse:
                 return {
                     "name": (mf.get("name") or "").upper(),
                     "label": mf.get("label") or (mf.get("name") or "").title(),
-                    "features": _norm_features(mf.get("features") if isinstance(mf.get("features"), dict) else {}),
-                    "capabilities": _norm_caps(mf.get("capabilities") if isinstance(mf.get("capabilities"), dict) else {}),
+                    "features": _norm_features(mf.get("features")),
+                    "capabilities": _norm_caps(mf.get("capabilities")),
                     "version": mf.get("version"),
                     "vendor": mf.get("vendor"),
                     "description": mf.get("description"),
@@ -3075,13 +3075,13 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
             path=str(local_path),
             media_type=mime,
             headers={
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
+                # Cache aggressively; browser can reuse while revalidating
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=86400",
             },
         )
     except Exception as e:
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
+
 
 
 def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache_dir: Path | str) -> tuple[str, str]:
@@ -3122,7 +3122,7 @@ def api_scheduling_replan_now() -> Dict[str, Any]:
 
     st = {}
     try:
-        st = scheduler.status() if scheduler is not None else {}
+        st = scheduler.status()
         st["config"] = scfg
         if _SCHED_HINT.get("next_run_at"):
             st["next_run_at"] = int(_SCHED_HINT["next_run_at"])
@@ -3151,14 +3151,12 @@ def api_sched_post(payload: dict = Body(...)):
         nxt = 0
 
     if (cfg["scheduling"] or {}).get("enabled"):
-        if scheduler is not None:
-            if hasattr(scheduler, "start"): scheduler.start()
-            if hasattr(scheduler, "refresh"): scheduler.refresh()
+        scheduler.start()
+        scheduler.refresh()
     else:
-        if scheduler is not None and hasattr(scheduler, "stop"):
-            scheduler.stop()
+        scheduler.stop()
 
-    st = scheduler.status() if scheduler is not None else {}
+    st = scheduler.status()
     try:
         if _SCHED_HINT.get("next_run_at"):
             st["next_run_at"] = int(_SCHED_HINT["next_run_at"])
@@ -3171,7 +3169,7 @@ def api_sched_post(payload: dict = Body(...)):
 
 @app.get("/api/scheduling/status")
 def api_sched_status():
-    st = scheduler.status() if scheduler is not None else {}
+    st = scheduler.status()
     try:
         st["config"] = load_config().get("scheduling") or {}
         if _SCHED_HINT.get("next_run_at"):
@@ -3230,12 +3228,24 @@ def _clear_simkl_state_files() -> list[str]:
     return cleared
 
 @app.post("/api/troubleshoot/reset-stats")
-def api_trbl_reset_stats(recalc: bool = Body(False)) -> Dict[str, Any]:
+def api_trbl_reset_stats(
+    recalc: bool = Body(False),
+    purge_file: bool = Body(False)   # NEW
+) -> Dict[str, Any]:
     try:
         STATS.reset()
+        if purge_file:
+            try:
+                STATS.path.unlink(missing_ok=True)  # nuke on-disk file
+            except Exception:
+                pass
+            # recreate empty file for consistency
+            STATS._load(); STATS._save()
+
         if recalc:
             state = _load_state()
             if state:
+                # NOTE: this will count the current state as fresh "adds"
                 STATS.refresh_from_state(state)
         return {"ok": True}
     except Exception as e:
@@ -3280,7 +3290,7 @@ def api_trbl_reset_state(
                 pass
 
         if mode == "clear_tombstone_entries":
-            t = orc.files.load_tomb()
+            t = orc.load_tombstones()
             t["keys"] = {}
             if isinstance(ttl_override, int) and ttl_override > 0:
                 t["ttl_sec"] = ttl_override

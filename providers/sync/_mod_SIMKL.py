@@ -1,14 +1,6 @@
-"""SIMKL sync provider module.
-
-Provides read/write operations for SIMKL watchlist (plan-to-watch), ratings,
-and history with cautious HTTP usage (backoff, ETag/TTL cache), and durable
-cursors/shadows under the configured state directory. Documentation-only
-cleanup; no identifiers or runtime behavior changed.
-"""
-
 from __future__ import annotations
 
-__VERSION__ = "1.2.1"
+__VERSION__ = "1.2.3"
 __all__ = ["OPS", "SIMKLModule", "get_manifest"]
 
 import json
@@ -16,7 +8,7 @@ import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, cast
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 import requests
 
@@ -25,12 +17,11 @@ _CALLS = getattr(globals(), "_CALLS", {"GET": 0, "POST": 0})
 globals()["_CALLS"] = _CALLS
 
 # In-run GET memoization: collapses repeated identical GETs within the same process/run.
-_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Optional[Any]] = {}
+_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Tuple[float, Optional[requests.Response]]] = {}
 
 def _norm_params(p: Optional[dict]) -> Tuple[Tuple[str, str], ...]:
     if not p:
         return tuple()
-    # stringify and sort keys to normalize
     out = []
     for k, v in p.items():
         if isinstance(v, (list, tuple)):
@@ -50,6 +41,7 @@ SIMKL_SYNC_ACTIVITIES = f"{SIMKL_BASE}/sync/activities"
 # Plan-to-watch (PTW)
 SIMKL_ALL_ITEMS_MOVIES_PTW = f"{SIMKL_BASE}/sync/all-items/movies/plantowatch"
 SIMKL_ALL_ITEMS_SHOWS_PTW  = f"{SIMKL_BASE}/sync/all-items/shows/plantowatch"
+SIMKL_ALL_ITEMS_ANIME_PTW  = f"{SIMKL_BASE}/sync/all-items/anime/plantowatch"
 SIMKL_ADD_TO_LIST          = f"{SIMKL_BASE}/sync/add-to-list"
 SIMKL_HISTORY_REMOVE       = f"{SIMKL_BASE}/sync/history/remove"  # PTW removal via history API
 
@@ -58,8 +50,8 @@ SIMKL_HISTORY_ADD          = f"{SIMKL_BASE}/sync/history"          # GET support
 
 # Ratings
 SIMKL_RATINGS_GET          = f"{SIMKL_BASE}/sync/ratings"
-SIMKL_RATINGS_SET          = f"{SIMKL_BASE}/sync/ratings"
 SIMKL_RATINGS_REMOVE       = f"{SIMKL_BASE}/sync/ratings/remove"
+SIMKL_RATINGS_SET          = f"{SIMKL_BASE}/sync/ratings"
 
 _ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
 
@@ -113,15 +105,14 @@ def _gmt_ops_for_feature(feature: str) -> Tuple[str, str]:
         return "rate", "unrate"
     if f == "history":
         return "scrobble", "unscrobble"
-    # watchlist behaves like add/remove
-    return "add", "remove"
+    return "add", "remove"  # watchlist
 
-def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[Any]:
+def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore]:
     if not _HAS_GMT or not _gmt_is_enabled(cfg):
         return None
     try:
         ttl_days = int(((cfg.get("sync") or {}).get("gmt_quarantine_days") or (cfg.get("sync") or {}).get("tombstone_ttl_days") or 7))
-        return cast(Any, GlobalTombstoneStore)(ttl_sec=max(1, ttl_days) * 24 * 3600)
+        return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
     except Exception:
         return None
 
@@ -132,11 +123,17 @@ def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[Any]:
 
 def iso_to_ts(s: str) -> int:
     """Parse ISO-8601 string into epoch seconds. Returns 0 on failure."""
+    if not s:
+        return 0
     try:
         import datetime as dt
         return int(dt.datetime.strptime(s.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z").timestamp())
     except Exception:
-        return 0
+        try:
+            import datetime as dt
+            return int(dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            return 0
 
 
 def ts_to_iso(ts: int) -> str:
@@ -149,19 +146,18 @@ def ts_to_iso(ts: int) -> str:
 # ---------------------------------------------------------------------------
 
 _HTTP_CACHE_FILE_NAME = "simkl_http_cache.json"
-_HTTP_CACHE_TTL_SEC   = 600  # 10 minutes default TTL for GETs
+_HTTP_CACHE_TTL_SEC   = 60
 _HTTP_CACHE_MAX_ENTRIES = 512
 
 def _resolve_state_dir(root_cfg: Mapping[str, Any]) -> Path:
     """
-    Decide where to keep durable state:
+    Choose where durable state lives:
     1) cfg.runtime.state_dir
     2) env: CW_STATE_DIR
     3) next to config.json (CONFIG.path)
     4) /config (Docker volume convention)
     5) cwd (last resort)
     """
-    # 1) explicit override in config
     try:
         p = (root_cfg.get("runtime") or {}).get("state_dir")
         if p:
@@ -169,23 +165,19 @@ def _resolve_state_dir(root_cfg: Mapping[str, Any]) -> Path:
     except Exception:
         pass
 
-    # 2) env override
     p = os.environ.get("CW_STATE_DIR")
     if p:
         return Path(p)
 
-    # 3) next to config.json
     try:
         if CONFIG and getattr(CONFIG, "path", None):
             return Path(CONFIG.path).parent  # type: ignore[attr-defined]
     except Exception:
         pass
 
-    # 4) Docker default
     if Path("/config").exists():
         return Path("/config")
 
-    # 5) fallback
     return Path.cwd()
 
 
@@ -204,7 +196,7 @@ def _load_http_cache(root_cfg: Optional[Mapping[str, Any]] = None) -> Dict[str, 
     try:
         return json.loads(path.read_text("utf-8"))
     except Exception:
-        return {"map": {}, "order": []}  # order: LRU-ish list of keys
+        return {"map": {}, "order": []}
 
 
 def _save_http_cache(cache: Mapping[str, Any], root_cfg: Optional[Mapping[str, Any]] = None) -> None:
@@ -227,13 +219,21 @@ def _http_cache_get(root_cfg: Mapping[str, Any], url: str, params: Optional[dict
     ent = (cache.get("map") or {}).get(key)
     if not ent:
         return None
-    # TTL check
     try:
         if (time.time() - float(ent.get("ts", 0))) > _HTTP_CACHE_TTL_SEC:
             return None
     except Exception:
         return None
     return ent
+
+
+def _http_cache_peek_ts(root_cfg: Mapping[str, Any], url: str, params: Optional[dict]) -> float:
+    """Return cache entry epoch timestamp or 0 when absent/expired."""
+    ent = _http_cache_get(root_cfg, url, params)
+    try:
+        return float(ent.get("ts", 0)) if ent else 0.0
+    except Exception:
+        return 0.0
 
 
 def _http_cache_put(root_cfg: Mapping[str, Any], url: str, params: Optional[dict], response: requests.Response) -> None:
@@ -261,7 +261,6 @@ def _http_cache_put(root_cfg: Mapping[str, Any], url: str, params: Optional[dict
         except Exception:
             pass
         cache_order.append(key)
-        # LRU cap
         while len(cache_order) > _HTTP_CACHE_MAX_ENTRIES:
             victim = cache_order.pop(0)
             cache_map.pop(victim, None)
@@ -272,14 +271,14 @@ def _http_cache_put(root_cfg: Mapping[str, Any], url: str, params: Optional[dict
 
 
 class _CachedResponse:
-    """Tiny Response-like wrapper to serve JSON from disk cache uniformly."""
+    """Response-like wrapper to serve JSON from disk cache uniformly."""
     def __init__(self, ent: Mapping[str, Any]):
         self._ent = dict(ent)
         self.status_code = int(ent.get("status", 200))
         self.ok = 200 <= self.status_code < 300
         self.headers = dict(ent.get("headers") or {})
         self.content = (ent.get("body") or "").encode("utf-8")
-        self.elapsed = 0  # pretend instant
+        self.elapsed = 0
 
     def json(self) -> Any:
         try:
@@ -316,14 +315,12 @@ class _CursorStore:
         base = _resolve_state_dir(root_cfg)
         base_dir = (base / ".cw_state")
 
-        # Ensure directory exists; fallback to cwd if needed
         try:
             base_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             base_dir = Path.cwd() / ".cw_state"
             base_dir.mkdir(parents=True, exist_ok=True)
 
-        # Optional one-time migration from /app/.cw_state -> new base
         try:
             old_dir = Path("/app/.cw_state")
             if old_dir.exists() and old_dir != base_dir:
@@ -347,7 +344,7 @@ class _CursorStore:
     def _atomic_write(self, path: Path, data: Mapping[str, Any]) -> None:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-        os.replace(tmp, path)  # atomic on POSIX/Windows
+        os.replace(tmp, path)
 
     def get(self, feature: str) -> Optional[str]:
         return (self._read() or {}).get(feature)
@@ -396,7 +393,7 @@ def canonical_key(item: Mapping[str, Any]) -> str:
 
 
 def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
-    """Return a compact item payload safe to cache."""
+    """Return a compact item payload safe to cache and persist."""
     return {
         "ids": {k: item.get("ids", {}).get(k) for k in _ID_KEYS if item.get("ids", {}).get(k)},
         "title": item.get("title"),
@@ -434,7 +431,7 @@ def _ids_from_simkl_node(node: Mapping[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _RUN_ACT = {"ts": 0.0, "data": None}
-_ACT_TTL_SEC = 60  # Cache activities for 1 minutes to avoid chattiness
+_ACT_TTL_SEC = 60  # Short TTL to surface interactive changes quickly
 
 def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
     """Fetch SIMKL activities once per TTL; flatten a few nested keys."""
@@ -453,11 +450,38 @@ def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
             out[k] = data[k]
         elif isinstance(data.get(k), dict):
             for sk, sv in data[k].items():
-                if isinstance(sv, (str, int, str)):
+                if isinstance(sv, (str, int)):
                     out[f"{k}.{sk}"] = sv
     _RUN_ACT.update(ts=now, data=out)
     return out
 
+# --- run cache control -------------------------------------------------------
+
+def _clear_run_cache() -> None:
+    """Clear in-process GET memoization. Safe to call every sync start."""
+    try:
+        _RUN_GET_CACHE.clear()
+    except Exception:
+        pass
+
+def _bust_ptw_cache(cfg_root: Mapping[str, Any]) -> None:
+    try:
+        cache = _load_http_cache(cfg_root)
+        m = cache.get("map") or {}
+        order = cache.get("order") or []
+        def drop(url: str, params: dict):
+            key = _http_cache_key(url, params)
+            m.pop(key, None)
+            try: order.remove(key)
+            except Exception: pass
+        # present-snapshot keys we use in _ptw_fetch_present
+        base_params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
+        drop(SIMKL_ALL_ITEMS_MOVIES_PTW, base_params)
+        drop(SIMKL_ALL_ITEMS_SHOWS_PTW,  base_params)
+        cache["map"], cache["order"] = m, order
+        _save_http_cache(cache, cfg_root)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # HTTP recording & backoff wrappers
@@ -468,7 +492,6 @@ def _record_http_simkl(r: Optional[requests.Response], *, endpoint: str, method:
     Record HTTP telemetry if host statistics are available.
     Also increments global GET/POST counters for debug analysis (unless count=False for cache hits).
     """
-    # Increment basic counters regardless of _stats availability (unless disabled)
     if count:
         try:
             if method == "GET":
@@ -486,7 +509,6 @@ def _record_http_simkl(r: Optional[requests.Response], *, endpoint: str, method:
         ok = bool(getattr(r, "ok", False))
         bytes_in = len(getattr(r, "content", b"") or b"") if r is not None else 0
 
-        # Estimate outgoing payload size
         if isinstance(payload, (bytes, bytearray)):
             bytes_out = len(payload)
         elif payload is None:
@@ -497,11 +519,8 @@ def _record_http_simkl(r: Optional[requests.Response], *, endpoint: str, method:
             except Exception:
                 bytes_out = 0
 
-        # Timing (elapsed may be missing or non-timedelta; be defensive)
-        el = getattr(r, "elapsed", None) if r is not None else None
-        ms = int(cast(Any, el).total_seconds() * 1000) if el is not None else 0
+        ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
 
-        # Rate headers (best-effort)
         rate_remaining = None
         rate_reset_iso = None
         try:
@@ -537,9 +556,8 @@ def _record_http_simkl(r: Optional[requests.Response], *, endpoint: str, method:
 
 def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
     """
-    Apply defensive retries with exponential backoff.
-    - Retries on network errors, 5xx, and 429.
-    - If headers expose low remaining quota, pause briefly.
+    Defensive retries with exponential backoff.
+    Retries on network errors, 5xx, and 429. Pauses briefly on low remaining quota.
     """
     delay = 1.0
     last: Optional[requests.Response] = None
@@ -550,12 +568,10 @@ def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
         except Exception:
             r = None  # type: ignore
 
-        # If we have a response, inspect status and rate headers
         if r is not None:
             try:
                 rem = r.headers.get("X-RateLimit-Remaining")
                 if rem is not None and int(rem) <= 0:
-                    # If reset header exists, sleep up to 10s max (keep runs responsive)
                     rst = r.headers.get("X-RateLimit-Reset")
                     if rst:
                         try:
@@ -569,94 +585,94 @@ def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
                     time.sleep(delay)
                     delay = min(delay * 2, 10)
                     continue
-                # For other statuses, return directly (including 4xx which we don't retry)
                 return r
             except Exception:
-                # If inspection fails, treat as transient
                 time.sleep(delay)
                 delay = min(delay * 2, 10)
                 continue
         else:
-            # Network error, retry
             time.sleep(delay)
             delay = min(delay * 2, 10)
     return last
-
-
 # ---------------------------------------------------------------------------
-# GET/POST with memo + disk cache + ETag
+# GET/POST with memo + disk cache + ETag (configurable bypass)
 # ---------------------------------------------------------------------------
 
-def _simkl_get(url: str, *, headers: Mapping[str, str], params: Optional[dict] = None, timeout: int = 45, cfg_root: Optional[Mapping[str, Any]] = None) -> Optional[requests.Response]:
+def _simkl_get(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    params: Optional[dict] = None,
+    timeout: int = 45,
+    cfg_root: Optional[Mapping[str, Any]] = None,
+    force_refresh: bool = False
+) -> Optional[requests.Response]:
     """
     GET with layers:
-    1) per-run memo (identical url+params),
-    2) disk cache TTL hit (no network, no call count),
-    3) If-None-Match using cached ETag (network, counts; 304 -> synthesize from cache),
+    1) small in-process memo with TTL (skipped when force_refresh=True),
+    2) disk cache TTL (skipped when force_refresh=True),
+    3) If-None-Match using cached ETag (304 -> synthesize from cache),
     4) store fresh body+ETag on 200.
     """
     key = (url, _norm_params(params))
-    # 1) in-run memo
-    if key in _RUN_GET_CACHE:
-        r = _RUN_GET_CACHE[key]
-        # count as a logical GET for stats, but don't double log bandwidth
-        _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
-        return cast(Optional[requests.Response], r)
+    now = time.time()
+
+    # 1) in-run memo (short TTL)
+    if not force_refresh:
+        ent = _RUN_GET_CACHE.get(key)
+        if ent:
+            ts, r_cached = ent
+            if (now - ts) < _HTTP_CACHE_TTL_SEC:
+                _record_http_simkl(r_cached, endpoint=url.replace(SIMKL_BASE, ""), method="GET", count=False)
+                return r_cached
+            else:
+                _RUN_GET_CACHE.pop(key, None)
 
     # 2) disk TTL cache (no network)
-    ent = _http_cache_get(cfg_root or {}, url, params)
-    if ent:
-        try:
+    if not force_refresh:
+        ent = _load_http_cache(cfg_root or {}).get("map", {}).get(_http_cache_key(url, params))
+        if ent and (now - float(ent.get("ts", 0))) <= _HTTP_CACHE_TTL_SEC:
             r = _CachedResponse(ent)
-            _RUN_GET_CACHE[key] = r
-            # do NOT count a call here (no HTTP made)
-            return cast(Optional[requests.Response], r)
-        except Exception:
-            pass  # fall through to network
+            _RUN_GET_CACHE[key] = (now, r)
+            return r
 
     # 3) network with optional If-None-Match
     hdrs = dict(headers or {})
     try:
-        # if we have a cached ETag (even if TTL expired), send it
-        cache_all = _load_http_cache(cfg_root or {})
-        ck = _http_cache_key(url, params)
-        prev = (cache_all.get("map") or {}).get(ck)
-        if prev and prev.get("etag"):
+        prev = _load_http_cache(cfg_root or {}).get("map", {}).get(_http_cache_key(url, params))
+        if (not force_refresh) and prev and prev.get("etag"):
             hdrs["If-None-Match"] = prev.get("etag")
     except Exception:
         pass
 
     try:
-        r = _with_backoff(
-            requests.get, url, headers=hdrs, params=(params or {}), timeout=timeout
-        )
+        r = _with_backoff(requests.get, url, headers=hdrs, params=(params or {}), timeout=timeout)
     except Exception:
         _record_http_simkl(None, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
-        _RUN_GET_CACHE[key] = None
+        if not force_refresh:
+            _RUN_GET_CACHE[key] = (now, None)
         return None
 
-    # Handle 304 from server using cached body
+    # 304 -> synthesize from cache body
     try:
         if r is not None and getattr(r, "status_code", 0) == 304:
-            cache_all = _load_http_cache(cfg_root or {})
-            ck = _http_cache_key(url, params)
-            prev = (cache_all.get("map") or {}).get(ck)
+            prev = _load_http_cache(cfg_root or {}).get("map", {}).get(_http_cache_key(url, params))
             if prev:
                 r2 = _CachedResponse(prev)
-                _RUN_GET_CACHE[key] = r2
-                _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")  # counts the network 304
-                return cast(Optional[requests.Response], r2)
+                if not force_refresh:
+                    _RUN_GET_CACHE[key] = (now, r2)
+                _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
+                return r2
     except Exception:
         pass
 
-    # Normal success path: write cache on 200
     if r is not None and getattr(r, "ok", False):
         _http_cache_put(cfg_root or {}, url, params, r)
 
-    _RUN_GET_CACHE[key] = r
+    if not force_refresh:
+        _RUN_GET_CACHE[key] = (now, r)
     _record_http_simkl(r, endpoint=url.replace(SIMKL_BASE, ""), method="GET")
-    return cast(Optional[requests.Response], r)
-
+    return r
 
 def _simkl_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[str, Any], timeout: int = 45) -> Optional[requests.Response]:
     try:
@@ -716,11 +732,10 @@ def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _ptw_fetch_delta(hdr: Mapping[str, str], date_from_iso: str, *, cfg_root: Optional[Mapping[str, Any]] = None) -> Dict[str, List[dict]]:
-    """Fetch PTW delta since a given date."""
     params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": date_from_iso}
 
     def _get(url: str, key: str) -> List[dict]:
-        r = _simkl_get(url, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+        r = _simkl_get(url, headers=hdr, params=params, timeout=45, cfg_root=cfg_root, force_refresh=False)
         return _json_or_empty_list(r, key)
 
     movies = _get(SIMKL_ALL_ITEMS_MOVIES_PTW, "movies")
@@ -729,10 +744,10 @@ def _ptw_fetch_delta(hdr: Mapping[str, str], date_from_iso: str, *, cfg_root: Op
 
 
 def _ptw_flatten_item(kind: str, it: Mapping[str, Any]) -> Dict[str, Any]:
-    """Normalize PTW item into a compact shape."""
-    node = (it.get("movie") if kind == "movie" else it.get("show")) or {}
-    return {"type": kind, "title": node.get("title"), "year": node.get("year"), "ids": _ids_from_simkl_node(node)}
-
+    """Normalize PTW item into a compact shape. Treat anime as show for cross-provider compatibility."""
+    node = it.get("movie") or it.get("show") or it.get("anime") or it.get(kind) or {}
+    target_kind = "movie" if kind == "movie" else "show"
+    return {"type": target_kind, "title": node.get("title"), "year": node.get("year"), "ids": _ids_from_simkl_node(node)}
 
 def _ptw_key_for(kind: str, node: Mapping[str, Any]) -> str:
     """Build a stable key for PTW entries by ID, falling back to title/year."""
@@ -758,8 +773,11 @@ def _ptw_apply_delta(shadow: Dict[str, Any], delta: Dict[str, List[dict]]) -> Di
     """Apply PTW delta onto the local shadow map."""
     items = dict(shadow)
     for kind, arr in (delta or {}).items():
+        if not arr:
+            continue
+        # movies -> movie, shows/anime -> show
         k = "movie" if kind == "movies" else "show"
-        for it in arr or []:
+        for it in arr:
             node = _ptw_flatten_item(k, it)
             key = _ptw_key_for(k, node)
             if _looks_removed(it):
@@ -767,7 +785,6 @@ def _ptw_apply_delta(shadow: Dict[str, Any], delta: Dict[str, List[dict]]) -> Di
             else:
                 items[key] = node
     return items
-
 
 def _ptw_bootstrap_using_windows(hdr: Mapping[str, str], start_iso: str, *, cfg_root: Optional[Mapping[str, Any]] = None, window_days: int = 365, max_windows: int = 8) -> Dict[str, Any]:
     """
@@ -792,32 +809,70 @@ def _ptw_bootstrap_using_windows(hdr: Mapping[str, str], start_iso: str, *, cfg_
     return items
 
 
-def _ptw_fetch_present(hdr: Mapping[str, str], *, cfg_root: Optional[Mapping[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
+def _ptw_fetch_present(
+    hdr: Mapping[str, str],
+    *,
+    cfg_root: Optional[Mapping[str, Any]] = None,
+    force_refresh: bool = False,
+) -> Tuple[Dict[str, Any], bool]:
     """
-    Present-time PTW snapshot by sweeping from epoch (SIMKL requires date_from).
-    Returns (items_map, ok_flag). ok_flag indicates a meaningful response.
-    """
-    params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
+    Fetch the present Plant-To-Watch snapshot for movies and shows.
 
-    r_m = _simkl_get(SIMKL_ALL_ITEMS_MOVIES_PTW, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
-    r_s = _simkl_get(SIMKL_ALL_ITEMS_SHOWS_PTW,  headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+    - Always include `date_from` (SIMKL requires it); 1970 ensures a full present view.
+    - When `force_refresh=True`, _simkl_get will bypass ETag so we get a fresh 200 body.
+    """
+    params = {
+        "extended": "full",
+        "episode_watched_at": "yes",
+        "memos": "yes",
+        "date_from": "1970-01-01T00:00:00Z",
+    }
+
+    # Propagate `force_refresh` to control ETag usage and cache bypass.
+    r_m = _simkl_get(
+        SIMKL_ALL_ITEMS_MOVIES_PTW,
+        headers=hdr,
+        params=params,
+        timeout=45,
+        cfg_root=cfg_root,
+        force_refresh=force_refresh,
+    )
+    r_s = _simkl_get(
+        SIMKL_ALL_ITEMS_SHOWS_PTW,
+        headers=hdr,
+        params=params,
+        timeout=45,
+        cfg_root=cfg_root,
+        force_refresh=force_refresh,
+    )
 
     movies = _json_or_empty_list(r_m, "movies")
     shows  = _json_or_empty_list(r_s, "shows")
 
-    ok = (r_m is not None and getattr(r_m, "ok", False)) or (r_s is not None and getattr(r_s, "ok", False))
+    ok = bool(
+        (r_m is not None and getattr(r_m, "ok", False)) or
+        (r_s is not None and getattr(r_s, "ok", False))
+    )
+
     items: Dict[str, Any] = {}
-    for it in movies or []:
-        node = _ptw_flatten_item("movie", it)
-        key = _ptw_key_for("movie", node)
-        if not _looks_removed(it):
+    if movies:
+        for it in movies:
+            if _looks_removed(it):
+                continue
+            node = _ptw_flatten_item("movie", it)
+            key  = _ptw_key_for("movie", node)
             items[key] = node
-    for it in shows or []:
-        node = _ptw_flatten_item("show", it)
-        key = _ptw_key_for("show", node)
-        if not _looks_removed(it):
+
+    if shows:
+        for it in shows:
+            if _looks_removed(it):
+                continue
+            node = _ptw_flatten_item("show", it)
+            key  = _ptw_key_for("show", node)
             items[key] = node
+
     return items, ok
+
 
 # ---------------------------------------------------------------------------
 # Connectivity / liveness
@@ -838,23 +893,34 @@ def _simkl_alive(hdr: Mapping[str, str], *, cfg_root: Optional[Mapping[str, Any]
 
 def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
-    Build a full watchlist (PTW) snapshot with minimal API cost:
-    - Prefer present-time snapshot (2 calls).
-    - If present works, skip delta unless activities moved past our cursor.
-    - If present fails and shadow is empty, use a bounded bootstrap (<= 8 windows).
-    - Advance the cursor using activities (server view) when possible.
+    Build a full PTW snapshot with minimal API cost and correct freshness:
+    - Zero-call fast path when activities ≤ shadow timestamp.
+    - Prefer present snapshot (authoritative).
+    - If present fails and shadow is empty, bounded bootstrap.
+    - Use delta only when present failed.
+    - Clear per-run GET memo to avoid cross-run staleness.
     """
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     hdr = simkl_headers(simkl_cfg)
     store = _CursorStore(cfg_root)
 
-    # If offline, return last known shadow. Orchestrator can surface transient state.
+    # Reset in-run GET memoization so prior runs can't leak stale responses.
+    try:
+        _RUN_GET_CACHE.clear()
+    except Exception:
+        pass
+
+    # Offline → serve last shadow to keep orchestrator stable.
     if not _simkl_alive(hdr, cfg_root=cfg_root):
         shadow = store.load_shadow()
         out = {}
         for k, node in (shadow.get("items") or {}).items():
-            out[k] = {"type": node.get("type"), "title": node.get("title"), "year": node.get("year"), "ids": node.get("ids") or {}}
-        # Log call counters in debug
+            out[k] = {
+                "type": node.get("type"),
+                "title": node.get("title"),
+                "year": node.get("year"),
+                "ids": node.get("ids") or {},
+            }
         try:
             if (cfg_root.get("runtime") or {}).get("debug"):
                 host_log("SIMKL.calls", {"feature": "watchlist", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
@@ -864,44 +930,80 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     acts = _activities(cfg_root)
 
-    # Cursor precedence: persisted -> simkl config hints -> activities -> now
+    # Cursor precedence: persisted → config hints → activities → now
     cursor = store.get("watchlist") or simkl_cfg.get("last_date") or simkl_cfg.get("date_from")
     date_from = cursor or acts.get("watchlist") or acts.get("lists") or ts_to_iso(int(time.time()))
 
-    # Load shadow first; cheap local baseline
+    # Load shadow as temporary base
     shadow = store.load_shadow()
     items = dict(shadow.get("items") or {})
 
-    # 1) Try present-time snapshot first (authoritative, cheap)
-    present_items, ok_present = _ptw_fetch_present(hdr, cfg_root=cfg_root)
-    did_present = bool(ok_present)
-    if did_present:
-        items = dict(present_items)
+    # Activity-aware fast path: if nothing moved since shadow, skip network entirely.
+    try:
+        shadow_ts = int(shadow.get("last_sync_ts") or 0)
+    except Exception:
+        shadow_ts = 0
+    try:
+        acts_ts = iso_to_ts(str(acts.get("watchlist") or acts.get("lists") or "")) or 0
+    except Exception:
+        acts_ts = 0
+
+    if shadow_ts and acts_ts and acts_ts <= shadow_ts:
+        out: Dict[str, Dict[str, Any]] = {}
+        for k, node in items.items():
+            out[k] = {
+                "type": node.get("type"),
+                "title": node.get("title"),
+                "year": node.get("year"),
+                "ids": node.get("ids") or {},
+            }
+        try:
+            if (cfg_root.get("runtime") or {}).get("debug"):
+                host_log("SIMKL.calls", {"feature": "watchlist", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
+        except Exception:
+            pass
+        return out
+
+    # 1) Present snapshot first (authoritative). Force refresh only if activities moved.
+    force_present = bool(acts_ts and (acts_ts > shadow_ts))
+    present_items, ok_present = _ptw_fetch_present(hdr, cfg_root=cfg_root, force_refresh=force_present)
+    if ok_present:
+        items = dict(present_items)  # authoritative, including empty
+        # Persist immediately to prevent stale shadow re-infecting later runs
+        try:
+            now_ts = int(time.time())
+            store.save_shadow(items, now_ts)
+            store.set("watchlist", ts_to_iso(now_ts))
+        except Exception:
+            pass
+        did_present = True
     else:
-        # 1b) If present failed and we have no shadow, do a bounded bootstrap
+        did_present = False
+        # If present failed and no shadow exists, do bounded bootstrap
         if not items:
             items = _ptw_bootstrap_using_windows(hdr, date_from, cfg_root=cfg_root)
 
-    # 2) Decide if a delta fetch is actually needed
-    need_delta = not did_present
-    if not need_delta:
-        # Only do delta if activities indicate movement beyond our cursor
+    # 2) Delta only when present failed
+    if not did_present:
+        # Backshift cursor slightly to avoid boundary misses
         try:
-            act_ts = iso_to_ts(str(acts.get("watchlist") or acts.get("lists") or ""))
-            cur_ts = iso_to_ts(str(date_from))
-            need_delta = bool(act_ts and cur_ts and act_ts > cur_ts)
+            base_ts = iso_to_ts(str(date_from)) or int(time.time())
+            date_from_safe = ts_to_iso(max(0, base_ts - 5))
         except Exception:
-            need_delta = False
+            date_from_safe = date_from
 
-    if need_delta:
-        delta = _ptw_fetch_delta(hdr, date_from, cfg_root=cfg_root)
+        delta = _ptw_fetch_delta(hdr, date_from_safe, cfg_root=cfg_root)
         items = _ptw_apply_delta(items, delta)
 
-        # Safety net: if activities moved but delta looked empty, sweep a tiny window
+        # Safety net: activities moved but delta looked empty → tiny sweep
         try:
-            act_ts = iso_to_ts(str(acts.get("watchlist") or acts.get("lists") or ""))
-            cur_ts = iso_to_ts(str(date_from))
-            delta_size = (len(delta.get("movies", [])) + len(delta.get("shows", [])))
+            act_ts = iso_to_ts(str(acts.get("watchlist") or acts.get("lists") or "")) or 0
+            cur_ts = iso_to_ts(str(date_from_safe)) or 0
+            delta_size = (
+                len(delta.get("movies", [])) +
+                len(delta.get("shows", [])) +
+                (len(delta.get("anime", [])) if isinstance(delta.get("anime", []), list) else 0)
+            )
             if delta_size == 0 and act_ts and cur_ts and act_ts > cur_ts:
                 tiny_since = ts_to_iso(int(time.time()) - 7 * 86400)
                 tiny = _ptw_fetch_delta(hdr, tiny_since, cfg_root=cfg_root)
@@ -909,19 +1011,15 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
 
-    # 3) Advance cursor from activities if available; otherwise use "now"
+    # 3) Persist shadow and advance cursor from activities (or now as fallback)
     try:
+        now_ts = int(time.time())
+        store.save_shadow(items, now_ts)
         acts2 = _activities(cfg_root)
-    except Exception:
-        acts2 = {}
-    new_cursor = acts2.get("watchlist") or acts2.get("lists") or ts_to_iso(int(time.time()))
-    try:
+        new_cursor = acts2.get("watchlist") or acts2.get("lists") or ts_to_iso(now_ts)
         store.set("watchlist", new_cursor)
     except Exception:
         pass
-
-    # Persist shadow for next run
-    store.save_shadow(items, int(time.time()))
 
     # 4) Normalize snapshot for orchestrator
     out: Dict[str, Dict[str, Any]] = {}
@@ -930,10 +1028,10 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             "type": node.get("type"),
             "title": node.get("title"),
             "year": node.get("year"),
-            "ids": node.get("ids") or {}
+            "ids": node.get("ids") or {},
         }
 
-    # Log call counters in debug
+    # Debug counters (optional)
     try:
         if (cfg_root.get("runtime") or {}).get("debug"):
             host_log("SIMKL.calls", {"feature": "watchlist", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
@@ -951,13 +1049,16 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     items_list = list(items)
     store_gmt = _gmt_store_from_cfg(cfg_root)
     if store_gmt and items_list:
-        op_add, _op_neg = _gmt_ops_for_feature("watchlist")
-        items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="watchlist", write_op=op_add)]
+        op_add, _ = _gmt_ops_for_feature("watchlist")
+        items_list = [it for it in items_list
+                      if not _gmt_suppress(store=store_gmt, item=it, feature="watchlist", write_op=op_add)]
 
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     for it in items_list:
         ids = dict((it.get("ids") or {}))
         typ = (it.get("type") or "movie").lower()
+        if typ == "anime":
+            typ = "show"
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}, "to": "plantowatch"}
         if entry["ids"]:
             (payload["movies"] if typ == "movie" else payload["shows"]).append(entry)
@@ -968,24 +1069,35 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     r = _simkl_post(SIMKL_ADD_TO_LIST, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
     if r and r.ok:
-        # Move cursor forward and update shadow immediately
-        now_iso = ts_to_iso(int(time.time()))
+        # Bust caches so _watchlist_index sees the new state right away
+        _bust_ptw_cache(cfg_root)
+        _clear_run_cache()
+
+        now_ts = int(time.time())
+        now_iso = ts_to_iso(now_ts)
         store = _CursorStore(cfg_root)
         store.set("watchlist", now_iso)
+
+        # Update shadow append-only
         shadow = store.load_shadow()
         m = dict(shadow.get("items") or {})
         for it in items_list:
-            k = canonical_key({"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year"), "type": (it.get("type") or "movie").lower()})
-            m[k] = {"type": (it.get("type") or "movie").lower(), "title": it.get("title"), "year": it.get("year"), "ids": it.get("ids") or {}}
-        store.save_shadow(m, int(time.time()))
+            typ = (it.get("type") or "movie").lower()
+            if typ == "anime":
+                typ = "show"
+            node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": dict(it.get("ids") or {})}
+            k = canonical_key(node)
+            m[k] = node
+        store.save_shadow(m, now_ts)
+
         return sum(len(v) for v in payload.values())
     return 0
 
 
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     """
-    Remove items from PTW using the official history/remove endpoint.
-    On success, advance both history and watchlist cursors and update shadow.
+    Remove items from SIMKL PTW using the official history/remove endpoint.
+    On success, advance both history and watchlist cursors, update shadow, and record GMT.
     """
     items_list = list(items)
 
@@ -993,6 +1105,8 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     for it in items_list:
         ids = dict((it.get("ids") or {}))
         typ = (it.get("type") or "movie").lower()
+        if typ == "anime":
+            typ = "show"
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if entry["ids"]:
             (payload["movies"] if typ == "movie" else payload["shows"]).append(entry)
@@ -1003,21 +1117,34 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
     if r and r.ok:
-        now_iso = ts_to_iso(int(time.time()))
+        # Bust caches + run memo so the next index is fresh
+        _bust_ptw_cache(cfg_root)
+        _clear_run_cache()
+
+        now_ts = int(time.time())
+        now_iso = ts_to_iso(now_ts)
         store = _CursorStore(cfg_root)
         store.set("history", now_iso)
         store.set("watchlist", now_iso)
+
+        # Shadow: remove keys
         shadow = store.load_shadow()
         m = dict(shadow.get("items") or {})
         for it in items_list:
-            k = canonical_key({"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year"), "type": (it.get("type") or "movie").lower()})
+            typ = (it.get("type") or "movie").lower()
+            if typ == "anime":
+                typ = "show"
+            node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": dict(it.get("ids") or {})}
+            k = canonical_key(node)
             m.pop(k, None)
-        store.save_shadow(m, int(time.time()))
-        # GMT: record negatives for successful removes
+        store.save_shadow(m, now_ts)
+
+        # GMT negatives start quarantine
         store_gmt = _gmt_store_from_cfg(cfg_root)
         if store_gmt:
             for it in items_list:
                 _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="SIMKL")
+
         return sum(len(v) for v in payload.values())
     return 0
 
@@ -1033,7 +1160,6 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     store = _CursorStore(cfg_root)
 
     if not _simkl_alive(hdr, cfg_root=cfg_root):
-        # Debug call counters
         try:
             if (cfg_root.get("runtime") or {}).get("debug"):
                 host_log("SIMKL.calls", {"feature": "ratings", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
@@ -1055,7 +1181,6 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         for it in arr or []:
             node = it.get(kind) or {}
             ids = _ids_from_simkl_node(node)
-            rating = it.get("rating")
             if not ids and (node.get("title") is None):
                 continue
             key = None
@@ -1068,23 +1193,28 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                 t = str(node.get("title") or "").strip().lower()
                 y = node.get("year") or ""
                 key = f"{kind}|title:{t}|year:{y}"
-            idx[key] = {"type": kind, "title": node.get("title"), "year": node.get("year"), "ids": ids, "rating": rating}
+            idx[key] = {
+                "type":  kind,
+                "title": node.get("title"),
+                "year":  node.get("year"),
+                "ids":   ids,
+                "rating": it.get("rating"),
+            }
 
     handle(_read_as_list(data, "movies"), "movie")
-    handle(_read_as_list(data, "shows"), "show")
+    handle(_read_as_list(data, "shows"),  "show")
 
-    # Advance cursor using server Date header if present
+    # Advance cursor using server Date header if present; fallback to now
     try:
         srv_now = r.headers.get("Date") if r else None
     except Exception:
         srv_now = None
-    new_cursor = srv_now or ts_to_iso(int(time.time()))
+    new_cursor = ts_to_iso(int(time.time()))
     try:
         store.set("ratings", new_cursor)
     except Exception:
         pass
 
-    # Debug call counters
     try:
         if (cfg_root.get("runtime") or {}).get("debug"):
             host_log("SIMKL.calls", {"feature": "ratings", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
@@ -1092,7 +1222,6 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         pass
 
     return idx
-
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     """
@@ -1314,7 +1443,8 @@ class _SimklOPS:
     def features(self) -> Mapping[str, bool]:
         return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
     def capabilities(self) -> Mapping[str, Any]:
-        return {"bidirectional": True}
+        # This provider returns stable IDs across snapshots.
+        return {"bidirectional": True, "provides_ids": True}
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         if feature == "watchlist":
@@ -1390,7 +1520,7 @@ except Exception:  # pragma: no cover
         capabilities: ModuleCapabilities
 
 
-class SIMKLModule(SyncModule):  # type: ignore[misc]
+class SIMKLModule(SyncModule):
     info = ModuleInfo(
         name="SIMKL",
         version=__VERSION__,

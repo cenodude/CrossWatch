@@ -1,12 +1,4 @@
 from __future__ import annotations
-
-"""Trakt webhook integration
-
-Validates Plex webhooks, resolves IDs from Plex metadata (with a search
-fallback), maps events to Trakt scrobble endpoints, and forwards them with
-simple de-duplication and logging.
-"""
-
 import base64
 import hashlib
 import hmac
@@ -27,7 +19,6 @@ _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)"
 
 
 def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
-    """Emit a log line via provided logger if available, else stdout."""
     try:
         if logger:
             logger(msg, level=level, module="SCROBBLE")
@@ -38,7 +29,6 @@ def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
 
 
 def _load_config() -> Dict[str, Any]:
-    """Load configuration via app helper or fall back to config.json file."""
     try:
         from crosswatch import load_config
         return load_config()
@@ -48,7 +38,6 @@ def _load_config() -> Dict[str, Any]:
 
 
 def _save_config(cfg: Dict[str, Any]) -> None:
-    """Persist configuration via app helper or to config.json as fallback."""
     try:
         from crosswatch import save_config as _save
         _save(cfg)
@@ -69,7 +58,6 @@ def _tokens(cfg: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
-    """Standard Trakt headers with optional Authorization when token present."""
     t = _tokens(cfg)
     h = {
         "Content-Type": "application/json",
@@ -84,7 +72,6 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
-    """POST to Trakt, refresh token once on 401, then retry once."""
     url = f"{TRAKT_API}{path}"
     r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     if r.status_code == 401:
@@ -99,7 +86,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
 
 
 def _ids_from_candidates(candidates: Iterable[Any]) -> Dict[str, Any]:
-    """Scan a list of GUID-like strings and return a single best-match IDs dict."""
     for c in candidates:
         if not c:
             continue
@@ -117,7 +103,6 @@ def _ids_from_candidates(candidates: Iterable[Any]) -> Dict[str, Any]:
 
 
 def _gather_guid_candidates(md: Dict[str, Any]) -> list[str]:
-    """Collect plausible Plex GUID fields and their array-form variants."""
     cand: list[str] = []
     for k in ("guid", "grandparentGuid", "parentGuid"):
         v = md.get(k)
@@ -140,7 +125,6 @@ def _gather_guid_candidates(md: Dict[str, Any]) -> list[str]:
 
 
 def _ids_from_metadata(md: Dict[str, Any], media_type: str) -> Dict[str, Any]:
-    """Prefer show GUIDs for episodes, else scan all GUID candidates."""
     if media_type == "episode":
         pref = [md.get("grandparentGuid"), md.get("parentGuid")]
         ids = _ids_from_candidates(pref)
@@ -150,7 +134,6 @@ def _ids_from_metadata(md: Dict[str, Any], media_type: str) -> Dict[str, Any]:
 
 
 def _describe_ids(ids: Dict[str, Any]) -> str:
-    """Compact string form of IDs for logs."""
     if "imdb" in ids:
         return f"imdb:{ids['imdb']}"
     if "tmdb" in ids:
@@ -161,7 +144,6 @@ def _describe_ids(ids: Dict[str, Any]) -> str:
 
 
 def _progress(payload: Dict[str, Any]) -> float:
-    """Compute percent progress from viewOffset and duration with clamping."""
     md = payload.get("Metadata") or {}
     vo = payload.get("viewOffset") or md.get("viewOffset") or 0
     dur = md.get("duration") or 0
@@ -172,7 +154,6 @@ def _progress(payload: Dict[str, Any]) -> float:
 
 
 def _map_event(event: str) -> Optional[str]:
-    """Translate Plex event names to Trakt scrobble endpoints."""
     e = (event or "").lower()
     if e in ("media.play", "media.resume"):
         return "/scrobble/start"
@@ -184,7 +165,6 @@ def _map_event(event: str) -> Optional[str]:
 
 
 def _verify_signature(raw: Optional[bytes], headers: Mapping[str, str], secret: str) -> bool:
-    """Validate X-Plex-Signature if a shared secret is configured."""
     if not secret:
         return True
     if not raw:
@@ -199,7 +179,6 @@ def _verify_signature(raw: Optional[bytes], headers: Mapping[str, str], secret: 
 
 # ---- Trakt fallback search to avoid wrong matches ("Matrix" problem) ----------
 def _lookup_trakt_ids(media_type: str, md: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
-    """Search Trakt by title/year to avoid mismatches when GUIDs are missing."""
     try:
         title = (md.get("title") if media_type == "movie" else md.get("grandparentTitle")) or ""
         year = md.get("year")
@@ -235,7 +214,6 @@ def process_webhook(
     raw: Optional[bytes] = None,
     logger: Optional[Callable[..., None]] = None,
 ) -> Dict[str, Any]:
-    """Process a Plex webhook and forward a matching scrobble request to Trakt."""
     cfg = _load_config()
     secret = ((cfg.get("plex") or {}).get("webhook_secret") or "").strip()
 
@@ -313,10 +291,8 @@ def process_webhook(
             rj = r.json()
         except Exception:
             rj = {"raw": (r.text or "")[:200]}
-        what = rj.get("action") if isinstance(rj, dict) else None
-        # Only access .get on dict-like; guard if Trakt returned text
-        ident_src = {} if not isinstance(rj, dict) else (rj.get("movie") or rj.get("show") or {})
-        ident = ident_src.get("ids") if isinstance(ident_src, dict) else {}
+        what = rj.get("action") or "?"
+        ident = (rj.get("movie") or rj.get("show") or {}).get("ids") or {}
         _emit(logger, f"trakt resp {r.status_code} action={what} ids={ident}", "DEBUG")
         if r.status_code >= 400:
             _emit(logger, f"{path} {r.status_code} {r.text[:180]}", "ERROR")

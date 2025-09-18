@@ -93,6 +93,13 @@ class WatchService:
                 pass
         print(f"{level} [WATCH] {msg}")
 
+    def sinks_count(self) -> int:
+        """Return how many sinks are effectively wired."""
+        try:
+            return len(getattr(self._dispatch, "_sinks", []) or [])
+        except Exception:
+            return 0
+
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         if ev.session_key and ev.session_key in self._allowed_sessions:
             return True
@@ -207,6 +214,7 @@ class WatchService:
             return None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
+        """Populate title/year/ids and account from Plex when possible."""
         try:
             if not self._plex:
                 return ev
@@ -226,6 +234,7 @@ class WatchService:
             title = getattr(it, "title", None)
             year = getattr(it, "year", None)
             ids = dict(ev.ids or {})
+            ids["plex"] = int(rk)  # make probes more reliable
             ids.update(self._ids_from_guids(getattr(it, "guids", [])))
 
             season = ev.season
@@ -265,6 +274,7 @@ class WatchService:
             return ev
 
     def _probe_session_progress(self, ev: ScrobbleEvent) -> Optional[int]:
+        """Quickly probe Plex sessions for a more accurate progress %."""
         try:
             if not self._plex:
                 return None
@@ -299,7 +309,7 @@ class WatchService:
         return int(round(100 * max(0, min(vo, d)) / float(d)))
 
     def _handle_alert(self, alert: Dict[str, Any]) -> None:
-        # gate early: ignore noisy alert types
+        # Gate early: ignore noisy alert types
         try:
             t = (alert.get("type") or "").lower()
             if t not in ("playing", "transcodesession.start", "transcodesession.end"):
@@ -363,6 +373,10 @@ class WatchService:
                 self._log(f"probe correction: {want}% → {best}%", "INFO")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
 
+            # Ensure Trakt sees a real start (avoid 0% edge-cases)
+            if ev.action == "start" and ev.progress < 1:
+                ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
+
             if ev.session_key and ev.action == "stop":
                 skd = str(ev.session_key)
                 last = self._last_seen.get(skd, 0.0)
@@ -392,7 +406,7 @@ class WatchService:
 
     def start(self) -> None:
         self._stop.clear()
-        self._log("Ensuring AlertListener is running (plexapi)")
+        self._log(f"Ensuring AlertListener is running (plexapi); wired sinks: {self.sinks_count()}")
         while not self._stop.is_set():
             try:
                 base, token = _plex_base_and_token(_load_config())
@@ -481,4 +495,3 @@ def autostart_from_config() -> Optional[WatchService]:
     _AUTO_WATCH = WatchService(sinks=sinks)
     _AUTO_WATCH.start_async()
     return _AUTO_WATCH
-
