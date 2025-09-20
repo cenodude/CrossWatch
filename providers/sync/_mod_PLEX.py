@@ -2,9 +2,13 @@ from __future__ import annotations
 # providers/sync/_mod_PLEX.py
 # Unified OPS provider for Plex: watchlist, ratings, history, playlists
 
-__VERSION__ = "1.0.3"
+__VERSION__ = "1.2.0"
 
 import re
+import os
+import json
+import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, cast
 
@@ -23,6 +27,32 @@ try:
     _stats = Stats()
 except Exception:
     _stats = None
+
+def _emit_rating_event(*, action: str, node: Mapping[str, Any], prev: Optional[int], value: Optional[int]) -> None:
+    """Emit compact rating event for UI spotlight/summary."""
+    try:
+        payload = {
+            "feature": "ratings",
+            "action": action,                 # "rate" | "unrate" | "update"
+            "title": node.get("title"),
+            "type": node.get("type"),
+            "ids": dict(node.get("ids") or {}),
+            "value": value,
+            "prev": prev,
+            "provider": "PLEX",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(time.time()))),
+        }
+        if _stats and hasattr(_stats, "record_event"):
+            try:
+                _stats.record_event(payload)
+            except Exception:
+                pass
+        try:
+            host_log("event", payload)
+        except Exception:
+            pass
+    except Exception:
+        pass  # never break writes due to telemetry
 
 # ----- Global Tombstones (optional) --------------------------------------------
 _GMT_ENABLED_DEFAULT = True
@@ -63,6 +93,59 @@ def _gmt_store_from_cfg(cfg: Mapping[str, Any]) -> Optional[GlobalTombstoneStore
         return GlobalTombstoneStore(ttl_sec=max(1, ttl_days) * 24 * 3600)
     except Exception:
         return None
+
+# ----- Small state helpers (cache under /config/.cw_state) ---------------------
+def _state_root() -> Path:
+    """All state lives under /config/.cw_state."""
+    base = Path("/config")
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return base / ".cw_state"
+
+def _shadow_path(name: str) -> Path:
+    return _state_root() / name
+
+def _read_json(path: Path, fallback: Any) -> Any:
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except Exception:
+        return fallback
+
+def _write_json(path: Path, data: Any) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+def _ratings_shadow_load() -> Dict[str, Any]:
+    return _read_json(_shadow_path("plex_ratings.shadow.json"), {"items": {}, "ts": 0})
+
+def _ratings_shadow_save(items: Mapping[str, Any]) -> None:
+    _write_json(_shadow_path("plex_ratings.shadow.json"), {"items": dict(items), "ts": int(time.time())})
+
+def _cfg_get(cfg_root: Mapping[str, Any], path: str, default: Any) -> Any:
+    """Simple dot-path config getter across root/sync/runtime."""
+    def _dig(d: Mapping[str, Any], keys: List[str]) -> Any:
+        cur: Any = d
+        for k in keys:
+            if not isinstance(cur, Mapping):
+                return default
+            cur = cur.get(k)
+            if cur is None:
+                return default
+        return cur
+    keys = path.split(".")
+    for root_key in ("", "sync", "runtime"):
+        base = cfg_root if root_key == "" else (cfg_root.get(root_key) or {})
+        val = _dig(base, keys)
+        if val is not None and val != default:
+            return val
+    return default
 
 # ----- PlexAPI dependency ------------------------------------------------------
 try:
@@ -148,7 +231,29 @@ def _discover_get(path: str, token: str, params: dict, timeout: int = 20) -> Opt
     return None
 
 # ----- Canonical/minimal helpers ----------------------------------------------
+def _plural(t: str) -> str:
+    """Normalize item type to plural for orchestrator compatibility."""
+    x = (t or "").lower()
+    if x.endswith("s"):
+        return x
+    if x == "movie": return "movies"
+    if x == "show": return "shows"
+    if x == "season": return "seasons"
+    if x == "episode": return "episodes"
+    return x or "movies"
+
+def _libtype_from_item(item: Mapping[str, Any]) -> str:
+    """Map canonical type to Plex libtype for lookup."""
+    t = (item.get("type") or "").lower()
+    if t in ("movie", "movies"): return "movie"
+    if t in ("show", "shows"): return "show"
+    if t in ("season", "seasons"): return "season"
+    if t in ("episode", "episodes"): return "episode"
+    # Fallback: title-only search prefers movies
+    return "movie"
+
 def canonical_key(item: Mapping[str, Any]) -> str:
+    """Build a stable key; prefer known IDs, else type|title|year."""
     ids = item.get("ids") or {}
     for k in ("tmdb", "imdb", "tvdb", "guid"):
         v = ids.get(k)
@@ -157,14 +262,15 @@ def canonical_key(item: Mapping[str, Any]) -> str:
     t = (item.get("title") or "").strip().lower()
     y = item.get("year") or ""
     typ = (item.get("type") or "").lower()
-    return f"{typ}|title:{t}|year:{y}"
+    return f"{_plural(typ)}|title:{t}|year:{y}"
 
 def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return minimal shape used across orchestrator pipelines."""
     return {
         "ids": {k: item.get("ids", {}).get(k) for k in _ID_KEYS if item.get("ids", {}).get(k)},
         "title": item.get("title"),
         "year": item.get("year"),
-        "type": (item.get("type") or "").lower() or None,
+        "type": _plural(item.get("type") or "") or None,
     }
 
 def _extract_ids_from_guid_strings(guid_values: List[str]) -> Tuple[Optional[str], Optional[int], Optional[int]]:
@@ -185,6 +291,7 @@ def _extract_ids_from_guid_strings(guid_values: List[str]) -> Tuple[Optional[str
 
 # ----- Discover helpers --------------------------------------------------------
 def _discover_metadata_by_ratingkey(token: str, rating_key: str) -> Optional[dict]:
+    """Resolve extra GUIDs for a given ratingKey via plex.tv discover."""
     params = {"includeExternalMedia": "1"}
     data = _discover_get(f"{PLEX_METADATA_PATH}/{rating_key}", token, params, timeout=12)
     if not data:
@@ -196,6 +303,7 @@ def _discover_metadata_by_ratingkey(token: str, rating_key: str) -> Optional[dic
     return items[0] if items else None
 
 def _watchlist_fetch_via_discover(token: str, page_size: int = 100) -> List[Dict[str, Any]]:
+    """Page through user watchlist using plex.tv discover; returns normalized items."""
     params_base = {"includeCollections": "1", "includeExternalMedia": "1"}
     start = 0
     items: List[dict] = []
@@ -253,6 +361,7 @@ class PlexEnv:
     servers: List[Any]  # plexapi.server.PlexServer
 
 def _ensure_account(plex_cfg: Mapping[str, Any]) -> MyPlexAccount:
+    """Require plexapi and a valid account token for writes/servers."""
     if not HAS_PLEXAPI:
         raise RuntimeError("plexapi is required")
     token = (plex_cfg.get("account_token") or "").strip()
@@ -261,6 +370,7 @@ def _ensure_account(plex_cfg: Mapping[str, Any]) -> MyPlexAccount:
     return MyPlexAccount(token=token)  # type: ignore
 
 def _connect_servers(acct: MyPlexAccount, plex_cfg: Mapping[str, Any]) -> List[Any]:
+    """Connect to configured servers (machine_ids allowlist), fallback to first reachable."""
     wanted_ids: List[str] = list(plex_cfg.get("servers", {}).get("machine_ids") or [])
     servers: List[Any] = []
     for res in acct.resources():
@@ -290,6 +400,7 @@ def _env_from_config(cfg: Mapping[str, Any]) -> PlexEnv:
 
 # ----- Server/object helpers ---------------------------------------------------
 def _ids_from_plexobj(obj: Any) -> Dict[str, Any]:
+    """Extract imdb/tmdb/tvdb ids from Plex object GUIDs."""
     ids: Dict[str, Any] = {}
     try:
         for g in (getattr(obj, "guids", []) or []):
@@ -316,7 +427,8 @@ def _ids_from_plexobj(obj: Any) -> Dict[str, Any]:
         pass
     return {k: v for k, v in ids.items() if v is not None}
 
-def _server_find_item(server: Any, q: Mapping[str, Any], mtype: str) -> Optional[Any]:
+def _server_find_item(server: Any, q: Mapping[str, Any], libtype: str) -> Optional[Any]:
+    """Try guid-based then title/year search for a specific libtype."""
     ids = (q.get("ids") or q) or {}
     for key in ("imdb", "tmdb", "tvdb"):
         val = ids.get(key)
@@ -331,7 +443,7 @@ def _server_find_item(server: Any, q: Mapping[str, Any], mtype: str) -> Optional
             variants.append(f"com.plexapp.agents.thetvdb://{val}")
         for g in variants:
             try:
-                hits = server.search(guid=g, libtype=mtype) or []
+                hits = server.search(guid=g, libtype=libtype) or []
                 if hits:
                     return hits[0]
             except Exception:
@@ -339,22 +451,23 @@ def _server_find_item(server: Any, q: Mapping[str, Any], mtype: str) -> Optional
     title = q.get("title")
     year = q.get("year")
     try:
-        hits = server.search(title=title, year=year, libtype=mtype) or []
+        hits = server.search(title=title, year=year, libtype=libtype) or []
         if hits:
             return hits[0]
     except Exception:
         pass
     return None
 
-
 def _resolve_on_servers(env: PlexEnv, q: Mapping[str, Any], mtype: str) -> Optional[Any]:
+    """Search across connected servers for the first matching item."""
     for s in env.servers:
-        it = _server_find_item(s, q, "movie" if mtype == "movie" else "show")
+        it = _server_find_item(s, q, mtype)
         if it: return it
     return None
 
 # ----- Watchlist (plex.tv; read via discover, write via account) --------------
 def _resolve_discover_item(acct: MyPlexAccount, ids: dict, libtype: str) -> Optional[Any]:
+    """Resolve a discover item by ids/title/year; returns a Discover Metadata object."""
     queries: List[str] = []
     if ids.get("imdb"): queries.append(ids["imdb"])
     if ids.get("tmdb"): queries.append(str(ids["tmdb"]))
@@ -381,37 +494,43 @@ def _resolve_discover_item(acct: MyPlexAccount, ids: dict, libtype: str) -> Opti
     return None
 
 def _watchlist_add(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]]) -> int:
+    """Add items to Plex Watchlist through plex.tv Discover."""
     added = 0
     for it in items:
         ids = dict(it.get("ids") or {})
         if "title" not in ids and it.get("title"): ids["title"] = it["title"]
         if "year"  not in ids and it.get("year"):  ids["year"]  = it["year"]
-        libtype = "movie" if (it.get("type") or "movie") == "movie" else "show"
+        libtype = "movie" if (it.get("type") or "movie") in ("movie", "movies") else "show"
         md = _resolve_discover_item(acct, ids, libtype)
-        if not md: continue
+        if not md:
+            continue
         try:
             cast(Any, md).addToWatchlist(account=acct)
             added += 1
         except Exception as e:
             msg = str(e).lower()
+            # Treat idempotent add as success
             if "already on the watchlist" in msg or "409" in msg:
                 added += 1
     return added
 
 def _watchlist_remove(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]]) -> int:
+    """Remove items from Plex Watchlist through plex.tv Discover."""
     removed = 0
     for it in items:
         ids = dict(it.get("ids") or {})
         if "title" not in ids and it.get("title"): ids["title"] = it["title"]
         if "year"  not in ids and it.get("year"):  ids["year"]  = it["year"]
-        libtype = "movie" if (it.get("type") or "movie") == "movie" else "show"
+        libtype = "movie" if (it.get("type") or "movie") in ("movie", "movies") else "show"
         md = _resolve_discover_item(acct, ids, libtype)
-        if not md: continue
+        if not md:
+            continue
         try:
             cast(Any, md).removeFromWatchlist(account=acct)
             removed += 1
         except Exception as e:
             msg = str(e).lower()
+            # Treat idempotent remove as success
             if "not on the watchlist" in msg or "404" in msg:
                 removed += 1
     return removed
@@ -425,110 +544,367 @@ def _watchlist_index(token: str) -> Dict[str, Dict[str, Any]]:
         for k in ("imdb", "tmdb", "tvdb"):
             if ids.get(k):
                 idx[f"{k}:{ids[k]}".lower()] = {
-                    "type": it.get("type") or "movie",
+                    "type": "movie" if (it.get("type") or "movie") == "movie" else "show",
                     "title": it.get("title"),
                     "ids": {kk: ids.get(kk) for kk in ("imdb", "tmdb", "tvdb") if ids.get(kk)},
                 }
                 break
     return idx
 
-# ----- Ratings (server-side) ---------------------------------------------------
-def _ratings_index(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
+# ----- Ratings (server-side, movies/shows/seasons/episodes) --------------------
+def _rating_row(obj: Any, kind: str) -> Optional[Dict[str, Any]]:
+    """Normalize a Plex item's user rating (+ timestamp if present) into canonical dict."""
+    try:
+        ur = getattr(obj, "userRating", None)
+    except Exception:
+        ur = None
+    if ur is None:
+        return None
+    ids = _ids_from_plexobj(obj)
+    if not ids:
+        return None
+    row: Dict[str, Any] = {
+        "type": kind,
+        "title": getattr(obj, "title", None),
+        "year": getattr(obj, "year", None),
+        "ids": ids,
+        "rating": int(round(float(ur))) if isinstance(ur, (int, float)) else None,
+    }
+    try:
+        ra = getattr(obj, "lastRatedAt", None)
+        if ra:
+            try:
+                row["rated_at"] = ra.strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return row
+
+def _ratings_index_full(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
+    """
+    Build a ratings index across connected servers:
+    - Movies, Shows, Seasons, Episodes
+    Note: Traversal is breadth-first; heavy libraries may take time.
+    """
     idx: Dict[str, Dict[str, Any]] = {}
     for s in env.servers:
         try:
             for section in s.library.sections():
-                if section.type not in ("movie", "show"): 
+                if section.type not in ("movie", "show"):
                     continue
-                try:
-                    items = section.all()
-                except Exception:
-                    items = []
-                for it in items:
-                    ur = getattr(it, "userRating", None)
-                    if ur is None: 
+
+                # Movies: iterate direct items
+                if section.type == "movie":
+                    try:
+                        for mv in section.all():
+                            row = _rating_row(mv, "movies")
+                            if not row or row.get("rating") is None:
+                                continue
+                            key = None
+                            for k in ("imdb", "tmdb", "tvdb"):
+                                if row["ids"].get(k):
+                                    key = f"{k}:{row['ids'][k]}".lower(); break
+                            if not key:
+                                key = canonical_key(row)
+                            idx[key] = row
+                    except Exception:
                         continue
-                    ids = _ids_from_plexobj(it)
-                    if not ids: 
+
+                # Shows: include show + seasons + episodes where userRating is set
+                if section.type == "show":
+                    try:
+                        for sh in section.all():
+                            # Show rating
+                            r_show = _rating_row(sh, "shows")
+                            if r_show and r_show.get("rating") is not None:
+                                key = None
+                                for k in ("imdb", "tmdb", "tvdb"):
+                                    if r_show["ids"].get(k):
+                                        key = f"{k}:{r_show['ids'][k]}".lower(); break
+                                if not key:
+                                    key = canonical_key(r_show)
+                                idx[key] = r_show
+
+                            # Seasons
+                            try:
+                                for sn in sh.seasons():
+                                    r_season = _rating_row(sn, "seasons")
+                                    if not r_season or r_season.get("rating") is None:
+                                        continue
+                                    key = None
+                                    for k in ("imdb", "tmdb", "tvdb"):
+                                        if r_season["ids"].get(k):
+                                            key = f"{k}:{r_season['ids'][k]}".lower(); break
+                                    if not key:
+                                        sid = None
+                                        for k in ("imdb", "tmdb", "tvdb"):
+                                            if r_show and (r_show.get("ids") or {}).get(k):
+                                                sid = f"{k}:{r_show['ids'][k]}"; break
+                                        snum = getattr(sn, "index", None)
+                                        key = f"{(sid or canonical_key(r_show or r_season))}#season:{snum}"
+                                    idx[key] = r_season
+                            except Exception:
+                                pass
+
+                            # Episodes
+                            try:
+                                for ep in sh.episodes():
+                                    r_ep = _rating_row(ep, "episodes")
+                                    if not r_ep or r_ep.get("rating") is None:
+                                        continue
+                                    key = None
+                                    for k in ("imdb", "tmdb", "tvdb"):
+                                        if r_ep["ids"].get(k):
+                                            key = f"{k}:{r_ep['ids'][k]}".lower(); break
+                                    if not key:
+                                        sid = None
+                                        for k in ("imdb", "tmdb", "tvdb"):
+                                            if r_show and (r_show.get("ids") or {}).get(k):
+                                                sid = f"{k}:{r_show['ids'][k]}"; break
+                                        snum = getattr(ep, "seasonNumber", getattr(ep, "seasonNumberLocal", None))
+                                        enum = getattr(ep, "index", None)
+                                        key = f"{(sid or canonical_key(r_show or r_ep))}#s{str(snum).zfill(2)}e{str(enum).zfill(2)}"
+                                    idx[key] = r_ep
+                            except Exception:
+                                pass
+                    except Exception:
                         continue
-                    key = None
-                    for k in ("imdb", "tmdb", "tvdb"):
-                        if ids.get(k):
-                            key = f"{k}:{ids[k]}".lower(); break
-                    if not key: 
-                        continue
-                    idx[key] = {"type": section.type, "title": getattr(it, "title", None), "year": getattr(it, "year", None), "ids": ids, "rating": ur}
         except Exception:
             continue
     return idx
 
+def _ratings_index(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Ratings snapshot with TTL cache:
+    - Return shadow when fresh.
+    - On refresh, rebuild full index and persist.
+    """
+    ttl_min = int(_cfg_get(cfg_root, "ratings.cache.ttl_minutes", 0) or 0)
+    ttl_sec = max(0, ttl_min * 60)
+
+    shadow = _ratings_shadow_load()
+    items = dict(shadow.get("items") or {})
+    ts = int(shadow.get("ts") or 0)
+
+    now = int(time.time())
+    if ttl_sec > 0 and ts > 0 and (now - ts) < ttl_sec and items:
+        # Use cached snapshot
+        try:
+            host_log("PLEX.ratings", {"cache": "hit", "age_sec": now - ts, "count": len(items)})
+        except Exception:
+            pass
+        return items
+
+    # Refresh snapshot
+    idx = _ratings_index_full(env)
+    if idx:
+        _ratings_shadow_save(idx)
+        try:
+            host_log("PLEX.ratings", {"cache": "refresh", "count": len(idx)})
+        except Exception:
+            pass
+        return idx
+
+    # Fallback to shadow if rebuild failed
+    try:
+        host_log("PLEX.ratings", {"cache": "fallback_shadow", "count": len(items)})
+    except Exception:
+        pass
+    return items
+
 def _ratings_apply(env: PlexEnv, items: Iterable[Mapping[str, Any]]) -> int:
+    """Upsert user ratings for movies/shows/seasons/episodes (with events + shadow update)."""
     updated = 0
+    sh = _ratings_shadow_load()
+    shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
+
     for it in items:
-        target_rating = it.get("rating")
-        if target_rating is None: 
+        tr = it.get("rating")
+        if tr is None:
             continue
-        mtype = "movie" if (it.get("type") or "movie") == "movie" else "show"
-        obj = _resolve_on_servers(env, it, mtype)
-        if not obj: 
+        libtype = _libtype_from_item(it)
+        obj = _resolve_on_servers(env, it, libtype)
+        if not obj:
             continue
         try:
-            obj.rate(float(target_rating))
+            obj.rate(float(int(tr)))  # Plex expects float
             updated += 1
         except Exception:
             continue
+
+        # Update shadow + emit event
+        node = {
+            "type": _plural(it.get("type") or "movie"),
+            "title": it.get("title"),
+            "year": it.get("year"),
+            "ids": {k: (it.get("ids") or {}).get(k) for k in ("imdb", "tmdb", "tvdb") if (it.get("ids") or {}).get(k)},
+        }
+        # Determine key and prev
+        key = None
+        ids = node["ids"]
+        for k in ("imdb", "tmdb", "tvdb"):
+            if ids.get(k):
+                key = f"{k}:{ids[k]}".lower(); break
+        if not key:
+            key = canonical_key(node)
+        prev_val = None
+        if key in shadow_map and isinstance(shadow_map[key], dict):
+            pv = shadow_map[key].get("rating")
+            prev_val = int(pv) if isinstance(pv, int) else None
+
+        new_val = int(tr)
+        shadow_map[key] = {
+            "type": node["type"],
+            "title": node["title"],
+            "year": node["year"],
+            "ids": node["ids"],
+            "rating": new_val,
+            "rated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(time.time()))),
+        }
+
+        if prev_val is None:
+            _emit_rating_event(action="rate", node=shadow_map[key], prev=None, value=new_val)
+        elif prev_val != new_val:
+            _emit_rating_event(action="update", node=shadow_map[key], prev=prev_val, value=new_val)
+        else:
+            _emit_rating_event(action="rate", node=shadow_map[key], prev=prev_val, value=new_val)
+
+    if updated:
+        _ratings_shadow_save(shadow_map)
+
     return updated
 
 def _ratings_remove(env: PlexEnv, items: Iterable[Mapping[str, Any]]) -> int:
+    """Clear user ratings for movies/shows/seasons/episodes (with events + shadow update)."""
     cleared = 0
+    sh = _ratings_shadow_load()
+    shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
+
     for it in items:
-        mtype = "movie" if (it.get("type") or "movie") == "movie" else "show"
-        obj = _resolve_on_servers(env, it, mtype)
-        if not obj: 
+        libtype = _libtype_from_item(it)
+        obj = _resolve_on_servers(env, it, libtype)
+        if not obj:
             continue
         try:
-            obj.rate(None)  # clear rating
+            obj.rate(None)
             cleared += 1
         except Exception:
             continue
+
+        node = {
+            "type": _plural(it.get("type") or "movie"),
+            "title": it.get("title"),
+            "year": it.get("year"),
+            "ids": {k: (it.get("ids") or {}).get(k) for k in ("imdb", "tmdb", "tvdb") if (it.get("ids") or {}).get(k)},
+        }
+        key = None
+        ids = node["ids"]
+        for k in ("imdb", "tmdb", "tvdb"):
+            if ids.get(k):
+                key = f"{k}:{ids[k]}".lower(); break
+        if not key:
+            key = canonical_key(node)
+
+        prev_val = None
+        if key in shadow_map and isinstance(shadow_map[key], dict):
+            pv = shadow_map[key].get("rating")
+            prev_val = int(pv) if isinstance(pv, int) else None
+            shadow_map[key].pop("rating", None)  # keep node, drop rating only
+
+        _emit_rating_event(action="unrate", node={"type": node["type"], "title": node["title"], "ids": node["ids"]}, prev=prev_val, value=None)
+
+    if cleared:
+        _ratings_shadow_save(shadow_map)
+
     return cleared
 
 # ----- History (played/unplayed) ----------------------------------------------
+def _history_row(obj: Any, kind: str) -> Optional[Dict[str, Any]]:
+    """Normalize a Plex item's watched state (viewCount>0) into canonical dict."""
+    try:
+        vc = getattr(obj, "viewCount", 0) or 0
+    except Exception:
+        vc = 0
+    if vc <= 0:
+        return None
+    ids = _ids_from_plexobj(obj)
+    if not ids:
+        return None
+    row: Dict[str, Any] = {
+        "type": kind,
+        "title": getattr(obj, "title", None),
+        "year": getattr(obj, "year", None),
+        "ids": ids,
+        "watched": True,
+    }
+    try:
+        wa = getattr(obj, "lastViewedAt", None)
+        if wa:
+            try:
+                row["watched_at"] = wa.strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return row
+
 def _history_index(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
+    """Build a watched index (movies/shows/seasons/episodes with viewCount>0)."""
     idx: Dict[str, Dict[str, Any]] = {}
     for s in env.servers:
         try:
             for section in s.library.sections():
-                if section.type not in ("movie", "show"): 
+                if section.type not in ("movie", "show"):
                     continue
-                try:
-                    items = section.all()
-                except Exception:
-                    items = []
-                for it in items:
-                    vc = getattr(it, "viewCount", 0) or 0
-                    if vc <= 0: 
+
+                if section.type == "movie":
+                    try:
+                        for mv in section.all():
+                            row = _history_row(mv, "movies")
+                            if not row:
+                                continue
+                            key = None
+                            for k in ("imdb", "tmdb", "tvdb"):
+                                if row["ids"].get(k):
+                                    key = f"{k}:{row['ids'][k]}".lower(); break
+                            if not key:
+                                key = canonical_key(row)
+                            idx[key] = row
+                    except Exception:
                         continue
-                    ids = _ids_from_plexobj(it)
-                    if not ids: 
+
+                if section.type == "show":
+                    try:
+                        for sh in section.all():
+                            # Episodes: primary watched signal
+                            try:
+                                for ep in sh.episodes():
+                                    row = _history_row(ep, "episodes")
+                                    if not row:
+                                        continue
+                                    key = None
+                                    for k in ("imdb", "tmdb", "tvdb"):
+                                        if row["ids"].get(k):
+                                            key = f"{k}:{row['ids'][k]}".lower(); break
+                                    if not key:
+                                        key = canonical_key(row)
+                                    idx[key] = row
+                            except Exception:
+                                pass
+                    except Exception:
                         continue
-                    key = None
-                    for k in ("imdb", "tmdb", "tvdb"):
-                        if ids.get(k):
-                            key = f"{k}:{ids[k]}".lower(); break
-                    if not key: 
-                        continue
-                    idx[key] = {"type": section.type, "title": getattr(it, "title", None), "year": getattr(it, "year", None), "ids": ids, "watched": True}
         except Exception:
             continue
     return idx
 
 def _history_apply(env: PlexEnv, items: Iterable[Mapping[str, Any]], watched: bool) -> int:
+    """Mark items played/unplayed across servers."""
     changed = 0
     for it in items:
-        mtype = "movie" if (it.get("type") or "movie") == "movie" else "show"
-        obj = _resolve_on_servers(env, it, mtype)
-        if not obj: 
+        libtype = _libtype_from_item(it)
+        obj = _resolve_on_servers(env, it, libtype)
+        if not obj:
             continue
         try:
             if watched:
@@ -542,11 +918,12 @@ def _history_apply(env: PlexEnv, items: Iterable[Mapping[str, Any]], watched: bo
 
 # ----- Playlists ---------------------------------------------------------------
 def _playlists_index(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
+    """List video playlists for reference and basic sync."""
     idx: Dict[str, Dict[str, Any]] = {}
     for s in env.servers:
         try:
             for pl in s.playlists():
-                if getattr(pl, "playlistType", "") not in ("video", "movie", "show"): 
+                if getattr(pl, "playlistType", "") not in ("video", "movie", "show"):
                     continue
                 key = f"playlist:{pl.ratingKey}".lower()
                 idx[key] = {"type": "playlist", "title": getattr(pl, "title", None), "ids": {"plex": pl.ratingKey}}
@@ -555,16 +932,17 @@ def _playlists_index(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
     return idx
 
 def _playlist_add_items(env: PlexEnv, playlist_title: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None) -> bool:
-    if not env.servers: 
+    """Create or extend a playlist by title."""
+    if not env.servers:
         return False
     s = env.servers[0]
-    libtype = "movie" if (mtype_hint or "movie") == "movie" else "show"
+    libtype = "movie" if (mtype_hint or "movie") in ("movie", "movies") else "show"
     plex_items: List[Any] = []
     for it in items:
         obj = _resolve_on_servers(env, it, libtype)
-        if obj: 
+        if obj:
             plex_items.append(obj)
-    if not plex_items: 
+    if not plex_items:
         return False
     try:
         for pl in s.playlists():
@@ -577,16 +955,17 @@ def _playlist_add_items(env: PlexEnv, playlist_title: str, items: Iterable[Mappi
         return False
 
 def _playlist_remove_items(env: PlexEnv, playlist_title: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None) -> bool:
-    if not env.servers: 
+    """Remove items from a playlist by title."""
+    if not env.servers:
         return False
     s = env.servers[0]
-    libtype = "movie" if (mtype_hint or "movie") == "movie" else "show"
+    libtype = "movie" if (mtype_hint or "movie") in ("movie", "movies") else "show"
     plex_items: List[Any] = []
     for it in items:
         obj = _resolve_on_servers(env, it, libtype)
-        if obj: 
+        if obj:
             plex_items.append(obj)
-    if not plex_items: 
+    if not plex_items:
         return False
     try:
         for pl in s.playlists():
@@ -599,28 +978,53 @@ def _playlist_remove_items(env: PlexEnv, playlist_title: str, items: Iterable[Ma
 
 # ----- OPS implementation ------------------------------------------------------
 class _PlexOPS:
-    def name(self) -> str: return "PLEX"
-    def label(self) -> str: return "Plex"
+    def name(self) -> str:
+        return "PLEX"
+
+    def label(self) -> str:
+        return "Plex"
+
     def features(self) -> Mapping[str, bool]:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+        # All four features supported by this adapter
+        return {
+            "watchlist": True,
+            "ratings":   True,
+            "history":   True,
+            "playlists": True,
+        }
+
     def capabilities(self) -> Mapping[str, Any]:
-        # provides_ids=True means orchestrator can skip enrichment for Plex-sourced items
-        return {"bidirectional": True, "provides_ids": True}
+        # provides_ids=True => orchestrator can skip enrichment for Plex-sourced items
+        # ratings.types advertises full matrix support for planning/filters
+        return {
+            "bidirectional": True,
+            "provides_ids": True,
+            "ratings": {
+                "types": {
+                    "movies":   True,
+                    "shows":    True,
+                    "seasons":  True,
+                    "episodes": True,
+                },
+                "upsert":    True,
+                "unrate":    True,
+                "from_date": False,
+            },
+        }
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
+        # Watchlist is fetched via plex.tv discover; ratings/history/playlists via servers
         plex_cfg = dict(cfg.get("plex") or {})
-        token = plex_cfg.get("account_token", "").strip()
+        token = (plex_cfg.get("account_token") or "").strip()
         if not token:
             raise ValueError("plex.account_token is required")
 
         if feature == "watchlist":
-            # Read-only via discover; no plexapi required
             return _watchlist_index(token)
 
-        # The features below require server access via plexapi
         env = _env_from_config(cfg)
         if feature == "ratings":
-            return _ratings_index(env)
+            return _ratings_index(env, cfg)
         if feature == "history":
             return _history_index(env)
         if feature == "playlists":
@@ -630,14 +1034,14 @@ class _PlexOPS:
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         plex_cfg = dict(cfg.get("plex") or {})
         acct = _ensure_account(plex_cfg)
-        env = _env_from_config(cfg)
+        env  = _env_from_config(cfg)
         items_list = list(items)
 
-        # GMT: suppress re-adds for watchlist/ratings/history
+        # Global tombstone suppress (optional)
         if feature in ("watchlist", "ratings", "history"):
             store = _gmt_store_from_cfg(cfg)
             if store:
-                op_add, _op_neg = _gmt_ops_for_feature(feature)
+                op_add, _ = _gmt_ops_for_feature(feature)
                 items_list = [it for it in items_list if not _gmt_suppress(store=store, item=it, feature=feature, write_op=op_add)]
 
         if feature == "watchlist":
@@ -662,33 +1066,31 @@ class _PlexOPS:
             # Note: playlist semantics are implementation-specific; GMT is not enforced here.
             if dry_run:
                 return {"ok": True, "count": sum(len(it.get("items", [])) for it in items_list), "dry_run": True}
-            removed = 0
+            added = 0
             for pl in items_list:
                 title = pl.get("playlist") or pl.get("title")
                 if not title:
                     continue
                 mtyp = pl.get("type") or "movie"
-                if _playlist_remove_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp):
-                    removed += len(pl.get("items") or [])
-            return {"ok": True, "count": removed}
+                if _playlist_add_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp):
+                    added += len(pl.get("items") or [])
+            return {"ok": True, "count": added}
 
         return {"ok": True, "count": 0}
-
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         plex_cfg = dict(cfg.get("plex") or {})
         acct = _ensure_account(plex_cfg)
-        env = _env_from_config(cfg)
+        env  = _env_from_config(cfg)
         items_list = list(items)
 
         if feature == "watchlist":
             if dry_run:
                 return {"ok": True, "count": len(items_list), "dry_run": True}
             cnt = _watchlist_remove(acct, items_list)
-            # GMT: record negatives after successful remove
+            # Record negatives for watchlist removes
             store = _gmt_store_from_cfg(cfg)
             if store and cnt:
-                _gmt_record(store=store, item={}, feature="watchlist", op="remove", origin="PLEX")
                 for it in items_list:
                     _gmt_record(store=store, item=it, feature="watchlist", op="remove", origin="PLEX")
             return {"ok": True, "count": cnt}
@@ -714,7 +1116,7 @@ class _PlexOPS:
             return {"ok": True, "count": cnt}
 
         if feature == "playlists":
-            # Note: playlist semantics are implementation-specific; GMT is not enforced here.
+            # Playlists: treat 'remove' as "remove items from playlist by title"
             if dry_run:
                 return {"ok": True, "count": sum(len(it.get("items", [])) for it in items_list), "dry_run": True}
             removed = 0
@@ -723,12 +1125,12 @@ class _PlexOPS:
                 if not title:
                     continue
                 mtyp = pl.get("type") or "movie"
-                if _playlist_remove_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp):
+                ok = _playlist_remove_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp)
+                if ok:
                     removed += len(pl.get("items") or [])
             return {"ok": True, "count": removed}
 
         return {"ok": True, "count": 0}
-
 
 # Exported adapter for orchestrator discovery
 OPS: InventoryOps = _PlexOPS()
@@ -759,7 +1161,7 @@ class PLEXModule(SyncModule):
     info = ModuleInfo(
         name="PLEX",
         version=__VERSION__,
-        description="Reads/writes Plex watchlist (plex.tv), ratings, history, and playlists.",
+        description="Reads/writes Plex watchlist (plex.tv), ratings (movies/shows/seasons/episodes) with TTL cache + events, history, and playlists.",
         vendor="community",
         capabilities=ModuleCapabilities(
             supports_dry_run=True,
@@ -782,6 +1184,17 @@ class PLEXModule(SyncModule):
                             },
                         },
                         "required": ["account_token"],
+                    },
+                    "ratings": {
+                        "type": "object",
+                        "properties": {
+                            "cache": {
+                                "type": "object",
+                                "properties": {
+                                    "ttl_minutes": {"type": "integer", "minimum": 0}
+                                }
+                            }
+                        }
                     },
                     "sync": {
                         "type": "object",
@@ -809,7 +1222,15 @@ def get_manifest() -> dict:
         "name": PLEXModule.info.name,
         "label": "Plex",
         "features": PLEXModule.supported_features(),
-        "capabilities": {"bidirectional": True},
+        "capabilities": {
+            "bidirectional": True,
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
+            },
+        },
         "version": PLEXModule.info.version,
         "vendor": PLEXModule.info.vendor,
         "description": PLEXModule.info.description,

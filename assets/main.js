@@ -54,6 +54,8 @@
   .muted { opacity:.7; }
   .small { font-size:11px; }
   `;
+  // Replace existing style to avoid duplicates
+  (document.getElementById("ux-styles") || {}).remove?.();
   const styleEl = document.createElement("style");
   styleEl.id = "ux-styles";
   styleEl.textContent = css;
@@ -64,31 +66,42 @@
   let progressPct = 0;
   let status = null;
   let summary = null;
-  let _prevTL = { start:false, done:false };
+  let _prevTL = { start:false, pre:false, post:false, done:false };
   let _prevRunning = false;
 
-  // Optimistic UI state (assume progress until server confirms)
+  // Optimistic UI state
   let optimistic = false;
-  let lastServerUpdate = 0;
 
   // Map of enabled lanes (derived from /api/pairs)
   let enabledFromPairs = null;
   let lastPairsAt = 0;
 
+  // Last phase-change timestamp (drives optimistic bump)
+  let lastPhaseAt = 0;
+
   // Counters used for shake detection on updates
   const lastCounts = Object.create(null);
 
+  // Sticky fallback per lane to prevent flicker to 0 when server lacks deltas
+  const hydratedLanes = Object.create(null);
+
   // ---------- Utility functions ----------
   const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
+
   function asPctFromTimeline(tl) {
+    // Fallback anchors used only if measuring fails
     if (!tl) return 0;
+    const anchors = [0, 33.3333, 66.6667, 100];
     if (tl.done) return 100;
-    const order = ["start","pre","post","done"];
-    let k = 0; for (const x of order) if (tl[x]) k++;
-    let pct = (k / order.length) * 100;
-    if (pct > 0 && pct < 15) pct = 15;
-    return pct;
+    let idx = 0;
+    if (tl.post) idx = 2;
+    else if (tl.pre) idx = 1;
+    else if (tl.start) idx = 0;
+    let pct = anchors[idx];
+    if (idx === 0 && !tl.pre) pct = Math.max(8, pct);
+    return Math.round(pct);
   }
+
   function pick(obj, path, dflt) {
     try { const parts = Array.isArray(path)?path:path.split("."); let v=obj; for (const p of parts) v=v?.[p]; return v ?? dflt; }
     catch { return dflt; }
@@ -109,13 +122,94 @@
     return summary?.enabled || defaultEnabledMap();
   }
 
+  // --- Sync rail: measure labels → align rail → compute % ----------------------
+  const Rail = (() => {
+    let cache = null;
+
+    function _labels(root) {
+      const host  = root || document;
+      const steps = host.querySelector('.ux-rail-steps');
+      if (!steps) return null;
+
+      const pick = (name) =>
+        steps.querySelector(`[data-step="${name}"]`) ||
+        [...steps.querySelectorAll('*')].find(el =>
+          el.childElementCount === 0 &&
+          (el.textContent || '').trim().toLowerCase() === name);
+
+      const start = pick('start');
+      const disc  = pick('discovering') || pick('discover') || pick('pre');
+      const sync  = pick('syncing')     || pick('sync')      || pick('post');
+      const done  = pick('done');
+
+      if (!start || !disc || !sync || !done) return null;
+      return { steps, start, disc, sync, done };
+    }
+
+    function _measure(root) {
+      if (cache) return cache;
+      const L = _labels(root);
+      if (!L) return null;
+
+      const hb = L.steps.getBoundingClientRect();
+      const rb = (el) => el.getBoundingClientRect();
+
+      const s  = rb(L.start);
+      const d  = rb(L.disc);
+      const y  = rb(L.sync);
+      const z  = rb(L.done);
+
+      const x0 = s.left  - hb.left;                       // left edge of "Start"
+      const x1 = d.left + d.width / 2 - hb.left;          // center of "Discovering"
+      const x2 = y.left + y.width / 2 - hb.left;          // center of "Syncing"
+      const x3 = z.right - hb.left;                       // right edge of "Done"
+      const span = Math.max(1, x3 - x0);
+
+      cache = { host: L.steps, x0, x1, x2, x3, span, ml: x0, mr: (hb.width - x3) };
+      return cache;
+    }
+
+    function align(root) {
+      const m = _measure(root);
+      if (!m) return;
+      const rail = (root || document).querySelector('.ux-rail');
+      if (!rail) return;
+      rail.style.marginLeft  = Math.round(m.ml) + 'px';
+      rail.style.marginRight = Math.round(m.mr) + 'px';
+    }
+
+    function pctFromTimeline(tl, root) {
+      const m = _measure(root);
+      if (!m) return null;
+      let x = m.x0;
+      if (tl?.done) x = m.x3;
+      else if (tl?.post) x = m.x2;
+      else if (tl?.pre) x = m.x1;
+      const pct = ((x - m.x0) / m.span) * 100;
+      return Math.max(0, Math.min(100, Math.round(pct)));
+    }
+
+    // Invalidate and re-align on resize
+    window.addEventListener('resize', () => { cache = null; requestAnimationFrame(() => { align(document); }); });
+
+    return { align, pct: pctFromTimeline, _invalidate(){ cache = null; } };
+  })();
+
   // ---------- Rendering helpers ----------
   function renderProgress() {
     elProgress.innerHTML = "";
+
     const rail = document.createElement("div");
     rail.className = "ux-rail";
     const fill = document.createElement("div");
     fill.className = "ux-rail-fill";
+
+    // Compute baseline from measured labels; fallback to static anchors
+    const measured = Rail.pct(timeline, elProgress);
+    const baseline = measured ?? asPctFromTimeline(timeline);
+
+    // Never go backwards: keep optimistic progress if higher than baseline
+    progressPct = timeline?.done ? 100 : Math.max(progressPct || 0, baseline);
 
     const pct = timeline?.done ? 100 : Math.min(95, clamp(progressPct, 0, 100));
     fill.style.width = pct + "%";
@@ -136,6 +230,10 @@
 
     elProgress.appendChild(rail);
     elProgress.appendChild(steps);
+
+    // Align rail margins to labels after they exist in the DOM
+    Rail._invalidate();
+    Rail.align(elProgress);
   }
 
   function getLaneStats(sum, key) {
@@ -147,6 +245,10 @@
     const spotAdd = Array.isArray(f.spotlight_add)    ? f.spotlight_add    : [];
     const spotRem = Array.isArray(f.spotlight_remove) ? f.spotlight_remove : [];
     const spotUpd = Array.isArray(f.spotlight_update) ? f.spotlight_update : [];
+
+    if ((added || removed || updated) === 0 && hydratedLanes[key]) {
+      return { ...hydratedLanes[key] };
+    }
     return { added, removed, updated, items, spotAdd, spotRem, spotUpd };
   }
 
@@ -169,7 +271,7 @@
     wrap.className = "lanes";
 
     const enabledMap = getEnabledMap();
-    const running = summary?.running === true || (!timeline.done && timeline.start);
+    const running = summary?.running === true || (timeline.start && !timeline.done);
 
     for (const f of FEATS) {
       const isEnabled = !!enabledMap[f.key];
@@ -179,7 +281,7 @@
       const lane = document.createElement("div"); lane.className = "lane";
       if (!isEnabled) lane.classList.add("disabled");
 
-  // Add a temporary 'shake' animation when totals increase during a run
+      // Shake when totals increase during a run
       const total = (added||0) + (removed||0) + (updated||0);
       const prev  = lastCounts[f.key] ?? 0;
       if (running && total > prev && isEnabled) {
@@ -190,7 +292,6 @@
 
       const h = document.createElement("div"); h.className = "lane-h";
       const ico = document.createElement("div"); ico.className = "lane-ico"; ico.innerHTML = `<span class="material-symbol">${f.icon}</span>`;
-
       const ttl = document.createElement("div"); ttl.className = "lane-title"; ttl.textContent = f.label;
 
       const badges = document.createElement("div"); badges.className = "lane-badges";
@@ -237,7 +338,7 @@
   }
 
   function renderSpotlightSummary() {
-  elSpot.innerHTML = ""; // intentionally left blank (no "Sync complete" message)
+    elSpot.innerHTML = ""; // intentionally left blank
   }
 
   // ---------- Pairs → derive enabled lanes ----------
@@ -245,7 +346,6 @@
     const arr = await fetchJSON("/api/pairs", null);
     if (!Array.isArray(arr)) return;
 
-  // If pairs exist, compute the union of enabled features; otherwise leave null to fall back to summary/defaults
     if (arr.length === 0) { enabledFromPairs = null; return; }
 
     const enabled = { watchlist:false, ratings:false, history:false, playlists:false };
@@ -289,6 +389,11 @@
     if (!lane.spotlight_remove?.length && spotRem.length) lane.spotlight_remove = spotRem;
     summary.features.watchlist = lane;
 
+    hydratedLanes.watchlist = {
+      added: lane.added, removed: lane.removed, updated: lane.updated,
+      items: [], spotAdd: lane.spotlight_add || [], spotRem: lane.spotlight_remove || [], spotUpd: []
+    };
+
     summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
 
     renderAll();
@@ -298,40 +403,123 @@
   function hydrateFromLog() {
     const det = document.getElementById("det-log");
     if (!det) return false;
+
     const txt = det.innerText || det.textContent || "";
     if (!txt) return false;
 
-    const lines = txt.split(/\n+/).slice(-80);
-    let added = 0, removed = 0;
+    const lines = txt.split(/\n+/).slice(-500);
+    const tallies = Object.create(null);
 
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const m = lines[i].match(/Sync complete·\+(\d+)\s*\/\s*-(\d+)/);
-      if (m) { added = parseInt(m[1],10)||0; removed = parseInt(m[2],10)||0; break; }
+    function ensureLane(k) {
+      if (!tallies[k]) tallies[k] = { added:0, removed:0, updated:0, spotAdd:[], spotRem:[], spotUpd:[] };
+      return tallies[k];
     }
-    if (added === 0 && removed === 0) {
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const m = lines[i].match(/Plan·add A=(\d+),\s*add B=(\d+),\s*remove A=(\d+),\s*remove B=(\d+)/i);
-        if (m) {
-          added = (parseInt(m[1],10)||0) + (parseInt(m[2],10)||0);
-          removed = (parseInt(m[3],10)||0) + (parseInt(m[4],10)||0);
-          break;
-        }
+
+    for (const raw of lines) {
+      const i = raw.indexOf("{");
+      if (i < 0) continue;
+      let obj = null;
+      try { obj = JSON.parse(raw.slice(i)); } catch { continue; }
+      if (!obj || !obj.event) continue;
+
+      if (obj.event === "two:done") {
+        const feat = (obj.feature || "").trim();
+        if (!feat) continue;
+        const res = obj.res || {};
+        const lane = ensureLane(feat);
+        lane.added   += +res.adds    || 0;
+        lane.removed += +res.removes || 0;
+        continue;
+      }
+
+      if (obj.event === "plan") {
+        const feat = (obj.feature || "").trim();
+        if (!feat) continue;
+        const lane = ensureLane(feat);
+        lane.added   += +obj.add || 0;
+        lane.removed += +obj.rem || 0;
+        continue;
+      }
+
+      if (obj.event === "two:plan") {
+        const feat = (obj.feature || "").trim();
+        if (!feat) continue;
+        const lane = ensureLane(feat);
+        const addA = +obj.add_to_A || 0, addB = +obj.add_to_B || 0;
+        const remA = +obj.rem_from_A || 0, remB = +obj.rem_from_B || 0;
+        lane.added   += Math.max(addA, addB);
+        lane.removed += Math.max(remA, remB);
+        continue;
+      }
+
+      if (obj.event === "spotlight" && obj.feature && obj.action && obj.title) {
+        const lane = ensureLane(obj.feature.trim());
+        if (obj.action === "add"   && lane.spotAdd.length < 3) lane.spotAdd.push(obj.title);
+        if (obj.action === "remove"&& lane.spotRem.length < 3) lane.spotRem.push(obj.title);
+        if (obj.action === "update"&& lane.spotUpd.length < 3) lane.spotUpd.push(obj.title);
+        continue;
       }
     }
 
-    const changed = (added > 0 || removed > 0);
+    if (!Object.keys(tallies).length) {
+      let added = 0, removed = 0;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const m = lines[i].match(/Sync complete·\+(\d+)\s*\/\s*-(\d+)/);
+        if (m) { added = parseInt(m[1],10)||0; removed = parseInt(m[2],10)||0; break; }
+      }
+      if (added === 0 && removed === 0) {
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const m = lines[i].match(/Plan·add A=(\d+),\s*add B=(\d+),\s*remove A=(\d+),\s*remove B=(\d+)/i);
+          if (m) {
+            added   = Math.max(parseInt(m[1],10)||0, parseInt(m[2],10)||0);
+            removed = Math.max(parseInt(m[3],10)||0, parseInt(m[4],10)||0);
+            break;
+          }
+        }
+      }
+      summary = summary || {};
+      summary.features = summary.features || {};
+      const lane = Object.assign({ added:0, removed:0, updated:0 }, summary.features.watchlist || {});
+      lane.added = lane.added || added;
+      lane.removed = lane.removed || removed;
+      summary.features.watchlist = lane;
+
+      hydratedLanes.watchlist = {
+        added: lane.added, removed: lane.removed, updated: lane.updated,
+        items: [], spotAdd: [], spotRem: [], spotUpd: []
+      };
+
+      summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
+      renderAll();
+      return (added > 0 || removed > 0);
+    }
 
     summary = summary || {};
     summary.features = summary.features || {};
-    const lane = summary.features.watchlist || {};
-    lane.added = added || lane.added || 0;
-    lane.removed = removed || lane.removed || 0;
-    lane.updated = lane.updated || 0;
-    summary.features.watchlist = lane;
+    for (const [feat, lane] of Object.entries(tallies)) {
+      const prev = summary.features[feat] || {};
+      const merged = {
+        added:   (prev.added   || 0) + (lane.added   || 0),
+        removed: (prev.removed || 0) + (lane.removed || 0),
+        updated: (prev.updated || 0) + (lane.updated || 0),
+        spotlight_add:    prev.spotlight_add    && prev.spotlight_add.length    ? prev.spotlight_add    : lane.spotAdd,
+        spotlight_remove: prev.spotlight_remove && prev.spotlight_remove.length ? prev.spotlight_remove : lane.spotRem,
+        spotlight_update: prev.spotlight_update && prev.spotlight_update.length ? prev.spotlight_update : lane.spotUpd,
+      };
+      summary.features[feat] = merged;
+
+      hydratedLanes[feat] = {
+        added: merged.added, removed: merged.removed, updated: merged.updated,
+        items: [],
+        spotAdd: merged.spotlight_add || [],
+        spotRem: merged.spotlight_remove || [],
+        spotUpd: merged.spotlight_update || []
+      };
+    }
 
     summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
     renderAll();
-    return changed;
+    return true;
   }
 
   function hasFeatureData() {
@@ -347,98 +535,106 @@
     try { window._ui = window._ui || {}; window._ui.status = status; } catch (e) {}
   }
 
-async function pullSummary() {
-  const s = await fetchJSON("/api/run/summary", summary);
-  if (!s) return;
+  async function pullSummary() {
+    const s = await fetchJSON("/api/run/summary", summary);
+    if (!s) return;
 
-  // Remember previous state before updating UI
-  const prevTL = _prevTL;
-  const prevRunning = _prevRunning;
+    // Remember previous state before updating UI
+    const prevTL = _prevTL;
+    const prevRunning = _prevRunning;
 
-  summary = s;
-  lastServerUpdate = Date.now();
+    summary = s;
 
-  const tl = s?.timeline || s?.tl || null;
-  const running = s?.running === true || s?.state === "running";
-  const exitedOk = (s?.exit_code === 0) || (s?.exit === 0) || (s?.status === "ok");
+    const tl = s?.timeline || s?.tl || null;
+    const running = s?.running === true || s?.state === "running";
+    const exitedOk = (s?.exit_code === 0) || (s?.exit === 0) || (s?.status === "ok");
 
-  let mapped = {
-    start: !!(tl?.start || tl?.started || tl?.[0] || s?.started),
-    pre:   !!(tl?.pre   || tl?.discovery || tl?.discovering || tl?.[1]),
-    post:  !!(tl?.post  || tl?.syncing   || tl?.apply       || tl?.[2]),
-    done:  !!(tl?.done  || tl?.finished  || tl?.complete    || tl?.[3]),
-  };
-  if (!mapped.done && !running && (exitedOk || s?.finished || s?.end)) {
-    mapped = { start:true, pre:true, post:true, done:true };
-  }
-
-  timeline = mapped;
-  progressPct = asPctFromTimeline(timeline);
-
-  // ---- Legacy compatibility bridges (do not alter) -------------------------
-  try {
-    if (typeof updateProgressFromTimeline === "function") updateProgressFromTimeline(timeline);
-    const btn = document.getElementById("run");
-    if (typeof startRunVisuals === "function" && typeof stopRunVisuals === "function") {
-      if (running && !_prevRunning) {
-        const indeterminate = !(timeline.pre || timeline.post || timeline.done);
-        startRunVisuals(indeterminate);
-        btn?.classList.add("glass");
-      }
-      if (!running && _prevRunning) {
-        stopRunVisuals();
-        btn?.classList.remove("glass");
-      }
+    let mapped = {
+      start: !!(tl?.start || tl?.started || tl?.[0] || s?.started),
+      pre:   !!(tl?.pre   || tl?.discovery || tl?.discovering || tl?.[1]),
+      post:  !!(tl?.post  || tl?.syncing   || tl?.apply       || tl?.[2]),
+      done:  !!(tl?.done  || tl?.finished  || tl?.complete    || tl?.[3]),
+    };
+    if (!mapped.done && !running && (exitedOk || s?.finished || s?.end)) {
+      mapped = { start:true, pre:true, post:true, done:true };
     }
-    if (typeof recomputeRunDisabled === "function") recomputeRunDisabled();
-  } catch (e) {}
 
-  // ---- Robust detection of phase transitions --------------------------------
-  const wasInProgress = prevRunning || (prevTL.start && !prevTL.done) || optimistic;
-  const nowInProgress = running || (timeline.start && !timeline.done);
-  const justFinished  = wasInProgress && !nowInProgress && timeline.done;
-
-  if (justFinished) {
-  optimistic = false; // Clear optimistic mode once confirmed
-
-  // Refresh left-side preview elements
-    try {
-      window.wallLoaded = false;
-      if (typeof updatePreviewVisibility === "function") updatePreviewVisibility();
-      if (typeof loadWatchlist === "function") loadWatchlist();
-      if (typeof refreshSchedulingBanner === "function") refreshSchedulingBanner();
-    } catch (e) {}
-
-  // Refresh right-side statistics panel
-    try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch (e) {}
-
-  // Dispatch an event for other listeners
-    try {
-      window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary } }));
-    } catch (e) {}
-  }
-
-  // Preserve previous markers for the next update tick
-  _prevTL = { start: timeline.start, done: timeline.done };
-  _prevRunning = !!running;
-
-  // Ensure enabled map is set and re-render lanes
-  if (!summary.enabled) summary.enabled = defaultEnabledMap();
-  renderAll();
-
-  // Feature hydration fallback (use defaults when server data missing)
-  const hasFeatures =
-    summary?.features && Object.keys(summary.features).length > 0 &&
-    Object.values(summary.features).some(v =>
-      (v?.added||v?.removed||v?.updated||0) > 0 ||
-      (v?.spotlight_add?.length||v?.spotlight_remove?.length||v?.spotlight_update?.length)
+    // Detect phase changes and only raise the baseline, never drop progress
+    const changedPhase = (
+      mapped.start !== prevTL.start ||
+      mapped.pre   !== prevTL.pre   ||
+      mapped.post  !== prevTL.post  ||
+      mapped.done  !== prevTL.done
     );
-  if (!hasFeatures && timeline.done) {
-    const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at)/1000 : 0);
-    const ok = await hydrateFromInsights(startTs);
-    if (!ok) setTimeout(() => { if (!hasFeatureData()) hydrateFromLog(); }, 300);
+    if (changedPhase) lastPhaseAt = Date.now();
+
+    timeline = mapped;
+
+    // Baseline from measured labels; do not clobber optimistic progress if higher
+    const baseline = (Rail.pct(timeline, elProgress) ?? asPctFromTimeline(timeline));
+    if (timeline.done) {
+      progressPct = 100;
+    } else if (changedPhase || progressPct < baseline) {
+      progressPct = baseline;
+    }
+
+    // ---- Legacy compatibility bridges (do not alter) -------------------------
+    try {
+      if (typeof updateProgressFromTimeline === "function") updateProgressFromTimeline(timeline);
+      const btn = document.getElementById("run");
+      if (typeof startRunVisuals === "function" && typeof stopRunVisuals === "function") {
+        if (running && !_prevRunning) {
+          const indeterminate = !(timeline.pre || timeline.post || timeline.done);
+          startRunVisuals(indeterminate);
+          btn?.classList.add("glass");
+        }
+        if (!running && _prevRunning) {
+          stopRunVisuals();
+          btn?.classList.remove("glass");
+        }
+      }
+      if (typeof recomputeRunDisabled === "function") recomputeRunDisabled();
+    } catch (e) {}
+
+    const wasInProgress = prevRunning || (prevTL.start && !prevTL.done) || optimistic;
+    const nowInProgress = running || (timeline.start && !timeline.done);
+    const justFinished  = wasInProgress && !nowInProgress && timeline.done;
+
+    if (justFinished) {
+      optimistic = false;
+
+      try {
+        window.wallLoaded = false;
+        if (typeof updatePreviewVisibility === "function") updatePreviewVisibility();
+        if (typeof loadWatchlist === "function") loadWatchlist();
+        if (typeof refreshSchedulingBanner === "function") refreshSchedulingBanner();
+      } catch (e) {}
+
+      try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch (e) {}
+
+      try {
+        window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary } }));
+      } catch (e) {}
+    }
+
+    _prevTL = { ...timeline };
+    _prevRunning = !!running;
+
+    if (!summary.enabled) summary.enabled = defaultEnabledMap();
+    renderAll();
+
+    const hasFeatures =
+      summary?.features && Object.keys(summary.features).length > 0 &&
+      Object.values(summary.features).some(v =>
+        (v?.added||v?.removed||v?.updated||0) > 0 ||
+        (v?.spotlight_add?.length||v?.spotlight_remove?.length||v?.spotlight_update?.length)
+      );
+    if (!hasFeatures && timeline.done) {
+      const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at)/1000 : 0);
+      const ok = await hydrateFromInsights(startTs);
+      if (!ok) setTimeout(() => { if (!hasFeatureData()) hydrateFromLog(); }, 300);
+    }
   }
-}
 
   function renderAll() {
     renderProgress();
@@ -448,20 +644,21 @@ async function pullSummary() {
 
   // ---------- Polling and optimistic auto-bump ----------
   function tick() {
-    const running = !timeline?.done || (summary?.running === true);
+    const running = (summary?.running === true) || (timeline.start && !timeline.done);
     pullSummary();
 
-  // Periodically refresh pairs so enabled lanes remain synchronized
-    if ((Date.now() - lastPairsAt) > 10000) { pullPairs().finally(() => { lastPairsAt = Date.now(); renderLanes(); }); }
+    // Periodically refresh pairs so enabled lanes remain synchronized
+    if ((Date.now() - lastPairsAt) > 10000) {
+      pullPairs().finally(() => { lastPairsAt = Date.now(); renderLanes(); });
+    }
 
-    if ((tick._lastStatusAt || 0) + 5000 < Date.now()) { pullStatus(); tick._lastStatusAt = Date.now(); }
-
-    if (running) {
-      const noUpdateMs = Date.now() - (lastServerUpdate || 0);
-      if (optimistic && noUpdateMs > 700 && !(timeline.pre || timeline.post || timeline.done)) {
-        const floor = 12;
-        const cap   = 60;
-        progressPct = clamp((progressPct || floor) + 2, floor, cap);
+    // Optimistic bump while still in "Start" (no pre/post/done yet)
+    if (running && optimistic && !(timeline.pre || timeline.post || timeline.done)) {
+      const since = Date.now() - (lastPhaseAt || 0);
+      if (since > 900) {
+        const floor = Math.max((Rail.pct({ start:true }, elProgress) ?? 12), 12);
+        const cap   = (Rail.pct({ pre:true }, elProgress) ?? 60); // stop near the "Discovering" mark
+        progressPct = clamp((progressPct || floor) + 2, floor, cap - 1);
         renderProgress();
       }
     }
@@ -478,13 +675,14 @@ async function pullSummary() {
 
     btn.addEventListener("click", () => {
       optimistic = true;
-      lastServerUpdate = 0;
+      lastPhaseAt = Date.now(); // mark start
       try {
         if (typeof startRunVisuals === "function") startRunVisuals(true);
         if (typeof recomputeRunDisabled === "function") recomputeRunDisabled();
       } catch (e) {}
       timeline = { start:true, pre:false, post:false, done:false };
-      progressPct = Math.max(progressPct, 12);
+      // Set a sensible initial floor; will be lifted by renderProgress()
+      progressPct = Math.max(progressPct, (Rail.pct({ start:true }, elProgress) ?? 12));
       renderProgress();
     }, { capture:true });
   }
@@ -493,7 +691,10 @@ async function pullSummary() {
   window.addEventListener("ux:timeline", (e) => {
     const tl = e.detail || {};
     timeline = { start: !!tl.start, pre: !!tl.pre, post: !!tl.post, done: !!tl.done };
-    progressPct = asPctFromTimeline(timeline);
+    // Only raise to the new baseline; preserve higher optimistic progress
+    const base = (Rail.pct(timeline, elProgress) ?? asPctFromTimeline(timeline));
+    if (timeline.done) progressPct = 100; else progressPct = Math.max(progressPct || 0, base);
+    lastPhaseAt = Date.now();
     renderProgress();
   });
   window.addEventListener("ux:progress", (e) => {
@@ -504,7 +705,7 @@ async function pullSummary() {
   window.UX = {
     updateTimeline: (tl) => window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} })),
     updateProgress: (payload) => payload && window.dispatchEvent(new CustomEvent("ux:progress", { detail: payload })),
-    refresh: () => pullSummary().then(renderAll)
+    refresh: () => { Rail._invalidate(); return pullSummary().then(renderAll); }
   };
 
   // ---------- Boot / initialization ----------

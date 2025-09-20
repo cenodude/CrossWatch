@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-__VERSION__ = "1.0.1"
+__VERSION__ = "1.1.0"
 __all__ = ["OPS", "TRAKTModule", "get_manifest"]
 
 import json
@@ -26,11 +26,11 @@ TRAKT_LAST_ACTIVITIES = f"{TRAKT_BASE}/sync/last_activities"
 TRAKT_WATCHLIST_MOVIES = f"{TRAKT_BASE}/sync/watchlist/movies"
 TRAKT_WATCHLIST_SHOWS  = f"{TRAKT_BASE}/sync/watchlist/shows"
 
-# Ratings
-TRAKT_RATINGS_MOVIES   = f"{TRAKT_BASE}/sync/ratings/movies"
-TRAKT_RATINGS_SHOWS    = f"{TRAKT_BASE}/sync/ratings/shows"
-TRAKT_RATINGS_POST     = f"{TRAKT_BASE}/sync/ratings"
-TRAKT_RATINGS_REMOVE   = f"{TRAKT_BASE}/sync/ratings/remove"
+# Ratings (GET user ratings by type) + mutations
+TRAKT_USER_RATINGS_MOVIES = f"{TRAKT_BASE}/users/me/ratings/movies/all"
+TRAKT_USER_RATINGS_SHOWS  = f"{TRAKT_BASE}/users/me/ratings/shows/all"
+TRAKT_RATINGS_POST        = f"{TRAKT_BASE}/sync/ratings"
+TRAKT_RATINGS_REMOVE      = f"{TRAKT_BASE}/sync/ratings/remove"
 
 # History
 TRAKT_HISTORY_BASE     = f"{TRAKT_BASE}/sync/history"           # POST add
@@ -78,6 +78,34 @@ try:
     _stats = Stats()
 except Exception:
     _stats = None
+
+def _emit_rating_event(*, action: str, node: Mapping[str, Any], prev: Optional[int], value: Optional[int]) -> None:
+    """Emit a compact rating event for UI (watchlist-style spotlight & summary lanes)."""
+    try:
+        payload = {
+            "feature": "ratings",
+            "action": action,                   # "rate" | "unrate" | "update"
+            "title": node.get("title"),
+            "type": node.get("type") or _plural(node.get("type") or "movie"),
+            "ids": dict(node.get("ids") or {}),
+            "value": value,
+            "prev": prev,
+            "provider": "TRAKT",
+            "ts": ts_to_iso(int(time.time())),
+        }
+        if _stats and hasattr(_stats, "record_event"):
+            try:
+                _stats.record_event(payload)   # preferred if available
+            except Exception:
+                pass
+        # Fallback: structured host log entry (safe no-op if host_log is stub)
+        try:
+            host_log("event", payload)
+        except Exception:
+            pass
+    except Exception:
+        # Never let event logging break mutations
+        pass
 
 # -----------------------------------------------------------------------------
 # Global call counters (debug visibility)
@@ -234,7 +262,6 @@ def _trakt_cache_key(use_etag_key: Optional[str], url: str, params: Optional[dic
         return use_etag_key
     return f"{url}::{json.dumps(dict(params or {}), sort_keys=True)}"
 
-
 # -----------------------------------------------------------------------------
 # HTTP helpers with backoff, memoization, and ETag support
 # -----------------------------------------------------------------------------
@@ -330,7 +357,6 @@ def _save_etags(d: Mapping[str, str]) -> None:
         os.replace(tmp, p)
     except Exception:
         pass
-
 
 def _trakt_get(
     url: str,
@@ -447,6 +473,40 @@ def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
+# Config helpers
+# -----------------------------------------------------------------------------
+
+def _cfg_get(cfg_root: Mapping[str, Any], path: str, default: Any) -> Any:
+    """
+    Lightweight nested config getter using dot path.
+    Searches common roots: root, root['sync'], root['runtime'].
+    """
+    def _dig(d: Mapping[str, Any], keys: List[str]) -> Any:
+        cur: Any = d
+        for k in keys:
+            if not isinstance(cur, Mapping):
+                return default
+            cur = cur.get(k)
+            if cur is None:
+                return default
+        return cur
+    keys = path.split(".")
+    for root_key in ("", "sync", "runtime"):
+        base = cfg_root if root_key == "" else (cfg_root.get(root_key) or {})
+        val = _dig(base, keys)
+        if val is not None and val != default:
+            return val
+    return default
+
+def _iter_chunks(seq: List[Dict[str, Any]], size: int) -> Iterable[List[Dict[str, Any]]]:
+    """Yield list chunks of max `size` items."""
+    if size <= 0:
+        yield seq
+        return
+    for i in range(0, len(seq), size):
+        yield seq[i:i+size]
+
+# -----------------------------------------------------------------------------
 # Shadows + cursors (persisted snapshots & timestamps under /config/.cw_state)
 # -----------------------------------------------------------------------------
 
@@ -548,14 +608,23 @@ def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
 
     return flat
 
-
 # -----------------------------------------------------------------------------
 # Shapes & helpers
 # -----------------------------------------------------------------------------
 
+def _plural(kind: str) -> str:
+    """Map Trakt object kind to orchestrator's plural type names."""
+    k = (kind or "").lower()
+    if k == "movie": return "movies"
+    if k == "show": return "shows"
+    if k == "season": return "seasons"
+    if k == "episode": return "episodes"
+    return k or "movies"
+
 def canonical_key(kind: str, node: Mapping[str, Any]) -> str:
     """
-    Produce a deterministic key based on IDs, falling back to title/year/ids.
+    Produce a deterministic key based on IDs, falling back to type|title|year.
+    Use plural type names to stay consistent with orchestrator filters.
     """
     ids = dict(node.get("ids") or {})
     for k in _ID_KEYS:
@@ -564,18 +633,17 @@ def canonical_key(kind: str, node: Mapping[str, Any]) -> str:
             return f"{k}:{v}".lower()
     t = (node.get("title") or "").strip().lower()
     y = node.get("year") or ""
-    return f"{kind}|title:{t}|year:{y}"
-
+    return f"{_plural(kind)}|title:{t}|year:{y}"
 
 def minimal_node(kind: str, node: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a minimal canonical node (pluralized type)."""
     ids = dict(node.get("ids") or {})
     return {
-        "type": kind,
+        "type": _plural(kind),
         "title": node.get("title"),
         "year": node.get("year"),
         "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}
     }
-
 
 def _flatten_watchlist(arr: List[dict], kind: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -585,21 +653,29 @@ def _flatten_watchlist(arr: List[dict], kind: str) -> Dict[str, Any]:
         out[key] = minimal_node(kind, node)
     return out
 
-
 def _flatten_ratings(arr: List[dict], kind: str) -> Dict[str, Any]:
+    """
+    Trakt ratings rows have `rating` (1..10) and `rated_at`.
+    Keep both to enable recency-based conflict resolution upstream.
+    """
     out: Dict[str, Any] = {}
     for it in arr or []:
         node = it.get(kind) or {}
         key = canonical_key(kind, node)
         rating = None
-        # Trakt rating can be under 'rating'
         if isinstance(it.get("rating"), (int, float)):
-            rating = int(it.get("rating"))
+            try:
+                rating = int(it.get("rating"))
+            except Exception:
+                rating = None
         row = minimal_node(kind, node)
-        row["rating"] = rating
+        if rating is not None:
+            row["rating"] = rating
+        ra = it.get("rated_at")
+        if isinstance(ra, str) and ra:
+            row["rated_at"] = ra
         out[key] = row
     return out
-
 
 def _flatten_history(arr: List[dict], kind: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -608,6 +684,9 @@ def _flatten_history(arr: List[dict], kind: str) -> Dict[str, Any]:
         key = canonical_key(kind, node)
         row = minimal_node(kind, node)
         row["watched"] = True
+        # Keep watched_at if present; helps downstream merges
+        if isinstance(it.get("watched_at"), str):
+            row["watched_at"] = it.get("watched_at")
         out[key] = row
     return out
 
@@ -624,6 +703,9 @@ class InventoryOps(Protocol):
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
 
+# -----------------------------------------------------------------------------
+# Indices (watchlist, ratings, history)
+# -----------------------------------------------------------------------------
 
 def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
@@ -687,11 +769,15 @@ def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
-    Build a Trakt ratings snapshot.
-    Use activities guard + ETag + shadow.
+    Build a Trakt ratings snapshot (movies + shows).
+    Guard with activities + ETag + shadow + optional TTL.
     """
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
+
+    # Optional TTL to avoid first-run full pulls when nothing changed
+    ttl_min = int(_cfg_get(cfg_root, "ratings.cache.ttl_minutes", 0) or 0)
+    ttl_sec = max(0, ttl_min * 60)
 
     acts = _activities(cfg_root)
     cursors = _cursor_store_load()
@@ -700,18 +786,26 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     shadow = _ratings_shadow_load()
     items = dict(shadow.get("items") or {})
+    shadow_ts = int(shadow.get("ts") or 0)
 
-    # Guard: if nothing moved since last cursor, keep shadow
+    # Activities gate: if nothing moved since last cursor → keep shadow
     if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur):
         return items
 
-    m = _trakt_get(TRAKT_RATINGS_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="rt.movies", timeout=45)
-    s = _trakt_get(TRAKT_RATINGS_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="rt.shows",  timeout=45)
+    # TTL gate: if present and fresh → keep shadow
+    now = int(time.time())
+    if ttl_sec > 0 and shadow_ts > 0 and (now - shadow_ts) < ttl_sec and items:
+        return items
+
+    # Use /users/me/ratings/*/all because it returns rated_at per row
+    m = _trakt_get(TRAKT_USER_RATINGS_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="rt.movies", timeout=45)
+    s = _trakt_get(TRAKT_USER_RATINGS_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="rt.shows",  timeout=45)
 
     mov = _json_or_empty_list(m)
     sho = _json_or_empty_list(s)
 
     if (m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items:
+        # Both unchanged; rely on shadow
         pass
     else:
         got_any = False
@@ -724,6 +818,7 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             items = out
             _ratings_shadow_save(items)
 
+    # Move cursor to server view if available (best for consistency)
     if act_updated:
         cursors["ratings"] = act_updated
         _cursor_store_save(cursors)
@@ -767,16 +862,12 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     return out
 
-
 # -----------------------------------------------------------------------------
-# Mutations (add/remove ratings/history, add/remove watchlist)
+# Mutations (watchlist, ratings, history)
 # -----------------------------------------------------------------------------
 
 def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Trakt watchlist add goes through /sync/watchlist (POST by type).
-    We accept mixed items and split into movies/shows.
-    """
+    """Add items to Trakt watchlist (mixed types supported)."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
@@ -784,16 +875,16 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     shows:  List[Dict[str, Any]] = []
     for it in items or []:
         ids = dict(it.get("ids") or {})
-        typ = (it.get("type") or "movie").lower()
+        typ = _plural(it.get("type") or "movie")
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if typ == "movie":
+        if typ == "movies":
             movies.append(entry)
-        else:
+        elif typ == "shows":
             shows.append(entry)
 
-    payload = {}
+    payload: Dict[str, Any] = {}
     if movies: payload["movies"] = movies
     if shows:  payload["shows"]  = shows
     if not payload:
@@ -802,25 +893,23 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
     url = f"{TRAKT_BASE}/sync/watchlist"
     r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        # Invalidate caches (ETag + body + per-run memo) so next read is fresh
+        # Bust caches + memo, advance cursor, refresh shadow
         try:
             _bust_trakt_watchlist_cache()
             _bust_run_memo_for(["watchlist_movies", "watchlist_shows"])
         except Exception:
             pass
 
-        # Advance cursor immediately; activities will reflect shortly
         cursors = _cursor_store_load()
         cursors["watchlist"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
 
-        # Refresh local shadow best-effort (append)
         sh = _watchlist_shadow_load()
         m = dict(sh.get("items") or {})
         for it in items or []:
-            typ = (it.get("type") or "movie").lower()
+            typ = _plural(it.get("type") or "movie")
             node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ, node)
+            key = canonical_key(typ.rstrip("s"), node)  # canonical_key expects singular hint
             m[key] = {
                 "type": typ,
                 "title": node["title"],
@@ -833,9 +922,7 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
 
 
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Remove items from Trakt watchlist.
-    """
+    """Remove items from Trakt watchlist."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
@@ -843,16 +930,16 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     shows:  List[Dict[str, Any]] = []
     for it in items or []:
         ids = dict(it.get("ids") or {})
-        typ = (it.get("type") or "movie").lower()
+        typ = _plural(it.get("type") or "movie")
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if typ == "movie":
+        if typ == "movies":
             movies.append(entry)
-        else:
+        elif typ == "shows":
             shows.append(entry)
 
-    payload = {}
+    payload: Dict[str, Any] = {}
     if movies: payload["movies"] = movies
     if shows:  payload["shows"]  = shows
     if not payload:
@@ -861,25 +948,22 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
     url = f"{TRAKT_BASE}/sync/watchlist/remove"
     r = _trakt_post(url, headers=hdr, json_payload=payload, timeout=45)
     if r and r.ok:
-        # Invalidate caches and memo
         try:
             _bust_trakt_watchlist_cache()
             _bust_run_memo_for(["watchlist_movies", "watchlist_shows"])
         except Exception:
             pass
 
-        # Advance cursor
         cursors = _cursor_store_load()
         cursors["watchlist"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
 
-        # Update shadow: remove keys
         sh = _watchlist_shadow_load()
         m = dict(sh.get("items") or {})
         for it in items or []:
-            typ = (it.get("type") or "movie").lower()
+            typ = _plural(it.get("type") or "movie")
             node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ, node)
+            key = canonical_key(typ.rstrip("s"), node)
             m.pop(key, None)
         _watchlist_shadow_save(m)
         return sum(len(v) for v in payload.values())
@@ -887,91 +971,247 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
 
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Set ratings on Trakt (/sync/ratings).
-    """
+    """Set (upsert) ratings at Trakt (/sync/ratings) with batch support + events."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
+    # Batch size is configurable; default safe value
+    batch_size = int(_cfg_get(cfg_root, "ratings.write.batch_size", 200) or 200)
+
+    # Prepare per-type payloads and collect event context
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
+    ctx:    List[Dict[str, Any]] = []  # keep full incoming nodes for event emission
 
     for it in items or []:
         ids = dict(it.get("ids") or {})
         rating = it.get("rating")
         if rating is None:
             continue
-        entry = {"rating": int(rating), "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        entry: Dict[str, Any] = {"rating": int(rating), "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if (it.get("type") or "movie") == "movie":
+        ra = it.get("rated_at")
+        if isinstance(ra, str) and ra:
+            entry["rated_at"] = ra  # let server honor it if valid
+        typ = _plural(it.get("type") or "movie")
+        # Keep original node metadata for event emission
+        node = {
+            "type": typ,
+            "title": it.get("title"),
+            "year": it.get("year"),
+            "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
+            "rating": int(rating),
+            "rated_at": ra if isinstance(ra, str) else None,
+        }
+        ctx.append(node)
+        if typ == "movies":
             movies.append(entry)
-        else:
+        elif typ == "shows":
             shows.append(entry)
 
-    payload = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["shows"]  = shows
-    if not payload:
-        return 0
+    total = 0
+    if not movies and not shows:
+        return total
 
-    r = _trakt_post(TRAKT_RATINGS_POST, headers=hdr, json_payload=payload, timeout=45)
-    if r and r.ok:
-        # Bust ratings caches + memo
+    # Chunk and post; we keep events and shadow in sync after success
+    def _post_payload(payload: Dict[str, Any]) -> bool:
+        r = _trakt_post(TRAKT_RATINGS_POST, headers=hdr, json_payload=payload, timeout=45)
+        return bool(r and r.ok)
+
+    # Shadow for event delta classification (rate vs update)
+    sh = _ratings_shadow_load()
+    shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
+
+    # Build chunks
+    mov_chunks = list(_iter_chunks(movies, batch_size)) if movies else []
+    sho_chunks = list(_iter_chunks(shows,  batch_size)) if shows  else []
+
+    # Send movie chunks
+    for chunk in mov_chunks:
+        if _post_payload({"movies": chunk}):
+            total += len(chunk)
+        else:
+            continue  # skip shadow/events on failed chunk
+
+        # Update shadow + emit events for each item in this chunk
+        for entry in chunk:
+            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
+            if not node:
+                continue
+            key = None
+            try:
+                key = canonical_key("movie", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
+            except Exception:
+                pass
+            # Compute prev and new for event
+            prev_val = None
+            if key and key in shadow_map and isinstance(shadow_map[key], dict):
+                p = shadow_map[key].get("rating")
+                if isinstance(p, int):
+                    prev_val = p
+            new_val = int(node.get("rating")) if isinstance(node.get("rating"), int) else None
+            # Update shadow
+            shadow_map[key] = {
+                "type": "movies",
+                "title": node.get("title"),
+                "year": node.get("year"),
+                "ids": node.get("ids"),
+                "rating": new_val,
+                "rated_at": node.get("rated_at") or ts_to_iso(int(time.time())),
+            }
+            # Emit event
+            if prev_val is None and new_val is not None:
+                _emit_rating_event(action="rate", node=shadow_map[key], prev=None, value=new_val)
+            elif prev_val is not None and new_val is not None and prev_val != new_val:
+                _emit_rating_event(action="update", node=shadow_map[key], prev=prev_val, value=new_val)
+            else:
+                # Same value; emit a lightweight rate event for visibility
+                _emit_rating_event(action="rate", node=shadow_map[key], prev=prev_val, value=new_val)
+
+    # Send show chunks
+    for chunk in sho_chunks:
+        if _post_payload({"shows": chunk}):
+            total += len(chunk)
+        else:
+            continue
+
+        for entry in chunk:
+            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
+            if not node:
+                continue
+            key = None
+            try:
+                key = canonical_key("show", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
+            except Exception:
+                pass
+            prev_val = None
+            if key and key in shadow_map and isinstance(shadow_map[key], dict):
+                p = shadow_map[key].get("rating")
+                if isinstance(p, int):
+                    prev_val = p
+            new_val = int(node.get("rating")) if isinstance(node.get("rating"), int) else None
+            shadow_map[key] = {
+                "type": "shows",
+                "title": node.get("title"),
+                "year": node.get("year"),
+                "ids": node.get("ids"),
+                "rating": new_val,
+                "rated_at": node.get("rated_at") or ts_to_iso(int(time.time())),
+            }
+            if prev_val is None and new_val is not None:
+                _emit_rating_event(action="rate", node=shadow_map[key], prev=None, value=new_val)
+            elif prev_val is not None and new_val is not None and prev_val != new_val:
+                _emit_rating_event(action="update", node=shadow_map[key], prev=prev_val, value=new_val)
+            else:
+                _emit_rating_event(action="rate", node=shadow_map[key], prev=prev_val, value=new_val)
+
+    if total > 0:
+        # Bust caches + memo
         try:
             _bust_trakt_ratings_cache()
             _bust_run_memo_for(["rt.movies", "rt.shows"])
         except Exception:
             pass
 
+        # Move cursor to now (activities will catch up soon)
         cursors = _cursor_store_load()
         cursors["ratings"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
 
-        # Update shadow (best-effort)
-        sh = _ratings_shadow_load()
-        m = dict(sh.get("items") or {})
-        for it in items or []:
-            typ = (it.get("type") or "movie").lower()
-            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ, node)
-            row = m.get(key) or {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}}
-            if it.get("rating") is not None:
-                row["rating"] = int(it.get("rating"))
-            m[key] = row
-        _ratings_shadow_save(m)
+        # Persist shadow
+        _ratings_shadow_save(shadow_map)
 
-        return sum(len(v) for v in payload.values())
-    return 0
+    return total
 
 
 def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Remove ratings on Trakt.
-    """
+    """Unset ratings at Trakt (/sync/ratings/remove) with batch support + events."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
+    batch_size = int(_cfg_get(cfg_root, "ratings.write.batch_size", 200) or 200)
+
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
+    ctx:    List[Dict[str, Any]] = []  # carry metadata for events
+
     for it in items or []:
         ids = dict(it.get("ids") or {})
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if (it.get("type") or "movie") == "movie":
+        typ = _plural(it.get("type") or "movie")
+        node = {
+            "type": typ,
+            "title": it.get("title"),
+            "year": it.get("year"),
+            "ids": entry["ids"],
+        }
+        ctx.append(node)
+        if typ == "movies":
             movies.append(entry)
-        else:
+        elif typ == "shows":
             shows.append(entry)
 
-    payload = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["shows"]  = shows
-    if not payload:
-        return 0
+    total = 0
+    if not movies and not shows:
+        return total
 
-    r = _trakt_post(TRAKT_RATINGS_REMOVE, headers=hdr, json_payload=payload, timeout=45)
-    if r and r.ok:
+    def _post_payload(payload: Dict[str, Any]) -> bool:
+        r = _trakt_post(TRAKT_RATINGS_REMOVE, headers=hdr, json_payload=payload, timeout=45)
+        return bool(r and r.ok)
+
+    # Current shadow for prev values
+    sh = _ratings_shadow_load()
+    shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
+
+    for chunk in list(_iter_chunks(movies, batch_size)) if movies else []:
+        if _post_payload({"movies": chunk}):
+            total += len(chunk)
+        else:
+            continue
+        for entry in chunk:
+            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
+            if not node:
+                continue
+            key = None
+            try:
+                key = canonical_key("movie", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
+            except Exception:
+                pass
+            prev_val = None
+            if key and key in shadow_map and isinstance(shadow_map[key], dict):
+                p = shadow_map[key].get("rating")
+                if isinstance(p, int):
+                    prev_val = p
+                # Remove rating in shadow but keep node
+                shadow_map[key].pop("rating", None)
+            _emit_rating_event(action="unrate", node={"type": "movies", "title": node.get("title"), "ids": node.get("ids")}, prev=prev_val, value=None)
+
+    for chunk in list(_iter_chunks(shows, batch_size)) if shows else []:
+        if _post_payload({"shows": chunk}):
+            total += len(chunk)
+        else:
+            continue
+        for entry in chunk:
+            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
+            if not node:
+                continue
+            key = None
+            try:
+                key = canonical_key("show", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
+            except Exception:
+                pass
+            prev_val = None
+            if key and key in shadow_map and isinstance(shadow_map[key], dict):
+                p = shadow_map[key].get("rating")
+                if isinstance(p, int):
+                    prev_val = p
+                shadow_map[key].pop("rating", None)
+            _emit_rating_event(action="unrate", node={"type": "shows", "title": node.get("title"), "ids": node.get("ids")}, prev=prev_val, value=None)
+
+    if total > 0:
         try:
             _bust_trakt_ratings_cache()
             _bust_run_memo_for(["rt.movies", "rt.shows"])
@@ -982,46 +1222,33 @@ def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
         cursors["ratings"] = ts_to_iso(int(time.time()))
         _cursor_store_save(cursors)
 
-        # Update shadow (best-effort)
-        sh = _ratings_shadow_load()
-        m = dict(sh.get("items") or {})
-        for it in items or []:
-            typ = (it.get("type") or "movie").lower()
-            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ, node)
-            row = m.get(key)
-            if row:
-                row.pop("rating", None)
-                m[key] = row
-        _ratings_shadow_save(m)
+        _ratings_shadow_save(shadow_map)
 
-        return sum(len(v) for v in payload.values())
-    return 0
+    return total
 
 
 def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Add history entries (scrobbles) to Trakt.
-    """
+    """Add history entries (scrobbles) to Trakt."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
     movies: List[Dict[str, Any]] = []
-    episodes:  List[Dict[str, Any]] = []
+    episodes: List[Dict[str, Any]] = []
     now_iso = ts_to_iso(int(time.time()))
     for it in items or []:
         ids = dict(it.get("ids") or {})
         entry = {"watched_at": it.get("watched_at") or now_iso, "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if (it.get("type") or "movie") == "movie":
+        typ = _plural(it.get("type") or "movie")
+        if typ == "movies":
             movies.append(entry)
         else:
             episodes.append(entry)
 
-    payload = {}
+    payload: Dict[str, Any] = {}
     if movies:   payload["movies"]   = movies
-    if episodes: payload["episodes"] = episodes   # Trakt expects episodes under "episodes"
+    if episodes: payload["episodes"] = episodes
     if not payload:
         return 0
 
@@ -1035,25 +1262,24 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
 
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Remove history entries from Trakt.
-    """
+    """Remove history entries from Trakt."""
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
     movies: List[Dict[str, Any]] = []
-    episodes:  List[Dict[str, Any]] = []
+    episodes: List[Dict[str, Any]] = []
     for it in items or []:
         ids = dict(it.get("ids") or {})
         entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         if not entry["ids"]:
             continue
-        if (it.get("type") or "movie") == "movie":
+        typ = _plural(it.get("type") or "movie")
+        if typ == "movies":
             movies.append(entry)
         else:
             episodes.append(entry)
 
-    payload = {}
+    payload: Dict[str, Any] = {}
     if movies:   payload["movies"]   = movies
     if episodes: payload["episodes"] = episodes
     if not payload:
@@ -1073,12 +1299,26 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
 # -----------------------------------------------------------------------------
 
 class _TraktOPS:
-    def name(self) -> str: return "TRAKT"
-    def label(self) -> str: return "Trakt"
+    def name(self) -> str:
+        return "TRAKT"
+
+    def label(self) -> str:
+        return "Trakt"
+
     def features(self) -> Mapping[str, bool]:
         return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+
     def capabilities(self) -> Mapping[str, Any]:
-        return {"bidirectional": True}
+        return {
+            "bidirectional": True,
+            "provides_ids": False,
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
+            },
+        }
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         if feature == "watchlist":
@@ -1109,43 +1349,82 @@ class _TraktOPS:
             return {}
         return {}
 
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
-        items_list = list(items)
-        if dry_run:
-            return {"ok": True, "count": len(items_list), "dry_run": True}
+    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         if feature == "watchlist":
-            cnt = _watchlist_add(cfg, items_list)
-            return {"ok": True, "count": cnt}
+            if dry_run:
+                # Count how many will be posted
+                movies = shows = 0
+                for it in items or []:
+                    typ = _plural(it.get("type") or "movie")
+                    if typ == "movies": movies += 1
+                    elif typ == "shows": shows += 1
+                return {"ok": True, "count": movies + shows, "dry_run": True}
+            cnt = _watchlist_add(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         if feature == "ratings":
-            cnt = _ratings_set(cfg, items_list)
-            return {"ok": True, "count": cnt}
+            if dry_run:
+                payload = 0
+                for it in items or []:
+                    if it.get("rating") is not None:
+                        typ = _plural(it.get("type") or "movie")
+                        if typ in ("movies", "shows"):
+                            payload += 1
+                return {"ok": True, "count": payload, "dry_run": True}
+            cnt = _ratings_set(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         if feature == "history":
-            cnt = _history_add(cfg, items_list)
-            return {"ok": True, "count": cnt}
-        if feature == "playlists":
-            return {"ok": False, "count": 0, "error": "Trakt playlists API not supported"}
+            if dry_run:
+                movies = episodes = 0
+                for it in items or []:
+                    typ = _plural(it.get("type") or "movie")
+                    if typ == "movies": movies += 1
+                    else: episodes += 1
+                return {"ok": True, "count": movies + episodes, "dry_run": True}
+            cnt = _history_add(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         return {"ok": True, "count": 0}
 
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
-        items_list = list(items)
-        if dry_run:
-            return {"ok": True, "count": len(items_list), "dry_run": True}
+    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         if feature == "watchlist":
-            cnt = _watchlist_remove(cfg, items_list)
-            return {"ok": True, "count": cnt}
+            if dry_run:
+                movies = shows = 0
+                for it in items or []:
+                    typ = _plural(it.get("type") or "movie")
+                    if typ == "movies": movies += 1
+                    elif typ == "shows": shows += 1
+                return {"ok": True, "count": movies + shows, "dry_run": True}
+            cnt = _watchlist_remove(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         if feature == "ratings":
-            cnt = _ratings_remove(cfg, items_list)
-            return {"ok": True, "count": cnt}
+            if dry_run:
+                movies = shows = 0
+                for it in items or []:
+                    typ = _plural(it.get("type") or "movie")
+                    if typ == "movies": movies += 1
+                    elif typ == "shows": shows += 1
+                return {"ok": True, "count": movies + shows, "dry_run": True}
+            cnt = _ratings_remove(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         if feature == "history":
-            cnt = _history_remove(cfg, items_list)
-            return {"ok": True, "count": cnt}
-        if feature == "playlists":
-            return {"ok": False, "count": 0, "error": "Trakt playlists API not supported"}
+            if dry_run:
+                movies = episodes = 0
+                for it in items or []:
+                    typ = _plural(it.get("type") or "movie")
+                    if typ == "movies": movies += 1
+                    else: episodes += 1
+                return {"ok": True, "count": movies + episodes, "dry_run": True}
+            cnt = _history_remove(cfg, items)
+            return {"ok": True, "count": int(cnt)}
+
         return {"ok": True, "count": 0}
 
 
 OPS: InventoryOps = _TraktOPS()
-
 
 # -----------------------------------------------------------------------------
 # Module manifest
@@ -1176,7 +1455,7 @@ class TRAKTModule(SyncModule):
     info = ModuleInfo(
         name="TRAKT",
         version=__VERSION__,
-        description="Trakt connector with activities guards, ETag caching under /config, and low-call indexing.",
+        description="Trakt connector with activities/ETag/TTL guards, batch writes, and rating events under /config.",
         vendor="community",
         capabilities=ModuleCapabilities(
             supports_dry_run=True,
@@ -1194,6 +1473,23 @@ class TRAKTModule(SyncModule):
                             "access_token": {"type": "string", "minLength": 1},
                         },
                         "required": ["client_id", "access_token"],
+                    },
+                    "ratings": {
+                        "type": "object",
+                        "properties": {
+                            "cache": {
+                                "type": "object",
+                                "properties": {
+                                    "ttl_minutes": {"type": "integer", "minimum": 0}
+                                }
+                            },
+                            "write": {
+                                "type": "object",
+                                "properties": {
+                                    "batch_size": {"type": "integer", "minimum": 1}
+                                }
+                            }
+                        }
                     },
                     "runtime": {
                         "type": "object",

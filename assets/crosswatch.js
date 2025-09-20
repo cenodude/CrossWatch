@@ -412,29 +412,70 @@ function pickCase(obj, k) {
   return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
 }
 
-function setBadge(id, providerName, state, stale) {
+// --- tiny inline icons (inherit currentColor) --------------------------------
+function svgCrown() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
+}
+function svgCheck() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.2L5.5 12.7l1.4-1.4 2.1 2.1 6-6 1.4 1.4z"/></svg>';
+}
+
+/**
+ * Render a connection badge. Adds a left "membership" tag for Plex Pass / Trakt VIP.
+ * @param {string} id - Element id (e.g., 'badge-plex')
+ * @param {string} providerName - Display name (e.g., 'Plex')
+ * @param {'ok'|'no'|'unknown'} state - Connection state
+ * @param {boolean} stale - When true, dim slightly
+ * @param {string} [provKey] - 'PLEX' | 'TRAKT' | 'SIMKL'
+ * @param {object|boolean} [info] - Provider object as returned by /api/status.providers[provKey]
+ */
+function setBadge(id, providerName, state, stale, provKey, info) {
   const el = document.getElementById(id);
   if (!el) return;
+
   el.classList.remove("ok", "no", "unknown", "stale");
   el.classList.add(state);
   if (stale) el.classList.add("stale");
-  const label =
-    providerName + ": " + (state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown");
-  el.innerHTML = `<span class="dot ${state}"></span>${label}`;
+  // ensure new layout class is present
+  el.classList.add("conn");
+
+  // --- left capability tag (optional) ---------------------------------------
+  let tag = "";
+  if (provKey === "PLEX" && info && info.plexpass) {
+    const plan = String(info?.subscription?.plan || "").toLowerCase();
+    const label = plan === "lifetime" ? "Plex Pass • Lifetime" : "Plex Pass";
+    tag = `<span class="tag plexpass" title="${label}">${svgCrown()}${label}</span>`;
+  } else if (provKey === "TRAKT" && info && info.vip) {
+    const t = String(info.vip_type || "vip").toLowerCase();
+    const lbl = /plus|ep/.test(t) ? "VIP+" : "VIP";
+    tag = `<span class="tag vip" title="Trakt ${lbl}">${svgCheck()}${lbl}</span>`;
+  }
+
+  // --- main text -------------------------------------------------------------
+  const labelState = state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown";
+  el.innerHTML =
+    `${tag}<span class="txt">` +
+      `<span class="dot ${state}"></span>` +
+      `<span class="name">${providerName}</span>` +
+      `<span class="state">· ${labelState}</span>` +
+    `</span>`;
 }
 
+/**
+ * Normalize providers and render all three badges.
+ * Accepts either booleans or objects: { connected: true, vip: ..., plexpass: ... }
+ */
 function renderConnectorStatus(providers, { stale = false } = {}) {
   const p = providers || {};
-
-  // Fallback to false (=> "no") if provider key is missing
-  const plex  = pickCase(p, "PLEX");   // could be boolean or object
+  const plex  = pickCase(p, "PLEX");   // boolean or {connected,...}
   const simkl = pickCase(p, "SIMKL");
   const trakt = pickCase(p, "TRAKT");
 
-  setBadge("badge-plex",  "Plex",  connState(plex  ?? false), stale);
-  setBadge("badge-simkl", "SIMKL", connState(simkl ?? false), stale);
-  setBadge("badge-trakt", "Trakt", connState(trakt ?? false), stale);
+  setBadge("badge-plex",  "Plex",  connState(plex  ?? false), stale, "PLEX",  plex);
+  setBadge("badge-simkl", "SIMKL", connState(simkl ?? false), stale, "SIMKL", simkl);
+  setBadge("badge-trakt", "Trakt", connState(trakt ?? false), stale, "TRAKT", trakt);
 }
+
 
 
 async function refreshStatus(force = false) {
@@ -561,47 +602,6 @@ function flashCopy(btn, ok, msg) {
   }, 1200);
 }
 
-function setRunProgress(pct) {
-  const btn = document.getElementById("run");
-  if (!btn) return;
-  const p = Math.max(0, Math.min(100, Math.floor(pct)));
-  btn.style.setProperty("--prog", String(p));
-}
-
-function startRunVisuals(indeterminate = true) {
-  const btn = document.getElementById("run");
-  if (!btn) return;
-  btn.classList.add("loading");
-  btn.classList.toggle("indet", !!indeterminate);
-  if (indeterminate) setRunProgress(8);
-}
-
-function stopRunVisuals() {
-  const btn = document.getElementById("run");
-  if (!btn) return;
-  setRunProgress(100);
-  btn.classList.remove("indet");
-  setTimeout(() => {
-    btn.classList.remove("loading");
-    setRunProgress(0);
-  }, 700);
-}
-
-function updateProgressFromTimeline(tl) {
-  const order = ["start", "pre", "post", "done"];
-  let done = 0;
-  for (const k of order) if (tl && tl[k]) done++;
-  let pct = (done / order.length) * 100;
-  if (pct > 0 && pct < 15) pct = 15;
-
-  if (typeof setRunProgress === "function") setRunProgress(pct);
-
-  const payload = { pct, tl: tl || {} };
-  window.dispatchEvent(new CustomEvent("ux:progress", { detail: payload }));
-  if (window.UX && typeof window.UX.updateProgress === "function") {
-    window.UX.updateProgress(payload);
-  }
-}
 
 function recomputeRunDisabled() {
   const btn = document.getElementById("run");
@@ -802,6 +802,172 @@ function ensureScrobbler() {
   }
 }
 
+// ---- Run + Header progress UI helpers (drop-in) -----------------
+// Exposes: window.setRunProgress, window.startRunVisuals, window.stopRunVisuals
+// - Updates #run (--prog) for the button ring
+// - Updates .sync-rail (or [data-role="sync-rail"]) via --pct for the header bar
+// - Handles indeterminate "pulse" while waiting for real events
+
+(function () {
+  let lastPct = 0;
+  let finishTimer = null;
+  let pulseTimer = null;
+
+  const qs = (sel) => document.querySelector(sel);
+  const btn = () => document.getElementById("run");
+  const rail = () => qs(".sync-rail") || qs('[data-role="sync-rail"]');
+  const railFill = () => (rail() ? rail().querySelector(".fill") : null);
+
+  // Internal: set header bar percentage (0..100)
+  function setRail(pct) {
+    const r = rail();
+    if (!r) return;
+    const f = railFill();
+    const v = Math.max(0, Math.min(100, Math.floor(Number(pct) || 0)));
+    // Prefer setting on the .fill (width), fallback to CSS var
+    if (f) f.style.width = v + "%";
+    else r.style.setProperty("--pct", v + "%");
+  }
+
+  // Public: set numeric progress (0..100) for both button + rail
+  function setRunProgress(pct) {
+    const b = btn();
+    const p = Math.max(0, Math.min(100, Math.floor(Number(pct) || 0)));
+    if (p === lastPct) return;
+    lastPct = p;
+
+    // Button ring
+    if (b) {
+      b.style.setProperty("--prog", String(p));
+      // a11y
+      b.setAttribute("aria-valuemin", "0");
+      b.setAttribute("aria-valuemax", "100");
+      b.setAttribute("aria-valuenow", String(p));
+    }
+    // Header rail
+    setRail(p);
+  }
+
+  // Start visuals; indeterminate pulse until we get real events
+  function startRunVisuals(indeterminate = true) {
+    clearTimeout(finishTimer);
+    clearInterval(pulseTimer);
+
+    const b = btn();
+    const r = rail();
+    if (b) {
+      b.classList.add("loading");
+      b.classList.toggle("indet", !!indeterminate);
+      b.setAttribute("aria-busy", "true");
+      b.setAttribute("aria-live", "polite");
+    }
+    if (r) {
+      r.classList.toggle("indet", !!indeterminate);
+    }
+
+    // show immediate feedback
+    setRunProgress(0);
+
+    // gentle pulse so the bar never looks "stuck"
+    if (indeterminate) {
+      pulseTimer = setInterval(() => {
+        const target = Math.min(92, (lastPct || 8) + 0.4);
+        setRunProgress(target);
+      }, 500);
+    }
+  }
+
+  // Complete and reset after a short dwell (so users see 100%)
+  function stopRunVisuals() {
+    clearInterval(pulseTimer);
+
+    const b = btn();
+    const r = rail();
+
+    setRunProgress(100);
+
+    if (b) {
+      b.classList.remove("indet");
+      b.setAttribute("aria-busy", "false");
+    }
+    if (r) r.classList.remove("indet");
+
+    finishTimer = setTimeout(() => {
+      if (b) b.classList.remove("loading");
+      setRunProgress(0);
+    }, 700);
+  }
+
+  // Expose globally
+  window.setRunProgress  = setRunProgress;
+  window.startRunVisuals = startRunVisuals;
+  window.stopRunVisuals  = stopRunVisuals;
+})();
+
+  // Auto-align the sync rail to the actual Start/Done labels
+  (function () {
+    // Optionele directe selectors als je ze hebt
+    const SEL = {
+      start: '[data-step="start"], .sync-step--start, .sync-start',
+      done:  '[data-step="done"],  .sync-step--done,  .sync-done'
+    };
+
+    function findByText(root, word) {
+      const re = new RegExp(`(^|\\s)${word}(\\s|$)`, 'i');
+      let best = null, bestScore = Infinity;
+      root.querySelectorAll('*').forEach(el => {
+        if (!el.offsetParent) return;                    // only visible
+        const t = (el.textContent || '').trim();
+        if (!t || !re.test(t)) return;
+        const r = el.getBoundingClientRect();
+        // kies het kleinst-omlijnde element (meestal het labelspan)
+        const score = r.width * r.height;
+        if (score < bestScore) { best = el; bestScore = score; }
+      });
+      return best;
+    }
+
+    function findLabel(root, name) {
+      return root.querySelector(SEL[name]) || findByText(root, name);
+    }
+
+    function alignSyncRail() {
+      const rail = document.querySelector('.sync-rail, [data-role="sync-rail"]');
+      if (!rail) return;
+
+      // container die labels + rail bevat (pas aan indien nodig)
+      const host = rail.closest('.sync-header') || rail.parentElement || document.body;
+
+      const elStart = findLabel(host, 'start');
+      const elDone  = findLabel(host, 'done');
+      if (!elStart || !elDone) return;
+
+      const h = host.getBoundingClientRect();
+      const a = elStart.getBoundingClientRect();
+      const z = elDone.getBoundingClientRect();
+
+      const ml = Math.max(0, Math.round(a.left - h.left));
+      const mr = Math.max(0, Math.round(h.right - z.right));
+
+      rail.style.marginLeft  = ml + 'px';
+      rail.style.marginRight = mr + 'px';
+    }
+
+    // align wanneer layout klaar is en wanneer iets verandert
+    const requestAlign = () => requestAnimationFrame(alignSyncRail);
+    window.addEventListener('load', requestAlign);
+    window.addEventListener('resize', requestAlign);
+    // haak mee op jouw progress-events zodat late renders ook goed komen
+    window.addEventListener('ux:progress', requestAlign, { passive: true });
+
+    // als labels asynchroon verschijnen, observer helpt
+    const railHost = document.querySelector('.sync-rail, [data-role="sync-rail"]')?.parentElement;
+    if (railHost && 'MutationObserver' in window) {
+      new MutationObserver(() => requestAlign()).observe(railHost, { childList: true, subtree: true });
+    }
+  })();
+
+
 
 function toggleSection(id) {
   const el = document.getElementById(id);
@@ -817,12 +983,11 @@ async function runSync() {
   if (busy) return;
   const btn = document.getElementById("run");
   setBusy(true);
+  startRunVisuals(true);
 
-  
   const detLog = document.getElementById("det-log");
   if (detLog) detLog.textContent = "";
 
-  
   if (esDet) {
     try { esDet.close(); } catch (_) {}
     esDet = null;
@@ -1064,10 +1229,7 @@ async function checkForUpdate() {
   }
 }
 
-/* END Update Check (uses /api/version) */
 
-/* Summary Stream: Render */
-/* #-------------PASCAL----BEGIN----- summary-stream */
 function renderSummary(sum) {
   currentSummary = sum;
   window._ui = window._ui || {};
@@ -1112,8 +1274,9 @@ function renderSummary(sum) {
       if (tl.pre || tl.post || tl.done) btn.classList.remove("indet");
       else btn.classList.add("indet");
 
+
       if (!_wasRunning && !(tl.pre || tl.post || tl.done)) {
-        setRunProgress?.(8);
+        setRunProgress?.(0); // wait for real timeline/progress
       }
     } else {
       if (_wasRunning) {
@@ -1174,7 +1337,7 @@ function _ease(t) {
 }
 
 function animateNumber(
-/* #-------------PASCAL----END----- summary-stream */
+
 el, to) {
   const from = parseInt(el.dataset.v || "0", 10) || 0;
 
@@ -1445,6 +1608,19 @@ document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 // Small buffer used to assemble Server-Sent Events (SSE) chunks
 let detBuf = "";
 
+// Parseer JSON-regels uit de logstream en stuur ze door naar de progress-mapper
+function scanForEvents(chunk) {
+  const lines = String(chunk).split('\n');
+  for (const line of lines) {
+    if (!line || line[0] !== '{') continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj && obj.event) window.Progress?.onEvent(obj);
+    } catch (_) { /* non-JSON line; ignore */ }
+  }
+}
+
+
 function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
@@ -1505,6 +1681,8 @@ function openDetailsLog() {
       detBuf = "";
       return;
     }
+
+  try { scanForEvents(ev.data); } catch {}
 
   // DEBUG mode: skip all formatting
     if (window.appDebug) {
@@ -2961,17 +3139,19 @@ function renderConnections() {
     window.deletePair = deletePair;
   } catch (_) {}
 
-  
+
+
+  // --------------------------- Save Pair (create/update) ---------------------------
   async function cxSavePair(data) {
     try {
-      const modal = _getModal();
+      const modal = (typeof _getModal === "function" ? _getModal() : document.getElementById("cx-modal")) || null;
       const editingId =
         modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
 
-      
+      // De-dupe same source/target if creating (not when editing)
       if (
         !editingId &&
-        Array.isArray(window.cx.pairs) &&
+        Array.isArray(window.cx?.pairs) &&
         window.cx.pairs.some(
           (x) =>
             String(x.source || "").toUpperCase() ===
@@ -2984,10 +3164,12 @@ function renderConnections() {
         return;
       }
 
-      
+      // ---- Normalize features ------------------------------------------------
       const F = (data && data.features) || {};
       const DEF = { enable: true, add: true, remove: false };
-      function norm(feat) {
+
+      // Basic feature: only enable/add/remove
+      function normBasic(feat) {
         const v = Object.assign({}, DEF, feat || {});
         return {
           enable: !!v.enable,
@@ -2996,69 +3178,103 @@ function renderConnections() {
         };
       }
 
-      const features = {
-        watchlist: norm(F.watchlist),
-      };
-      if (F.ratings)   features.ratings   = norm(F.ratings);
-      if (F.history)   features.history   = norm(F.history);
-      if (F.playlists) features.playlists = norm(F.playlists);
+      // Ratings: keep toggles + pass through types/mode/from_date (sanitized)
+      function normRatings(feat) {
+        const v = Object.assign({}, DEF, feat || {});
+        const out = {
+          enable: !!v.enable,
+          add: !!v.add,
+          remove: !!v.remove,
+        };
+        // Preserve scope if present
+        if (Array.isArray(v.types)) out.types = v.types.map(String);
+        if (typeof v.mode === "string") out.mode = v.mode;
+        if (typeof v.from_date === "string") out.from_date = v.from_date.trim();
+        return out;
+      }
+
+      const features = {};
+      if (F.watchlist) features.watchlist = normBasic(F.watchlist);
+      if (F.history) features.history = normBasic(F.history);
+      if (F.playlists) features.playlists = normBasic(F.playlists);
+      if (F.ratings) features.ratings = normRatings(F.ratings);
+
+      // ---- Payload -----------------------------------------------------------
+      const modeIn = String(data.mode || "one-way").toLowerCase();
+      const mode =
+        modeIn === "two" || modeIn === "two-way" ? "two-way" : "one-way";
 
       const payload = {
         source: data.source,
         target: data.target,
-        mode: data.mode || "one-way",
+        mode,
         enabled: !!data.enabled,
         features,
       };
 
-      let ok = false, r;
+      // ---- Save via API ------------------------------------------------------
+      let ok = false;
+      let r;
       if (editingId) {
         r = await fetch(`/api/pairs/${encodeURIComponent(editingId)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        ok = r && r.ok;
+        ok = !!(r && r.ok);
       } else {
         r = await fetch("/api/pairs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        ok = r && r.ok;
+        ok = !!(r && r.ok);
       }
 
       if (!ok) {
-        const msg = r ? `${r.status} ${r.statusText}` : "network";
+        let msg = "network";
+        try {
+          msg = r ? `${r.status} ${r.statusText}` : "network";
+        } catch (_) {}
         console.warn("[cx] save failed:", msg);
         alert("Failed to save connection.");
         return;
       }
 
-      
+      // Reset modal state and refresh UI
       if (modal && modal.dataset) modal.dataset.editingId = "";
-      try { window.cx.connect = { source: null, target: null }; } catch (_) {}
-      try { if (typeof window.cxCloseModal === "function") window.cxCloseModal(); } catch (_) {}
+      try {
+        window.cx = window.cx || {};
+        window.cx.connect = { source: null, target: null };
+      } catch (_) {}
+      try {
+        if (typeof window.cxCloseModal === "function") window.cxCloseModal();
+      } catch (_) {}
       const close = document.getElementById("cx-modal");
       if (close) close.classList.add("hidden");
 
-      await loadPairs();
+      await (typeof loadPairs === "function" ? loadPairs() : Promise.resolve());
     } catch (e) {
       console.warn("[cx] cxSavePair error", e);
       alert("Failed to save connection.");
     }
   }
-  try { window.cxSavePair = cxSavePair; } catch (_) {}
 
-  
+  try {
+    window.cxSavePair = cxSavePair;
+  } catch (_) {}
+
+  // ------------------------- Open Modal (prefill helpers) -------------------------
   const _olderOpen = window.cxOpenModalFor;
   window.cxOpenModalFor = async function (pair, editingId) {
-    
+    // Delegate to the original (which builds the full UI & advanced Ratings)
     if (typeof _olderOpen === "function") {
-      try { await _olderOpen(pair, editingId); } catch (_) {}
+      try {
+        await _olderOpen(pair, editingId);
+      } catch (_) {}
     }
 
-    
+    // Ensure modal exists
     try {
       if (typeof cxEnsureCfgModal === "function") {
         await cxEnsureCfgModal();
@@ -3067,79 +3283,125 @@ function renderConnections() {
       }
     } catch (_) {}
 
-  
-  const __wait = (pred, ms = 1500, step = 25) =>
-    new Promise((res) => { const t0 = Date.now(); (function loop(){ if (pred() || Date.now() - t0 >= ms) return res(); setTimeout(loop, step); })(); });
+    // Wait for provider selects to be populated
+    const __wait = (pred, ms = 1500, step = 25) =>
+      new Promise((res) => {
+        const t0 = Date.now();
+        (function loop() {
+          if (pred() || Date.now() - t0 >= ms) return res();
+          setTimeout(loop, step);
+        })();
+      });
 
-  const m = document.getElementById("cx-modal") || (typeof _getModal === "function" ? _getModal() : null);
-  if (!m) return;
-  if (m.dataset) m.dataset.editingId = String(editingId || (pair && pair.id) || "");
+    const m =
+      document.getElementById("cx-modal") ||
+      (typeof _getModal === "function" ? _getModal() : null);
+    if (!m) return;
+    if (m.dataset)
+      m.dataset.editingId = String(editingId || (pair && pair.id) || "");
 
-  const q = (sel) => m.querySelector(sel) || document.querySelector(sel);
+    const q = (sel) => m.querySelector(sel) || document.querySelector(sel);
 
-  await __wait(() => {
-    const s = q("#cx-src"), d = q("#cx-dst");
-    return !!(s && d && s.querySelectorAll("option").length && d.querySelectorAll("option").length);
-  });
+    await __wait(() => {
+      const s = q("#cx-src"),
+        d = q("#cx-dst");
+      return !!(
+        s &&
+        d &&
+        s.querySelectorAll("option").length &&
+        d.querySelectorAll("option").length
+      );
+    });
 
-  try {
-    const src = q("#cx-src");
-    const dst = q("#cx-dst");
-    const one = q("#cx-mode-one") || q('input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]');
-    const two = q("#cx-mode-two") || q('input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]');
-    const en  = q("#cx-enabled");
+    try {
+      const src = q("#cx-src");
+      const dst = q("#cx-dst");
+      const one =
+        q("#cx-mode-one") ||
+        q(
+          'input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]'
+        );
+      const two =
+        q("#cx-mode-two") ||
+        q(
+          'input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]'
+        );
+      const en = q("#cx-enabled");
 
-    
-    if (src) { src.value = (pair && pair.source) || "PLEX"; try { src.dispatchEvent(new Event("change")); } catch(_) {} }
-    if (dst) { dst.value = (pair && pair.target) || "SIMKL"; try { dst.dispatchEvent(new Event("change")); } catch(_) {} }
+      // Source/Target
+      if (src) {
+        src.value = (pair && pair.source) || "PLEX";
+        try {
+          src.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
+      if (dst) {
+        dst.value = (pair && pair.target) || "SIMKL";
+        try {
+          dst.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
 
-    
-    if (en) en.checked = !(pair && pair.enabled === false);
+      // Enabled
+      if (en) en.checked = !(pair && pair.enabled === false);
 
-    
-    if (one && two) {
-      let mval = (pair && pair.mode) || "one-way";
-      if (mval === "one") mval = "one-way";
-      if (mval === "two") mval = "two-way";
-      two.checked = mval === "two-way";
-      one.checked = !two.checked;
-    }
+      // Mode
+      if (one && two) {
+        let mval = (pair && pair.mode) || "one-way";
+        if (mval === "one") mval = "one-way";
+        if (mval === "two") mval = "two-way";
+        two.checked = mval === "two-way";
+        one.checked = !two.checked;
+      }
 
-    
-    const f = (pair && pair.features && pair.features.watchlist) || {};
-    const wlEnable = q("#cx-wl-enable");
-    const wlAdd    = q("#cx-wl-add");
-    const wlRem    = q("#cx-wl-remove");
+      // Watchlist basics (Ratings & others are handled by original renderer)
+      const f = (pair && pair.features && pair.features.watchlist) || {};
+      const wlEnable = q("#cx-wl-enable");
+      const wlAdd = q("#cx-wl-add");
+      const wlRem = q("#cx-wl-remove");
 
-    const wlOn = ("enable" in f) ? !!f.enable : true;
-    if (wlEnable) {
-      wlEnable.checked = wlOn;
-      try { wlEnable.dispatchEvent(new Event("change")); } catch(_) {}
-    }
-    if (wlAdd) wlAdd.checked = !!f.add;
-    if (wlRem) {
-      wlRem.checked = !!f.remove;
-      wlRem.disabled = !wlOn;      
-    }
+      const wlOn = "enable" in f ? !!f.enable : true;
+      if (wlEnable) {
+        wlEnable.checked = wlOn;
+        try {
+          wlEnable.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
+      if (wlAdd) wlAdd.checked = !!f.add;
+      if (wlRem) {
+        wlRem.checked = !!f.remove;
+        wlRem.disabled = !wlOn;
+      }
 
-    m.classList.remove("hidden");
+      m.classList.remove("hidden");
 
-    
-    await new Promise(r => setTimeout(r, 0));
-    if (src && pair && pair.source) { src.value = pair.source; try { src.dispatchEvent(new Event("change")); } catch(_) {} }
-    if (dst && pair && pair.target) { dst.value = pair.target; try { dst.dispatchEvent(new Event("change")); } catch(_) {} }
+      // Re-apply after a tick (ensures labels update)
+      await new Promise((r) => setTimeout(r, 0));
+      if (src && pair && pair.source) {
+        src.value = pair.source;
+        try {
+          src.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
+      if (dst && pair && pair.target) {
+        dst.value = pair.target;
+        try {
+          dst.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
+      if (wlEnable) {
+        try {
+          wlEnable.dispatchEvent(new Event("change"));
+        } catch (_) {}
+      }
+      if (wlRem) wlRem.disabled = !(wlEnable ? wlEnable.checked : wlOn);
+    } catch (_) {}
+  };
 
-    
-    if (wlEnable) { try { wlEnable.dispatchEvent(new Event("change")); } catch(_) {} }
-    if (wlRem) wlRem.disabled = !(wlEnable ? wlEnable.checked : wlOn);
-
-  } catch (_) {}
-};
-
-  
+  // ------------------------------- Boot --------------------------------------
   document.addEventListener("DOMContentLoaded", () => {
     try {
-      loadPairs();
+      if (typeof loadPairs === "function") loadPairs();
     } catch (_) {}
   });
 })();

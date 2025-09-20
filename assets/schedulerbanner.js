@@ -1,8 +1,12 @@
 // /assets/schedulerbanner.js
 (() => {
+  // Guard against double initialization (prevents duplicate logs and listeners)
+  if (window.__SCHED_BANNER_INIT__) return;
+  window.__SCHED_BANNER_INIT__ = true;
+
   const $ = (s, r = document) => r.querySelector(s);
 
-  // ---------- locate the Sync Output container ----------
+  // Locate the Sync Output container
   function findSyncOutputBox() {
     const picks = ['#ops-out', '#ops_log', '#ops-card', '#sync-output', '.sync-output', '#ops'];
     for (const sel of picks) { const n = $(sel); if (n) return n; }
@@ -12,11 +16,12 @@
     return null;
   }
 
-  // ---------- ensure an inline footer inside the output box ----------
+  // Ensure an inline footer inside the output box
   function ensureFooter() {
     const host = findSyncOutputBox();
     if (!host) return null;
-  // Ensure the host can be positioned so our label can be absolutely positioned
+
+    // Allow absolute child positioning if needed
     const st = getComputedStyle(host);
     if (st.position === 'static') host.style.position = 'relative';
 
@@ -34,7 +39,7 @@
     return f;
   }
 
-  // ---------- format helpers ----------
+  // Format helpers
   function fmtClockFromEpochSec(epochSec) {
     if (!epochSec) return '—';
     const ms = epochSec < 10_000_000_000 ? epochSec * 1000 : epochSec;
@@ -54,10 +59,19 @@
     return `${s}s`;
   }
 
-  // ---------- state ----------
+  // State
   let enabled = false;
   let running = false;
   let nextRunAt = 0; // epoch seconds
+  let _inFlight = false;
+  let _refreshPend = false;
+
+  // Debounced refresh (coalesces bursts from multiple events)
+  function requestRefresh() {
+    if (_refreshPend) return;
+    _refreshPend = true;
+    setTimeout(() => { _refreshPend = false; fetchStatus(); }, 120);
+  }
 
   function render() {
     const el = ensureFooter();
@@ -77,8 +91,7 @@
     el.style.display = 'block';
   }
 
-  // ---------- backend poll (status endpoint) ----------
-  let _inFlight = false;
+  // Backend poll (status endpoint)
   async function fetchStatus() {
     if (_inFlight) return;
     _inFlight = true;
@@ -100,47 +113,47 @@
     render();
   }
 
-  // Expose manual refresh for other modules
-  window.refreshSchedulingBanner = fetchStatus;
+  // Expose a debounced manual refresh for other modules
+  window.refreshSchedulingBanner = requestRefresh;
 
-  // ---------- boot & event wiring ----------
+  // Boot & event wiring
   document.addEventListener('DOMContentLoaded', () => {
     const wait = setInterval(() => {
       if (findSyncOutputBox()) {
         clearInterval(wait);
         fetchStatus();
 
-  // Poll: refresh status every 30s; update countdown every second
+        // Poll: refresh status every 30s; update countdown every second
         try { clearInterval(window._schedPoll); } catch {}
         window._schedPoll = setInterval(fetchStatus, 30000);
 
         try { clearInterval(window._schedTick); } catch {}
         window._schedTick = setInterval(render, 1000);
 
-  // Announce readiness to other modules (for example: crosswatch.js showTab/settings)
+        // Announce readiness to other modules
         try { window.dispatchEvent(new Event('sched-banner-ready')); } catch {}
       }
     }, 300);
 
-  // Refresh when the document becomes visible again
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchStatus(); });
+    // Visibility change: refresh when tab becomes visible
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) requestRefresh(); }, { passive: true });
 
-  // React immediately after settings are saved (triggered by saveSettings())
+    // React after settings are saved (only when scheduling changed or unspecified)
     document.addEventListener('config-saved', (e) => {
       const sec = e?.detail?.section;
-      if (!sec || sec === 'scheduling') fetchStatus();
+      if (!sec || sec === 'scheduling') requestRefresh();
     });
 
-  // Optional broadcast event that other modules may emit
-    document.addEventListener('scheduling-status-refresh', fetchStatus);
+    // Optional broadcast event that other modules may emit
+    document.addEventListener('scheduling-status-refresh', requestRefresh);
 
-  // If the app emits tab-change events, refresh when switching to main or settings
+    // If the app emits tab-change events, refresh when switching to main or settings
     document.addEventListener('tab-changed', (e) => {
       const id = e?.detail?.id;
-      if (id === 'main' || id === 'settings') fetchStatus();
+      if (id === 'main' || id === 'settings') requestRefresh();
     });
 
-  // On window focus (Alt+Tab back)
-    window.addEventListener('focus', fetchStatus);
+    // On window focus (Alt+Tab back)
+    window.addEventListener('focus', requestRefresh);
   });
 })();

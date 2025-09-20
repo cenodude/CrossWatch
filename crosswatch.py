@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 # --------------- Imports ---------------
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
+
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -61,6 +62,7 @@ from _watchlist import build_watchlist, delete_watchlist_item
 
 from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
+from cw_platform.orchestrator import canonical_key
 from cw_platform import config_base
 
 try:
@@ -405,7 +407,7 @@ async def _lifespan(app):
                 from providers.scrobble.trakt.sink import TraktSink
                 from providers.scrobble.plex.watch import make_default_watch  # available in NEW fallback too
                 w2 = make_default_watch(sinks=[TraktSink()])
-                # Apply optional filters if your provider supports it
+
                 try:
                     filters = ((sc.get("watch") or {}).get("filters") or {})
                     if hasattr(w2, "set_filters") and isinstance(filters, dict):
@@ -541,15 +543,20 @@ def _feature_enabled(fmap: dict, name: str) -> tuple[bool, bool]:
 
 
 def _item_sig_key(v: dict) -> str:
-    ids = (v.get("ids") or {})
-    for k in ("tmdb", "imdb", "tvdb", "slug"):
-        val = ids.get(k)
-        if val:
-            return f"{k}:{val}".lower()
-    t = (str(v.get("title") or v.get("name") or "")).strip().lower()
-    y = str(v.get("year") or v.get("release_year") or "")
-    typ = (v.get("type") or "").lower()
-    return f"{typ}|title:{t}|year:{y}"
+    try:
+        return canonical_key(v)
+    except Exception:
+        # Fallback (oude logica)
+        ids = (v.get("ids") or {})
+        for k in ("tmdb", "imdb", "tvdb", "slug"):
+            val = ids.get(k)
+            if val:
+                return f"{k}:{val}".lower()
+        t = (str(v.get("title") or v.get("name") or "")).strip().lower()
+        y = str(v.get("year") or v.get("release_year") or "")
+        typ = (v.get("type") or "").lower()
+        return f"{typ}|title:{t}|year:{y}"
+
 
 
 def _persist_state_via_orc(orc: Orchestrator, *, feature: str = "watchlist") -> dict:
@@ -559,8 +566,14 @@ def _persist_state_via_orc(orc: Orchestrator, *, feature: str = "watchlist") -> 
     seen = set()
 
     for prov, idx in (snaps or {}).items():
-        providers[prov] = {"items": idx}
-        for item in (idx or {}).values():
+        items_min = {k: minimal(v) for k, v in (idx or {}).items()}
+        providers[prov] = {
+            feature: {
+                "baseline": {"items": items_min},
+                "checkpoint": None,
+            }
+        }
+        for item in items_min.values():
             key = _item_sig_key(item)
             if key in seen:
                 continue
@@ -574,6 +587,7 @@ def _persist_state_via_orc(orc: Orchestrator, *, feature: str = "watchlist") -> 
     }
     orc.files.save_state(state)
     return state
+
 
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
@@ -953,10 +967,11 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
 
     def ids_of(v: dict) -> Dict[str, str]:
         ids = dict(v.get("ids") or {})
-        for k in ("tmdb", "imdb", "tvdb", "slug"):
+        for k in ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug"):
             if k not in ids and v.get(k):
                 ids[k] = str(v[k])
         return {k: str(val) for k, val in ids.items() if val is not None}
+
 
     def sig_title_year(v: dict) -> str:
         t = (v.get("title") or v.get("name") or "").strip().lower()
@@ -971,7 +986,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     def alias_keys(v: dict) -> List[str]:
         t = norm_type(v); ids = ids_of(v)
         out = []
-        for k in ("tmdb", "imdb", "tvdb", "slug"):
+        for k in ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug"):
             val = ids.get(k)
             if val:
                 out.append(f"{t}:{k}:{val}")
@@ -979,13 +994,15 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             out.append(f"{t}:sig:{sig_title_year(v)}")
         return out
 
+
     def primary_key(v: dict) -> str:
         t = norm_type(v); ids = ids_of(v)
-        for k in ("tmdb", "imdb", "tvdb", "slug"):
+        for k in ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug"):
             val = ids.get(k)
             if val:
                 return f"{t}:{k}:{val}"
         return f"{t}:sig:{sig_title_year(v)}"
+
 
     buckets: Dict[str, Dict[str, Any]] = {}
     alias2bucket: Dict[str, str] = {}
@@ -1641,14 +1658,15 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     """
     Returns:
       - series:   last N (time,count) samples (ascending)
-      - history:  last few sync reports (with per-feature breakdown)
+      - history:  last few sync reports (with per-feature breakdown; lanes backfilled from Stats if empty)
       - watchtime:estimated minutes/hours/days with method=tmdb|fallback|mixed
-      - providers:{ plex, simkl, trakt } totals (derived from state.json)
+      - providers:{ plex, simkl, trakt } totals (derived from state.json; watchlist for back-compat)
+      - providers_by_feature:{watchlist|ratings|history|playlists -> {plex,simkl,trakt}}
       - providers_active:{ plex, simkl, trakt } booleans (from configured pairs)
       - now/week/month: high-level counts from Stats.overview()
       - added/removed/new/del: cumulative + last-run counters from Stats.overview()
     """
-    # Samples
+    # Samples (keep stable shape)
     with STATS.lock:
         samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -1666,41 +1684,53 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         )[:max(1, int(history))]
 
         def zero_lane():
-            return {"added": 0, "removed": 0, "updated": 0}
+            return {"added": 0, "removed": 0, "updated": 0,
+                    "spotlight_add": [], "spotlight_remove": [], "spotlight_update": []}
 
         for p in files:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
 
-                # Normalize features + enabled (backwards-compatible)
-                feats = d.get("features") or {}
+                # Normalized lanes present in the file (may be all zeros)
+                feats_in = d.get("features") or {}
                 lanes = {
-                    "watchlist": feats.get("watchlist") or zero_lane(),
-                    "ratings":   feats.get("ratings")   or zero_lane(),
-                    "history":   feats.get("history")   or zero_lane(),
-                    "playlists": feats.get("playlists") or zero_lane(),
+                    "watchlist": feats_in.get("watchlist") or zero_lane(),
+                    "ratings":   feats_in.get("ratings")   or zero_lane(),
+                    "history":   feats_in.get("history")   or zero_lane(),
+                    "playlists": feats_in.get("playlists") or zero_lane(),
                 }
 
-                enabled = d.get("enabled")
-                if not isinstance(enabled, dict):
-                    # Fallback: mark lane enabled if present with any non-zero, else False.
-                    enabled = {}
-                    for k, v in lanes.items():
-                        enabled[k] = bool((v.get("added") or 0) or (v.get("removed") or 0) or (v.get("updated") or 0))
+                # Compute the time window for this report
+                since = _parse_epoch(d.get("raw_started_ts") or d.get("started_at"))
+                until = _parse_epoch(d.get("finished_at"))
+                if not until:
+                    # fallback: use file mtime if finished_at is missing
+                    until = int(p.stat().st_mtime)
 
-                # Totals: prefer explicit *_last fields; else derive from lanes over enabled
+                # Backfill empty/missing lanes from Stats events within [since, until]
+                stats_feats, stats_enabled = _compute_lanes_from_stats(since, until)
+                for name in ("watchlist", "ratings", "history", "playlists"):
+                    lane = lanes.get(name)
+                    if name not in lanes or _lane_is_empty(lane):
+                        lanes[name] = stats_feats.get(name) or zero_lane()
+
+                # Enabled map: prefer explicit, else stats-derived, else sane defaults
+                enabled = d.get("features_enabled") or d.get("enabled")
+                if not isinstance(enabled, dict):
+                    enabled = dict(stats_enabled)  # defaults to all True if Stats had nothing
+
+                # Totals: prefer explicit *_last; else derive by summing enabled lanes
                 added_total   = d.get("added_last")
                 removed_total = d.get("removed_last")
                 updated_total = d.get("updated_last")
-
                 if added_total is None or removed_total is None or updated_total is None:
                     a = r = u = 0
-                    for k, data in lanes.items():
+                    for k, lane in lanes.items():
                         if enabled.get(k) is False:
                             continue
-                        a += int((data or {}).get("added")   or 0)
-                        r += int((data or {}).get("removed") or 0)
-                        u += int((data or {}).get("updated") or 0)
+                        a += int((lane or {}).get("added")   or 0)
+                        r += int((lane or {}).get("removed") or 0)
+                        u += int((lane or {}).get("updated") or 0)
                     if added_total   is None: added_total   = a
                     if removed_total is None: removed_total = r
                     if updated_total is None: updated_total = u
@@ -1716,7 +1746,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     "added":        int(added_total or 0),
                     "removed":      int(removed_total or 0),
 
-                    # Per-feature breakdown + enabled map
+                    # Per-feature breakdown + enabled map (now filtered by actual lane)
                     "features":         lanes,
                     "features_enabled": enabled,
                     "updated_total":    int(updated_total or 0),
@@ -1805,7 +1835,13 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         pass
 
     # Provider totals from state.json (keys are uppercase: PLEX/SIMKL/TRAKT)
-    providers = {"plex": 0, "simkl": 0, "trakt": 0}
+    providers = {"plex": 0, "simkl": 0, "trakt": 0}  # back-compat: watchlist only
+    providers_by_feature = {
+        "watchlist": {"plex": 0, "simkl": 0, "trakt": 0},
+        "ratings":   {"plex": 0, "simkl": 0, "trakt": 0},
+        "history":   {"plex": 0, "simkl": 0, "trakt": 0},
+        "playlists": {"plex": 0, "simkl": 0, "trakt": 0},
+    }
     try:
         if state is None:
             try:
@@ -1816,9 +1852,13 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         prov = (state or {}).get("providers") or {}
         for upcase, data in prov.items():
             key = str(upcase or "").strip().lower()
-            if key in providers:
-                wl = (((data or {}).get("watchlist") or {}).get("baseline") or {}).get("items") or {}
-                providers[key] = int(len(wl))
+            if key not in ("plex", "simkl", "trakt"):
+                continue
+            for feat in ("watchlist", "ratings", "history", "playlists"):
+                items = ((((data or {}).get(feat) or {}).get("baseline") or {}).get("items") or {})
+                providers_by_feature[feat][key] = int(len(items))
+        # Back-compat top-level `providers` = watchlist totals
+        providers = dict(providers_by_feature.get("watchlist", providers))
     except Exception:
         pass
 
@@ -1829,11 +1869,12 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         top = {}
 
     payload = {
-        "series":            series,
-        "history":           rows,
-        "watchtime":         watchtime,
-        "providers":         providers,
-        "providers_active":  active,
+        "series":               series,
+        "history":              rows,
+        "watchtime":            watchtime,
+        "providers":            providers,
+        "providers_by_feature": providers_by_feature,
+        "providers_active":     active,
     }
     # Also expose cumulative and last-run counters
     for k in ("now", "week", "month", "added", "removed", "new", "del"):
@@ -1841,6 +1882,8 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
             payload[k] = top[k]
 
     return JSONResponse(payload)
+
+
 
 # --------------- Middleware ---------------
 @app.middleware("http")
@@ -2187,8 +2230,9 @@ def favicon_ico():
 # --------------- Version / update ---------------
 STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
+PROBE_TTL  = 30
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.0")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.1")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -2289,6 +2333,12 @@ _PROBE_CACHE: Dict[str, Tuple[float, bool]] = {
     "trakt": (0.0, False),
 }
 
+# Extra per-user capability cache (Plex Pass / Trakt VIP)
+_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {
+    "plex":  (0.0, {}),
+    "trakt": (0.0, {}),
+}
+USERINFO_TTL = 600  # seconds
 
 def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
@@ -2300,6 +2350,95 @@ def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> Tuple[int,
     except Exception:
         return 0, b""
 
+def _json_loads(b: bytes) -> dict:
+    try:
+        return json.loads(b.decode("utf-8", errors="ignore"))
+    except Exception:
+        return {}
+
+def plex_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
+    ts, info = _USERINFO_CACHE["plex"]
+    now = time.time()
+    if now - ts < max_age_sec and isinstance(info, dict):
+        return info
+
+    token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
+    if not token:
+        _USERINFO_CACHE["plex"] = (now, {})
+        return {}
+
+    # 1) Try plexapi if available
+    plexpass = None
+    plan = None
+    status = None
+    if HAVE_PLEXAPI:
+        try:
+            acc = MyPlexAccount(token=token)
+            plexpass = bool(getattr(acc, "subscriptionActive", None) or getattr(acc, "hasPlexPass", None))
+            plan = getattr(acc, "subscriptionPlan", None) or None
+            status = getattr(acc, "subscriptionStatus", None) or None
+        except Exception:
+            pass
+
+    # 2) Fallback to REST v2 (JSON)
+    if plexpass is None:
+        headers = {
+            "X-Plex-Token": token,
+            "X-Plex-Client-Identifier": "crosswatch",
+            "X-Plex-Product": "CrossWatch",
+            "X-Plex-Version": "1.0",
+            "Accept": "application/json",
+            "User-Agent": "CrossWatch/1.0",
+        }
+        code, body = _http_get("https://plex.tv/api/v2/user", headers=headers, timeout=8)
+        if code == 200:
+            j = _json_loads(body)
+            sub = (j.get("subscription") or {})
+            plexpass = bool(sub.get("active") or j.get("hasPlexPass"))
+            plan = sub.get("plan") or plan
+            status = sub.get("status") or status
+
+    out = {}
+    if plexpass is not None:
+        out["plexpass"] = bool(plexpass)
+        out["subscription"] = {"plan": plan, "status": status}
+    _USERINFO_CACHE["plex"] = (now, out)
+    return out
+
+def trakt_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
+    ts, info = _USERINFO_CACHE["trakt"]
+    now = time.time()
+    if now - ts < max_age_sec and isinstance(info, dict):
+        return info
+
+    tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})  # uppercase fallback
+    auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
+    cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
+    tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
+    if not cid or not tok:
+        _USERINFO_CACHE["trakt"] = (now, {})
+        return {}
+
+    headers = {
+        "Authorization": f"Bearer {tok}",
+        "trakt-api-key": cid,
+        "trakt-api-version": "2",
+        "Accept": "application/json",
+        "User-Agent": "CrossWatch/1.0",
+    }
+    code, body = _http_get("https://api.trakt.tv/users/settings", headers=headers, timeout=8)
+    out = {}
+    if code == 200:
+        j = _json_loads(body)
+        u = j.get("user") or {}
+        # Trakt exposeert soms meerdere VIP flags; pak wat er is.
+        vip = bool(u.get("vip") or u.get("vip_og") or u.get("vip_ep"))
+        vip_type = "vip"
+        if u.get("vip_og"): vip_type = "vip_og"
+        if u.get("vip_ep"): vip_type = "vip_ep"
+        out = {"vip": vip, "vip_type": vip_type}
+    _USERINFO_CACHE["trakt"] = (now, out)
+    return out
 
 def probe_plex(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["plex"]
@@ -2332,9 +2471,9 @@ def probe_simkl(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     if now - ts < max_age_sec:
         return ok
 
-    simkl = cfg.get("simkl", {}) or {}
-    cid = (simkl.get("client_id") or "").strip()
-    tok = (simkl.get("access_token") or "").strip()
+    sk = (cfg.get("simkl") or cfg.get("SIMKL") or {})  # <-- uppercase fallback
+    cid = (sk.get("client_id") or "").strip()
+    tok = (sk.get("access_token") or sk.get("token") or "").strip()  # token fallback
     if not cid or not tok:
         _PROBE_CACHE["simkl"] = (now, False)
         return False
@@ -2357,9 +2496,18 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     if now - ts < max_age_sec:
         return ok
 
-    tr = cfg.get("trakt", {}) or {}
-    cid = (tr.get("client_id") or "").strip()
-    tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or (tr.get("access_token") or "").strip()
+    tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})  # <-- uppercase fallback
+    auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
+
+    cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
+    tok = (
+        auth_tr.get("access_token")
+        or tr.get("access_token")
+        or tr.get("token")            # token fallback
+        or ""
+    )
+    tok = str(tok).strip()
+
     if not cid or not tok:
         _PROBE_CACHE["trakt"] = (now, False)
         return False
@@ -2375,6 +2523,7 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ok = (code == 200)
     _PROBE_CACHE["trakt"] = (now, ok)
     return ok
+
 
 
 def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
@@ -2447,28 +2596,71 @@ def trakt_request_pin() -> dict:
 
 
 def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: float = 2.0) -> str | None:
+    """
+    Poll for a finished Trakt device flow.
+
+    Fix: when a token file is detected, persist it into the config before returning,
+    so /api/status -> probe_trakt() can see access_token/refresh_token/expires_at.
+    """
     try:
         from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
     except Exception:
         _TRAKT_PROVIDER = None
-    if _TRAKT_PROVIDER is None:
-        return None
 
     deadline = time.time() + max(0, int(timeout_sec))
     sleep_s = max(0.5, float(interval))
 
     while time.time() < deadline:
-        cfg = load_config()
-        tok = ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token") or (cfg.get("trakt") or {}).get("access_token")
+        cfg = load_config() or {}
+
+        # 1) try to read a token produced by the helper/provider
+        tok = None
+        if _TRAKT_PROVIDER is not None:
+            try:
+                tok = _TRAKT_PROVIDER.read_token_file(cfg, device_code)
+            except Exception:
+                tok = None
+
         if tok:
-            return tok
-        try:
-            _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
-            save_config(cfg)
-        except Exception:
-            pass
+            # NEW: persist into cfg before returning
+            try:
+                if _TRAKT_PROVIDER is not None:
+                    _TRAKT_PROVIDER.finish(cfg, device_code=device_code)  # writes tokens into cfg["trakt"]
+                    save_config(cfg)
+                else:
+                    # very defensive fallback: try to parse JSON-like token content
+                    if isinstance(tok, str):
+                        try:
+                            tok = json.loads(tok)
+                        except Exception:
+                            tok = {}
+                    if isinstance(tok, dict):
+                        tr = cfg.setdefault("trakt", {})
+                        tr["access_token"]  = tok.get("access_token")  or tr.get("access_token", "")
+                        tr["refresh_token"] = tok.get("refresh_token") or tr.get("refresh_token", "")
+                        exp = int(tok.get("created_at") or 0) + int(tok.get("expires_in") or 0)
+                        if not exp:
+                            exp = int(time.time()) + 90 * 24 * 3600  # conservative default
+                        tr["expires_at"] = exp
+                        tr["token_type"] = tok.get("token_type") or "bearer"
+                        tr["scope"] = tok.get("scope") or tr.get("scope", "public")
+                        save_config(cfg)
+            except Exception:
+                pass
+            return "ok"
+
+        # 2) nudge the provider to complete the code exchange (idempotent)
+        if _TRAKT_PROVIDER is not None:
+            try:
+                _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
+                save_config(cfg)
+            except Exception:
+                pass
+
         time.sleep(sleep_s)
+
     return None
+
 
 
 @app.post("/api/trakt/pin/new")
@@ -2521,10 +2713,15 @@ def api_status(fresh: int = Query(0)):
         return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
     cfg = load_config()
-    plex_ok  = probe_plex(cfg,  max_age_sec=STATUS_TTL)
-    simkl_ok = probe_simkl(cfg, max_age_sec=STATUS_TTL)
-    trakt_ok = probe_trakt(cfg, max_age_sec=STATUS_TTL)
+    probe_age = 0 if fresh else PROBE_TTL
+    plex_ok  = probe_plex(cfg,  max_age_sec=probe_age)
+    simkl_ok = probe_simkl(cfg, max_age_sec=probe_age)
+    trakt_ok = probe_trakt(cfg, max_age_sec=probe_age)
     debug    = bool(cfg.get("runtime", {}).get("debug"))
+
+    # NEW: enrichments (cached)
+    info_plex  = plex_user_info(cfg,  max_age_sec=USERINFO_TTL) if plex_ok  else {}
+    info_trakt = trakt_user_info(cfg, max_age_sec=USERINFO_TTL) if trakt_ok else {}
 
     data = {
         "plex_connected":  plex_ok,
@@ -2533,27 +2730,330 @@ def api_status(fresh: int = Query(0)):
         "debug":           debug,
         "can_run":         bool((plex_ok or trakt_ok) and simkl_ok),
         "ts":              int(now),
+
+        "providers": {
+            "PLEX":  {"connected": plex_ok,  **({} if not info_plex else {
+                "plexpass": bool(info_plex.get("plexpass")),
+                "subscription": info_plex.get("subscription") or {}
+            })},
+            "SIMKL": {"connected": simkl_ok},
+            "TRAKT": {"connected": trakt_ok, **({} if not info_trakt else {
+                "vip": bool(info_trakt.get("vip")),
+                "vip_type": info_trakt.get("vip_type")
+            })},
+        },
     }
     STATUS_CACHE["ts"]   = now
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
+@app.post("/api/debug/clear_probe_cache")
+def clear_probe_cache():
+    for k in list(_PROBE_CACHE.keys()):
+        _PROBE_CACHE[k] = (0.0, False)
+    STATUS_CACHE["ts"] = 0.0
+    STATUS_CACHE["data"] = None
+    return {"ok": True}
+
+
+# --- Ratings spotlight helpers (summary) ---
+_R_ACTION_MAP = {
+    "add": "add", "rate": "add",
+    "remove": "remove", "unrate": "remove",
+    "update": "update", "update_rating": "update",
+}
+
+def _lane_init():
+    return {
+        "added": 0, "removed": 0, "updated": 0,
+        "spotlight_add": [], "spotlight_remove": [], "spotlight_update": []
+    }
+
+def _push_spotlight(lane: dict, kind: str, items: list, max3: bool = True):
+    # Keeps up to 3 titles for UI
+    key = {"add":"spotlight_add","remove":"spotlight_remove","update":"spotlight_update"}[kind]
+    dst = lane[key]
+    for it in (items or []):
+        title = (it.get("title") or it.get("name") or it.get("key") or str(it))[:200]
+        if title and title not in dst:
+            dst.append(title)
+            if max3 and len(dst) >= 3:
+                break
+
+def _ensure_feature(summary_obj: dict, feature: str) -> dict:
+    feats = summary_obj.setdefault("features", {})
+    lane = feats.setdefault(feature, _lane_init())
+    for k, v in _lane_init().items():
+        lane.setdefault(k, [] if k.startswith("spotlight_") else 0)
+    return lane
+
+
+# --- Summary helpers (per-feature fill + ratings fallback) ---
+def _lane_is_empty(v: dict | None) -> bool:
+    if not isinstance(v, dict):
+        return True
+    has_counts = (v.get("added") or 0) + (v.get("removed") or 0) + (v.get("updated") or 0) > 0
+    has_spots  = any(v.get(k) for k in ("spotlight_add","spotlight_remove","spotlight_update"))
+    return not (has_counts or has_spots)
+
+def _push_spot_titles(dst: list, items: list, max3: bool = True):
+    # Keep up to 3 human titles
+    for it in (items or []):
+        t = (it.get("title") or it.get("name") or it.get("key") or str(it))[:200]
+        if t and t not in dst:
+            dst.append(t)
+            if max3 and len(dst) >= 3:
+                break
+
+def _augment_ratings_from_file(summary_obj: dict) -> None:
+    """Fill Ratings lane spotlights from orchestrator snapshot; keep existing counts."""
+    feats = summary_obj.setdefault("features", {})
+    lane = feats.setdefault("ratings", {
+        "added": 0, "removed": 0, "updated": 0,
+        "spotlight_add": [], "spotlight_remove": [], "spotlight_update": []
+    })
+
+    # Only gate on spotlights (we want to fill them even if counts exist)
+    have_spots = bool(lane.get("spotlight_add") or lane.get("spotlight_remove") or lane.get("spotlight_update"))
+    if have_spots and all(
+        isinstance(lane.get(k), list) and lane.get(k) for k in ("spotlight_add", "spotlight_remove", "spotlight_update")
+    ):
+        return  # already populated
+
+    # --- helpers
+    def _to_epoch(s: str | None) -> int:
+        if not s or not isinstance(s, str):
+            return 0
+        try:
+            ss = s.strip()
+            if ss.endswith("Z"): ss = ss[:-1] + "+00:00"
+            dt = datetime.fromisoformat(ss)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return 0
+
+    def _canon_key(it: dict) -> str:
+        ids = (it.get("ids") or {})
+        for k in ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug"):
+            v = ids.get(k)
+            if v is not None:
+                return f"{k}:{str(v).lower()}"
+        t = str(it.get("title") or it.get("name") or "").strip().lower()
+        y = str(it.get("year") or "")
+        typ = str(it.get("type") or "").strip().lower()
+        return f"{typ}|title:{t}|year:{y}"
+
+    def _title_of(it: dict) -> str | None:
+        t = it.get("title") or it.get("name") or None
+        if not t: return None
+        y = it.get("year")
+        return f"{t} ({y})" if y else str(t)
+
+    def _push(dst: list, items: list, max3: bool = True):
+        seen = set(dst)
+        for it in items:
+            title = _title_of(it) or (it.get("key") if isinstance(it.get("key"), str) else None)
+            if not title or title in seen:
+                continue
+            dst.append(title); seen.add(title)
+            if max3 and len(dst) >= 3:
+                break
+
+    # --- robust base dir resolution (no fragile relative import)
+    base_dir_candidates: list[Path] = []
+    try:
+        # absolute package import
+        from cw_platform import config_base as _cb  # type: ignore
+        if hasattr(_cb, "CONFIG_BASE"):
+            base_dir_candidates.append(Path(_cb.CONFIG_BASE()))
+        if hasattr(_cb, "CONFIG"):
+            base_dir_candidates.append(Path(_cb.CONFIG))
+    except Exception:
+        try:
+            # relative import fallback
+            from . import config_base as _cb  # type: ignore
+            if hasattr(_cb, "CONFIG_BASE"):
+                base_dir_candidates.append(Path(_cb.CONFIG_BASE()))
+            if hasattr(_cb, "CONFIG"):
+                base_dir_candidates.append(Path(_cb.CONFIG))
+        except Exception:
+            pass
+
+    # env var + cwd fallbacks
+    if os.getenv("CW_CONFIG_BASE"):
+        base_dir_candidates.append(Path(os.getenv("CW_CONFIG_BASE")))
+    base_dir_candidates.append(Path(".").resolve())
+
+    # find ratings_changes.json
+    snap_file = None
+    for bd in base_dir_candidates:
+        for p in (bd / "ratings_changes.json", bd / "data" / "ratings_changes.json"):
+            if p.exists():
+                snap_file = p
+                break
+        if snap_file:
+            break
+    if not snap_file:
+        return
+
+    # read + normalize payload
+    try:
+        data = json.loads(snap_file.read_text("utf-8") or "{}")
+    except Exception:
+        return
+    if data.get("feature") != "ratings":
+        return
+
+    def _norm_lists(obj: dict) -> tuple[list, list, list]:
+        if "to_A" in obj or "to_B" in obj:
+            toA = obj.get("to_A") or {}
+            toB = obj.get("to_B") or {}
+            adds = list((toA.get("adds") or [])) + list((toB.get("adds") or []))
+            upds = list((toA.get("updates") or [])) + list((toB.get("updates") or []))
+            rems = list((toA.get("removes") or [])) + list((toB.get("removes") or []))
+        else:
+            adds = list(obj.get("adds") or [])
+            upds = list(obj.get("updates") or [])
+            rems = list(obj.get("removes") or [])
+        return adds, upds, rems
+
+    adds, upds, rems = _norm_lists(data)
+
+    # de-dupe by canonical id; newest first by rated_at
+    def _dedupe_and_sort(items: list) -> list:
+        by_key = {}
+        for it in items:
+            by_key[_canon_key(it)] = it
+        return sorted(by_key.values(), key=lambda x: _to_epoch(x.get("rated_at")), reverse=True)
+
+    adds = _dedupe_and_sort(adds)
+    upds = _dedupe_and_sort(upds)
+    rems = _dedupe_and_sort(rems)
+
+    # spotlights (max 3 each)
+    if not lane.get("spotlight_add"):    _push(lane["spotlight_add"], adds)
+    if not lane.get("spotlight_update"): _push(lane["spotlight_update"], upds)
+    if not lane.get("spotlight_remove"): _push(lane["spotlight_remove"], rems)
+
+    # counts: only fill if still zero (keep stats-based counts intact)
+    if lane.get("added", 0) == 0:   lane["added"]   = len(adds)
+    if lane.get("updated", 0) == 0: lane["updated"] = len(upds)
+    if lane.get("removed", 0) == 0: lane["removed"] = len(rems)
+
+
+# --- helpers: ratings schema (pair-level) ------------------------------------
+
+_ALLOWED_RATING_TYPES: List[str] = ["movies", "shows", "seasons", "episodes"]
+_ALLOWED_RATING_MODES: List[str] = ["only_new", "from_date", "all"]
+
+def _ensure_pair_ratings_defaults(cfg: Dict[str, Any]) -> None:
+    """
+    Ensure each pair has a ratings block with UI-safe defaults (GET path only).
+    """
+    for p in (cfg.get("pairs") or []):
+        rt = p.setdefault("features", {}).setdefault("ratings", {})
+        rt.setdefault("enable", False)
+        rt.setdefault("add", False)
+        rt.setdefault("remove", False)
+        rt.setdefault("types", ["movies", "shows"])
+        rt.setdefault("mode", "only_new")
+        rt.setdefault("from_date", "")
+
+def _normalize_pair_ratings(p: Dict[str, Any]) -> None:
+    """
+    Validate/normalize pair.features.ratings in-place (POST path).
+    Keeps types/mode/from_date in the saved config.
+    """
+    feats = p.setdefault("features", {})
+    rt = feats.setdefault("ratings", {})
+    if not isinstance(rt, dict):
+        feats["ratings"] = {"enable": False, "add": False, "remove": False,
+                            "types": ["movies", "shows"], "mode": "only_new", "from_date": ""}
+        return
+
+    # Booleans
+    rt["enable"] = bool(rt.get("enable"))
+    rt["add"]    = bool(rt.get("add"))
+    rt["remove"] = bool(rt.get("remove"))
+
+    # Types
+    in_types = rt.get("types", [])
+    if isinstance(in_types, str):
+        in_types = [in_types]
+    in_types = [str(t).strip().lower() for t in in_types if isinstance(t, str)]
+    if "all" in in_types:
+        norm_types = list(_ALLOWED_RATING_TYPES)
+    else:
+        norm_types = [t for t in _ALLOWED_RATING_TYPES if t in in_types]
+        if not norm_types:
+            norm_types = ["movies", "shows"]
+    rt["types"] = norm_types
+
+    # Mode + from_date
+    mode = str(rt.get("mode", "only_new")).strip().lower()
+    if mode not in _ALLOWED_RATING_MODES:
+        mode = "only_new"
+    rt["mode"] = mode
+
+    fd = str(rt.get("from_date", "") or "").strip()
+    if mode == "from_date":
+        try:
+            d = date.fromisoformat(fd)
+        except Exception:
+            d = None
+        if not d or d > date.today():
+            rt["mode"] = "only_new"
+            rt["from_date"] = ""
+        else:
+            rt["from_date"] = d.isoformat()
+    else:
+        rt["from_date"] = ""
+
+# --- helper: remove legacy ratings keys + optional migration -----------------
+def _prune_legacy_ratings(cfg: Dict[str, Any]) -> None:
+    """
+    Remove top-level 'ratings' and 'features.ratings' (legacy schema).
+    If a legacy enabled flag existed, gently migrate it to pairs that don't
+    have ratings configured yet (enable+add only; never override per-pair).
+    """
+    legacy = dict(cfg.pop("ratings", {}) or {})
+    feats  = cfg.setdefault("features", {})
+    legacy_feat = dict((feats.pop("ratings", {}) or {}))
+
+    if not legacy and legacy_feat:
+        # accept legacy under features.ratings too
+        legacy = legacy_feat
+
+    if legacy.get("enabled"):
+        for p in (cfg.get("pairs") or []):
+            f = p.setdefault("features", {})
+            rt = f.setdefault("ratings", {"enable": False, "add": False, "remove": False})
+            if not rt.get("enable"):
+                rt["enable"] = True
+            # prefer add=True as the least surprising migration
+            if "add" not in rt:
+                rt["add"] = True
+            # never force removes during migration
 
 # --------------- Config endpoints ---------------
 @app.get("/api/config")
 def api_config() -> JSONResponse:
-    return JSONResponse(load_config())
-
+    cfg = load_config()
+    _prune_legacy_ratings(cfg)         # strip legacy blocks
+    _ensure_pair_ratings_defaults(cfg) # ensure per-pair defaults for UI
+    return JSONResponse(cfg)
 
 @app.post("/api/config")
 def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Persist configuration, normalize scrobble mode, derive features.watch.enabled,
-    and (re)plan the scheduler using start/stop/refresh only (no .apply()).
+    Persist configuration, normalize scrobble bits, strip legacy ratings,
+    normalize pair-level ratings, and (re)plan the scheduler using start/stop/refresh only.
     """
     cfg = dict(cfg or {})
 
-    # Normalize scrobble settings
+    # --- Normalize scrobble settings (existing behavior) ----------------------
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
     mode = (sc.get("mode") or "").strip().lower()
@@ -2570,45 +3070,46 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     else:
         sc["enabled"] = False
 
-    # Map to features.watch.enabled
+    # Map to features.watch.enabled (unchanged)
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
     autostart = bool(sc.get("watch", {}).get("autostart", False))
     watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and autostart)
 
-    # Persist
+    # --- Strip legacy ratings + normalize pair-level ratings ------------------
+    _prune_legacy_ratings(cfg)
+    for p in (cfg.get("pairs") or []):
+        try:
+            _normalize_pair_ratings(p)
+        except Exception:
+            pass
+
+    # --- Persist --------------------------------------------------------------
     save_config(cfg)
 
-    # Force probes to refresh quickly
+    # --- Bust probe caches & refresh scheduler (unchanged) --------------------
     _PROBE_CACHE["plex"]  = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
 
-    # (Re)plan scheduler: start/stop + refresh (no apply)
+    try:
+        if hasattr(globals().get("scheduler", None), "refresh_ratings_watermarks"):
+            globals()["scheduler"].refresh_ratings_watermarks()
+    except Exception:
+        pass
+
     try:
         global scheduler
         if scheduler is not None:
             s = (cfg.get("scheduling") or {})
             if bool(s.get("enabled")):
-                if hasattr(scheduler, "start"):    scheduler.start()   # idempotent
-                if hasattr(scheduler, "refresh"):  scheduler.refresh() # recompute next_run_at now
-                try:
-                    _UIHostLogger("SYNC", "SCHED")("scheduler refreshed (enabled)", level="INFO")
-                except Exception:
-                    pass
+                if hasattr(scheduler, "start"):   scheduler.start()
+                if hasattr(scheduler, "refresh"): scheduler.refresh()
             else:
-                if hasattr(scheduler, "stop"):     scheduler.stop()
-                try:
-                    _UIHostLogger("SYNC", "SCHED")("scheduler stopped (disabled)", level="INFO")
-                except Exception:
-                    pass
-    except Exception as e:
-        try:
-            _UIHostLogger("SYNC", "SCHED")(f"scheduler refresh on save failed: {e}", level="ERROR")
-        except Exception:
-            pass
+                if hasattr(scheduler, "stop"):    scheduler.stop()
+    except Exception:
+        pass
 
     return {"ok": True}
-
 
 # --------------- Plex PIN auth ---------------
 def plex_request_pin() -> dict:
@@ -2885,24 +3386,28 @@ def api_run_summary() -> JSONResponse:
     if not until and snap.get("running"):
         until = int(time.time())
 
-    # Compute features if missing or empty
-    need = not isinstance(snap.get("features"), dict)
-    if not need:
-        need = not any(
-            isinstance(v, dict)
-            and (
-                (v.get("added") or v.get("removed") or v.get("updated") or 0) > 0
-                or (v.get("spotlight_add") or v.get("spotlight_remove") or v.get("spotlight_update"))
-            )
-            for v in snap.get("features", {}).values()
-        )
-
-    if need:
-        feats, enabled = _compute_lanes_from_stats(since, until)
-        snap["features"] = feats
+    # Features present?
+    feats = snap.get("features") if isinstance(snap.get("features"), dict) else {}
+    if not feats:
+        # No lanes at all → compute all from stats
+        stats_feats, enabled = _compute_lanes_from_stats(since, until)
+        snap["features"] = stats_feats
         snap["enabled"] = enabled
     else:
-        snap.setdefault("enabled", _lanes_enabled_defaults())
+        # Partially hydrate: fill empty lanes and lanes missing entirely
+        empty_names = [name for name, lane in feats.items() if _lane_is_empty(lane)]
+        stats_feats, enabled = _compute_lanes_from_stats(since, until)
+        missing_names = [name for name in stats_feats.keys() if name not in feats]
+
+        for name in set(empty_names + missing_names):
+            if stats_feats.get(name):
+                feats[name] = stats_feats[name]
+
+        snap["features"] = feats
+        snap.setdefault("enabled", enabled or _lanes_enabled_defaults())
+
+    # Ratings fallback from orchestrator snapshot (fills spotlights; keeps counts if present)
+    _augment_ratings_from_file(snap)
 
     # Defensive timeline consistency
     tl = snap.get("timeline") or {}
@@ -2931,6 +3436,7 @@ def api_run_summary_stream() -> StreamingResponse:
         while True:
             time.sleep(0.25)
             snap = _summary_snapshot()
+            _augment_ratings_from_file(snap)  # keep live spotlights in sync
             key = (
                 snap.get("running"),
                 snap.get("exit_code"),
@@ -2943,7 +3449,6 @@ def api_run_summary_stream() -> StreamingResponse:
             if key != last_key:
                 last_key = key
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"
-
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
@@ -3654,6 +4159,10 @@ def api_trbl_reset_state(
 ) -> Dict[str, Any]:
     """
     Provider-agnostic reset via Orchestrator.
+    Also cleans orchestrator extras:
+      - ratings_changes.json (ratings spotlight snapshot for the UI)
+      - last_sync.json       (last run summary)
+      - watchlist_hide.json  (transient hide list)
     """
     try:
         cfg = load_config()
@@ -3661,14 +4170,28 @@ def api_trbl_reset_state(
 
         state_path = orc.files.state
         tomb_path = orc.files.tomb
+        last_path = orc.files.last
+        hide_path = orc.files.hide
+        ratings_changes_path = orc.files.ratings_changes
 
-        if mode in ("clear_state", "clear_both"):
-            # Clear orchestrator state
+        cleared_files: list[str] = []
+
+        def _try_unlink(p: Path, label: str):
             try:
-                state_path.unlink(missing_ok=True)
+                p.unlink(missing_ok=True)
+                cleared_files.append(label)
             except Exception:
                 pass
-            # Clear SIMKL caches/shadow state under /config/.cw_state
+
+        if mode in ("clear_state", "clear_both"):
+            # Core orchestrator state
+            _try_unlink(state_path, "state.json")
+            # Extras added by orchestrator for UI/summaries
+            _try_unlink(last_path, "last_sync.json")
+            _try_unlink(ratings_changes_path, "ratings_changes.json")
+            _try_unlink(hide_path, "watchlist_hide.json")
+
+            # SIMKL caches/shadow state under /config/.cw_state
             try:
                 cleared = _clear_simkl_state_files()
                 if cleared:
@@ -3677,23 +4200,26 @@ def api_trbl_reset_state(
                 pass
 
         if mode in ("clear_tombstones", "clear_both"):
-            try:
-                tomb_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            _try_unlink(tomb_path, "tombstones.json")
 
         if mode == "clear_tombstone_entries":
-            t = orc.load_tombstones()
+            # Keep file but clear entries; optionally adjust TTL
+            t = orc.files.load_tomb()
             t["keys"] = {}
             if isinstance(ttl_override, int) and ttl_override > 0:
                 t["ttl_sec"] = ttl_override
             elif not keep_ttl:
-                t["ttl_sec"] = 172800
+                # sensible default TTL (2 days) if not keeping existing TTL
+                t["ttl_sec"] = 2 * 24 * 3600
             orc.files.save_tomb(t)
             _append_log("TRBL", f"[i] Tombstones cleared (ttl={t.get('ttl_sec', 'n/a')})")
 
         if mode == "rebuild":
-            # Optional: also clear SIMKL cache before rebuild to avoid stale snapshots
+            # Clean stale UI extras before rebuilding to avoid ghost spotlights
+            _try_unlink(last_path, "last_sync.json")
+            _try_unlink(ratings_changes_path, "ratings_changes.json")
+            _try_unlink(hide_path, "watchlist_hide.json")
+
             try:
                 cleared = _clear_simkl_state_files()
                 if cleared:
@@ -3708,12 +4234,12 @@ def api_trbl_reset_state(
         if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
             return {"ok": False, "error": f"Unknown mode: {mode}"}
 
-        return {"ok": True, "mode": mode}
+        # Small, helpful payload
+        return {"ok": True, "mode": mode, "cleared": cleared_files}
+
     except Exception as e:
         _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}
-
-
 
 # --------------- Auth providers & metadata providers (UI helpers) ---------------
 try:

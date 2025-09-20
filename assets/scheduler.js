@@ -1,10 +1,13 @@
 // /assets/scheduler.js
-
 (() => {
+  // Guard against double initialization (prevents duplicate logs and handlers)
+  if (window.__SCHED_UI_INIT__) return;
+  window.__SCHED_UI_INIT__ = true;
+
   const $  = (sel, root = document) => root.querySelector(sel);
   const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
 
-  // --- Stable ID generator
+  // Stable ID generator
   const genId = (() => {
     function withCrypto() {
       try {
@@ -20,7 +23,7 @@
     return () => (crypto?.randomUUID?.() || withCrypto() || `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`);
   })();
 
-  // --- Minimal CSS
+  // Minimal CSS (scoped to the advanced scheduler block)
   const CSS = `
   .sch-adv{margin-top:12px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--panel2)}
   .sch-adv summary{font-weight:700;letter-spacing:.02em;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between}
@@ -39,10 +42,11 @@
   `;
   document.head.appendChild(Object.assign(el('style'), { textContent: CSS }));
 
-  // --- State
+  // State
   let _pairs = [];
   let _jobs  = [];
   let _advEnabled = false;
+  let _loading = false; // prevents concurrent loads
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
   function setBooleanSelect(selectEl, boolVal) {
@@ -57,7 +61,7 @@
     if (hit) selectEl.value = hit.value;
   }
 
-  // --- Data
+  // Data
   async function fetchPairs() {
     try {
       const r = await fetch('/api/pairs', { cache: 'no-store' });
@@ -74,12 +78,12 @@
   }
   const isEnabled = (pid) => !!_pairs.find(p => String(p.id) === String(pid) && p.enabled);
 
-  // --- UI
+  // UI
   function jobRow(j) {
     const tr = el('tr');
     if (j.active !== false && j.pair_id && !isEnabled(j.pair_id)) tr.classList.add('row-disabled');
 
-  // Pair selector
+    // Pair selector
     const tdPair = el('td');
     const sel = el('select');
     const ph = el('option'); ph.value=''; ph.textContent='— select pair —'; sel.appendChild(ph);
@@ -94,13 +98,13 @@
     sel.onchange = () => { j.pair_id = sel.value || null; };
     tdPair.appendChild(sel);
 
-  // Time input
+    // Time input
     const tdTime = el('td');
     const t = el('input'); t.type = 'time'; if (j.at) t.value = j.at;
     t.onchange = () => { j.at = (t.value || '').trim() || null; };
     tdTime.appendChild(t);
 
-  // Days selector (Mon-Sun chips)
+    // Days selector (Mon-Sun chips)
     const tdDays = el('td');
     const wrap = el('div','chipdays');
     const cur = new Set(Array.isArray(j.days) ? j.days : []);
@@ -117,7 +121,7 @@
     });
     tdDays.appendChild(wrap);
 
-  // 'After' selector (sequence dependency)
+    // 'After' selector (sequence dependency)
     const tdAfter = el('td');
     const sa = el('select');
     const none = el('option'); none.value=''; none.textContent='— none —'; sa.appendChild(none);
@@ -130,13 +134,13 @@
     sa.onchange = () => { j.after = sa.value || null; renderJobs(); };
     tdAfter.appendChild(sa);
 
-  // Active toggle
+    // Active toggle
     const tdOn = el('td');
     const c = el('input'); c.type='checkbox'; c.checked = (j.active !== false);
     c.onchange = () => { j.active = !!c.checked; renderJobs(); };
     tdOn.appendChild(c);
 
-  // Delete step button
+    // Delete step button
     const tdDel = el('td');
     const del = el('button'); del.className = 'btn ghost'; del.textContent = '✕';
     del.onclick = () => { _jobs = _jobs.filter(x => x !== j); renderJobs(); };
@@ -150,7 +154,7 @@
     const host = $('#sec-scheduling .body');
     if (!host || $('#schAdv')) return;
 
-  // Details element - collapsed by default (no "open" attribute)
+    // Details element - collapsed by default
     const adv = el('details','sch-adv'); adv.id = 'schAdv';
     adv.innerHTML = `
       <summary>
@@ -188,81 +192,86 @@
     `;
     host.appendChild(adv);
 
-  // Add an empty step at the end of the plan
-  $('#btnAddStep').onclick = () => {
+    // Add an empty step at the end of the plan
+    $('#btnAddStep').onclick = () => {
       _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
       renderJobs();
     };
-  // Auto-create steps from currently enabled pairs
-  $('#btnAutoFromPairs').onclick = () => {
+    // Auto-create steps from currently enabled pairs
+    $('#btnAutoFromPairs').onclick = () => {
       const eps = _pairs.filter(p => p.enabled);
       _jobs = eps.map(p => ({ id: genId(), pair_id: p.id, at: null, days: [], after: null, active: true }));
       if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
       renderJobs();
     };
-  // Toggle advanced plan enabled state
-  $('#schAdvEnabled').onchange = () => { _advEnabled = !!$('#schAdvEnabled').checked; };
+    // Toggle advanced plan enabled state
+    $('#schAdvEnabled').onchange = () => { _advEnabled = !!$('#schAdvEnabled').checked; };
   }
 
   function renderJobs() {
     const tbody = $('#schJobsBody'); if (!tbody) return;
     tbody.innerHTML = '';
 
-  // Ensure there's at least one editable step
-  if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
+    // Ensure there's at least one editable step
+    if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
 
-  // Mark steps that reference a disabled pair as blocked, then render rows
-  _jobs.forEach(j => j._blocked = j.active !== false && j.pair_id && !isEnabled(j.pair_id));
-  _jobs.forEach(j => tbody.appendChild(jobRow(j)));
+    // Mark steps that reference a disabled pair as blocked, then render rows
+    _jobs.forEach(j => j._blocked = j.active !== false && j.pair_id && !isEnabled(j.pair_id));
+    _jobs.forEach(j => tbody.appendChild(jobRow(j)));
 
-  // Update status message: no pairs, or some steps reference disabled pairs
-  const st = $('#schAdvStatus');
-  if (!_pairs.length) st.textContent = 'No pairs from /api/pairs.';
-  else if (_jobs.some(j => j._blocked)) st.textContent = 'Some steps reference disabled pairs.';
-  else st.textContent = '';
+    // Update status message
+    const st = $('#schAdvStatus');
+    if (!_pairs.length) st.textContent = 'No pairs from /api/pairs.';
+    else if (_jobs.some(j => j._blocked)) st.textContent = 'Some steps reference disabled pairs.';
+    else st.textContent = '';
   }
 
-  // --- Load
+  // Load (idempotent; guarded against concurrent calls)
   async function loadScheduling() {
-  // Build/ensure UI elements, then load current server config
-    ensureUI();
-    await fetchPairs();
-
-    let saved = {};
+    if (_loading) return;
+    _loading = true;
     try {
-      // Cache-bust to avoid stale reads from server
-      saved = await fetch('/api/scheduling?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json());
-    } catch {}
+      ensureUI();
+      await fetchPairs();
 
-    setBooleanSelect($('#schEnabled'), !!saved.enabled);
-    if ($('#schMode')) $('#schMode').value = saved.mode || 'hourly';
-    if ($('#schN'))    $('#schN').value = String(saved.every_n_hours || 2);
-    if ($('#schTime')) $('#schTime').value = saved.daily_time || '03:30';
+      let saved = {};
+      try {
+        // Cache-bust to avoid stale reads
+        saved = await fetch('/api/scheduling?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json());
+      } catch {}
 
-  // Advanced payload (sequential plan)
-    const adv = saved?.advanced || {};
-    _advEnabled = !!adv.enabled;
-    if ($('#schAdvEnabled')) $('#schAdvEnabled').checked = _advEnabled;
-    _jobs = Array.isArray(adv.jobs)
-      ? adv.jobs.map(j => ({
-          id: j.id || genId(),
-          pair_id: j.pair_id || null,
-          at: j.at || null,
-          days: Array.isArray(j.days) ? j.days.filter(n => n >= 1 && n <= 7) : [],
-          after: j.after || null,
-          active: j.active !== false
-        }))
-      : [];
-    renderJobs();
+      setBooleanSelect($('#schEnabled'), !!saved.enabled);
+      if ($('#schMode')) $('#schMode').value = saved.mode || 'hourly';
+      if ($('#schN'))    $('#schN').value = String(saved.every_n_hours || 2);
+      if ($('#schTime')) $('#schTime').value = saved.daily_time || '03:30';
 
-  // Nudge the inline banner if present (best-effort)
-  try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
+      // Advanced payload (sequential plan)
+      const adv = saved?.advanced || {};
+      _advEnabled = !!adv.enabled;
+      if ($('#schAdvEnabled')) $('#schAdvEnabled').checked = _advEnabled;
+      _jobs = Array.isArray(adv.jobs)
+        ? adv.jobs.map(j => ({
+            id: j.id || genId(),
+            pair_id: j.pair_id || null,
+            at: j.at || null,
+            days: Array.isArray(j.days) ? j.days.filter(n => n >= 1 && n <= 7) : [],
+            after: j.after || null,
+            active: j.active !== false
+          }))
+        : [];
+      renderJobs();
+
+      // Nudge the inline banner once (if the banner script is present)
+      try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
+    } finally {
+      _loading = false;
+    }
   }
 
-  // Expose for other scripts (e.g. crosswatch.js showTab/settings)
+  // Expose for other scripts (e.g., global Save flow)
   window.loadScheduling = loadScheduling;
 
-  // --- Serialize (for global Save)
+  // Serialize (used by the global Save handler)
   function serializeAdvanced() {
     return {
       enabled: !!_advEnabled,
@@ -277,7 +286,7 @@
     };
   }
 
-  // Public patch (used by the global Save handler)
+  // Public accessor collected by the global Save flow
   window.getSchedulingPatch = function() {
     const enabled = ($('#schEnabled')?.value || '').trim() === 'true';
     const mode = $('#schMode')?.value || 'hourly';
@@ -291,6 +300,6 @@
   document.addEventListener('DOMContentLoaded', () => {
     loadScheduling().catch(e => console.warn('scheduler load failed', e));
     try { window.dispatchEvent(new Event('sched-banner-ready')); } catch {}
-    try { typeof window.refreshSchedulingBanner === 'function' && window.refreshSchedulingBanner(); } catch {}
+    // Do not call refreshSchedulingBanner here; loadScheduling already triggers it once.
   });
 })();

@@ -69,10 +69,8 @@ def get_index_html() -> str:
   <section id="ops-card" class="card">
     <div class="title">Synchronization</div>
     <div class="ops-header">
-      <div class="badges" id="conn-badges" style="margin-left:auto">
-        <span id="badge-plex" class="badge no"><span class="dot no"></span>Plex: Not connected</span>
-        <span id="badge-simkl" class="badge no"><span class="dot no"></span>SIMKL: Not connected</span>
-        <span id="badge-trakt" class="badge no"><span class="dot no"></span>Trakt: Not connected</span>
+        <div id="conn-badges" class="vip-badges" style="margin-left:auto"></div>
+
         <div id="update-banner" class="hidden">
           <span id="update-text">A new version is available.</span>
           <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener noreferrer">Get update</a>
@@ -375,6 +373,135 @@ def get_index_html() -> str:
     <span class="btn-ic">✔</span> <span class="btn-label">Save</span>
   </button>
 </div>
+
+<script>
+/* Reuse crown icon */
+const CROWN =
+  '<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>';
+
+/* Build one pill (+ optional tooltip) */
+function makeConn({ name, connected, vip, detail }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'conn-item';
+
+  const pill = document.createElement('div');
+  pill.className = `conn-pill ${connected ? 'ok' : 'no'}${vip ? ' has-vip' : ''}`;
+  pill.setAttribute('role', 'status');
+  pill.setAttribute('aria-label', `${name} ${connected ? 'Connected' : 'Disconnected'}`);
+
+  if (vip) {
+    const slot = document.createElement('span');
+    slot.className = 'conn-slot';
+    slot.innerHTML = CROWN;
+    pill.appendChild(slot);
+  }
+
+  const txt = document.createElement('span');
+  txt.className = 'conn-text';
+  txt.textContent = `${name} ${connected ? 'Connected' : 'Disconnected'}`;
+  pill.appendChild(txt);
+
+  wrap.appendChild(pill);
+
+  if (detail) {
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.textContent = detail;
+    wrap.appendChild(tip);
+  }
+  return wrap;
+}
+
+/* Move the small manual refresh control after the last pill and (re)wire it */
+function moveManualRefreshButton() {
+  const host = document.getElementById('conn-badges');
+  const btn = document.getElementById('btn-status-refresh'); // FastAPI id
+  if (!host || !btn) return null;
+
+  // Make it look right inline with the pills
+  btn.classList.add('conn-ctrl');
+
+  // Kill legacy inline onclick to avoid double handlers
+  btn.removeAttribute('onclick');
+
+  // Append as last element in the row
+  host.appendChild(btn);
+
+  // Rebind click -> fetch /api/status?fresh=1
+  btn.removeEventListener('click', handleManualRefresh, true);
+  btn.addEventListener('click', handleManualRefresh, true);
+
+  return btn;
+}
+
+/* Fetch fresh status and re-render pills */
+async function handleManualRefresh(e) {
+  e?.preventDefault?.();
+  const btn = e?.currentTarget || document.getElementById('btn-status-refresh');
+  if (btn) btn.classList.add('spinning');
+  try {
+    const res = await fetch('/api/status?fresh=1', { cache: 'no-store' });
+    const data = res.ok ? await res.json() : null;
+    if (data && data.providers) renderConnections(data);
+  } catch (_) {
+    // Swallow; no UI disruption.
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
+/* Backwards-compat: if template still calls manualRefreshStatus(), redirect here */
+window.manualRefreshStatus = handleManualRefresh;
+
+/* Main render */
+function renderConnections(payload) {
+  const host = document.getElementById('conn-badges');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const p = payload?.providers || {};
+
+  // Plex (VIP = Plex Pass)
+  const plexVip = !!(p?.PLEX?.plexpass || p?.PLEX?.subscription?.plan);
+  const plan = (p?.PLEX?.subscription?.plan || '').toLowerCase();
+  host.appendChild(makeConn({
+    name: 'Plex',
+    connected: !!p?.PLEX?.connected,
+    vip: plexVip,
+    detail: plexVip ? `Plex Pass – ${plan ? plan[0].toUpperCase() + plan.slice(1) : 'Active'}` : ''
+  }));
+
+  // SIMKL (no VIP)
+  host.appendChild(makeConn({
+    name: 'SIMKL',
+    connected: !!p?.SIMKL?.connected,
+    vip: false,
+    detail: ''
+  }));
+
+  // Trakt (VIP)
+  const traktVip = !!p?.TRAKT?.vip;
+  host.appendChild(makeConn({
+    name: 'Trakt',
+    connected: !!p?.TRAKT?.connected,
+    vip: traktVip,
+    detail: traktVip ? 'VIP status – Enabled' : ''
+  }));
+
+  // Ensure manual refresh button sits after the last pill
+  moveManualRefreshButton();
+}
+
+/* Example bootstrap — replace with your live payload */
+renderConnections({
+  providers: {
+    PLEX:  { connected: true,  plexpass: true, subscription: { plan: 'lifetime', status: 'Active' } },
+    SIMKL: { connected: true  },
+    TRAKT: { connected: true, vip: true, vip_type: 'vip' }
+  }
+});
+</script>
+
 
 <script>
 (function(){

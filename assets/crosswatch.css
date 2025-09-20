@@ -4087,3 +4087,125 @@ select {
   border:1px solid #ff9a9a55; box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55;
 }
 #save-fab.hidden, #save-frost.hidden{ display:none; }
+
+/* Make indeterminate start from 0% instead of 15% */
+@keyframes rail-pulse { 
+  0% { width:0%;  opacity:.7 }
+  50%{ width:30%; opacity:.95 }
+  100%{width:0%;  opacity:.7 }
+}
+
+:root{
+  /* Theme palette (muted/dark-friendly) */
+  --vip-p1:#361863;         /* purple rail start */
+  --vip-p2:#5a28cd;         /* purple rail end */
+  --ok-b1:#214f86;          /* connected blue 1 */
+  --ok-b2:#2b7eb5;          /* connected blue 2 */
+  --no-1:#7c2f2f;           /* disconnected red 1 */
+  --no-2:#612424;           /* disconnected red 2 */
+
+  --bd:rgba(255,255,255,.12);
+  --shadow:0 6px 16px rgba(0,0,0,.30);
+
+  --tip-bg:rgba(16,18,24,.96);
+  --tip-bd:rgba(255,255,255,.10);
+
+  /* Crown + rail geometry (exact centering) */
+  --crown-size:18px;
+  --rail-pad:8px;
+  --vip-rail:calc(var(--crown-size) + 2*var(--rail-pad));
+
+  /* NEW: “glass” transparency */
+  --pill-alpha:.50;         /* main pill transparency */
+  --rail-alpha:.75;         /* purple rail transparency */
+  --glass-blur:6px;         /* backdrop blur amount */
+}
+
+.conn-badges{ display:flex; gap:10px; align-items:flex-start; }
+
+.conn-item{
+  position:relative; display:flex; flex-direction:column; align-items:center;
+}
+
+/* Compact pill (background is now drawn by ::after so text stays opaque) */
+.conn-pill{
+  position:relative;
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 12px; min-height:30px;
+  border-radius:10px; overflow:hidden;                /* clip the glass layers */
+  border:1px solid var(--bd); color:#fff; font-weight:800; letter-spacing:.01em;
+
+  background:transparent;                              /* moved to ::after */
+  box-shadow:var(--shadow); user-select:none; cursor:default;
+  transition:transform .12s ease, filter .12s ease;
+  backdrop-filter:blur(var(--glass-blur)) saturate(120%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(120%);
+  z-index:0;
+}
+.conn-pill:hover{ transform:translateY(-1px); filter:saturate(1.04); }
+
+/* Glass body layer */
+.conn-pill::after{
+  content:""; position:absolute; inset:0; border-radius:inherit;
+  background:linear-gradient(135deg,var(--ok-b1),var(--ok-b2)); /* connected */
+  opacity:var(--pill-alpha);
+  z-index:-2;  /* keep below the purple rail (::before) */
+}
+/* Disconnected = fully red (still transparent via alpha) */
+.conn-pill.no::after{
+  background:linear-gradient(135deg,var(--no-1),var(--no-2));
+}
+
+/* VIP only: narrow purple rail under the crown */
+.conn-pill.ok.has-vip::before{
+  content:""; position:absolute; inset:-1px auto -1px -1px; width:var(--vip-rail);
+  background:linear-gradient(135deg,var(--vip-p1),var(--vip-p2));
+  border-radius:10px 0 0 10px;
+  opacity:var(--rail-alpha);
+  z-index:-1; pointer-events:none;
+}
+
+/* Remove left padding when the rail is shown so the crown centers perfectly */
+.conn-pill.has-vip{ padding-left:0; }
+
+/* Crown block = same width as the rail, centered crown */
+.conn-slot{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:var(--vip-rail); line-height:0; transform-origin:50% 70%;
+}
+.conn-slot svg{ width:var(--crown-size); height:var(--crown-size); }
+
+/* Subtle animation (non-destructive) */
+@keyframes crown-bob{ 0%{margin-top:0} 50%{margin-top:-1px} 100%{margin-top:0} }
+@keyframes crown-tilt{ 0%{transform:rotate(0)} 30%{transform:rotate(18deg)} 60%{transform:rotate(-12deg)} 100%{transform:rotate(0)} }
+.conn-slot{ animation:crown-bob 5s ease-in-out infinite; }
+.conn-pill:hover .conn-slot{ animation:crown-bob 5s ease-in-out infinite, crown-tilt .8s cubic-bezier(.2,.8,.2,1) 1; }
+
+.conn-text{ font-size:12.6px; white-space:nowrap; }
+
+/* Tooltip below the pill (details only) */
+.conn-item .tip{
+  position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
+  background:var(--tip-bg); color:#fff; border:1px solid var(--tip-bd);
+  padding:7px 9px; border-radius:8px; font-size:12.2px; line-height:1.2; white-space:nowrap;
+  box-shadow:0 8px 20px rgba(0,0,0,.34); opacity:0; pointer-events:none;
+  transition:opacity .12s ease, transform .12s ease;
+}
+.conn-item .tip::before{
+  content:""; position:absolute; top:-6px; left:50%; transform:translateX(-50%);
+  border:6px solid transparent; border-bottom-color:var(--tip-bg);
+  filter:drop-shadow(0 -1px 0 var(--tip-bd));
+}
+.conn-item:hover .tip, .conn-item:focus-within .tip{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* Manual refresh control inline */
+.conn-ctrl{ margin-left:10px; align-self:flex-start; }
+.conn-ctrl.spinning svg{ animation:spin 1s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg) } }
+
+/* Reduced motion */
+@media (prefers-reduced-motion:reduce){
+  .conn-slot{ animation:none }
+  .conn-pill, .conn-item .tip{ transition:none }
+  .conn-ctrl.spinning svg{ animation:none }
+}

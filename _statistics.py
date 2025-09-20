@@ -9,7 +9,7 @@ Provides a thread-safe, low-overhead store to:
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import json, time, threading, re
 
@@ -17,10 +17,15 @@ from cw_platform.config_base import CONFIG
 
 STATS_PATH = CONFIG / "statistics.json"
 
-# Accept common GUID formats
-_GUID_TMDB_RE = re.compile(r"^tmdb://(?:movie|tv)/(\d+)$", re.IGNORECASE)
-_GUID_IMDB_RE = re.compile(r"^imdb://(tt?\d+)$", re.IGNORECASE)
-_GUID_TVDB_RE = re.compile(r"^tvdb://(\d+)$", re.IGNORECASE)
+# --- GUID patterns (robust to agent prefixes & query strings) ---
+# Examples:
+#   com.plexapp.agents.imdb://tt0944947?lang=en
+#   com.plexapp.agents.tmdb://movie/603?lang=en
+#   tmdb://tv/1399
+#   tvdb://81189
+_GUID_TMDB_RE = re.compile(r"tmdb://(?:movie|tv)/(\d+)", re.IGNORECASE)
+_GUID_IMDB_RE = re.compile(r"(tt\d{5,})", re.IGNORECASE)  # require 'tt' + ≥5 digits
+_GUID_TVDB_RE = re.compile(r"tvdb://(\d+)", re.IGNORECASE)
 
 
 def _read_json(p: Path) -> Dict[str, Any]:
@@ -61,7 +66,7 @@ class Stats:
     def _load(self) -> None:
         """Load or initialize the on-disk JSON state."""
         d = _read_json(self.path)
-        d.setdefault("events", [])               # recent add/remove events
+        d.setdefault("events", [])               # recent add/remove events and others (rating/watch/etc.)
         d.setdefault("samples", [])              # rolling total over time
         d.setdefault("current", {})              # current union map
         d.setdefault("counters", {"added": 0, "removed": 0})
@@ -80,7 +85,7 @@ class Stats:
     @staticmethod
     def _title_of(d: Dict[str, Any]) -> str:
         return (d.get("title") or d.get("name") or d.get("original_title") or d.get("original_name") or "").strip()
-    
+
     @staticmethod
     def _provider_items(state: Dict[str, Any], prov: str) -> Dict[str, Any]:
         """Read items from new snapshot layout with legacy fallback."""
@@ -118,7 +123,7 @@ class Stats:
 
     @staticmethod
     def _extract_ids(d: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract common ids from nested/flat structures + Plex GUID."""
+        """Extract common ids from nested/flat structures + robust Plex GUID parse."""
         out: Dict[str, Any] = {}
         ids = d.get("ids") or d.get("external_ids") or {}
         if isinstance(ids, dict):
@@ -147,24 +152,28 @@ class Stats:
         if "slug" not in out and isinstance(d.get("slug"), (str, int)):
             out["slug"] = d.get("slug")
 
+        # GUID parsing (handles agent prefixes and querystrings)
         guid = (d.get("guid") or d.get("Guid") or "").strip()
         if isinstance(guid, str) and "://" in guid:
-            g = guid.lower()
-            m = _GUID_IMDB_RE.match(guid)
+            g = guid  # keep original; regexes are IGNORECASE
+            m = _GUID_IMDB_RE.search(g)
             if m and "imdb" not in out:
                 out["imdb"] = m.group(1)
-            m = _GUID_TMDB_RE.match(guid)
+            m = _GUID_TMDB_RE.search(g)
             if m and "tmdb" not in out:
                 out["tmdb"] = m.group(1)
-            m = _GUID_TVDB_RE.match(guid)
+            m = _GUID_TVDB_RE.search(g)
             if m and "tvdb" not in out:
                 out["tvdb"] = m.group(1)
-            # naive tmdb fallback
-            if "tmdb" not in out and g.startswith("tmdb://"):
-                tail = guid.split("://", 1)[1]
-                num = tail.split("/", 1)[-1]
-                if num.isdigit():
-                    out["tmdb"] = num
+            # final naive tmdb numeric tail (defensive)
+            if "tmdb" not in out and "tmdb://" in g.lower():
+                try:
+                    tail = g.split("tmdb://", 1)[1]
+                    num = tail.split("/", 1)[-1].split("?", 1)[0]
+                    if num.isdigit():
+                        out["tmdb"] = num
+                except Exception:
+                    pass
         return out
 
     @staticmethod
@@ -230,6 +239,7 @@ class Stats:
         return out
 
     # ---------- union & counting ----------
+
     @staticmethod
     def _build_union_map(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         """Build a de-duplicated map of current items across providers.
@@ -297,7 +307,7 @@ class Stats:
                 b["src"] = ""
 
         return buckets
-        
+
     def _counts_by_source(self, cur: Dict[str, Any]) -> Dict[str, int]:
         """Summarize how many items come from each provider and overlaps."""
         plex_only = simkl_only = both = 0
@@ -318,7 +328,6 @@ class Stats:
             "simkl_total": simkl_only + both,
             "trakt_total": trakt_total,
         }
-
 
     def _totals_from_events(self) -> Dict[str, int]:
         """Compute totals by scanning the recent event list (fallback)."""
@@ -362,7 +371,7 @@ class Stats:
 
     def refresh_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Update stats from a full snapshot (`state.json`)."""
-        now = int(time.time())
+        now_epoch = int(time.time())
         with self.lock:
             prev = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
             cur = self._build_union_map(state)
@@ -374,10 +383,16 @@ class Stats:
             ev = self.data.get("events") or []
             for k in added_keys:
                 m = cur.get(k) or {}
-                ev.append({"ts": now, "action": "add", "key": k, "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")})
+                ev.append({
+                    "ts": now_epoch, "action": "add", "key": k,
+                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
+                })
             for k in removed_keys:
                 m = prev.get(k) or {}
-                ev.append({"ts": now, "action": "remove", "key": k, "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")})
+                ev.append({
+                    "ts": now_epoch, "action": "remove", "key": k,
+                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
+                })
             self.data["events"] = ev[-5000:]
 
             c = self._ensure_counters()
@@ -385,34 +400,38 @@ class Stats:
             c["removed"] = int(c.get("removed", 0)) + len(removed_keys)
             self.data["counters"] = c
 
-            self.data["last_run"] = {"added": len(added_keys), "removed": len(removed_keys), "ts": now}
+            self.data["last_run"] = {"added": len(added_keys), "removed": len(removed_keys), "ts": now_epoch}
             self.data["current"] = cur
 
             samples = self.data.get("samples") or []
-            samples.append({"ts": now, "count": len(cur)})
+            samples.append({"ts": now_epoch, "count": len(cur)})
             self.data["samples"] = samples[-4000:]
 
             self._save()
-            return {"now": len(cur), "week": self._count_at(now - 7 * 86400), "month": self._count_at(now - 30 * 86400)}
+            return {
+                "now": len(cur),
+                "week": self._count_at(now_epoch - 7 * 86400),
+                "month": self._count_at(now_epoch - 30 * 86400),
+            }
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
         """Append a custom event to the log (lightweight helper)."""
-        now = int(time.time())
+        now_epoch = int(time.time())
         with self.lock:
             ev = self.data.get("events") or []
-            ev.append({"ts": now, "action": action, "key": key, "source": source, "title": title, "type": typ})
+            ev.append({"ts": now_epoch, "action": action, "key": key, "source": source, "title": title, "type": typ})
             self.data["events"] = ev[-5000:]
             self._save()
 
     def record_summary(self, added: int = 0, removed: int = 0) -> None:
         """Update last_run counters without a full refresh (optional)."""
-        now = int(time.time())
+        now_epoch = int(time.time())
         with self.lock:
             c = self._ensure_counters()
             c["added"] = int(c.get("added", 0)) + int(added or 0)
             c["removed"] = int(c.get("removed", 0)) + int(removed or 0)
             self.data["counters"] = c
-            self.data["last_run"] = {"added": int(added or 0), "removed": int(removed or 0), "ts": now}
+            self.data["last_run"] = {"added": int(added or 0), "removed": int(removed or 0), "ts": now_epoch}
             self._save()
 
     def reset(self) -> None:
@@ -424,7 +443,7 @@ class Stats:
                 "current": {},
                 "counters": {"added": 0, "removed": 0},
                 "last_run": {"added": 0, "removed": 0, "ts": 0},
-                "http": {"events": [], "counters": {}, "last": {}},  # NEW
+                "http": {"events": [], "counters": {}, "last": {}},
             }
             self._save()
 
@@ -459,7 +478,7 @@ class Stats:
                 },
             }
 
-    # ---------- public API: HTTP telemetry (NEW) ----------
+    # ---------- public API: HTTP telemetry ----------
 
     def record_http(
         self,
@@ -476,9 +495,9 @@ class Stats:
         rate_reset_iso: Optional[str] = None,
     ) -> None:
         """Record a single HTTP call; safe and lightweight."""
-        now = int(time.time())
+        now_epoch = int(time.time())
         evt = {
-            "ts": now,
+            "ts": now_epoch,
             "provider": str(provider or "").upper(),
             "endpoint": endpoint,
             "method": method.upper(),
@@ -521,7 +540,7 @@ class Stats:
             pc["ms_sum"] += evt["ms"]
             pc["last_status"] = evt["status"]
             pc["last_ok"] = evt["ok"]
-            pc["last_at"] = now
+            pc["last_at"] = now_epoch
             if "rate_remaining" in evt:
                 pc["last_rate_remaining"] = evt["rate_remaining"]
             ctr[prov] = pc
@@ -529,7 +548,7 @@ class Stats:
 
             # last snapshot by provider+endpoint
             last = http.get("last") or {}
-            key = f"{prov} {method.upper()} {endpoint}"
+            key = f"{prov} {evt['method']} {evt['endpoint']}"
             last[key] = evt
             http["last"] = last
 

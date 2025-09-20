@@ -256,6 +256,28 @@
   .wl-modal .box iframe{ width:100%; height:100%; display:block; }
   .wl-modal .box .x{ position:absolute; top:8px; right:8px; }
 
+  /* Make the artwork pop more */
+  .wl-detail::before{
+    /* softer blur and a touch more brightness/contrast */
+    filter: blur(14px) saturate(120%) brightness(1.05) contrast(1.05);
+  }
+
+  /* Use a lighter overlay when we actually have a backdrop */
+  .wl-detail.has-bg::after{
+    background:
+      radial-gradient(120% 90% at 50% 110%, rgba(0,0,0,.35) 35%, rgba(0,0,0,.6) 100%),
+      linear-gradient(180deg, rgba(0,0,0,.08) 0%, rgba(0,0,0,.22) 100%),
+      linear-gradient(180deg, rgba(var(--wl-tint,20,28,44), .18), rgba(0,0,0,.18));
+  }
+
+  /* Keep a stronger scrim only when there is no backdrop (readability) */
+  .wl-detail:not(.has-bg)::after{
+    background:
+      radial-gradient(120% 90% at 50% 110%, rgba(0,0,0,.55) 40%, rgba(0,0,0,.85) 100%),
+      linear-gradient(180deg, rgba(0,0,0,.12) 0%, rgba(0,0,0,.35) 100%),
+      linear-gradient(180deg, rgba(var(--wl-tint,20,28,44), .22), rgba(0,0,0,.25));
+  }
+
   /* Auto-hide helper */
   .wl-hidden{display:none !important}
   `;
@@ -1046,41 +1068,54 @@ async function warmGenresForFilter(limit=200){
   }
 
   // ---------- trailer helpers ----------
+  // Robust: supports meta.videos, meta.videos.results, meta.detail.videos, meta.detail.videos.results.
   function pickTrailer(meta){
-    const vids = Array.isArray(meta?.videos) ? meta.videos : [];
-    if (!vids.length) return null;
+    const pools = [
+      meta?.videos,
+      meta?.videos?.results,
+      meta?.detail?.videos,
+      meta?.detail?.videos?.results
+    ].filter(Array.isArray);
 
-    const ranked = vids
-      .filter(v => v && v.site && v.key)
-      .map(v => {
-        const site = String(v.site).toLowerCase();
-        const type = String(v.type || "").toLowerCase();
-        const official = !!v.official;
-        const published = Date.parse(v.published_at || 0) || 0;
-        const rank =
-          (type === "trailer" ? 100 : (type === "teaser" ? 60 : 10)) +
-          (official ? 30 : 0) +
-          (site === "youtube" ? 5 : 0) +
-          (published ? 1 : 0);
-        return { ...v, site, type, official, published, rank };
-      })
-      .sort((a, b) => b.rank - a.rank);
+    const vids = (pools.length ? pools.flat() : []).map(v => {
+      const siteRaw = String(v.site || v.host || v.platform || "").toLowerCase();
+      const site =
+        siteRaw.includes("youtube") ? "youtube" :
+        siteRaw.includes("vimeo")   ? "vimeo"   : siteRaw;
 
-    const v = ranked[0];
+      const key = v.key || v.id || v.videoId || v.video_id || "";
+      const type = String(v.type || v.category || "").toLowerCase();
+      const name = v.name || v.title || "Trailer";
+      const official = !!v.official;
+      const published = Date.parse(v.published_at || v.publishedAt || v.created_at || v.added_at || "") || 0;
+
+      const rank =
+        (type.includes("trailer") ? 100 :
+         type.includes("teaser")  ?  60 :
+         type.includes("clip")    ?  40 : 10) +
+        (official ? 30 : 0) +
+        (site === "youtube" ? 5 : 0) +
+        (published ? 1 : 0);
+
+      return { site, key, type, name, official, published, rank };
+    }).filter(v => v.site && v.key);
+
+    vids.sort((a,b) => b.rank - a.rank);
+    const v = vids[0];
     if (!v) return null;
 
-    if (v.site === "youtube") {
+    if (v.site === "youtube"){
       return {
         url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(v.key)}?autoplay=1&rel=0&modestbranding=1&playsinline=1`,
         site: "YouTube",
-        title: v.name || "Trailer"
+        title: v.name
       };
     }
-    if (v.site === "vimeo") {
+    if (v.site === "vimeo"){
       return {
         url: `https://player.vimeo.com/video/${encodeURIComponent(v.key)}?autoplay=1`,
         site: "Vimeo",
-        title: v.name || "Trailer"
+        title: v.name
       };
     }
     return null;
@@ -1227,7 +1262,6 @@ async function warmGenresForFilter(limit=200){
   }
 
   async function setBackdrop(meta, it){
-    // Backdrop first; fallback to poster/art
     const b =
       meta?.images?.backdrop?.[0]?.url ||
       meta?.images?.backdrops?.[0]?.url ||
@@ -1236,13 +1270,15 @@ async function warmGenresForFilter(limit=200){
 
     if (b){
       detailEl.style.setProperty("--wl-bg", `url("${b}")`);
+      detailEl.classList.add("has-bg");       // <-- NEW
       try{
         const rgb = await dominantRGB(b);
-        detailEl.style.setProperty("--wl-tint", rgb); // used in rgba(var(--wl-tint), alpha)
+        detailEl.style.setProperty("--wl-tint", rgb);
       }catch{}
     }else{
       detailEl.style.removeProperty("--wl-bg");
       detailEl.style.setProperty("--wl-tint","20,28,44");
+      detailEl.classList.remove("has-bg");    // <-- NEW
     }
   }
 
@@ -1302,7 +1338,7 @@ async function warmGenresForFilter(limit=200){
         : `<span class="wl-badge">${s}</span>`;
     }).join("");
 
-    // Trailer availability
+    // Trailer availability (but we render the button regardless; fallback will search YouTube)
     const hasTrailer = !!pickTrailer(meta);
 
     // Render
@@ -1323,7 +1359,7 @@ async function warmGenresForFilter(limit=200){
 
         <div class="actions">
           ${scoreHtml || ""}
-          ${hasTrailer ? `<button class="wl-btn trailer" id="wl-play-trailer" title="Watch Trailer">Watch Trailer</button>` : ""}
+          <button class="wl-btn trailer" id="wl-play-trailer" title="${hasTrailer ? "Watch Trailer" : "Search trailer"}" ${hasTrailer ? "" : "data-fallback='1'"}>Watch Trailer</button>
           <div class="wl-srcs">${logos}</div>   <!-- now under Watch Trailer -->
         </div>
       </div>
@@ -1337,7 +1373,19 @@ async function warmGenresForFilter(limit=200){
     if (closeBtn) closeBtn.onclick = () => { pinnedKey = null; hideDetail(); };
 
     const playBtn = document.getElementById("wl-play-trailer");
-    if (playBtn) playBtn.onclick = () => openTrailer(meta);
+    if (playBtn) {
+      playBtn.onclick = () => {
+        const pick = pickTrailer(meta);
+        if (pick) {
+          openTrailer(meta);
+        } else {
+          const title = it?.title || meta?.title || "";
+          const yr = it?.year || meta?.year || "";
+          const q = `${title} ${yr} trailer`.trim();
+          window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`, "_blank", "noopener,noreferrer");
+        }
+      };
+    }
 
     const moreBtn = document.getElementById("wl-overview-more");
     const ov = document.getElementById("wl-overview");

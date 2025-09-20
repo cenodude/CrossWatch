@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-__VERSION__ = "1.2.3"
+__VERSION__ = "1.3.0"
 __all__ = ["OPS", "SIMKLModule", "get_manifest"]
 
 import json
@@ -73,6 +73,51 @@ try:
     from cw_platform.config_base import CONFIG  # type: ignore
 except Exception:
     CONFIG = None  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def _cfg_get(cfg_root: Mapping[str, Any], path: str, default: Any = None) -> Any:
+    """Dot-path fetch from nested config."""
+    parts = path.split(".")
+    cur: Any = cfg_root
+    try:
+        for p in parts:
+            if not isinstance(cur, Mapping):
+                return default
+            cur = cur.get(p)
+            if cur is None:
+                return default
+        return cur
+    except Exception:
+        return default
+
+def _emit_rating_event(*, action: str, node: Mapping[str, Any], prev: Optional[int], value: Optional[int]) -> None:
+    """Emit compact rating event for UI spotlight/summary."""
+    try:
+        payload = {
+            "feature": "ratings",
+            "action": action,                 # "rate" | "unrate" | "update"
+            "title": node.get("title"),
+            "type": node.get("type"),
+            "ids": dict(node.get("ids") or {}),
+            "value": value,
+            "prev": prev,
+            "provider": "SIMKL",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(time.time()))),
+        }
+        if _stats and hasattr(_stats, "record_event"):
+            try:
+                _stats.record_event(payload)
+            except Exception:
+                pass
+        try:
+            host_log("event", payload)
+        except Exception:
+            pass
+    except Exception:
+        pass  # never break writes due to telemetry
 
 # ---------------------------------------------------------------------------
 # Global Tombstones (optional)
@@ -302,7 +347,7 @@ class InventoryOps(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Cursor and shadow storage
+# Cursor, shadows, and cache bust
 # ---------------------------------------------------------------------------
 
 class _CursorStore:
@@ -364,67 +409,74 @@ class _CursorStore:
         data = {"items": dict(items or {}), "last_sync_ts": int(last_sync_ts)}
         self._atomic_write(self.shadow_file, data)
 
-# ---------------------------------------------------------------------------
-# Helpers for IDs and shapes
-# ---------------------------------------------------------------------------
+def _ratings_shadow_path(cfg_root: Mapping[str, Any]) -> Path:
+    base = _resolve_state_dir(cfg_root) / ".cw_state"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return base / "simkl_ratings.shadow.json"
 
-def simkl_headers(simkl_cfg: Mapping[str, Any]) -> Dict[str, str]:
-    """Build standard SIMKL headers."""
-    return {
-        "User-Agent": UA,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {simkl_cfg.get('access_token','')}",
-        "simkl-api-key": simkl_cfg.get("client_id",""),
-    }
+def _ratings_shadow_load(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
+    p = _ratings_shadow_path(cfg_root)
+    try:
+        return json.loads(p.read_text("utf-8"))
+    except Exception:
+        return {"items": {}, "ts": 0}
 
+def _ratings_shadow_save(cfg_root: Mapping[str, Any], items: Mapping[str, Any]) -> None:
+    p = _ratings_shadow_path(cfg_root)
+    try:
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps({"items": dict(items), "ts": int(time.time())}, ensure_ascii=False, indent=2), "utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        pass
 
-def canonical_key(item: Mapping[str, Any]) -> str:
-    """Produce a deterministic key based on IDs, falling back to title/year."""
-    ids = item.get("ids") or {}
-    for k in _ID_KEYS:
-        v = ids.get(k)
-        if v:
-            return f"{k}:{v}".lower()
-    t = (item.get("title") or "").strip().lower()
-    y = item.get("year") or ""
-    typ = (item.get("type") or "").lower()
-    return f"{typ}|title:{t}|year:{y}"
+def _clear_run_cache() -> None:
+    """Clear in-process GET memoization. Safe to call every sync start."""
+    try:
+        _RUN_GET_CACHE.clear()
+    except Exception:
+        pass
 
+def _bust_ptw_cache(cfg_root: Mapping[str, Any]) -> None:
+    try:
+        cache = _load_http_cache(cfg_root)
+        m = cache.get("map") or {}
+        order = cache.get("order") or []
+        def drop(url: str, params: dict):
+            key = _http_cache_key(url, params)
+            m.pop(key, None)
+            try: order.remove(key)
+            except Exception: pass
+        # present-snapshot keys we use in _ptw_fetch_present
+        base_params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
+        drop(SIMKL_ALL_ITEMS_MOVIES_PTW, base_params)
+        drop(SIMKL_ALL_ITEMS_SHOWS_PTW,  base_params)
+        cache["map"], cache["order"] = m, order
+        _save_http_cache(cache, cfg_root)
+    except Exception:
+        pass
 
-def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
-    """Return a compact item payload safe to cache and persist."""
-    return {
-        "ids": {k: item.get("ids", {}).get(k) for k in _ID_KEYS if item.get("ids", {}).get(k)},
-        "title": item.get("title"),
-        "year": item.get("year"),
-        "type": (item.get("type") or "").lower() or None,
-    }
-
-
-def _read_as_list(j: Any, key: str) -> List[dict]:
-    """Extract a list from a response payload tolerant to null-shapes."""
-    if isinstance(j, list):
-        return j
-    if isinstance(j, dict):
-        if j.get("type") == "null" and j.get("body") is None:
-            return []
-        arr = j.get(key)
-        if isinstance(arr, list):
-            return arr
-    return []
-
-
-def _ids_from_simkl_node(node: Mapping[str, Any]) -> Dict[str, Any]:
-    """Extract known IDs from a SIMKL node into string form."""
-    ids = dict(node.get("ids") or {})
-    out: Dict[str, Any] = {}
-    for k in _ID_KEYS:
-        v = ids.get(k)
-        if v is not None:
-            out[k] = str(v)
-    return out
-
+def _bust_ratings_cache(cfg_root: Mapping[str, Any]) -> None:
+    """Remove all cached entries for the ratings endpoint."""
+    try:
+        cache = _load_http_cache(cfg_root)
+        m = cache.get("map") or {}
+        order = cache.get("order") or []
+        prefix = f"{SIMKL_RATINGS_GET}::"
+        victims = [k for k in list(m.keys()) if k.startswith(prefix)]
+        for k in victims:
+            m.pop(k, None)
+            try:
+                order.remove(k)
+            except Exception:
+                pass
+        cache["map"], cache["order"] = m, order
+        _save_http_cache(cache, cfg_root)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Activities (cached per run)
@@ -454,34 +506,6 @@ def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
                     out[f"{k}.{sk}"] = sv
     _RUN_ACT.update(ts=now, data=out)
     return out
-
-# --- run cache control -------------------------------------------------------
-
-def _clear_run_cache() -> None:
-    """Clear in-process GET memoization. Safe to call every sync start."""
-    try:
-        _RUN_GET_CACHE.clear()
-    except Exception:
-        pass
-
-def _bust_ptw_cache(cfg_root: Mapping[str, Any]) -> None:
-    try:
-        cache = _load_http_cache(cfg_root)
-        m = cache.get("map") or {}
-        order = cache.get("order") or []
-        def drop(url: str, params: dict):
-            key = _http_cache_key(url, params)
-            m.pop(key, None)
-            try: order.remove(key)
-            except Exception: pass
-        # present-snapshot keys we use in _ptw_fetch_present
-        base_params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
-        drop(SIMKL_ALL_ITEMS_MOVIES_PTW, base_params)
-        drop(SIMKL_ALL_ITEMS_SHOWS_PTW,  base_params)
-        cache["map"], cache["order"] = m, order
-        _save_http_cache(cache, cfg_root)
-    except Exception:
-        pass
 
 # ---------------------------------------------------------------------------
 # HTTP recording & backoff wrappers
@@ -594,6 +618,7 @@ def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
             time.sleep(delay)
             delay = min(delay * 2, 10)
     return last
+
 # ---------------------------------------------------------------------------
 # GET/POST with memo + disk cache + ETag (configurable bypass)
 # ---------------------------------------------------------------------------
@@ -730,6 +755,64 @@ def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # PTW: delta-only fetch + local shadow => full snapshot
 # ---------------------------------------------------------------------------
+
+def simkl_headers(simkl_cfg: Mapping[str, Any]) -> Dict[str, str]:
+    """Build standard SIMKL headers."""
+    return {
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {simkl_cfg.get('access_token','')}",
+        "simkl-api-key": simkl_cfg.get("client_id",""),
+    }
+
+
+def canonical_key(item: Mapping[str, Any]) -> str:
+    """Produce a deterministic key based on IDs, falling back to title/year."""
+    ids = item.get("ids") or {}
+    for k in _ID_KEYS:
+        v = ids.get(k)
+        if v:
+            return f"{k}:{v}".lower()
+    t = (item.get("title") or "").strip().lower()
+    y = item.get("year") or ""
+    typ = (item.get("type") or "").lower()
+    return f"{typ}|title:{t}|year:{y}"
+
+
+def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a compact item payload safe to cache and persist."""
+    return {
+        "ids": {k: item.get("ids", {}).get(k) for k in _ID_KEYS if item.get("ids", {}).get(k)},
+        "title": item.get("title"),
+        "year": item.get("year"),
+        "type": (item.get("type") or "").lower() or None,
+    }
+
+
+def _read_as_list(j: Any, key: str) -> List[dict]:
+    """Extract a list from a response payload tolerant to null-shapes."""
+    if isinstance(j, list):
+        return j
+    if isinstance(j, dict):
+        if j.get("type") == "null" and j.get("body") is None:
+            return []
+        arr = j.get(key)
+        if isinstance(arr, list):
+            return arr
+    return []
+
+
+def _ids_from_simkl_node(node: Mapping[str, Any]) -> Dict[str, Any]:
+    """Extract known IDs from a SIMKL node into string form."""
+    ids = dict(node.get("ids") or {})
+    out: Dict[str, Any] = {}
+    for k in _ID_KEYS:
+        v = ids.get(k)
+        if v is not None:
+            out[k] = str(v)
+    return out
+
 
 def _ptw_fetch_delta(hdr: Mapping[str, str], date_from_iso: str, *, cfg_root: Optional[Mapping[str, Any]] = None) -> Dict[str, List[dict]]:
     params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": date_from_iso}
@@ -872,7 +955,6 @@ def _ptw_fetch_present(
             items[key] = node
 
     return items, ok
-
 
 # ---------------------------------------------------------------------------
 # Connectivity / liveness
@@ -1150,22 +1232,37 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
 
 
 # ---------------------------------------------------------------------------
-# Ratings
+# Ratings (with shadow + TTL)
 # ---------------------------------------------------------------------------
 
 def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Return a snapshot of SIMKL ratings, advancing the ratings cursor."""
+    """
+    Ratings snapshot with optional TTL cache:
+    - When TTL (ratings.cache.ttl_minutes) > 0 and shadow is fresh → return shadow.
+    - Otherwise fetch from SIMKL. If date_from cursor is present, merge delta into shadow.
+      If no cursor, replace shadow with full snapshot.
+    """
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     hdr = simkl_headers(simkl_cfg)
     store = _CursorStore(cfg_root)
 
-    if not _simkl_alive(hdr, cfg_root=cfg_root):
+    # Shadow TTL gate
+    ttl_min = int(_cfg_get(cfg_root, "ratings.cache.ttl_minutes", 0) or 0)
+    ttl_sec = max(0, ttl_min * 60)
+    sh = _ratings_shadow_load(cfg_root)
+    sh_items = dict(sh.get("items") or {})
+    sh_ts = int(sh.get("ts") or 0)
+    now = int(time.time())
+    if ttl_sec > 0 and sh_ts > 0 and (now - sh_ts) < ttl_sec and sh_items:
         try:
-            if (cfg_root.get("runtime") or {}).get("debug"):
-                host_log("SIMKL.calls", {"feature": "ratings", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
+            host_log("SIMKL.ratings", {"cache": "hit", "age_sec": now - sh_ts, "count": len(sh_items)})
         except Exception:
             pass
-        return {}
+        return sh_items
+
+    if not _simkl_alive(hdr, cfg_root=cfg_root):
+        # Offline → shadow only (even if stale)
+        return sh_items
 
     params: Dict[str, Any] = {"extended": "full"}
     df = store.get("ratings") or simkl_cfg.get("date_from")
@@ -1177,7 +1274,7 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     idx: Dict[str, Dict[str, Any]] = {}
 
-    def handle(arr: List[dict], kind: str):
+    def handle(arr: List[dict], kind: str, base: Dict[str, Dict[str, Any]]):
         for it in arr or []:
             node = it.get(kind) or {}
             ids = _ids_from_simkl_node(node)
@@ -1193,25 +1290,34 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                 t = str(node.get("title") or "").strip().lower()
                 y = node.get("year") or ""
                 key = f"{kind}|title:{t}|year:{y}"
-            idx[key] = {
+            base[key] = {
                 "type":  kind,
                 "title": node.get("title"),
                 "year":  node.get("year"),
                 "ids":   ids,
-                "rating": it.get("rating"),
+                "rating": int(it.get("rating")) if isinstance(it.get("rating"), (int, float)) else None,
             }
 
-    handle(_read_as_list(data, "movies"), "movie")
-    handle(_read_as_list(data, "shows"),  "show")
+    # Build fresh snapshot (for full) or delta map (for merge)
+    handle(_read_as_list(data, "movies"), "movie", idx)
+    handle(_read_as_list(data, "shows"),  "show",  idx)
 
-    # Advance cursor using server Date header if present; fallback to now
+    # Merge vs replace
+    if df:
+        # Merge delta onto shadow
+        merged = dict(sh_items)
+        for k, v in idx.items():
+            merged[k] = v
+        _ratings_shadow_save(cfg_root, merged)
+        out = merged
+    else:
+        # Replace entire snapshot
+        _ratings_shadow_save(cfg_root, idx)
+        out = idx
+
+    # Advance cursor to now (server Date header is optional/inconsistent)
     try:
-        srv_now = r.headers.get("Date") if r else None
-    except Exception:
-        srv_now = None
-    new_cursor = ts_to_iso(int(time.time()))
-    try:
-        store.set("ratings", new_cursor)
+        store.set("ratings", ts_to_iso(int(time.time())))
     except Exception:
         pass
 
@@ -1221,13 +1327,9 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     except Exception:
         pass
 
-    return idx
+    return out
 
 def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """
-    Set ratings in SIMKL for movies/shows. Sends in chunks, returns count of successful writes.
-    GMT is consulted to avoid re-rating during quarantine.
-    """
     items_list = list(items)
     store_gmt = _gmt_store_from_cfg(cfg_root)
     if store_gmt and items_list:
@@ -1268,11 +1370,58 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
         if r and r.ok:
             total += len(chunk)
 
+    if total:
+        # Bust caches to reflect changes immediately
+        _bust_ratings_cache(cfg_root)
+        _clear_run_cache()
+
+        # Update shadow + emit events
+        sh = _ratings_shadow_load(cfg_root)
+        smap: Dict[str, Any] = dict(sh.get("items") or {})
+        now_iso = ts_to_iso(int(time.time()))
+        for it in items_list:
+            if it.get("rating") is None:
+                continue
+            node = {
+                "type": (it.get("type") or "movie"),
+                "title": it.get("title"),
+                "year":  it.get("year"),
+                "ids":   {k: (it.get("ids") or {}).get(k) for k in _ID_KEYS if (it.get("ids") or {}).get(k)},
+            }
+            key = canonical_key(node)
+            prev_val = None
+            if key in smap and isinstance(smap[key], dict):
+                pv = smap[key].get("rating")
+                prev_val = int(pv) if isinstance(pv, int) else None
+
+            new_val = int(it.get("rating"))
+            smap[key] = {
+                "type": node["type"],
+                "title": node["title"],
+                "year":  node["year"],
+                "ids":   node["ids"],
+                "rating": new_val,
+                "rated_at": now_iso,
+            }
+
+            if prev_val is None:
+                _emit_rating_event(action="rate", node=smap[key], prev=None, value=new_val)
+            elif prev_val != new_val:
+                _emit_rating_event(action="update", node=smap[key], prev=prev_val, value=new_val)
+            else:
+                _emit_rating_event(action="rate", node=smap[key], prev=prev_val, value=new_val)
+
+        _ratings_shadow_save(cfg_root, smap)
+        # Move cursor forward so next index can be delta
+        try:
+            _CursorStore(cfg_root).set("ratings", now_iso)
+        except Exception:
+            pass
+
     return total
 
-
 def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    """Remove ratings from SIMKL. Records GMT negatives on success."""
+    """Remove ratings from SIMKL. Updates shadow, emits events, and records GMT negatives on success."""
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     hdr = simkl_headers(simkl_cfg)
 
@@ -1305,11 +1454,42 @@ def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
         if r and r.ok:
             total += len(chunk)
 
-    # GMT: record negatives (unrate) after successful removals
-    store_gmt = _gmt_store_from_cfg(cfg_root)
-    if store_gmt and total:
+    if total:
+        # Bust caches + memo
+        _bust_ratings_cache(cfg_root)
+        _clear_run_cache()
+
+        # Update shadow + emit events
+        sh = _ratings_shadow_load(cfg_root)
+        smap: Dict[str, Any] = dict(sh.get("items") or {})
         for it in items_list:
-            _gmt_record(store=store_gmt, item=it, feature="ratings", op="unrate", origin="SIMKL")
+            node = {
+                "type": (it.get("type") or "movie"),
+                "title": it.get("title"),
+                "year":  it.get("year"),
+                "ids":   {k: (it.get("ids") or {}).get(k) for k in _ID_KEYS if (it.get("ids") or {}).get(k)},
+            }
+            key = canonical_key(node)
+            prev_val = None
+            if key in smap and isinstance(smap[key], dict):
+                pv = smap[key].get("rating")
+                prev_val = int(pv) if isinstance(pv, int) else None
+                smap[key].pop("rating", None)  # keep node, drop rating only
+            _emit_rating_event(action="unrate", node=node, prev=prev_val, value=None)
+
+        _ratings_shadow_save(cfg_root, smap)
+
+        # GMT: record negatives (unrate)
+        store_gmt = _gmt_store_from_cfg(cfg_root)
+        if store_gmt:
+            for it in items_list:
+                _gmt_record(store=store_gmt, item=it, feature="ratings", op="unrate", origin="SIMKL")
+
+        # Move cursor forward
+        try:
+            _CursorStore(cfg_root).set("ratings", ts_to_iso(int(time.time())))
+        except Exception:
+            pass
 
     return total
 
@@ -1524,7 +1704,7 @@ class SIMKLModule(SyncModule):
     info = ModuleInfo(
         name="SIMKL",
         version=__VERSION__,
-        description="Reads and writes SIMKL watchlist (PTW), ratings, and history with resilient cursors, ETag/TTL caching, and low-call indexing.",
+        description="Reads and writes SIMKL watchlist (PTW), ratings (with TTL cache + events), and history with resilient cursors, ETag/TTL caching, and low-call indexing.",
         vendor="community",
         capabilities=ModuleCapabilities(
             supports_dry_run=True,
@@ -1544,6 +1724,17 @@ class SIMKLModule(SyncModule):
                             "last_date": {"type": "string"},
                         },
                         "required": ["client_id", "access_token"],
+                    },
+                    "ratings": {
+                        "type": "object",
+                        "properties": {
+                            "cache": {
+                                "type": "object",
+                                "properties": {
+                                    "ttl_minutes": {"type": "integer", "minimum": 0}
+                                }
+                            }
+                        }
                     },
                     "sync": {
                         "type": "object",
