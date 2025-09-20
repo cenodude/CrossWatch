@@ -1,13 +1,22 @@
-<table width="100%">
-  <tr>
-    <td align="left" width="50%">
-      <img src="/images/CrossWatch.png" alt="CrossWatch" width="400">
-    </td>
-    <td align="right" width="50%">
-      <img src="/images/CrossWatch-showcase.png" alt="CrossWatch Showcase" width="400">
-    </td>
-  </tr>
-</table>
+<!-- Logo centered -->
+<p align="center">
+  <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
+</p>
+
+<!-- Click-to-zoom screenshots (links to full size) -->
+<p align="center">
+  <a href="images/screenshot1.jpg">
+    <img src="images/screenshot1.jpg" alt="CrossWatch — Screenshot 1" width="32%">
+  </a>
+  <a href="images/screenshot2.jpg">
+    <img src="images/screenshot2.jpg" alt="CrossWatch — Screenshot 2" width="32%">
+  </a>
+  <a href="images/screenshot3.jpg">
+    <img src="images/screenshot3.jpg" alt="CrossWatch — Screenshot 3" width="32%">
+  </a>
+</p>
+
+<p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
 
 **CrossWatch** is a lightweight synchronization engine that keeps your Plex, Simkl, and Trakt libraries in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
@@ -86,9 +95,14 @@ Then open:
 
 ## 🛠 Troubleshooting
 
-- Clear cache: `POST /api/troubleshoot/clear-cache`
-- Reset stats: `POST /api/troubleshoot/reset-stats`
-- Reset state: `POST /api/troubleshoot/reset-state`
+Open **Settings → Troubleshoot** to access three quick-fix actions:
+
+- **Clear cache** — Purges cached data so fresh metadata is fetched next time.  
+  `POST /api/troubleshoot/clear-cache`
+- **Reset stats** — Resets usage/summary counters used for insights.  
+  `POST /api/troubleshoot/reset-stats`
+- **Reset state** — Reinitializes app state (filters, view prefs, local UI). Linked accounts are not touched.  
+  `POST /api/troubleshoot/reset-state`
 
 ---
 # 🎬 Live Scrobbling (Plex → Trakt)
@@ -100,17 +114,6 @@ CrossWatch can **scrobble your real-time Plex playback to Trakt** — so episode
 - Every play/pause/stop is converted into a **ScrobbleEvent**.
 - The event is enriched with TMDb/Tvdb/IMDb IDs and sent to **Trakt’s `/scrobble` API**.
 - Built-in **deduplication, retries, and fallbacks** ensure stable reporting.
-
-## 📎 API Reference
-
-The backend exposes a REST API at `http://localhost:8787`.  
-Main routes include:
-
-- `/api/status`, `/api/version`, `/api/config`
-- `/api/auth/providers`, `/api/plex/pin/new`, `/api/simkl/authorize`
-- `/api/sync/providers`, `/api/pairs`, `/api/run`
-- `/api/watchlist`, `/api/metadata/resolve`, `/api/scheduling`
-- `/api/stats`, `/api/logs/stream`, `/api/troubleshoot/*`
 
 ---
 
