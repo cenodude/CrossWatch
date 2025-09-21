@@ -24,7 +24,8 @@
 CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
 <center>⚠️  Before using this software ALWAYS make backups</center>
 
-
+> ⚠️ **Alpha/Beta Warning**
+> CrossWatch is in **ALPHA/BETA**, meaning it can—and probably will—have bugs. Use it only if you’re aware of the risks.
 ---
 
 ## 🚀 Features
