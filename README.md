@@ -25,8 +25,7 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
 
 
 ---
-⚠️ **Alpha/Beta Warning**
-CrossWatch is in **ALPHA/BETA**, meaning it can—and probably will have bugs. Use it only if you’re aware of the risks.
+⚠️ CrossWatch is in **ALPHA/BETA**, meaning it can—and probably will have bugs. Use it only if you’re aware of the risks.
 Before using this software ALWAYS make backups
 ---
 
