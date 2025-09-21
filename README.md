@@ -22,18 +22,20 @@
 **CrossWatch** is a lightweight synchronization engine that keeps your Plex, Simkl, and Trakt libraries in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
 CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
-<center>⚠️  Before using this software ALWAYS make backups</center>
 
 
+---
+⚠️ CrossWatch is in **ALPHA/BETA**, meaning it can—and probably will have bugs. Use it only if you’re aware of the risks.
+Before using this software ALWAYS make backups
 ---
 
 ## 🚀 Features
 
 - Sync watchlists (one-way or two-way)
 - Live Scrobbling (Plex → Trakt) doest require webhooks
-- Sync Ratings (one-way or two-way - currently disabled in alpha version)
-- Sync Watch history (one-way or two-way - currently disabled in alpha version)
-- Sync Playlists (one-way or two-way - currently disabled in alpha version)
+- Sync Ratings (one-way or two-way)
+- Sync Watch history (one-way or two-way - currently disabled)
+- Sync Playlists (one-way or two-way - currently disabled)
 
 - Simple web UI — no external DB, just JSON state files
 - Rich metadata & posters via TMDb
