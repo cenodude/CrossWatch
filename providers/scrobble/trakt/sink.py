@@ -2,7 +2,7 @@
 - refactored at 21-09-2025
 - Retries with 401 refresh + rate-limit backoff
 - Debounce non-start events (STOP bypass at high progress)
-- STOP->PAUSE under threshold
+- STOP->PAUSE under threshold + demote suspicious STOP jumps
 - Progress memory (session/global), clamp suspicious 100% (non-STOP)
 - Prefer episode GUIDs; on 404, try alternates; last-resort GUID search
 """
@@ -240,15 +240,23 @@ class TraktSink(ScrobbleSink):
             if p_sess < 0 or p_base >= p_sess: p_send = p_base
             else: p_send = p_base if (p_sess - p_base) >= tol else p_sess
 
-        # STOP -> PAUSE if below threshold
-        action = "pause" if (ev.action == "stop" and p_send < _stop_pause_threshold(cfg)) else ev.action
+        # Decide final action (demote suspicious STOP jumps; then threshold)
+        thr  = _stop_pause_threshold(cfg)
+        last = max(p_sess, p_glob)
+        action = ev.action
+        if ev.action == "stop":
+            if p_send >= 98 and last >= 0 and last < thr and (p_send - last) >= 30:
+                self._log(f"Demote STOP→PAUSE (jump {last}%→{p_send}%, thr={thr})")
+                action = "pause"
+            elif p_send < thr:
+                action = "pause"
 
         # Update memory
         if p_send != p_sess: self._p_sess[(sk,mk)] = p_send
         if p_send > (p_glob if p_glob >= 0 else -1): self._p_glob[mk] = p_send
 
-        # Debounce (bypass for high-progress STOP)
-        bypass = (ev.action == "stop" and p_send >= _force_stop_at(cfg))
+        # Debounce (bypass only for final STOP at high progress)
+        bypass = (action == "stop" and p_send >= _force_stop_at(cfg))
         if not bypass and self._debounced(ev.session_key, action): return
 
         path = { "start":"/scrobble/start", "pause":"/scrobble/pause", "stop":"/scrobble/stop" }[action]
@@ -265,7 +273,7 @@ class TraktSink(ScrobbleSink):
             if res.get("status") == 404:
                 self._log("404 with current representation → trying alternate", "WARN")
                 continue
-            break  # non-404: no further alternates help
+            break  # non-404
 
         # Last resort: GUID search
         if last_err and last_err.get("status") == 404 and ev.media_type == "episode":
