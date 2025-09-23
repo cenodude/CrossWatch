@@ -1,873 +1,460 @@
 /* Insights module: multi-feature stats (watchlist/ratings/history/playlists). */
 (function (w, d) {
-  // --- Small helpers ---------------------------------------------------------
+  // --- helpers ---------------------------------------------------------------
   const FEATS = ["watchlist","ratings","history","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
-
-  function $(sel, root) { return (root || d).querySelector(sel); }
-  function $all(sel, root){ return Array.prototype.slice.call((root || d).querySelectorAll(sel)); }
-  function txt(el, v) { if (el) el.textContent = v == null ? "—" : String(v); }
-  function toLocal(iso) { if (!iso) return "—"; const t = new Date(iso); return isNaN(+t) ? "—" : t.toLocaleString(undefined, { hour12: false }); }
-  function clampFeature(name){ return FEATS.includes(name) ? name : "watchlist"; }
-
-  // Persisted selection
+  const $  = (s,r)=> (r||d).querySelector(s);
+  const $$ = (s,r)=> Array.from((r||d).querySelectorAll(s));
+  const txt= (el,v)=> el && (el.textContent = v==null ? "—" : String(v));
+  const clampFeature = n => FEATS.includes(n) ? n : "watchlist";
   let _feature = clampFeature(localStorage.getItem("insights.feature") || "watchlist");
+  const fetchJSON = async (url)=>{ try{ const r=await fetch(url,{cache:"no-store"}); return r.ok? r.json():null; }catch{ return null; } };
 
-  // --- HTTP ------------------------------------------------------------------
-  async function fetchJSON(url) {
-    try { const res = await fetch(url, { cache: "no-store" }); return res.ok ? res.json() : null; }
-    catch (_) { return null; }
+  // configured providers cache (gate tiles)
+  const _lc = s=>String(s||"").toLowerCase();
+  let _cfgSet = null, _cfgAt = 0; const CFG_TTL=60_000;
+  async function getConfiguredProviders(force=false){
+    if (!force && _cfgSet && (Date.now()-_cfgAt<CFG_TTL)) return _cfgSet;
+    const cfg = await fetchJSON(`/api/config?no_secrets=1&t=${Date.now()}`) || {};
+    const has = v => typeof v==="string" ? v.trim().length>0 : !!v;
+    const S = new Set();
+    if (has(cfg?.plex?.account_token)) S.add("plex");
+    if (has(cfg?.trakt?.access_token)) S.add("trakt");
+    if (has(cfg?.simkl?.access_token)) S.add("simkl");
+    if (has(cfg?.jellyfin?.access_token)) S.add("jellyfin");
+    _cfgSet=S; _cfgAt=Date.now(); return S;
   }
 
-  // --- Sparkline -------------------------------------------------------------
+  // --- sparkline -------------------------------------------------------------
   function renderSparkline(id, points) {
-    const el = d.getElementById(id);
-    if (!el) return;
-    if (!points || !points.length) { el.innerHTML = '<div class="muted">No data</div>'; return; }
-    const wv = el.clientWidth || 260, hv = el.clientHeight || 64, pad = 4;
-    const xs = points.map(p => +p.ts || 0), ys = points.map(p => +p.count || 0);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const X = t => maxX === minX ? pad : pad + ((wv - 2 * pad) * (t - minX)) / (maxX - minX);
-    const Y = v => maxY === minY ? hv / 2 : hv - pad - ((hv - 2 * pad) * (v - minY)) / (maxY - minY);
-    const dStr = points.map((p, i) => (i ? "L" : "M") + X(p.ts) + "," + Y(p.count)).join(" ");
-    const dots = points.map(p => '<circle class="dot" cx="'+X(p.ts)+'" cy="'+Y(p.count)+'"></circle>').join("");
-    el.innerHTML = '<svg viewBox="0 0 '+wv+' '+hv+'" preserveAspectRatio="none"><path class="line" d="'+dStr+'"></path>'+dots+'</svg>';
+    const el = d.getElementById(id); if (!el) return;
+    if (!points?.length) { el.innerHTML = '<div class="muted">No data</div>'; return; }
+    const wv=el.clientWidth||260, hv=el.clientHeight||64, pad=4;
+    const xs=points.map(p=>+p.ts||0), ys=points.map(p=>+p.count||0);
+    const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+    const X=t=> maxX===minX? pad : pad + ((wv-2*pad)*(t-minX))/(maxX-minX);
+    const Y=v=> maxY===minY? hv/2: hv - pad - ((hv-2*pad)*(v-minY))/(maxY-minY);
+    const dStr=points.map((p,i)=>(i?"L":"M")+X(p.ts)+","+Y(p.count)).join(" ");
+    const dots=points.map(p=>`<circle class="dot" cx="${X(p.ts)}" cy="${Y(p.count)}"></circle>`).join("");
+    el.innerHTML = `<svg viewBox="0 0 ${wv} ${hv}" preserveAspectRatio="none"><path class="line" d="${dStr}"></path>${dots}</svg>`;
   }
 
-  // --- Number + bar animations ----------------------------------------------
-  function _ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
-  function animateNumber(el, to, duration) {
+  // --- number + bars ---------------------------------------------------------
+  const _ease = t => t<.5 ? 2*t*t : -1 + (4-2*t)*t;
+  function animateNumber(el, to, duration=650) {
     if (!el) return;
-    const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0;
-    if (from === to) { el.textContent = String(to); el.dataset.v = String(to); return; }
-    const dur = Math.max(180, duration || 650), t0 = performance.now();
-    function step(now) {
-      const p = Math.min(1, (now - t0) / dur);
-      const v = Math.round(from + (to - from) * _ease(p));
-      el.textContent = String(v);
-      if (p < 1) requestAnimationFrame(step); else el.dataset.v = String(to);
-    }
+    const from = parseInt(el.dataset?.v || el.textContent || "0",10)||0;
+    if (from===to) { el.textContent=String(to); el.dataset.v=String(to); return; }
+    const t0 = performance.now(), dur = Math.max(180,duration);
+    const step = now => { const p=Math.min(1,(now-t0)/dur), v=Math.round(from+(to-from)*_ease(p));
+      el.textContent=String(v); p<1? requestAnimationFrame(step) : (el.dataset.v=String(to)); };
     requestAnimationFrame(step);
   }
-  function animateChart(now, week, month) {
-    const bars = { now: d.querySelector(".bar.now"), week: d.querySelector(".bar.week"), month: d.querySelector(".bar.month") };
-    const max = Math.max(1, now, week, month);
-    const h = (v) => Math.max(0.04, v / max);
-    if (bars.week)  bars.week.style.transform  = `scaleY(${h(week)})`;
-    if (bars.month) bars.month.style.transform = `scaleY(${h(month)})`;
-    if (bars.now)   bars.now.style.transform   = `scaleY(${h(now)})`;
+  function animateChart(now,week,month){
+    const bars = { now:$('.bar.now'), week:$('.bar.week'), month:$('.bar.month') };
+    const max = Math.max(1, now, week, month), h=v=> Math.max(.04, v/max);
+    bars.week && (bars.week.style.transform = `scaleY(${h(week)})`);
+    bars.month&& (bars.month.style.transform= `scaleY(${h(month)})`);
+    bars.now  && (bars.now.style.transform  = `scaleY(${h(now)})`);
   }
 
-  // --- Footer host inside #stats-card (switcher + tiles live here) ----------
-  function ensureInsightsFooter() {
-    let foot = d.getElementById("insights-footer");
-    if (foot) return foot;
-
-    const card = d.getElementById("stats-card") || d.body;
-    foot = d.createElement("div");
-    foot.id = "insights-footer";
-    foot.className = "ins-footer";
-    foot.innerHTML = '<div class="ins-foot-wrap"></div>';
-    card.appendChild(foot);
-    return foot;
-  }
-  function footWrap() {
-    const foot = ensureInsightsFooter();
-    return foot.querySelector(".ins-foot-wrap") || foot;
-  }
-
-  // Reserve space so the absolute footer never overlaps the stats above
-  let _padTimer = 0;
-  function reserveSpaceForFooter() {
-    const card = d.getElementById("stats-card");
-    const foot = d.getElementById("insights-footer");
-    if (!card || !foot) return;
-    clearTimeout(_padTimer);
-    _padTimer = setTimeout(() => {
-      const h = (foot.getBoundingClientRect().height || foot.offsetHeight || 120) + 14;
-      card.style.paddingBottom = h + "px";
-    }, 0);
-  }
-  w.addEventListener("resize", () => reserveSpaceForFooter(), { passive: true });
-
-  // --- Provider tiles (Plex, SIMKL, Trakt) ----------------------------------
-  function ensureProviderTiles() {
-    let container =
-      d.getElementById("stat-providers") ||
-      d.querySelector("[data-role='stat-providers']");
-
-    if (!container) {
-      container = d.createElement("div");
-      container.id = "stat-providers";
-      footWrap().appendChild(container);
-    } else if (container.parentElement?.id !== "insights-footer" && container.parentElement?.className !== "ins-foot-wrap") {
-      footWrap().appendChild(container);
-    }
-
-    ["plex","simkl","trakt"].forEach((name)=>{
-      const tileId = "tile-" + name;
-      const valId  = "stat-" + name;
-
-      let tile = d.getElementById(tileId);
-      if (!tile) {
-        tile = d.createElement("div");
-        tile.id = tileId;
-        tile.className = "tile provider brand-" + name;
-        tile.dataset.provider = name;
-        tile.innerHTML =
-          '<div class="k">'+name.toUpperCase()+'</div>' +
-          '<div class="n" id="'+valId+'" data-v="0">0</div>';
-        container.appendChild(tile);
-      } else {
-        tile.classList.add("provider","brand-" + name);
-        tile.dataset.provider = name;
-        if (!d.getElementById(valId)) {
-          const n = d.createElement("div");
-          n.className = "n";
-          n.id = valId;
-          n.dataset.v = "0";
-          n.textContent = "0";
-          tile.appendChild(n);
-        }
-        if (tile.parentElement !== container) container.appendChild(tile);
+  // --- footer host -----------------------------------------------------------
+  const footWrap = (()=>{ let _padTimer=0;
+    function ensureFooter(){
+      let foot = d.getElementById("insights-footer");
+      if (!foot) {
+        foot = d.createElement("div"); foot.id="insights-footer"; foot.className="ins-footer";
+        foot.innerHTML = '<div class="ins-foot-wrap"></div>'; (d.getElementById("stats-card")||d.body).appendChild(foot);
       }
-    });
+      return foot.querySelector(".ins-foot-wrap")||foot;
+    }
+    function reserve(){ const card=$("#stats-card"), foot=$("#insights-footer"); if(!card||!foot) return;
+      clearTimeout(_padTimer); _padTimer=setTimeout(()=>{ const h=(foot.getBoundingClientRect().height||foot.offsetHeight||120)+14; card.style.paddingBottom=h+"px"; },0);
+    }
+    w.addEventListener("resize", reserve, { passive:true });
+    return Object.assign(ensureFooter, { reserve });
+  })();
 
-    return {
-      plex:  d.getElementById("stat-plex"),
-      simkl: d.getElementById("stat-simkl"),
-      trakt: d.getElementById("stat-trakt")
-    };
-  }
-
-  function pulseTile(tile) {
-    if (!tile) return;
-    tile.classList.remove("pulse-brand");
-    // restart animation
-    // eslint-disable-next-line no-unused-expressions
-    tile.offsetWidth;
-    tile.classList.add("pulse-brand");
-  }
-
-  // --- Feature switcher (segment + arrows) ----------------------------------
-  function ensureFeatureSwitcher() {
+  // --- feature switcher ------------------------------------------------------
+  function ensureSwitch() {
+    const wrap = footWrap();
     let host = d.getElementById("insights-switch");
     if (!host) {
       host = d.createElement("div");
-      host.id = "insights-switch";
-      host.className = "ins-switch";
-      host.innerHTML =
-        '<button class="nav prev" aria-label="Previous feature" title="Previous"></button>' +
-        '<div class="seg" role="tablist" aria-label="Insights features"></div>' +
-        '<button class="nav next" aria-label="Next feature" title="Next"></button>';
-      footWrap().appendChild(host);
-
-      const seg = host.querySelector(".seg");
-      FEATS.forEach((key)=>{
-        const b = d.createElement("button");
-        b.className = "seg-btn";
-        b.type = "button";
-        b.dataset.key = key;
-        b.setAttribute("role", "tab");
-        b.textContent = FEAT_LABEL[key] || key;
-        if (key === _feature) { b.classList.add("active"); b.setAttribute("aria-selected","true"); }
-        seg.appendChild(b);
-      });
-
-      host.addEventListener("click", (ev)=>{
-        const btn = ev.target.closest(".seg-btn");
-        if (!btn) return;
-        switchFeature(btn.dataset.key);
-      });
-      host.querySelector(".prev").addEventListener("click", ()=> {
-        const idx = FEATS.indexOf(_feature);
-        const next = FEATS[(idx - 1 + FEATS.length) % FEATS.length];
-        switchFeature(next);
-      });
-      host.querySelector(".next").addEventListener("click", ()=> {
-        const idx = FEATS.indexOf(_feature);
-        const next = FEATS[(idx + 1) % FEATS.length];
-        switchFeature(next);
-      });
-    } else if (host.parentElement?.id !== "insights-footer" && host.parentElement?.className !== "ins-foot-wrap") {
-      footWrap().appendChild(host);
+      host.id = "insights-switch"; host.className = "ins-switch";
+      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div>';
+      wrap.appendChild(host);
+    } else if (host.parentNode !== wrap) {
+      wrap.appendChild(host);
     }
-    placeFeatureSwitcher();
-    reserveSpaceForFooter();
+    const seg = host.querySelector(".seg");
+    if (!host.dataset.init || !seg.querySelector(".seg-btn")) {
+      seg.innerHTML = FEATS.map(f=>{
+        const on = _feature===f;
+        return `<button class="seg-btn${on?' active':''}" data-key="${f}" role="tab" aria-selected="${on}">${FEAT_LABEL[f]}</button>`;
+      }).join("");
+      seg.addEventListener("click", ev=>{
+        const b = ev.target.closest(".seg-btn"); if (!b) return; switchFeature(b.dataset.key);
+      });
+      host.dataset.init="1";
+    }
+    placeSwitchBeforeTiles(); markActiveSwitcher(); footWrap.reserve();
     return host;
   }
-
-  // Keep the switcher before the tiles inside the footer
-  function placeFeatureSwitcher() {
-    const host = d.getElementById("insights-switch");
-    ensureProviderTiles();
-    const prov = d.getElementById("stat-providers");
-    const wrap = footWrap();
-    if (!host || !prov || !wrap) return;
-    if (host.nextElementSibling !== prov || host.parentElement !== wrap) {
-      wrap.appendChild(host);
-      wrap.appendChild(prov);
-    }
+  function placeSwitchBeforeTiles(){
+    const wrap = footWrap(), sw=$("#insights-switch"), grid=$("#stat-providers"); if (!wrap||!sw) return;
+    if (!wrap.contains(sw)) wrap.appendChild(sw);
+    const ref = (grid && grid.parentNode === wrap) ? grid : null;
+    if (sw.nextSibling !== ref) { try { wrap.insertBefore(sw, ref); } catch {} }
   }
-
-  function markActiveSwitcher() {
-    const seg = d.querySelector("#insights-switch .seg");
-    if (!seg) return;
-    $all(".seg-btn", seg).forEach(b=>{
-      const on = b.dataset.key === _feature;
-      b.classList.toggle("active", on);
-      b.setAttribute("aria-selected", on ? "true":"false");
+  function markActiveSwitcher(){
+    $$("#insights-switch .seg .seg-btn").forEach(b=>{
+      const on=b.dataset.key===_feature; b.classList.toggle("active",on); b.setAttribute("aria-selected", on?"true":"false");
     });
   }
-
   function switchFeature(name){
-    const want = clampFeature(name);
-    if (want === _feature) return;
-    _feature = want;
-    localStorage.setItem("insights.feature", want);
-    markActiveSwitcher();
-    refreshInsights(true);
+    const want = clampFeature(name); if (want===_feature) return;
+    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
   }
 
-  // --- Data shaping per feature (UPDATED: avoid mixing features) ------------
-  function pickBlock(data, feat) {
-    const fromFeatures = data?.features?.[feat] || data?.stats?.[feat] || data?.[feat];
-    const block = fromFeatures || data || {};
-    const history = Array.isArray(data?.history) ? data.history : [];
+  // --- provider tiles (only when configured) ---------------------------------
+  function renderProviderStats(provTotals, provActive, configuredSet) {
+    const wrap = footWrap();
+    const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
+    if (host.parentNode !== wrap) wrap.appendChild(host);
 
-    const n = (v, fb = 0) => {
-      const x = Number(v);
-      return Number.isFinite(x) ? x : fb;
-    };
+    const totals = provTotals || {};
+    const active = Object.assign({}, provActive || {});
+    const conf   = configuredSet || _cfgSet || new Set();
+    let keys = Array.from(new Set([
+      ...Object.keys(Object.assign({}, totals, active)),
+      ...Array.from(conf)
+    ])).filter(k=> conf.has(_lc(k))).sort();
 
-    // Provider totals
-    function pickProviderTotals(src, whichFeat) {
-      if (!src) return null;
-      if (src.providers_by_feature && src.providers_by_feature[whichFeat]) {
-        return src.providers_by_feature[whichFeat];
-      }
-      const by = src.providers || src.provider_stats || src.providers_totals;
-      if (by) return by;
-
-      const cur = src.current;
-      if (cur && typeof cur === "object") {
-        const out = { plex:0, simkl:0, trakt:0 };
-        Object.keys(cur).forEach((k)=>{
-          const x = cur[k] || {};
-          if (x.p) out.plex++;
-          if (x.s) out.simkl++;
-          if (x.t) out.trakt++;
-        });
-        return out;
-      }
-      return null;
-    }
-    function pickActive(src, totals) {
-      if (!src) return { plex:false, simkl:false, trakt:false };
-      if (src.providers_active) return src.providers_active;
-      totals = totals || {};
-      return { plex: !!(totals.plex||0), simkl: !!(totals.simkl||0), trakt: !!(totals.trakt||0) };
+    // Always show at least one tile (if none configured, show empty state)
+    if (!keys.length) {
+      host.hidden = true;
+      footWrap.reserve();
+      return;
     }
 
-    const series =
-      block.series_by_feature?.[feat] ||
-      data?.series_by_feature?.[feat] ||
-      block.series ||
-      [];
+    host.hidden = false;
+    host.style.setProperty("--prov-cols", Math.max(1, Math.min(keys.length, 4)));
 
-    const providers = pickProviderTotals(block, feat) || pickProviderTotals(data, feat) || {};
-    const active = pickActive(block, providers);
+    const seen = new Set();
+    keys.forEach(k=>{
+      const id=`tile-${k}`, valId=`stat-${k}`;
+      let tile=d.getElementById(id);
+      if (!tile) {
+        tile=d.createElement("div"); tile.id=id; tile.dataset.provider=_lc(k); tile.className="tile provider";
+        tile.innerHTML=`<div class="n" id="${valId}" data-v="0">0</div>`; host.appendChild(tile);
+      } else if (tile.parentNode !== host) host.appendChild(tile);
 
-    // Prefer feature-scoped counters if present; otherwise we'll derive them from history.
-    let now   = Number.isFinite(+block.now)   ? n(block.now)   : NaN;
-    let week  = Number.isFinite(+block.week)  ? n(block.week)  : NaN;
-    let month = Number.isFinite(+block.month) ? n(block.month) : NaN;
-
-    // ADDED / REMOVED: only trust explicit per-feature fields
-    let added   = NaN;
-    let removed = NaN;
-
-    // Optionals (server may expose any of these):
-    if (block.added_by_feature && block.added_by_feature[feat] != null)
-      added = n(block.added_by_feature[feat]);
-    if (block.removed_by_feature && block.removed_by_feature[feat] != null)
-      removed = n(block.removed_by_feature[feat]);
-
-    if (Number.isNaN(added) && block.totals_by_feature && block.totals_by_feature[feat]?.added != null)
-      added = n(block.totals_by_feature[feat].added);
-    if (Number.isNaN(removed) && block.totals_by_feature && block.totals_by_feature[feat]?.removed != null)
-      removed = n(block.totals_by_feature[feat].removed);
-
-    // Also check top-level maps if present
-    if (Number.isNaN(added) && data?.added_by_feature?.[feat] != null)
-      added = n(data.added_by_feature[feat]);
-    if (Number.isNaN(removed) && data?.removed_by_feature?.[feat] != null)
-      removed = n(data.removed_by_feature[feat]);
-
-    // Derive counters from history if still missing (feature-scoped)
-    const MS = { w: 7*86400000, m: 30*86400000 };
-    const nowMs = Date.now();
-
-    function rowTs(row) {
-      const t = row?.finished_at || row?.started_at;
-      const ts = t ? new Date(t).getTime() : NaN;
-      return Number.isFinite(ts) ? ts : null;
-    }
-    function totalsFor(row) {
-      const f = (row && row.features && row.features[feat]) || {};
-      const a = +((f.added ?? f.adds) || 0);
-      const r = +((f.removed ?? f.removes) || 0);
-      const u = +((f.updated ?? f.updates) || 0);
-      return { a, r, u, sum: (a|0)+(r|0)+(u|0) };
-    }
-    function rowHasFeat(row) {
-      if (!row) return false;
-      const explicit = (row.feature || row.run_feature || row.target_feature || row.meta?.feature || "");
-      if (explicit) return String(explicit).toLowerCase() === feat;
-      const listed = (row.feature_list || row.features_list || row.meta?.features || "");
-      if (listed) return (","+String(listed).toLowerCase()+",").includes(","+feat+",");
-      const en = row.features_enabled || row.enabled || row.featuresEnabled || null;
-      if (en && Object.prototype.hasOwnProperty.call(en, feat)) return !!en[feat];
-      const t = totalsFor(row); return t.sum > 0;
-    }
-
-    const rows = history
-      .map(r => ({ r, ts: rowTs(r) }))
-      .filter(x => x.ts != null && rowHasFeat(x.r))
-      .sort((a,b)=>a.ts-b.ts);
-
-    if (Number.isNaN(now)) {
-      const last = rows.length ? rows[rows.length-1].r : null;
-      now = last ? totalsFor(last).sum : 0;
-    }
-    if (Number.isNaN(week) || Number.isNaN(month) || Number.isNaN(added) || Number.isNaN(removed)) {
-      const sumSince = (since) => {
-        let A=0,R=0,U=0,S=0;
-        rows.forEach(({r, ts})=>{
-          if (ts < since) return;
-          const t = totalsFor(r); A+=t.a; R+=t.r; U+=t.u; S+=t.sum;
-        });
-        return {A,R,U,S};
-      };
-      if (Number.isNaN(week))  week  = sumSince(nowMs - MS.w).S;
-      if (Number.isNaN(month)) month = sumSince(nowMs - MS.m).S;
-      if (Number.isNaN(added) || Number.isNaN(removed)) {
-        const m = sumSince(nowMs - MS.m);
-        if (Number.isNaN(added))   added   = m.A;
-        if (Number.isNaN(removed)) removed = m.R;
-      }
-    }
-
-    return {
-      series,
-      providers,
-      active,
-      now: n(now, 0),
-      week: n(week, 0),
-      month: n(month, 0),
-      added: n(added, 0),
-      removed: n(removed, 0),
-      raw:block
-    };
-  }
-
-  // --- Render provider totals ------------------------------------------------
-  function renderProviderStats(provTotals, provActive) {
-    const by = provTotals || {};
-    const n = (x) => (+x || 0);
-
-    function pickTotal(key) {
-      if (by && typeof by === "object") {
-        if (Number.isFinite(+by[key + "_total"])) return n(by[key + "_total"]);
-        const maybe = by[key];
-        if (maybe && typeof maybe === "object" && "total" in maybe) return n(maybe.total);
-        return n(maybe) + n(by.both); // tolerate legacy shapes
-      }
-      return 0;
-    }
-
-    const totals = { plex: pickTotal("plex"), simkl: pickTotal("simkl"), trakt: pickTotal("trakt") };
-    const active = Object.assign({ plex:false, simkl:false, trakt:false }, provActive || {});
-    ensureProviderTiles();
-
-    [["plex","stat-plex","tile-plex"],
-     ["simkl","stat-simkl","tile-simkl"],
-     ["trakt","stat-trakt","tile-trakt"]].forEach(([k, valId, tileId])=>{
-      const vEl = d.getElementById(valId);
-      const tEl = d.getElementById(tileId);
-      if (!vEl || !tEl) return;
-
-      const prev = parseInt(vEl.dataset.v || vEl.textContent || 0, 10) || 0;
-      animateNumber(vEl, totals[k], 650);
-      if (prev !== totals[k]) pulseTile(tEl);
-
-      tEl.classList.toggle("inactive", !active[k]);
-      tEl.removeAttribute("hidden");
+      let valEl=d.getElementById(valId);
+      if (!valEl) { valEl=d.createElement("div"); valEl.className="n"; valEl.id=valId; valEl.dataset.v="0"; valEl.textContent="0"; tile.appendChild(valEl); }
+      animateNumber(valEl, (+totals[k]||0), 650);
+      tile.classList.toggle("inactive", !active[k]);
+      seen.add(id);
     });
 
-    placeFeatureSwitcher();
-    reserveSpaceForFooter();
+    Array.from(host.querySelectorAll(".tile")).forEach(t=>{ if(!seen.has(t.id)) t.remove(); });
+    placeSwitchBeforeTiles(); footWrap.reserve();
   }
 
-  // --- Recent syncs: TABBED (shared across features) -------------------------
-  function renderHistoryTabs(hist) {
-    const wrap =
-      document.getElementById("sync-history") ||
-      document.querySelector("[data-role='sync-history']") ||
-      document.querySelector(".sync-history");
+  // --- history tabs ------------------------------------------------------------
+  function renderHistoryTabs(hist){
+    const LIMIT_HISTORY = +(localStorage.getItem("insights.history.limit") || 3);
+    const wrap = $("#sync-history") || $("[data-role='sync-history']") || $(".sync-history");
     if (!wrap) return;
 
-    if (!wrap.dataset.tabsInit) {
+    // One-time scaffold
+    if (!wrap.dataset.tabsInit){
       wrap.innerHTML =
         '<div class="sync-tabs" role="tablist" aria-label="Recent syncs">' +
-          '<button class="tab active" data-tab="watchlist" role="tab" aria-selected="true">Watchlist</button>' +
-          '<button class="tab" data-tab="ratings" role="tab" aria-selected="false">Ratings</button>' +
-          '<button class="tab" data-tab="history" role="tab" aria-selected="false">History</button>' +
-          '<button class="tab" data-tab="playlists" role="tab" aria-selected="false">Playlists</button>' +
-        '</div>' +
-        '<div class="sync-tabpanes">' +
-          '<div class="pane active" data-pane="watchlist" role="tabpanel"><div class="list"></div></div>' +
-          '<div class="pane" data-pane="ratings" role="tabpanel" hidden><div class="list"></div></div>' +
-          '<div class="pane" data-pane="history" role="tabpanel" hidden><div class="list"></div></div>' +
-          '<div class="pane" data-pane="playlists" role="tabpanel" hidden><div class="list"></div></div>' +
+          FEATS.map((f,i)=>`<button class="tab ${i?'':'active'}" data-tab="${f}" role="tab" aria-selected="${i?'false':'true'}">${FEAT_LABEL[f]}</button>`).join("") +
+        '</div><div class="sync-tabpanes">' +
+          FEATS.map((f,i)=>`<div class="pane ${i?'':'active'}" data-pane="${f}" role="tabpanel"${i?' hidden':''}><div class="list"></div></div>`).join("") +
         '</div>';
       wrap.dataset.tabsInit = "1";
-      wrap.addEventListener("click", (ev) => {
+      wrap.addEventListener("click", ev => {
         const btn = ev.target.closest(".tab"); if (!btn) return;
         const name = btn.dataset.tab;
-        wrap.querySelectorAll(".sync-tabs .tab").forEach(b=>{
+        $$(".sync-tabs .tab", wrap).forEach(b => {
           const on = b.dataset.tab === name;
           b.classList.toggle("active", on);
           b.setAttribute("aria-selected", on ? "true" : "false");
         });
-        wrap.querySelectorAll(".sync-tabpanes .pane").forEach(p=>{
+        $$(".sync-tabpanes .pane", wrap).forEach(p => {
           const on = p.dataset.pane === name;
-          p.classList.toggle("active", on); p.hidden = !on;
+          p.classList.toggle("active", on);
+          p.hidden = !on;
         });
       });
     }
 
     const emptyMsg = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>';
-    const SHOW_ZERO = { watchlist:false, ratings:false, history:false, playlists:false };
-
-    const toWhen  = (row) => {
-      const t = (row && (row.finished_at || row.started_at)) || null;
-      if (!t) return "—";
-      const dt = new Date(t); return isNaN(+dt) ? "—" : dt.toLocaleString(undefined, { hour12:false });
-    };
-    const safeDur = (v) => {
-      if (v == null) return "—";
-      const n = parseFloat(String(v).replace(/[^\d.]/g,""));
-      return Number.isFinite(n) ? n.toFixed(1)+'s' : '—';
-    };
+    const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); return isNaN(+dt)?"—":dt.toLocaleString(undefined,{hour12:false}); };
+    const dur  = v => { if(v==null) return "—"; const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return Number.isFinite(n)? n.toFixed(1)+'s':'—'; };
     const totalsFor = (row, feat) => {
-      const f = (row && row.features && row.features[feat]) || {};
-      const a = +((f.added ?? f.adds) || 0);
-      const r = +((f.removed ?? f.removes) || 0);
-      const u = +((f.updated ?? f.updates) || 0);
-      return { a, r, u, sum: (a|0)+(r|0)+(u|0) };
+      const f=(row?.features?.[feat])||{};
+      const a=+((f.added??f.adds)||0), r=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
+      return { a:a|0, r:r|0, u:u|0, sum:(a|0)+(r|0)+(u|0) };
     };
-
-    // UPDATED: consider enabled maps from orchestrator insights
-    function hasFeature(row, feat) {
-      if (!row) return false;
-
-      // Explicit single-feature markers win
-      const explicit = (row && (row.feature || row.run_feature || row.target_feature || row.meta?.feature || "")).toLowerCase?.() || "";
-      if (explicit) return explicit === feat;
-
-      // Explicit list markers (e.g., "watchlist,ratings,history")
-      const listed = (row.feature_list || row.features_list || row.meta?.features || "");
-      if (listed) {
-        const s = String(listed).toLowerCase();
-        if ((","+s+",").includes(","+feat+",")) return true;
-      }
-
-      // NEW: treat runs as relevant when the feature was enabled (even if 0 changes)
-      const enMap = row.features_enabled || row.enabled || row.featuresEnabled || null;
-      if (enMap && Object.prototype.hasOwnProperty.call(enMap, feat)) {
-        return !!enMap[feat];
-      }
-
-      // Fallback: only show if that feature had activity
-      const t = totalsFor(row, feat);
-      return t.sum > 0;
-    }
-
-    const badgeCls = (row, t) => {
-      const exit = (row && typeof row.exit_code === "number") ? row.exit_code : null;
-      const res  = (row && row.result) ? String(row.result) : "";
-      if (exit != null && exit !== 0) return "err";
+    const badgeCls = (row,t) => {
+      const exit = (typeof row?.exit_code==="number") ? row.exit_code : null;
+      const res  = (row?.result?String(row.result):"");
+      if (exit!=null && exit!==0) return "err";
       if (res.toUpperCase()==="EQUAL" || t.sum===0) return "ok";
       return "warn";
     };
 
-    function renderPane(list, featName) {
-      const paneList = wrap.querySelector('.pane[data-pane="'+featName+'"] .list');
+    // Precompute latest finished timestamp to allow zero-delta fallback only for newest run....i hope...
+    const all = Array.isArray(hist) ? hist.slice() : [];
+    const latestTs = all.reduce((mx,row)=>{
+      const t = Date.parse(row?.finished_at || row?.started_at || "");
+      return Number.isFinite(t) ? Math.max(mx, t) : mx;
+    }, 0);
+
+    function renderPane(list, feat){
+      const paneList = wrap.querySelector(`.pane[data-pane="${feat}"] .list`);
       if (!paneList) return;
 
-      const html = (list || [])
+      const rows = (list||[])
         .filter(row => {
-          if (!hasFeature(row, featName)) return false;
-          const t = totalsFor(row, featName);
-          return (t.sum > 0) || SHOW_ZERO[featName] || true; // show enabled runs even with 0
+          const t = totalsFor(row, feat);
+          if (t.sum > 0) return true;
+          const fin = Date.parse(row?.finished_at || row?.started_at || "");
+          const isLatest = Number.isFinite(fin) && fin === latestTs;
+          const en = row?.features_enabled;
+          return isLatest && !!(en && en[feat] === true);
         })
-        .map(row => {
-          const t = totalsFor(row, featName);
-          const b = badgeCls(row, t);
-          const upd = t.u ? (' <span class="badge micro">~'+t.u+'</span>') : '';
-          return (
-            '<div class="history-item">' +
-              '<div class="history-meta">' +
-                toWhen(row) + ' • ' +
-                '<span class="badge '+b+'">'+((row && row.result) || "—")+
-                  (typeof row.exit_code === "number" ? (' · '+row.exit_code) : '') +
-                '</span> • ' + safeDur(row && row.duration_sec) +
-              '</div>' +
-              '<div class="history-badges">' +
-                '<span class="badge">+'+(t.a|0)+'</span>' +
-                '<span class="badge">-'+(t.r|0)+'</span>' +
-                upd +
-              '</div>' +
-            '</div>'
-          );
-        })
-        .join("");
+        .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0))
+        .slice(0, LIMIT_HISTORY);
 
-      paneList.innerHTML = html || emptyMsg;
+      if (!rows.length){ paneList.innerHTML = emptyMsg; return; }
+
+      paneList.innerHTML = rows.map(row=>{
+        const t = totalsFor(row, feat);
+        const b = badgeCls(row, t);
+        const upd = t.u ? ` <span class="badge micro">~${t.u}</span>` : "";
+        return `<div class="history-item">
+          <div class="history-meta">${when(row)} • <span class="badge ${b}">${(row?.result)||"—"}${(typeof row?.exit_code==="number")?(' · '+row.exit_code):''}</span> • ${dur(row?.duration_sec)}</div>
+          <div class="history-badges"><span class="badge">+${t.a|0}</span><span class="badge">-${t.r|0}</span>${upd}</div>
+        </div>`;
+      }).join("");
     }
 
-    ["watchlist","ratings","history","playlists"].forEach(n=>{
-      const pane = wrap.querySelector('.pane[data-pane="'+n+'"] .list');
-      if (pane) pane.innerHTML = emptyMsg; // default
+    // Clear panes first
+    FEATS.forEach(n=>{
+      const pane = wrap.querySelector(`.pane[data-pane="${n}"] .list`);
+      if (pane) pane.innerHTML = emptyMsg;
     });
-    if (!hist || !hist.length) return;
 
-    renderPane(hist, "watchlist");
-    renderPane(hist, "ratings");
-    renderPane(hist, "history");
-    renderPane(hist, "playlists");
+    if (!all.length) return;
+    FEATS.forEach(n => renderPane(all, n));
   }
 
 
-
-  // --- Top-level counters (per selected feature) -----------------------------
+  // --- top counters ----------------------------------------------------------
   function renderTopStats(s) {
-    const now   = +((s && s.now) || 0);
-    const week  = +((s && s.week) || 0);
-    const month = +((s && s.month) || 0);
-    const added   = +((s && s.added) || 0);
-    const removed = +((s && s.removed) || 0);
-
-    const elNow = d.getElementById("stat-now");
-    const elW   = d.getElementById("stat-week");
-    const elM   = d.getElementById("stat-month");
-    const elA   = d.getElementById("stat-added");
-    const elR   = d.getElementById("stat-removed");
-
-    if (elNow) animateNumber(elNow, now|0); else txt(elNow, now|0);
-    if (elW)   animateNumber(elW,   week|0); else txt(elW,   week|0);
-    if (elM)   animateNumber(elM,   month|0); else txt(elM,   month|0);
-
-    if (elA)   animateNumber(elA,   added|0); else txt(elA,   added|0);
-    if (elR)   animateNumber(elR,   removed|0); else txt(elR, removed|0);
-
-    const fill = d.getElementById("stat-fill");
-    if (fill) { const max = Math.max(1, now, week, month); fill.style.width = Math.round((now / max) * 100) + "%"; }
-
-    animateChart(now, week, month);
-
-    const lab = d.getElementById("stat-feature-label");
-    if (lab) lab.textContent = FEAT_LABEL[_feature] || _feature;
-
-    // OPTIONAL: dynamic chip/label (“no change” or delta vs last week)
-    const chip = d.getElementById("stat-delta-chip") || d.querySelector(".stat-delta-chip");
-    if (chip) {
-      const diff = (now|0) - (week|0);
-      const txtVal = diff === 0 ? "no change" : (diff > 0 ? `+${diff} vs last week` : `${diff} vs last week`);
-      chip.textContent = txtVal;
-      chip.classList.toggle("muted", diff === 0);
-    }
+    const now=+(s?.now||0), week=+(s?.week||0), month=+(s?.month||0), added=+(s?.added||0), removed=+(s?.removed||0);
+    const elNow=$("#stat-now"), elW=$("#stat-week"), elM=$("#stat-month"), elA=$("#stat-added"), elR=$("#stat-removed");
+    elNow ? animateNumber(elNow, now|0) : txt(elNow, now|0);
+    elW   ? animateNumber(elW,   week|0): txt(elW,   week|0);
+    elM   ? animateNumber(elM,   month|0):txt(elM,   month|0);
+    elA   ? animateNumber(elA,   added|0):txt(elA,   added|0);
+    elR   ? animateNumber(elR, removed|0):txt(elR, removed|0);
+    const fill=$("#stat-fill"); if (fill){ const max=Math.max(1,now,week,month); fill.style.width=Math.round((now/max)*100)+"%"; }
+    animateChart(now,week,month);
+    const lab=$("#stat-feature-label"); if (lab) lab.textContent = FEAT_LABEL[_feature] || _feature;
+    const chip=$("#trend-week")||$("#stat-delta-chip"); if (chip){ const diff=(now|0)-(week|0); chip.textContent = diff===0 ? "no change" : (diff>0?`+${diff} vs last week`:`${diff} vs last week`); chip.classList.toggle("muted", diff===0); }
   }
 
-  // --- Fetch and render ------------------------------------------------------
+  // --- fetch & render --------------------------------------------------------
   async function refreshInsights(force=false) {
-    const data = await fetchJSON(`/api/insights?limit_samples=60&history=3${force ? "&t="+Date.now() : ""}`);
-    if (!data) return;
-
-    ensureInsightsFooter();
-    ensureFeatureSwitcher();
-    markActiveSwitcher();
-
-    const blk = pickBlock(data, _feature);
-
-    try { renderSparkline("sparkline", blk.series || []); } catch (_) {}
-    renderHistoryTabs(data.history || []);
-    renderTopStats({
-      now: blk.now, week: blk.week, month: blk.month,
-      added: blk.added, removed: blk.removed
-    });
-
-    renderProviderStats(blk.providers, blk.active);
-
-    const wt = data.watchtime || null;
+    const data = await fetchJSON(`/api/insights?limit_samples=60&history=3${force ? "&t="+Date.now() : ""}`); if (!data) return;
+    footWrap(); ensureSwitch(); const blk = pickBlock(data, _feature);
+    try{ renderSparkline("sparkline", blk.series||[]); }catch{}
+    renderHistoryTabs(data.history||[]);
+    renderTopStats({ now:blk.now, week:blk.week, month:blk.month, added:blk.added, removed:blk.removed });
+    const configured = await getConfiguredProviders();
+    renderProviderStats(blk.providers, blk.active, configured);
+    const wt = data.watchtime||null;
     if (wt) {
-      const wEl = d.getElementById("watchtime");
-      if (wEl) wEl.innerHTML = '<div class="big">≈ ' + (wt.hours|0) + '</div><div class="units">hrs <span style="opacity:.6">('+(wt.days|0)+' days)</span><br><span style="opacity:.8">'+(wt.movies|0)+' movies • '+(wt.shows|0)+' shows</span></div>';
-      const note = d.getElementById("watchtime-note");
-      if (note) note.textContent = wt.method || "estimate";
+      const wEl=$("#watchtime"); wEl && (wEl.innerHTML = `<div class="big">≈ ${wt.hours|0}</div><div class="units">hrs <span style="opacity:.6">(${wt.days|0} days)</span><br><span style="opacity:.8">${wt.movies|0} movies • ${wt.shows|0} shows</span></div>`);
+      const note=$("#watchtime-note"); note && (note.textContent = wt.method || "estimate");
     }
-
-    reserveSpaceForFooter();
-    setTimeout(reserveSpaceForFooter, 0);
+    footWrap.reserve(); setTimeout(footWrap.reserve, 0);
   }
 
-  // Lightweight stats-only refresh (legacy callers)
   let _lastStatsFetch = 0;
   async function refreshStats(force=false) {
-    const nowT = Date.now();
-    if (!force && nowT - _lastStatsFetch < 900) return;
-    _lastStatsFetch = nowT;
-
-    const data = await fetchJSON("/api/insights?limit_samples=0&history=0");
-    if (!data) return;
-
+    const nowT=Date.now(); if(!force && nowT - _lastStatsFetch < 900) return; _lastStatsFetch=nowT;
+    const data = await fetchJSON("/api/insights?limit_samples=0&history=0"); if (!data) return;
     const blk = pickBlock(data, _feature);
-    renderTopStats({ now: blk.now, week: blk.week, month: blk.month, added: blk.added, removed: blk.removed });
-    renderProviderStats(blk.providers, blk.active);
-    reserveSpaceForFooter();
+    renderTopStats({ now:blk.now, week:blk.week, month:blk.month, added:blk.added, removed:blk.removed });
+    const configured = await getConfiguredProviders();
+    renderProviderStats(blk.providers, blk.active, configured);
+    footWrap.reserve();
   }
 
-  // Mount scheduler UI (when dashboard becomes visible)
-  function scheduleInsights(max) {
-    let tries = 0, limit = max || 20;
-    (function tick(){
-      const need = d.getElementById("sync-history") || d.getElementById("stat-now") || d.getElementById("sparkline");
-      if (need) { refreshInsights(); return; }
-      tries++; if (tries < limit) setTimeout(tick, 250);
-    })();
+  // --- shape per feature -----------------------------------------------------
+  function pickBlock(data, feat) {
+    const featureBlock = (data?.features?.[feat] || data?.stats?.[feat] || data?.[feat]) || null;
+    const block  = featureBlock || data || {};
+    const history = Array.isArray(data?.history) ? data.history : [];
+    const n = (v, fb=0)=> Number.isFinite(+v) ? +v : fb;
+
+    function pickProviderTotals(src, whichFeat){
+      if(!src) return null;
+      if (src.providers_by_feature?.[whichFeat]) return src.providers_by_feature[whichFeat];
+      return src.providers || src.provider_stats || src.providers_totals || null;
+    }
+    const series    = block.series_by_feature?.[feat] || data?.series_by_feature?.[feat] || block.series || [];
+    const providers = pickProviderTotals(block, feat) || pickProviderTotals(data, feat) || {};
+    const active    = (block.providers_active || data.providers_active || {});
+
+    let { now, week, month, added, removed } = featureBlock ? block : { now: undefined, week: undefined, month: undefined, added: undefined, removed: undefined };
+
+    const MS = { w:7*86400000, m:30*86400000 }, nowMs=Date.now();
+    const rowTs = r => { const t=r?.finished_at||r?.started_at, ts=t? new Date(t).getTime():NaN; return Number.isFinite(ts)? ts:null; };
+    const totalsFor = r => {
+      const f=(r?.features?.[feat])||{};
+      const a=+((f.added??f.adds)||0), rr=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
+      return { a:a|0, r:rr|0, u:u|0, sum:(a|0)+(rr|0)+(u|0) };
+    };
+
+    // Strict match: explicit tag/list OR non-zero lane totals. Ignore enabled flags.
+    const rowHasFeat = r => {
+      if(!r) return false;
+      const explicit=(r.feature||r.run_feature||r.target_feature||r.meta?.feature||"");
+      if (explicit && String(explicit).toLowerCase()===feat) return true;
+
+      const listedRaw = r.feature_list ?? r.features_list ?? r.meta?.features ?? null;
+      if (Array.isArray(listedRaw)) {
+        if (listedRaw.map(s=>String(s).toLowerCase()).includes(feat)) return true;
+      } else if (listedRaw) {
+        if ((","+String(listedRaw).toLowerCase()+",").includes(","+feat+",")) return true;
+      }
+      return totalsFor(r).sum > 0;
+    };
+
+    const rows = history.map(r=>({r,ts:rowTs(r)})).filter(x=>x.ts!=null && rowHasFeat(x.r)).sort((a,b)=>a.ts-b.ts);
+
+    if (!Number.isFinite(+now))   now   = rows.length ? totalsFor(rows.at(-1).r).sum : 0;
+    const sumSince = since => rows.reduce((acc,{r,ts})=> ts<since ? acc : (t=>({A:acc.A+t.a,R:acc.R+t.r,U:acc.U+t.u,S:acc.S+t.sum}))(totalsFor(r)), {A:0,R:0,U:0,S:0});
+    if (!Number.isFinite(+week))  week  = sumSince(nowMs-MS.w).S;
+    if (!Number.isFinite(+month)) month = sumSince(nowMs-MS.m).S;
+    if (!Number.isFinite(+added) || !Number.isFinite(+removed)) {
+      const m = sumSince(nowMs-MS.m);
+      if (!Number.isFinite(+added))   added   = m.A;
+      if (!Number.isFinite(+removed)) removed = m.R;
+    }
+
+    return { series, providers, active, now:n(now), week:n(week), month:n(month), added:n(added), removed:n(removed), raw:block };
   }
 
-  // --- Public API ------------------------------------------------------------
-  w.Insights = Object.assign(w.Insights || {}, {
-    renderSparkline, refreshInsights, refreshStats, scheduleInsights, fetchJSON,
-    animateNumber, animateChart,
+  // --- public api & boot -----------------------------------------------------
+  w.Insights = Object.assign(w.Insights||{}, {
+    renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart,
     switchFeature, get feature(){ return _feature; }
   });
-  w.renderSparkline = renderSparkline;
-  w.refreshInsights = refreshInsights;
-  w.refreshStats = refreshStats;
-  w.scheduleInsights = scheduleInsights;
-  w.fetchJSON = fetchJSON;
-  w.animateNumber = w.animateNumber || animateNumber; // back-compat
+  w.renderSparkline = renderSparkline; w.refreshInsights = refreshInsights; w.refreshStats = refreshStats;
+  w.scheduleInsights = function scheduleInsights(max){ let tries=0, limit=max||20; (function tick(){ if ($("#sync-history")||$("#stat-now")||$("#sparkline")){ refreshInsights(); return; } if (++tries<limit) setTimeout(tick,250); })(); };
+  w.fetchJSON = fetchJSON; w.animateNumber = w.animateNumber || animateNumber;
 
-  // --- Boot ------------------------------------------------------------------
-  d.addEventListener("DOMContentLoaded", function(){ scheduleInsights(); });
-  d.addEventListener("tab-changed", function(ev){ if (ev && ev.detail && ev.detail.id === "main") refreshInsights(true); });
-})(window, document);
--
-// --------- Layout polish for history tabs (centered, correct visibility) -----
-(function patchTabLayoutCss(){
-  const id = 'insights-tabs-layout-fix';
-  if (document.getElementById(id)) return;
+  d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
+  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
 
-  const css = `
-  /* Tabs row centered; panes toggle only via .active */
-  .sync-tabs{
-    display:flex; justify-content:center; gap:.5rem;
-    margin:.25rem 0 .6rem; flex-wrap:wrap;
-  }
-  .sync-tabpanes{ margin-top:.25rem; }
-  .sync-tabpanes .pane{ display:none; width:100%; column-count:1; }
-  .sync-tabpanes .pane.active{ display:block; }
-  .sync-tabpanes .pane .list{ display:flex; flex-direction:column; gap:.5rem; }
-  .sync-tabpanes .pane .history-item{ width:100%; }
-  `;
+  // IIFE closer
+  })(window, document);
 
-  const s = document.createElement('style');
-  s.id = id;
-  s.textContent = css;
+
+/* ---- History tabs layout -------------------------------------------------- */
+(function(){
+  const id='insights-tabs-layout-fix'; if (document.getElementById(id)) return;
+  const s=document.createElement('style'); s.id=id; s.textContent = `
+  .sync-tabs{display:flex;justify-content:center;gap:.5rem;margin:.25rem 0 .6rem;flex-wrap:wrap}
+  .sync-tabpanes{margin-top:.25rem}.sync-tabpanes .pane{display:none;width:100%}.sync-tabpanes .pane.active{display:block}
+  .sync-tabpanes .pane .list{display:flex;flex-direction:column;gap:.5rem}.sync-tabpanes .pane .history-item{width:100%}`;
   document.head.appendChild(s);
 })();
 
-// -------- Styles: footer + provider tiles + feature switcher (size preserved) -
-(function injectInsightStyles() {
-  const id = "insights-provider-styles";
+/* glassy tabs for Recent syncs */
+(() => {
+  const id = 'insights-tabs-style-v2';
   if (document.getElementById(id)) return;
-
-  const css = `
-  /* Footer host inside #stats-card */
-  #insights-footer{
-    position:absolute; left:12px; right:12px; bottom:12px; z-index:2;
-    pointer-events:auto;
+  const s = document.createElement('style'); s.id = id;
+  s.textContent = `
+  #sync-history .sync-tabs{ gap:.35rem; margin:.1rem 0 .4rem; flex-wrap:wrap }
+  #sync-history .sync-tabs .tab{
+    appearance:none; border:1px solid rgba(255,255,255,.12);
+    background:rgba(255,255,255,.06);
+    -webkit-backdrop-filter:blur(8px) saturate(110%);
+    backdrop-filter:blur(8px) saturate(110%);
+    border-radius:12px;
+    padding:.34rem .68rem;
+    min-height:32px;
+    line-height:1; font-weight:700; letter-spacing:.2px;
+    color:#e6e8ee;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.22);
+    transition:background .16s, border-color .16s, box-shadow .16s, color .16s;
   }
-  #insights-footer .ins-foot-wrap{
-    display:flex; flex-direction:column; gap:8px;
-    padding:10px 12px; border-radius:14px;
-    background:linear-gradient(180deg, rgba(8,8,14,.32), rgba(8,8,14,.52));
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 8px 22px rgba(0,0,0,.28);
-    backdrop-filter: blur(6px) saturate(110%);
-    -webkit-backdrop-filter: blur(6px) saturate(110%);
+  #sync-history .sync-tabs .tab:hover{ background:rgba(255,255,255,.09); border-color:rgba(255,255,255,.18); }
+  #sync-history .sync-tabs .tab.active{
+    background:linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06));
+    border-color:rgba(120,150,255,.45); color:#fff;
+    box-shadow:0 0 0 1px rgba(120,150,255,.5), inset 0 10px 24px rgba(80,130,255,.16), 0 8px 18px rgba(64,128,255,.2);
   }
-  @media (max-width: 820px){
-    #insights-footer{ position:static; margin-top:10px; }
-  }
-
-  /* Feature switcher — centered line, arrows hidden */
-  #insights-switch{
-    display:flex; align-items:center; justify-content:center; gap:.5rem; flex-wrap:nowrap;
-  }
-  #insights-switch .nav{ display:none !important; }
-  #insights-switch .seg{
-    display:flex; gap:.35rem; flex:1 1 auto; min-width:0; max-width:100%;
-    justify-content:center; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden;
-    -webkit-overflow-scrolling:touch; scrollbar-width:none; margin-inline:auto;
-  }
-  #insights-switch .seg::-webkit-scrollbar{ display:none; }
-  #insights-switch .seg-btn{
-    appearance:none; border:0; outline:0; cursor:pointer; font:inherit; font-weight:600; letter-spacing:.2px;
-    padding:.32rem .66rem; border-radius:.6rem;
-    background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
-    color:rgba(255,255,255,.9); opacity:.9;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
-    transition:all .12s ease; white-space:nowrap;
-  }
-  #insights-switch .seg-btn:hover{ opacity:1; transform:translateY(-1px); }
-  #insights-switch .seg-btn.active{
-    background:linear-gradient(180deg, rgba(24,24,24,.28), rgba(255,255,255,.06));
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.14), 0 4px 18px rgba(0,0,0,.18);
-  }
-
-  /* — Recent syncs: subtle glassy tabs — */
-  .sync-tabs .tab{
-    appearance:none; border:0; outline:0; cursor:pointer;
-    font:inherit; font-weight:600; letter-spacing:.2px;
-    padding:.48rem .9rem; border-radius:.8rem;
-    color:rgba(255,255,255,.88);
-    background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-    border:1px solid rgba(255,255,255,.08);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 6px 18px rgba(0,0,0,.22);
-    backdrop-filter: blur(8px) saturate(115%);
-    -webkit-backdrop-filter: blur(8px) saturate(115%);
-    transition:transform .12s ease, box-shadow .12s ease, background .12s ease, border-color .12s ease;
-  }
-  .sync-tabs .tab:hover{
-    transform:translateY(-1px);
-    border-color:rgba(255,255,255,.12);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 8px 22px rgba(0,0,0,.26);
-  }
-  .sync-tabs .tab.active{
-    background:linear-gradient(180deg, rgba(24,24,40,.28), rgba(120,140,255,.10));
-    box-shadow: 0 0 0 1.5px rgba(128,140,255,.45), 0 8px 22px rgba(0,0,0,.26), inset 0 0 0 1px rgba(255,255,255,.08);
-    border-color:rgba(128,140,255,.35);
-  }
-  .sync-tabs .tab:focus-visible{
-    outline:2px solid rgba(128,140,255,.55);
-    outline-offset:2px;
-  }
-
-  /* Provider tiles grid (sizes preserved) */
-  #stat-providers{
-    display:grid !important;
-    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
-    gap:.5rem !important; width:100% !important;
-  }
-  #stat-providers .tile{
-    display:flex; align-items:center; justify-content:center;
-    padding:.5rem .75rem; min-height:76px;
-    border-radius:.8rem; background:rgba(255,255,255,.045);
-    border:0; box-shadow:none; position:relative; overflow:hidden; isolation:isolate;
-    animation: tile-in .6s cubic-bezier(.2,.7,.2,1) both;
-  }
-  #stat-providers .tile .k{ display:none !important; }
-
-  /* Watermark */
-  #stat-providers .tile::after{
-    content:""; position:absolute; left:50%; top:50%;
-    width:90%; height:90%; transform:translate(-50%,-50%);
-    background-repeat:no-repeat; background-position:center; background-size:contain;
-    opacity:.08; mix-blend-mode:soft-light; filter:blur(.2px);
-    pointer-events:none; z-index:0; transition:opacity .25s ease;
-  }
-  #stat-providers .tile:hover::after{ opacity:.10; }
-  #stat-providers .tile.inactive::after{ opacity:.05; }
-
-  /* Brand bloom */
-  #stat-providers .tile::before{
-    content:""; position:absolute; left:50%; top:50%;
-    width:120%; height:120%; transform:translate(-50%,-50%);
-    background:radial-gradient(50% 50% at 50% 50%, rgb(var(--glow,255,255,255)/.07), rgb(var(--glow,255,255,255)/0) 62%);
-    filter:blur(8px); z-index:0; pointer-events:none;
-  }
-
-  /* Big numbers (unchanged size) */
-  #stat-providers .tile .n{
-    position:relative; z-index:1; margin:0; padding:0;
-    font-weight:800; letter-spacing:.25px;
-    font-size:clamp(36px, 4vw, 64px); line-height:1;
-    color:rgba(255,255,255,.36);
-    text-shadow:0 1px 0 rgba(0,0,0,.08), 0 0 4px rgba(255,255,255,.04);
-  }
-  @supports (-webkit-background-clip:text){
-    #stat-providers .tile .n{
-      background-image:linear-gradient(180deg, rgba(255,255,255,.76) 0%, rgba(224,224,224,.38) 52%, rgba(255,255,255,.16) 100%);
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent; color:transparent;
-    }
-  }
-  @supports (background-clip:text){
-    #stat-providers .tile .n{
-      background-image:linear-gradient(180deg, rgba(255,255,255,.76) 0%, rgba(224,224,224,.38) 52%, rgba(255,255,255,.16) 100%);
-      background-clip:text; color:transparent;
-    }
-  }
-  #stat-providers .tile .n::after{
-    content:""; position:absolute; inset:0;
-    background:linear-gradient(100deg, transparent 0%, rgba(255,255,255,.06) 46%, rgba(255,255,255,.12) 50%, rgba(255,255,255,.06) 54%, transparent 100%);
-    transform:translateX(-120%); opacity:0; pointer-events:none; z-index:2;
-  }
-  #stat-providers .tile:hover .n::after{ animation:shimmer 1.05s ease-out forwards; opacity:1; }
-
-  /* Brand color vars + watermarks */
-  #tile-plex,  [data-provider="plex"]  { --glow:255,194,0; }
-  #tile-simkl, [data-provider="simkl"] { --glow:24,196,255; }
-  #tile-trakt, [data-provider="trakt"] { --glow:142,78,255; }
-
-  #tile-plex::after,  [data-provider="plex"]::after  { background-image:url("/assets/PLEX.svg"); }
-  #tile-simkl::after, [data-provider="simkl"]::after { background-image:url("/assets/SIMKL.svg"); }
-  #tile-trakt::after, [data-provider="trakt"]::after { background-image:url("/assets/TRAKT.svg"); }
-
-  #stat-providers .tile.pulse-brand{ animation:brand-pulse .55s ease-out 1; }
-  #stat-providers .tile.inactive{ opacity:.6; filter:saturate(.85); }
-
-  @media (prefers-color-scheme: light) {
-    #stat-providers .tile::after { mix-blend-mode:multiply; opacity:.12; }
-  }
-  @media (max-width:560px){ #stat-providers{ grid-template-columns:repeat(2,1fr) !important; } }
-  @media (max-width:380px){ #stat-providers{ grid-template-columns:1fr !important; } }
-
-  /* History rows */
-  .history-item{ padding:.35rem 0; border-bottom:1px dashed rgba(255,255,255,.08); }
-  .history-item:last-child{ border-bottom:0; }
-  .history-meta{ font-size:.86rem; opacity:.9; }
-  .history-badges{ display:flex; align-items:center; gap:.35rem; margin-top:.25rem; }
-  .badge{ display:inline-flex; align-items:center; gap:.25rem; padding:.12rem .4rem; border-radius:.45rem; background:rgba(255,255,255,.08); font-size:.78rem; }
-  .badge.micro{ font-size:.72rem; opacity:.8; }
-  .badge.ok{ background:rgba(80,200,120,.18); }
-  .badge.warn{ background:rgba(255,255,255,.12); }
-  .badge.err{ background:rgba(255,80,80,.20); }
-
-  /* Neutralize external pushes and keep footer clean */
-  #tile-plex, #tile-simkl, #tile-trakt { margin-top:0 !important; }
-
-  /* Animations */
-  @keyframes tile-in{ from{ opacity:0; transform:translateY(6px) scale(.98);} to{ opacity:1; transform:translateY(0) scale(1);} }
-  @keyframes brand-pulse{ 0%{ box-shadow:0 0 0 0 rgba(var(--glow), .22);} 100%{ box-shadow:0 0 0 14px rgba(var(--glow), 0);} }
-  @keyframes shimmer{ from{ transform:translateX(-120%);} to{ transform:translateX(120%);} }
-  `;
-
-  const style = document.createElement("style");
-  style.id = id;
-  style.textContent = css;
-  document.head.appendChild(style);
+  #sync-history .sync-tabs .tab:focus-visible{ outline:2px solid rgba(120,150,255,.7); outline-offset:2px; }`;
+  document.head.appendChild(s);
 })();
+
+/* provider tiles + switcher */
+(()=>{const old=document.getElementById("insights-provider-styles");if(old)old.remove();
+const id="insights-provider-styles-v6";if(document.getElementById(id))return;
+const s=document.createElement("style");s.id=id;s.textContent=`
+#insights-footer{position:absolute;left:12px;right:12px;bottom:12px;z-index:2}
+#insights-footer .ins-foot-wrap{display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(8,8,14,.28),rgba(8,8,14,.48));box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 8px 22px rgba(0,0,0,.28);backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%)}
+@media(max-width:820px){#insights-footer{position:static;margin-top:10px}}
+
+#insights-switch{display:flex;justify-content:center}
+#insights-switch .seg{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center}
+#insights-switch .seg-btn{appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.2px;padding:.38rem .72rem;border-radius:.8rem;color:rgba(255,255,255,.85);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);transition:transform .12s,box-shadow .12s,background .12s,border-color .12s;opacity:.95}
+#insights-switch .seg-btn:hover{transform:translateY(-1px);opacity:1}
+#insights-switch .seg-btn.active{background:linear-gradient(180deg,rgba(22,22,30,.24),rgba(130,150,255,.10));border-color:rgba(128,140,255,.30);box-shadow:0 0 0 1px rgba(128,140,255,.35),0 8px 22px rgba(0,0,0,.18)}
+
+#stats-card #stat-providers{--prov-cols:4;--tile-h:92px;display:grid!important;grid-template-columns:repeat(var(--prov-cols),minmax(0,1fr))!important;grid-auto-rows:var(--tile-h)!important;gap:12px!important;width:100%!important;align-items:stretch!important}
+#stats-card #stat-providers .tile{--brand:255,255,255;--wm:none;position:relative!important;display:block!important;height:var(--tile-h)!important;min-height:var(--tile-h)!important;max-height:var(--tile-h)!important;border-radius:12px!important;background:rgba(255,255,255,.045)!important;overflow:hidden!important;isolation:isolate!important;margin:0!important;padding:0!important;border:0!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+#stats-card #stat-providers .tile .k{display:none!important}
+#stats-card #stat-providers .tile::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;background:
+  radial-gradient(80% 60% at 35% 40%,rgba(var(--brand),.24),transparent 60%),
+  radial-gradient(80% 60% at 55% 75%,rgba(var(--brand),.12),transparent 70%)}
+#stats-card #stat-providers .tile::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-8deg);width:220%;height:220%;background-repeat:no-repeat;background-position:center;background-size:contain;background-image:var(--wm);mix-blend-mode:screen;opacity:.28;filter:saturate(1.5) brightness(1.22) contrast(1.05)}
+#stats-card #stat-providers .tile{box-shadow:inset 0 0 0 1px rgba(var(--brand),.25),0 0 24px rgba(var(--brand),.16)}
+#stats-card #stat-providers .tile.inactive{box-shadow:inset 0 0 0 1px rgba(var(--brand),.18),0 0 16px rgba(var(--brand),.10)}
+#stats-card #stat-providers .tile.inactive::after{opacity:.18;filter:saturate(1.1) brightness(1)}
+#stats-card #stat-providers .tile .n{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);margin:0;font-weight:800;letter-spacing:.25px;font-size:clamp(18px,2.6vw,28px);line-height:1;color:rgba(255,255,255,.36)}
+@supports(-webkit-background-clip:text){#stats-card #stat-providers .tile .n{background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));-webkit-background-clip:text;-webkit-text-fill-color:transparent;color:transparent}}
+@supports(background-clip:text){#stats-card #stat-providers .tile .n{background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));background-clip:text;color:transparent}}
+#stats-card #stat-providers [data-provider=plex]{--brand:229,160,13;--wm:url("/assets/PLEX.svg")}
+#stats-card #stat-providers [data-provider=simkl]{--brand:0,183,235;--wm:url("/assets/SIMKL.svg")}
+#stats-card #stat-providers [data-provider=trakt]{--brand:237,28,36;--wm:url("/assets/TRAKT.svg")}
+#stats-card #stat-providers [data-provider=jellyfin]{--brand:150,84,244;--wm:url("/assets/JELLYFIN.svg")}
+#stats-card #stat-providers{ --prov-cols:4; --tile-h:96px; }
+#stats-card #stat-providers .tile .n{
+  position:absolute; top:50%; left:50%; bottom:auto; transform:translate(-50%,-50%);
+  margin:0; font-weight:900; letter-spacing:.25px; font-variant-numeric:tabular-nums;
+  font-size:clamp(26px, calc(var(--tile-h)*.48), 56px); line-height:1; color:rgba(255,255,255,.36);
+
+#stats-card #stat-providers .provider-empty{
+  grid-column:1/-1; display:flex; align-items:center; justify-content:center;
+  min-height:80px; padding:12px; border-radius:12px;
+  background:rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.18);
+  color:rgba(255,255,255,.75); font-weight:700; letter-spacing:.2px;
+}
+
+}
+@media(max-width:560px){#stats-card #stat-providers{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:380px){#stats-card #stat-providers{grid-template-columns:repeat(1,minmax(0,1fr))!important}}
+`;document.head.appendChild(s)})();

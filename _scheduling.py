@@ -1,25 +1,5 @@
-"""
-_scheduling.py
-
-A tiny background scheduler driven by config callbacks, not file paths.
-Safe-by-default: thread-safe, time zone aware for daily runs, and resilient
-to bad config values. Designed to be embedded in long-running apps.
-
-Public surface (unchanged where possible):
-- merge_defaults(s: dict) -> dict
-- compute_next_run(now: datetime, sch: dict) -> datetime
-- class SyncScheduler:
-    - start(), stop(), refresh()
-    - ensure_defaults() -> dict
-    - status() -> dict
-    - (new) trigger_once(), set_enabled(bool), set_mode(...)
-
-Notes:
-- All wall-clock comparisons use naive local datetimes to avoid mixing aware
-  and naive objects. Daily scheduling is computed in the configured time zone
-  and converted back to local time for stable comparisons.
-- `status()` exposes both epoch and ISO timestamps for UIs.
-"""
+#_scheduling.py
+#  Small cooperative scheduler for periodic sync tasks with flexible timing.
 
 from __future__ import annotations
 
@@ -48,7 +28,6 @@ DEFAULT_SCHEDULING: Dict[str, Any] = {
     # optional jitter to spread start times (seconds)
     "jitter_seconds": 0,
 }
-
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -114,12 +93,6 @@ def _to_local_naive(dt_tzaware: datetime) -> datetime:
 
 
 def compute_next_run(now: datetime, sch: Dict[str, Any]) -> datetime:
-    """
-    Compute the next run time (naive local) based on scheduling config.
-    - For 'daily_time' and 'hourly', alignment is done in the configured time
-      zone, then converted to local time for stable comparisons.
-    - For 'every_n_hours', we use a simple forward jump from 'now'.
-    """
     mode = (sch.get("mode") or "disabled").lower()
     if not sch.get("enabled") or mode == "disabled":
         # Effectively never: far future date
@@ -183,20 +156,6 @@ def compute_next_run(now: datetime, sch: Dict[str, Any]) -> datetime:
 # ---------------------------------------------------------------------
 
 class SyncScheduler:
-    """
-    Small cooperative scheduler that periodically calls a provided `run_sync_fn`.
-    It reloads scheduling preferences via `load_config` on every loop iteration.
-
-    Concurrency:
-    - Single background thread with a stop event.
-    - `is_sync_running_fn` can be provided by the host to guard against overlap.
-    - `refresh()` nudges the loop to re-read config and recompute the next slot.
-
-    Time handling:
-    - Internally compares naive local datetimes (consistent with datetime.now()).
-    - Daily/hourly alignment respects the configured time zone if available.
-    """
-
     def __init__(
         self,
         load_config: Callable[[], Dict[str, Any]],

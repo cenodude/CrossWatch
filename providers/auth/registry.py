@@ -1,31 +1,91 @@
-
+# providers/auth/registry.py
 """
-Auth provider registry: discovers modules named _auth_*.py and aggregates their manifests and HTML snippets.
+Robust auth provider registry:
+- Discovers modules named _auth_*.py under providers.auth
+- Imports each module safely (continues on errors)
+- Aggregates their manifests and optional HTML snippets
 """
 from __future__ import annotations
-import importlib, pkgutil, inspect
+
+import importlib
+import pkgutil
+import inspect
+import dataclasses
 from pathlib import Path
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 
-PKG_NAME = __package__  # "providers.auth"
-import providers.auth as _authpkg
-PKG_PATHS = list(getattr(_authpkg, '__path__', []))  # type: ignore
+# Package metadata
+PKG_NAME: str = __package__ or "providers.auth"          # typically "providers.auth"
+try:
+    import providers.auth as _authpkg                     # type: ignore
+    PKG_PATHS = list(getattr(_authpkg, "__path__", []))   # pkgutil-compatible paths
+except Exception:
+    PKG_PATHS = []
 
-def _iter_auth_modules():
-    for finder, name, ispkg in pkgutil.iter_modules(PKG_PATHS):
+# ---------- discovery helpers ----------
+
+def _filesystem_module_names() -> List[str]:
+    """Also scan the package dirs directly for _auth_*.py files."""
+    names: set[str] = set()
+    for p in PKG_PATHS:
+        try:
+            base = Path(p)
+            for f in base.glob("_auth_*.py"):
+                if f.name == "_auth_base.py":
+                    continue
+                names.add(f.stem)  # module name without .py
+        except Exception:
+            # best-effort
+            continue
+    return sorted(names)
+
+def _pkgutil_module_names() -> List[str]:
+    """Use pkgutil to list submodules in the package."""
+    names: List[str] = []
+    for _, name, ispkg in pkgutil.iter_modules(PKG_PATHS):
+        if ispkg:
+            continue
         if not name.startswith("_auth_"):
             continue
-        # skip base
-        if name in ("_auth_base",):
+        if name == "_auth_base":
             continue
-        yield importlib.import_module(f"{PKG_NAME}.{name}")
+        names.append(name)
+    return sorted(names)
+
+def _discover_module_names() -> List[str]:
+    """Union of pkgutil and filesystem results, de-duplicated."""
+    s = set(_pkgutil_module_names()) | set(_filesystem_module_names())
+    return sorted(s)
+
+def _safe_import(fullname: str):
+    """Import a module; on failure return None instead of blowing up the whole list."""
+    try:
+        return importlib.import_module(fullname)
+    except Exception:
+        # Keep silent but skip this provider; uncomment for debugging:
+        # import traceback; traceback.print_exc()
+        return None
+
+def _iter_auth_modules():
+    """Yield imported provider modules safely."""
+    # Make Python see newly added/renamed files (important when reload=no)
+    importlib.invalidate_caches()
+    for modname in _discover_module_names():
+        mod = _safe_import(f"{PKG_NAME}.{modname}")
+        if mod is not None:
+            yield mod
+
+# ---------- provider extraction ----------
 
 def _provider_from_module(mod):
-    # Preferred: mod.PROVIDER
+    """
+    Preferred: module-level PROVIDER instance.
+    Fallback: first class providing a `manifest()` method; try to instantiate it.
+    """
     prov = getattr(mod, "PROVIDER", None)
     if prov is not None:
         return prov
-    # Otherwise, try to find a class with manifest method
+
     for _, obj in inspect.getmembers(mod, inspect.isclass):
         if hasattr(obj, "manifest"):
             try:
@@ -34,6 +94,18 @@ def _provider_from_module(mod):
                 pass
     return None
 
+def _manifest_to_dict(man: Any) -> Dict[str, Any]:
+    """Convert dataclass or plain object to dict."""
+    if dataclasses.is_dataclass(man):
+        return dataclasses.asdict(man)  # type: ignore[arg-type]
+    if isinstance(man, dict):
+        return dict(man)
+    # generic best-effort
+    d = getattr(man, "__dict__", None)
+    return dict(d) if isinstance(d, dict) else {"name": str(man)}
+
+# ---------- public API ----------
+
 def auth_providers_manifests() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for mod in _iter_auth_modules():
@@ -41,19 +113,15 @@ def auth_providers_manifests() -> List[Dict[str, Any]]:
         if prov is None:
             continue
         try:
-            man = prov.manifest()  # dataclass or dict-like
-            # convert dataclass to dict
-            if hasattr(man, "__dict__"):
-                # dataclass or simple object
-                man = getattr(man, "__dict__", man)
-            out.append(man)  # type: ignore[arg-type]
+            man = prov.manifest()
+            out.append(_manifest_to_dict(man))
         except Exception:
-            # ignore faulty providers
+            # ignore faulty providers (manifest crashed)
             continue
     return out
 
 def _module_html(mod) -> str:
-    # Provider instance may expose html()
+    # Try provider.html() first
     prov = _provider_from_module(mod)
     if prov is not None and hasattr(prov, "html"):
         try:
@@ -62,7 +130,8 @@ def _module_html(mod) -> str:
                 return html
         except Exception:
             pass
-    # Module-level html()
+
+    # Then module-level html()
     if hasattr(mod, "html"):
         try:
             html = mod.html()  # type: ignore[call-arg]
@@ -70,19 +139,30 @@ def _module_html(mod) -> str:
                 return html
         except Exception:
             pass
-    # Fallback: generate a tiny default card
+
+    # Fallback tiny card
     prov_name = getattr(prov, "name", getattr(mod, "__name__", "Auth"))
-    label = getattr(getattr(prov, "manifest", lambda: {})(), "label", None) if prov else None
+    label = None
+    try:
+        m = prov.manifest() if prov else None
+        label = getattr(m, "label", None) if m else None
+    except Exception:
+        label = None
     label = label or str(prov_name).title().replace("_", " ")
-    pid = str(prov_name).lower()
-    return f"""<div class="section"><div class="head"><span class="chev"></span><strong>{label}</strong></div><div class="body"><div class="sub">No custom UI provided for {label}.</div></div></div>"""
+
+    return (
+        f'<div class="section">'
+        f'  <div class="head"><span class="chev"></span><strong>{label}</strong></div>'
+        f'  <div class="body"><div class="sub">No custom UI provided for {label}.</div></div>'
+        f'</div>'
+    )
 
 def auth_providers_html() -> str:
-    fragments: List[str] = []
+    frags: List[str] = []
     for mod in _iter_auth_modules():
         try:
-            fragments.append(_module_html(mod))
+            frags.append(_module_html(mod))
         except Exception:
-            # skip broken provider
+            # skip broken providers
             continue
-    return "".join(fragments)
+    return "".join(frags)

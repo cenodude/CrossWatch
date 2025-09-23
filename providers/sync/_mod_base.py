@@ -147,7 +147,7 @@ def get_stats():
 import time
 
 def iso_to_ts(s: str) -> int:
-    """Parse ISO-8601 string naar epoch seconden. Retourneert 0 bij fout."""
+
     if not s:
         return 0
     try:
@@ -171,13 +171,7 @@ import os
 import json
 
 def resolve_state_dir(cfg_root: Mapping[str, Any]) -> Path:
-    """
-    Locatie voor duurzame state:
-      1) cfg.runtime.state_dir
-      2) env CW_STATE_DIR
-      3) /config (Docker)
-      4) cwd
-    """
+
     try:
         p = (cfg_root.get("runtime") or {}).get("state_dir")
         if p:
@@ -228,11 +222,7 @@ def with_backoff(
     max_delay: float = 10.0,
     **kw
 ):
-    """
-    Exponential backoff voor HTTP-requests:
-    - retry bij netwerkfouten, 429 en 5xx
-    - houdt (best effort) rekening met X-RateLimit-Remaining/Reset
-    """
+
     delay = float(base_delay)
     last = None
     for _ in range(max(1, int(retries))):
@@ -285,10 +275,7 @@ def record_http(
     payload: Any = None,
     count: bool = True,
 ) -> None:
-    """
-    Uniforme HTTP-telemetrie naar _statistics.Stats (indien aanwezig).
-    - 'count' kan False zijn voor cache hits, zodat call-counters zuiver blijven.
-    """
+
     stats = get_stats()
     if not stats:
         return
@@ -344,5 +331,4 @@ def record_http(
             count=count,
         )
     except Exception:
-        # Telemetrie mag nooit de flow verstoren
         pass

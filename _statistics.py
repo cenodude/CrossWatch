@@ -1,35 +1,32 @@
 from __future__ import annotations
-"""CrossWatch statistics tracker.
-
-Provides a thread-safe, low-overhead store to:
-- Build a de-duplicated "current" map from a state snapshot
-- Record add/remove events and maintain rolling samples over time
-- Track HTTP call metrics per provider/endpoint using a small ring buffer
-- Expose lightweight counters and a high-level overview for dashboards
-"""
+#_statistics.py
+# Thread-safe statistics with minimal I/O 
 
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-import json, time, threading, re
+import json, time, threading, re, os, tempfile
 
-from cw_platform.config_base import CONFIG
+# ----- resolve CONFIG root safely -----
+try:
+    from cw_platform.config_base import CONFIG as _CONFIG_DIR  # type: ignore
+    CONFIG = Path(_CONFIG_DIR)
+except Exception:
+    # Fallback to /config if available, else local folder
+    try:
+        CONFIG = Path(os.getenv("CW_CONFIG_DIR", "/config")).resolve()
+    except Exception:
+        CONFIG = Path(".").resolve()
 
 STATS_PATH = CONFIG / "statistics.json"
 
 # --- GUID patterns (robust to agent prefixes & query strings) ---
-# Examples:
-#   com.plexapp.agents.imdb://tt0944947?lang=en
-#   com.plexapp.agents.tmdb://movie/603?lang=en
-#   tmdb://tv/1399
-#   tvdb://81189
 _GUID_TMDB_RE = re.compile(r"tmdb://(?:movie|tv)/(\d+)", re.IGNORECASE)
-_GUID_IMDB_RE = re.compile(r"(tt\d{5,})", re.IGNORECASE)  # require 'tt' + ≥5 digits
+_GUID_IMDB_RE = re.compile(r"(tt\d{5,})", re.IGNORECASE)
 _GUID_TVDB_RE = re.compile(r"tvdb://(\d+)", re.IGNORECASE)
 
 
 def _read_json(p: Path) -> Dict[str, Any]:
-    """Read a JSON object from disk; return an empty dict on failure."""
     try:
         with p.open("r", encoding="utf-8") as f:
             data = json.load(f)
@@ -39,21 +36,42 @@ def _read_json(p: Path) -> Dict[str, Any]:
 
 
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
-    """Atomically write a JSON object, creating parent directories if needed."""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(p)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    tmp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(p.parent),
+            prefix=p.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            json.dump(data, tmp, indent=2, ensure_ascii=False)
+            tmp_name = tmp.name
+
+        os.replace(tmp_name, p)
+
+    except Exception:
+        try:
+            with p.open("w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+    finally:
+        if tmp_name:
+            try:
+                if Path(tmp_name).exists():
+                    os.unlink(tmp_name)
+            except Exception:
+                pass
 
 
 class Stats:
-    """Thread-safe statistics with minimal I/O.
-
-    The store keeps a compact structure on disk backed by a lock for safe
-    concurrent access. It focuses on simple counters, recent events, and a
-    small window of samples to power UI summaries without heavy computation.
-    """
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else STATS_PATH
@@ -66,19 +84,21 @@ class Stats:
     def _load(self) -> None:
         """Load or initialize the on-disk JSON state."""
         d = _read_json(self.path)
-        d.setdefault("events", [])               # recent add/remove events and others (rating/watch/etc.)
-        d.setdefault("samples", [])              # rolling total over time
-        d.setdefault("current", {})              # current union map
+        d.setdefault("events", [])               # recent add/remove and other events
+        d.setdefault("samples", [])              # rolling totals over time
+        d.setdefault("current", {})              # current de-duped union map
         d.setdefault("counters", {"added": 0, "removed": 0})
         d.setdefault("last_run", {"added": 0, "removed": 0, "ts": 0})
-        # HTTP telemetry container (ring buffer, per-provider counters, last call snapshot)
         d.setdefault("http", {"events": [], "counters": {}, "last": {}})
         self.data = d
 
     def _save(self) -> None:
-        """Persist the in-memory state to disk with an updated timestamp."""
-        self.data["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write_json_atomic(self.path, self.data)
+        """Persist in-memory state; never throw."""
+        try:
+            self.data["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _write_json_atomic(self.path, self.data)
+        except Exception:
+            pass
 
     # ---------- identity helpers ----------
 
@@ -95,7 +115,6 @@ class Stats:
         wl = (((P.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
         if isinstance(wl, dict) and wl:
             return wl
-        # legacy fallback (old layout)
         legacy = ((state.get(prov.lower(), {}) or {}).get("items") or {})
         return legacy if isinstance(legacy, dict) else {}
 
@@ -155,7 +174,7 @@ class Stats:
         # GUID parsing (handles agent prefixes and querystrings)
         guid = (d.get("guid") or d.get("Guid") or "").strip()
         if isinstance(guid, str) and "://" in guid:
-            g = guid  # keep original; regexes are IGNORECASE
+            g = guid
             m = _GUID_IMDB_RE.search(g)
             if m and "imdb" not in out:
                 out["imdb"] = m.group(1)
@@ -165,7 +184,7 @@ class Stats:
             m = _GUID_TVDB_RE.search(g)
             if m and "tvdb" not in out:
                 out["tvdb"] = m.group(1)
-            # final naive tmdb numeric tail (defensive)
+            # defensive numeric tail for tmdb://...
             if "tmdb" not in out and "tmdb://" in g.lower():
                 try:
                     tail = g.split("tmdb://", 1)[1]
@@ -242,16 +261,11 @@ class Stats:
 
     @staticmethod
     def _build_union_map(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-        """Build a de-duplicated map of current items across providers.
-
-        Merges PLEX, SIMKL, and TRAKT watchlist snapshots into buckets keyed by
-        canonical IDs (TMDb, IMDb, TVDb, or slug) with a title/year fallback.
-        For compatibility, keeps a simple `src` label for existing consumers:
-        'plex' | 'simkl' | 'both' | 'trakt'.
-        """
-        plex  = Stats._provider_items(state, "PLEX")
-        simkl = Stats._provider_items(state, "SIMKL")
-        trakt = Stats._provider_items(state, "TRAKT")
+        """Build a de-duplicated map of current items across providers."""
+        plex     = Stats._provider_items(state, "PLEX")
+        simkl    = Stats._provider_items(state, "SIMKL")
+        trakt    = Stats._provider_items(state, "TRAKT")
+        jellyfin = Stats._provider_items(state, "JELLYFIN")
 
         buckets: Dict[str, Dict[str, Any]] = {}
         alias2bucket: Dict[str, str] = {}
@@ -274,7 +288,7 @@ class Stats:
                 "src": "",
                 "title": Stats._title_of(d),
                 "type": (d.get("type") or "").lower(),
-                "p": False, "s": False, "t": False,  # flags for providers
+                "p": False, "s": False, "t": False, "j": False,   # plex/simkl/trakt/jellyfin
             }
             for a in Stats._aliases(d):
                 alias2bucket[a] = pk
@@ -286,58 +300,73 @@ class Stats:
                 buckets[bk]["title"] = Stats._title_of(d)
             if not buckets[bk].get("type"):
                 buckets[bk]["type"] = (d.get("type") or "").lower()
-            buckets[bk][flag] = True  # set provider flag
+            buckets[bk][flag] = True
 
-        for _, raw in simkl.items(): ingest(raw, "s")
-        for _, raw in plex.items():  ingest(raw, "p")
-        for _, raw in trakt.items(): ingest(raw, "t")
+        for _, raw in simkl.items():    ingest(raw, "s")
+        for _, raw in plex.items():     ingest(raw, "p")
+        for _, raw in trakt.items():    ingest(raw, "t")
+        for _, raw in jellyfin.items(): ingest(raw, "j")
 
-        # Compute legacy-compatible src label
+        # Legacy-compatible src label
         for b in buckets.values():
-            p, s, t = bool(b.get("p")), bool(b.get("s")), bool(b.get("t"))
-            if p and s:
-                b["src"] = "both"
-            elif p:
-                b["src"] = "plex"
-            elif s:
-                b["src"] = "simkl"
-            elif t:
-                b["src"] = "trakt"
-            else:
-                b["src"] = ""
+            p, s, t, j = bool(b.get("p")), bool(b.get("s")), bool(b.get("t")), bool(b.get("j"))
+            if p and s: b["src"] = "both"       # historical meaning: Plex+Simkl
+            elif p:     b["src"] = "plex"
+            elif s:     b["src"] = "simkl"
+            elif j:     b["src"] = "jellyfin"
+            elif t:     b["src"] = "trakt"
+            else:       b["src"] = ""
 
         return buckets
 
     def _counts_by_source(self, cur: Dict[str, Any]) -> Dict[str, int]:
-        """Summarize how many items come from each provider and overlaps."""
-        plex_only = simkl_only = both = 0
-        trakt_total = 0
+        plex_only = simkl_only = trakt_only = jellyfin_only = both_ps = 0
+        plex_total = simkl_total = trakt_total = jellyfin_total = 0
+
         for v in (cur or {}).values():
             p = bool((v or {}).get("p"))
             s = bool((v or {}).get("s"))
             t = bool((v or {}).get("t"))
-            if p and s: both += 1
-            elif p:     plex_only += 1
-            elif s:     simkl_only += 1
-            if t:       trakt_total += 1
+            j = bool((v or {}).get("j"))
+
+            plex_total     += 1 if p else 0
+            simkl_total    += 1 if s else 0
+            trakt_total    += 1 if t else 0
+            jellyfin_total += 1 if j else 0
+
+            # "both" remains legacy "Plex + Simkl"
+            if p and s and not t and not j:
+                both_ps += 1
+            elif p and not s and not t and not j:
+                plex_only += 1
+            elif s and not p and not t and not j:
+                simkl_only += 1
+            elif t and not p and not s and not j:
+                trakt_only += 1
+            elif j and not p and not s and not t:
+                jellyfin_only += 1
+
+        # Preserve legacy keys; add jellyfin-specific counts
         return {
             "plex": plex_only,
             "simkl": simkl_only,
-            "both": both,
-            "plex_total": plex_only + both,
-            "simkl_total": simkl_only + both,
+            "both": both_ps,
+            "plex_total": plex_total,
+            "simkl_total": simkl_total,
             "trakt_total": trakt_total,
+            "jellyfin_total": jellyfin_total,
+
+            "trakt": trakt_only,
+            "jellyfin": jellyfin_only,
         }
 
     def _totals_from_events(self) -> Dict[str, int]:
-        """Compute totals by scanning the recent event list (fallback)."""
         ev = list(self.data.get("events") or [])
         adds = sum(1 for e in ev if (e or {}).get("action") == "add")
         rems = sum(1 for e in ev if (e or {}).get("action") == "remove")
         return {"added": adds, "removed": rems}
 
     def _ensure_counters(self) -> Dict[str, int]:
-        """Ensure counters exist and are well-formed; initialize if missing."""
         c = self.data.get("counters")
         if not isinstance(c, dict):
             c = self._totals_from_events()
@@ -348,7 +377,6 @@ class Stats:
         return self.data["counters"]
 
     def _count_at(self, ts_floor: int) -> int:
-        """Return the sample count at or before the given timestamp."""
         samples: List[Dict[str, Any]] = list(self.data.get("samples") or [])
         if not samples:
             return 0
@@ -370,7 +398,6 @@ class Stats:
     # ---------- public API: state-based ----------
 
     def refresh_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Update stats from a full snapshot (`state.json`)."""
         now_epoch = int(time.time())
         with self.lock:
             prev = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
@@ -415,7 +442,6 @@ class Stats:
             }
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
-        """Append a custom event to the log (lightweight helper)."""
         now_epoch = int(time.time())
         with self.lock:
             ev = self.data.get("events") or []
@@ -424,7 +450,6 @@ class Stats:
             self._save()
 
     def record_summary(self, added: int = 0, removed: int = 0) -> None:
-        """Update last_run counters without a full refresh (optional)."""
         now_epoch = int(time.time())
         with self.lock:
             c = self._ensure_counters()
@@ -435,7 +460,6 @@ class Stats:
             self._save()
 
     def reset(self) -> None:
-        """Clear all stats safely."""
         with self.lock:
             self.data = {
                 "events": [],
@@ -448,7 +472,6 @@ class Stats:
             self._save()
 
     def overview(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Return a summary suitable for dashboards and UIs."""
         now_epoch = int(time.time())
         week_floor = now_epoch - 7 * 86400
         month_floor = now_epoch - 30 * 86400
@@ -479,28 +502,34 @@ class Stats:
             }
 
     # ---------- public API: HTTP telemetry ----------
-
     def record_http(
         self,
         *,
         provider: str,
-        endpoint: str,
-        method: str,
-        status: int,
-        ok: bool,
+        endpoint: Optional[str] = None,
+        method: Optional[str] = None,
+        status: int = 0,
+        ok: bool = False,
         bytes_in: int = 0,
         bytes_out: int = 0,
         ms: int = 0,
         rate_remaining: Optional[int] = None,
         rate_reset_iso: Optional[str] = None,
+        **kw,  # accept extra keys like fn= / path=
     ) -> None:
         """Record a single HTTP call; safe and lightweight."""
+        # Map legacy argument names if provided
+        if endpoint is None and "path" in kw:
+            endpoint = kw.get("path")
+        if method is None and ("fn" in kw or "verb" in kw):
+            method = kw.get("fn") or kw.get("verb")
+
         now_epoch = int(time.time())
         evt = {
             "ts": now_epoch,
             "provider": str(provider or "").upper(),
-            "endpoint": endpoint,
-            "method": method.upper(),
+            "endpoint": str(endpoint or ""),
+            "method": str(method or "").upper(),
             "status": int(status or 0),
             "ok": bool(ok),
             "ms": int(ms or 0),
@@ -521,7 +550,7 @@ class Stats:
             # events ring buffer
             events: List[Dict[str, Any]] = list(http.get("events") or [])
             events.append(evt)
-            http["events"] = events[-2000:]  # keep last N
+            http["events"] = events[-2000:]
 
             # provider-level counters
             prov = evt["provider"] or "UNKNOWN"

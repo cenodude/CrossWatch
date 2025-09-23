@@ -86,13 +86,14 @@ REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist
 CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
 HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
+CW_STATE_DIR = (CONFIG_DIR / ".cw_state"); CW_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists"]
 
 _METADATA: Any = None
 WATCH: Optional[WatchService] = None
 DISPATCHER: Optional[Dispatcher] = None
-scheduler: Optional[SyncScheduler] = None  # initialized elsewhere
+scheduler: Optional[SyncScheduler] = None
 
 STATS = Stats()
 
@@ -100,7 +101,6 @@ _DEBUG_CACHE = {"ts": 0.0, "val": False}
 RUNNING_PROCS: Dict[str, threading.Thread] = {}
 SYNC_PROC_LOCK = threading.Lock()
 
-# Hint used to immediately reflect a fresh next_run_at in status after a config save.
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
 
@@ -264,11 +264,13 @@ _MODULES = {
         "_auth_PLEX":  "providers.auth._auth_PLEX",
         "_auth_SIMKL": "providers.auth._auth_SIMKL",
         "_auth_TRAKT": "providers.auth._auth_TRAKT",
+        "_auth_JELLYFIN": "providers.auth._auth_JELLYFIN",
     },
     "SYNC": {
         "_mod_PLEX":   "providers.sync._mod_PLEX",
         "_mod_SIMKL":  "providers.sync._mod_SIMKL",
         "_mod_TRAKT":  "providers.sync._mod_TRAKT",
+        "_mod_JELLYFIN":  "providers.sync._mod_JELLYFIN",
     },
 }
 
@@ -383,7 +385,7 @@ async def _lifespan(app):
 
     started = False
     try:
-        w = autostart_from_config()  # same entrypoint as in NEW
+        w = autostart_from_config()
         if w:
             app.state.watch = w
             globals()['WATCH'] = w    # keep old debug endpoints happy
@@ -398,14 +400,13 @@ async def _lifespan(app):
         try: _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
         except Exception: pass
 
-    # --- Hard fallback: if scrobble says 'watch+autostart', start a default watch anyway ---
     if not started:
         try:
             cfg = load_config()
             sc = (cfg.get("scrobble") or {})
             if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
                 from providers.scrobble.trakt.sink import TraktSink
-                from providers.scrobble.plex.watch import make_default_watch  # available in NEW fallback too
+                from providers.scrobble.plex.watch import make_default_watch
                 w2 = make_default_watch(sinks=[TraktSink()])
 
                 try:
@@ -429,7 +430,6 @@ async def _lifespan(app):
             try: _UIHostLogger("TRAKT", "WATCH")(f"fallback start failed: {e}", level="ERROR")
             except Exception: pass
 
-    # --- Scheduler (zoals NEW) ---
     try:
         global scheduler
         if scheduler is not None:
@@ -958,9 +958,10 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     if not st:
         return []
 
-    plex_items  = _state_items(st, "PLEX")
-    simkl_items = _state_items(st, "SIMKL")
-    trakt_items = _state_items(st, "TRAKT")
+    plex_items   = _state_items(st, "PLEX")
+    simkl_items  = _state_items(st, "SIMKL")
+    trakt_items  = _state_items(st, "TRAKT")
+    jelly_items  = _state_items(st, "JELLYFIN")  # <-- include Jellyfin
 
     def norm_type(v: dict) -> str:
         return "tv" if str(v.get("type", "").lower()) in ("show", "tv", "series") else "movie"
@@ -971,7 +972,6 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             if k not in ids and v.get(k):
                 ids[k] = str(v[k])
         return {k: str(val) for k, val in ids.items() if val is not None}
-
 
     def sig_title_year(v: dict) -> str:
         t = (v.get("title") or v.get("name") or "").strip().lower()
@@ -994,7 +994,6 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             out.append(f"{t}:sig:{sig_title_year(v)}")
         return out
 
-
     def primary_key(v: dict) -> str:
         t = norm_type(v); ids = ids_of(v)
         for k in ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug"):
@@ -1002,7 +1001,6 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             if val:
                 return f"{t}:{k}:{val}"
         return f"{t}:sig:{sig_title_year(v)}"
-
 
     buckets: Dict[str, Dict[str, Any]] = {}
     alias2bucket: Dict[str, str] = {}
@@ -1019,7 +1017,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
                 "ids": ids_of(rec),
                 "title": rec.get("title") or rec.get("name") or "",
                 "year": rec.get("year") or rec.get("release_year"),
-                "p": None, "s": None, "t": None,
+                "p": None, "s": None, "t": None, "j": None,  # <-- add 'j' bucket
                 "added_epoch": int((rec.get("added_epoch") or rec.get("added_ts") or 0) or 0),
             }
         b = buckets[bucket_key]
@@ -1027,8 +1025,10 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             b["p"] = rec
         elif src == "simkl":
             b["s"] = rec
-        else:
+        elif src == "trakt":
             b["t"] = rec
+        else:  # jellyfin
+            b["j"] = rec
         b["ids"].update(ids_of(rec))
         if not b["title"]:
             b["title"] = rec.get("title") or rec.get("name") or ""
@@ -1046,6 +1046,8 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
         ingest("simkl", v)
     for _, v in trakt_items.items():
         ingest("trakt", v)
+    for _, v in jelly_items.items():                 # <-- ingest Jellyfin
+        ingest("jellyfin", v)
 
     out: List[Dict[str, Any]] = []
     for pk, b in buckets.items():
@@ -1056,7 +1058,7 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-        sources = [name for name, it in (("plex", b["p"]), ("simkl", b["s"]), ("trakt", b["t"])) if it]
+        sources = [name for name, it in (("plex", b["p"]), ("simkl", b["s"]), ("trakt", b["t"]), ("jellyfin", b["j"])) if it]
         if len(sources) <= 1:
             status = f"{sources[0]}_only" if sources else "unknown"
         else:
@@ -1065,12 +1067,9 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
         p_ts = int((b["p"] or {}).get("added_epoch") or 0)
         s_ts = int((b["s"] or {}).get("added_epoch") or 0)
         t_ts = int((b["t"] or {}).get("added_epoch") or 0)
-        if p_ts >= s_ts and p_ts >= t_ts:
-            added_src = "Plex"
-        elif s_ts >= p_ts and s_ts >= t_ts:
-            added_src = "SIMKL"
-        else:
-            added_src = "TRAKT"
+        j_ts = int((b["j"] or {}).get("added_epoch") or 0)
+        # pick newest source
+        newest = max((("Plex", p_ts), ("SIMKL", s_ts), ("TRAKT", t_ts), ("JELLYFIN", j_ts)), key=lambda kv: kv[1])[0]
 
         out.append({
             "key": pk,
@@ -1080,12 +1079,13 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
             "year": b["year"],
             "status": status,
             "added_epoch": int(b.get("added_epoch") or 0),
-            "added_src": added_src,
+            "added_src": newest,
             "categories": [],
         })
 
     out.sort(key=lambda x: int(x.get("added_epoch") or 0), reverse=True)
     return out
+
 
 # --------------- Plex users & identity ---------------
 def _plex_token(cfg: Dict[str, Any]) -> str:
@@ -1221,8 +1221,6 @@ def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
         if not cur or rank.get(u.get("type", "friend"), 0) >= rank.get(cur.get("type", "friend"), 0):
             out[uid] = u
     return list(out.values())
-
-
 def _filter_users_with_server_access(cfg: Dict[str, Any], users: List[dict], server_uuid: str) -> List[dict]:
     """
     Lightweight heuristic: friends returned by acc.users() are shared with you (likely have access);
@@ -1578,8 +1576,6 @@ def api_metadata_bulk(
 
         if not meta:
             return key, {"ok": False, "error": "no metadata"}
-
-        # Keep a broader set so the frontend can render score/genres/trailer/certs/release.
         keep_keys = {
             "type",
             "title",
@@ -1589,7 +1585,6 @@ def api_metadata_bulk(
             "overview",
             "tagline",
             "images",
-            # new fields:
             "genres",
             "videos",
             "score",
@@ -1643,7 +1638,6 @@ def api_metadata_bulk(
         },
         status_code=200,
     )
-
 # --------------- Watch logs ---------------
 @app.get("/debug/watch/logs")
 def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAKT")) -> JSONResponse:
@@ -1659,14 +1653,14 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     Returns:
       - series:   last N (time,count) samples (ascending)
       - history:  last few sync reports (with per-feature breakdown; lanes backfilled from Stats if empty)
+                  Each history row also contains 'provider_posts': { <provider>: <value from report> }.
       - watchtime:estimated minutes/hours/days with method=tmdb|fallback|mixed
-      - providers:{ plex, simkl, trakt } totals (derived from state.json; watchlist for back-compat)
-      - providers_by_feature:{watchlist|ratings|history|playlists -> {plex,simkl,trakt}}
-      - providers_active:{ plex, simkl, trakt } booleans (from configured pairs)
-      - now/week/month: high-level counts from Stats.overview()
-      - added/removed/new/del: cumulative + last-run counters from Stats.overview()
+      - providers:               { <provider>: total }  (watchlist totals for back-compat)
+      - providers_by_feature:    { watchlist|ratings|history|playlists -> { <provider>: total } }
+      - providers_active:        { <provider>: bool } (from configured pairs)
+      - now/week/month + added/removed/new/del from Stats.overview()
     """
-    # Samples (keep stable shape)
+    # ---- Samples (keep stable shape)
     with STATS.lock:
         samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -1674,7 +1668,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         samples = samples[-int(limit_samples):]
     series = [{"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)} for r in samples]
 
-    # Recent sync history (read recent reports)
+    # ---- Recent sync history (read recent reports)
     rows: list[dict] = []
     try:
         files = sorted(
@@ -1735,6 +1729,12 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     if removed_total is None: removed_total = r
                     if updated_total is None: updated_total = u
 
+                # Collect any "<provider>_post" keys dynamically into a compact map.
+                provider_posts = {}
+                for k, v in d.items():
+                    if isinstance(k, str) and k.endswith("_post"):
+                        provider_posts[k[:-5]] = v  # key without suffix, e.g. "plex"
+
                 rows.append({
                     "started_at":   d.get("started_at"),
                     "finished_at":  d.get("finished_at"),
@@ -1751,17 +1751,20 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     "features_enabled": enabled,
                     "updated_total":    int(updated_total or 0),
 
-                    # Provider posts if present (Plex/SIMKL/Trakt)
-                    "plex_post":    d.get("plex_post"),
-                    "simkl_post":   d.get("simkl_post"),
-                    "trakt_post":   d.get("trakt_post"),
+                    # Dynamic provider posts (plus legacy keys remain in 'd' if the UI still reads them)
+                    "provider_posts": provider_posts,
+                    # Legacy convenience (kept if present in the file)
+                    "plex_post":     d.get("plex_post"),
+                    "simkl_post":    d.get("simkl_post"),
+                    "trakt_post":    d.get("trakt_post"),
+                    "jellyfin_post": d.get("jellyfin_post"),
                 })
             except Exception:
                 continue
     except Exception:
         pass
 
-    # Watchtime (and capture state for provider totals)
+    # ---- Watchtime (and capture state for provider totals)
     wall = _load_wall_snapshot()
     state = None
     if not wall:
@@ -1821,12 +1824,42 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         "method":  method,
     }
 
-    # Active providers from configured pairs
-    active = {"plex": False, "simkl": False, "trakt": False}
+    # ---- Build provider universe dynamically (from state + configured pairs)
+    providers_set: set[str] = set()
     try:
-        cfg = load_config() or {}
-        pairs = (cfg.get("pairs") or cfg.get("connections") or [])
+        # 1) From state providers (UPPERCASE keys)
+        if state is None:
+            try:
+                orc = _get_orchestrator()
+                state = orc.files.load_state()
+            except Exception:
+                state = None
+        prov_block = (state or {}).get("providers") or {}
+        for up in prov_block.keys():
+            if isinstance(up, str):
+                providers_set.add(up.strip().lower())
+
+        # 2) From configured pairs (source/target)
+        cfg2 = load_config() or {}
+        pairs = (cfg2.get("pairs") or cfg2.get("connections") or []) or []
         for p in pairs:
+            s = str(p.get("source") or "").strip().lower()
+            t = str(p.get("target") or "").strip().lower()
+            if s: providers_set.add(s)
+            if t: providers_set.add(t)
+    except Exception:
+        pass
+
+    # Ensure at least the common ones exist if nothing discovered (harmless default)
+    if not providers_set:
+        providers_set = {"plex", "simkl", "trakt", "jellyfin"}
+
+    # ---- Active map (from pairs)
+    active: dict[str, bool] = {k: False for k in providers_set}
+    try:
+        cfg3 = load_config() or {}
+        pairs3 = (cfg3.get("pairs") or cfg3.get("connections") or []) or []
+        for p in pairs3:
             s = str(p.get("source") or "").strip().lower()
             t = str(p.get("target") or "").strip().lower()
             if s in active: active[s] = True
@@ -1834,35 +1867,24 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     except Exception:
         pass
 
-    # Provider totals from state.json (keys are uppercase: PLEX/SIMKL/TRAKT)
-    providers = {"plex": 0, "simkl": 0, "trakt": 0}  # back-compat: watchlist only
-    providers_by_feature = {
-        "watchlist": {"plex": 0, "simkl": 0, "trakt": 0},
-        "ratings":   {"plex": 0, "simkl": 0, "trakt": 0},
-        "history":   {"plex": 0, "simkl": 0, "trakt": 0},
-        "playlists": {"plex": 0, "simkl": 0, "trakt": 0},
-    }
+    # ---- Provider totals by feature and top-level (watchlist back-compat)
+    feature_keys = ["watchlist", "ratings", "history", "playlists"]
+    providers_by_feature: dict[str, dict[str, int]] = {feat: {k: 0 for k in providers_set} for feat in feature_keys}
     try:
-        if state is None:
-            try:
-                orc = _get_orchestrator()
-                state = orc.files.load_state()
-            except Exception:
-                state = None
-        prov = (state or {}).get("providers") or {}
-        for upcase, data in prov.items():
+        for upcase, data in (prov_block or {}).items():
             key = str(upcase or "").strip().lower()
-            if key not in ("plex", "simkl", "trakt"):
+            if key not in providers_set:
                 continue
-            for feat in ("watchlist", "ratings", "history", "playlists"):
+            for feat in feature_keys:
                 items = ((((data or {}).get(feat) or {}).get("baseline") or {}).get("items") or {})
                 providers_by_feature[feat][key] = int(len(items))
-        # Back-compat top-level `providers` = watchlist totals
-        providers = dict(providers_by_feature.get("watchlist", providers))
     except Exception:
         pass
 
-    # High-level counters from Stats
+    # Back-compat top-level `providers` = watchlist totals
+    providers = dict(providers_by_feature.get("watchlist", {}))
+
+    # ---- High-level counters from Stats
     try:
         top = STATS.overview(None) or {}
     except Exception:
@@ -1883,8 +1905,6 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
 
     return JSONResponse(payload)
 
-
-
 # --------------- Middleware ---------------
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
@@ -1894,7 +1914,6 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
-
 
 # --------------- Stats endpoints ---------------
 @app.get("/api/stats/raw")
@@ -1916,18 +1935,10 @@ def api_stats() -> Dict[str, Any]:
         pass
     return {"ok": True, **base}
 
-
 # --------------- Logs ---------------
 @app.get("/api/logs/dump")
 def logs_dump(channel: str = "TRAKT", n: int = 50):
     return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
-
-
-@app.get("/__log_test")
-def __log_test():
-    _UIHostLogger("TRAKT", "TEST")("manual test")
-    return {"ok": True}
-
 
 @app.get("/api/logs/stream")
 def api_logs_stream_initial(tag: str = Query("SYNC")):
@@ -1946,7 +1957,6 @@ def api_logs_stream_initial(tag: str = Query("SYNC")):
             time.sleep(0.25)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
-
 
 # --------------- Watchlist endpoints ---------------
 @app.get("/api/watchlist")
@@ -2095,7 +2105,7 @@ def api_watchlist_providers():
 @app.post("/api/watchlist/delete")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Payload: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT" }
+    Payload: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT"|"JELLYFIN" }
     Semantics:
       - ok == True if at least one key deleted successfully (partial success allowed)
       - partial == True if some keys failed
@@ -2107,7 +2117,7 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         if not isinstance(keys, list) or not keys:
             return {"ok": False, "error": "keys must be a non-empty array"}
 
-        if provider not in ("ALL", "PLEX", "SIMKL", "TRAKT"):
+        if provider not in ("ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
         try:
@@ -2158,11 +2168,12 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         print(f"[watchlist:delete] FATAL: {e}\n{tb}")
         return {"ok": False, "error": f"fatal: {e}"}
 
+
 # Delete Batch
 @app.post("/api/watchlist/delete_batch")
 def api_watchlist_delete_batch(payload: dict = Body(...)):
     """
-    JSON body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|ALL" }
+    JSON body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|JELLYFIN|ALL" }
     Deletes selected items on the given provider(s) in one shot.
     """
     try:
@@ -2171,37 +2182,42 @@ def api_watchlist_delete_batch(payload: dict = Body(...)):
         if not isinstance(keys, list) or not keys:
             raise HTTPException(status_code=400, detail="keys array required")
 
+        allowed = {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}
+        if provider not in allowed:
+            raise HTTPException(status_code=400, detail=f"unknown provider '{provider}'")
+
         cfg = load_config()
         state = _load_state()
 
         from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import keeps imports tidy
 
         results = []
-        targets = ["PLEX", "SIMKL", "TRAKT"] if provider == "ALL" else [provider]
+        targets = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if provider == "ALL" else [provider]
         for prov in targets:
             try:
                 res = _wl_delete_batch(keys, prov, state, cfg)
-                results.append(res)
+                results.append(res | {"provider": prov})
                 _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: OK")
             except Exception as e:
                 msg = f"[WL] batch-delete on {prov} failed: {e}"
                 _append_log("SYNC", msg)
-                # Keep going for other providers, but include error in response
-                results.append({"provider": prov, "error": str(e)})
+    
+                results.append({"provider": prov, "ok": False, "error": str(e)})
 
-        # Persist any state changes already done inside batch helper; also refresh summary/stats if desired
         try:
             if state:
                 STATS.refresh_from_state(state)
         except Exception:
             pass
 
-        return {"ok": True, "results": results}
+        any_ok = any(r.get("ok") for r in results if isinstance(r, dict))
+        return {"ok": any_ok, "results": results}
     except HTTPException:
         raise
     except Exception as e:
         _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
     
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -2232,7 +2248,7 @@ STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 PROBE_TTL  = 30
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.1")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.2")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -2331,6 +2347,7 @@ _PROBE_CACHE: Dict[str, Tuple[float, bool]] = {
     "plex":  (0.0, False),
     "simkl": (0.0, False),
     "trakt": (0.0, False),
+    "jellyfin": (0.0, False),
 }
 
 # Extra per-user capability cache (Plex Pass / Trakt VIP)
@@ -2440,6 +2457,7 @@ def trakt_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     _USERINFO_CACHE["trakt"] = (now, out)
     return out
 
+# --------------- Connectivity Probes ---------------
 def probe_plex(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["plex"]
     now = time.time()
@@ -2489,6 +2507,15 @@ def probe_simkl(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     _PROBE_CACHE["simkl"] = (now, ok)
     return ok
 
+def probe_jellyfin(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
+    ts, ok = _PROBE_CACHE.get("jellyfin", (0.0, False))
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok
+    jf = (cfg.get("jellyfin") or cfg.get("JELLYFIN") or {})
+    ok = bool((jf.get("server") or "").strip() and (jf.get("access_token") or jf.get("token") or "").strip())
+    _PROBE_CACHE["jellyfin"] = (now, ok)
+    return ok
 
 def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     ts, ok = _PROBE_CACHE["trakt"]
@@ -2496,15 +2523,14 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     if now - ts < max_age_sec:
         return ok
 
-    tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})  # <-- uppercase fallback
+    tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})
     auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
 
     cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
     tok = (
         auth_tr.get("access_token")
         or tr.get("access_token")
-        or tr.get("token")            # token fallback
-        or ""
+        or tr.get("token")
     )
     tok = str(tok).strip()
 
@@ -2524,15 +2550,12 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = 30) -> bool:
     _PROBE_CACHE["trakt"] = (now, ok)
     return ok
 
-
-
 def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
     plex_ok  = probe_plex(cfg)
     simkl_ok = probe_simkl(cfg)
     trakt_ok = probe_trakt(cfg)
     debug    = bool(cfg.get("runtime", {}).get("debug"))
     return plex_ok, simkl_ok, trakt_ok, debug
-
 
 # --------------- Start/stop/schedule sync ---------------
 def _is_sync_running() -> bool:
@@ -2565,7 +2588,62 @@ def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
 
 
-# --------------- Trakt device auth ---------------
+# --------------- Jellyfin login & status ---------------
+@app.post("/api/jellyfin/login")
+def api_jellyfin_login(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    import importlib
+
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+
+    cfg = load_config()
+    jf = cfg.setdefault("jellyfin", {})
+    for k in ("server", "username", "password"):
+        v = (payload.get(k) or "").strip()
+        if v: jf[k] = v
+    if not all(jf.get(k) for k in ("server","username","password")):
+        return JSONResponse({"ok": False, "error": "Missing: server/username/password"}, 400)
+
+    def _code(msg: str) -> int:
+        m = (msg or "").lower()
+        if "401" in m or "403" in m or "invalid credential" in m or "unauthor" in m: return 401
+        if "timeout" in m: return 504
+        if any(x in m for x in ("dns","ssl","connection","refused","unreachable","getaddrinfo","name or service")): return 502
+        return 502
+
+    try:
+        mod = importlib.import_module("providers.auth._auth_JELLYFIN")
+        prov = getattr(mod, "PROVIDER", None)
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+
+        res = prov.start(cfg, redirect_uri="")
+        save_config(cfg)
+
+        if res.get("ok"):
+            return JSONResponse({
+                "ok": True,
+                "user_id": res.get("user_id"),
+                "username": jf.get("user") or jf.get("username"),
+                "server": jf.get("server"),
+            }, 200)
+
+        msg = res.get("error") or "Login failed"
+        return JSONResponse({"ok": False, "error": msg}, _code(msg))
+    except Exception as e:
+        msg = str(e) or "Login failed"
+        return JSONResponse({"ok": False, "error": msg}, _code(msg))
+
+@app.get("/api/jellyfin/status")
+def api_jellyfin_status() -> Dict[str, Any]:
+    cfg = load_config()
+    jf = (cfg.get("jellyfin") or {})
+    return {
+        "connected": bool(jf.get("access_token") and jf.get("server")),
+        "user": jf.get("user") or jf.get("username") or None,
+    }
+
+# --------------- Trakt PIN request & wait ---------------
 def trakt_request_pin() -> dict:
     try:
         from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
@@ -2594,14 +2672,8 @@ def trakt_request_pin() -> dict:
         "expires_epoch": exp_epoch,
     }
 
-
+# --------------- Trakt wait for token ---------------
 def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: float = 2.0) -> str | None:
-    """
-    Poll for a finished Trakt device flow.
-
-    Fix: when a token file is detected, persist it into the config before returning,
-    so /api/status -> probe_trakt() can see access_token/refresh_token/expires_at.
-    """
     try:
         from providers.auth._auth_TRAKT import PROVIDER as _TRAKT_PROVIDER
     except Exception:
@@ -2612,8 +2684,6 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
 
     while time.time() < deadline:
         cfg = load_config() or {}
-
-        # 1) try to read a token produced by the helper/provider
         tok = None
         if _TRAKT_PROVIDER is not None:
             try:
@@ -2622,13 +2692,12 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
                 tok = None
 
         if tok:
-            # NEW: persist into cfg before returning
             try:
                 if _TRAKT_PROVIDER is not None:
-                    _TRAKT_PROVIDER.finish(cfg, device_code=device_code)  # writes tokens into cfg["trakt"]
+                    _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
                     save_config(cfg)
                 else:
-                    # very defensive fallback: try to parse JSON-like token content
+     
                     if isinstance(tok, str):
                         try:
                             tok = json.loads(tok)
@@ -2649,7 +2718,6 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
                 pass
             return "ok"
 
-        # 2) nudge the provider to complete the code exchange (idempotent)
         if _TRAKT_PROVIDER is not None:
             try:
                 _TRAKT_PROVIDER.finish(cfg, device_code=device_code)
@@ -2661,12 +2729,10 @@ def trakt_wait_for_token(device_code: str, timeout_sec: int = 600, interval: flo
 
     return None
 
-
-
+# --------------- Trakt PIN request ---------------
 @app.post("/api/trakt/pin/new")
 def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
     try:
-        # Optional: accept client credentials from request and persist
         if payload:
             cid  = str(payload.get("client_id") or "").strip()
             secr = str(payload.get("client_secret") or "").strip()
@@ -2703,6 +2769,51 @@ def api_trakt_pin_new(payload: dict | None = Body(None)) -> Dict[str, Any]:
 
 
 # --------------- App status ---------------
+from fastapi.responses import JSONResponse
+
+def _prov_configured(cfg: dict, name: str) -> bool:
+    """Return True when provider has credentials."""
+    name = (name or "").strip().lower()
+    if name == "plex":
+        return bool((cfg.get("plex") or {}).get("account_token"))
+    if name == "trakt":
+        return bool((cfg.get("trakt") or {}).get("access_token"))
+    if name == "simkl":
+        return bool((cfg.get("simkl") or {}).get("access_token"))
+    if name == "jellyfin":
+        jf = cfg.get("jellyfin") or {}
+        return bool((jf.get("server") or "").strip() and (jf.get("access_token") or "").strip())
+    return False
+
+def _pair_ready(cfg: dict, pair: dict) -> bool:
+    """Ready when pair enabled and both ends configured."""
+    if not isinstance(pair, dict):
+        return False
+    enabled = pair.get("enabled", True) is not False
+    def _name(x):
+        if isinstance(x, str): return x
+        if isinstance(x, dict): return x.get("provider") or x.get("name") or x.get("id") or x.get("type") or ""
+        return ""
+    a = _name(pair.get("source") or pair.get("a") or pair.get("src") or pair.get("from"))
+    b = _name(pair.get("target") or pair.get("b") or pair.get("dst") or pair.get("to"))
+    return bool(enabled and _prov_configured(cfg, a) and _prov_configured(cfg, b))
+
+def _safe_probe(fn, cfg, max_age_sec=0):
+    """Probe with guard."""
+    try:
+        return bool(fn(cfg, max_age_sec=max_age_sec))
+    except Exception as e:
+        print(f"[status] probe {getattr(fn, '__name__', 'fn')} failed: {e}")
+        return False
+
+def _safe_userinfo(fn, cfg, max_age_sec=0):
+    """User info with guard."""
+    try:
+        return fn(cfg, max_age_sec=max_age_sec) or {}
+    except Exception as e:
+        print(f"[status] userinfo {getattr(fn, '__name__', 'fn')} failed: {e}")
+        return {}
+
 @app.get("/api/status")
 def api_status(fresh: int = Query(0)):
     now = time.time()
@@ -2712,37 +2823,52 @@ def api_status(fresh: int = Query(0)):
     if not fresh and cached and age < STATUS_TTL:
         return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
-    cfg = load_config()
-    probe_age = 0 if fresh else PROBE_TTL
-    plex_ok  = probe_plex(cfg,  max_age_sec=probe_age)
-    simkl_ok = probe_simkl(cfg, max_age_sec=probe_age)
-    trakt_ok = probe_trakt(cfg, max_age_sec=probe_age)
-    debug    = bool(cfg.get("runtime", {}).get("debug"))
+    cfg = load_config() or {}
+    pairs = cfg.get("pairs") or []
+    any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
 
-    # NEW: enrichments (cached)
-    info_plex  = plex_user_info(cfg,  max_age_sec=USERINFO_TTL) if plex_ok  else {}
-    info_trakt = trakt_user_info(cfg, max_age_sec=USERINFO_TTL) if trakt_ok else {}
+    probe_age = 0 if fresh else PROBE_TTL
+
+    plex_ok  = _safe_probe(probe_plex,  cfg, max_age_sec=probe_age)
+    simkl_ok = _safe_probe(probe_simkl, cfg, max_age_sec=probe_age)
+    trakt_ok = _safe_probe(probe_trakt, cfg, max_age_sec=probe_age)
+
+    jf_cfg = (cfg.get("jellyfin") or {})
+    jelly_ok = bool((jf_cfg.get("server") or "").strip() and (jf_cfg.get("access_token") or "").strip())
+
+    debug = bool(cfg.get("runtime", {}).get("debug"))
+
+    info_plex  = _safe_userinfo(plex_user_info,  cfg, max_age_sec=USERINFO_TTL)  if plex_ok  else {}
+    info_trakt = _safe_userinfo(trakt_user_info, cfg, max_age_sec=USERINFO_TTL)  if trakt_ok else {}
 
     data = {
-        "plex_connected":  plex_ok,
-        "simkl_connected": simkl_ok,
-        "trakt_connected": trakt_ok,
-        "debug":           debug,
-        "can_run":         bool((plex_ok or trakt_ok) and simkl_ok),
-        "ts":              int(now),
-
+        "plex_connected":     plex_ok,
+        "simkl_connected":    simkl_ok,
+        "trakt_connected":    trakt_ok,
+        "jellyfin_connected": jelly_ok,
+        "debug":              debug,
+        "can_run":            bool(any_pair_ready),
+        "ts":                 int(now),
         "providers": {
-            "PLEX":  {"connected": plex_ok,  **({} if not info_plex else {
-                "plexpass": bool(info_plex.get("plexpass")),
-                "subscription": info_plex.get("subscription") or {}
-            })},
+            "PLEX":  {
+                "connected": plex_ok,
+                **({} if not info_plex else {
+                    "plexpass": bool(info_plex.get("plexpass")),
+                    "subscription": info_plex.get("subscription") or {}
+                })
+            },
             "SIMKL": {"connected": simkl_ok},
-            "TRAKT": {"connected": trakt_ok, **({} if not info_trakt else {
-                "vip": bool(info_trakt.get("vip")),
-                "vip_type": info_trakt.get("vip_type")
-            })},
+            "TRAKT": {
+                "connected": trakt_ok,
+                **({} if not info_trakt else {
+                    "vip": bool(info_trakt.get("vip")),
+                    "vip_type": info_trakt.get("vip_type")
+                })
+            },
+            "JELLYFIN": {"connected": jelly_ok},
         },
     }
+
     STATUS_CACHE["ts"]   = now
     STATUS_CACHE["data"] = data
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
@@ -2818,7 +2944,7 @@ def _augment_ratings_from_file(summary_obj: dict) -> None:
     if have_spots and all(
         isinstance(lane.get(k), list) and lane.get(k) for k in ("spotlight_add", "spotlight_remove", "spotlight_update")
     ):
-        return  # already populated
+        return
 
     # --- helpers
     def _to_epoch(s: str | None) -> int:
@@ -2861,7 +2987,7 @@ def _augment_ratings_from_file(summary_obj: dict) -> None:
             if max3 and len(dst) >= 3:
                 break
 
-    # --- robust base dir resolution (no fragile relative import)
+    # --- find snapshot file
     base_dir_candidates: list[Path] = []
     try:
         # absolute package import
@@ -2881,7 +3007,7 @@ def _augment_ratings_from_file(summary_obj: dict) -> None:
         except Exception:
             pass
 
-    # env var + cwd fallbacks
+    # env override
     if os.getenv("CW_CONFIG_BASE"):
         base_dir_candidates.append(Path(os.getenv("CW_CONFIG_BASE")))
     base_dir_candidates.append(Path(".").resolve())
@@ -2941,7 +3067,6 @@ def _augment_ratings_from_file(summary_obj: dict) -> None:
     if lane.get("added", 0) == 0:   lane["added"]   = len(adds)
     if lane.get("updated", 0) == 0: lane["updated"] = len(upds)
     if lane.get("removed", 0) == 0: lane["removed"] = len(rems)
-
 
 # --- helpers: ratings schema (pair-level) ------------------------------------
 
@@ -3011,7 +3136,7 @@ def _normalize_pair_ratings(p: Dict[str, Any]) -> None:
     else:
         rt["from_date"] = ""
 
-# --- helper: remove legacy ratings keys + optional migration -----------------
+# --- helper: remove legacy ratings keys and migration -----------------
 def _prune_legacy_ratings(cfg: Dict[str, Any]) -> None:
     """
     Remove top-level 'ratings' and 'features.ratings' (legacy schema).
@@ -3023,7 +3148,6 @@ def _prune_legacy_ratings(cfg: Dict[str, Any]) -> None:
     legacy_feat = dict((feats.pop("ratings", {}) or {}))
 
     if not legacy and legacy_feat:
-        # accept legacy under features.ratings too
         legacy = legacy_feat
 
     if legacy.get("enabled"):
@@ -3032,28 +3156,69 @@ def _prune_legacy_ratings(cfg: Dict[str, Any]) -> None:
             rt = f.setdefault("ratings", {"enable": False, "add": False, "remove": False})
             if not rt.get("enable"):
                 rt["enable"] = True
-            # prefer add=True as the least surprising migration
             if "add" not in rt:
                 rt["add"] = True
-            # never force removes during migration
 
 # --------------- Config endpoints ---------------
 @app.get("/api/config")
 def api_config() -> JSONResponse:
     cfg = load_config()
-    _prune_legacy_ratings(cfg)         # strip legacy blocks
-    _ensure_pair_ratings_defaults(cfg) # ensure per-pair defaults for UI
+    _prune_legacy_ratings(cfg)
+    _ensure_pair_ratings_defaults(cfg)
+
+    # Redact secrets before sending to the browser
+    try:
+        cfg = config_base.redact_config(cfg)
+    except Exception:
+        pass
+
     return JSONResponse(cfg)
+
 
 @app.post("/api/config")
 def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Persist configuration, normalize scrobble bits, strip legacy ratings,
-    normalize pair-level ratings, and (re)plan the scheduler using start/stop/refresh only.
+    Persist configuration safely:
+      - Deep-merge over current config (no destructive overwrite)
+      - Do not blank secrets if client sends empty/masked values
+      - Normalize scrobble, strip legacy ratings, normalize pair-level ratings
+      - Refresh scheduler without applying destructive changes
     """
-    cfg = dict(cfg or {})
+    incoming = dict(cfg or {})
+    current  = load_config()
 
-    # --- Normalize scrobble settings (existing behavior) ----------------------
+    try:
+        merged = config_base._deep_merge(current, incoming)
+    except Exception:
+        merged = {**current, **incoming}
+
+    def _is_blank_or_masked(v: Any) -> bool:
+        if v is None:
+            return True
+        s = str(v).strip()
+        return s == "" or s == "••••••••"
+
+    SECRET_PATHS = [
+        ("plex", "account_token"),
+        ("simkl", "access_token"), ("simkl", "refresh_token"),
+        ("trakt", "client_secret"), ("trakt", "access_token"), ("trakt", "refresh_token"),
+        ("tmdb", "api_key"),
+        ("jellyfin", "access_token"),
+    ]
+
+    for path in SECRET_PATHS:
+        cur = current
+        inc = incoming
+        dst = merged
+        for k in path[:-1]:
+            cur = cur.get(k, {}) if isinstance(cur, dict) else {}
+            inc = inc.get(k, {}) if isinstance(inc, dict) else {}
+            dst = dst.setdefault(k, {}) if isinstance(dst, dict) else {}
+        leaf = path[-1]
+        if isinstance(inc, dict) and leaf in inc and _is_blank_or_masked(inc[leaf]):
+            dst[leaf] = (cur or {}).get(leaf, "")
+
+    cfg = merged
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
     mode = (sc.get("mode") or "").strip().lower()
@@ -3070,13 +3235,13 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     else:
         sc["enabled"] = False
 
-    # Map to features.watch.enabled (unchanged)
+    # Map to features.watch.enabled
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
     autostart = bool(sc.get("watch", {}).get("autostart", False))
     watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and autostart)
 
-    # --- Strip legacy ratings + normalize pair-level ratings ------------------
+    # Normalize pair-level ratings + prune legacy
     _prune_legacy_ratings(cfg)
     for p in (cfg.get("pairs") or []):
         try:
@@ -3084,12 +3249,13 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # --- Persist --------------------------------------------------------------
     save_config(cfg)
 
-    # --- Bust probe caches & refresh scheduler (unchanged) --------------------
+    # Clear probe cache so status is fresh
     _PROBE_CACHE["plex"]  = (0.0, False)
     _PROBE_CACHE["simkl"] = (0.0, False)
+    _PROBE_CACHE["trakt"] = (0.0, False)
+    _PROBE_CACHE["jellyfin"] = (0.0, False)
 
     try:
         if hasattr(globals().get("scheduler", None), "refresh_ratings_watermarks"):
@@ -3223,10 +3389,8 @@ def api_plex_pin_new() -> Dict[str, Any]:
         _append_log("PLEX", f"[PLEX] ERROR: {e}")
         return {"ok": False, "error": str(e)}
 
-
 # --------------- SIMKL OAuth ---------------
 SIMKL_STATE: Dict[str, Any] = {}
-
 
 @app.post("/api/simkl/authorize")
 def api_simkl_authorize(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -3463,17 +3627,17 @@ def api_state_wall(
     st = _load_state()
     items = _wall_items_from_state() or []
 
-    # Build active providers map from configured pairs
-    active = {"plex": False, "simkl": False, "trakt": False}
+    # Build active providers map from configured pairs (now includes Jellyfin)
+    active = {"plex": False, "simkl": False, "trakt": False, "jellyfin": False}
     try:
-        pairs = (cfg.get("pairs") or cfg.get("connections") or []) or []
-        for p in pairs:
-            s = str(p.get("source") or "").strip().lower()
-            t = str(p.get("target") or "").strip().lower()
-            if s in active: active[s] = True
-            if t in active: active[t] = True
+      pairs = (cfg.get("pairs") or cfg.get("connections") or []) or []
+      for p in pairs:
+          s = str(p.get("source") or "").strip().lower()
+          t = str(p.get("target") or "").strip().lower()
+          if s in active: active[s] = True
+          if t in active: active[t] = True
     except Exception:
-        pass
+      pass
 
     # Filters
     def keep_item(it: Dict[str, Any]) -> bool:
@@ -3495,7 +3659,7 @@ def api_state_wall(
         "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
     }
 
-# --------------- Providers manifests ---------------
+# --------------- Sync providers discovery ---------------
 @app.get("/api/sync/providers")
 def api_sync_providers() -> JSONResponse:
     """
@@ -3632,14 +3796,12 @@ def api_sync_providers() -> JSONResponse:
     return JSONResponse(items)
 
 
-# --------------- Pairs CRUD ---------------
+# --------------- Sync pairs endpoints ---------------
 @app.get("/api/pairs")
 def api_pairs_list() -> JSONResponse:
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
-
-        # normalize features in-place if needed
         dirty = False
         for it in arr:
             newf = _normalize_features(it.get("features"))
@@ -3667,12 +3829,6 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
         item.setdefault("mode", "one-way")
         item["enabled"] = bool(item.get("enabled", False))  # default OFF
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
-
-        src = str(item.get("source", "")).upper()
-        tgt = str(item.get("target", "")).upper()
-        if any(str(x.get("source", "")).upper() == src and str(x.get("target", "")).upper() == tgt for x in arr):
-            return {"ok": False, "error": "duplicate"}
-
         item["id"] = _gen_id("pair")
         arr.append(item)
         save_config(cfg)
@@ -3687,9 +3843,6 @@ def api_pairs_add(payload: PairIn) -> Dict[str, Any]:
 
 @app.post("/api/pairs/reorder")
 def api_pairs_reorder(order: List[str] = Body(...)) -> dict:
-    """
-    Reorder pairs by list of IDs. Unknown IDs are ignored.
-    """
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
@@ -3765,10 +3918,9 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
             pass
         return {"ok": False, "error": str(e)}
 
-
 # --------------- TMDb artwork & metadata (via MetadataManager) ---------------
 
-# ---- disk cache helpers
+#-- globals
 def _cfg_meta_ttl_secs() -> int:
     """Read TTL hours from config (metadata.ttl_hours); default 6h."""
     try:
@@ -3835,7 +3987,6 @@ def _read_meta_cache(p: Path) -> dict | None:
         return None
 
 def _write_meta_cache(p: Path, payload: dict) -> None:
-    """Atomic write to avoid partial files."""
     try:
         tmp = p.with_suffix(p.suffix + ".tmp")
         data = dict(payload)
@@ -3846,7 +3997,6 @@ def _write_meta_cache(p: Path, payload: dict) -> None:
         pass
 
 def _prune_meta_cache_if_needed() -> None:
-    """Optional size cap via metadata.meta_cache_max_mb; purge oldest first."""
     try:
         cfg = load_config() or {}
         md = cfg.get("metadata") or {}
@@ -3872,7 +4022,7 @@ def _prune_meta_cache_if_needed() -> None:
     except Exception:
         pass
 
-# ---- in-memory LRU to soften bursts
+#-- MetadataManager instance (if available)
 def _ttl_bucket(seconds: int) -> int:
     return int(time.time() // max(1, seconds))
 
@@ -3894,14 +4044,10 @@ def _shorten(txt: str, limit: int = 280) -> str:
     cut = txt[:limit].rsplit(" ", 1)[0].rstrip(",.;:!-–—")
     return f"{cut}…"
 
-# ---- public helpers used by endpoints
+#-- public API
 def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str, *,
              need: dict | None = None, locale: str | None = None) -> dict:
-    """
-    Resolve metadata with disk cache + LRU.
-    - Disk cache: CACHE_DIR/meta/{movie|tv}/{tmdb}.{locale}.json (TTL = metadata.ttl_hours)
-    - 'need' controls which fields must be present; stale or incomplete entries are refreshed.
-    """
+
     if _METADATA is None:
         raise RuntimeError("MetadataManager not available")
 
@@ -3910,18 +4056,17 @@ def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str, 
     need_key = tuple(sorted(k for k, v in eff_need.items() if v))
     eff_locale = locale  # may be None; provider will fall back to configured locale
 
-    # Disk cache check (optional)
     if _meta_cache_enabled():
         p = _meta_cache_path(entity, tmdb_id, eff_locale or "en-US")
         cached = _read_meta_cache(p)
         if cached and _need_satisfied(cached, eff_need):
             return cached  # fresh & satisfies need
 
-    # Miss or incomplete → resolve via providers (still behind LRU)
+
     ttl_key = _ttl_bucket(_cfg_meta_ttl_secs())
     res = _resolve_tmdb_cached(ttl_key, entity, str(tmdb_id), eff_locale, need_key) or {}
 
-    # Write-through to disk
+
     if res and _meta_cache_enabled():
         try:
             payload = dict(res)
@@ -3979,10 +4124,6 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
 
 def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache_dir: Path | str) -> tuple[str, str]:
-    """
-    Resolve the best poster URL from metadata and persist it to disk once.
-    Uses the same cached resolver under the hood.
-    """
     meta = get_meta(api_key, typ, tmdb_id, cache_dir, need={"poster": True}) or {}
     posters = ((meta.get("images") or {}).get("poster") or [])
     if not posters:
@@ -3996,7 +4137,7 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     return str(path), mime
 
 
-# --------------- Scheduling API ---------------
+# --------------- Scheduling endpoints ---------------
 @app.post("/api/scheduling/replan_now")
 def api_scheduling_replan_now() -> Dict[str, Any]:
     cfg = load_config()
@@ -4077,7 +4218,7 @@ def api_sched_status():
     return st
 
 
-# --------------- Troubleshooting ---------------
+# --------------- Troubleshooting endpoints ---------------
 def _safe_remove_path(p: Path) -> bool:
     try:
         if p.is_dir():
@@ -4087,7 +4228,6 @@ def _safe_remove_path(p: Path) -> bool:
         return True
     except Exception:
         return False
-
 
 @app.post("/api/troubleshoot/clear-cache")
 def api_trbl_clear_cache() -> Dict[str, Any]:
@@ -4108,27 +4248,26 @@ def api_trbl_clear_cache() -> Dict[str, Any]:
     _append_log("TRBL", "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared cache folder.")
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
-def _clear_simkl_state_files() -> list[str]:
-    """Remove SIMKL on-disk cache/shadow files under /config/.cw_state."""
-    base = Path("/config/.cw_state")
-    targets = [
-        base / "simkl_http_cache.json",
-        base / "simkl_watchlist.shadow.json",
-        base / "simkl_cursors.json",
-    ]
-    cleared: list[str] = []
-    for p in targets:
-        try:
-            p.unlink(missing_ok=True)
-            cleared.append(p.name)
-        except Exception:
-            pass
-    return cleared
+# Clear CrossWatch state files
+def _clear_cw_state_files() -> list[str]:
+    from pathlib import Path
+    root = CW_STATE_DIR  # e.g. CONFIG_DIR / ".cw_state"
+    removed: list[str] = []
+    if not root.exists():
+        return removed
+    for p in root.iterdir():
+        if p.is_file():
+            try:
+                p.unlink(missing_ok=True)
+                removed.append(p.name)
+            except Exception:
+                pass
+    return removed
 
 @app.post("/api/troubleshoot/reset-stats")
 def api_trbl_reset_stats(
     recalc: bool = Body(False),
-    purge_file: bool = Body(False)   # NEW
+    purge_file: bool = Body(False)
 ) -> Dict[str, Any]:
     try:
         STATS.reset()
@@ -4137,44 +4276,36 @@ def api_trbl_reset_stats(
                 STATS.path.unlink(missing_ok=True)  # nuke on-disk file
             except Exception:
                 pass
-            # recreate empty file for consistency
             STATS._load(); STATS._save()
 
         if recalc:
             state = _load_state()
             if state:
-                # NOTE: this will count the current state as fresh "adds"
                 STATS.refresh_from_state(state)
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-
 @app.post("/api/troubleshoot/reset-state")
 def api_trbl_reset_state(
-    mode: str = Body("rebuild"),        # rebuild | clear_both | clear_state | clear_tombstones | clear_tombstone_entries
+    mode: str = Body("clear_both"),  # clear_both | clear_state | clear_tombstones | clear_tombstone_entries | clear_cw_state_only | rebuild
     keep_ttl: bool = Body(True),
     ttl_override: Optional[int] = Body(None),
     feature: str = Body("watchlist"),
 ) -> Dict[str, Any]:
-    """
-    Provider-agnostic reset via Orchestrator.
-    Also cleans orchestrator extras:
-      - ratings_changes.json (ratings spotlight snapshot for the UI)
-      - last_sync.json       (last run summary)
-      - watchlist_hide.json  (transient hide list)
-    """
     try:
-        cfg = load_config()
-        orc = Orchestrator(config=cfg)
+        from pathlib import Path
+        import json, os
 
-        state_path = orc.files.state
-        tomb_path = orc.files.tomb
-        last_path = orc.files.last
-        hide_path = orc.files.hide
-        ratings_changes_path = orc.files.ratings_changes
+        # Direct paths — no Orchestrator in clear modes
+        state_path           = CONFIG_DIR / "state.json"
+        tomb_path            = CONFIG_DIR / "tombstones.json"
+        last_path            = CONFIG_DIR / "last_sync.json"
+        hide_path            = CONFIG_DIR / "watchlist_hide.json"
+        ratings_changes_path = CONFIG_DIR / "ratings_changes.json"
 
         cleared_files: list[str] = []
+        cw_state: Dict[str, Any] = {}
 
         def _try_unlink(p: Path, label: str):
             try:
@@ -4183,65 +4314,55 @@ def api_trbl_reset_state(
             except Exception:
                 pass
 
-        if mode in ("clear_state", "clear_both"):
-            # Core orchestrator state
-            _try_unlink(state_path, "state.json")
-            # Extras added by orchestrator for UI/summaries
-            _try_unlink(last_path, "last_sync.json")
-            _try_unlink(ratings_changes_path, "ratings_changes.json")
-            _try_unlink(hide_path, "watchlist_hide.json")
+        def _ls_cw_files() -> list[str]:
+            if not CW_STATE_DIR.exists(): return []
+            return sorted([x.name for x in CW_STATE_DIR.iterdir() if x.is_file()])
 
-            # SIMKL caches/shadow state under /config/.cw_state
-            try:
-                cleared = _clear_simkl_state_files()
-                if cleared:
-                    _append_log("TRBL", f"[i] SIMKL state cleared: {', '.join(cleared)}")
-            except Exception:
-                pass
+        if mode in ("clear_state", "clear_both", "clear_cw_state_only"):
+            pre = _ls_cw_files()
+            removed = _clear_cw_state_files()
+            post = _ls_cw_files()
+            cw_state = {"path": str(CW_STATE_DIR), "pre": pre, "removed": removed, "post": post}
+
+            if mode != "clear_cw_state_only":
+                _try_unlink(state_path, "state.json")
+                _try_unlink(last_path, "last_sync.json")
+                _try_unlink(ratings_changes_path, "ratings_changes.json")
+                _try_unlink(hide_path, "watchlist_hide.json")
 
         if mode in ("clear_tombstones", "clear_both"):
             _try_unlink(tomb_path, "tombstones.json")
 
         if mode == "clear_tombstone_entries":
-            # Keep file but clear entries; optionally adjust TTL
-            t = orc.files.load_tomb()
+            try:
+                t = json.loads(tomb_path.read_text("utf-8")) if tomb_path.exists() else {}
+            except Exception:
+                t = {}
             t["keys"] = {}
             if isinstance(ttl_override, int) and ttl_override > 0:
                 t["ttl_sec"] = ttl_override
             elif not keep_ttl:
-                # sensible default TTL (2 days) if not keeping existing TTL
                 t["ttl_sec"] = 2 * 24 * 3600
-            orc.files.save_tomb(t)
-            _append_log("TRBL", f"[i] Tombstones cleared (ttl={t.get('ttl_sec', 'n/a')})")
+            tmp = tomb_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(t, ensure_ascii=False, indent=2), "utf-8")
+            os.replace(tmp, tomb_path)
 
+        # Only rebuild path touches Orchestrator (kept for completeness)
         if mode == "rebuild":
-            # Clean stale UI extras before rebuilding to avoid ghost spotlights
-            _try_unlink(last_path, "last_sync.json")
-            _try_unlink(ratings_changes_path, "ratings_changes.json")
-            _try_unlink(hide_path, "watchlist_hide.json")
-
-            try:
-                cleared = _clear_simkl_state_files()
-                if cleared:
-                    _append_log("TRBL", f"[i] SIMKL state cleared pre-rebuild: {', '.join(cleared)}")
-            except Exception:
-                pass
-
+            from .orchestrator import Orchestrator  # adjust import if needed
+            cfg = load_config()
+            orc = Orchestrator(config=cfg)
             state = _persist_state_via_orc(orc, feature=feature)
             STATS.refresh_from_state(state)
-            _append_log("TRBL", f"[i] Snapshot rebuilt via Orchestrator (feature={feature})")
 
-        if mode not in ("rebuild", "clear_state", "clear_tombstones", "clear_tombstone_entries", "clear_both"):
+        if mode not in ("clear_both","clear_state","clear_tombstones","clear_tombstone_entries","clear_cw_state_only","rebuild"):
             return {"ok": False, "error": f"Unknown mode: {mode}"}
 
-        # Small, helpful payload
-        return {"ok": True, "mode": mode, "cleared": cleared_files}
-
+        return {"ok": True, "mode": mode, "cleared": cleared_files, "cw_state": cw_state}
     except Exception as e:
-        _append_log("TRBL", f"[!] Reset failed: {e}")
         return {"ok": False, "error": str(e)}
 
-# --------------- Auth providers & metadata providers (UI helpers) ---------------
+# --------------- Providers registry endpoints ---------------
 try:
     from providers.auth.registry import auth_providers_html, auth_providers_manifests
 except Exception:
@@ -4276,7 +4397,7 @@ def api_metadata_providers_html():
     return HTMLResponse(metadata_providers_html())
 
 
-# --------------- Platform/Metadata managers  ---------------------
+# --------------- Platform & MetadataManager instances (if available) ---------------
 try:
     from cw_platform.manager import PlatformManager as _PlatformMgr
     _PLATFORM = _PlatformMgr(load_config, save_config)
@@ -4292,7 +4413,7 @@ except Exception as _e:
     print("MetadataManager not available:", _e)
 
 
-# --------------- Helpers: counts via Orchestrator ---------------
+# --------------- Provider item counts ---------------
 def _count_provider(cfg: dict, provider: str, feature: str = "watchlist") -> int:
     try:
         orc = Orchestrator(config=cfg)
@@ -4310,20 +4431,20 @@ def _safe_get(d: dict, *path, default=None):
         cur = cur.get(k, default)
     return cur
 
-
 def _count_plex(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "PLEX", feature="watchlist")
-
 
 def _count_simkl(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "SIMKL", feature="watchlist")
 
-
 def _count_trakt(cfg: Dict[str, Any]) -> int:
     return _count_provider(cfg, "TRAKT", feature="watchlist")
 
+def _count_jellyfin(cfg: Dict[str, Any]) -> int:
+    return _count_provider(cfg, "JELLYFIN", feature="watchlist")
 
-# --------------- Main ---------------
+
+# --------------- Main & startup ---------------
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()
     print("\nCrossWatch Engine running:")

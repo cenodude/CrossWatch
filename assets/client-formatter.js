@@ -1,11 +1,7 @@
 (function (w, d) {
   // Client-side log formatter used by the UI to render server log streams.
-  // It injects lightweight styles, prettifies known JSON events, filters
-  // unhelpful plain lines, and outputs concise, readable HTML blocks. The
-  // implementation is side-effect free aside from DOM insertion.
 
   // ---------- styles (once) ----------
-  // Insert a small stylesheet exactly once to style the rendered log output.
   if (!d.getElementById("cf-styles")) {
     const style = d.createElement("style");
     style.id = "cf-styles";
@@ -35,6 +31,7 @@
 .cf-plex{background:#2b240a;color:#ffbf3a;border-color:rgba(255,191,58,.28)}
 .cf-simkl{background:#072430;color:#35d1ff;border-color:rgba(53,209,255,.28)}
 .cf-trakt{background:#2b0a0a;color:#ff6470;border-color:rgba(255,100,112,.28)}
+.cf-jellyfin{background:#15102b;color:#9aa5ff;border-color:rgba(154,165,255,.28)}
 .cf-generic{background:#1b1b1b;color:#eaeaea}
 
 /* animations */
@@ -57,34 +54,17 @@
   }
 
   // ---------- utils ----------
-  // Small helpers for HTML-escaping and generating consistent labels/icons.
-  /**
-   * Escape a string for safe HTML insertion.
-   * @param {any} s
-   * @returns {string}
-   */
   const esc = s => String(s ?? "").replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
-  // Map provider keys to badge CSS classes.
-  const BADGE_CLASS = { PLEX: "cf-plex", SIMKL: "cf-simkl", TRAKT: "cf-trakt" };
-  // Map provider keys to small logo images.
-  const LOGO_SRC    = { PLEX: "/assets/PLEX-log.svg", SIMKL: "/assets/SIMKL-log.svg", TRAKT: "/assets/TRAKT-log.svg" };
-  // Simple icon set used across event types.
+  const BADGE_CLASS = { PLEX:"cf-plex", SIMKL:"cf-simkl", TRAKT:"cf-trakt", JELLYFIN:"cf-jellyfin" };
+  const LOGO_SRC    = {
+    PLEX:"/assets/PLEX-log.svg",
+    SIMKL:"/assets/SIMKL-log.svg",
+    TRAKT:"/assets/TRAKT-log.svg",
+    JELLYFIN:"/assets/JELLYFIN-log.svg" // ok if missing; we fallback to text
+  };
   const ICON        = { start:"▶", pair:"🔗", plan:"📝", add:"➕", remove:"➖", done:"✅", complete:"🏁" };
-  /**
-   * Choose an arrow based on mode (two-way uses a bidirectional glyph).
-   * @param {string} m
-   */
   const arrowFor = m => (String(m||"").toLowerCase().startsWith("two") ? "⇄" : "→");
-  /**
-   * Capitalize the first character (for labels).
-   * @param {string} s
-   */
   const capitalize = s => String(s||"").replace(/^./, c => c.toUpperCase());
-  /**
-   * Render a small provider badge with optional logo.
-   * @param {string} name
-   * @returns {string} HTML string
-   */
   const badge = name => {
     const key = String(name||"").toUpperCase();
     const cls = BADGE_CLASS[key] || "cf-generic";
@@ -92,14 +72,6 @@
     const icon = src ? `<img src="${src}" alt="" aria-hidden="true">` : "";
     return `<span class="cf-badge ${cls}">${icon}${esc(key)}</span>`;
   };
-  /**
-   * Build a standardized HTML block for a log event.
-   * @param {"start"|"pair"|"plan"|"add"|"remove"|"done"|"complete"} type
-   * @param {string} titleHTML already-escaped title HTML
-   * @param {string} metaText plain metadata text (escaped internally)
-   * @param {string=} extra optional extra class names
-   * @returns {string}
-   */
   const htmlBlock = (type, titleHTML, metaText, extra) => {
     const add = (extra ? ` ${extra}` : "");
     const base = type === "start" ? "cf-slide-in cf-pulse" :
@@ -112,24 +84,25 @@
   };
 
   // ---------- state ----------
-  // Local state tracking to enrich summaries across multiple events.
   let pendingRunId = null;
-  let opCounts = { add: { PLEX:0, SIMKL:0 }, remove: { PLEX:0, SIMKL:0 } };
-  /**
-   * Infer destination provider name from an event when not explicitly given.
-   * @param {any} ev
-   * @returns {"PLEX"|"SIMKL"}
-   */
-  const dstNameFrom = (ev) => ev.dst || (ev.event.includes(":A:") ? "PLEX" : "SIMKL");
+  // Track current pair so we can label A/B correctly (no SIMKL hardcode).
+  let currentPair = { A: "A", B: "B" }; // uppercase provider keys
+  let opCounts = { add: {}, remove: {} };
+  const resetCountsForPair = (a, b) => {
+    opCounts = { add: {}, remove: {} };
+    opCounts.add[a] = 0; opCounts.add[b] = 0;
+    opCounts.remove[a] = 0; opCounts.remove[b] = 0;
+  };
+  const dstNameFrom = (ev) => {
+    if (ev && ev.dst) return String(ev.dst).toUpperCase();
+    if (ev && typeof ev.event === "string") {
+      return ev.event.includes(":A:") ? currentPair.A : currentPair.B;
+    }
+    return currentPair.B;
+  };
   let squelchPlain = 0;
 
   // ---------- pretty JSON ----------
-  /**
-   * Convert a structured JSON event line into a styled HTML fragment.
-   * Returns null for unknown/unhandled events so callers can fallback to plain rendering.
-   * @param {string} line
-   * @returns {string|null}
-   */
   function formatFriendlyLog(line) {
     if (!line || line[0] !== "{") return null;
     let ev; try { ev = JSON.parse(line); } catch { return null; }
@@ -145,7 +118,11 @@
       }
       case "run:pair": {
         const i = ev.i|0, n = ev.n|0;
-        const src = badge(ev.src), dst = badge(ev.dst), arr = arrowFor(ev.mode);
+        const A = String(ev.src||"").toUpperCase();
+        const B = String(ev.dst||"").toUpperCase();
+        currentPair = { A, B };
+        resetCountsForPair(A, B);
+        const src = badge(A), dst = badge(B), arr = arrowFor(ev.mode);
         const idx = (i && n) ? ` ${i}/${n}` : "";
         const meta = `feature=<b>${esc(ev.feature||"watchlist")}</b> · mode=${esc(ev.mode||"one-way")}` + (ev.dry_run ? " · dry_run=true" : "");
         return htmlBlock("pair", `${ICON.pair} Pair${idx}: ${src} <span class="cf-arrow">${arr}</span> ${dst}`, meta);
@@ -188,19 +165,26 @@
         return null;
       }
       case "two:done": {
-        const rP = Number(opCounts.remove.PLEX || 0);
-        const rS = Number(opCounts.remove.SIMKL || 0);
-        const aP = Number(opCounts.add.PLEX || 0);
-        const aS = Number(opCounts.add.SIMKL || 0);
-        const row = (kind, p, s) => {
+        const A = currentPair.A, B = currentPair.B;
+        const rA = Number(opCounts.remove[A] || 0);
+        const rB = Number(opCounts.remove[B] || 0);
+        const aA = Number(opCounts.add[A] || 0);
+        const aB = Number(opCounts.add[B] || 0);
+
+        const row = (kind, aName, aCnt, bName, bCnt) => {
           const ico  = kind === "add" ? ICON.add : ICON.remove;
           const type = kind === "add" ? "add" : "remove";
-          const muted = (p + s) === 0 ? " cf-muted" : "";
-          const meta = `PLEX·${p} / SIMKL·${s}`;
+          const muted = (aCnt + bCnt) === 0 ? " cf-muted" : "";
+          const meta = `${aName}·${aCnt} / ${bName}·${bCnt}`;
           return htmlBlock(type, `${ico} ${capitalize(kind)}`, meta, muted);
         };
-        const out = [ row("remove", rP, rS), row("add", aP, aS) ].join("");
-        opCounts = { add:{PLEX:0,SIMKL:0}, remove:{PLEX:0,SIMKL:0} };
+
+        const out = [
+          row("remove", A, rA, B, rB),
+          row("add",    A, aA, B, aB)
+        ].join("");
+
+        // keep counts but safe to reset; next pair will re-init
         return out;
       }
       case "run:done": {
@@ -212,27 +196,18 @@
   }
 
   // ---------- host/plain filtering ----------
-  /**
-   * Render plain text lines into friendlier output when possible (non-JSON path).
-   * Applies small heuristics to detect orchestrator/scheduler milestones.
-   * @param {string} line
-   * @param {boolean} isDebug when true, bypasses filters (handled upstream)
-   * @returns {string|null} HTML or plain text; null if the line should be dropped
-   */
   function filterPlainLine(line, isDebug) {
     if (!line) return null;
     const t = String(line).trim();
     if (!t) return null;
 
-    // pretty: the orchestrator start line -> "Start: orchestrator PAIR: <run_id>"
     const mOrch = t.match(/^>\s*SYNC start:\s*orchestrator\s+pairs\s+run_id=(\d+)/i);
     if (mOrch) {
       const id = mOrch[1];
-      pendingRunId = id; // keep for JSON 'run:start' enrichment
+      pendingRunId = id;
       return htmlBlock("start", `${ICON.start} Start: orchestrator PAIR: ${id}`);
     }
 
-    // capture other SYNC start lines (no render)
     const mRun = t.match(/^>\s*SYNC start:.*?\brun_id=(\d+)/i);
     if (mRun) { pendingRunId = mRun[1]; return null; }
 
@@ -252,7 +227,6 @@
       return htmlBlock("complete", `${ICON.complete} Sync complete`, `+${adds} / -${rems}`);
     }
 
-    // scheduler pretty lines
     const mSched1 = t.match(/^\s*(?:\[?INFO]?)\s*\[?SCHED]?\s*scheduler\s+(started|stopped|refreshed)\s*\((enabled|disabled)\)/i);
     if (mSched1) {
       const state = mSched1[1].toLowerCase();
@@ -273,11 +247,6 @@
   }
 
   // ---------- chunk split + JSON extract ----------
-  /**
-   * Split host buffer into separate lines while keeping known markers on their own lines.
-   * @param {string} s
-   * @returns {string[]} lines
-   */
   function splitHost(s) {
     return String(s)
       .replace(/\r\n/g, "\n")
@@ -293,13 +262,6 @@
       .split(/\n+/);
   }
 
-  /**
-   * Extract JSON tokens from a streaming chunk while preserving any trailing buffer.
-   * The parser is tolerant to plain text around JSON objects.
-   * @param {string} buf prior trailing buffer
-   * @param {string} chunk new appended data
-   * @returns {{tokens: string[], buf: string}}
-   */
   function processChunk(buf, chunk) {
     let s = (buf || "") + String(chunk || "");
     const tokens = [];
@@ -339,23 +301,12 @@
   }
 
   // ---------- squelch helpers ----------
-  /**
-   * Heuristic: whether a line looks like a continuation (part of a block),
-   * used to drop follow-up lines after a "providers:" or "features:" header.
-   * @param {string} t
-   */
-  const isContinuationLine = t =>
-    /^[\{\[]/.test(t) ||
-    /^['"]?[A-Za-z0-9_]+['"]?\s*:/.test(t) ||
-    /^\s{2,}\S/.test(t) ||
-    /[}\]]$/.test(t);
+  const isContinuationLine =
+    t => /^[\{\[]/.test(t) ||
+         /^['"]?[A-Za-z0-9_]+['"]?\s*:/.test(t) ||
+         /^\s{2,}\S/.test(t) ||
+         /[}\]]$/.test(t);
 
-  /**
-   * Decide whether to drop a line and potentially squelch subsequent lines.
-   * @param {string} t
-   * @param {boolean} isDebug
-   * @returns {boolean}
-   */
   function shouldDropAndMaybeSquelch(t, isDebug) {
     if (isDebug) return false;
     if (/^\[i]\s*providers:/i.test(t)) { squelchPlain = 2; return true; }
@@ -370,14 +321,6 @@
   }
 
   // ---------- render helper ----------
-  /**
-   * Render a line into a container element, using friendly formatting for
-   * known JSON events and filtered plain text for others. In debug mode, emits
-   * raw lines to aid troubleshooting.
-   * @param {HTMLElement} el container element to insert into
-   * @param {string} line a log line or HTML fragment
-   * @param {boolean=} isDebug force debug rendering
-   */
   function renderInto(el, line, isDebug) {
     if (!el || !line) return;
 
@@ -386,7 +329,7 @@
     if (isDebug) {
       const raw = String(line);
       if (!raw) return;
-      const div = document.createElement("div");
+      const div = d.createElement("div");
       div.className = "cf-line";
       div.textContent = raw;
       el.appendChild(div);
@@ -411,7 +354,7 @@
 
     if (/^<.+>/.test(out)) el.insertAdjacentHTML("beforeend", out);
     else {
-      const div = document.createElement("div");
+      const div = d.createElement("div");
       div.className = "cf-line cf-fade-in";
       div.textContent = out;
       el.appendChild(div);
@@ -419,6 +362,5 @@
   }
 
   // ---------- export ----------
-  // Public API: used by the UI to format incoming log streams and render them.
   w.ClientFormatter = { formatFriendlyLog, filterPlainLine, splitHost, processChunk, renderInto };
 })(window, document);

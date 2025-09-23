@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-"""
-Provider-agnostic Orchestrator
-------------------------------
-"""
+# Orchestrator for synchronization across multiple providers.
 
 # -------------------- imports
 import json
@@ -13,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
-# -------------------- config base
+# -------------------- config base path
 try:
     from . import config_base
 except Exception:
@@ -22,7 +19,7 @@ except Exception:
         def CONFIG_BASE() -> str:
             return "./"
 
-# -------------------- logging shim
+# -------------------- simple logger fallback
 class _Logger:
     def __call__(self, *a): print(*a)
     def info(self, *a): print(*a)
@@ -32,7 +29,7 @@ class _Logger:
     def success(self, *a): print(*a)
 log = _Logger()
 
-# -------------------- statistics (provider-agnostic)
+# -------------------- optional stats
 try:
     from _statistics import Stats  # type: ignore
 except Exception:  # pragma: no cover
@@ -41,7 +38,6 @@ except Exception:  # pragma: no cover
         def record_summary(self, *a, **k): pass
         def overview(self, *a, **k): return {}
         def http_overview(self, *a, **k): return {}
-
 
 
 # -------------------- provider protocol
@@ -53,7 +49,6 @@ class InventoryOps(Protocol):
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]: ...
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
-    # Optional: modules may expose activities(cfg) → dict with timestamps
 
 # -------------------- module loader
 def _iter_sync_modules():
@@ -221,18 +216,79 @@ class Orchestrator:
             self.stats = Stats()
 
         # thresholds for rate warnings
-        telem = dict((self.cfg.get("telemetry") or {}))
-        self.warn_thresholds = (telem.get("warn_rate_remaining") or {"TRAKT": 100, "SIMKL": 50, "PLEX": 0})
+        telem = dict(self.cfg.get("telemetry") or (self.cfg.get("runtime", {}).get("telemetry") or {}))
+        self.warn_thresholds = (telem.get("warn_rate_remaining") or {"TRAKT": 100, "SIMKL": 50, "PLEX": 0, "JELLYFIN": 0})
 
-        # NEW: in-run snapshot memo (sec). 0 disables memo.
+        # snapshot caching
         rt = dict(self.cfg.get("runtime") or {})
         self._snap_ttl_sec = int(rt.get("snapshot_ttl_sec") or 0)
         self._snap_cache: Dict[Tuple[str, str], Tuple[float, Dict[str, Dict[str, Any]]]] = {}
 
-        # NEW: pair context (set in run_pair feature loop, read by _ratings_cfg)
+        # Suspect guard tuning (kept simple and overridable)
+        self._suspect_min_prev = int(rt.get("suspect_min_prev", 20))          # do not trigger on tiny baselines
+        self._suspect_shrink_ratio = float(rt.get("suspect_shrink_ratio", 0.10))  # "much smaller" threshold (10%)
+        self._suspect_debug = bool(rt.get("suspect_debug", True))
+
+        # Apply chunking (0 = disabled). Example config:
+        # "runtime": { "apply_chunk_size": 100, "apply_chunk_pause_ms": 50 }
+        self._apply_chunk_size = int(rt.get("apply_chunk_size") or 0)
+        self._apply_chunk_pause_ms = int(rt.get("apply_chunk_pause_ms") or 0)
         self._pair_ctx: Optional[Mapping[str, Any]] = None
 
     # -------------------- logging
+    def _apply_chunked(
+        self,
+        tag: str,
+        *,
+        dst: str,
+        feature: str,
+        items: List[Dict[str, Any]],
+        call: Callable[[List[Dict[str, Any]]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Call provider ops in chunks and emit progress."""
+        total = len(items)
+        if total == 0:
+            return {"ok": True, "count": 0}
+
+        csize = int(getattr(self, "_apply_chunk_size", 0) or 0)
+
+        # Single-shot path (no chunking)
+        if csize <= 0 or total <= csize:
+            res = self._retry(lambda: call(items))
+            ok = bool((res or {}).get("ok", True))
+            # Count = provider count, or added/removed, else assume all items
+            cnt = int((res or {}).get("count")
+                    or (res or {}).get("added")
+                    or (res or {}).get("removed")
+                    or total)
+            return {"ok": ok, "count": cnt}
+
+        # Chunked path
+        done = 0
+        ok_all = True
+        cnt_total = 0
+
+        for i in range(0, total, csize):
+            chunk = items[i:i + csize]
+            res = self._retry(lambda: call(chunk))
+            ok = bool((res or {}).get("ok", True))
+            cnt = int((res or {}).get("count")
+                    or (res or {}).get("added")
+                    or (res or {}).get("removed")
+                    or len(chunk))
+            ok_all = ok_all and ok
+            cnt_total += cnt
+            done += len(chunk)
+            self._emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=ok)
+
+            pause = int(getattr(self, "_apply_chunk_pause_ms", 0) or 0)
+            if pause:
+                try: time.sleep(pause / 1000.0)
+                except Exception: pass
+
+        return {"ok": ok_all, "count": cnt_total}
+
+
     def _emit(self, event: str, **data):
         if self.on_progress:
             try:
@@ -469,7 +525,14 @@ class Orchestrator:
             return
         pf = self._ensure_pf(state, prov, feature)
         pf["checkpoint"] = checkpoint
-        
+
+    def _prev_checkpoint(self, prov: str, feature: str) -> Optional[str]:
+        """Fetch last persisted checkpoint for provider+feature."""
+        try:
+            st = self.files.load_state() or {}
+            return (((st.get("providers") or {}).get(prov, {}) or {}).get(feature, {}) or {}).get("checkpoint")
+        except Exception:
+            return None
 
     # -------------------- activities (optional)
     def _module_checkpoint(self, ops: InventoryOps, feature: str) -> Optional[str]:
@@ -490,6 +553,11 @@ class Orchestrator:
 
     # -------------------- snapshots (modules may implement internal delta)
     def build_snapshots(self, *, feature: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Build provider snapshots (present or module-defined index) with a short-lived memo.
+        If a provider fails, we log it as degraded and do not cache an empty snapshot to avoid
+        "sticky empties" caused by TTL.
+        """
         snaps: Dict[str, Dict[str, Any]] = {}
         now = time.time()
         for name, ops in self.providers.items():
@@ -502,20 +570,107 @@ class Orchestrator:
                     snaps[name] = ent[1]
                     self._dbg("snapshot.memo", provider=name, feature=feature, count=len(ent[1]))
                     continue
+
+            degraded = False
             try:
                 idx = ops.build_index(self.cfg, feature=feature) or {}
             except Exception as e:
                 self._emit_info(f"[!] snapshot.failed provider={name} feature={feature} error={e}")
+                self._emit("debug", msg="provider.degraded", provider=name, feature=feature)
+                degraded = True
                 idx = {}
+
             if isinstance(idx, list):
                 canon = {canonical_key(v): v for v in idx}
             else:
                 canon = {canonical_key(v): v for v in idx.values()} if idx else {}
+
             snaps[name] = canon
+
+            # Do not cache empty or degraded results; prevents caching a transient outage
             if self._snap_ttl_sec > 0:
-                self._snap_cache[memo_key] = (now, canon)
+                if degraded or not canon:
+                    self._dbg("snapshot.no_cache_empty", provider=name, feature=feature, degraded=bool(degraded))
+                else:
+                    self._snap_cache[memo_key] = (now, canon)
+
             self._dbg("snapshot", provider=name, feature=feature, count=len(canon))
         return snaps
+
+    # -------------------- suspect snapshot guard
+    def _coerce_suspect_snapshot(
+        self,
+        *,
+        provider: str,
+        ops: InventoryOps,
+        prev_idx: Mapping[str, Any],
+        cur_idx: Mapping[str, Any],
+        feature: str,
+    ) -> Tuple[Dict[str, Any], bool, str]:
+        """
+        Guard against transient "empty/mini" snapshots that could cascade into mass removals.
+
+        Logic:
+        - Only applies to providers whose index_semantics is "present" (default).
+        - If current is empty OR shrunk far below previous AND the provider's activities checkpoint
+          has not advanced since the last persisted checkpoint → treat current as transient.
+          In that case we return 'prev_idx' as the effective snapshot and mark 'suspect=True'.
+        - We also emit a debug event to make this visible in telemetry.
+
+        Returns: (effective_idx, suspect_flag, reason)
+        """
+        try:
+            sem = (ops.capabilities() or {}).get("index_semantics", "present")
+        except Exception:
+            sem = "present"
+
+        if str(sem).lower() != "present":
+            return dict(cur_idx), False, "semantics:delta"
+
+        prev_count = len(prev_idx or {})
+        cur_count = len(cur_idx or {})
+        if prev_count < self._suspect_min_prev:
+            # Do not trigger guard on tiny baselines; too noisy.
+            return dict(cur_idx), False, "baseline:tiny"
+
+        # Compute shrink condition (e.g., 0 or <=10% of previous)
+        shrink_limit = max(1, int(prev_count * self._suspect_shrink_ratio))
+        shrunk = (cur_count == 0) or (cur_count <= shrink_limit)
+
+        if not shrunk:
+            return dict(cur_idx), False, "ok"
+
+        # Compare activity checkpoints (no forward progress → suspicious)
+        prev_cp = self._prev_checkpoint(provider, feature)
+        now_cp = self._module_checkpoint(ops, feature)
+        prev_ts = self._parse_ts(prev_cp)
+        now_ts = self._parse_ts(now_cp)
+
+        no_progress = (
+            (prev_ts is not None and now_ts is not None and now_ts <= prev_ts) or
+            (prev_ts is not None and now_ts is None) or
+            (prev_cp and now_cp and str(now_cp) == str(prev_cp))
+        )
+
+        if no_progress:
+            reason = "suspect:no-progress+shrunk"
+            if self._suspect_debug:
+                self._emit(
+                    "snapshot:suspect",
+                    provider=provider,
+                    feature=feature,
+                    prev_count=prev_count,
+                    cur_count=cur_count,
+                    shrink_limit=shrink_limit,
+                    prev_checkpoint=prev_cp,
+                    now_checkpoint=now_cp,
+                    reason=reason,
+                )
+            # Use previous snapshot as effective to avoid mass deletes for this run.
+            return dict(prev_idx), True, reason
+
+        # Progress is visible; accept the current snapshot even if small.
+        return dict(cur_idx), False, "progressed"
 
     @staticmethod
     def diff(src_idx: Mapping[str, Any], dst_idx: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -794,7 +949,7 @@ class Orchestrator:
                 last = e; time.sleep(base_sleep * (2 ** i))
         raise last  # type: ignore
 
-    # -------------------- one-way
+    # -------------------- one-way (with suspect snapshot guard)
     def apply_direction(self, *, src: str, dst: str, feature: str, allow_removals: bool, dry_run: bool=False) -> Dict[str, Any]:
         src = src.upper(); dst = dst.upper()
         sops = self.providers[src]; dops = self.providers[dst]
@@ -804,17 +959,42 @@ class Orchestrator:
         # 1) fresh snapshots
         self._emit("snapshot:start", src=src, dst=dst, feature=feature)
         snaps = self.build_snapshots(feature=feature)
-        src_idx = snaps.get(src, {}) or {}
-        dst_delta = snaps.get(dst, {}) or {}
+        src_cur = snaps.get(src, {}) or {}
+        dst_cur = snaps.get(dst, {}) or {}
 
-        # 2) previous baseline (for delta providers)
+        # 2) previous baselines for guard + delta semantics handling
         prev_state = self.files.load_state() or {}
         prev_provs = (prev_state.get("providers") or {})
+        prev_src = dict((((prev_provs.get(src, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
         prev_dst = dict((((prev_provs.get(dst, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
 
-        # Effective destination = previous baseline + current delta
-        dst_full: Dict[str, Any] = dict(prev_dst)
-        dst_full.update(dst_delta)
+        # 3) suspect guard evaluation (present semantics only)
+        src_eff, src_suspect, src_reason = self._coerce_suspect_snapshot(
+            provider=src, ops=sops, prev_idx=prev_src, cur_idx=src_cur, feature=feature
+        )
+        dst_eff, dst_suspect, dst_reason = self._coerce_suspect_snapshot(
+            provider=dst, ops=dops, prev_idx=prev_dst, cur_idx=dst_cur, feature=feature
+        )
+
+        if src_suspect or dst_suspect:
+            self._emit("snapshot:suspect:one_way",
+                       src=src, dst=dst, feature=feature,
+                       src_flag=bool(src_suspect), src_reason=src_reason,
+                       dst_flag=bool(dst_suspect), dst_reason=dst_reason)
+
+        # 4) build effective destination view
+        dst_sem = str((dops.capabilities() or {}).get("index_semantics", "present")).lower()
+        if dst_sem == "delta":
+            # Destination module provides delta-only indices → combine with previous baseline.
+            dst_full: Dict[str, Any] = dict(prev_dst)
+            dst_full.update(dst_cur)
+        else:
+            # Present semantics (guard already applied).
+            dst_full = dict(dst_eff)
+
+        # Source effective (we assume source is present; if delta, we keep as-is)
+        src_sem = str((sops.capabilities() or {}).get("index_semantics", "present")).lower()
+        src_idx = dict(src_cur if src_sem == "delta" else src_eff)
 
         # Ratings-aware planning
         ratings_changes_snapshot = None
@@ -865,40 +1045,48 @@ class Orchestrator:
 
         self._emit("plan", src=src, dst=dst, feature=feature, add=len(additions), rem=len(removals) if allow_removals else 0)
 
-        # 3) apply removes
+        # 5) apply removes
         res_rem = {"ok": True, "count": 0}
         if allow_removals and removals:
             self._emit("apply:remove:start", dst=dst, feature=feature, count=len(removals))
-            res_rem = self._retry(lambda: dops.remove(self.cfg, removals, feature=feature, dry_run=dry_run))
+            res_rem = self._apply_chunked(
+                "apply:remove",
+                dst=dst, feature=feature, items=removals,
+                call=lambda ch: dops.remove(self.cfg, ch, feature=feature, dry_run=dry_run),
+            )
             # include items for UI (ratings spotlight)
             try:
                 items_payload = [minimal(x) for x in removals][:50] if feature == "ratings" else None
-                self._emit("apply:remove:done", dst=dst, feature=feature, count=len(removals), result=res_rem, items=items_payload)
-            finally:
-                if removals and not dry_run:
-                    pair = self._pair_key(src, dst)
-                    self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in removals], pair=pair)
-                    for it in removals:
-                        dst_full.pop(canonical_key(it), None)
-                    # stats for feature
-                    if feature == "ratings":
-                        self._stats_rating("unrate", removals, dst)
-                    else:
-                        self._stats_generic(feature, "remove", removals, dst)
+            except Exception:
+                items_payload = None
+            self._emit("apply:remove:done", dst=dst, feature=feature, count=len(removals), result=res_rem, items=items_payload)
+            if removals and not dry_run:
+                pair = self._pair_key(src, dst)
+                self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in removals], pair=pair)
+                if feature == "ratings":
+                    self._stats_rating("unrate", removals, dst)
+                else:
+                    self._stats_generic(feature, "remove", removals, dst)
         else:
             self._emit("apply:remove:done", dst=dst, feature=feature, count=0, result=res_rem)
 
-        # 4) enrich if needed
+
+        # 6) enrich if needed
         want_ids = not bool(dops.capabilities().get("provides_ids"))
         additions = self.maybe_enrich(additions, want_ids=want_ids, dst=dst)
 
-        # 5) apply adds (incl. rating updates)
+        # 7) apply adds (incl. rating updates)
         self._emit("apply:add:start", dst=dst, feature=feature, count=len(additions))
         res_add = {"ok": True, "count": 0}
         if additions:
-            res_add = self._retry(lambda: dops.add(self.cfg, additions, feature=feature, dry_run=dry_run))
+            res_add = self._apply_chunked(
+                "apply:add",
+                dst=dst, feature=feature, items=additions,
+                call=lambda ch: dops.add(self.cfg, ch, feature=feature, dry_run=dry_run),
+            )
         items_payload = [minimal(x) for x in additions][:50] if feature == "ratings" else None
         self._emit("apply:add:done", dst=dst, feature=feature, count=len(additions), result=res_add, items=items_payload)
+
 
         if additions and not dry_run:
             for it in additions:
@@ -912,7 +1100,7 @@ class Orchestrator:
             else:
                 self._stats_generic(feature, "add", additions, dst)
 
-        # 6) commit state
+        # 8) commit state
         state = self.files.load_state()
         self._commit_baseline(state, src, feature, src_idx)
         self._commit_baseline(state, dst, feature, dst_full)
@@ -921,7 +1109,7 @@ class Orchestrator:
         state["last_sync_epoch"] = int(time.time())
         self.files.save_state(state)
 
-        # 7) persist ratings change snapshot for UI
+        # 9) persist ratings change snapshot for UI
         if feature == "ratings" and ratings_changes_snapshot is not None:
             self._record_ratings_changes(ratings_changes_snapshot)
 
@@ -939,7 +1127,7 @@ class Orchestrator:
             "res_add": res_add, "res_remove": res_rem,
         }
 
-    # -------------------- two-way (pair-scoped tombstones; baseline+delta aware)
+    # -------------------- two-way (pair-scoped tombstones; suspect-guard aware)
     def _two_way_sync(
         self,
         a: str,
@@ -964,15 +1152,41 @@ class Orchestrator:
         A_cur = snaps.get(a, {}) or {}
         B_cur = snaps.get(b, {}) or {}
 
-        # 2) previous baselines
+        # 2) previous baselines (reference for both delta composition and suspect-guard)
         prev_state = self.files.load_state() or {}
         prev_provs = (prev_state.get("providers") or {})
         prevA = dict((((prev_provs.get(a, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
         prevB = dict((((prev_provs.get(b, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
 
-        # Effective views = baseline + current delta
-        A_eff: Dict[str, Any] = dict(prevA); A_eff.update(A_cur)
-        B_eff: Dict[str, Any] = dict(prevB); B_eff.update(B_cur)
+        # 3) suspect snapshot guard — only meaningful for "present" semantics
+        A_eff_guard, A_suspect, A_reason = self._coerce_suspect_snapshot(
+            provider=a, ops=aops, prev_idx=prevA, cur_idx=A_cur, feature=feature
+        )
+        B_eff_guard, B_suspect, B_reason = self._coerce_suspect_snapshot(
+            provider=b, ops=bops, prev_idx=prevB, cur_idx=B_cur, feature=feature
+        )
+        if A_suspect or B_suspect:
+            self._emit(
+                "snapshot:suspect:two_way",
+                a=a, b=b, feature=feature,
+                a_flag=bool(A_suspect), a_reason=A_reason,
+                b_flag=bool(B_suspect), b_reason=B_reason,
+                prevA=len(prevA), curA=len(A_cur), prevB=len(prevB), curB=len(B_cur),
+            )
+
+        # 4) effective views — compose using module-declared semantics
+        a_sem = str((aops.capabilities() or {}).get("index_semantics", "present")).lower()
+        b_sem = str((bops.capabilities() or {}).get("index_semantics", "present")).lower()
+
+        if a_sem == "delta":
+            A_eff: Dict[str, Any] = dict(prevA); A_eff.update(A_cur)
+        else:
+            A_eff = dict(A_eff_guard)   # suspect guard already applied
+
+        if b_sem == "delta":
+            B_eff: Dict[str, Any] = dict(prevB); B_eff.update(B_cur)
+        else:
+            B_eff = dict(B_eff_guard)   # suspect guard already applied
 
         # Pair-scoped tombstones with TTL (union of global + pair)
         pair = self._pair_key(a, b)
@@ -982,29 +1196,41 @@ class Orchestrator:
         tomb = {k for k, ts in tomb_map.items() if (now - int(ts)) <= ttl_secs}
         reasons: Dict[str, str] = {k: "tomb:explicit" for k in tomb}
 
-        # Observed deletions (scoped)
+        # 5) observed deletions — suppressed on suspect sides
         obsA: set[str] = set()
         obsB: set[str] = set()
         bootstrap = (not prevA) and (not prevB) and not tomb
+
         if include_observed_deletes and not bootstrap:
-            obsA = {k for k in prevA.keys() if k not in A_cur}
-            obsB = {k for k in prevB.keys() if k not in B_cur}
+            # Only compute obs for a side if that side is not marked suspect.
+            if not A_suspect:
+                obsA = {k for k in prevA.keys() if k not in A_cur}
+            if not B_suspect:
+                obsB = {k for k in prevB.keys() if k not in B_cur}
+
             if obsA or obsB:
                 newly = (obsA | obsB) - tomb
                 if newly:
                     self._tomb_add_keys_for_feature(feature, newly, pair=pair)
                     for k in newly: reasons[k] = "tomb:observed-since-last-state"
                     tomb |= newly
-            self._emit("debug", msg="observed.deletions", a=len(obsA), b=len(obsB), tomb=len(tomb))
+            self._emit(
+                "debug",
+                msg="observed.deletions",
+                a=len(obsA), b=len(obsB), tomb=len(tomb),
+                suppressed_on_A=bool(A_suspect), suppressed_on_B=bool(B_suspect),
+            )
         else:
             self._emit("debug", msg="observed.deletions", a=0, b=0, tomb=len(tomb))
 
         # Remove observed deletions from effective view so they become one-sided diffs
         if include_observed_deletes:
-            for k in list(obsA):
-                A_eff.pop(k, None)
-            for k in list(obsB):
-                B_eff.pop(k, None)
+            if obsA:
+                for k in list(obsA):
+                    A_eff.pop(k, None)
+            if obsB:
+                for k in list(obsB):
+                    B_eff.pop(k, None)
 
         # Alias-aware indices (used by non-ratings path)
         def _alias_index(idx: Mapping[str, Mapping[str, Any]]) -> Dict[str, str]:
@@ -1032,10 +1258,11 @@ class Orchestrator:
             A_eff = self._filter_types(A_eff, r_types)
             B_eff = self._filter_types(B_eff, r_types)
 
-            # Directional mode filtering (source-side)
+            # Directional mode filtering (source-side for each direction)
             mode = self._ratings_mode()
             prevA_cp = (((prev_provs.get(a, {}) or {}).get(feature, {}) or {}).get("checkpoint"))
             prevB_cp = (((prev_provs.get(b, {}) or {}).get(feature, {}) or {}).get("checkpoint"))
+
             A_src = self._filter_mode_ratings(A_eff, mode=mode, from_date=self._ratings_from_date(), checkpoint=prevA_cp or self._module_checkpoint(aops, feature))
             B_src = self._filter_mode_ratings(B_eff, mode=mode, from_date=self._ratings_from_date(), checkpoint=prevB_cp or self._module_checkpoint(bops, feature))
 
@@ -1136,12 +1363,17 @@ class Orchestrator:
                 rem_from_A=len(rem_from_A) if allow_removals else 0,
                 rem_from_B=len(rem_from_B) if allow_removals else 0)
 
-        # 3) apply removes
+        # 6) apply removes (two-way, chunked)
         resA_rem = {"ok": True, "count": 0}; resB_rem = {"ok": True, "count": 0}
         if allow_removals:
+            # A
             self._emit("two:apply:remove:A:start", dst=a, feature=feature, count=len(rem_from_A))
             if rem_from_A:
-                resA_rem = self._retry(lambda: aops.remove(self.cfg, rem_from_A, feature=feature, dry_run=dry_run))
+                resA_rem = self._apply_chunked(
+                    "two:apply:remove:A",
+                    dst=a, feature=feature, items=rem_from_A,
+                    call=lambda ch: aops.remove(self.cfg, ch, feature=feature, dry_run=dry_run),
+                )
                 if rem_from_A and not dry_run:
                     self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in rem_from_A], pair=pair)
                     for it in rem_from_A:
@@ -1153,9 +1385,14 @@ class Orchestrator:
             self._emit("two:apply:remove:A:done", dst=a, feature=feature, count=len(rem_from_A), result=resA_rem,
                        items=[minimal(x) for x in rem_from_A][:50] if feature == "ratings" else None)
 
+            # B
             self._emit("two:apply:remove:B:start", dst=b, feature=feature, count=len(rem_from_B))
             if rem_from_B:
-                resB_rem = self._retry(lambda: bops.remove(self.cfg, rem_from_B, feature=feature, dry_run=dry_run))
+                resB_rem = self._apply_chunked(
+                    "two:apply:remove:B",
+                    dst=b, feature=feature, items=rem_from_B,
+                    call=lambda ch: bops.remove(self.cfg, ch, feature=feature, dry_run=dry_run),
+                )
                 if rem_from_B and not dry_run:
                     self._tomb_add_keys_for_feature(feature, [canonical_key(it) for it in rem_from_B], pair=pair)
                     for it in rem_from_B:
@@ -1167,47 +1404,60 @@ class Orchestrator:
             self._emit("two:apply:remove:B:done", dst=b, feature=feature, count=len(rem_from_B), result=resB_rem,
                        items=[minimal(x) for x in rem_from_B][:50] if feature == "ratings" else None)
 
-        # 4) enrich if provider can’t resolve IDs
+
+        # 7) enrich if provider can’t resolve IDs
         want_ids_A = not bool(aops.capabilities().get("provides_ids"))
         want_ids_B = not bool(bops.capabilities().get("provides_ids"))
         add_to_A = self.maybe_enrich(add_to_A, want_ids=want_ids_A, dst=a)
         add_to_B = self.maybe_enrich(add_to_B, want_ids=want_ids_B, dst=b)
 
-        # 5) apply adds (includes updates; providers should upsert)
+        # 8) apply adds (two-way, chunked; providers should upsert)
         resA_add = {"ok": True, "count": 0}; resB_add = {"ok": True, "count": 0}
+
+        # A
         self._emit("two:apply:add:A:start", dst=a, feature=feature, count=len(add_to_A))
         if add_to_A:
-            resA_add = self._retry(lambda: aops.add(self.cfg, add_to_A, feature=feature, dry_run=dry_run))
+            resA_add = self._apply_chunked(
+                "two:apply:add:A",
+                dst=a, feature=feature, items=add_to_A,
+                call=lambda ch: aops.add(self.cfg, ch, feature=feature, dry_run=dry_run),
+            )
             if not dry_run:
                 for it in add_to_A:
                     A_eff[canonical_key(it)] = minimal(it)
                 if feature == "ratings":
-                    if adds_to_A:
+                    if 'adds_to_A' in locals() and adds_to_A:
                         self._stats_rating("rate", adds_to_A, a)
-                    if updates_on_A:
+                    if 'updates_on_A' in locals() and updates_on_A:
                         self._stats_rating("update_rating", updates_on_A, a)
                 else:
                     self._stats_generic(feature, "add", add_to_A, a)
         self._emit("two:apply:add:A:done", dst=a, feature=feature, count=len(add_to_A), result=resA_add,
                    items=[minimal(x) for x in add_to_A][:50] if feature == "ratings" else None)
 
+        # B
         self._emit("two:apply:add:B:start", dst=b, feature=feature, count=len(add_to_B))
         if add_to_B:
-            resB_add = self._retry(lambda: bops.add(self.cfg, add_to_B, feature=feature, dry_run=dry_run))
+            resB_add = self._apply_chunked(
+                "two:apply:add:B",
+                dst=b, feature=feature, items=add_to_B,
+                call=lambda ch: bops.add(self.cfg, ch, feature=feature, dry_run=dry_run),
+            )
             if not dry_run:
                 for it in add_to_B:
                     B_eff[canonical_key(it)] = minimal(it)
                 if feature == "ratings":
-                    if adds_to_B:
+                    if 'adds_to_B' in locals() and adds_to_B:
                         self._stats_rating("rate", adds_to_B, b)
-                    if updates_on_B:
+                    if 'updates_on_B' in locals() and updates_on_B:
                         self._stats_rating("update_rating", updates_on_B, b)
                 else:
                     self._stats_generic(feature, "add", add_to_B, b)
         self._emit("two:apply:add:B:done", dst=b, feature=feature, count=len(add_to_B), result=resB_add,
                    items=[minimal(x) for x in add_to_B][:50] if feature == "ratings" else None)
 
-        # 6) commit baselines from effective post-apply models
+
+        # 9) commit baselines from effective post-apply models
         state = self.files.load_state()
         self._commit_baseline(state, a, feature, A_eff)
         self._commit_baseline(state, b, feature, B_eff)
@@ -1451,7 +1701,7 @@ class Orchestrator:
         progress: Optional[Callable[[str], None]] = None,
         write_state_json: bool = True,
         state_path: Optional[Path] = None,
-        use_snapshot: bool = True,
+        use_snapshot: bool = True,   # kept for compatibility; memo is managed via runtime.snapshot_ttl_sec
         only_feature: Optional[str] = None,
         **_kwargs,
     ) -> Dict[str, Any]:

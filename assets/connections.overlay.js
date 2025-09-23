@@ -1,18 +1,7 @@
-// connections.overlay.js — Providers connection UI with drag-and-drop.
-//
-// Purpose
-// - Lets users pick a Source provider and then a Target provider to connect
-//   via either button clicks or drag-and-drop (drag source → drop on target).
-// - Keeps provider titles uppercase (PLEX, SIMKL, TRAKT) for visual consistency.
-// - Applies a subtle glass look to provider cards to match the connectors vibe.
-//
-// Behavior notes
-// - Dragging temporarily disables button interactions to avoid accidental clicks.
-// - Original global functions (renderConnections, cxStartConnect) are preserved
-//   and wrapped so existing flows keep working.
+// connections.overlay.js — Providers connection UI
 (function () {
-  let dragSrc = null;           // Transient drag source (provider name)
-  let isDragging = false;       // Blocks button clicks while dragging
+  let dragSrc = null;
+  let isDragging = false;
 
   /**
    * Brand details (class + icon) for a provider name.
@@ -24,14 +13,14 @@
     if (key === "PLEX") return { cls: "brand-plex", icon: "/assets/PLEX.svg" };
     if (key === "SIMKL") return { cls: "brand-simkl", icon: "/assets/SIMKL.svg" };
     if (key === "TRAKT") return { cls: "brand-trakt", icon: "/assets/TRAKT.svg" };
+    if (key === "JELLYFIN") return { cls: "brand-jellyfin", icon: "/assets/JELLYFIN.svg" };
     return { cls: "", icon: "" };
   }
 
-  /** Ensure the overlay CSS is injected exactly once. */
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
-      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; }
+      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; --jellyfin:#9654f4; } 
 
       .cx-grid{
         display:grid;
@@ -75,6 +64,8 @@
       .prov-card.brand-plex{border-color:rgba(229,160,13,.55); box-shadow:inset 0 0 0 1px rgba(229,160,13,.20), 0 0 24px rgba(229,160,13,.18)}
       .prov-card.brand-simkl{border-color:rgba(0,183,235,.55); box-shadow:inset 0 0 0 1px rgba(0,183,235,.20), 0 0 24px rgba(0,183,235,.18)}
       .prov-card.brand-trakt{border-color:rgba(237,28,36,.55); box-shadow:inset 0 0 0 1px rgba(237,28,36,.20), 0 0 24px rgba(237,28,36,.18)}
+      .prov-card.brand-jellyfin{border-color:rgba(150,84,244,.55);box-shadow:inset 0 0 0 1px rgba(150,84,244,.2),0 0 24px rgba(150,84,244,.18);}
+}
 
       .prov-caps{display:flex;gap:6px;margin:8px 0}
       .prov-caps .dot{width:8px;height:8px;border-radius:50%;background:#444}
@@ -99,6 +90,10 @@
       .brand-trakt .prov-watermark{ background:
         radial-gradient(80% 60% at 35% 40%, rgba(237,28,36,.18), transparent 60%),
         radial-gradient(80% 60% at 50% 70%, rgba(237,28,36,.10), transparent 70%); }
+      .brand-jellyfin .prov-watermark{ background:
+        radial-gradient(80% 60% at 35% 40%, rgba(150,84,244,.18), transparent 60%),
+        radial-gradient(80% 60% at 50% 70%, rgba(150,84,244,.10), transparent 70%);
+      }
       .prov-watermark::after{
         content:""; position:absolute; top:50%; right:8%;
         width:120%; aspect-ratio:1/1; transform:translateY(-50%);
@@ -144,7 +139,7 @@
   }
 
   /**
-   * Safe capability check for a provider object.
+   * capability check for a provider object.
    * @param {any} obj provider manifest-like object
    * @param {string} key capability key (e.g., "watchlist")
    * @returns {boolean}
@@ -325,8 +320,7 @@
     document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok','dragging'));
   });
 
-  // keyboard helpers stay the same
-  // Enter = toggle or set source; Shift+Enter = pick as target.
+  // keyboard helpers
   document.addEventListener("keydown", (e)=>{
     const card = e.target.closest && e.target.closest(".prov-card");
     if (!card) return;

@@ -84,6 +84,7 @@
   .metric[data-w="PLEX"]::after{background-image:url('/assets/PLEX.svg')}
   .metric[data-w="SIMKL"]::after{background-image:url('/assets/SIMKL.svg')}
   .metric[data-w="TRAKT"]::after{background-image:url('/assets/TRAKT.svg')}
+  .metric[data-w="JELLYFIN"]::after{background-image:url('/assets/JELLYFIN.svg')}
 
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
   .wl-snack .wl-btn{padding:6px 10px}
@@ -361,6 +362,7 @@
                 <option value="PLEX">PLEX</option>
                 <option value="SIMKL">SIMKL</option>
                 <option value="TRAKT">TRAKT</option>
+                <option value="JELLYFIN">JELLYFIN</option>
               </select>
 
               <!-- Posters-only control -->
@@ -416,6 +418,7 @@
                   <option value="PLEX">PLEX</option>
                   <option value="SIMKL">SIMKL</option>
                   <option value="TRAKT">TRAKT</option>
+                  <option value="JELLYFIN">JELLYFIN</option>
                 </select>
                 <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
               </div>
@@ -580,7 +583,6 @@
       return Math.round(ms / 86400000); // >0 future, <0 past, 0 today
     }catch{ return null; }
   };
-
   /* --- Release helpers (single source of truth) --- */
   function getReleaseIso(it){
     const t = String(it.type || "").toLowerCase();
@@ -607,41 +609,40 @@
     return (typeof iso === "string" ? iso.trim() : "") || "";
   }
 
-async function warmGenresForFilter(limit=200){
-  // Build a unique list of (type, tmdb) not yet in metaCache
-  const wants = [];
-  const seen = new Set();
-  for (const it of items){
-    const k = metaKey(it);
-    if (metaCache.has(k)) continue;
-    const tmdb = String(it.tmdb || it.ids?.tmdb || "");
-    if (!tmdb) continue;
-    const typ = k.startsWith("movie") ? "movie" : "show";
-    const sig = `${typ}:${tmdb}`;
-    if (seen.has(sig)) continue;
-    seen.add(sig);
-    wants.push({ type: typ, tmdb });
-    if (wants.length >= limit) break;
-  }
-  if (!wants.length) return 0;
-
-  try{
-    const r = await fetch(`/api/metadata/bulk`, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ items: wants, need: { genres:true, detail:true }, concurrency: 2 })
-    });
-    const j = await r.json();
-    const results = j?.results || {};
-    let cached = 0;
-    for (const key in results){
-      const m = results[key]?.ok && results[key]?.meta ? results[key].meta : null;
-      if (m){ metaCache.set(key, m); cached++; }
+  async function warmGenresForFilter(limit=200){
+    // Build a unique list of (type, tmdb) not yet in metaCache
+    const wants = [];
+    const seen = new Set();
+    for (const it of items){
+      const k = metaKey(it);
+      if (metaCache.has(k)) continue;
+      const tmdb = String(it.tmdb || it.ids?.tmdb || "");
+      if (!tmdb) continue;
+      const typ = k.startsWith("movie") ? "movie" : "show";
+      const sig = `${typ}:${tmdb}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      wants.push({ type: typ, tmdb });
+      if (wants.length >= limit) break;
     }
-    return cached;
-  } catch { return 0; }
-}
+    if (!wants.length) return 0;
 
+    try{
+      const r = await fetch(`/api/metadata/bulk`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ items: wants, need: { genres:true, detail:true, videos:true }, concurrency: 2 })
+      });
+      const j = await r.json();
+      const results = j?.results || {};
+      let cached = 0;
+      for (const key in results){
+        const m = results[key]?.ok && results[key]?.meta ? results[key].meta : null;
+        if (m){ metaCache.set(key, m); cached++; }
+      }
+      return cached;
+    } catch { return 0; }
+  }
 
   // If Released filter is active but many items have unknown dates,
   let _warmingReleases = false;
@@ -665,7 +666,6 @@ async function warmGenresForFilter(limit=200){
       _warmingReleases = false;
     }
   }
-
 
   // Accepts "YYYY-MM-DD" or "DD-MM-YYYY" and returns a UTC Date or null
   function parseReleaseDate(raw) {
@@ -716,7 +716,6 @@ async function warmGenresForFilter(limit=200){
     }
   }
 
-
   const providersOf = (it) => (Array.isArray(it.sources) ? it.sources.map(s=>String(s).toUpperCase()) : []);
 
   const releaseIso = (it) => {
@@ -736,6 +735,7 @@ async function warmGenresForFilter(limit=200){
     PLEX: "/assets/PLEX.svg",
     SIMKL: "/assets/SIMKL.svg",
     TRAKT: "/assets/TRAKT.svg",
+    JELLYFIN: "/assets/JELLYFIN.svg",
   };
 
   function mapProvidersByKey(list){
@@ -798,7 +798,6 @@ async function warmGenresForFilter(limit=200){
     genreSel.value = prefs.genre || "";
   }
 
-
   // ---------- provider dropdown, sizing ----------
   function rebuildDeleteProviderOptions(){
     const map = mapProvidersByKey(items);
@@ -812,7 +811,7 @@ async function warmGenresForFilter(limit=200){
     while (delProv.firstChild) delProv.removeChild(delProv.firstChild);
     const mk = (val, label) => { const opt = document.createElement("option"); opt.value = val; opt.textContent = label; return opt; };
     delProv.appendChild(mk("ALL", "ALL (default)"));
-    ["PLEX","SIMKL","TRAKT"].forEach(p=>{ if (union.has(p)) delProv.appendChild(mk(p, p)); });
+    ["PLEX","SIMKL","TRAKT","JELLYFIN"].forEach(p=>{ if (union.has(p)) delProv.appendChild(mk(p, p)); });
     const allowed = new Set([...delProv.options].map(o=>o.value));
     delProv.value = allowed.has(prev) ? prev : "ALL";
   }
@@ -900,14 +899,16 @@ async function warmGenresForFilter(limit=200){
   }
 
   function updateMetrics(){
-    const onPlex  = filtered.filter(it => providersOf(it).includes("PLEX")).length;
-    const onSimkl = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
-    const onTrakt = filtered.filter(it => providersOf(it).includes("TRAKT")).length;
+    const onPlex     = filtered.filter(it => providersOf(it).includes("PLEX")).length;
+    const onSimkl    = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
+    const onTrakt    = filtered.filter(it => providersOf(it).includes("TRAKT")).length;
+    const onJellyfin = filtered.filter(it => providersOf(it).includes("JELLYFIN")).length;
 
     metricsEl.innerHTML = `
       ${metric('movie_filter','PLEX', onPlex, 'PLEX')}
       ${metric('playlist_add','SIMKL', onSimkl, 'SIMKL')}
       ${metric('featured_play_list','TRAKT', onTrakt, 'TRAKT')}
+      ${metric('bookmark_added','JELLYFIN', onJellyfin, 'JELLYFIN')}
     `;
   }
   function metric(icon, label, val, w){
@@ -1041,11 +1042,10 @@ async function warmGenresForFilter(limit=200){
 
     const body = {
       items: [{ type: typ, tmdb }],
-      // Ask for a richer set; backend may ignore unknown keys gracefully.
       need: {
         overview: true, tagline: true, runtime_minutes: true, poster: true, ids: true,
         videos: true, genres: true, certification: true, score: true, release: true,
-        backdrop: true               // request backdrop for the detail bar
+        backdrop: true
       },
       concurrency: 1
     };
@@ -1068,7 +1068,6 @@ async function warmGenresForFilter(limit=200){
   }
 
   // ---------- trailer helpers ----------
-  // Robust: supports meta.videos, meta.videos.results, meta.detail.videos, meta.detail.videos.results.
   function pickTrailer(meta){
     const pools = [
       meta?.videos,
@@ -1091,8 +1090,8 @@ async function warmGenresForFilter(limit=200){
 
       const rank =
         (type.includes("trailer") ? 100 :
-         type.includes("teaser")  ?  60 :
-         type.includes("clip")    ?  40 : 10) +
+        type.includes("teaser")  ?  60 :
+        type.includes("clip")    ?  40 : 10) +
         (official ? 30 : 0) +
         (site === "youtube" ? 5 : 0) +
         (published ? 1 : 0);
@@ -1143,11 +1142,23 @@ async function warmGenresForFilter(limit=200){
       delete modal._trapHandler;
     }
   }
+
   function openTrailer(meta){
     const pick = pickTrailer(meta);
-    if (!pick) return;
-    if (!trailerModal) { console.warn("Trailer modal element not found"); return; }
+    if (pick) return openTrailerWithUrl(pick.url, pick.title);
 
+    // Fallback: keep modal UX with a YouTube search embed
+    const title = meta?.title || meta?.detail?.title || "";
+    const year  = meta?.year || (meta?.detail?.release_date||"").slice(0,4) || "";
+    const q = `${title} ${year} trailer`.trim();
+    return openTrailerWithUrl(
+      `https://www.youtube-nocookie.com/embed?listType=search&list=${encodeURIComponent(q)}&autoplay=1`,
+      "Trailer"
+    );
+  }
+
+  function openTrailerWithUrl(url, title="Trailer"){
+    if (!trailerModal) { console.warn("Trailer modal element not found"); return; }
     const box = trailerModal.querySelector(".box");
     box.querySelector("iframe")?.remove();
 
@@ -1156,8 +1167,8 @@ async function warmGenresForFilter(limit=200){
     iframe.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
     iframe.setAttribute("loading", "lazy");
     iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
-    iframe.title = pick.title;
-    iframe.src = pick.url;
+    iframe.title = title;
+    iframe.src = url;
 
     box.appendChild(iframe);
     _prevFocus = document.activeElement;
@@ -1165,6 +1176,7 @@ async function warmGenresForFilter(limit=200){
     trapFocus(trailerModal);
     trailerClose?.focus();
   }
+
   function closeTrailer(){
     releaseTrap(trailerModal);
     trailerModal.classList.remove("show");
@@ -1485,9 +1497,10 @@ async function warmGenresForFilter(limit=200){
       const thumb = artUrl(it, "w92");
 
       const have = {
-        PLEX: providersOf(it).includes("PLEX"),
-        SIMKL: providersOf(it).includes("SIMKL"),
-        TRAKT: providersOf(it).includes("TRAKT")
+        PLEX:     providersOf(it).includes("PLEX"),
+        SIMKL:    providersOf(it).includes("SIMKL"),
+        TRAKT:    providersOf(it).includes("TRAKT"),
+        JELLYFIN: providersOf(it).includes("JELLYFIN"),
       };
 
       const matrix = `
@@ -1495,6 +1508,7 @@ async function warmGenresForFilter(limit=200){
           ${providerChip('PLEX', have.PLEX)}
           ${providerChip('SIMKL', have.SIMKL)}
           ${providerChip('TRAKT', have.TRAKT)}
+          ${providerChip('JELLYFIN', have.JELLYFIN)}
         </div>`;
 
       // Release + Genre (separate columns)
@@ -1568,7 +1582,6 @@ async function warmGenresForFilter(limit=200){
   }
 
   const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
   // ---------- refresh / network ----------
   async function hardReloadWatchlist(){
     try {
@@ -1593,8 +1606,9 @@ async function warmGenresForFilter(limit=200){
     }
   }
 
-
+  // Delete response parsing (PLEX/SIMKL/TRAKT/JELLYFIN/ALL)
   async function postDelete(keys, provider){
+    let status = 0;
     try {
       const r = await fetch("/api/watchlist/delete", {
         method: "POST",
@@ -1602,39 +1616,32 @@ async function warmGenresForFilter(limit=200){
         body: JSON.stringify({ keys, provider: (provider || "ALL").toUpperCase() })
       });
 
-      let txt = ""; try { txt = await r.text(); } catch {}
-      let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+      status = r.status;
+      let txt = "";
+      try { txt = await r.text(); } catch {}
+      let data = null;
+      try { data = txt ? JSON.parse(txt) : null; } catch {}
 
+      // Count success from multiple possible shapes
       let okCount = 0;
+
       if (data && typeof data.deleted_ok === "number") {
         okCount = data.deleted_ok;
       } else if (Array.isArray(data?.results)) {
         okCount = data.results.filter(x => x && (x.ok === true || x.status === "ok")).length;
       }
 
-      const anySuccess = okCount > 0 || (r.status >= 200 && r.status < 300);
-      return { okCount, anySuccess, status: r.status, networkError: false };
-    } catch {
-      return { okCount: 0, anySuccess: false, status: 0, networkError: true };
-    }
-  }
-
-  function applyOptimisticDeletion(keys, provider){
-    const K = new Set(keys);
-    items = items.reduce((acc, it) => {
-      const k = normKey(it);
-      if (!K.has(k)) { acc.push(it); return acc; }
-
-      if (provider === 'ALL') {
-        return acc; // remove item entirely
+      // Be generous: some backends only set { ok:true } per batch/provider
+      if (!okCount && data?.ok === true) {
+        okCount = keys.length; // assume batch succeeded
       }
 
-      const srcs = providersOf(it);
-      const next = srcs.filter(s => s !== provider);
-      if (next.length === 0) return acc; // remove item if no providers left
-      acc.push({ ...it, sources: next });
-      return acc;
-    }, []);
+      const anySuccess = (okCount > 0) || (data?.ok === true) || r.ok;
+
+      return { okCount, anySuccess, status, networkError: false, raw: data };
+    } catch {
+      return { okCount: 0, anySuccess: false, status: status || 0, networkError: true, raw: null };
+    }
   }
 
   function computeDelta(keys, provider, beforeProv, afterProv){
@@ -1746,7 +1753,6 @@ async function warmGenresForFilter(limit=200){
     savePrefs();
   }, true);
 
-
   // ---------- busy button helpers ----------
   (() => {
     if (window.beginBusy) return;
@@ -1801,7 +1807,7 @@ async function warmGenresForFilter(limit=200){
   })();
 
   // ---------- delete flow ----------
-  document.getElementById("wl-delete").addEventListener("click", async ()=>{
+  document.getElementById("wl-delete").addEventListener("click", async () => {
     const provider = (delProv.value || "ALL").toUpperCase();
     if (!selected.size) return;
 
@@ -1814,6 +1820,7 @@ async function warmGenresForFilter(limit=200){
     let attemptCount = 0;
     let anyHttpAttempt = false;
     let sawNetworkError = false;
+    let anyBackendSuccess = false;
     let lastStatus;
 
     try {
@@ -1824,25 +1831,27 @@ async function warmGenresForFilter(limit=200){
           const part = keys.slice(i, i + CHUNK);
           const res = await postDelete(part, "ALL");
           attemptCount++;
-          anyHttpAttempt = anyHttpAttempt || (res.status > 0);
-          sawNetworkError = sawNetworkError || res.networkError;
+          anyHttpAttempt ||= (res.status > 0);
+          sawNetworkError ||= res.networkError;
           lastStatus = res.status;
           totalOk += (res.okCount || 0);
+          anyBackendSuccess ||= !!(res.anySuccess || res?.raw?.ok === true);
           updateBusy?.(btn, Math.round(((i + part.length) / keys.length) * 100));
         }
       } else {
         const map = mapProvidersByKey(items);
-        const subset = keys.filter(k => (map.get(k)||new Set()).has(provider));
-        const run = subset.length ? subset : keys; // if none tagged, still try the full set
+        const subset = keys.filter(k => (map.get(k) || new Set()).has(provider));
+        const run = subset.length ? subset : keys; // try anyway if tags missing
 
         for (let i = 0; i < run.length; i += CHUNK) {
           const part = run.slice(i, i + CHUNK);
           const res = await postDelete(part, provider);
           attemptCount++;
-          anyHttpAttempt = anyHttpAttempt || (res.status > 0);
-          sawNetworkError = sawNetworkError || res.networkError;
+          anyHttpAttempt ||= (res.status > 0);
+          sawNetworkError ||= res.networkError;
           lastStatus = res.status;
           totalOk += (res.okCount || 0);
+          anyBackendSuccess ||= !!(res.anySuccess || res?.raw?.ok === true);
           updateBusy?.(btn, Math.round(((i + part.length) / run.length) * 100));
         }
       }
@@ -1853,7 +1862,7 @@ async function warmGenresForFilter(limit=200){
         await (hardReloadWatchlist?.());
         const afterProv = mapProvidersByKey(items);
         deltaOk = computeDelta(keys, provider, beforeProv, afterProv);
-        if (deltaOk === 0 && totalOk > 0) {
+        if (deltaOk === 0 && (totalOk > 0 || anyBackendSuccess)) {
           await sleep(800);
           await (hardReloadWatchlist?.());
           const after2 = mapProvidersByKey(items);
@@ -1862,6 +1871,7 @@ async function warmGenresForFilter(limit=200){
       } catch {}
 
       const effectiveOk = Math.max(totalOk, deltaOk);
+      const anyEffective = anyBackendSuccess || (effectiveOk > 0);
 
       // Optimistic UI
       applyOptimisticDeletion(keys, provider);
@@ -1870,10 +1880,12 @@ async function warmGenresForFilter(limit=200){
       updateSelCount?.();
       updateMetrics?.();
 
-      if (effectiveOk > 0) {
-        snackbar?.(provider === "ALL"
-          ? `Deleted on available providers for ${effectiveOk}/${keys.length} item(s)`
-          : `Deleted ${effectiveOk}/${keys.length} from <b>${provider}</b>`);
+      if (anyEffective) {
+        snackbar?.(
+          provider === "ALL"
+            ? `Deleted on available providers for ${Math.max(effectiveOk, totalOk)}/${keys.length} item(s)`
+            : `Deleted ${Math.max(effectiveOk, totalOk)}/${keys.length} from <b>${provider}</b>`
+        );
       } else {
         if (attemptCount === 0) {
           snackbar?.(`No delete attempted (UI gating)`);
@@ -2031,7 +2043,6 @@ async function warmGenresForFilter(limit=200){
     }
   }, AUTO_REFRESH_MS);
 
-
   // ---------- legacy API ----------
   window.Watchlist = {
     async mount(_host) {},
@@ -2056,7 +2067,6 @@ async function warmGenresForFilter(limit=200){
       } catch {}
     }
   };
-
 
   window.dispatchEvent(new CustomEvent("watchlist-ready"));
 })();

@@ -35,10 +35,7 @@ def CONFIG_BASE() -> Path:
 CONFIG: Path = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)  # ensure exists
 
-
-# ------------------------------------------------------------
-# Defaults (safe, comprehensive)
-# ------------------------------------------------------------
+# Default config structure
 DEFAULT_CFG: Dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
@@ -75,12 +72,21 @@ DEFAULT_CFG: Dict[str, Any] = {
     },
     "tmdb": {"api_key": ""},
 
+    "jellyfin": {
+        "server": "",
+        "username": "",
+        "access_token": "",
+        "user_id": "",
+        "device_id": "crosswatch",
+        "watchlist": {"mode": "favorites", "playlist_name": "Watchlist"},
+    },
+
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
-        "enable_add": False,
-        "enable_remove": False,
+        "enable_add": True,          # write by default
+        "enable_remove": False,      # safer default: don't delete by default
         "verify_after_write": False,
-        "dry_run": False,
+        "dry_run": False,            # set True if you want to preview only
         "drop_guard": False,
         "allow_mass_delete": True,
         "tombstone_ttl_days": 1,
@@ -97,6 +103,15 @@ DEFAULT_CFG: Dict[str, Any] = {
         "debug": False,
         "state_dir": "",
         "telemetry": {"enabled": True},
+
+        # progress + stability knobs
+        "snapshot_ttl_sec": 300,     # reuse snapshots within 5 min
+        "apply_chunk_size": 100,     # emit progress every 100 items
+        "apply_chunk_pause_ms": 50,  # tiny breather between chunks
+
+        # suspect guard (shrinking inventories protection)
+        "suspect_min_prev": 20,
+        "suspect_shrink_ratio": 0.10,
     },
 
     # --- Scheduling ----------------------------------------------------------
@@ -110,7 +125,6 @@ DEFAULT_CFG: Dict[str, Any] = {
     # --- Pairs (UI-driven) ---------------------------------------------------
     "pairs": [],
 }
-
 
 # ------------------------------------------------------------
 # Helpers: paths, IO, merging, normalization

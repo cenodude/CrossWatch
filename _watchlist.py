@@ -1,4 +1,5 @@
 # _watchlist.py
+#  Helpers for building the merged watchlist view and performing deletes
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -7,6 +8,7 @@ from pathlib import Path
 import json
 import requests
 from time import time
+from urllib.parse import urlencode
 
 from plexapi.myplex import MyPlexAccount
 from cw_platform.config_base import CONFIG
@@ -79,7 +81,7 @@ def _del_key_from_provider_items(state: Dict[str, Any], provider: str, key: str)
     return changed
 
 def _find_item_in_state(state: Dict[str, Any], key: str) -> Dict[str, Any]:
-    for prov in ("PLEX", "SIMKL", "TRAKT"):
+    for prov in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
         it = _get_provider_items(state, prov).get(key)
         if it:
             return dict(it)
@@ -93,11 +95,11 @@ def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
     ids = dict(item.get("ids") or {})
     pref, _, val = (key or "").partition(":")
     pref = pref.lower().strip()
-    if pref in ("imdb", "tmdb", "tvdb", "trakt", "slug") and val:
+    if pref in ("imdb", "tmdb", "tvdb", "trakt", "slug", "jellyfin") and val:
         ids.setdefault(pref, val)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
-    return {k: ids[k] for k in ("simkl", "imdb", "tmdb", "tvdb", "trakt", "slug") if ids.get(k)}
+    return {k: ids[k] for k in ("simkl", "imdb", "tmdb", "tvdb", "trakt", "slug", "jellyfin") if ids.get(k)}
 
 def _type_from_item_or_guess(item: Dict[str, Any], key: str) -> str:
     typ = (item.get("type") or "").lower()
@@ -199,6 +201,200 @@ def _extract_plex_identifiers(item: Dict[str, Any]) -> Tuple[Optional[str], Opti
     return (str(guid) if guid else None, str(ratingKey) if ratingKey else None)
 
 # -----------------------------------------------------------------------------
+# Jellyfin helpers (API calls, id resolution, index)
+# -----------------------------------------------------------------------------
+
+def _jf_base(cfg: Dict[str, Any]) -> str:
+    base = (cfg.get("server") or "").strip()
+    if not base:
+        raise RuntimeError("Jellyfin: missing 'server' in config")
+    if not base.endswith("/"):
+        base += "/"
+    return base
+
+def _jf_headers(cfg: Dict[str, Any]) -> Dict[str, str]:
+    token = (cfg.get("access_token") or cfg.get("api_key") or "").strip()
+    device_id = (cfg.get("device_id") or "CrossWatch").strip() or "CrossWatch"
+    hdr = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Emby-Authorization": f'MediaBrowser Client="CrossWatch", Device="WebUI", DeviceId="{device_id}", Version="1.0.0"',
+    }
+    if token:
+        hdr["X-Emby-Token"] = token
+    return hdr
+
+def _jf_require_user(cfg: Dict[str, Any]) -> str:
+    user_id = (cfg.get("user_id") or "").strip()
+    if not user_id:
+        raise RuntimeError("Jellyfin: missing 'user_id' in config")
+    return user_id
+
+def _extract_jf_id(item: Dict[str, Any], key: str) -> Optional[str]:
+    if not isinstance(item, dict):
+        item = {}
+    ids = (item.get("ids") or {})
+    cand = (
+        ids.get("jellyfin")
+        or item.get("jellyfinId")
+        or item.get("jf_id")
+        or item.get("Id")
+        or item.get("id")
+    )
+    if cand:
+        return str(cand)
+    pref, _, val = (key or "").partition(":")
+    if pref.lower().strip() == "jellyfin" and val.strip():
+        return val.strip()
+    return None
+
+def _jf_get(base: str, path: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = base + path.lstrip("/")
+    if params:
+        url += ("&" if "?" in url else "?") + urlencode({k: v for k, v in params.items() if v is not None})
+    r = requests.get(url, headers=headers, timeout=45)
+    if not r.ok:
+        raise RuntimeError(f"Jellyfin GET {path} -> {r.status_code}: {getattr(r, 'text', '')}")
+    try:
+        j = r.json()
+    except Exception:
+        j = {}
+    return j if isinstance(j, dict) else {}
+
+def _jf_delete(base: str, path: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> None:
+    url = base + path.lstrip("/")
+    if params:
+        url += ("&" if "?" in url else "?") + urlencode({k: v for k, v in params.items() if v is not None})
+    r = requests.delete(url, headers=headers, timeout=45)
+    if not r.ok:
+        raise RuntimeError(f"Jellyfin DELETE {path} -> {r.status_code}: {getattr(r, 'text', '')}")
+
+def _jf_provider_tokens(ids: Dict[str, Any]) -> List[str]:
+    """
+    Build a list of ProviderId tokens Jellyfin understands for AnyProviderIdEquals.
+    We'll try multiple casings just in case.
+    """
+    out: List[str] = []
+    tmdb = ids.get("tmdb"); imdb = ids.get("imdb"); tvdb = ids.get("tvdb"); trakt = ids.get("trakt")
+    if tmdb:
+        out += [f"Tmdb:{tmdb}", f"tmdb:{tmdb}", str(tmdb)]
+    if imdb:
+        out += [f"Imdb:{imdb}", f"imdb:{imdb}", str(imdb)]
+    if tvdb:
+        out += [f"Tvdb:{tvdb}", f"tvdb:{tvdb}", str(tvdb)]
+    if trakt:
+        out += [f"Trakt:{trakt}", f"trakt:{trakt}", str(trakt)]
+    # dedupe keep order
+    seen = set(); uniq = []
+    for t in out:
+        if t not in seen:
+            seen.add(t); uniq.append(t)
+    return uniq
+
+def _jf_find_playlist_id(cfg: Dict[str, Any], headers: Dict[str, str], name: str) -> Optional[str]:
+    base = _jf_base(cfg)
+    user_id = _jf_require_user(cfg)
+    j = _jf_get(base, f"Users/{user_id}/Items", headers, params={
+        "IncludeItemTypes": "Playlist",
+        "Recursive": "true",
+        "SortBy": "SortName",
+        "Fields": "ItemCounts",
+        "Limit": 1000,
+    })
+    items = (j.get("Items") or []) if isinstance(j, dict) else []
+    name_lc = (name or "").strip().lower()
+    for it in items:
+        if isinstance(it, dict) and str(it.get("Name", "")).strip().lower() == name_lc:
+            return str(it.get("Id") or "")
+    return None
+
+def _jf_playlist_items(cfg: Dict[str, Any], headers: Dict[str, str], playlist_id: str) -> List[Dict[str, Any]]:
+    base = _jf_base(cfg)
+    user_id = _jf_require_user(cfg)
+    j = _jf_get(base, f"Playlists/{playlist_id}/Items", headers, params={"UserId": user_id, "Fields": "ProviderIds", "Limit": 5000})
+    return (j.get("Items") or []) if isinstance(j, dict) else []
+
+def _jf_favorite_items(cfg: Dict[str, Any], headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    base = _jf_base(cfg)
+    user_id = _jf_require_user(cfg)
+    j = _jf_get(base, f"Users/{user_id}/Items", headers, params={
+        "Recursive": "true",
+        "Filters": "IsFavorite",
+        "IncludeItemTypes": "Movie,Series",
+        "Fields": "ProviderIds",
+        "Limit": 5000,
+    })
+    return (j.get("Items") or []) if isinstance(j, dict) else []
+
+def _jf_index_watchlist(cfg: Dict[str, Any], headers: Dict[str, str], mode: str, playlist_name: str) -> Dict[str, Any]:
+    """
+    Build a reverse index of the user's Favorites/Playlist:
+      - map provider ids (tmdb/imdb/tvdb/trakt) -> Jellyfin ItemId
+      - for playlist mode also collect PlaylistItemId entries for quick delete
+    """
+    index: Dict[str, str] = {}          # token -> itemId
+    entry_by_item: Dict[str, str] = {}  # itemId -> playlistEntryId (playlist mode)
+    items: List[Dict[str, Any]] = []
+
+    if mode == "playlist":
+        pl_id = _jf_find_playlist_id(cfg, headers, playlist_name)
+        if not pl_id:
+            return {"by_token": index, "entry_by_item": entry_by_item}
+        items = _jf_playlist_items(cfg, headers, pl_id)
+    else:
+        items = _jf_favorite_items(cfg, headers)
+
+    for it in items:
+        try:
+            iid = str(it.get("Id") or "")
+            if not iid:
+                continue
+            prov = (it.get("ProviderIds") or {}) if isinstance(it.get("ProviderIds"), dict) else {}
+            tok = []
+            for k in ("Tmdb", "Imdb", "Tvdb", "Trakt"):
+                v = prov.get(k)
+                if not v:
+                    continue
+                if k == "Imdb" and isinstance(v, list):
+                    v = v[0]
+                tok += [f"{k}:{v}", f"{k.lower()}:{v}", str(v)]
+            for t in tok:
+                if t not in index:
+                    index[t] = iid
+            if "PlaylistItemId" in it:
+                entry_by_item[iid] = str(it.get("PlaylistItemId"))
+        except Exception:
+            continue
+
+    return {"by_token": index, "entry_by_item": entry_by_item}
+
+def _jf_lookup_by_provider_ids(cfg: Dict[str, Any], headers: Dict[str, str], tokens: List[str]) -> Optional[str]:
+    """
+    Try querying Jellyfin by AnyProviderIdEquals until we find an item Id.
+    """
+    if not tokens:
+        return None
+    base = _jf_base(cfg)
+    user_id = _jf_require_user(cfg)
+
+    for tok in tokens:
+        try:
+            j = _jf_get(base, f"Users/{user_id}/Items", headers, params={
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series",
+                "AnyProviderIdEquals": tok,
+                "Limit": 1,
+                "Fields": "ProviderIds",
+            })
+            items = (j.get("Items") or []) if isinstance(j, dict) else []
+            if items:
+                iid = str(items[0].get("Id") or "")
+                if iid:
+                    return iid
+        except Exception:
+            continue
+    return None
+# -----------------------------------------------------------------------------
 # Build merged watchlist view (for UI)
 # -----------------------------------------------------------------------------
 
@@ -206,13 +402,14 @@ def _get_items(state: Dict[str, Any], prov: str) -> Dict[str, Any]:
     return _get_provider_items(state, prov)
 
 def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[Dict[str, Any]]:
-    plex_items  = _get_items(state, "PLEX")
-    simkl_items = _get_items(state, "SIMKL")
-    trakt_items = _get_items(state, "TRAKT")
+    plex_items   = _get_items(state, "PLEX")
+    simkl_items  = _get_items(state, "SIMKL")
+    trakt_items  = _get_items(state, "TRAKT")
+    jelly_items  = _get_items(state, "JELLYFIN")
 
     hidden = _load_hide_set()
     out: List[Dict[str, Any]] = []
-    all_keys = set(plex_items) | set(simkl_items) | set(trakt_items)
+    all_keys = set(plex_items) | set(simkl_items) | set(trakt_items) | set(jelly_items)
 
     for key in all_keys:
         if key in hidden:
@@ -221,7 +418,8 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
         p = plex_items.get(key) or {}
         s = simkl_items.get(key) or {}
         t = trakt_items.get(key) or {}
-        info = p or s or t
+        j = jelly_items.get(key) or {}
+        info = p or s or t or j
         if not info:
             continue
 
@@ -234,20 +432,24 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
         p_ep = _iso_to_epoch(_pick_added(p))
         s_ep = _iso_to_epoch(_pick_added(s))
         t_ep = _iso_to_epoch(_pick_added(t))
-        added_epoch = max(p_ep, s_ep, t_ep)
+        j_ep = _iso_to_epoch(_pick_added(j))
+        added_epoch = max(p_ep, s_ep, t_ep, j_ep)
         if added_epoch == p_ep:
             added_when, added_src = _pick_added(p), "plex"
         elif added_epoch == s_ep:
             added_when, added_src = _pick_added(s), "simkl"
-        else:
+        elif added_epoch == t_ep:
             added_when, added_src = _pick_added(t), "trakt"
+        else:
+            added_when, added_src = _pick_added(j), "jellyfin"
 
-        sources = [name for name, it in (("plex", p), ("simkl", s), ("trakt", t)) if it]
+        sources = [name for name, it in (("plex", p), ("simkl", s), ("trakt", t), ("jellyfin", j)) if it]
         status = {
-            1: {"plex": "plex_only", "simkl": "simkl_only", "trakt": "trakt_only"}[sources[0]],
+            1: {"plex": "plex_only", "simkl": "simkl_only", "trakt": "trakt_only", "jellyfin": "jellyfin_only"}[sources[0]],
             2: "both",
             3: "both",
-        }[len(sources) if len(sources) in (1, 2, 3) else 1]
+            4: "both",
+        }[len(sources) if len(sources) in (1, 2, 3, 4) else 1]
 
         ids_for_ui = _ids_from_key_or_item(key, info)
 
@@ -283,7 +485,9 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
 
     plex_items = _get_provider_items(state, "PLEX")
     simkl_items = _get_provider_items(state, "SIMKL")
-    item = plex_items.get(key) or simkl_items.get(key) or {}
+    trakt_items = _get_provider_items(state, "TRAKT")
+    jelly_items = _get_provider_items(state, "JELLYFIN")
+    item = plex_items.get(key) or simkl_items.get(key) or trakt_items.get(key) or jelly_items.get(key) or {}
 
     guid, ratingKey = _extract_plex_identifiers(item)
     variants = _guid_variants_from_key_or_item(key, item)
@@ -292,7 +496,6 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     targets = {_norm_guid(v) for v in variants if v}
     rk = str(ratingKey or "").strip()
 
-    # 1) fetch full list
     watchlist = account.watchlist(maxresults=100000)
 
     def matches(media) -> bool:
@@ -316,7 +519,6 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     if not found:
         raise RuntimeError("item not found in Plex online watchlist")
 
-    # 2) remove via item method if present; else via account
     removed = False
     try:
         rm = getattr(found, "removeFromWatchlist", None)
@@ -328,7 +530,6 @@ def _delete_on_plex_single(key: str, state: Dict[str, Any], cfg: Dict[str, Any])
     if not removed:
         account.removeFromWatchlist([found])
 
-    # 3) verify removal
     wl2 = account.watchlist(maxresults=100000)
     if any(matches(m) for m in wl2):
         raise RuntimeError("PlexAPI reported removal but item is still present")
@@ -430,15 +631,83 @@ def _delete_on_trakt_batch(items: List[Dict[str, Any]], trakt_cfg: Dict[str, Any
     if not r or not r.ok:
         raise RuntimeError(f"TRAKT delete failed: {getattr(r,'text','no response')}")
 
+# ---- JELLYFIN (batch) -------------------------------------------------
+
+def _delete_on_jellyfin_batch(items: List[Dict[str, Any]], jf_cfg: Dict[str, Any]) -> None:
+    """
+    Delete items from Jellyfin watchlist:
+      - mode=favorites -> remove from Favorites
+      - mode=playlist  -> remove entries from named Playlist
+    Resolves Jellyfin ItemIds from external ids when needed.
+    """
+    headers = _jf_headers(jf_cfg)
+    base = _jf_base(jf_cfg)
+    user_id = _jf_require_user(jf_cfg)
+
+    mode = (((jf_cfg.get("watchlist") or {}).get("mode") or "favorites").strip().lower())
+    playlist_name = ((jf_cfg.get("watchlist") or {}).get("playlist_name") or "Watchlist").strip()
+
+    # Build reverse index for extra robustness
+    idx = _jf_index_watchlist(jf_cfg, headers, mode, playlist_name)
+    by_tok = idx.get("by_token") or {}
+    entry_by_item = idx.get("entry_by_item") or {}
+
+    jf_ids: List[str] = []
+    for it in items:
+        key = it.get("key") or ""
+        src_item = it.get("item") or {}
+        ids = _ids_from_key_or_item(key, src_item)
+        # 1) direct jellyfin id
+        jf_id = _extract_jf_id(src_item, key)
+        if not jf_id:
+            # 2) try index by provider tokens
+            tokens = _jf_provider_tokens(ids)
+            for tok in tokens:
+                jf_id = by_tok.get(tok)
+                if jf_id:
+                    break
+        if not jf_id:
+            # 3) query Jellyfin by AnyProviderIdEquals tokens
+            jf_id = _jf_lookup_by_provider_ids(jf_cfg, headers, _jf_provider_tokens(ids))
+        if jf_id:
+            jf_ids.append(jf_id)
+
+    if not jf_ids:
+        raise RuntimeError("Jellyfin delete: no resolvable ItemIds (check ProviderIds or playlist/favorites content)")
+
+    if mode == "favorites":
+        # DELETE /Users/{userId}/FavoriteItems/{itemId}
+        last_err = None
+        ok = 0
+        for iid in jf_ids:
+            try:
+                _jf_delete(base, f"Users/{user_id}/FavoriteItems/{iid}", headers)
+                ok += 1
+            except Exception as e:
+                last_err = e
+        if ok == 0:
+            raise last_err or RuntimeError("Jellyfin favorites delete failed")
+
+    elif mode == "playlist":
+        pl_id = _jf_find_playlist_id(jf_cfg, headers, playlist_name)
+        if not pl_id:
+            raise RuntimeError(f"Jellyfin: playlist '{playlist_name}' not found")
+
+        # Prefer PlaylistEntryIds when available, else we can delete by ItemIds too
+        entry_ids = [entry_by_item.get(iid) for iid in jf_ids if entry_by_item.get(iid)]
+        if entry_ids:
+            _jf_delete(base, f"Playlists/{pl_id}/Items", headers, params={"EntryIds": ",".join(entry_ids)})
+        else:
+            # Fallback: Jellyfin also accepts Ids= (item ids) for playlist delete
+            _jf_delete(base, f"Playlists/{pl_id}/Items", headers, params={"Ids": ",".join(jf_ids)})
+    else:
+        raise RuntimeError(f"Jellyfin: unknown watchlist mode '{mode}'")
+
 # -----------------------------------------------------------------------------
 # Public: batch facade used by the API
 # -----------------------------------------------------------------------------
 
 def delete_watchlist_batch(keys: List[str], provider: str, state: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Delete multiple items from a single provider in one go.
-    Returns a small result dict for logging/UI.
-    """
     prov = (provider or "").upper().strip()
     keys = [k for k in (keys or []) if isinstance(k, str) and k.strip()]
     if not keys:
@@ -462,14 +731,19 @@ def delete_watchlist_batch(keys: List[str], provider: str, state: Dict[str, Any]
         for k in keys:
             _delete_on_plex_single(k, state, cfg)
 
+    elif prov == "JELLYFIN":
+        items = []
+        for k in keys:
+            it = _find_item_in_state_for_provider(state, k, "JELLYFIN") or _find_item_in_state(state, k)
+            items.append({"key": k, "item": it or {}, "type": _type_from_item_or_guess(it or {}, k)})
+        _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {})
+
     else:
         raise RuntimeError(f"unknown provider: {prov}")
 
-    # prune local state for this provider so the UI updates instantly
     changed = False
     for k in keys:
         changed |= _del_key_from_provider_items(state, prov, k)
-
     if changed:
         _save_state_dict(_state_path(), state)
 
@@ -486,7 +760,6 @@ def delete_watchlist_item(
     log=None,
     provider: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Delete a single watchlist item by key from one provider or ALL."""
     provider = (provider or "PLEX").upper()
     state = _load_state_dict(state_path)
 
@@ -498,9 +771,8 @@ def delete_watchlist_item(
                 pass
 
     def _present_any_prov() -> bool:
-        return any(_get_provider_items(state, p).get(key) for p in ("PLEX", "SIMKL", "TRAKT"))
+        return any(_get_provider_items(state, p).get(key) for p in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN"))
 
-    # SIMKL delete without relying on a pre-populated SIMKL provider-state
     def _delete_simkl_any():
         item = _find_item_in_state(state, key) or {}
         _delete_on_simkl_batch(
@@ -509,7 +781,6 @@ def delete_watchlist_item(
         )
         _del_key_from_provider_items(state, "SIMKL", key)
 
-    # TRAKT delete without relying on a pre-populated TRAKT provider-state
     def _delete_trakt_any():
         item = _find_item_in_state(state, key) or {}
         _delete_on_trakt_batch(
@@ -517,6 +788,14 @@ def delete_watchlist_item(
             (cfg.get("trakt") or {}),
         )
         _del_key_from_provider_items(state, "TRAKT", key)
+
+    def _delete_jf_any():
+        item = _find_item_in_state(state, key) or {}
+        _delete_on_jellyfin_batch(
+            [{"key": key, "item": item, "type": _type_from_item_or_guess(item, key)}],
+            (cfg.get("jellyfin") or {}),
+        )
+        _del_key_from_provider_items(state, "JELLYFIN", key)
 
     try:
         if provider == "PLEX":
@@ -536,6 +815,13 @@ def delete_watchlist_item(
 
         elif provider == "TRAKT":
             _delete_trakt_any()
+            if not _present_any_prov():
+                hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
+            _save_state_dict(state_path, state)
+            return {"ok": True, "deleted": key, "provider": provider}
+
+        elif provider == "JELLYFIN":
+            _delete_jf_any()
             if not _present_any_prov():
                 hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)
             _save_state_dict(state_path, state)
@@ -565,6 +851,13 @@ def delete_watchlist_item(
             except Exception as e:
                 _log("TRBL", f"[WATCHLIST] TRAKT delete failed: {e}")
                 details["TRAKT"] = {"ok": False, "error": str(e)}
+
+            try:
+                _delete_jf_any()
+                details["JELLYFIN"] = {"ok": True}
+            except Exception as e:
+                _log("TRBL", f"[WATCHLIST] JELLYFIN delete failed: {e}")
+                details["JELLYFIN"] = {"ok": False, "error": str(e)}
 
             if not _present_any_prov():
                 hide = _load_hide_set(); hide.add(key); _save_hide_set(hide)

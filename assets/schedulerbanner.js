@@ -1,159 +1,64 @@
 // /assets/schedulerbanner.js
-(() => {
-  // Guard against double initialization (prevents duplicate logs and listeners)
-  if (window.__SCHED_BANNER_INIT__) return;
-  window.__SCHED_BANNER_INIT__ = true;
+(()=>{if(window.__SCHED_BANNER_INIT__)return;window.__SCHED_BANNER_INIT__=1;const $=(s,r=document)=>r.querySelector(s);
 
-  const $ = (s, r = document) => r.querySelector(s);
+/* CSS */
+(()=>{ if($('#sched-banner-css')) return; const st=document.createElement('style'); st.id='sched-banner-css'; st.textContent=`
+#sched-inline-log{position:absolute;right:12px;bottom:4px;z-index:3;pointer-events:none}
+.sched{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;max-width:92vw;
+  padding:2px 8px;border-radius:8px;line-height:1;font-size:12px;
+  background:linear-gradient(180deg,rgba(16,18,26,.78),rgba(16,18,26,.92));
+  backdrop-filter:blur(5px) saturate(110%);
+  border:1px solid rgba(140,160,255,.15);
+  box-shadow:0 2px 8px rgba(0,0,0,.22),0 0 10px rgba(110,140,255,.06)}
+.sched .ic{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:1em;height:1em;font-size:1em;line-height:1;
+  transform-origin:50% 50%;
+  font-variation-settings:'FILL' 0,'wght' 600,'GRAD' 0,'opsz' 20;
+  animation:spinY 45s linear infinite;
+}
+.sched .sub{font-weight:800;letter-spacing:.1px;opacity:.95;line-height:1;display:inline-flex;align-items:center}
+@keyframes spinY{
+  from{transform:translateY(-4px) rotate(0deg)}
+  to  {transform:translateY(-4px) rotate(360deg)}
+}
+`; document.head.appendChild(st); })();
 
-  // Locate the Sync Output container
-  function findSyncOutputBox() {
-    const picks = ['#ops-out', '#ops_log', '#ops-card', '#sync-output', '.sync-output', '#ops'];
-    for (const sel of picks) { const n = $(sel); if (n) return n; }
-    const heads = Array.from(document.querySelectorAll('h2,h3,h4,div.head,.head'));
-    const head = heads.find(h => (h.textContent || '').trim().toUpperCase() === 'SYNC OUTPUT');
-    if (head) return head.parentElement?.querySelector('pre,textarea,.box,.card,div') || null;
-    return null;
-  }
+/* Host */
+function findBox(){const picks=['#ops-out','#ops_log','#ops-card','#sync-output','.sync-output','#ops'];for(const s of picks){const n=$(s);if(n)return n}
+const h=[...document.querySelectorAll('h2,h3,h4,div.head,.head')].find(x=>(x.textContent||'').trim().toUpperCase()==='SYNC OUTPUT');return h?h.parentElement?.querySelector('pre,textarea,.box,.card,div'):null}
+function ensureBanner(){const host=findBox();if(!host)return null;const cs=getComputedStyle(host);if(cs.position==='static')host.style.position='relative';
+let f=$('#sched-inline-log',host);if(!f){f=document.createElement('div');f.id='sched-inline-log';
+f.innerHTML=`<div class="sched"><span class="ic material-symbols-rounded" aria-hidden="true">schedule</span><span class="sub" id="sched-sub">Schedular: —</span></div>`;host.appendChild(f)}return f}
 
-  // Ensure an inline footer inside the output box
-  function ensureFooter() {
-    const host = findSyncOutputBox();
-    if (!host) return null;
+/* Format */
+const tClock=s=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,d=new Date(ms);return isNaN(+d)?'—':d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 
-    // Allow absolute child positioning if needed
-    const st = getComputedStyle(host);
-    if (st.position === 'static') host.style.position = 'relative';
+/* State */
+let enabled=false,running=false,nextRunAt=0,_busy=false,_pend=false;
+function rfr(){if(_pend)return;_pend=true;setTimeout(()=>{_pend=false;fetchStatus()},120)}
 
-    let f = host.querySelector('#sched-inline-log');
-    if (!f) {
-      f = document.createElement('div');
-      f.id = 'sched-inline-log';
-      f.style.cssText = `
-        position:absolute; right:10px; bottom:8px; font-size:12px;
-        color:var(--muted, #a7a7a7); opacity:.95; pointer-events:none;
-        line-height:1.2; background:transparent;
-      `;
-      host.appendChild(f);
-    }
-    return f;
-  }
+/* Render */
+function render(){const host=ensureBanner();if(!host)return;const sub=$('#sched-sub',host);
+if(!enabled){host.style.display='none';return}host.style.display='block';
+sub.textContent=`Schedular: ${running?'running':'scheduled'}${nextRunAt?` (next at ${tClock(nextRunAt)})`:''}`}
 
-  // Format helpers
-  function fmtClockFromEpochSec(epochSec) {
-    if (!epochSec) return '—';
-    const ms = epochSec < 10_000_000_000 ? epochSec * 1000 : epochSec;
-    const dt = new Date(ms);
-    if (isNaN(+dt)) return '—';
-    try { return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-    catch { return dt.toISOString().slice(11, 16); }
-  }
+/* Fetch */
+async function fetchStatus(){if(_busy)return;_busy=true;try{const r=await fetch('/api/scheduling/status?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw 0;const j=await r.json();
+enabled=!!(j?.config?.enabled);running=!!j?.running;nextRunAt=+(j?.next_run_at||0)||0}catch{enabled=false;running=false;nextRunAt=0}_busy=false;render()}
 
-  function fmtLeft(sec) {
-    if (!sec || sec <= 0) return 'due';
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    if (h) return `${h}h ${m}m ${s}s`;
-    if (m) return `${m}m ${s}s`;
-    return `${s}s`;
-  }
+/* API */
+window.refreshSchedulingBanner=rfr;
 
-  // State
-  let enabled = false;
-  let running = false;
-  let nextRunAt = 0; // epoch seconds
-  let _inFlight = false;
-  let _refreshPend = false;
-
-  // Debounced refresh (coalesces bursts from multiple events)
-  function requestRefresh() {
-    if (_refreshPend) return;
-    _refreshPend = true;
-    setTimeout(() => { _refreshPend = false; fetchStatus(); }, 120);
-  }
-
-  function render() {
-    const el = ensureFooter();
-    if (!el) return;
-
-    if (!enabled) {
-      el.textContent = '';
-      el.style.display = 'none';
-      return;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const left = nextRunAt ? (nextRunAt - now) : 0;
-    const label = fmtClockFromEpochSec(nextRunAt);
-    const prefix = running ? '⏳ Scheduler running' : '⏳ Scheduler scheduled';
-    el.textContent = `${prefix} — next at ${label}${nextRunAt ? ` (in ${fmtLeft(left)})` : ''}`;
-    el.style.display = 'block';
-  }
-
-  // Backend poll (status endpoint)
-  async function fetchStatus() {
-    if (_inFlight) return;
-    _inFlight = true;
-    try {
-      const r = await fetch('/api/scheduling/status?t=' + Date.now(), { cache: 'no-store' });
-      if (!r.ok) throw new Error(String(r.status));
-      const j = await r.json();
-
-      enabled   = !!(j?.config?.enabled);
-      running   = !!j?.running;
-      nextRunAt = Number(j?.next_run_at || 0) || 0; // 0 = not scheduled/unknown
-    } catch {
-      enabled = false;
-      running = false;
-      nextRunAt = 0;
-    } finally {
-      _inFlight = false;
-    }
-    render();
-  }
-
-  // Expose a debounced manual refresh for other modules
-  window.refreshSchedulingBanner = requestRefresh;
-
-  // Boot & event wiring
-  document.addEventListener('DOMContentLoaded', () => {
-    const wait = setInterval(() => {
-      if (findSyncOutputBox()) {
-        clearInterval(wait);
-        fetchStatus();
-
-        // Poll: refresh status every 30s; update countdown every second
-        try { clearInterval(window._schedPoll); } catch {}
-        window._schedPoll = setInterval(fetchStatus, 30000);
-
-        try { clearInterval(window._schedTick); } catch {}
-        window._schedTick = setInterval(render, 1000);
-
-        // Announce readiness to other modules
-        try { window.dispatchEvent(new Event('sched-banner-ready')); } catch {}
-      }
-    }, 300);
-
-    // Visibility change: refresh when tab becomes visible
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) requestRefresh(); }, { passive: true });
-
-    // React after settings are saved (only when scheduling changed or unspecified)
-    document.addEventListener('config-saved', (e) => {
-      const sec = e?.detail?.section;
-      if (!sec || sec === 'scheduling') requestRefresh();
-    });
-
-    // Optional broadcast event that other modules may emit
-    document.addEventListener('scheduling-status-refresh', requestRefresh);
-
-    // If the app emits tab-change events, refresh when switching to main or settings
-    document.addEventListener('tab-changed', (e) => {
-      const id = e?.detail?.id;
-      if (id === 'main' || id === 'settings') requestRefresh();
-    });
-
-    // On window focus (Alt+Tab back)
-    window.addEventListener('focus', requestRefresh);
-  });
+/* Boot */
+document.addEventListener('DOMContentLoaded',()=>{const wait=setInterval(()=>{if(findBox()){clearInterval(wait);fetchStatus();
+clearInterval(window._schedPoll);window._schedPoll=setInterval(fetchStatus,3e4);
+clearInterval(window._schedTick);window._schedTick=setInterval(render,1e3);
+try{window.dispatchEvent(new Event('sched-banner-ready'))}catch{}}},300);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)rfr()},{passive:true});
+document.addEventListener('config-saved',e=>{const sec=e?.detail?.section;if(!sec||sec==='scheduling')rfr()});
+document.addEventListener('scheduling-status-refresh',rfr);
+document.addEventListener('tab-changed',e=>{const id=e?.detail?.id;if(id==='main'||id==='settings')rfr()});
+window.addEventListener('focus',rfr);
+});
 })();

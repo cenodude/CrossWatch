@@ -4,20 +4,24 @@
     window.showTab = function(id){
       try {
         var pages = document.querySelectorAll("#page-main, #page-watchlist, #page-settings, .tab-page");
-        pages.forEach(function(el){ el.classList.add("hidden"); });
+        pages.forEach(el => el.classList.add("hidden"));
         var target = document.getElementById("page-" + id) || document.getElementById(id);
         if (target) target.classList.remove("hidden");
-        ["main","watchlist","settings"].forEach(function(name){
+        ["main","watchlist","settings"].forEach(name => {
           var th = document.getElementById("tab-" + name);
           if (th) th.classList.toggle("active", name === id);
         });
-        document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: id } }));
+        // Track current tab (used by preview guard)
+        var t = String(id || "").toLowerCase();
+        document.documentElement.dataset.tab = t;
+        if (document.body) document.body.dataset.tab = t;
+
+        document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id } }));
       } catch(e) { console.warn("showTab bootstrap failed:", e); }
     };
   }
 })();
 
-/* ==== BEGIN crosswatch.core. ==== */
 
 function _el(id) {
   return document.getElementById(id);
@@ -95,6 +99,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.plex?.account_token)) S.add("PLEX");
   if (has(cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
   if (has(cfg?.trakt?.access_token || cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
+  if (has(cfg?.jellyfin?.access_token || cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
 
   return S;
 }
@@ -111,6 +116,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("PLEX"))  return "PLEX";
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
+  if (alt.includes("JELLYFIN")) return "JELLYFIN";
 
   // Fallback: inspect common title/name containers, then full text
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
@@ -118,6 +124,7 @@ function resolveProviderKeyFromNode(node) {
   if (/\bPLEX\b/.test(txt))  return "PLEX";
   if (/\bSIMKL\b/.test(txt)) return "SIMKL";
   if (/\bTRAKT\b/.test(txt)) return "TRAKT";
+  if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
 
   return ""; // unknown
 }
@@ -147,7 +154,7 @@ function applySyncVisibility() {
   });
 
   // Rebuild provider pair selectors using only allowed providers
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt" };
+  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin" };
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -162,7 +169,7 @@ function applySyncVisibility() {
       sel.appendChild(o0);
     }
 
-    ["PLEX", "SIMKL", "TRAKT"].forEach((k) => {
+    ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"].forEach((k) => {
       if (!allowed.has(k)) return;
       const o = document.createElement("option");
       o.value = k; o.textContent = LABEL[k] || k;
@@ -172,6 +179,7 @@ function applySyncVisibility() {
     if (prev && allowed.has(prev)) sel.value = prev;
     else if (hadPlaceholder) sel.value = "";
   });
+
 }
 
 
@@ -285,7 +293,7 @@ window._ui = { status: null, summary: null };
 
 const STATUS_CACHE_KEY = "cw.status.v1";
 
-// --- status normalizer (zet alles naar {PLEX|SIMKL|TRAKT: {connected:boolean}})
+// --- status normalizer (zet alles naar {PLEX|SIMKL|TRAKT|JELLYFIN: {connected:boolean}})
 function normalizeProviders(input) {
   const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
   const normOne = (v) => {
@@ -298,9 +306,10 @@ function normalizeProviders(input) {
   };
   const p = input || {};
   return {
-    PLEX:  normOne(pick(p, "PLEX")  ?? p.plex_connected),
-    SIMKL: normOne(pick(p, "SIMKL") ?? p.simkl_connected),
-    TRAKT: normOne(pick(p, "TRAKT") ?? p.trakt_connected),
+    PLEX:    normOne(pick(p, "PLEX")    ?? p.plex_connected),
+    SIMKL:   normOne(pick(p, "SIMKL")   ?? p.simkl_connected),
+    TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
+    JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
   };
 }
 
@@ -341,7 +350,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     if (res.ok) pairs = await res.json();
   } catch (_) {}
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false };
+  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false };
   for (const p of pairs || []) {
     if (p && p.enabled !== false) {
       const s = String(p.source || "").toUpperCase();
@@ -360,12 +369,11 @@ async function refreshPairedProviders(throttleMs = 5000) {
 }
 
 // Hide/show badges by provider
-function toggleProviderBadges(active) {
-  const map = { PLEX: "badge-plex", SIMKL: "badge-simkl", TRAKT: "badge-trakt" };
-  for (const [prov, id] of Object.entries(map)) {
+function toggleProviderBadges(active){
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin" };
+  for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
-    if (!el) continue;
-    el.classList.toggle("hidden", !(active && active[prov]));
+    if (el) el.classList.toggle("hidden", !active?.[prov]);
   }
 }
 
@@ -426,7 +434,7 @@ function svgCheck() {
  * @param {string} providerName - Display name (e.g., 'Plex')
  * @param {'ok'|'no'|'unknown'} state - Connection state
  * @param {boolean} stale - When true, dim slightly
- * @param {string} [provKey] - 'PLEX' | 'TRAKT' | 'SIMKL'
+ * @param {string} [provKey] - 'PLEX' | 'TRAKT' | 'SIMKL' | 'JELLYFIN'
  * @param {object|boolean} [info] - Provider object as returned by /api/status.providers[provKey]
  */
 function setBadge(id, providerName, state, stale, provKey, info) {
@@ -462,21 +470,21 @@ function setBadge(id, providerName, state, stale, provKey, info) {
 }
 
 /**
- * Normalize providers and render all three badges.
+ * Normalize providers and render all badges.
  * Accepts either booleans or objects: { connected: true, vip: ..., plexpass: ... }
  */
 function renderConnectorStatus(providers, { stale = false } = {}) {
   const p = providers || {};
-  const plex  = pickCase(p, "PLEX");   // boolean or {connected,...}
-  const simkl = pickCase(p, "SIMKL");
-  const trakt = pickCase(p, "TRAKT");
+  const plex    = pickCase(p, "PLEX");   // boolean or {connected,...}
+  const simkl   = pickCase(p, "SIMKL");
+  const trakt   = pickCase(p, "TRAKT");
+  const jelly   = pickCase(p, "JELLYFIN");
 
-  setBadge("badge-plex",  "Plex",  connState(plex  ?? false), stale, "PLEX",  plex);
-  setBadge("badge-simkl", "SIMKL", connState(simkl ?? false), stale, "SIMKL", simkl);
-  setBadge("badge-trakt", "Trakt", connState(trakt ?? false), stale, "TRAKT", trakt);
+  setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
+  setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
+  setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
+  setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
 }
-
-
 
 async function refreshStatus(force = false) {
   const now = Date.now();
@@ -496,9 +504,10 @@ async function refreshStatus(force = false) {
 
     const pRaw = r.providers || {};
     const providers = {
-      PLEX:  norm(pick(pRaw, "PLEX"),  (r.plex_connected  ?? r.plex)),
-      SIMKL: norm(pick(pRaw, "SIMKL"), (r.simkl_connected ?? r.simkl)),
-      TRAKT: norm(pick(pRaw, "TRAKT"), (r.trakt_connected ?? r.trakt)),
+      PLEX:     norm(pick(pRaw, "PLEX"),     (r.plex_connected    ?? r.plex)),
+      SIMKL:    norm(pick(pRaw, "SIMKL"),    (r.simkl_connected   ?? r.simkl)),
+      TRAKT:    norm(pick(pRaw, "TRAKT"),    (r.trakt_connected   ?? r.trakt)),
+      JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
     };
 
     renderConnectorStatus(providers, { stale: false });
@@ -506,10 +515,11 @@ async function refreshStatus(force = false) {
 
     window._ui = window._ui || {};
     window._ui.status = {
-      can_run:          !!r.can_run,
-      plex_connected:   !!(providers.PLEX?.connected  ?? providers.PLEX?.ok),
-      simkl_connected:  !!(providers.SIMKL?.connected ?? providers.SIMKL?.ok),
-      trakt_connected:  !!(providers.TRAKT?.connected ?? providers.TRAKT?.ok),
+      can_run:            !!r.can_run,
+      plex_connected:     !!(providers.PLEX?.connected     ?? providers.PLEX?.ok),
+      simkl_connected:    !!(providers.SIMKL?.connected    ?? providers.SIMKL?.ok),
+      trakt_connected:    !!(providers.TRAKT?.connected    ?? providers.TRAKT?.ok),
+      jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
     };
 
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
@@ -553,13 +563,15 @@ async function manualRefreshStatus() {
     await refreshPairedProviders(0);
 
     const cached = loadStatusCache?.();
-    if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
-    else if (window._ui?.status) {
+    if (cached?.providers) {
+      renderConnectorStatus(cached.providers, { stale: true });
+    } else if (window._ui?.status) {
       const s = window._ui.status;
       renderConnectorStatus({
-        PLEX:  { connected: !!s.plex_connected },
-        SIMKL: { connected: !!s.simkl_connected },
-        TRAKT: { connected: !!s.trakt_connected },
+        PLEX:     { connected: !!s.plex_connected },
+        SIMKL:    { connected: !!s.simkl_connected },
+        TRAKT:    { connected: !!s.trakt_connected },
+        JELLYFIN: { connected: !!s.jellyfin_connected },
       }, { stale: true });
     }
 
@@ -577,6 +589,7 @@ async function manualRefreshStatus() {
 }
 
 //  ====================== END CONNECTION status =========================
+
 
 function toLocal(iso) {
   if (!iso) return "—";
@@ -655,6 +668,57 @@ document.addEventListener("keydown", (e) => {
 });
 
 
+// Soft vs hard refresh helpers for Main
+let __currentTab = "main";
+let __softMainBusy = false;
+
+// Force 2-col Main every time
+function enforceMainLayout(){
+  const layout = document.getElementById("layout");
+  const stats  = document.getElementById("stats-card");
+  if (!layout) return;
+  layout.classList.remove("single","full");
+  stats?.classList.remove("hidden");
+}
+
+async function softRefreshMain() {
+  if (__softMainBusy) return;
+  __softMainBusy = true;
+  enforceMainLayout();
+  try {
+    const tasks = [
+      (async () => { try { await refreshStatus(); } catch {} })(),
+      (async () => { try { window.manualRefreshStatus?.(); } catch {} })(),
+      (async () => { try { await refreshStats(); } catch {} })(),
+      (async () => { try { window.refreshInsights?.(); } catch {} })(),
+      (async () => { try { await updateWatchlistPreview?.(); } catch {} })(),
+    ];
+    await Promise.allSettled(tasks);
+  } finally {
+    __softMainBusy = false;
+  }
+}
+
+async function hardRefreshMain({ layout, statsCard }) {
+  enforceMainLayout();
+  try { await fetch("/api/debug/clear_probe_cache", { method: "POST", cache: "no-store" }); } catch {}
+  try { if (typeof lastStatusMs !== "undefined") lastStatusMs = 0; } catch {}
+  await refreshStatus(true);
+  window.manualRefreshStatus?.();
+  await refreshStats(true);
+  window.refreshInsights?.(true);
+
+  if (!esSum) openSummaryStream();
+  window.wallLoaded = false;
+  try { await updatePreviewVisibility(); } catch {}
+
+  if (typeof window.refreshSchedulingBanner === "function") {
+    window.refreshSchedulingBanner();
+  } else {
+    window.addEventListener("sched-banner-ready", () => { try { window.refreshSchedulingBanner?.(); } catch {} }, { once: true });
+  }
+}
+
 /* Tabs & Navigation */
 async function showTab(n) {
   const pageSettings  = document.getElementById("page-settings");
@@ -664,101 +728,101 @@ async function showTab(n) {
   const statsCard     = document.getElementById("stats-card");
   const ph            = document.getElementById("placeholder-card");
 
-  // Tab elements
+  // tab header
   document.getElementById("tab-main")?.classList.toggle("active", n === "main");
   document.getElementById("tab-watchlist")?.classList.toggle("active", n === "watchlist");
   document.getElementById("tab-settings")?.classList.toggle("active", n === "settings");
 
-  // Card elements
+  // main cards
   document.getElementById("ops-card")?.classList.toggle("hidden", n !== "main");
   statsCard?.classList.toggle("hidden", n !== "main");
   if (ph && n !== "main") ph.classList.add("hidden");
 
-  // Page elements
+  // pages
   pageWatchlist?.classList.toggle("hidden", n !== "watchlist");
   pageSettings?.classList.toggle("hidden", n !== "settings");
 
-  const hasStats = !!(statsCard && !statsCard.classList.contains("hidden"));
+  document.documentElement.dataset.tab = n;
+  if (document.body) document.body.dataset.tab = n;
 
+  // Main
   if (n === "main") {
-    layout.classList.remove("single");
-    layout.classList.toggle("full", !appDebug && !hasStats);
-    if (AUTO_STATUS) refreshStatus(false);
-    if (!esSum) openSummaryStream();
-    refreshStats(true);
-    window.wallLoaded = false;
-    try { await updatePreviewVisibility(); } catch (e) { console.warn(e); }
-
-    if (typeof window.refreshSchedulingBanner === 'function') {
-      window.refreshSchedulingBanner();
-    } else {
-      window.addEventListener('sched-banner-ready', () => {
-        try { window.refreshSchedulingBanner?.(); } catch {}
-      }, { once: true });
-    }
-  } else {
-    layout.classList.add("single");
-    layout.classList.remove("full");
-    logPanel?.classList.add("hidden");
+    enforceMainLayout();
+    if (__currentTab === "main") { await softRefreshMain(); }
+    else { await hardRefreshMain({ layout, statsCard }); }
+    logPanel?.classList.remove("hidden");
+    __currentTab = "main";
+    return;
   }
 
+  // Watchlist
   if (n === "watchlist") {
+    layout?.classList.add("single");
+    layout?.classList.remove("full");
+    logPanel?.classList.add("hidden");
+
+    try { await fetch("/api/debug/clear_probe_cache", { method: "POST", cache: "no-store" }); } catch {}
+    try { if (typeof lastStatusMs !== "undefined") lastStatusMs = 0; } catch {}
+    await refreshStatus(true);
+    window.manualRefreshStatus?.();
+    await refreshStats(true);
+    window.refreshInsights?.(true);
+
     try {
       const host = document.getElementById("watchlist-root") || pageWatchlist;
-
       const mountIt = async () => {
         const m = window.Watchlist || window.WatchlistPage || window.WatchlistUI || null;
         if (!m) return false;
         const mountFn = m.mount || m.init || m.render || (typeof m === "function" ? m : null);
         if (!mountFn) return false;
         if (!window.Watchlist || !window.Watchlist.mount) {
-          window.Watchlist = {
-            mount: (el) => mountFn.call(m, el),
-            refresh: m.refresh || m.update || null
-          };
+          window.Watchlist = { mount: (el) => mountFn.call(m, el), refresh: m.refresh || m.update || null };
         }
-        if (!window._watchlistMounted) {
-          await window.Watchlist.mount(host);
-          window._watchlistMounted = true;
-        } else {
-          await window.Watchlist?.refresh?.();
-        }
+        if (!window._watchlistMounted) { await window.Watchlist.mount(host); window._watchlistMounted = true; }
+        else { await window.Watchlist?.refresh?.(); }
         return true;
       };
-
       let ok = await mountIt();
       if (!ok && !window.Watchlist) {
         try {
           const mod = await import("/assets/watchlist.js").catch(() => null);
           if (mod && !window.Watchlist) window.Watchlist = mod.Watchlist || mod.default || mod;
           ok = await mountIt();
-        } catch (e) { console.error(e); }
+        } catch {}
       }
-      if (!ok) console.warn("Watchlist not mounted");
-    } catch (e) { console.warn(e); }
+    } catch {}
+    __currentTab = "watchlist";
+    return;
   }
 
+  // Settings
   if (n === "settings") {
-    try { await mountAuthProviders?.(); } catch (e) { console.warn(e); }
-    try { await loadConfig(); } catch (e) { console.warn(e); }
-    updateTmdbHint?.();
-    updateSimklHint?.();
-    updateSimklButtonState?.();
-    updateTraktHint?.();
-    startTraktTokenPoll?.();
+    layout?.classList.add("single");
+    layout?.classList.remove("full");
+    logPanel?.classList.add("hidden");
 
-    if (typeof window.loadScheduling === 'function') {
+    try { await mountAuthProviders?.(); } catch {}
+    try { await loadConfig(); } catch {}
+    updateTmdbHint?.(); updateSimklHint?.(); updateSimklButtonState?.(); updateTraktHint?.(); startTraktTokenPoll?.();
+
+    if (typeof window.loadScheduling === "function") {
       await window.loadScheduling();
     } else {
-      window.addEventListener('sched-banner-ready', () => {
-        try { window.loadScheduling?.(); } catch {}
-      }, { once: true });
+      window.addEventListener("sched-banner-ready", () => { try { window.loadScheduling?.(); } catch {} }, { once: true });
     }
 
-    ensureScrobbler();
-    setTimeout(ensureScrobbler, 200);
+    try { ensureScrobbler(); setTimeout(ensureScrobbler, 200); } catch {}
+    __currentTab = "settings";
+    return;
   }
+
+  __currentTab = n || "main";
 }
+
+// Extra safety for any external tab trigger
+document.addEventListener("tab-changed", e => {
+  if (String(e?.detail?.id).toLowerCase() === "main") enforceMainLayout();
+});
 
 
 // --- Scrobbler UI mount: initialize once when the settings tab is shown and both PLEX + TRAKT are available
@@ -803,10 +867,6 @@ function ensureScrobbler() {
 }
 
 // ---- Run + Header progress UI helpers (drop-in) -----------------
-// Exposes: window.setRunProgress, window.startRunVisuals, window.stopRunVisuals
-// - Updates #run (--prog) for the button ring
-// - Updates .sync-rail (or [data-role="sync-rail"]) via --pct for the header bar
-// - Handles indeterminate "pulse" while waiting for real events
 
 (function () {
   let lastPct = 0;
@@ -1608,7 +1668,7 @@ document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 // Small buffer used to assemble Server-Sent Events (SSE) chunks
 let detBuf = "";
 
-// Parseer JSON-regels uit de logstream en stuur ze door naar de progress-mapper
+
 function scanForEvents(chunk) {
   const lines = String(chunk).split('\n');
   for (const line of lines) {
@@ -1619,6 +1679,87 @@ function scanForEvents(chunk) {
     } catch (_) { /* non-JSON line; ignore */ }
   }
 }
+
+// Progress mapper: SYNC events -> UI timeline/progress
+window.Progress = (function () {
+  let tl = { start: false, pre: false, post: false, done: false };
+  const A = [0, 33, 66, 100]; // anchors used by main.js
+
+  function emitTL() {
+    (window.UX?.updateTimeline || window.setTimeline)?.(tl);
+  }
+
+  function setPhase(p) {
+    tl = {
+      start: true,
+      pre: p !== "start",
+      post: p === "post" || p === "done",
+      done: p === "done",
+    };
+    emitTL();
+  }
+
+  function pushPct(done, total) {
+    if (!total) return;
+    const pct = Math.min(99, Math.floor(A[2] + (done / total) * (A[3] - A[2])));
+    window.UX?.updateProgress?.({ pct });
+  }
+
+  function reset() {
+    tl = { start: true, pre: false, post: false, done: false };
+    emitTL();
+    window.UX?.updateProgress?.({ pct: A[0] });
+  }
+
+  function onEvent(e) {
+    if (!e || !e.event) return;
+
+    switch (e.event) {
+      // START
+      case "run:start":
+      case "run:pair":
+      case "pair:start":
+        reset();
+        break;
+
+      // DISCOVERING
+      case "snapshot:start":
+      case "plan":
+        setPhase("pre");
+        break;
+      case "debug":
+        if (e.msg && e.msg.startsWith("snapshot")) setPhase("pre");
+        break;
+
+      // SYNCING
+      case "apply:start":
+      case "apply:add:start":
+      case "apply:remove:start":
+      case "cascade:pre":
+        setPhase("post");
+        break;
+      case "apply:add:progress":
+      case "apply:remove:progress":
+        setPhase("post");
+        pushPct(+e.done || 0, +e.total || 0);
+        break;
+      case "apply:add:done":
+      case "apply:remove:done":
+      case "cascade:summary":
+        setPhase("post");
+        break;
+
+      // DONE
+      case "run:done":
+        tl = { start: true, pre: true, post: true, done: true };
+        emitTL();
+        window.UX?.updateProgress?.({ pct: 100 });
+        break;
+    }
+  }
+
+  return { onEvent };
+})();
 
 
 function openDetailsLog() {
@@ -2059,6 +2200,40 @@ async function saveSettings() {
       changed = true;
     }
 
+    // Jellyfin patch (server + username only; token is set by /api/jellyfin/login)
+    try {
+      let jfPatch = null;
+      if (typeof window.getJellyfinPatch === "function") {
+        jfPatch = window.getJellyfinPatch() || null; // { server, username } expected
+      } else {
+        const jfServerEl = document.getElementById("jfy_server");
+        const jfUserEl   = document.getElementById("jfy_user");
+        jfPatch = {
+          server: jfServerEl ? norm(jfServerEl.value) : "",
+          username: jfUserEl ? norm(jfUserEl.value) : "",
+        };
+      }
+
+      const prevJfServer = norm(serverCfg?.jellyfin?.server);
+      const prevJfUser   = norm(serverCfg?.jellyfin?.username);
+      const nextJfServer = norm(jfPatch?.server);
+      const nextJfUser   = norm(jfPatch?.username);
+
+      if (nextJfServer !== "" && nextJfServer !== prevJfServer) {
+        cfg.jellyfin = cfg.jellyfin || {};
+        cfg.jellyfin.server = nextJfServer;
+        changed = true;
+      }
+      if (nextJfUser !== "" && nextJfUser !== prevJfUser) {
+        cfg.jellyfin = cfg.jellyfin || {};
+        cfg.jellyfin.username = nextJfUser;
+        changed = true;
+      }
+    } catch (e) {
+      console.warn("saveSettings: jellyfin merge failed", e);
+    }
+
+    // Scrobbler merge
     try {
       if (typeof window.getScrobbleConfig === "function") {
         const prev = serverCfg?.scrobble || {};
@@ -2072,6 +2247,7 @@ async function saveSettings() {
       console.warn("saveSettings: scrobbler merge failed", e);
     }
 
+    // Plex root patch
     try {
       if (typeof window.getRootPatch === "function") {
         const rootPatch = window.getRootPatch() || {};
@@ -2085,7 +2261,7 @@ async function saveSettings() {
       console.warn("saveSettings: plex.server_url merge failed", e);
     }
 
-    // scheduling merge
+    // Scheduling merge
     try {
       let sched = {};
       if (typeof window.getSchedulingPatch === "function") {
@@ -2103,7 +2279,7 @@ async function saveSettings() {
       if (JSON.stringify(sched) !== JSON.stringify(prevSched)) {
         cfg.scheduling = sched;
         changed = true;
-        schedChanged = true; // NEW
+        schedChanged = true;
       }
     } catch (e) {
       console.warn("saveSettings: scheduling merge failed", e);
@@ -2117,12 +2293,9 @@ async function saveSettings() {
       });
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
 
-      // refresh caches after save
       try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
       try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
 
-      // If scheduling changed, hit the scheduler endpoint (does real stop/start).
-      // Otherwise just nudge a replan.
       if (schedChanged) {
         try {
           await fetch("/api/scheduling", {
@@ -2139,7 +2312,7 @@ async function saveSettings() {
       }
     }
 
-    // downstream UI refreshes (guard everything)
+    // UI refreshes
     try {
       if (typeof refreshPairedProviders === "function") await refreshPairedProviders(0);
       const cached = (typeof loadStatusCache === "function") ? loadStatusCache() : null;
@@ -2152,8 +2325,8 @@ async function saveSettings() {
     try { if (typeof updatePreviewVisibility === "function") await updatePreviewVisibility(); } catch {}
     try { if (typeof updateTmdbHint === "function") updateTmdbHint(); } catch {}
     try { if (typeof updateSimklState === "function") updateSimklState(); } catch {}
+    try { if (typeof updateJellyfinState === "function") updateJellyfinState(); } catch {}
 
-    // loadScheduling may not exist → guard it, use the global
     try {
       if (typeof window.loadScheduling === "function") {
         await window.loadScheduling();
@@ -2165,24 +2338,19 @@ async function saveSettings() {
       console.warn("loadScheduling failed:", e);
     }
 
-    // Dependent UI updates
     try { if (typeof updateTraktHint === "function") updateTraktHint(); } catch {}
     try { if (typeof updateWatchlistTabVisibility === "function") await updateWatchlistTabVisibility(); } catch {}
     try { if (typeof updatePreviewVisibility === "function") updatePreviewVisibility(); } catch {}
 
-    // Broadcast once at the end
     try {
       window.dispatchEvent(new CustomEvent("settings-changed", {
         detail: { scope: "settings", reason: "save" }
       }));
     } catch {}
 
-
-    // explicit broadcasts for scheduler consumers
     try { document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } })); } catch {}
     try { document.dispatchEvent(new Event("scheduling-status-refresh")); } catch {}
 
-    // banners / side insight (cache-busted fetches happen inside)
     try { if (typeof window.refreshSchedulingBanner === "function") await window.refreshSchedulingBanner(); } catch {}
     try { if (typeof window.refreshSettingsInsight === "function") window.refreshSettingsInsight(); } catch {}
 
@@ -2409,6 +2577,7 @@ function cxBrandLogo(providerName) {
     SIMKL: "/assets/SIMKL.svg",
     TRAKT: "/assets/TRAKT.svg",
     TMDB:  "/assets/TMDB.svg",
+    JELLYFIN: "/assets/JELLYFIN.svg",
   };
   const src = ICONS[key];
   return src
@@ -2497,14 +2666,15 @@ async function loadWall() {
       case "both":       return { text: "SYNCED",  cls: "p-syn" };
       case "plex_only":  return { text: "PLEX",    cls: "p-px" };
       case "simkl_only": return { text: "SIMKL",   cls: "p-sk" };
-      case "trakt_only": return { text: "TRAKT",   cls: "p-tr" }; // ensure .p-tr exists in CSS
+      case "trakt_only": return { text: "TRAKT",   cls: "p-tr" };
+      case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
       default:           return { text: "—",       cls: "p-sk" };
     }
   }
 
   try {
     // filtered server call; falls back to client filter if needed
-    const data = await fetch("/api/state/wall?both_only=1&active_only=1", { cache: "no-store" }).then(r => r.json());
+    const data = await fetch("/api/state/wall?both_only=0&active_only=1", { cache: "no-store" }).then(r => r.json());
     if (myReq !== wallReqSeq) return;
 
     if (data.missing_tmdb_key) { card.classList.add("hidden"); return; }
@@ -2644,8 +2814,11 @@ async function updateWatchlistTabVisibility() {
   }
 }
 
-function isOnMain() {
-  return !document.getElementById("ops-card").classList.contains("hidden");
+function isOnMain(){
+  var t = (document.documentElement.dataset.tab || "").toLowerCase();
+  if (t) return t === "main";
+  var th = document.getElementById("tab-main");
+  return !!(th && th.classList.contains("active"));
 }
 
 async function updatePreviewVisibility() {
@@ -2855,6 +3028,7 @@ async function loadProviders() {
       if (/\bPLEX\b/.test(s)) return "PLEX";
       if (/\bSIMKL\b/.test(s)) return "SIMKL";
       if (/\bTRAKT\b/.test(s)) return "TRAKT";
+      if (/\bJELLYFIN\b/.test(s)) return "JELLYFIN";
       return s;
     };
 
@@ -3012,13 +3186,6 @@ function renderConnections() {
 
 (function () {
   
-/* [moved to modals.js] */
-
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-/* #-------------PASCAL----END----- modal-template-_ensureCfgModal */
-
-  
   window.cxOpenModalFor = function (pair, editingId) {
   try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
@@ -3147,22 +3314,6 @@ function renderConnections() {
       const modal = (typeof _getModal === "function" ? _getModal() : document.getElementById("cx-modal")) || null;
       const editingId =
         modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
-
-      // De-dupe same source/target if creating (not when editing)
-      if (
-        !editingId &&
-        Array.isArray(window.cx?.pairs) &&
-        window.cx.pairs.some(
-          (x) =>
-            String(x.source || "").toUpperCase() ===
-              String(data.source || "").toUpperCase() &&
-            String(x.target || "").toUpperCase() ===
-              String(data.target || "").toUpperCase()
-        )
-      ) {
-        alert("This connection already exists.");
-        return;
-      }
 
       // ---- Normalize features ------------------------------------------------
       const F = (data && data.features) || {};
@@ -3531,8 +3682,6 @@ function fixFormLabels(root = document) {
   });
 }
 document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
-
-/* ==== END crosswatch.core.fixed4.js ==== */
 
 /* Smoke-check: ensure essential APIs exist on window */
 (function(){

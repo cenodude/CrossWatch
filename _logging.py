@@ -1,16 +1,5 @@
-"""Lightweight logging utilities for CrossWatch.
-
-This module provides a fast, minimal stdout logger with:
-- ANSI colorized tags for readability (optional)
-- Timestamp prefixes (optional)
-- Structured context binding (module/name and arbitrary fields)
-- Optional newline-delimited JSON sink for file-based log collection
-- A callable adapter so code can use `log("msg", level="INFO", extra={...})`
-
-Behavior and identifiers are unchanged; comments and docstrings were polished
-for clarity and consistency.
-"""
-
+# _logging.py
+# A simple structured logger with colored console output and optional JSON file output.
 from __future__ import annotations
 import sys, datetime, json, threading
 from typing import Any, Optional, TextIO, Mapping, Dict
@@ -26,14 +15,6 @@ LEVELS = {"silent": 60, "error": 40, "warn": 30, "info": 20, "debug": 10}
 LEVEL_TAG = {"debug": "[debug]", "info": "[i]", "warn": "[!]", "error": "[!]", "success": "[✓]"}
 
 class Logger:
-    """Minimal, fast stdout logger with optional JSON sink and context binding.
-
-    Designed for low overhead and simple integration:
-    - `debug/info/warn/error/success` methods format and write to stdout
-    - Optional JSON sink writes one JSON object per line for easy ingestion
-    - Context helpers (`set_context`, `bind`, `child`) attach structured fields
-    - Callable adapter supports `log("text", level="INFO", extra={...})`
-    """
     def __init__(
         self,
         stream: TextIO = sys.stdout,
@@ -195,14 +176,7 @@ class Logger:
         module: Optional[str] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """Call-style logging entry point used across the codebase.
 
-        Parameters
-        - message: text to log
-        - level: case-insensitive level name (DEBUG|INFO|WARN|ERROR)
-        - module: optional logical name added to context for this call
-        - extra: optional mapping of structured metadata to include
-        """
         if module:
             self = self.bind(module=module)
         lvl = (level or "INFO").lower()

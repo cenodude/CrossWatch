@@ -134,17 +134,31 @@
     return nodes;
   }
 
-  async function readConfig(){ return (await fetchJSON("/api/config"))||{}; }
-  // Summarize authentication providers (detected vs configured)
-  async function getAuthSummary(cfg){
-    const plexOK  = !!(cfg?.plex?.account_token);
-    const simklOK = !!(cfg?.simkl?.access_token);
-    const traktOK = !!(cfg?.trakt?.access_token);
-    return { detected: 3, configured: [plexOK,simklOK,traktOK].filter(Boolean).length };
-  }
+// Read current config (no caching)
+async function readConfig() {
+  const cfg = await fetchJSON("/api/config?t=" + Date.now());
+  return cfg || {};
+}
 
-  // Retrieve synchronization pairs (try /api/pairs; fall back to config if needed)
-  async function getPairsSummary(cfg){
+// Summarize authentication providers (detected via backend; configured via tokens)
+async function getAuthSummary(cfg) {
+  // Ask backend which auth providers exist
+  const list = await fetchJSON("/api/auth/providers?t=" + Date.now());
+  const detected = Array.isArray(list) ? list.length : 4; // fallback to known set
+
+  // Count providers that actually have valid credentials/tokens
+  const plexOK     = !!(cfg?.plex?.account_token);
+  const simklOK    = !!(cfg?.simkl?.access_token);
+  const traktOK    = !!(cfg?.trakt?.access_token);
+  // Jellyfin considered configured if we have an access token or a resolved user_id
+  const jellyfinOK = !!(cfg?.jellyfin?.access_token || cfg?.jellyfin?.user_id);
+
+  const configured = [plexOK, simklOK, traktOK, jellyfinOK].filter(Boolean).length;
+  return { detected, configured };
+}
+
+  // Retrieve synchronization pairs (prefer API; fallback to config)
+  async function getPairsSummary(cfg) {
     let list = await fetchJSON("/api/pairs?t=" + Date.now());
     if (!Array.isArray(list)) {
       const a = cfg?.pairs || cfg?.connections || [];
@@ -154,21 +168,21 @@
   }
 
   // Summarize metadata providers and TMDB key readiness
-  async function getMetadataSummary(){
+  async function getMetadataSummary() {
     const [cfg, mansRaw] = await Promise.all([
-      fetchJSON("/api/config"),
-      fetchJSON("/api/metadata/providers")
+      fetchJSON("/api/config?t=" + Date.now()),
+      fetchJSON("/api/metadata/providers?t=" + Date.now())
     ]);
 
     const mans = Array.isArray(mansRaw) ? mansRaw : [];
-    const detected = mans.length;
+    let detected = mans.length;
 
-  // TMDB key may be present or masked (e.g., "••••••••")
-    const rawKey   = String(cfg?.tmdb?.api_key ?? "").trim();
-    const isMasked = rawKey.length > 0 && /^[•]+$/.test(rawKey);
+    // TMDB key may be present or masked (e.g., "••••••••")
+    const rawKey     = String(cfg?.tmdb?.api_key ?? "").trim();
+    const isMasked   = rawKey.length > 0 && /^[•]+$/.test(rawKey);
     const hasTmdbKey = rawKey.length > 0 || isMasked;
 
-  // Default: if provider manifests fail to load, still count TMDB when an API key exists
+    // Default: if provider manifests fail to load, still count TMDB when a key exists
     let configured = hasTmdbKey ? 1 : 0;
 
     if (detected > 0) {
@@ -193,13 +207,15 @@
         if (enabled && ready === true) configured++;
       }
 
+      // If TMDB key exists but TMDB provider isn't listed, still count it as configured
       if (hasTmdbKey && !hasTmdbProvider) configured += 1;
     }
 
-    return { detected: detected || (hasTmdbKey ? 1 : 0), configured };
+    // If manifests failed but we do have a TMDB key, report at least one detected
+    if (detected === 0 && hasTmdbKey) detected = 1;
+
+    return { detected, configured };
   }
-
-
 
   // Get scheduling enabled state and next run time
   async function getSchedulingSummary(){

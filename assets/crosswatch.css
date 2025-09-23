@@ -450,83 +450,52 @@ header {
 .edge.hide {
   opacity: 0
 }
-.prov-card.brand-plex {
-  --brand-color: var(--plex)
+/* brand vars (ensure these exist somewhere global) */
+:root{
+  --jellyfin: #AA5CC3;
+  --jellyfin-rgb: 170, 92, 195;
 }
-.prov-card.brand-simkl {
-  --brand-color: var(--simkl)
-}
-.prov-card.brand-trakt {
-  --brand-color: var(--trakt)
-}
-.prov-card.brand-plex {
-  --brand-color: var(--plex);
-  --brand-rgb: var(--plex-rgb)
-}
-.prov-card.brand-simkl {
-  --brand-color: var(--simkl);
-  --brand-rgb: var(--simkl-rgb)
-}
-.prov-card.brand-trakt {
-  --brand-color: var(--trakt);
-  --brand-rgb: 237,28,36
-}
-.prov-card.brand-plex .btn:hover {
-  box-shadow: 0 0 16px rgba(var(--plex-rgb), .25)
-}
-.prov-card.brand-simkl .btn:hover {
-  box-shadow: 0 0 16px rgba(var(--simkl-rgb), .25)
-}
-.prov-card.brand-trakt .btn:hover {
-  box-shadow: 0 0 16px rgba(237,28,36,.25)
-}
-.prov-card.brand-plex {
+
+.prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
+.prov-card.brand-simkl  { --brand-color: var(--simkl);  --brand-rgb: var(--simkl-rgb); }
+.prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
+.prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
+
+/* shared styling */
+.prov-card[class*="brand-"] {
   border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
- 0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
-  transition: box-shadow .25s ease, border-color .25s ease
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
+    0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
+  transition: box-shadow .25s ease, border-color .25s ease;
 }
-.prov-card.brand-simkl {
-  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
- 0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
-  transition: box-shadow .25s ease, border-color .25s ease
+.prov-card[class*="brand-"]:hover {
+  box-shadow:
+    0 0 0 1px var(--brand-color) inset,
+    0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
 }
-.prov-card.brand-trakt {
-  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
- 0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
-  transition: box-shadow .25s ease, border-color .25s ease
+.prov-card[class*="brand-"] .btn:hover {
+  box-shadow: 0 0 16px rgba(var(--brand-rgb), .25);
 }
-.prov-card.brand-plex:hover {
-  box-shadow: 0 0 0 1px var(--brand-color) inset,
- 0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent)
+.prov-card[class*="brand-"] .prov-brand {
+  border-color: color-mix(in oklab, var(--brand-color) 35%, rgba(255,255,255,.35));
 }
-.prov-card.brand-simkl:hover {
-  box-shadow: 0 0 0 1px var(--brand-color) inset,
- 0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent)
-}
-.prov-card.brand-trakt:hover {
-  box-shadow: 0 0 0 1px var(--brand-color) inset,
- 0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent)
-}
-.prov-card.brand-trakt .prov-brand {
-  border-color: color-mix(in oklab, var(--trakt) 35%, rgba(255,255,255,.35))
-}
+
+/* existing brand icon pills (add Jellyfin) */
 .brand-ico.plex {
   color: var(--plex);
   background: rgba(229,160,13,.12);
-  border-color: rgba(229,160,13,.35)
+  border-color: rgba(229,160,13,.35);
 }
 .brand-ico.simkl {
   color: var(--simkl);
   background: rgba(0,183,235,.12);
-  border-color: rgba(0,183,235,.35)
+  border-color: rgba(0,183,235,.35);
 }
 .brand-ico.tmdb {
   color: var(--tmdb);
   background: rgba(1,210,119,.12);
-  border-color: rgba(1,210,119,.35)
+  border-color: rgba(1,210,119,.35);
 }
 .brand-ico.tmdb .tmdb-box {
   display: inline-block;
@@ -537,19 +506,21 @@ header {
   font-weight: 800;
   color: var(--tmdb);
   border: 1px solid currentColor;
-  background: rgba(1,210,119,.10)
+  background: rgba(1,210,119,.10);
 }
-.prov-card.brand-plex .prov-brand {
-  border-color: rgba(229,160,13,.35)
+.brand-ico.jellyfin {
+  color: var(--jellyfin);
+  background: rgba(var(--jellyfin-rgb), .12);
+  border-color: rgba(var(--jellyfin-rgb), .35);
 }
-.prov-card.brand-simkl .prov-brand {
-  border-color: rgba(0,183,235,.35)
-}
+
+/* layout */
 #cfg-conn .brand {
   display: flex;
   align-items: center;
-  gap: 10px
+  gap: 10px;
 }
+
 
 /* ==================================================================
    Cards & Panels
@@ -1617,6 +1588,10 @@ select {
 #sec-trakt > .head {
   border-left: 3px solid var(--trakt);
   padding-left: 10px
+}
+#sec-jellyfin > .head {
+  border-left: 3px solid var(--jellyfin);
+  padding-left: 10px;
 }
 .prov-card[data-prov="PLEX"] .prov-head::after {
   content: " ";
@@ -4209,3 +4184,59 @@ select {
   .conn-pill, .conn-item .tip{ transition:none }
   .conn-ctrl.spinning svg{ animation:none }
 }
+/* Pairs board: kill legacy DnD cursor/animations and restore tooltips */
+#pairs_list .pair-card { cursor: default !important; }
+#pairs_list .pair-card.dragging { opacity: 1 !important; transform: none !important; animation: none !important; }
+#pairs_list .ord-badge { cursor: default !important; }
+
+/* Make feature beads feel hoverable and ensure pointer events */
+#pairs_list .feat-beads .bead { cursor: help; pointer-events: auto; }
+
+/* Busy + input error */
+.btn.busy{opacity:.6;pointer-events:none;position:relative}
+.btn.busy::after{content:"";display:inline-block;width:16px;height:16px;margin-left:8px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;animation:cwspin 1s linear infinite;vertical-align:-3px}
+@keyframes cwspin{to{transform:rotate(360deg)}}
+input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(255,77,79,.2) inset}
+
+/* Scrobbler icons in header */
+.scrob-icons {
+  margin-left:auto;
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+.scrob-icon {
+  height:18px;
+  width:auto;
+  opacity:.85;
+}
+.scrob-icon:hover { opacity:1; }
+
+/* anchor */
+#ops-card { position: relative; }
+
+/* lift the header content down so pills + refresh can live above it */
+.ops-header { padding-top: 44px; } /* tweak to taste */
+
+/* top-right placement (above the progress bar) */
+#btn-status-refresh.sync-ctrl-fixed{
+  position: absolute !important;
+  top: 8px;
+  right: 12px;
+  z-index: 5;
+  width: 32px; height: 32px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-color, rgba(255,255,255,.10));
+  background: rgba(255,255,255,.04);
+}
+
+#conn-badges{
+  position: absolute !important;
+  top: 8px;
+  right: 56px;              /* leaves space for the refresh button */
+  z-index: 4;
+  margin-left: 0 !important;
+}
+
+/* neutralize any older rules that push badges left */
+.ops-header .badges, #conn-badges.badges { margin-left: 0 !important; }
