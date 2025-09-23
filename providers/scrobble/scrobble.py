@@ -6,6 +6,7 @@ from __future__ import annotations
 - Normalized ScrobbleEvent + sink protocol
 - Plex PSN + flat parsers
 - Dispatcher with username/server filters and pause debounce
+- Suppress near-end start flaps (credits overlay)
 """
 
 import json, re, time
@@ -225,6 +226,14 @@ class Dispatcher:
     def _should_send(self, ev: ScrobbleEvent) -> bool:
         sk = ev.session_key or "?"
         last_a, last_p = self._last_action.get(sk), self._last_progress.get(sk, -1)
+
+        # suppress near-end start flaps (credits overlay)
+        cfg = self._cfg_provider() or {}
+        try: sup = int(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
+        except Exception: sup = 99
+        if ev.action == "start" and last_p >= sup and ev.progress >= sup:
+            return False
+
         changed = (ev.action != last_a) or (abs(ev.progress - last_p) >= 1)
 
         if ev.action == "pause":

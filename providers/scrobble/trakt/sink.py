@@ -1,9 +1,9 @@
 """Trakt scrobble sink
 - refactored at 21-09-2025
 - Retries with 401 refresh + rate-limit backoff
-- Debounce non-start events
+- Debounce non-start events (STOP bypass at high progress)
 - STOP->PAUSE under threshold
-- Progress memory (session/global), clamp suspicious 100%
+- Progress memory (session/global), clamp suspicious 100% (non-STOP)
 - Prefer episode GUIDs; on 404, try alternates; last-resort GUID search
 """
 
@@ -110,6 +110,10 @@ def _stop_pause_threshold(cfg):  # default 80
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80))
     except: return 80
 
+def _force_stop_at(cfg):  # bypass debounce at/above this; default 95
+    try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95))
+    except: return 95
+
 def _regress_tol(cfg):  # default 5
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("regress_tolerance_percent", 5))
     except: return 5
@@ -143,7 +147,7 @@ class TraktSink(ScrobbleSink):
         try:
             if self._logr and hasattr(self._logr,"set_level"): self._logr.set_level("INFO")
         except: pass
-        self._last_sent = {}                # debounce: "session:action" -> ts
+        self._last_sent = {}               # debounce: "session:action" -> ts
         self._p_sess   = {}                # (session, media) -> %
         self._p_glob   = {}                # media -> %
 
@@ -229,8 +233,9 @@ class TraktSink(ScrobbleSink):
                 else: p_send = p_now
         else:
             p_base = p_now
-            if ev.action in ("pause","stop") and p_base >= 98 and p_sess >= 0 and p_sess < 95:
-                self._log(f"Clamp suspicious {ev.action} 100% → {p_sess}%")
+            # clamp only for PAUSE; never clamp STOP
+            if ev.action == "pause" and p_base >= 98 and p_sess >= 0 and p_sess < 95:
+                self._log(f"Clamp suspicious pause 100% → {p_sess}%")
                 p_base = p_sess
             if p_sess < 0 or p_base >= p_sess: p_send = p_base
             else: p_send = p_base if (p_sess - p_base) >= tol else p_sess
@@ -241,7 +246,10 @@ class TraktSink(ScrobbleSink):
         # Update memory
         if p_send != p_sess: self._p_sess[(sk,mk)] = p_send
         if p_send > (p_glob if p_glob >= 0 else -1): self._p_glob[mk] = p_send
-        if self._debounced(ev.session_key, action): return
+
+        # Debounce (bypass for high-progress STOP)
+        bypass = (ev.action == "stop" and p_send >= _force_stop_at(cfg))
+        if not bypass and self._debounced(ev.session_key, action): return
 
         path = { "start":"/scrobble/start", "pause":"/scrobble/pause", "stop":"/scrobble/stop" }[action]
         last_err = None
