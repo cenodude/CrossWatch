@@ -2248,7 +2248,7 @@ STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 PROBE_TTL  = 30
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.2")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.3")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
