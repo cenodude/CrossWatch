@@ -222,6 +222,11 @@ class WatchLoop:
         )
         debug(f"{action:<5} {s['kind']:<7} p={progress:.2f} sid={sid}")
         self.d.dispatch(ev)
+
+        # Important: don't re-add stopped sessions to the live map
+        if action == "stop":
+            return
+
         self.live[sid] = {
             "phase": action, "progress": progress, "last_beat": time.time(),
             "payload": payload, "last_s": s,
