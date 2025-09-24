@@ -36,30 +36,33 @@ This project is unstable and may break.
 
 ---
 
-<h2>🚀 Features</h2>
-<table>
-  <tr>
-    <td>
-      <ul>
-        <li>Sync watchlists (one-/two-way)</li>
-        <li>Live scrobbling (Plex → Trakt)</li>
-        <li>Sync ratings (one-/two-way)</li>
-        <li>Sync watch history (one-/two-way — disabled)</li>
-        <li>Sync playlists (one-/two-way — disabled)</li>
-      </ul>
-    </td>
-    <td>
-      <ul>
-        <li>Simple web UI — JSON state</li>
-        <li>TMDb metadata & posters</li>
-        <li>Stats, history, live logs</li>
-        <li>Headless scheduled runs</li>
-        <li>Trackers: SIMKL, Trakt</li>
-        <li>Media servers: Plex, Jellyfin (experimental)</li>
-      </ul>
-    </td>
-  </tr>
-</table>
+<h2 align="center">🚀 Features</h2>
+
+<div align="center">
+  <table style="display:inline-block;text-align:left;">
+    <tr>
+      <td valign="top">
+        <ul>
+          <li>Sync watchlists (one-/two-way)</li>
+          <li>Live scrobbling (Plex → Trakt)</li>
+          <li>Sync ratings (one-/two-way)</li>
+          <li>Sync watch history (one-/two-way — disabled)</li>
+          <li>Sync playlists (one-/two-way — disabled)</li>
+        </ul>
+      </td>
+      <td valign="top">
+        <ul>
+          <li>Simple web UI — JSON state</li>
+          <li>TMDb metadata & posters</li>
+          <li>Stats, history, live logs</li>
+          <li>Headless scheduled runs</li>
+          <li>Trackers: SIMKL, Trakt</li>
+          <li>Media servers: Plex, Jellyfin (experimental)</li>
+        </ul>
+      </td>
+    </tr>
+  </table>
+</div>
 
 ---
 
