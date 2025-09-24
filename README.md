@@ -19,7 +19,7 @@
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
 
-**CrossWatch** is a lightweight synchronization engine that keeps your Plex, Simkl, and Trakt libraries in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
+**CrossWatch** is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
 CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
 
@@ -32,7 +32,7 @@ Before using this software ALWAYS make backups
 ## 🚀 Features
 
 - Sync watchlists (one-way or two-way)
-- Live Scrobbling (Plex → Trakt) doest require webhooks
+- Live Scrobbling (Plex → Trakt)
 - Sync Ratings (one-way or two-way)
 - Sync Watch history (one-way or two-way - currently disabled)
 - Sync Playlists (one-way or two-way - currently disabled)
@@ -42,12 +42,32 @@ Before using this software ALWAYS make backups
 - Stats, history, and live logs built-in
 - Headless scheduling of sync runs
 
+- Trackers: SIMKL, TRAKT
+- Media Servers: Plex, Jellyfin (Experimental)
+
 ---
 
 ## 🐳 Run as Container
 
 ```bash
 docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=Europe/Amsterdam   ghcr.io/cenodude/crosswatch:latest
+```
+
+or
+
+```bash
+# docker-compose.yml
+services:
+  crosswatch:
+    image: ghcr.io/cenodude/crosswatch:latest
+    container_name: crosswatch
+    ports:
+      - "8787:8787"          # host:container
+    environment:
+      - TZ=Europe/Amsterdam
+    volumes:
+      - /path/to/config:/config
+    restart: unless-stopped
 ```
 
 > The container exposes the web UI at:  
