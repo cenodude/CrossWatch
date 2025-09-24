@@ -1,0 +1,30 @@
+name: "Feature request"
+description: "Suggest an idea or enhancement for CrossWatch."
+title: "[feat] <short summary>"
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      placeholder: What's the user problem or gap?
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      placeholder: What should CrossWatch do?
+    validations: { required: true }
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Area
+      options:
+        - label: Watchlist
+        - label: Ratings
+        - label: History
+        - label: Playlists
+        - label: Scrobble watcher
+        - label: Scheduler
+        - label: Web UI
+        - label: Config/API
