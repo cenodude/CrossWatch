@@ -1,0 +1,34 @@
+name: Auto-label by area
+on:
+  issues:
+    types: [opened, edited]
+permissions:
+  issues: write
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const map = {
+              'Watchlist': 'area:watchlist',
+              'Ratings': 'area:ratings',
+              'History': 'area:history',
+              'Playlists': 'area:playlists',
+              'Scrobble watcher': 'area:scrobble',
+              'Scheduler': 'area:scheduler',
+              'Web UI': 'area:webui',
+              'Metadata / IDs': 'area:metadata',
+              'Config / API': 'area:config'
+            };
+            const add = Object.entries(map).filter(([k]) => body.includes(k)).map(([,v]) => v);
+            if (add.length) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: add
+              });
+            }
