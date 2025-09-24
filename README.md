@@ -120,7 +120,7 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 
 1. Open the web UI
 2. Connect at least two Authentication providers, Plex, Jellyfin, SIMKL and/or TRakt under
-3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way)
+3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way) or/and use Scrobble
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
 
