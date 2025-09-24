@@ -1,0 +1,169 @@
+name: "Bug report (CrossWatch)"
+description: "Report a problem with CrossWatch sync/scrobble/UI."
+title: "[bug] <short summary>"
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do NOT paste secrets** (tokens, cookies, X-Plex-Token, API keys). Redact anything sensitive.
+
+  - type: input
+    id: version
+    attributes:
+      label: CrossWatch version
+      description: From Settings → About (e.g., v0.x.y) or paste short commit SHA.
+      placeholder: v0.x.y or 8-char SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options: ["Docker", "Source (local)", "Other"]
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS/Arch
+      placeholder: "e.g., Ubuntu 22.04 x86_64 / Synology / Unraid"
+
+  - type: dropdown
+    id: run_mode
+    attributes:
+      label: Run mode
+      options: ["Manual run", "Scheduled run", "Background scrobble"]
+
+  - type: checkboxes
+    id: providers
+    attributes:
+      label: Connected providers involved
+      options:
+        - label: Plex
+        - label: Jellyfin
+        - label: Trakt
+        - label: SIMKL
+
+  - type: input
+    id: server_version
+    attributes:
+      label: Media server version (if applicable)
+      placeholder: "Plex 1.41.x / Jellyfin 10.9.x"
+
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Affected area(s)
+      options:
+        - label: Synchronization → Watchlist
+        - label: Synchronization → Ratings
+        - label: Synchronization → History
+        - label: Synchronization → Playlists
+        - label: Scrobble watcher (Plex → Trakt)
+        - label: Scheduler
+        - label: Web UI (modals, pairs, progress)
+        - label: Metadata / IDs
+        - label: Config / API
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: Data loss risk (unexpected deletions)
+        - label: Wrong data (duplicates/mismatched items)
+        - label: Broken flow (sync/scrobble/scheduler not working)
+        - label: UI issue only
+        - label: Performance/timeout
+        - label: Other
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: Clear and concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: pairs
+    attributes:
+      label: Pair(s) and direction
+      description: List relevant pair(s) and direction.
+      placeholder: |
+        PLEX → SIMKL (Watchlist)
+        SIMKL ⇄ TRAKT (Ratings)
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Pre-conditions, actions, and what you saw.
+      placeholder: |
+        1) …
+        2) …
+        3) …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      placeholder: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      placeholder: What actually happened (include exact UI messages if any).
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example item(s) (helps ID matching)
+      description: Provide 1–3 concrete examples.
+      placeholder: |
+        Title: <Movie/Show S01E02>, Year: <YYYY>
+        IDs: tmdb=<id>, imdb=<tt…>, tvdb=<id>, trakt=<id>, simkl=<id>, plex.ratingKey=<key>
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Attach a file or paste an excerpt (redact tokens). Docker: `docker logs crosswatch --since=30m > crosswatch.log`
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config snippet (redacted)
+      description: Only relevant pair/feature portions of config.json. Redact tokens, usernames, URLs.
+      render: json
+
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: Troubleshooting already tried
+      options:
+        - label: Settings → Troubleshoot → Clear cache
+        - label: Settings → Troubleshoot → Reset stats
+        - label: Settings → Troubleshoot → Reset state
+        - label: Retried on latest CrossWatch version
+        - label: Re-ran the same pair one-way
+        - label: Restarted container/app
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      placeholder: Network quirks, rate limits, unusual library content (anime/season packs), etc.
