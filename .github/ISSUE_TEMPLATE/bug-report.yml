@@ -23,7 +23,10 @@ body:
     id: install
     attributes:
       label: Install method
-      options: ["Docker", "Source (local)", "Other"]
+      options:
+        - Docker
+        - Source (local)
+        - Other
     validations:
       required: true
 
@@ -37,7 +40,10 @@ body:
     id: run_mode
     attributes:
       label: Run mode
-      options: ["Manual run", "Scheduled run", "Background scrobble"]
+      options:
+        - Manual run
+        - Scheduled run
+        - Background scrobble
 
   - type: checkboxes
     id: providers
@@ -140,8 +146,11 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Attach a file or paste an excerpt (redact tokens). Docker: `docker logs crosswatch --since=30m > crosswatch.log`
-      render: shell
+      description: |
+        Attach a file or paste an excerpt (redact tokens).
+        Docker:
+        `docker logs crosswatch --since=30m > crosswatch.log`
+      render: bash
 
   - type: textarea
     id: config
