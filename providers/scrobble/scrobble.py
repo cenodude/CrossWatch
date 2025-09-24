@@ -1,15 +1,13 @@
+# providers/scrobble/scrobble.py
 from __future__ import annotations
-
-"""Scrobble core (compact)
-
-- refactored: 21-09-2025
+"""Scrobble core
 - Normalized ScrobbleEvent + sink protocol
 - Plex PSN + flat parsers
-- Dispatcher with username/server filters and pause debounce
+- Dispatcher with username/server filters and configurable pause debounce
 - Suppress near-end start flaps (credits overlay)
+- Config-aware loader (honors CROSSWATCH_CONFIG)
 """
-
-import json, re, time
+import os, json, re, time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Protocol, Set, Tuple
@@ -21,7 +19,6 @@ except Exception:
     BASE_LOG = None
 
 # --- utils ---------------------------------------------------------------------
-
 def _log(msg: str, lvl: str = "INFO") -> None:
     if BASE_LOG:
         try:
@@ -31,9 +28,22 @@ def _log(msg: str, lvl: str = "INFO") -> None:
     print(f"{lvl} [SCROBBLE] {msg}")
 
 def _load_config() -> Dict[str, Any]:
-    for p in (Path("/app/config/config.json"), Path("./config.json"), Path("/mnt/data/config.json")):
+    """Load config from CROSSWATCH_CONFIG (file or dir) or common fallbacks."""
+    paths: List[Path] = []
+    env = os.getenv("CROSSWATCH_CONFIG")
+    if env:
+        p = Path(env)
+        paths.append(p / "config.json" if p.is_dir() else p)
+    paths += [
+        Path("/config/config.json"),
+        Path("/app/config/config.json"),
+        Path("./config.json"),
+        Path("/mnt/data/config.json"),
+    ]
+    for p in paths:
         try:
-            if p.exists(): return json.loads(p.read_text(encoding="utf-8"))
+            if p.exists():
+                return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
@@ -88,7 +98,6 @@ def _event_from_meta(meta: Dict[str, Any], raw: Dict[str, Any]) -> "ScrobbleEven
     )
 
 # --- types ---------------------------------------------------------------------
-
 ScrobbleAction = Literal["start", "pause", "stop"]
 MediaType      = Literal["movie", "episode"]
 
@@ -111,7 +120,6 @@ class ScrobbleSink(Protocol):
     def send(self, event: ScrobbleEvent) -> None: ...
 
 # --- webhook (compat) ----------------------------------------------------------
-
 def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
     defaults = defaults or {}
     try:
@@ -130,7 +138,6 @@ def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -
     return None
 
 # --- parsers -------------------------------------------------------------------
-
 def from_plex_pssn(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
     defaults = defaults or {}
     arr = payload.get("PlaySessionStateNotification")
@@ -165,7 +172,6 @@ def from_plex_flat_playing(payload: Dict[str, Any], defaults: Optional[Dict[str,
     return _event_from_meta(meta, payload)
 
 # --- dispatcher ----------------------------------------------------------------
-
 class Dispatcher:
     """Filters + forwards events to sinks (username/server filters, pause debounce)."""
 
@@ -227,18 +233,23 @@ class Dispatcher:
         sk = ev.session_key or "?"
         last_a, last_p = self._last_action.get(sk), self._last_progress.get(sk, -1)
 
-        # suppress near-end start flaps (credits overlay)
         cfg = self._cfg_provider() or {}
-        try: sup = int(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
-        except Exception: sup = 99
+        try:
+            sup = int(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
+            pause_db = float(((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds", 5))
+        except Exception:
+            sup, pause_db = 99, 5.0
+
+        # suppress near-end start flaps (credits overlay)
         if ev.action == "start" and last_p >= sup and ev.progress >= sup:
             return False
 
         changed = (ev.action != last_a) or (abs(ev.progress - last_p) >= 1)
 
+        # configurable pause debounce
         if ev.action == "pause":
             now, k = time.time(), f"{sk}|pause"
-            if now - self._debounce.get(k, 0) < 5.0 and ev.action == last_a:
+            if now - self._debounce.get(k, 0) < pause_db and ev.action == last_a:
                 return False
             self._debounce[k] = now
 
@@ -256,5 +267,4 @@ class Dispatcher:
             except Exception as e: _log(f"Sink error: {e}", "ERROR")
 
 # --- exports -------------------------------------------------------------------
-
 __all__ = ["ScrobbleEvent","ScrobbleSink","Dispatcher","from_plex_webhook","from_plex_pssn","from_plex_flat_playing"]

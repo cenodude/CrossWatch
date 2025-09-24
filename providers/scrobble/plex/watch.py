@@ -1,17 +1,13 @@
+# providers/scrobble/watch.py
 from __future__ import annotations
-
-"""Plex WatchService (compact)
-
-- refacored: 21-09-2025
-Listens for Plex alerts → normalizes → dispatches to sinks.
+"""Plex WatchService
+- Listen Plex alerts → normalize → dispatch
 - Username/server filtering
-- Enrichment via Plex lookups (title/year/IDs/account)
-- Progress probe correction
-- Debounce + duplicate suppression
-- Reconnect with backoff
-- Autostart based on config
+- Enrich via Plex lookups (title/year/IDs/account)
+- Progress probe correction (DEBUG-only logs)
+- Debounce + duplicate suppression; STOP bypass controlled by config
+- Reconnect with backoff; optional autostart
 """
-
 import os, json, time, threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
@@ -19,7 +15,6 @@ from typing import Any, Dict, Iterable, Optional, Set, Tuple
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
 
-# Optional logger
 try:
     from _logging import log as BASE_LOG
 except Exception:
@@ -31,27 +26,28 @@ from providers.scrobble.scrobble import (
 )
 
 # --- config / utils -------------------------------------------------------------
-
 def _cfg_paths() -> list[Path]:
     p = os.getenv("CROSSWATCH_CONFIG")
     if p:
         p = Path(p)
         return [p / "config.json" if p.is_dir() else p]
-    return [Path("/config/config.json")]
+    return [Path("/config/config.json"), Path("/app/config/config.json"), Path("./config.json")]
 
 def _cfg() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
         v = load_config()
         if v: return v
-    except Exception:
-        pass
+    except Exception: pass
     for p in _cfg_paths():
         try:
             if p.exists(): return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception: pass
     return {}
+
+def _is_debug() -> bool:
+    try: return bool((( _cfg().get("runtime") or {}).get("debug")))
+    except Exception: return False
 
 def _plex_btok(cfg: Dict[str, Any]) -> Tuple[str, str]:
     px = cfg.get("plex") or {}
@@ -64,7 +60,6 @@ def _safe_int(x: Any) -> Optional[int]:
     except Exception: return None
 
 # --- service -------------------------------------------------------------------
-
 class WatchService:
     def __init__(self, sinks: Optional[Iterable[ScrobbleSink]] = None, dispatcher: Optional[Dispatcher] = None) -> None:
         self._dispatch = dispatcher or Dispatcher(list(sinks or []), _cfg)
@@ -82,15 +77,19 @@ class WatchService:
     # logging
     def _log(self, msg: str, level: str = "INFO") -> None:
         if BASE_LOG:
-            try: BASE_LOG(str(msg), level=level.upper(), module="WATCH"); return
+            try: BASE_LOG(str(msg), level=level.upper(), module="WATCH")
             except Exception: pass
         print(f"{level} [WATCH] {msg}")
+
+    def _dbg(self, msg: str) -> None:
+        if _is_debug():
+            print(f"DEBUG [WATCH] {msg}")
 
     def sinks_count(self) -> int:
         try: return len(getattr(self._dispatch, "_sinks", []) or [])
         except Exception: return 0
 
-    # filtering
+    # filtering helpers
     def _find_psn(self, o):
         if isinstance(o, dict):
             for k,v in o.items():
@@ -153,13 +152,12 @@ class WatchService:
                 gid = str(getattr(g, "id", "")).lower()
                 if "imdb://" in gid: out.setdefault("imdb", gid.split("imdb://",1)[1])
                 elif "tmdb://" in gid:
-                    v = gid.split("tmdb://",1)[1]; 
+                    v = gid.split("tmdb://",1)[1]
                     if v.isdigit(): out.setdefault("tmdb", int(v))
                 elif "thetvdb://" in gid or "tvdb://" in gid:
                     v = gid.split("://",1)[1]
                     if v.isdigit(): out.setdefault("tvdb", int(v))
-        except Exception:
-            pass
+        except Exception: pass
         return out
 
     def _resolve_account_from_session(self, session_key: Optional[str]) -> Optional[str]:
@@ -171,8 +169,7 @@ class WatchService:
                 if v.get("sessionKey") == str(session_key):
                     u = v.find("User")
                     return (u.get("title") if u is not None else None)
-        except Exception:
-            pass
+        except Exception: pass
         return None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
@@ -229,11 +226,12 @@ class WatchService:
             try:
                 if (sid and str(getattr(v,"sessionKey","")) == sid) or (rk and str(getattr(v,"ratingKey","")) == rk):
                     tgt = v; break
-            except Exception:
-                pass
+            except Exception: pass
         if not tgt: return None
         d, vo = getattr(tgt,"duration",None), getattr(tgt,"viewOffset",None)
-        try: d = int(d) if d is not None else None; vo = int(vo) if vo is not None else None
+        try:
+            d = int(d) if d is not None else None
+            vo = int(vo) if vo is not None else None
         except Exception: return None
         if not d or vo is None: return None
         return int(round(100 * max(0, min(vo, d)) / float(d)))
@@ -266,13 +264,13 @@ class WatchService:
                 return
 
             if not ev:
-                self._log("alert parsed but no event produced (unknown shape)", "WARN"); return
+                self._dbg("alert parsed but no event produced (unknown shape)"); return
 
             ev = self._enrich_event_with_plex(ev)
             if not self._passes_filters(ev):
-                self._log(f"event filtered: user={ev.account} server={ev.server_uuid}"); return
+                self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}"); return
 
-            # probe correction (up to 3 tries)
+            # probe correction (≤3 tries) — DEBUG only
             want = ev.progress; best = want
             for _ in range(3):
                 real = self._probe_session_progress(ev)
@@ -280,20 +278,19 @@ class WatchService:
                 if 5 <= best <= 95: break
                 time.sleep(0.25)
             if best != want:
-                self._log(f"probe correction: {want}% → {best}%")
+                self._dbg(f"probe correction: {want}% → {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
 
-            # force tiny start to 1%
+            # floor tiny start to 1%
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
 
-            # debounce STOP per session
+            # debounce STOP per session (sink still has final STOP bypass via force_stop_at)
             if ev.session_key and ev.action == "stop":
                 skd, now = str(ev.session_key), time.time()
                 force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95)))
                 if ev.progress < force_at and (now - self._last_seen.get(skd, 0.0) < 2.0):
-                    self._log(f"drop stop due to debounce sess={skd}")
-                    return
+                    self._dbg(f"drop stop due to debounce sess={skd}"); return
 
             if ev.session_key: self._last_seen[str(ev.session_key)] = time.time()
 
@@ -302,7 +299,7 @@ class WatchService:
             if sk:
                 last = self._last_emit.get(sk)
                 if last and ev.action == "stop" and last[0] == "stop" and abs(ev.progress - last[1]) <= 1:
-                    self._log(f"suppress duplicate stop sess={sk} p={ev.progress}"); return
+                    self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}"); return
                 self._last_emit[sk] = (ev.action, ev.progress)
 
             self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
@@ -339,8 +336,7 @@ class WatchService:
         self._stop.set()
         try:
             if self._listener: self._listener.stop()
-        except Exception:
-            pass
+        except Exception: pass
         self._log("Watch service stopping")
 
     def start_async(self) -> None:
@@ -358,7 +354,6 @@ def make_default_watch(sinks: Iterable[ScrobbleSink]) -> WatchService:
     return WatchService(sinks=sinks)
 
 # --- autostart -----------------------------------------------------------------
-
 _AUTO_WATCH: Optional[WatchService] = None
 
 def autostart_from_config() -> Optional[WatchService]:
