@@ -42,27 +42,35 @@ This project is unstable and may break.
   <table style="display:inline-block;text-align:left;">
     <tr>
       <td valign="top">
-        <ul>
+        <ul style="margin:0;padding-left:1.1em">
           <li>Sync watchlists (one-/two-way)</li>
           <li>Live scrobbling (Plex → Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
-          <li>Sync watch history (one-/two-way — disabled)</li>
+          <li>Sync watch history (one-/two-way)</li>
           <li>Sync playlists (one-/two-way — disabled)</li>
         </ul>
       </td>
       <td valign="top">
-        <ul>
+        <ul style="margin:0;padding-left:1.1em">
           <li>Simple web UI — JSON state</li>
           <li>TMDb metadata & posters</li>
           <li>Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
-          <li>Trackers: SIMKL, Trakt</li>
-          <li>Media servers: Plex, Jellyfin (experimental)</li>
+          <li><strong>Trackers:</strong>
+            <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?logo=trakt&logoColor=white&labelColor=1f2328" />
+          </li>
+          <li><strong>Media servers:</strong>
+            <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
+            &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
+            &nbsp;<img alt="Experimental" src="https://img.shields.io/badge/experimental-FFD166?labelColor=1f2328" />
+          </li>
         </ul>
       </td>
     </tr>
   </table>
 </div>
+
 
 ---
 
