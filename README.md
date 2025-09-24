@@ -63,7 +63,6 @@ This project is unstable and may break.
           <li><strong>Media servers:</strong>
             <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
             &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
-            &nbsp;<img alt="Experimental" src="https://img.shields.io/badge/experimental-FFD166?labelColor=1f2328" />
           </li>
         </ul>
       </td>
@@ -117,25 +116,10 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 
 ---
 
-
-## ⚡ Local Development
-
-```bash
-git clone https://github.com/cenodude/CrossWatch.git
-cd CrossWatch
-pip install fastapi uvicorn requests plexapi packaging pydantic
-python3 crosswatch.py
-```
-
-Then open:  
-📍 http://localhost:8787
-
----
-
 ## 📋 Usage
 
 1. Open the web UI
-2. Connect at least two Authentication providers, Plex, SIMKL and/or TRakt under
+2. Connect at least two Authentication providers, Plex, Jellyfin, SIMKL and/or TRakt under
 3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way)
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
