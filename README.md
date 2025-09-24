@@ -25,25 +25,41 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
 
 
 ---
-⚠️ CrossWatch is in **ALPHA/BETA**, meaning it can—and probably will have bugs. Use it only if you’re aware of the risks.
-Before using this software ALWAYS make backups
+
+<div align="center">
+
+⚠️ **EARLY DEVELOPMENT**  
+This project is unstable and may break.  
+**Always back up your data before use.**
+
+</div>
+
 ---
 
-## 🚀 Features
-
-- Sync watchlists (one-way or two-way)
-- Live Scrobbling (Plex → Trakt)
-- Sync Ratings (one-way or two-way)
-- Sync Watch history (one-way or two-way - currently disabled)
-- Sync Playlists (one-way or two-way - currently disabled)
-
-- Simple web UI — no external DB, just JSON state files
-- Rich metadata & posters via TMDb
-- Stats, history, and live logs built-in
-- Headless scheduling of sync runs
-
-- Trackers: SIMKL, TRAKT
-- Media Servers: Plex, Jellyfin (Experimental)
+<h2>🚀 Features</h2>
+<table>
+  <tr>
+    <td>
+      <ul>
+        <li>Sync watchlists (one-/two-way)</li>
+        <li>Live scrobbling (Plex → Trakt)</li>
+        <li>Sync ratings (one-/two-way)</li>
+        <li>Sync watch history (one-/two-way — disabled)</li>
+        <li>Sync playlists (one-/two-way — disabled)</li>
+      </ul>
+    </td>
+    <td>
+      <ul>
+        <li>Simple web UI — JSON state</li>
+        <li>TMDb metadata & posters</li>
+        <li>Stats, history, live logs</li>
+        <li>Headless scheduled runs</li>
+        <li>Trackers: SIMKL, Trakt</li>
+        <li>Media servers: Plex, Jellyfin (experimental)</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
 ---
 
