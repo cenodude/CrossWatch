@@ -1,18 +1,10 @@
 ---
-name: Bug report
-about: Create a report to help us improve
+name: Bug report (CrossWatch)
+about: Report a problem with CrossWatch sync/scrobble/UI so we can fix it fast
 title: ''
 labels: bug
 assignees: cenodude
 
----
-
----
-name: "Bug report (CrossWatch)"
-about: "Report a problem with CrossWatch sync/scrobble/UI so we can fix it fast."
-title: "[bug] <short summary>"
-labels: ["bug", "needs-triage"]
-assignees: []
 ---
 
 <!-- ✋ Please DO NOT paste secrets (tokens, cookies, X-Plex-Token, API keys). Redact anything sensitive. -->
