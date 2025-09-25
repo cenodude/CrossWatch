@@ -109,8 +109,8 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 - **FastAPI** backend (`crosswatch.py`) at port `8787`
 - **Vanilla JS/CSS** UI served from `/assets/`
 - Pluggable **providers**:  
-  - `auth` (Plex device PIN, SIMKL OAuth, TRAKT)
-  - `sync` (PLEX ⇄ SIMKL ⇄ TRAKT)
+  - `auth` (Plex, Jellyfin, SIMKL, TRAKT)
+  - `sync` (PLEX ⇄  ⇄ Jellyfin ⇄ SIMKL ⇄ TRAKT)
   - `metadata` (TMDb enrichment)
 - All state/config stored as JSON in `CONFIG_BASE`
 
