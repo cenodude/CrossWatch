@@ -125,7 +125,6 @@ class _Files:
         self.tomb  = base / "tombstones.json"
         self.last  = base / "last_sync.json"
         self.hide  = base / "watchlist_hide.json"
-        # NEW: compact snapshot of latest ratings changes (for UI)
         self.ratings_changes = base / "ratings_changes.json"
 
     def _read(self, p: Path, default):
@@ -170,8 +169,7 @@ class _Files:
                 self.hide.write_text("[]", encoding="utf-8")
             except Exception:
                 pass
-
-    # NEW: persist ratings change snapshot
+            
     def save_ratings_changes(self, data: Mapping[str, Any]) -> None:
         try:
             self._write_atomic(self.ratings_changes, data)
@@ -198,7 +196,6 @@ class Orchestrator:
         self.providers = load_sync_providers()
         self._emit_info(f"[i] Orchestrator module: {Path(__file__).resolve()}")
 
-        # optional metadata (best-effort)
         self.meta = None
         try:
             from .metadata import MetadataManager  # type: ignore
@@ -235,6 +232,48 @@ class Orchestrator:
         self._apply_chunk_pause_ms = int(rt.get("apply_chunk_pause_ms") or 0)
         self._pair_ctx: Optional[Mapping[str, Any]] = None
 
+    # -------------------- config helpers
+    def _allowed_providers_for_feature(self, feature: str) -> set[str]:
+        """Providers (UPPERCASE) present in any enabled pair where this feature is enabled."""
+        allowed: set[str] = set()
+        try:
+            pairs = list((self.cfg.get("pairs") or []) or [])
+        except Exception:
+            pairs = []
+        def _feat_enabled(fmap: dict, name: str) -> bool:
+            v = (fmap or {}).get(name)
+            if isinstance(v, bool): return bool(v)
+            if isinstance(v, dict): return bool(v.get("enable", v.get("add", True)))
+            return False
+        for p in pairs:
+            try:
+                if not p.get("enabled", True): 
+                    continue
+                fmap = dict(p.get("features") or {})
+                if not _feat_enabled(fmap, feature):
+                    continue
+                s = str(p.get("source") or p.get("src") or "").strip().upper()
+                t = str(p.get("target") or p.get("dst") or "").strip().upper()
+                if s: allowed.add(s)
+                if t: allowed.add(t)
+            except Exception:
+                continue
+        return allowed
+
+    def _prov_configured(self, name: str) -> bool:
+        """Minimal provider configuration check against self.cfg (UPPERCASE input)."""
+        nm = (name or "").strip().lower()
+        c = self.cfg or {}
+        if nm == "plex":     return bool((c.get("plex") or {}).get("account_token"))
+        if nm == "trakt":    return bool((c.get("trakt") or {}).get("access_token"))
+        if nm == "simkl":    return bool((c.get("simkl") or {}).get("access_token"))
+        if nm == "jellyfin":
+            jf = c.get("jellyfin") or {}
+            has_base = bool((jf.get("server") or "").strip() and (jf.get("access_token") or "").strip())
+            # Treat missing user_id as not configured to avoid noisy failures.
+            return has_base and bool((jf.get("user_id") or "").strip()) if "user_id" in jf else has_base
+        return False
+    
     # -------------------- logging
     def _apply_chunked(
         self,
@@ -551,18 +590,25 @@ class Orchestrator:
         except Exception:
             return None
 
-    # -------------------- snapshots (modules may implement internal delta)
+    ## -------------------- snapshot builder with memoization
     def build_snapshots(self, *, feature: str) -> Dict[str, Dict[str, Any]]:
-        """
-        Build provider snapshots (present or module-defined index) with a short-lived memo.
-        If a provider fails, we log it as degraded and do not cache an empty snapshot to avoid
-        "sticky empties" caused by TTL.
-        """
         snaps: Dict[str, Dict[str, Any]] = {}
         now = time.time()
+        allowed = self._allowed_providers_for_feature(feature)
+
         for name, ops in self.providers.items():
+            # Provider doesn't support this feature
             if not ops.features().get(feature, False):
                 continue
+            # Not part of any enabled pair for this feature
+            if allowed and name.upper() not in allowed:
+                self._dbg("snapshot.skip", provider=name, feature=feature, reason="not-in-pairs")
+                continue
+            # Not configured (e.g., missing tokens/server/user_id)
+            if not self._prov_configured(name):
+                self._dbg("snapshot.skip", provider=name, feature=feature, reason="not-configured")
+                continue
+
             memo_key = (name, feature)
             if self._snap_ttl_sec > 0:
                 ent = self._snap_cache.get(memo_key)
@@ -587,7 +633,6 @@ class Orchestrator:
 
             snaps[name] = canon
 
-            # Do not cache empty or degraded results; prevents caching a transient outage
             if self._snap_ttl_sec > 0:
                 if degraded or not canon:
                     self._dbg("snapshot.no_cache_empty", provider=name, feature=feature, degraded=bool(degraded))
@@ -607,18 +652,8 @@ class Orchestrator:
         cur_idx: Mapping[str, Any],
         feature: str,
     ) -> Tuple[Dict[str, Any], bool, str]:
-        """
-        Guard against transient "empty/mini" snapshots that could cascade into mass removals.
-
-        Logic:
-        - Only applies to providers whose index_semantics is "present" (default).
-        - If current is empty OR shrunk far below previous AND the provider's activities checkpoint
-          has not advanced since the last persisted checkpoint → treat current as transient.
-          In that case we return 'prev_idx' as the effective snapshot and mark 'suspect=True'.
-        - We also emit a debug event to make this visible in telemetry.
-
-        Returns: (effective_idx, suspect_flag, reason)
-        """
+ 
+        # Detect suspect snapshots and return (effective_snapshot, was_suspect, reason).
         try:
             sem = (ops.capabilities() or {}).get("index_semantics", "present")
         except Exception:
@@ -688,12 +723,7 @@ class Orchestrator:
         src_idx: Mapping[str, Dict[str, Any]],
         dst_idx: Mapping[str, Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Returns (to_add_or_update, to_remove, unchanged).
-        - Add: key missing on dst.
-        - Update: key exists on both, rating differs, and src.rated_at >= dst.rated_at (or dst missing timestamp).
-        - Remove: key exists on dst but missing on src (unrate handled upstream via removals policy).
-        """
+
         adds_updates: List[Dict[str, Any]] = []
         removes: List[Dict[str, Any]] = []
         unchanged: List[Dict[str, Any]] = []
@@ -735,10 +765,6 @@ class Orchestrator:
         return "-".join(sorted([a.upper(), b.upper()]))
 
     def _tomb_add_keys_for_feature(self, feature: str, keys: Iterable[str], *, pair: Optional[str] = None) -> int:
-        """
-        Mark tombstones for this feature both globally (feature|key) and, if provided,
-        pair-scoped (feature:PAIR|key).
-        """
         t = self.files.load_tomb()
         ks = t.setdefault("keys", {})
         now = int(time.time())
