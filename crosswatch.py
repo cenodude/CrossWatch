@@ -1686,19 +1686,14 @@ def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAK
 
 # --------------- Insights & stats (provider-agnostic) ---------------
 @app.get("/api/insights")
-def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSONResponse:
-    """
-    Returns:
-      - series:   last N (time,count) samples (ascending)
-      - history:  last few sync reports (with per-feature breakdown; lanes backfilled from Stats if empty)
-                  Each history row also contains 'provider_posts': { <provider>: <value from report> }.
-      - watchtime:estimated minutes/hours/days with method=tmdb|fallback|mixed
-      - providers:               { <provider>: total }  (watchlist totals for back-compat)
-      - providers_by_feature:    { watchlist|ratings|history|playlists -> { <provider>: total } }
-      - providers_active:        { <provider>: bool } (from configured pairs)
-      - now/week/month + added/removed/new/del from Stats.overview()
-    """
-    # ---- Samples (keep stable shape)
+def api_insights(
+    limit_samples: int = Query(60),
+    history: int = Query(3),
+    runtime: int = Query(0)  # 0=off (default), 1=on
+) -> JSONResponse:
+    """Insights payload with optional TMDb runtime lookups."""
+
+    # ---- Samples (stable shape)
     with STATS.lock:
         samples = list(STATS.data.get("samples") or [])
     samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -1736,8 +1731,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                 since = _parse_epoch(d.get("raw_started_ts") or d.get("started_at"))
                 until = _parse_epoch(d.get("finished_at"))
                 if not until:
-                    # fallback: use file mtime if finished_at is missing
-                    until = int(p.stat().st_mtime)
+                    until = int(p.stat().st_mtime)  # fallback
 
                 # Backfill empty/missing lanes from Stats events within [since, until]
                 stats_feats, stats_enabled = _compute_lanes_from_stats(since, until)
@@ -1746,12 +1740,12 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     if name not in lanes or _lane_is_empty(lane):
                         lanes[name] = stats_feats.get(name) or zero_lane()
 
-                # Enabled map: prefer explicit, else stats-derived, else sane defaults
+                # Enabled map: prefer explicit, else stats-derived
                 enabled = d.get("features_enabled") or d.get("enabled")
                 if not isinstance(enabled, dict):
-                    enabled = dict(stats_enabled)  # defaults to all True if Stats had nothing
+                    enabled = dict(stats_enabled)
 
-                # Totals: prefer explicit *_last; else derive by summing enabled lanes
+                # Totals: prefer explicit *_last; else sum enabled lanes
                 added_total   = d.get("added_last")
                 removed_total = d.get("removed_last")
                 updated_total = d.get("updated_last")
@@ -1767,11 +1761,11 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     if removed_total is None: removed_total = r
                     if updated_total is None: updated_total = u
 
-                # Collect any "<provider>_post" keys dynamically into a compact map.
+                # Collect "<provider>_post" keys into a compact map
                 provider_posts = {}
                 for k, v in d.items():
                     if isinstance(k, str) and k.endswith("_post"):
-                        provider_posts[k[:-5]] = v  # key without suffix, e.g. "plex"
+                        provider_posts[k[:-5]] = v  # drop suffix
 
                 rows.append({
                     "started_at":   d.get("started_at"),
@@ -1784,14 +1778,13 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
                     "added":        int(added_total or 0),
                     "removed":      int(removed_total or 0),
 
-                    # Per-feature breakdown + enabled map (now filtered by actual lane)
+                    # Per-feature breakdown + enabled map
                     "features":         lanes,
                     "features_enabled": enabled,
                     "updated_total":    int(updated_total or 0),
 
-                    # Dynamic provider posts (plus legacy keys remain in 'd' if the UI still reads them)
+                    # Provider posts (legacy keys still present in 'd' if UI reads them)
                     "provider_posts": provider_posts,
-                    # Legacy convenience (kept if present in the file)
                     "plex_post":     d.get("plex_post"),
                     "simkl_post":    d.get("simkl_post"),
                     "trakt_post":    d.get("trakt_post"),
@@ -1821,12 +1814,23 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
 
     cfg = load_config()
     api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
-    use_tmdb = bool(api_key)
+    use_tmdb = bool(api_key) and bool(int(runtime))  # gate by key + toggle
+
+    # Helper: try declared type, then the other type
+    def _try_runtime_both(api_key: str, typ: str, tmdb_id: int):
+        for t in (typ, ("movie" if typ == "tv" else "tv")):
+            try:
+                m = get_runtime(api_key, t, int(tmdb_id), CACHE_DIR)
+                if m is not None:
+                    return m
+            except Exception:
+                pass
+        return None
 
     movies = shows = 0
     total_min = 0
     tmdb_hits = tmdb_misses = 0
-    fetch_cap = 50
+    fetch_cap = 50 if use_tmdb else 0
     fetched = 0
 
     for meta in wall:
@@ -1835,20 +1839,20 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         else:              shows  += 1
 
         minutes = None
-        ids = meta.get("ids") or {}
-        tmdb_id = ids.get("tmdb")
+        tmdb_id = (meta.get("ids") or {}).get("tmdb")
 
         if use_tmdb and tmdb_id and fetched < fetch_cap:
             try:
-                minutes = get_runtime(api_key, typ, int(tmdb_id), CACHE_DIR)
-                fetched += 1
-                if minutes is not None: tmdb_hits += 1
-                else:                   tmdb_misses += 1
+                tid = int(str(tmdb_id))
+                minutes = _try_runtime_both(api_key, typ, tid)
             except Exception:
-                tmdb_misses += 1
+                minutes = None
+            fetched += 1
+            if minutes is not None: tmdb_hits += 1
+            else:                   tmdb_misses += 1
 
         if minutes is None:
-            minutes = 115 if typ == "movie" else 45
+            minutes = 115 if typ == "movie" else 45  # sane fallback
 
         total_min += int(minutes)
 
@@ -1864,6 +1868,7 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
 
     # ---- Build provider universe dynamically (from state + configured pairs)
     providers_set: set[str] = set()
+    prov_block: dict = {}  # ensure defined even if we bail early
     try:
         # 1) From state providers (UPPERCASE keys)
         if state is None:
@@ -1888,7 +1893,6 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
     except Exception:
         pass
 
-    # Ensure at least the common ones exist if nothing discovered (harmless default)
     if not providers_set:
         providers_set = {"plex", "simkl", "trakt", "jellyfin"}
 
@@ -1936,7 +1940,6 @@ def api_insights(limit_samples: int = Query(60), history: int = Query(3)) -> JSO
         "providers_by_feature": providers_by_feature,
         "providers_active":     active,
     }
-    # Also expose cumulative and last-run counters
     for k in ("now", "week", "month", "added", "removed", "new", "del"):
         if k in top:
             payload[k] = top[k]
@@ -2289,7 +2292,7 @@ STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 PROBE_TTL  = 30
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.4")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.5")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 

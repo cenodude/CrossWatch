@@ -1,13 +1,6 @@
 # providers/scrobble/watch.py
 from __future__ import annotations
-"""Plex WatchService
-- Listen Plex alerts → normalize → dispatch
-- Username/server filtering
-- Enrich via Plex lookups (title/year/IDs/account)
-- Progress probe correction (DEBUG-only logs)
-- Debounce + duplicate suppression; STOP bypass controlled by config
-- Reconnect with backoff; optional autostart
-"""
+
 import os, json, time, threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
@@ -270,7 +263,7 @@ class WatchService:
             if not self._passes_filters(ev):
                 self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}"); return
 
-            # probe correction (≤3 tries) — DEBUG only
+            # probe correction (debug only)
             want = ev.progress; best = want
             for _ in range(3):
                 real = self._probe_session_progress(ev)
@@ -285,12 +278,14 @@ class WatchService:
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
 
-            # debounce STOP per session (sink still has final STOP bypass via force_stop_at)
+            # debounce stop
             if ev.session_key and ev.action == "stop":
                 skd, now = str(ev.session_key), time.time()
                 force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95)))
-                if ev.progress < force_at and (now - self._last_seen.get(skd, 0.0) < 2.0):
-                    self._dbg(f"drop stop due to debounce sess={skd}"); return
+                elapsed = now - self._last_seen.get(skd, 0.0)
+                if ev.progress < force_at and elapsed < 2.0:
+                    self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={force_at} dt={elapsed:.2f}s")
+                    return
 
             if ev.session_key: self._last_seen[str(ev.session_key)] = time.time()
 

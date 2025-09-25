@@ -39,9 +39,9 @@ CONFIG.mkdir(parents=True, exist_ok=True)  # ensure exists
 DEFAULT_CFG: Dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
-        "server_url": "",
-        "account_token": "",
-        "client_id": "",
+        "server_url": "",          # http(s)://host:32400 (required for watcher)
+        "account_token": "",       # Plex token
+        "client_id": "",           # auto-generated when using PIN login
         "username": "",
         "servers": {"machine_ids": []},
     },
@@ -83,10 +83,10 @@ DEFAULT_CFG: Dict[str, Any] = {
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
-        "enable_add": True,                         # write by default
-        "enable_remove": False,                     # safer default: don't delete by default
+        "enable_add": True,              # write by default
+        "enable_remove": False,          # safer default: don't delete
         "verify_after_write": False,
-        "dry_run": False,                           # set True if you want to preview only
+        "dry_run": False,                # set True to preview only
         "drop_guard": False,
         "allow_mass_delete": True,
         "tombstone_ttl_days": 1,
@@ -105,34 +105,46 @@ DEFAULT_CFG: Dict[str, Any] = {
         "telemetry": {"enabled": True},
 
         # progress + stability knobs
-        "snapshot_ttl_sec": 300,                    # reuse snapshots within 5 min
-        "apply_chunk_size": 100,                    # emit progress every 100 items
-        "apply_chunk_pause_ms": 50,                 # tiny breather between chunks
+        "snapshot_ttl_sec": 300,         # reuse snapshots within 5 min
+        "apply_chunk_size": 100,         # progress heartbeat every 100 items
+        "apply_chunk_pause_ms": 50,      # tiny breather between chunks
 
         # suspect guard (shrinking inventories protection)
         "suspect_min_prev": 20,
         "suspect_shrink_ratio": 0.10,
     },
-    
-    # --- Metadata (TMDb resolver) ----------------------------------------------
+
+    # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
-        "locale": "",                               # default locale, e.g. "nl-NL" or "en-US"
-        "ttl_hours": 6,                             # coarse cache TTL for metadata resolver
-    },
-    
-    # --- Scrobble (Plex session watcher / webhooks) ------------------------------
-    "scrobble": {
-        "enabled": False,
-        "mode": "watch",                            # "watch" = poll Plex sessions; "webhook" = accept Plex webhooks
-        "watch": {
-            "autostart": False,                     # start watcher automatically on boot
-            "poll_secs": 5,                         # polling interval for Plex sessions (seconds)
-            "heartbeat_secs": 30,                   # playing-start heartbeat interval (seconds)
-            "pause_debounce_secs": 4,               # ignore short pauses right after start (seconds)
-            "stop_demote_threshold": None           # e.g. 80 -> demote a Stop <80% progress to Pause
-        }
+        "locale": "",                    # e.g. "en-US" / "nl-NL"
+        "ttl_hours": 6,                  # coarse cache TTL
     },
 
+    # --- Scrobble (Plex watcher / Trakt sink) -------------------------------
+    "scrobble": {
+        "enabled": False,
+        # "watch" = Plex Alerts listener (recommended)
+        # "webhook" = accept external POSTs (/webhook/trakt)
+        "mode": "watch",
+
+        # Watcher settings (Plex → events → Trakt)
+        "watch": {
+            "autostart": False,              # start watcher on boot if enabled+mode=watch
+            "pause_debounce_seconds": 5,     # ignore micro-pauses just after start
+            "suppress_start_at": 99,         # kill near-end "start" flaps (credits)
+            "filters": {
+                "username_whitelist": [],    # ["name", "id:123", "uuid:abcd…"]
+                "server_uuid": ""            # restrict to a specific PMS
+            }
+        },
+
+        # Trakt sink rules (progress decisions)
+        "trakt": {
+            "stop_pause_threshold": 80,      # <80% STOP → send as PAUSE (your “watched” bar)
+            "force_stop_at": 95,             # ≥95% always STOP (bypass debounces)
+            "regress_tolerance_percent": 5   # small progress regress is tolerated
+        }
+    },
 
     # --- Scheduling ----------------------------------------------------------
     "scheduling": {

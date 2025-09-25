@@ -4244,3 +4244,9 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 /* Hide sticky Save while About is open */
 body:has(#about-backdrop:not(.hidden)) #save-fab,
 body:has(#about-backdrop:not(.hidden)) #save-frost { display:none !important; }
+
+/* Reserve room for the sticky Save bar on settings */
+main.single #ops-card.card { padding-bottom: 120px !important; }
+
+/* When a modal is open we already hide the save bar; shrink padding */
+body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important; }

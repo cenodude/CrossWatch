@@ -1,18 +1,9 @@
 // auth.trakt.js — Secrets hydration and Trakt device flow helpers.
-// This script populates UI fields from server config and handles the Trakt
-// device authorization flow, including PIN request and polling. It is written
-// to be idempotent and avoids optional chaining on the left-hand side for
-// maximum compatibility.
 (function () {
   if (window._traktPatched) return;
   window._traktPatched = true;
 
-  // --- helpers --------------------------------------------------------------
-  /**
-   * Best-effort user notification.
-   * Uses window.notify when available, otherwise no-ops.
-   * @param {string} msg
-   */
+  // --- Utils -----------------------------------------------------------------
   function _notify(msg) { try { if (typeof window.notify === "function") window.notify(msg); } catch (_) {} }
   /** Get element by id. */
   function _el(id) { return document.getElementById(id); }
@@ -21,19 +12,12 @@
   /** Trim a string value or return empty string. */
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
 
-  /**
-   * Toggle the Trakt success message visibility.
-   * @param {boolean} show
-   */
+  // Show/hide the "success" message
   function setTraktSuccess(show) {
     try { var el = _el("trakt_msg"); if (el) el.classList.toggle("hidden", !show); } catch (_) {}
   }
 
-  // --- CONFIG fetch (single place) -----------------------------------------
-  /**
-   * Fetch the server config once, without caching.
-   * @returns {Promise<object|null>} Config object or null on failure.
-   */
+  // Fetch the current config from the backend (no-cache)
   async function fetchConfig() {
     try {
       var r = await fetch("/api/config", { cache: "no-store" });
@@ -45,15 +29,13 @@
     }
   }
 
-  // --- RAW hydration (Plex + SIMKL + Trakt token) --------------------------
-  /** Hydrate Plex token from config into its input field. */
+  // --- Hydration -------------------------------------------------------------
   async function hydratePlexFromConfigRaw() {
     var cfg = await fetchConfig(); if (!cfg) return;
     var tok = _str(cfg.plex && cfg.plex.account_token);
     if (tok) _setVal("plex_token", tok);
   }
 
-  /** Hydrate SIMKL credentials and token from config into UI inputs. */
   async function hydrateSimklFromConfigRaw() {
     var cfg = await fetchConfig(); if (!cfg) return;
     var s = cfg.simkl || {};
@@ -63,8 +45,6 @@
     _setVal("simkl_access_token",  _str(s.access_token || a.access_token));
   }
 
-  // Trakt-only (CID/Secret/Token) straight from cfg (unmasked)
-  /** Hydrate Trakt client id/secret and access token from config into UI. */
   async function hydrateAuthFromConfig() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -79,19 +59,13 @@
     }
   }
 
-  /** Hydrate all relevant provider secrets; runs each hydrator independently. */
   async function hydrateAllSecretsRaw() {
-    // call raw hydrators; keep separate calls so each can succeed independently
     try { await hydratePlexFromConfigRaw(); } catch (_) {}
     try { await hydrateSimklFromConfigRaw(); } catch (_) {}
     try { await hydrateAuthFromConfig(); } catch (_) {}
   }
 
-  // --- Trakt hint and copy --------------------------------------------------
-  /**
-   * Update the Trakt setup hint visibility: shown unless both Client ID and
-   * Client Secret are present.
-   */
+  // --- Trakt hint -----------------------------------------------------------
   function updateTraktHint() {
     try {
       var cid  = _str((_el("trakt_client_id")    || {}).value);
@@ -105,7 +79,6 @@
   }
 
   // Copy helpers + auto-bind for copy buttons
-  /** Copy arbitrary text to clipboard; optionally mark a button as copied. */
   async function _copyText(text, btn) {
     if (!text) return false;
     try {
@@ -133,15 +106,14 @@
     }
   }
 
-  /** Copy an input's value to the clipboard (used by several buttons). */
+  /** Copy the value of an input by id to the clipboard. */
   window.copyInputValue = async function (inputId, btn) {
     var el = document.getElementById(inputId);
     if (!el) return;
     await _copyText(el.value || "", btn);
   };
 
-  // For the hint buttons:
-  /** Copy the Trakt Redirect URI preview to the clipboard. */
+  /** Copy the Trakt PIN to the clipboard. */
   window.copyTraktRedirect = async function () {
     var code = document.getElementById("trakt_redirect_uri_preview");
     var text = (code && code.textContent ? code.textContent : "urn:ietf:wg:oauth:2.0:oob").trim();
@@ -171,11 +143,7 @@
     });
   });
 
-  // --- Flush Trakt creds from cfg (new + legacy location) -------------------
-  /**
-   * Remove Trakt tokens from both new and legacy locations in the config,
-   * persist the change, and clear related UI fields.
-   */
+  // --- Flush Trakt credentials ----------------------------------------------
   async function flushTraktCreds() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -212,75 +180,32 @@
     }
   }
 
-  // --- Pollers --------------------------------------------------------------
-  // New: poll the backend /api/trakt/pin/poll (device flow) until token is issued
-  /**
-   * Start polling the backend for a Trakt access token using the device flow.
-   * Stops after the specified timeout (default 3 minutes). Falls back to
-   * reading from config if the token is not echoed back in the API response.
-   * @param {number=} maxMs Custom maximum polling duration in milliseconds.
-   */
+  // --- Trakt: device pollers ------------------------------------------------
   function startTraktDevicePoll(maxMs) {
+    // Avoid hitting the SIMKL loopback mini-server (has no backend routes)
+    try { if (String(location.port || "") === "8787") return; } catch (_) {}
+
     try { if (window._traktPoll) clearTimeout(window._traktPoll); } catch (_){}
-    var MAX_MS   = typeof maxMs === "number" ? maxMs : 180000; // 3 min
+    var MAX_MS = typeof maxMs === "number" ? maxMs : 180000; // 3 min
     var deadline = Date.now() + MAX_MS;
-    var interval = 4000; // server may suggest slow_down; we keep modest default
+    var backoff = [1200, 2000, 3000, 4000, 5000, 7000, 10000, 12000];
+    var i = 0;
 
     var tick = async function () {
       if (Date.now() >= deadline) { window._traktPoll = null; return; }
-
       try {
-        var r = await fetch("/api/trakt/pin/poll", { method: "POST" });
-        var data = null;
-        try { data = await r.json(); } catch (_){ data = null; }
-
-        if (!r.ok || !data || data.ok === false) {
-          // Pending is not an error; keep polling
-          if (data && (data.pending || data.error === "authorization_pending" || data.error === "slow_down")) {
-            window._traktPoll = setTimeout(tick, interval);
-            return;
-          }
-          // Hard error: stop and surface
-          console.warn("[trakt] device poll error", data);
-          _notify((data && data.error) || "PIN poll failed");
-          window._traktPoll = null;
-          return;
-        }
-
-        // Success — token was stored by backend
-        var token =
-          (data.data && data.data.access_token) ? data.data.access_token :
-          null;
-
-        if (token) {
-          _setVal("trakt_token", token);
-          setTraktSuccess(true);
-        } else {
-          // Fall back to config read if payload omitted token echo
-          try {
-            var cfg = await fetchConfig();
-            var tok = _str(cfg && ((cfg.trakt && cfg.trakt.access_token) || (cfg.auth && cfg.auth.trakt && cfg.auth.trakt.access_token)));
-            if (tok) {
-              _setVal("trakt_token", tok);
-              setTraktSuccess(true);
-            }
-          } catch (_) {}
-        }
-        window._traktPoll = null;
-      } catch (e) {
-        console.warn("[trakt] device poll failed", e);
-        window._traktPoll = setTimeout(tick, 6000);
-      }
+        var r = await fetch("/api/status?fresh=1", { cache: "no-store" });
+        var s = await r.json();
+        var ok = !!(s && (s.trakt_connected || (s.providers && s.providers.TRAKT && s.providers.TRAKT.connected)));
+        if (ok) { setTraktSuccess(true); window._traktPoll = null; return; }
+      } catch (_) { /* ignore; keep polling */ }
+      var delay = backoff[Math.min(i++, backoff.length - 1)];
+      window._traktPoll = setTimeout(tick, delay);
     };
 
-    window._traktPoll = setTimeout(tick, 1500);
+    window._traktPoll = setTimeout(tick, backoff[0]);
   }
 
-  // Legacy: poll /api/config for the token (kept as a secondary fallback)
-  /**
-   * Legacy/fallback poller that checks /api/config for a Trakt token.
-   * Uses a backoff schedule and pauses when the settings page is hidden.
-   */
   function startTraktTokenPoll() {
     try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
     var MAX_MS   = 120000;
@@ -315,11 +240,7 @@
     window._traktPollCfg = setTimeout(poll, 1000);
   }
 
-  // --- Trakt: request PIN (device flow) ------------------------------------
-  /**
-   * Request a new Trakt device code (PIN), display it in the UI, and kick off
-   * polling. Opens the Trakt activation page to guide the user through consent.
-   */
+  // --- Trakt: PIN request ---------------------------------------------------
   async function requestTraktPin() {
     setTraktSuccess(false);
 
@@ -338,7 +259,6 @@
       resp = await fetch("/api/trakt/pin/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // backend will forward only client_id to Trakt (secret kept for token exchange)
         body: JSON.stringify({ client_id: cid, client_secret: secr })
       });
     } catch (e) {
@@ -394,7 +314,6 @@
       if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
 
       updateTraktHint();
-      // raw hydration for all providers
       hydrateAllSecretsRaw();
       // begin background poll in case user already activated (legacy path)
       startTraktTokenPoll();

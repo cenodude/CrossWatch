@@ -76,6 +76,12 @@ class TmdbProvider:
         except Exception:
             return None
 
+    def _log_exc(self, msg: str, exc: Exception) -> None:
+        """Uniform logging; 404 -> INFO, else WARNING."""
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        lvl = "INFO" if int(status or 0) == 404 else "WARNING"
+        log(f"{msg}: {exc}", level=lvl, module="META")
+
     def _get(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """
         GET with TTL cache + respectful retry/backoff.
@@ -128,7 +134,8 @@ class TmdbProvider:
                 status = getattr(getattr(e, "response", None), "status_code", None)
                 retryable = (status == 429) or (status is None) or (500 <= int(status or 0) < 600)
                 if (not retryable) or (attempt >= max_retries):
-                    log(f"TMDb request failed ({status or 'n/a'}) at {url}", level="WARNING", module="META")
+                    lvl = "INFO" if int(status or 0) == 404 else "WARNING"
+                    log(f"TMDb request failed ({status or 'n/a'}) at {url}", level=lvl, module="META")
                     raise
                 time.sleep(self._retry_delay(attempt, base_s, max_s))
                 attempt += 1
@@ -207,9 +214,9 @@ class TmdbProvider:
             if not site or not key:
                 continue
             out.append({
-                "site": site,                # YouTube | Vimeo
-                "key": key,                  # video key for embed
-                "type": v.get("type"),       # Trailer | Teaser | ...
+                "site": site,
+                "key": key,
+                "type": v.get("type"),
                 "official": bool(v.get("official")),
                 "name": v.get("name"),
                 "published_at": v.get("published_at"),
@@ -217,19 +224,15 @@ class TmdbProvider:
         return out
 
     def _movie_cert_and_release(self, tmdb_id: str, lang: str, locale: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """
-        Return (certification, best_release_iso, country_used) for movies.
-        Prefers country from locale; fallbacks to US; then any.
-        """
+        """Return (certification, best_release_iso, country_used) for movies."""
         base = "https://api.themoviedb.org/3"
         try:
             data = self._get(f"{base}/movie/{tmdb_id}/release_dates")
         except Exception as e:
-            log(f"TMDb release_dates failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb release_dates failed", e)
             return None, None, None
 
         def pick(results, cc) -> Tuple[Optional[str], Optional[str]]:
-            # Prefer type=3 (Theatrical), else first with certification/date.
             rows = [r for r in results if (r.get("iso_3166_1") == cc)]
             if not rows:
                 return None, None
@@ -249,7 +252,6 @@ class TmdbProvider:
 
         for cc in [cc_pref, "US", None]:
             if cc is None:
-                # fallback: any country
                 all_results = data.get("results") or []
                 for row in all_results:
                     c, d = pick([row], row.get("iso_3166_1"))
@@ -272,7 +274,7 @@ class TmdbProvider:
         try:
             data = self._get(f"{base}/tv/{tmdb_id}/content_ratings")
         except Exception as e:
-            log(f"TMDb content_ratings failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb content_ratings failed", e)
             return None, None
 
         cc_pref = self._locale_cc(locale)
@@ -291,7 +293,6 @@ class TmdbProvider:
             if cert:
                 return cert, used
 
-        # any fallback
         for r in results:
             if r.get("rating"):
                 return r.get("rating"), r.get("iso_3166_1")
@@ -355,7 +356,7 @@ class TmdbProvider:
                 }
                 kind = "tv"
         except Exception as e:
-            log(f"TMDb detail fetch failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb detail fetch failed", e)
             return {}
 
         # ---- 2) Images ----
@@ -363,14 +364,14 @@ class TmdbProvider:
         try:
             images = self._images(tmdb_id, kind, lang, need)
         except Exception as e:
-            log(f"TMDb images fetch failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb images fetch failed", e)
 
         # ---- 3) Videos (trailers) ----
         videos = []
         try:
             videos = self._videos(tmdb_id, kind, lang, need)
         except Exception as e:
-            log(f"TMDb videos fetch failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb videos fetch failed", e)
 
         # ---- 4) External IDs ----
         extra_ids = {}
@@ -387,7 +388,7 @@ class TmdbProvider:
                     if imdb_id: extra_ids["imdb"] = imdb_id
                     if tvdb_id: extra_ids["tvdb"] = tvdb_id
             except Exception as e:
-                log(f"TMDb external IDs fetch failed: {e}", level="WARNING", module="META")
+                self._log_exc("TMDb external IDs fetch failed", e)
 
         # ---- 5) Certifications & release date ----
         certification = None
@@ -398,9 +399,8 @@ class TmdbProvider:
                 certification, release_iso, release_cc = self._movie_cert_and_release(tmdb_id, lang, locale)
             elif kind == "tv" and need.get("certification"):
                 certification, release_cc = self._tv_cert(tmdb_id, locale)
-                # TV release date stays first_air_date (already in detail)
         except Exception as e:
-            log(f"TMDb certification/release failed: {e}", level="WARNING", module="META")
+            self._log_exc("TMDb certification/release failed", e)
 
         # ---- Assemble payload ----
         out: Dict[str, Any] = {
@@ -415,7 +415,7 @@ class TmdbProvider:
         if overview: out["overview"] = overview
         if tagline: out["tagline"] = tagline
         if genres is not None: out["genres"] = genres
-        if score is not None: out["score"] = score  # 0..100
+        if score is not None: out["score"] = score
         if videos: out["videos"] = videos
         if certification: out["certification"] = certification
         if release_iso: out["release"] = {"date": release_iso, "country": release_cc}
