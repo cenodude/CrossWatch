@@ -543,9 +543,9 @@
   function persistHidden(){ try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} }
 
   const artUrl = (it, size) => {
-    const typ = (it.type === "tv" || it.type === "show") ? "tv" : "movie";
+    const typ = it.type === "tv" ? "tv" : "movie";
     const tmdb = it.tmdb || (it.ids && it.ids.tmdb);
-    return tmdb ? `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size||"w92")}` : "";
+    return tmdb ? `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size || "w92")}` : "";
   };
 
   const normKey = (it) =>

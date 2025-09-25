@@ -14,8 +14,6 @@ IMG_BASE = "https://image.tmdb.org/t/p"
 
 
 class TmdbProvider:
-    """TMDb metadata provider with TTL cache, backoff, and need-aware fetching."""
-
     name = "TMDB"
     UA = "Crosswatch/1.0"
 
@@ -59,12 +57,10 @@ class TmdbProvider:
     # --------------------------- HTTP + caching ---------------------------
 
     def _retry_delay(self, attempt: int, base_s: float, max_s: float) -> float:
-        """Exponential backoff with jitter."""
         delay = min(max_s, base_s * (2 ** attempt))
         return delay + random.uniform(0.0, 0.25)
 
     def _seconds_from_retry_after(self, header: str) -> Optional[float]:
-        """Parse Retry-After header as seconds or HTTP-date."""
         if not header:
             return None
         header = header.strip()
@@ -300,7 +296,6 @@ class TmdbProvider:
         return None, None
 
     # --------------------------- provider API ---------------------------
-
     def fetch(
         self,
         *,
@@ -309,10 +304,12 @@ class TmdbProvider:
         locale: Optional[str] = None,
         need: Optional[Dict[str, bool]] = None,
     ) -> dict:
-        """Fetch TMDb metadata for a movie or TV show."""
+        """Fetch TMDb metadata for a movie or TV show, with 404 smart-fallback."""
         need = need or {"poster": True, "backdrop": True}
-        entity = (entity or "").lower().strip()
-        if entity not in ("movie", "show", "tv"):
+        ent_in = (entity or "").lower().strip()
+        if ent_in in {"show", "shows"}:
+            ent_in = "tv"
+        if ent_in not in {"movie", "tv"}:
             return {}
 
         tmdb_id = (ids.get("tmdb") or ids.get("id") or "").strip()
@@ -322,42 +319,61 @@ class TmdbProvider:
         lang = (locale or "en-US")
         base = "https://api.themoviedb.org/3"
 
-        # ---- 1) Details ----
+        # ---- 1) Details (with 404 swap fallback) ----
+        det = None
+        kind = "movie" if ent_in == "movie" else "tv"
+
+        def _get_details(k: str):
+            return self._get(f"{base}/{k}/{tmdb_id}", {"language": lang})
+
         try:
-            if entity == "movie":
-                det = self._get(f"{base}/movie/{tmdb_id}", {"language": lang})
-                title = det.get("title") or det.get("original_title")
-                year = self._safe_int_year(det.get("release_date"))
-                runtime = det.get("runtime")
-                runtime_minutes = runtime if isinstance(runtime, int) and runtime > 0 else None
-                overview = det.get("overview") if need.get("overview") else None
-                tagline = det.get("tagline") if need.get("tagline") else None
-                genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
-                vote_avg = det.get("vote_average")
-                score = round(float(vote_avg) * 10) if (isinstance(vote_avg, (int, float))) else None
-                detail = {"release_date": det.get("release_date")}
-                kind = "movie"
+            det = _get_details(kind)
+        except requests.exceptions.RequestException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if int(status or 0) == 404:
+                # swap once: movie<->tv
+                alt = "tv" if kind == "movie" else "movie"
+                try:
+                    det = _get_details(alt)
+                    kind = alt
+                except Exception as e2:
+                    self._log_exc("TMDb detail fetch failed", e2)
+                    return {}
             else:
-                det = self._get(f"{base}/tv/{tmdb_id}", {"language": lang})
-                title = det.get("name") or det.get("original_name")
-                year = self._safe_int_year(det.get("first_air_date"))
-                run_list = det.get("episode_run_time") or []
-                ep_runtime = next((x for x in run_list if isinstance(x, int) and x > 0), None)
-                runtime_minutes = ep_runtime
-                overview = det.get("overview") if need.get("overview") else None
-                tagline = det.get("tagline") if need.get("tagline") else None
-                genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
-                vote_avg = det.get("vote_average")
-                score = round(float(vote_avg) * 10) if (isinstance(vote_avg, (int, float))) else None
-                detail = {
-                    "first_air_date": det.get("first_air_date"),
-                    "episode_run_time": run_list,
-                    "number_of_seasons": det.get("number_of_seasons"),
-                }
-                kind = "tv"
+                self._log_exc("TMDb detail fetch failed", e)
+                return {}
         except Exception as e:
             self._log_exc("TMDb detail fetch failed", e)
             return {}
+
+        # ---- 1b) Normalize fields by kind ----
+        if kind == "movie":
+            title = det.get("title") or det.get("original_title")
+            year = self._safe_int_year(det.get("release_date"))
+            runtime = det.get("runtime")
+            runtime_minutes = runtime if isinstance(runtime, int) and runtime > 0 else None
+            overview = det.get("overview") if need.get("overview") else None
+            tagline = det.get("tagline") if need.get("tagline") else None
+            genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
+            vote_avg = det.get("vote_average")
+            score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
+            detail = {"release_date": det.get("release_date")}
+        else:
+            title = det.get("name") or det.get("original_name")
+            year = self._safe_int_year(det.get("first_air_date"))
+            run_list = det.get("episode_run_time") or []
+            ep_runtime = next((x for x in run_list if isinstance(x, int) and x > 0), None)
+            runtime_minutes = ep_runtime
+            overview = det.get("overview") if need.get("overview") else None
+            tagline = det.get("tagline") if need.get("tagline") else None
+            genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
+            vote_avg = det.get("vote_average")
+            score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
+            detail = {
+                "first_air_date": det.get("first_air_date"),
+                "episode_run_time": run_list,
+                "number_of_seasons": det.get("number_of_seasons"),
+            }
 
         # ---- 2) Images ----
         images = {}
@@ -366,7 +382,7 @@ class TmdbProvider:
         except Exception as e:
             self._log_exc("TMDb images fetch failed", e)
 
-        # ---- 3) Videos (trailers) ----
+        # ---- 3) Videos ----
         videos = []
         try:
             videos = self._videos(tmdb_id, kind, lang, need)
@@ -383,17 +399,14 @@ class TmdbProvider:
                     if imdb_id: extra_ids["imdb"] = imdb_id
                 else:
                     data = self._get(f"{base}/tv/{tmdb_id}/external_ids")
-                    imdb_id = data.get("imdb_id")
-                    tvdb_id = data.get("tvdb_id")
+                    imdb_id = data.get("imdb_id"); tvdb_id = data.get("tvdb_id")
                     if imdb_id: extra_ids["imdb"] = imdb_id
                     if tvdb_id: extra_ids["tvdb"] = tvdb_id
             except Exception as e:
                 self._log_exc("TMDb external IDs fetch failed", e)
 
-        # ---- 5) Certifications & release date ----
-        certification = None
-        release_iso = None
-        release_cc = None
+        # ---- 5) Certifications / release ----
+        certification = None; release_iso = None; release_cc = None
         try:
             if kind == "movie" and (need.get("certification") or need.get("release")):
                 certification, release_iso, release_cc = self._movie_cert_and_release(tmdb_id, lang, locale)
@@ -402,9 +415,9 @@ class TmdbProvider:
         except Exception as e:
             self._log_exc("TMDb certification/release failed", e)
 
-        # ---- Assemble payload ----
+        # ---- Assemble ----
         out: Dict[str, Any] = {
-            "type": "movie" if kind == "movie" else "show",
+            "type": "movie" if kind == "movie" else "tv",
             "ids": {"tmdb": str(tmdb_id), **extra_ids} if extra_ids else {"tmdb": str(tmdb_id)},
             "title": title,
             "year": year,

@@ -1,6 +1,7 @@
 /* assets/crosswatch.js *
 
 
+
 /* Global showTab bootstrap (runs first) */
 (function(){
   if (typeof window.showTab !== "function") {
@@ -25,6 +26,9 @@
   }
 })();
 
+// --- Helpers for common DOM tasks --------------------------------------------
+// Treat anything TV-ish as "tv"
+const isTV = v => /^(tv|show|shows|series|season|episode)$/i.test(String(v||""));
 
 function _el(id) {
   return document.getElementById(id);
@@ -2638,7 +2642,7 @@ document.addEventListener('DOMContentLoaded', updateFlowRailLogos);
 );
 
 function artUrl(item, size) {
-  const typ = item.type === "tv" || item.type === "show" ? "tv" : "movie";
+  const typ = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
   const tmdb = item.tmdb;
   if (!tmdb) return null;
   const cb = window._lastSyncEpoch || 0;
@@ -2736,7 +2740,7 @@ async function loadWall() {
 
       const a = document.createElement("a");
       a.className = "poster";
-      a.href = `https://www.themoviedb.org/${it.type}/${it.tmdb}`;
+      a.href = a.href = `https://www.themoviedb.org/${isTV(it.type) ? "tv" : "movie"}/${it.tmdb}`;
       a.target = "_blank";
       a.rel = "noopener";
       a.dataset.type = it.type;
@@ -2780,7 +2784,7 @@ async function loadWall() {
         if (!descEl || descEl.dataset.loaded) return;
 
         try {
-          const entity = (it.type === "tv" || it.type === "show") ? "show" : "movie";
+          const entity = isTV(it.type) ? "tv" : "movie";
           const res = await fetch("/api/metadata/resolve", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2907,8 +2911,7 @@ async function resolvePosterUrl(entity, id, size = "w342") {
   // Guard
   if (!id) return null;
 
-  const typ = (entity === "tv" || entity === "show") ? "tv" : "movie";
-  const apiEntity = (typ === "tv") ? "show" : "movie";
+  const typ = isTV(entity) ? "tv" : "movie";
   const cb = window._lastSyncEpoch || 0;
 
   try {
@@ -2917,7 +2920,7 @@ async function resolvePosterUrl(entity, id, size = "w342") {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        entity: apiEntity,
+        entity: typ,
         ids: { tmdb: String(id) },
         need: { poster: true }
       })

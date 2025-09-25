@@ -143,7 +143,7 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
 # --------------- Helper: media normalizer---
 def _norm_media_type(x: Optional[str]) -> str:
     t = (x or "").strip().lower()
-    return "show" if t in {"tv", "show", "series", "season", "episode"} else "movie"
+    return "tv" if t in {"tv", "show", "shows", "series", "season", "episode"} else "movie"
 
 
 # --------------- App & assets ---------------
@@ -1004,11 +1004,12 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     plex_items   = _state_items(st, "PLEX")
     simkl_items  = _state_items(st, "SIMKL")
     trakt_items  = _state_items(st, "TRAKT")
-    jelly_items  = _state_items(st, "JELLYFIN")  # <-- include Jellyfin
+    jelly_items  = _state_items(st, "JELLYFIN")
 
     def norm_type(v: dict) -> str:
+        # normalize tv-ish inputs, fallback to movie
         t = str((v.get("type") or v.get("entity") or v.get("media_type") or "")).strip().lower()
-        return "tv" if t in ("show", "shows", "tv", "series", "season", "episode") else "movie"
+        return "tv" if t in {"tv", "show", "shows", "series", "season", "episode"} else "movie"
 
     def ids_of(v: dict) -> Dict[str, str]:
         ids = dict(v.get("ids") or {})
@@ -2015,12 +2016,14 @@ def api_watchlist(
         )
 
         def _norm_type(x: Optional[str]) -> str:
-            # Keep it strict for TMDb: "movie" or "show"
+            # Normalize provider types into "movie" or "tv"
             t = (x or "").strip().lower()
-            if t in {"tv", "show", "series", "season", "episode"}:
-                return "show"
+            if t in {"tv", "show", "shows", "series", "season", "episode"}:
+                return "tv"
+            if t in {"movie", "movies", "film", "films"}:
+                return "movie"
             return "movie"
-
+        
         for it in items:
             if enriched >= int(max_meta):
                 break
