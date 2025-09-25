@@ -38,14 +38,18 @@ SIMKL_SYNC_ACTIVITIES = f"{SIMKL_BASE}/sync/activities"
 SIMKL_ALL_ITEMS_MOVIES_PTW = f"{SIMKL_BASE}/sync/all-items/movies/plantowatch"
 SIMKL_ALL_ITEMS_SHOWS_PTW  = f"{SIMKL_BASE}/sync/all-items/shows/plantowatch"
 SIMKL_ALL_ITEMS_ANIME_PTW  = f"{SIMKL_BASE}/sync/all-items/anime/plantowatch"
+
 SIMKL_ADD_TO_LIST          = f"{SIMKL_BASE}/sync/add-to-list"
-SIMKL_HISTORY_REMOVE       = f"{SIMKL_BASE}/sync/history/remove"
+SIMKL_REMOVE_FROM_LIST     = f"{SIMKL_BASE}/sync/remove-from-list"
 
 SIMKL_HISTORY_ADD          = f"{SIMKL_BASE}/sync/history"
+SIMKL_HISTORY_GET          = f"{SIMKL_BASE}/sync/history" 
+SIMKL_HISTORY_REMOVE       = f"{SIMKL_BASE}/sync/history/remove"
 
 SIMKL_RATINGS_GET          = f"{SIMKL_BASE}/sync/ratings"
-SIMKL_RATINGS_REMOVE       = f"{SIMKL_BASE}/sync/ratings/remove"
 SIMKL_RATINGS_SET          = f"{SIMKL_BASE}/sync/ratings"
+SIMKL_RATINGS_REMOVE       = f"{SIMKL_BASE}/sync/ratings/remove"
+
 
 _ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
 
@@ -978,43 +982,55 @@ def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any
 def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     items_list = list(items)
     payload: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
+
     for it in items_list:
-        ids = dict((it.get("ids") or {}))
+        ids = dict(it.get("ids") or {})
         typ = (it.get("type") or "movie").lower()
         if typ == "anime":
             typ = "show"
-        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        entry = {
+            "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
+            # PTW list is the target to remove from
+            "from": "plantowatch",
+        }
         if entry["ids"]:
             (payload["movies"] if typ == "movie" else payload["shows"]).append(entry)
+
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
         return 0
+
     simkl_cfg = dict(cfg_root.get("simkl") or {})
-    r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
-    if r and r.ok:
-        _bust_ptw_cache(cfg_root)
-        _clear_run_cache()
-        now_ts = int(time.time())
-        now_iso = ts_to_iso(now_ts)
-        store = _CursorStore(cfg_root)
-        store.set("history", now_iso)
-        store.set("watchlist", now_iso)
-        shadow = store.load_shadow()
-        m = dict(shadow.get("items") or {})
+    r = _simkl_post(SIMKL_REMOVE_FROM_LIST, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
+    if not (r and r.ok):
+        return 0
+
+    _bust_ptw_cache(cfg_root)
+    _clear_run_cache()
+
+    now_ts = int(time.time())
+    now_iso = ts_to_iso(now_ts)
+    store = _CursorStore(cfg_root)
+    store.set("watchlist", now_iso)
+
+    shadow = store.load_shadow()
+    m = dict(shadow.get("items") or {})
+    for it in items_list:
+        typ = (it.get("type") or "movie").lower()
+        if typ == "anime":
+            typ = "show"
+        node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": dict(it.get("ids") or {})}
+        k = canonical_key(node)
+        m.pop(k, None)
+    store.save_shadow(m, now_ts)
+
+    store_gmt = _gmt_store_from_cfg(cfg_root)
+    if store_gmt:
         for it in items_list:
-            typ = (it.get("type") or "movie").lower()
-            if typ == "anime":
-                typ = "show"
-            node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": dict(it.get("ids") or {})}
-            k = canonical_key(node)
-            m.pop(k, None)
-        store.save_shadow(m, now_ts)
-        store_gmt = _gmt_store_from_cfg(cfg_root)
-        if store_gmt:
-            for it in items_list:
-                _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="SIMKL")
-        return sum(len(v) for v in payload.values())
-    return 0
+            _gmt_record(store=store_gmt, item=it, feature="watchlist", op="remove", origin="SIMKL")
+
+    return sum(len(v) for v in payload.values())
+
 
 def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     simkl_cfg = dict(cfg_root.get("simkl") or {})
@@ -1226,8 +1242,10 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     hdr   = simkl_headers(simkl_cfg)
     store = _CursorStore(cfg_root)
     acts  = _activities(cfg_root)
+
     sh = _history_shadow_load(cfg_root)
     base: Dict[str, Any] = dict(sh.get("items") or {})
+
     if not _simkl_alive(hdr, cfg_root=cfg_root):
         try:
             if (cfg_root.get("runtime") or {}).get("debug"):
@@ -1235,46 +1253,61 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         except Exception:
             pass
         return base
+
     cursor = store.get("history") or simkl_cfg.get("last_date") or simkl_cfg.get("date_from")
     act_hint = acts.get("history") or acts.get("completed")
+
     params: Dict[str, Any] = {"extended": "full"}
     if cursor:
         try:
-            cts = iso_to_ts(str(cursor)) or 0
-            params["date_from"] = ts_to_iso(max(0, cts - 5))
+            cts = int(iso_to_ts(str(cursor)) or 0)
         except Exception:
-            params["date_from"] = cursor
+            cts = 0
+        if cts > 0:
+            params["date_from"] = ts_to_iso(max(0, cts - 5))
+        else:
+            params["date_from"] = str(cursor)
     elif act_hint:
         params["date_from"] = act_hint
-    r = _simkl_get(SIMKL_HISTORY_ADD, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+
+    r = _simkl_get(SIMKL_HISTORY_GET, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
     data = _json_or_empty_dict(r)
+
     delta: Dict[str, Dict[str, Any]] = {}
+    max_wat_ts = 0
+
     def handle(arr: List[dict], kind: str):
+        nonlocal max_wat_ts
         for it in arr or []:
             node = it.get(kind) or {}
             ids = _ids_from_simkl_node(node)
             if not ids and (node.get("title") is None):
                 continue
-            key = None
-            for k in _ID_KEYS:
-                if ids.get(k):
-                    key = f"{k}:{ids[k]}".lower()
-                    break
-            if not key:
-                t = str(node.get("title") or "").strip().lower()
-                y = node.get("year") or ""
-                key = f"{kind}|title:{t}|year:{y}"
-            watched_at = it.get("watched_at") or it.get("watched") or ts_to_iso(int(time.time()))
-            delta[key] = {
+
+            row = {
                 "type": kind,
                 "title": node.get("title"),
-                "year": node.get("year"),
-                "ids": ids,
+                "year":  node.get("year"),
+                "ids":   ids,
                 "watched": True,
-                "watched_at": watched_at,
             }
+
+            wat = it.get("watched_at") or it.get("watched")
+            if isinstance(wat, str) and wat.strip():
+                row["watched_at"] = wat
+                try:
+                    ts = iso_to_ts(wat) or 0
+                    if ts > max_wat_ts: max_wat_ts = ts
+                except Exception:
+                    pass
+
+            k = canonical_key(row)
+            delta[k] = row
+
     handle(_read_as_list(data, "movies"), "movie")
     handle(_read_as_list(data, "shows"),  "show")
+
+    # If activities advanced but API returned empty, keep shadow
     try:
         act_ts = iso_to_ts(str(act_hint or "")) or 0
         cur_ts = iso_to_ts(str(cursor or "")) or 0
@@ -1287,14 +1320,21 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             return base
     except Exception:
         pass
+
     if delta:
-        for k, v in delta.items():
-            base[k] = v
+        base.update(delta)
         _history_shadow_save(cfg_root, base)
+        # Advance cursor to the newest real watched_at, else activity hint, else now.
         try:
-            store.set("history", ts_to_iso(int(time.time())))
+            if max_wat_ts:
+                store.set("history", ts_to_iso(int(max_wat_ts)))
+            elif act_hint:
+                store.set("history", act_hint)
+            else:
+                store.set("history", ts_to_iso(int(time.time())))
         except Exception:
             pass
+
     try:
         if (cfg_root.get("runtime") or {}).get("debug"):
             host_log("SIMKL.calls", {"feature": "history", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
@@ -1302,46 +1342,88 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         pass
     return base
 
+
 def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     items_list = list(items)
+
+    # GMT suppression stays
     store_gmt = _gmt_store_from_cfg(cfg_root)
     if store_gmt and items_list:
-        op_add, _op_neg = _gmt_ops_for_feature("history")
+        op_add, _ = _gmt_ops_for_feature("history")
         items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="history", write_op=op_add)]
+
+    # Planner guard: skip things already in SIMKL history (by canonical key)
+    existing = _history_index(cfg_root)  # cached
+    existing_keys = set(existing.keys())
+
+    # Require explicit timestamps by default (do NOT force True)
+    require_ts = bool(_cfg_get(cfg_root, "history.write.require_timestamp", True))
+
     movies: List[Dict[str, Any]] = []
     shows:  List[Dict[str, Any]] = []
+    ctx_nodes: List[Tuple[Dict[str, Any], Optional[str]]] = []
     now_iso = ts_to_iso(int(time.time()))
+
     for it in items_list:
         ids = dict((it.get("ids") or {}))
-        entry = {"watched_at": it.get("watched_at") or now_iso, "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
+        typ = (it.get("type") or "movie").lower()
+        node = {
+            "type": "movie" if typ == "movie" else "show",
+            "title": it.get("title"),
+            "year":  it.get("year"),
+            "ids":   {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
+        }
+        key = canonical_key(node)
+        if key in existing_keys:
+            continue  # already in SIMKL
+
+        wat = it.get("watched_at")
+        if require_ts and not (isinstance(wat, str) and wat.strip()):
+            continue  # no timestamp → skip
+
+        entry = {"ids": dict(node["ids"])}
+        if isinstance(wat, str) and wat.strip():
+            entry["watched_at"] = wat  # never invent "now"
         if not entry["ids"]:
             continue
-        (movies if (it.get("type") or "movie") == "movie" else shows).append(entry)
+
+        ctx_nodes.append((node, wat))
+        (movies if node["type"] == "movie" else shows).append(entry)
+
     payload = {k: v for k, v in {"movies": movies, "shows": shows}.items() if v}
     if not payload:
         return 0
+
     simkl_cfg = dict(cfg_root.get("simkl") or {})
     r = _simkl_post(SIMKL_HISTORY_ADD, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
     if r and r.ok:
-        _CursorStore(cfg_root).set("history", now_iso)
+        try:
+            max_wat_ts = 0
+            for _node, wat in ctx_nodes:
+                if isinstance(wat, str) and wat.strip():
+                    t = int(iso_to_ts(wat) or 0)
+                    if t > max_wat_ts:
+                        max_wat_ts = t
+            new_cursor = ts_to_iso(max_wat_ts) if max_wat_ts > 0 else now_iso
+        except Exception:
+            new_cursor = now_iso
+
+        _CursorStore(cfg_root).set("history", new_cursor)
+
         shadow = _history_shadow_load(cfg_root)
         m: Dict[str, Any] = dict(shadow.get("items") or {})
-        for it in items_list:
-            node = {
-                "type": (it.get("type") or "movie"),
-                "title": it.get("title"),
-                "year":  it.get("year"),
-                "ids":   {k: (it.get("ids") or {}).get(k) for k in _ID_KEYS if (it.get("ids") or {}).get(k)},
-            }
+        for node, wat in ctx_nodes:
             k = canonical_key(node)
             m[k] = {
                 **node,
                 "watched": True,
-                "watched_at": it.get("watched_at") or now_iso,
+                "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cursor),
             }
         _history_shadow_save(cfg_root, m)
+
         return sum(len(v) for v in payload.values())
     return 0
+
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     items_list = list(items)
@@ -1378,6 +1460,7 @@ def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, An
                 _gmt_record(store=store_gmt, item=it, feature="history", op="unscrobble", origin="SIMKL")
         return sum(len(v) for v in payload.values())
     return 0
+
 
 class _SimklOPS:
     def name(self) -> str: return "SIMKL"
@@ -1505,7 +1588,7 @@ class SIMKLModule(SyncModule):
     )
     @staticmethod
     def supported_features() -> dict:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+        return {"watchlist": True, "ratings": True, "history": False, "playlists": False}
 
 def get_manifest() -> dict:
     return {

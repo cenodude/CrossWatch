@@ -265,9 +265,15 @@ def _jf_delete(base: str, path: str, headers: Dict[str, str], params: Optional[D
     url = base + path.lstrip("/")
     if params:
         url += ("&" if "?" in url else "?") + urlencode({k: v for k, v in params.items() if v is not None})
+
     r = requests.delete(url, headers=headers, timeout=45)
-    if not r.ok:
-        raise RuntimeError(f"Jellyfin DELETE {path} -> {r.status_code}: {getattr(r, 'text', '')}")
+    st = int(getattr(r, "status_code", 0) or 0)
+
+    if st in (200, 202, 204, 404) or r.ok:
+        return
+
+    raise RuntimeError(f"Jellyfin DELETE {path} -> {st}: {getattr(r, 'text', '')}")
+
 
 def _jf_provider_tokens(ids: Dict[str, Any]) -> List[str]:
     """

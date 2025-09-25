@@ -309,7 +309,13 @@ class PairIn(BaseModel):
     mode: str | None = None
     enabled: bool | None = None
     features: dict | None = None
-
+    
+class PairPatch(BaseModel):
+    source: str | None = None
+    target: str | None = None
+    mode: str | None = None
+    enabled: bool | None = None
+    features: dict | None = None
 
 # --------------- Orchestrator helpers ---------------
 def _get_orchestrator() -> Orchestrator:
@@ -677,7 +683,7 @@ def _lanes_enabled_defaults() -> Dict[str, bool]:
     return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
 
 
-def _compute_lanes_from_stats(since_epoch: int, until_epoch: int) -> Tuple[Dict[str, Any], Dict[str, bool]]:
+def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     feats = _lanes_defaults()
     enabled = _lanes_enabled_defaults()
 
@@ -688,55 +694,87 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int) -> Tuple[Dict[
 
     s = int(since_epoch or 0)
     u = int(until_epoch or 0) or int(time.time())
-    rows = [e for e in events if s <= int(e.get("ts") or 0) <= u]
+
+    def _evt_epoch(e: dict) -> int:
+        for k in ("sync_ts", "ingested_ts", "seen_ts", "ts"):
+            try:
+                v = int(e.get(k) or 0)
+                if v:
+                    return v
+            except Exception:
+                pass
+        return 0
+
+    rows = [e for e in events if s <= _evt_epoch(e) <= u]
     if not rows:
         return feats, enabled
 
     rows.sort(key=lambda r: int(r.get("ts") or 0))
 
     for e in rows:
-        action = str(e.get("action") or "").lower()
-        title  = e.get("title") or e.get("key") or "item"
-        slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
+        # Normalized action/feature
+        raw_action = str(e.get("action") or e.get("op") or e.get("change") or "").lower()
+        raw_feat   = str(e.get("feature") or e.get("feat") or "").lower()
+        action = raw_action.replace(":", "_").replace("-", "_")
+        feat   = raw_feat.replace(":", "_").replace("-", "_")
 
-        if action in ("add", "remove"):
+        title = e.get("title") or e.get("key") or "item"
+        slim  = {k: e.get(k) for k in ("title","key","type","source","ts") if k in e}
+
+        # WATCHLIST
+        if action in ("add","remove") and (feat in ("watchlist","") or "watchlist" in action):
             lane = "watchlist"
             if action == "add":
                 feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(slim)
+                feats[lane]["spotlight_add"].append(slim or {"title": title})
             else:
                 feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(slim)
+                feats[lane]["spotlight_remove"].append(slim or {"title": title})
+            continue
 
-        elif action in ("rate", "rating", "update_rating", "unrate"):
+        # RATINGS
+        if action in ("rate","rating","update_rating","unrate") or "rating" in feat:
             lane = "ratings"
+            # treat any rating change as updated (UI shows ~)
             feats[lane]["updated"] += 1
-            feats[lane]["spotlight_update"].append(slim if slim else {"title": title})
+            feats[lane]["spotlight_update"].append(slim or {"title": title})
+            continue
 
-        elif action in ("watch", "scrobble", "checkin", "mark_watched"):
+        # HISTORY
+        is_history_feat = feat in ("history","watch","watched") or ("history" in action)
+        is_add_like     = any(k in action for k in ("watch","scrobble","checkin","mark_watched","history_add","add_history"))
+        is_remove_like  = any(k in action for k in ("unwatch","remove_history","history_remove","delete_watch","del_history"))
+
+        if is_history_feat or is_add_like or is_remove_like:
             lane = "history"
-            feats[lane]["added"] += 1
-            feats[lane]["spotlight_add"].append(slim if slim else {"title": title})
+            if is_remove_like:
+                feats[lane]["removed"] += 1
+                feats[lane]["spotlight_remove"].append(slim or {"title": title})
+            else:
+                feats[lane]["added"] += 1
+                feats[lane]["spotlight_add"].append(slim or {"title": title})
+            continue
 
-        elif action.startswith("playlist"):
+        if action.startswith("playlist") or "playlist" in feat:
             lane = "playlists"
             if "remove" in action:
                 feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(slim if slim else {"title": title})
+                feats[lane]["spotlight_remove"].append(slim or {"title": title})
             elif "update" in action or "rename" in action:
                 feats[lane]["updated"] += 1
-                feats[lane]["spotlight_update"].append(slim if slim else {"title": title})
+                feats[lane]["spotlight_update"].append(slim or {"title": title})
             else:
                 feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(slim if slim else {"title": title})
+                feats[lane]["spotlight_add"].append(slim or {"title": title})
+            continue
 
+    # keep only last 3 spotlight items
     for lane in feats.values():
         lane["spotlight_add"]    = (lane["spotlight_add"]    or [])[-3:]
         lane["spotlight_remove"] = (lane["spotlight_remove"] or [])[-3:]
         lane["spotlight_update"] = (lane["spotlight_update"] or [])[-3:]
 
     return feats, enabled
-
 
 def _parse_sync_line(line: str) -> None:
     s = strip_ansi(line).strip()
@@ -2103,12 +2141,10 @@ def api_watchlist_providers():
 
 # Delete
 @app.post("/api/watchlist/delete")
-def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Payload: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT"|"JELLYFIN" }
-    Semantics:
-      - ok == True if at least one key deleted successfully (partial success allowed)
-      - partial == True if some keys failed
+    Body: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT"|"JELLYFIN" }
+    ok => at least one delete succeeded; partial => some failed.
     """
     try:
         keys = payload.get("keys") or []
@@ -2126,28 +2162,22 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
             return {"ok": False, "error": f"failed to load config: {e}"}
 
         state_file = STATE_PATH
-
         results: List[Dict[str, Any]] = []
         ok_count = 0
 
         for k in keys:
             try:
                 r = delete_watchlist_item(
-                    key=str(k),
-                    state_path=state_file,
-                    cfg=cfg,
-                    provider=provider,
-                    log=_append_log,
+                    key=str(k), state_path=state_file, cfg=cfg, provider=provider, log=_append_log
                 )
                 results.append({"key": k, **r})
                 if r.get("ok"):
                     ok_count += 1
             except Exception as e:
-                tb = traceback.format_exc()
-                print(f"[watchlist:delete] key={k} provider={provider} ERROR: {e}\n{tb}")
+                _append_log("SYNC", f"[WL] delete {k} on {provider} failed: {e}")
                 results.append({"key": k, "ok": False, "error": str(e)})
 
-        # Best-effort stats refresh
+        # best-effort stats
         try:
             state = _load_state()
             STATS.refresh_from_state(state)
@@ -2164,59 +2194,70 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         }
 
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[watchlist:delete] FATAL: {e}\n{tb}")
+        _append_log("SYNC", f"[WL] delete fatal: {e}")
         return {"ok": False, "error": f"fatal: {e}"}
 
 
 # Delete Batch
 @app.post("/api/watchlist/delete_batch")
-def api_watchlist_delete_batch(payload: dict = Body(...)):
+def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    JSON body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|JELLYFIN|ALL" }
-    Deletes selected items on the given provider(s) in one shot.
+    Body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|JELLYFIN|ALL" }
     """
     try:
         keys = payload.get("keys") or []
         provider = (payload.get("provider") or "ALL").upper().strip()
+
         if not isinstance(keys, list) or not keys:
-            raise HTTPException(status_code=400, detail="keys array required")
+            return {"ok": False, "error": "keys must be a non-empty array"}
 
         allowed = {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}
         if provider not in allowed:
-            raise HTTPException(status_code=400, detail=f"unknown provider '{provider}'")
+            return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        cfg = load_config()
-        state = _load_state()
+        try:
+            cfg = load_config()
+            state = _load_state()
+        except Exception as e:
+            return {"ok": False, "error": f"load failed: {e}"}
 
-        from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import keeps imports tidy
+        from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import
 
-        results = []
+        results: List[Dict[str, Any]] = []
         targets = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if provider == "ALL" else [provider]
+
         for prov in targets:
             try:
                 res = _wl_delete_batch(keys, prov, state, cfg)
-                results.append(res | {"provider": prov})
-                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: OK")
+                # normalize shape
+                ok = bool(res.get("ok")) if isinstance(res, dict) else bool(res)
+                results.append((res if isinstance(res, dict) else {"ok": ok}) | {"provider": prov})
+                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: {'OK' if ok else 'NOOP'}")
             except Exception as e:
-                msg = f"[WL] batch-delete on {prov} failed: {e}"
-                _append_log("SYNC", msg)
-    
+                _append_log("SYNC", f"[WL] batch-delete on {prov} failed: {e}")
                 results.append({"provider": prov, "ok": False, "error": str(e)})
 
+        # best-effort stats
         try:
             if state:
                 STATS.refresh_from_state(state)
         except Exception:
             pass
 
-        any_ok = any(r.get("ok") for r in results if isinstance(r, dict))
-        return {"ok": any_ok, "results": results}
-    except HTTPException:
-        raise
+        any_ok = any(isinstance(r, dict) and r.get("ok") for r in results)
+        all_ok = all(isinstance(r, dict) and r.get("ok") for r in results)
+
+        return {
+            "ok": any_ok,
+            "partial": any_ok and not all_ok,
+            "provider": provider,
+            "targets": targets,
+            "results": results,
+        }
+
     except Exception as e:
         _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"ok": False, "error": f"fatal: {e}"}
 
     
 # --------------- Icons ---------------
@@ -2248,7 +2289,7 @@ STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_TTL = 3600
 PROBE_TTL  = 30
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.3")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.1.4")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -3257,6 +3298,10 @@ def api_config_save(cfg: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     _PROBE_CACHE["trakt"] = (0.0, False)
     _PROBE_CACHE["jellyfin"] = (0.0, False)
 
+    # Clear status cache for debug freshness
+    STATUS_CACHE["ts"] = 0.0
+    STATUS_CACHE["data"] = None
+
     try:
         if hasattr(globals().get("scheduler", None), "refresh_ratings_watermarks"):
             globals()["scheduler"].refresh_ratings_watermarks()
@@ -3877,30 +3922,24 @@ def api_pairs_reorder(order: List[str] = Body(...)) -> dict:
 
 
 @app.put("/api/pairs/{pair_id}")
-def api_pairs_update(pair_id: str, payload: PairIn) -> Dict[str, Any]:
+def api_pairs_update(pair_id: str, payload: PairPatch) -> Dict[str, Any]:
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
         for it in arr:
             if str(it.get("id")) == pair_id:
-                upd = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+                upd = payload.model_dump(exclude_unset=True, exclude_none=True)
+                if "features" in upd:
+                    it["features"] = _normalize_features(upd.pop("features"))
                 for k, v in upd.items():
-                    if v is None:
-                        continue
-                    if k == "features":
-                        it["features"] = _normalize_features(v)
-                    else:
-                        it[k] = v
+                    it[k] = v
                 save_config(cfg)
                 return {"ok": True}
         return {"ok": False, "error": "not_found"}
     except Exception as e:
-        try:
-            _append_log("TRBL", f"/api/pairs PUT failed: {e}")
-        except Exception:
-            pass
+        try: _append_log("TRBL", f"/api/pairs PUT failed: {e}")
+        except Exception: pass
         return {"ok": False, "error": str(e)}
-
 
 @app.delete("/api/pairs/{pair_id}")
 def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
@@ -4454,7 +4493,17 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     print(f"  Config:  {CONFIG_DIR / 'config.json'} (JSON)")
     print(f"  Cache:   {CACHE_DIR}")
     print(f"  Reports: {REPORT_DIR}\n")
-    uvicorn.run(app, host=host, port=port)
+
+    cfg = load_config()
+    debug = bool((cfg.get("runtime") or {}).get("debug"))
+
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=("debug" if debug else "warning"),
+        access_log=debug,
+    )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@
 const G=(typeof window!=="undefined"?window:globalThis),ID=(x)=>document.getElementById(x),Q=(s,r=document)=>r.querySelector(s),QA=(s,r=document)=>Array.from(r.querySelectorAll(s)),log=(...a)=>{try{console.debug("[cx:modals]",...a)}catch(_){}},jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
 function _cxState(){const el=ID("cx-modal");return(el&&el.__state)||G.__cxState||null}
 
+
 /* open/close */
 async function openPairModal(pairOrId){
   try{
@@ -45,61 +46,67 @@ function _provLogoHTML(name,label){const src=_provIconPath(name),alt=(label||nam
 
 /* CSS */
 (function(){
-  if(ID("cx-modal-core-css"))return;
-  const st=document.createElement("style"); st.id="cx-modal-core-css";
-  st.textContent=`
-  #cx-modal .modal-shell{width:min(960px,calc(100vw - 56px));max-height:calc(100vh - 56px);overflow:hidden;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}
-  #cx-modal .cx-card{display:flex;flex-direction:column;height:100%;background:rgba(20,22,28,.96)}
-  #cx-modal .cx-body{padding:14px 16px 0;overflow:auto;padding-bottom:var(--cxFooterH,96px)}
-  #cx-modal .cx-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
-  #cx-modal .title-wrap{display:flex;align-items:center;gap:10px}
-  #cx-modal .app-logo{width:24px;height:24px;background:linear-gradient(90deg,#7c4dff,#00d4ff);border-radius:6px;opacity:.8}
-  #cx-modal .app-name{font-weight:800;letter-spacing:.2px}
-  #cx-modal .app-sub{opacity:.7;font-size:12px}
-  body.cx-modal-open #save-fab,body.cx-modal-open #save-frost,body.cx-modal-open .savebar,body.cx-modal-open .actions.sticky{display:none!important}
-  #cx-modal.cx-draggable .modal-shell{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%)}
-  #cx-modal[data-dragging=true] .modal-shell{transform:none;transition:none}
-  #cx-modal .cx-head{cursor:move;user-select:none}
-  #cx-modal .cx-head .switch,#cx-modal .cx-head input,#cx-modal .cx-head button{cursor:auto}
-  #cx-modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
-  #cx-modal .grid2.compact{grid-template-columns:1fr 1fr;gap:8px 10px}
-  #cx-modal .cx-top{align-items:start}
-  #cx-modal .cx-row{margin:6px 0}
-  #cx-modal .field label{display:block;opacity:.8;font-size:12px;margin-bottom:6px}
-  #cx-modal .input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;height:36px}
-  #cx-modal .input.static{display:flex;align-items:center;height:36px}
-  #cx-modal .cx-st-row{align-items:end}
-  #cx-modal .flow-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px}
-  #cx-modal .flow-title{font-weight:700;margin-bottom:6px;opacity:.9}
-  .flow-rail.pretty{display:flex;align-items:center;gap:10px;--flowColor:currentColor}
-  .flow-rail.pretty .token{min-width:40px;text-align:center;opacity:.9;display:flex;align-items:center;justify-content:center}
-  .flow-rail.pretty .arrow{position:relative;display:block;flex:1;min-width:120px;height:12px}
-  .flow-rail.pretty .arrow::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:var(--flowColor);opacity:.25;transform:translateY(-50%);border-radius:2px}
-  .flow-rail.pretty .dot.flow{position:absolute;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--flowColor);opacity:.6}
-  .prov-wrap{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px}
-  .prov-logo{width:36px;height:36px;object-fit:contain;display:block;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
-  .prov-fallback{font-size:12px;opacity:.8}
-  #cx-modal .cx-actions{position:sticky;bottom:0;z-index:3;display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(20,22,28,.85),rgba(20,22,28,.98));backdrop-filter:blur(2px);min-height:72px}
-  #cx-modal .cx-btn{appearance:none;cursor:pointer;user-select:none;font-weight:800;text-transform:uppercase;letter-spacing:.02em;border-radius:14px;padding:12px 18px;line-height:1.1;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#fff;transition:transform .12s,box-shadow .12s,opacity .12s}
-  #cx-modal .cx-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.35)}
-  #cx-modal .cx-btn:active{transform:none}
-  #cx-modal .cx-btn.primary{background:linear-gradient(135deg,#4c7dff,#6b9bff 40%,#8ab0ff 100%);border-color:#7aa0ff66;color:#fff;box-shadow:0 10px 28px rgba(43,88,255,.35),0 0 14px rgba(122,160,255,.28);position:relative;overflow:hidden}
-  #cx-modal .cx-btn[disabled]{opacity:.6;cursor:default}
-  #cx-modal .simkl-alert{margin-top:12px;padding:12px 14px;border-radius:14px;background:linear-gradient(180deg,rgba(255,170,54,.12),rgba(255,170,54,.05));border:1px solid rgba(255,170,54,.55);box-shadow:0 8px 28px rgba(255,170,54,.1),0 0 0 1px rgba(255,170,54,.25) inset}
-  #cx-modal .simkl-alert .title{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.2px;margin:0 0 6px;color:#ffd79a}
-  #cx-modal .simkl-alert .title .ic{font-size:14px;line-height:1;transform:translateY(-1px)}
-  #cx-modal .simkl-alert .body{color:#fff;opacity:.92}
-  #cx-modal .simkl-alert .mini{margin-top:8px;font-size:12.5px;opacity:.85}
-  #cx-modal .cx-top{margin-bottom:0}
-  #cx-modal .feature-tabs{margin:6px 0 0}
-  #cx-modal .cx-main{margin-top:6px}
-  #cx-modal .cx-main .left .panel{margin-top:0;padding-top:8px}
-  #cx-modal .cx-mode-row{margin:6px 0 4px}
-  #cx-modal .feature-tabs + .panel{border-top-left-radius:12px;border-top-right-radius:12px}
-  .material-symbols-rounded{font-variation-settings:'FILL' 1,'wght' 600,'GRAD' 0,'opsz' 24}
-  #cx-modal .app-logo{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1;color:#fff;width:28px;height:28px;border-radius:6px;background:linear-gradient(90deg,#7c4dff,#00d4ff)}`;
+  if (document.getElementById("cx-modal-core-css")) return;
+  const st = document.createElement("style"); st.id = "cx-modal-core-css";
+  st.textContent = `
+#cx-modal .modal-shell{width:min(960px,calc(100vw - 56px));max-height:calc(100vh - 56px);overflow:hidden;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}
+#cx-modal .cx-card{display:flex;flex-direction:column;height:100%;background:rgba(20,22,28,.96)}
+#cx-modal .cx-body{padding:14px 16px 0;overflow:auto;padding-bottom:var(--cxFooterH,96px)}
+#cx-modal .cx-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+#cx-modal .title-wrap{display:flex;align-items:center;gap:10px}
+#cx-modal .app-logo{display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1;color:#fff;width:28px;height:28px;border-radius:6px;background:linear-gradient(90deg,#7c4dff,#00d4ff)}
+#cx-modal .app-name{font-weight:800;letter-spacing:.2px}
+#cx-modal .app-sub{opacity:.7;font-size:12px}
+body.cx-modal-open #save-fab,body.cx-modal-open #save-frost,body.cx-modal-open .savebar,body.cx-modal-open .actions.sticky{display:none!important}
+#cx-modal.cx-draggable .modal-shell{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%)}
+#cx-modal[data-dragging=true] .modal-shell{transform:none;transition:none}
+#cx-modal .cx-head{cursor:move;user-select:none}
+#cx-modal .cx-head .switch,#cx-modal .cx-head input,#cx-modal .cx-head button{cursor:auto}
+#cx-modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+#cx-modal .grid2.compact{grid-template-columns:1fr 1fr;gap:8px 10px}
+#cx-modal .cx-top{align-items:start}
+#cx-modal .cx-row{margin:6px 0}
+#cx-modal .field label{display:block;opacity:.8;font-size:12px;margin-bottom:6px}
+#cx-modal .input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;height:36px}
+#cx-modal .input.static{display:flex;align-items:center;height:36px}
+#cx-modal .cx-st-row{align-items:end}
+#cx-modal .flow-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px}
+#cx-modal .flow-title{font-weight:700;margin-bottom:6px;opacity:.9}
+.flow-rail.pretty{display:flex;align-items:center;gap:10px;--flowColor:currentColor}
+.flow-rail.pretty .token{min-width:40px;text-align:center;opacity:.9;display:flex;align-items:center;justify-content:center}
+.flow-rail.pretty .arrow{position:relative;display:block;flex:1;min-width:120px;height:12px}
+.flow-rail.pretty .arrow::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:var(--flowColor);opacity:.25;transform:translateY(-50%);border-radius:2px}
+.flow-rail.pretty .dot.flow{position:absolute;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--flowColor);opacity:.6}
+.prov-wrap{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px}
+.prov-logo{width:36px;height:36px;object-fit:contain;display:block;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+.prov-fallback{font-size:12px;opacity:.8}
+#cx-modal .cx-actions{position:sticky;bottom:0;z-index:3;display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(20,22,28,.85),rgba(20,22,28,.98));backdrop-filter:blur(2px);min-height:72px}
+#cx-modal .cx-btn{appearance:none;cursor:pointer;user-select:none;font-weight:800;text-transform:uppercase;letter-spacing:.02em;border-radius:14px;padding:12px 18px;line-height:1.1;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#fff;transition:transform .12s,box-shadow .12s,opacity .12s}
+#cx-modal .cx-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.35)}
+#cx-modal .cx-btn:active{transform:none}
+#cx-modal .cx-btn.primary{background:linear-gradient(135deg,#4c7dff,#6b9bff 40%,#8ab0ff 100%);border-color:#7aa0ff66;color:#fff;box-shadow:0 10px 28px rgba(43,88,255,.35),0 0 14px rgba(122,160,255,.28);position:relative;overflow:hidden}
+#cx-modal .cx-btn[disabled]{opacity:.6;cursor:default}
+#cx-modal .simkl-alert{margin-top:12px;padding:12px 14px;border-radius:14px;background:linear-gradient(180deg,rgba(255,170,54,.12),rgba(255,170,54,.05));border:1px solid rgba(255,170,54,.55);box-shadow:0 8px 28px rgba(255,170,54,.1),0 0 0 1px rgba(255,170,54,.25) inset}
+#cx-modal .simkl-alert .title{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.2px;margin:0 0 6px;color:#ffd79a}
+#cx-modal .simkl-alert .title .ic{font-size:14px;line-height:1;transform:translateY(-1px)}
+#cx-modal .simkl-alert .body{color:#fff;opacity:.92}
+#cx-modal .simkl-alert .mini{margin-top:8px;font-size:12.5px;opacity:.85}
+#cx-modal .cx-top{margin-bottom:0}
+#cx-modal .feature-tabs{margin:6px 0 0}
+#cx-modal .cx-main{margin-top:6px}
+#cx-modal .cx-main .left .panel{margin-top:0;padding-top:8px}
+#cx-modal .cx-mode-row{margin:6px 0 4px}
+#cx-modal .feature-tabs + .panel{border-top-left-radius:12px;border-top-right-radius:12px}
+.material-symbols-rounded{font-variation-settings:'FILL' 1,'wght' 600,'GRAD' 0,'opsz' 24}
+#cx-modal,#cx-modal .cx-card{color-scheme:dark}
+#cx-modal select.input{background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.12)}
+#cx-modal select.input:focus{outline:2px solid rgba(124,77,255,.55)}
+#cx-modal select.input option{background:#14161c;color:#fff}
+#cx-modal input[type="date"].input{color-scheme:dark}
+`;
   document.head.appendChild(st);
 })();
+
 
 /* footer */
 function ensureInlineFootNoBar(modal){
@@ -168,20 +175,89 @@ async function openAbout(){
       const mr=await fetch("/api/modules/versions?cb="+Date.now(),{cache:"no-store"}); if(!mr.ok) throw new Error(String(mr.status)); const mv=await mr.json();
       const body=document.querySelector('#about-backdrop .modal-card .modal-body'),firstGrid=body?.querySelector('.about-grid'); if(!body||!firstGrid) throw new Error("about body/grid missing");
       body.querySelector("#about-mods")?.remove();
-      if(!ID("about-mods-style")){const style=document.createElement("style"); style.id="about-mods-style"; style.textContent=`.mods-card{margin-top:16px;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;background:rgba(255,255,255,.03)}.mods-header{font-weight:600;opacity:.9;margin:0 0 8px 2px}.mods-grid{display:grid;grid-template-columns:minmax(120px,160px) 1fr auto;gap:8px 12px;align-items:center}.mods-group{grid-column:1/-1;margin-top:8px;font-weight:600;opacity:.8;border-top:1px solid rgba(255,255,255,.08);padding-top:8px}.mods-name{opacity:.9}.mods-key{opacity:.7}.mods-ver{justify-self:end;font-variant-numeric:tabular-nums;opacity:.95}@media (max-width:520px){.mods-grid{grid-template-columns:1fr auto}.mods-key{display:none}}`; document.head.appendChild(style)}
-      const wrap=document.createElement("div"); wrap.id="about-mods"; wrap.className="mods-card"; wrap.innerHTML=`<div class="mods-header">Modules</div><div class="mods-grid" role="table" aria-label="Module versions"></div>`;
-      const grid=wrap.querySelector(".mods-grid"),addGroup=(label)=>{const g=document.createElement("div"); g.className="mods-group"; g.textContent=label; grid.appendChild(g)},addRow=(label,key,ver)=>{const n=document.createElement("div"); n.className="mods-name"; n.textContent=label.replace(/^_+/,""); const k=document.createElement("div"); k.className="mods-key"; k.textContent=key; const v=document.createElement("div"); v.className="mods-ver"; v.textContent=ver?`v${ver}`:"v0.0.0"; grid.appendChild(n);grid.appendChild(k);grid.appendChild(v)};
-      const groups=mv?.groups||{}; addGroup("Authentication Providers"); Object.entries(groups.AUTH||{}).forEach(([n,v])=>addRow(n,n,v)); addGroup("Synchronization Providers"); Object.entries(groups.SYNC||{}).forEach(([n,v])=>addRow(n,n,v));
-      firstGrid.insertAdjacentElement("afterend",wrap);
+
+      // CSS (once)
+      if(!ID("about-mods-style")){
+        const style=document.createElement("style"); style.id="about-mods-style";
+        style.textContent=[
+          `.mods-card{margin-top:16px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(255,255,255,.03)}`,
+          `.fold-head{width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:rgba(255,255,255,.02);border:0;border-bottom:1px solid rgba(255,255,255,.06);border-radius:12px 12px 0 0;color:#fff;font-weight:700;cursor:pointer}`,
+          `.fold-head .chev{font-family:"Material Symbols Rounded";transition:transform .18s ease}`,
+          `.fold.open .fold-head .chev{transform:rotate(180deg)}`,
+          `.fold-body{overflow:hidden;opacity:0;transform:translateY(-2px);height:0}`,
+          `.fold.open .fold-body{opacity:1;transform:none}`,
+          `.mods-section{border-top:1px solid rgba(255,255,255,.06)}`,
+          `.mods-section:first-child{border-top:0}`,
+          `.fold-sub{width:100%;display:flex;align-items:center;justify-content:space-between;background:transparent;border:0;color:#fff;font-weight:600;padding:10px 12px;cursor:pointer;opacity:.9}`,
+          `.mods-rows{display:grid;grid-template-columns:minmax(120px,160px) 1fr auto;gap:8px 12px;padding:0 12px 12px}`,
+          `.mods-name{opacity:.9}`, `.mods-key{opacity:.7}`, `.mods-ver{justify-self:end;font-variant-numeric:tabular-nums;opacity:.95}`,
+          `@media (max-width:520px){.mods-rows{grid-template-columns:1fr auto}.mods-key{display:none}}`,
+          `@media (prefers-reduced-motion:reduce){.fold-body{transition:none !important}}`
+        ].join("");
+        document.head.appendChild(style);
+      }
+
+      // Helpers
+      const animFold=(wrap,open)=>{
+        const b=wrap.querySelector(".fold-body"); if(!b) return;
+        b.hidden=false;
+        const to=open?b.scrollHeight:0;
+        b.style.transition="height 200ms ease,opacity 200ms ease,transform 200ms ease";
+        requestAnimationFrame(()=>{ b.style.height=to+"px"; b.style.opacity=open?"1":"0"; b.style.transform=open?"none":"translateY(-2px)"; });
+        const end=()=>{ b.style.transition=""; if(open){ b.style.height="auto"; } else { b.style.height="0"; b.hidden=true; } b.removeEventListener("transitionend",end); };
+        b.addEventListener("transitionend",end);
+        wrap.classList.toggle("open",open);
+        const hd=wrap.querySelector(".fold-head,.fold-sub"); if(hd) hd.setAttribute("aria-expanded",String(open));
+      };
+      const makeSection=(label)=>{
+        const sec=document.createElement("section"); sec.className="mods-section fold";
+        const h=document.createElement("button"); h.type="button"; h.className="fold-sub"; h.innerHTML=`<span>${label}</span><span class="chev">expand_more</span>`; h.setAttribute("aria-expanded","false");
+        const b=document.createElement("div"); b.className="fold-body"; b.hidden=true;
+        const rows=document.createElement("div"); rows.className="mods-rows"; b.appendChild(rows);
+        h.addEventListener("click",()=>animFold(sec,!sec.classList.contains("open")));
+        sec.append(h,b);
+        return {sec,rows};
+      };
+      const addRow=(rows,label,key,ver)=>{
+        const n=document.createElement("div"); n.className="mods-name"; n.textContent=label.replace(/^_+/,"");
+        const k=document.createElement("div"); k.className="mods-key"; k.textContent=key;
+        const v=document.createElement("div"); v.className="mods-ver"; v.textContent=ver?`v${ver}`:"v0.0.0";
+        rows.append(n,k,v);
+      };
+
+      // Build card (default collapsed)
+      const card=document.createElement("div"); card.id="about-mods"; card.className="mods-card fold";
+      const head=document.createElement("button"); head.type="button"; head.className="fold-head"; head.setAttribute("aria-expanded","false"); head.innerHTML=`<span>Modules</span><span class="chev">expand_more</span>`;
+      const bodyFold=document.createElement("div"); bodyFold.className="fold-body"; bodyFold.hidden=true;
+
+      // Sections (default collapsed)
+      const auth=makeSection("Authentication Providers");
+      const sync=makeSection("Synchronization Providers");
+      const groups=mv?.groups||{};
+      Object.entries(groups.AUTH||{}).forEach(([n,v])=>addRow(auth.rows,n,n,v));
+      Object.entries(groups.SYNC||{}).forEach(([n,v])=>addRow(sync.rows,n,n,v));
+
+      bodyFold.append(auth.sec,sync.sec);
+      card.append(head,bodyFold);
+      head.addEventListener("click",()=>animFold(card,!card.classList.contains("open")));
+
+      firstGrid.insertAdjacentElement("afterend",card);
     }catch(e){console.warn("[about] modules render failed",e)}
   }catch(e){console.warn("[about] openAbout failed",e)}
-  ID("about-backdrop")?.classList.remove("hidden");
+  const bb=ID("about-backdrop"); if(bb){bb.classList.remove("hidden"); document.body.classList.add("cx-modal-open"); document.body.dataset.aboutOpen="1";}
 }
-function closeAbout(ev){if(ev&&ev.type==="click"&&ev.currentTarget!==ev.target)return; ID("about-backdrop")?.classList.add("hidden")}
+function closeAbout(ev){
+  if(ev&&ev.type==="click"&&ev.currentTarget!==ev.target) return;
+  ID("about-backdrop")?.classList.add("hidden");
+  delete document.body.dataset.aboutOpen;
+  const stillOpen=document.querySelector('#cx-modal:not(.hidden),#about-backdrop:not(.hidden),#upd-modal:not(.hidden),.modal.open,[data-modal-open="1"]');
+  if(!stillOpen) document.body.classList.remove("cx-modal-open");
+}
 
-/* expose to header FastAPI*/
-G.openAbout  = openAbout;
-G.closeAbout = closeAbout;
+/* expose to header FastAPI */
+G.openAbout=openAbout;
+G.closeAbout=closeAbout;
+
 
 /* ensure modal UI */
 async function cxEnsureCfgModal(pairInit=null){

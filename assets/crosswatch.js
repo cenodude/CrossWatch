@@ -1,3 +1,6 @@
+/* assets/crosswatch.js *
+
+
 /* Global showTab bootstrap (runs first) */
 (function(){
   if (typeof window.showTab !== "function") {
@@ -183,7 +186,7 @@ function applySyncVisibility() {
 }
 
 
-// Debounced scheduler for applySyncVisibility — avoids repeated runs and is safe if the function isn't defined yet
+// Debounced applySyncVisibility using rAF or setTimeout
 let __syncVisTick = 0;
 function scheduleApplySyncVisibility() {
   if (__syncVisTick) return;
@@ -197,7 +200,7 @@ function scheduleApplySyncVisibility() {
   __syncVisTick = raf(run);
 }
 
-// Observe DOM changes and re-apply visibility (debounced)
+// Observe changes to the providers list and footer (where sync settings may be toggled)
 function bindSyncVisibilityObservers() {
   const list = document.getElementById("providers_list");
   if (list && !list.__syncObs) {
@@ -222,7 +225,7 @@ function bindSyncVisibilityObservers() {
 }
 
 
-// ---- Watchlist preview visibility driven by /api/pairs ----
+// ---- BEGIN Watchlist Preview visibility based on /api/pairs ----
 const PAIRS_CACHE_KEY = "cw.pairs.v1";
 const PAIRS_TTL_MS    = 15_000;
 
@@ -272,8 +275,7 @@ document.addEventListener("DOMContentLoaded", () => { updatePreviewVisibility();
 
 // ---- END   Watchlist Preview visibility based on /api/pairs ----
 
-// ========================== CONNECTION STATUS -- BEGIN   ============================================
-const AUTO_STATUS = false; // DISABLE by default
+const AUTO_STATUS = false; // DISABLE by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
 let lastStatusMs = 0;
 const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -492,7 +494,7 @@ async function refreshStatus(force = false) {
   if (typeof lastStatusMs !== "undefined") lastStatusMs = now;
 
   try {
-    // 1) Make sure we know which providers are used in pairs (throttled)
+    // 1) Update visibility first so badges hide/show instantly if pairs changed
     await refreshPairedProviders(force ? 0 : 5000);
 
     // 2) Fetch live status
@@ -541,13 +543,13 @@ async function refreshStatus(force = false) {
   try {
     const cached = loadStatusCache();
     if (cached?.providers) {
-      renderConnectorStatus(cached.providers, { stale: true }); // voorkom rode flits
+      renderConnectorStatus(cached.providers, { stale: true });
     }
   } catch {}
   // Adjust badge visibility based on /api/pairs if that helper is available
   try { refreshPairedProviders?.(0); } catch {}
   // Then fetch live status to replace stale UI and refresh cache
-  try { refreshStatus(false); } catch {}
+  try { refreshStatus(true); } catch {}
 })();
 
 async function manualRefreshStatus() {
@@ -587,9 +589,6 @@ async function manualRefreshStatus() {
     manualRefreshStatus._inFlight = false;
   }
 }
-
-//  ====================== END CONNECTION status =========================
-
 
 function toLocal(iso) {
   if (!iso) return "—";
@@ -2008,6 +2007,9 @@ async function loadConfig() {
   _setVal("mode",   cfg.sync?.bidirectional?.mode || "two-way");
   _setVal("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
   _setVal("debug",  String(!!cfg.runtime?.debug));
+  _setVal("metadata_locale", cfg.metadata?.locale || "");
+  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
+
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
 // --- Sensitive fields: inject RAW values from config (do not mark as touched)
@@ -2139,6 +2141,9 @@ async function saveSettings() {
     const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
     const prevTraktCid = norm(serverCfg?.trakt?.client_id);
     const prevTraktSec = norm(serverCfg?.trakt?.client_secret);
+    const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
+    const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
+
 
     const uiMode   = _getVal("mode");
     const uiSource = _getVal("source");
@@ -2162,6 +2167,24 @@ async function saveSettings() {
       changed = true;
     }
 
+    // Metadata (locale + TTL)
+    const uiMetaLocale = (document.getElementById("metadata_locale")?.value || "").trim();
+    const uiMetaTTLraw = (document.getElementById("metadata_ttl_hours")?.value || "").trim();
+    const uiMetaTTL    = uiMetaTTLraw === "" ? null : parseInt(uiMetaTTLraw, 10);
+
+    if (uiMetaLocale !== prevMetaLocale) {
+      cfg.metadata = cfg.metadata || {};
+      if (uiMetaLocale) cfg.metadata.locale = uiMetaLocale;
+      else delete cfg.metadata.locale; // allow clearing
+      changed = true;
+    }
+    if (uiMetaTTL !== null && !Number.isNaN(uiMetaTTL) && uiMetaTTL !== prevMetaTTL) {
+      cfg.metadata = cfg.metadata || {};
+      cfg.metadata.ttl_hours = Math.max(1, uiMetaTTL);
+      changed = true;
+    }
+
+    // Secrets (tokens, keys, client ids/secrets)
     const sPlex   = readSecretSafe("plex_token", prevPlex);
     const sCid    = readSecretSafe("simkl_client_id", prevCid);
     const sSec    = readSecretSafe("simkl_client_secret", prevSec);
@@ -2755,9 +2778,21 @@ async function loadWall() {
       a.addEventListener("mouseenter", async () => {
         const descEl = document.getElementById(`desc-${it.type}-${it.tmdb}`);
         if (!descEl || descEl.dataset.loaded) return;
+
         try {
-          const cb = window._lastSyncEpoch || 0;
-          const meta = await fetch(`/api/tmdb/meta/${it.type}/${it.tmdb}?cb=${cb}`).then(r => r.json());
+          const entity = (it.type === "tv" || it.type === "show") ? "show" : "movie";
+          const res = await fetch("/api/metadata/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              entity,
+              ids: { tmdb: String(it.tmdb) },
+              need: { overview: true }
+            })
+          });
+
+          const j = await res.json();
+          const meta = j?.ok ? j.result : null;
           descEl.textContent = meta?.overview || "—";
           descEl.dataset.loaded = "1";
         } catch {
@@ -2774,7 +2809,6 @@ async function loadWall() {
     msg.textContent = "Failed to load preview.";
   }
 }
-
 
 async function updateWatchlistPreview() {
   try {
@@ -2870,19 +2904,35 @@ window.addEventListener("storage", (event) => {
 });
 
 async function resolvePosterUrl(entity, id, size = "w342") {
+  // Guard
   if (!id) return null;
-  const typ = entity === "tv" || entity === "show" ? "tv" : "movie";
+
+  const typ = (entity === "tv" || entity === "show") ? "tv" : "movie";
+  const apiEntity = (typ === "tv") ? "show" : "movie";
   const cb = window._lastSyncEpoch || 0;
 
-  
-  const res = await fetch(`/api/tmdb/meta/${typ}/${id}`);
-  if (!res.ok) return null;
+  try {
+    // Ask the new resolver only for poster presence
+    const res = await fetch("/api/metadata/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entity: apiEntity,
+        ids: { tmdb: String(id) },
+        need: { poster: true }
+      })
+    });
+    if (!res.ok) return null;
 
-  const meta = await res.json();
-  if (!meta.images || !meta.images.poster?.length) return null;
+    const j = await res.json();
+    const meta = j && j.ok ? j.result : null;
+    if (!meta?.images?.poster?.length) return null;
 
-  
-  return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
+    // Use the cached art proxy for the actual image
+    return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
+  } catch {
+    return null;
+  }
 }
 
 async function mountAuthProviders() {

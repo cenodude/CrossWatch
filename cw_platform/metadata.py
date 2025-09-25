@@ -1,3 +1,4 @@
+# /cw_platform/metadata.py
 from __future__ import annotations
 
 import importlib
@@ -8,22 +9,6 @@ from _logging import log
 
 
 class MetadataManager:
-    """
-    Aggregates metadata from pluggable providers under providers/metadata/_meta_*.py.
-
-    Provider module contract (any one of):
-      - build(load_cfg, save_cfg) -> provider_instance
-      - PROVIDER (class): will be instantiated with (load_cfg, save_cfg)
-      - PROVIDER (instance)
-
-    Provider instance API (at least one of):
-      - fetch(entity: str, ids: dict, locale: Optional[str], need: dict) -> dict
-      - resolve(entity: str, ids: dict, locale: Optional[str], need: dict) -> dict  # legacy
-
-    Entities:
-      - We normalize to "movie" | "show" (aliases "tv"/"series" map to "show").
-    """
-
     def __init__(self, load_cfg, save_cfg):
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
@@ -44,7 +29,6 @@ class MetadataManager:
                 name = m.name
                 if not name.startswith("_meta_"):
                     continue
-
                 try:
                     mod = importlib.import_module(f"providers.metadata.{name}")
                 except Exception as e:
@@ -54,7 +38,6 @@ class MetadataManager:
                 inst = getattr(mod, "PROVIDER", None)
                 built = None
 
-                # Preferred: factory function
                 if hasattr(mod, "build"):
                     try:
                         built = mod.build(self.load_cfg, self.save_cfg)
@@ -64,7 +47,6 @@ class MetadataManager:
                 if built is not None:
                     inst = built
                 elif isinstance(inst, type):
-                    # Class provided: instantiate
                     try:
                         inst = inst(self.load_cfg, self.save_cfg)
                     except Exception as e:
@@ -95,27 +77,15 @@ class MetadataManager:
 
         Parameters
         ----------
-        entity : str
-            "movie" | "show" (aliases: "tv"/"series" -> "show").
-        ids : dict
-            Identifier map, e.g. {"tmdb": "123", "imdb": "tt..."}; providers choose what they can use.
-        locale : Optional[str]
-            Locale override (e.g., "nl-NL"). If None, falls back to config (metadata.locale or ui.locale).
-        need : Optional[dict]
-            Field request flags. Keep defaults lean; request rich fields explicitly.
-            Example: {"poster": True, "backdrop": True, "title": True, "year": True, "overview": True}
-        strategy : str
-            "first_success" (default) or "merge".
-              - first_success: return the first non-empty provider result.
-              - merge: field-wise merge; images concatenated/deduped by URL, scalars use first non-empty.
-
-        Returns
-        -------
-        dict
-            Normalized metadata dictionary. Empty dict on failure (fail-soft).
+        entity : "movie" | "show" (aliases: "tv"/"series" -> "show")
+        ids    : {"tmdb": "...", "imdb": "tt..."}; providers choose what they can use
+        locale : e.g., "nl-NL"; if None, falls back to config
+        need   : field flags, e.g., {"poster": True, "backdrop": True, "title": True, "year": True}
+        strategy : "first_success" (default) or "merge"
         """
         cfg = self.load_cfg() or {}
         md_cfg = cfg.get("metadata") or {}
+        debug = bool((cfg.get("runtime") or {}).get("debug"))
 
         # Normalize entity
         e = str(entity or "").lower()
@@ -124,11 +94,11 @@ class MetadataManager:
             entity = "movie"
 
         # Determine priority
-        default_order = list(self.providers.keys())  # discovery order
+        default_order = list(self.providers.keys())
         configured = md_cfg.get("priority") or default_order
         order = [str(x).upper() for x in configured if str(x).upper() in self.providers]
 
-        # Default lean request
+        # Defaults
         req_need = need or {"poster": True, "backdrop": True, "title": True, "year": True}
         eff_locale = locale or md_cfg.get("locale") or (cfg.get("ui") or {}).get("locale")
 
@@ -137,24 +107,22 @@ class MetadataManager:
             prov = self.providers.get(name)
             if not prov:
                 continue
-
             try:
                 if hasattr(prov, "fetch"):
                     r = prov.fetch(entity=entity, ids=ids, locale=eff_locale, need=req_need) or {}
                 else:
-                    # Compatibility shim
                     resolver = getattr(prov, "resolve", None)
                     r = resolver(entity=entity, ids=ids, locale=eff_locale, need=req_need) if callable(resolver) else {}
 
                 if not r:
                     continue
 
-                # Ensure type is normalized in the payload (helps callers)
                 if "type" not in r:
                     r["type"] = entity
 
                 if strategy == "first_success":
-                    log(f"Provider {name} hit", module="META")
+                    if debug:
+                        log(f"Provider {name} hit", level="DEBUG", module="META")
                     return r
 
                 results.append(r)
@@ -173,20 +141,18 @@ class MetadataManager:
     def _merge(self, results: list[dict]) -> dict:
         """
         Merge multiple provider payloads:
-          - images.* : concatenate and de-duplicate by URL, preserving order
-          - scalars  : first non-empty value wins
+          - images.* : concatenate and de-duplicate by URL (stable order)
+          - scalars  : first non-empty wins
         """
         out: dict = {}
         for r in results:
             if not isinstance(r, dict):
                 continue
-
             for k, v in r.items():
                 if k == "images" and isinstance(v, dict):
                     dst = out.setdefault("images", {})
                     for kind, arr in v.items():
                         bucket = dst.setdefault(kind, [])
-                        # dedupe by url with stable order
                         seen = {x.get("url") for x in bucket if isinstance(x, dict)}
                         for x in (arr or []):
                             url = x.get("url") if isinstance(x, dict) else None
@@ -197,7 +163,6 @@ class MetadataManager:
                     if k not in out and v not in (None, "", [], {}):
                         out[k] = v
 
-        # If no 'type' made it through but we can infer from any input, keep a sane default
         if "type" not in out:
             for r in results:
                 t = str(r.get("type") or "").lower()

@@ -433,10 +433,9 @@ PROVIDER = TmdbProvider
 
 
 def html() -> str:
-    # Settings UI for TMDb + Metadata (with Advanced fold)
+    # Minimal TMDb settings UI: API key + two Advanced fields (locale, ttl_hours)
     return r'''<div class="section" id="sec-tmdb">
   <style>
-    /* Scoped styles for TMDb Advanced fold */
     #sec-tmdb details.advanced {
       border: 1px dashed var(--border);
       border-radius: 12px;
@@ -444,23 +443,14 @@ def html() -> str:
       padding: 8px 10px;
       margin-top: 4px;
     }
-    #sec-tmdb details.advanced summary {
-      cursor: pointer;
-      font-weight: 700;
-      opacity: .9;
-      list-style: none;
-      outline: none;
-    }
-    #sec-tmdb details.advanced .adv-wrap {
-      margin-top: 10px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
+    #sec-tmdb details.advanced summary { cursor: pointer; font-weight: 700; opacity: .9; list-style: none; }
+    #sec-tmdb details.advanced .adv-wrap { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   </style>
+
   <div class="head" onclick="toggleSection('sec-tmdb')">
     <span class="chev"></span><strong>The Movie Database (TMDb)</strong>
   </div>
+
   <div class="body">
     <div class="grid2">
       <div style="grid-column:1 / -1">
@@ -489,36 +479,6 @@ def html() -> str:
             <label>TTL hours (metadata.ttl_hours)</label>
             <input id="metadata_ttl_hours" type="number" min="1" step="1" placeholder="6" oninput="this.dataset.dirty='1'">
             <div class="sub">Resolver cache freshness (coarse). Default 6h.</div>
-          </div>
-
-          <div>
-            <label>Bulk max (metadata.bulk_max)</label>
-            <input id="metadata_bulk_max" type="number" min="1" step="1" placeholder="300" oninput="this.dataset.dirty='1'">
-            <div class="sub">Safety cap for <code>/api/metadata/bulk</code> items. Default 300.</div>
-          </div>
-
-          <div>
-            <label>Backoff max retries (metadata.backoff_max_retries)</label>
-            <input id="metadata_backoff_max_retries" type="number" min="0" step="1" placeholder="4" oninput="this.dataset.dirty='1'">
-            <div class="sub">429/5xx retries before failing.</div>
-          </div>
-
-          <div>
-            <label>Backoff base (ms) (metadata.backoff_base_ms)</label>
-            <input id="metadata_backoff_base_ms" type="number" min="100" step="50" placeholder="500" oninput="this.dataset.dirty='1'">
-            <div class="sub">Base delay for exponential backoff.</div>
-          </div>
-
-          <div>
-            <label>Backoff max (ms) (metadata.backoff_max_ms)</label>
-            <input id="metadata_backoff_max_ms" type="number" min="200" step="100" placeholder="4000" oninput="this.dataset.dirty='1'">
-            <div class="sub">Upper bound for backoff delay.</div>
-          </div>
-
-          <div style="grid-column:1 / -1">
-            <label>Provider priority (metadata.priority)</label>
-            <input id="metadata_priority" placeholder="CSV, e.g. TMDB,TRAKT" oninput="this.dataset.dirty='1'">
-            <div class="sub">Order of providers for resolve(); first non-empty wins (merge mode still aggregates images).</div>
           </div>
 
         </div>

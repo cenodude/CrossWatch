@@ -4240,3 +4240,7 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 
 /* neutralize any older rules that push badges left */
 .ops-header .badges, #conn-badges.badges { margin-left: 0 !important; }
+
+/* Hide sticky Save while About is open */
+body:has(#about-backdrop:not(.hidden)) #save-fab,
+body:has(#about-backdrop:not(.hidden)) #save-frost { display:none !important; }

@@ -342,69 +342,97 @@
   function hydrateFromLog() {
     const det = document.getElementById("det-log"); if (!det) return false;
     const txt = det.innerText || det.textContent || ""; if (!txt) return false;
+
     const lines = txt.split(/\n+/).slice(-500);
     const tallies = Object.create(null);
     const ensureLane = (k) => (tallies[k] ||= { added:0, removed:0, updated:0, spotAdd:[], spotRem:[], spotUpd:[] });
 
+    // Normalize features to stable lanes
+    const mapFeat = (s) => {
+      const f = String(s || "").trim().toLowerCase();
+      if (!f) return "";
+      if (f === "watch" || f === "watched") return "history";
+      return f;
+    };
+
+    let lastFeatHint = "";
+
     for (const raw of lines) {
-      const i = raw.indexOf("{"); if (i < 0) continue;
-      let obj = null; try { obj = JSON.parse(raw.slice(i)); } catch { continue; }
+      const i = raw.indexOf("{");
+      if (i < 0) { // pick up feature hints for fallback
+        const m = raw.match(/feature["']?\s*:\s*"?(\w+)"?/i);
+        if (m) lastFeatHint = mapFeat(m[1]) || lastFeatHint;
+        continue;
+      }
+      let obj; try { obj = JSON.parse(raw.slice(i)); } catch { continue; }
       if (!obj || !obj.event) continue;
 
+      const feat = mapFeat(obj.feature);
+      if (feat) lastFeatHint = feat;
+
       if (obj.event === "two:done") {
-        const feat = (obj.feature || "").trim(); if (!feat) continue;
-        const res = obj.res || {}; const lane = ensureLane(feat);
-        lane.added += +res.adds || 0; lane.removed += +res.removes || 0; continue;
-      }
-      if (obj.event === "plan") {
-        const feat = (obj.feature || "").trim(); if (!feat) continue;
+        if (!feat) continue;
+        const res = obj.res || {};
         const lane = ensureLane(feat);
-        lane.added += +obj.add || 0; lane.removed += +obj.rem || 0; continue;
+        lane.added   += +res.adds    || 0;
+        lane.removed += +res.removes || 0;
+        lane.updated += +res.updates || 0;
+        continue;
       }
+
+      if (obj.event === "plan") {
+        if (!feat) continue;
+        const lane = ensureLane(feat);
+        lane.added   += +obj.add || 0;
+        lane.removed += +obj.rem || 0;
+        continue;
+      }
+
       if (obj.event === "two:plan") {
-        const feat = (obj.feature || "").trim(); if (!feat) continue;
+        if (!feat) continue;
         const lane = ensureLane(feat);
         const addA = +obj.add_to_A || 0, addB = +obj.add_to_B || 0;
         const remA = +obj.rem_from_A || 0, remB = +obj.rem_from_B || 0;
-        lane.added += Math.max(addA, addB);
+        lane.added   += Math.max(addA, addB);
         lane.removed += Math.max(remA, remB);
         continue;
       }
+
       if (obj.event === "spotlight" && obj.feature && obj.action && obj.title) {
-        const lane = ensureLane(obj.feature.trim());
-        if (obj.action === "add"   && lane.spotAdd.length < 3) lane.spotAdd.push(obj.title);
-        if (obj.action === "remove"&& lane.spotRem.length < 3) lane.spotRem.push(obj.title);
-        if (obj.action === "update"&& lane.spotUpd.length < 3) lane.spotUpd.push(obj.title);
+        const lane = ensureLane(feat || obj.feature);
+        const act = String(obj.action).toLowerCase();
+        if (act === "add"    && lane.spotAdd.length < 3) lane.spotAdd.push(obj.title);
+        if (act === "remove" && lane.spotRem.length < 3) lane.spotRem.push(obj.title);
+        if (act === "update" && lane.spotUpd.length < 3) lane.spotUpd.push(obj.title);
         continue;
       }
     }
 
+    // Coarse fallback when no structured tallies were found
     if (!Object.keys(tallies).length) {
       let added = 0, removed = 0;
       for (let i = lines.length - 1; i >= 0; i--) {
-        const m = lines[i].match(/Sync complete·\+(\d+)\s*\/\s*-(\d+)/);
-        if (m) { added = parseInt(m[1],10)||0; removed = parseInt(m[2],10)||0; break; }
+        const m = lines[i].match(/Sync complete·\+(\d+)\s*\/\s*-(\d+)/i);
+        if (m) { added = +m[1] || 0; removed = +m[2] || 0; break; }
       }
       if (added === 0 && removed === 0) {
         for (let i = lines.length - 1; i >= 0; i--) {
           const m = lines[i].match(/Plan·add A=(\d+),\s*add B=(\d+),\s*remove A=(\d+),\s*remove B=(\d+)/i);
-          if (m) {
-            added   = Math.max(parseInt(m[1],10)||0, parseInt(m[2],10)||0);
-            removed = Math.max(parseInt(m[3],10)||0, parseInt(m[4],10)||0);
-            break;
-          }
+          if (m) { added = Math.max(+m[1]||0, +m[2]||0); removed = Math.max(+m[3]||0, +m[4]||0); break; }
         }
       }
+      const feat = lastFeatHint || "watchlist"; // prefer history when hinted, else fall back
       summary = summary || {}; summary.features = summary.features || {};
-      const lane = Object.assign({ added:0, removed:0, updated:0 }, summary.features.watchlist || {});
-      lane.added = lane.added || added; lane.removed = lane.removed || removed;
-      summary.features.watchlist = lane;
-      hydratedLanes.watchlist = { added: lane.added, removed: lane.removed, updated: lane.updated, items: [], spotAdd: [], spotRem: [], spotUpd: [] };
+      const lane = Object.assign({ added:0, removed:0, updated:0 }, summary.features[feat] || {});
+      lane.added ||= added; lane.removed ||= removed;
+      summary.features[feat] = lane;
+      hydratedLanes[feat] = { added: lane.added, removed: lane.removed, updated: lane.updated, items: [], spotAdd: [], spotRem: [], spotUpd: [] };
       summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
       renderAll();
       return (added > 0 || removed > 0);
     }
 
+    // Merge tallies → summary; clamp spotlights to 3
     summary = summary || {}; summary.features = summary.features || {};
     for (const [feat, lane] of Object.entries(tallies)) {
       const prev = summary.features[feat] || {};
@@ -412,12 +440,15 @@
         added:   (prev.added   || 0) + (lane.added   || 0),
         removed: (prev.removed || 0) + (lane.removed || 0),
         updated: (prev.updated || 0) + (lane.updated || 0),
-        spotlight_add:    prev.spotlight_add    && prev.spotlight_add.length    ? prev.spotlight_add    : lane.spotAdd,
-        spotlight_remove: prev.spotlight_remove && prev.spotlight_remove.length ? prev.spotlight_remove : lane.spotRem,
-        spotlight_update: prev.spotlight_update && prev.spotlight_update.length ? prev.spotlight_update : lane.spotUpd,
+        spotlight_add:    (prev.spotlight_add    && prev.spotlight_add.length    ? prev.spotlight_add    : lane.spotAdd).slice(-3),
+        spotlight_remove: (prev.spotlight_remove && prev.spotlight_remove.length ? prev.spotlight_remove : lane.spotRem).slice(-3),
+        spotlight_update: (prev.spotlight_update && prev.spotlight_update.length ? prev.spotlight_update : lane.spotUpd).slice(-3),
       };
       summary.features[feat] = merged;
-      hydratedLanes[feat] = { added: merged.added, removed: merged.removed, updated: merged.updated, items: [], spotAdd: merged.spotlight_add || [], spotRem: merged.spotlight_remove || [], spotUpd: merged.spotlight_update || [] };
+      hydratedLanes[feat] = {
+        added: merged.added, removed: merged.removed, updated: merged.updated,
+        items: [], spotAdd: merged.spotlight_add || [], spotRem: merged.spotlight_remove || [], spotUpd: merged.spotlight_update || []
+      };
     }
     summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
     renderAll();

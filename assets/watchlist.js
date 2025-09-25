@@ -1607,37 +1607,45 @@
   }
 
   // Delete response parsing (PLEX/SIMKL/TRAKT/JELLYFIN/ALL)
-  async function postDelete(keys, provider){
+  async function postDelete(keys, provider) {
     let status = 0;
     try {
+      const prov = (provider || "ALL").toUpperCase();
       const r = await fetch("/api/watchlist/delete", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ keys, provider: (provider || "ALL").toUpperCase() })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys, provider: prov })
       });
 
       status = r.status;
+
+      // Tolerate empty/non-JSON bodies
       let txt = "";
       try { txt = await r.text(); } catch {}
       let data = null;
       try { data = txt ? JSON.parse(txt) : null; } catch {}
 
-      // Count success from multiple possible shapes
-      let okCount = 0;
+      // Universal fast-path: any 2xx = success (backend already enforced auth/logic)
+      if (r.ok) {
+        let okCount = 0;
+        if (data && typeof data.deleted_ok === "number") {
+          okCount = data.deleted_ok;
+        } else if (Array.isArray(data?.results)) {
+          okCount = data.results.filter(x => x && (x.ok === true || x.status === "ok")).length;
+        } else {
+          okCount = keys.length; // assume batch-level OK
+        }
+        return { okCount, anySuccess: true, status, networkError: false, raw: data };
+      }
 
+      // Non-2xx fallback: try to salvage partial success
+      let okCount = 0;
       if (data && typeof data.deleted_ok === "number") {
         okCount = data.deleted_ok;
       } else if (Array.isArray(data?.results)) {
         okCount = data.results.filter(x => x && (x.ok === true || x.status === "ok")).length;
       }
-
-      // Be generous: some backends only set { ok:true } per batch/provider
-      if (!okCount && data?.ok === true) {
-        okCount = keys.length; // assume batch succeeded
-      }
-
-      const anySuccess = (okCount > 0) || (data?.ok === true) || r.ok;
-
+      const anySuccess = (okCount > 0) || (data?.ok === true);
       return { okCount, anySuccess, status, networkError: false, raw: data };
     } catch {
       return { okCount: 0, anySuccess: false, status: status || 0, networkError: true, raw: null };
@@ -1807,9 +1815,10 @@
   })();
 
   // ---------- delete flow ----------
-  document.getElementById("wl-delete").addEventListener("click", async () => {
-    const provider = (delProv.value || "ALL").toUpperCase();
-    if (!selected.size) return;
+  // ---------- delete flow ----------
+  document.getElementById("wl-delete")?.addEventListener("click", async () => {
+    const provider = (delProv?.value || "ALL").toUpperCase();
+    if (!selected?.size) { snackbar?.("Nothing selected"); return; }
 
     const keys = [...selected];
     const btn = document.getElementById("wl-delete");
@@ -1820,108 +1829,97 @@
     let attemptCount = 0;
     let anyHttpAttempt = false;
     let sawNetworkError = false;
-    let anyBackendSuccess = false;
-    let lastStatus;
+    let any2xx = false;
+    let lastStatus = 0;
 
     try {
       const CHUNK = 50;
 
+      // Build run plan
+      const runPlan = [];
       if (provider === "ALL") {
-        for (let i = 0; i < keys.length; i += CHUNK) {
-          const part = keys.slice(i, i + CHUNK);
-          const res = await postDelete(part, "ALL");
-          attemptCount++;
-          anyHttpAttempt ||= (res.status > 0);
-          sawNetworkError ||= res.networkError;
-          lastStatus = res.status;
-          totalOk += (res.okCount || 0);
-          anyBackendSuccess ||= !!(res.anySuccess || res?.raw?.ok === true);
-          updateBusy?.(btn, Math.round(((i + part.length) / keys.length) * 100));
-        }
+        runPlan.push({ prov: "ALL", list: keys });
       } else {
         const map = mapProvidersByKey(items);
         const subset = keys.filter(k => (map.get(k) || new Set()).has(provider));
-        const run = subset.length ? subset : keys; // try anyway if tags missing
+        runPlan.push({ prov: provider, list: subset.length ? subset : keys });
+      }
 
-        for (let i = 0; i < run.length; i += CHUNK) {
-          const part = run.slice(i, i + CHUNK);
-          const res = await postDelete(part, provider);
+      // Execute deletes in chunks
+      for (const { prov, list } of runPlan) {
+        for (let i = 0; i < list.length; i += CHUNK) {
+          const part = list.slice(i, i + CHUNK);
+          const res = await postDelete(part, prov);
           attemptCount++;
           anyHttpAttempt ||= (res.status > 0);
-          sawNetworkError ||= res.networkError;
-          lastStatus = res.status;
+          sawNetworkError ||= !!res.networkError;
+          lastStatus = res.status || lastStatus;
           totalOk += (res.okCount || 0);
-          anyBackendSuccess ||= !!(res.anySuccess || res?.raw?.ok === true);
-          updateBusy?.(btn, Math.round(((i + part.length) / run.length) * 100));
+          any2xx ||= (res.status >= 200 && res.status < 300) || !!res.anySuccess;
+          updateBusy?.(btn, Math.round(((i + part.length) / list.length) * 100));
         }
       }
 
-      // Verification pass
-      let deltaOk = 0;
+    // ----- Optimistic UI: remove immediately from view -----
+    if (typeof applyOptimisticDeletion === "function") {
+      applyOptimisticDeletion(keys, provider);
+    } else {
+      // Fallback: mutate local model (keeps UI responsive if helper missing)
+      const byProv = mapProvidersByKey(items);
+      for (const k of keys) {
+        const provs = byProv.get(k) || new Set();
+        if (provider === "ALL") provs.clear();
+        else provs.delete(provider);
+        if (provs.size === 0) {
+          const idx = items.findIndex(it => it.key === k);
+          if (idx >= 0) items.splice(idx, 1);
+        }
+      }
+    }
+    selected.clear();
+    applyFilters?.();
+    updateSelCount?.();
+    updateMetrics?.();
+
+    // ----- Background refresh to pull server state -----
+    Promise.resolve().then(async () => {
       try {
         await (hardReloadWatchlist?.());
-        const afterProv = mapProvidersByKey(items);
-        deltaOk = computeDelta(keys, provider, beforeProv, afterProv);
-        if (deltaOk === 0 && (totalOk > 0 || anyBackendSuccess)) {
-          await sleep(800);
-          await (hardReloadWatchlist?.());
-          const after2 = mapProvidersByKey(items);
-          deltaOk = computeDelta(keys, provider, beforeProv, after2);
+        if (provider === "JELLYFIN") {
+          // JF can lag a bit; do a late re-poll
+          setTimeout(() => { try { hardReloadWatchlist?.(); } catch {} }, 700);
         }
       } catch {}
+    });
 
-      const effectiveOk = Math.max(totalOk, deltaOk);
-      const anyEffective = anyBackendSuccess || (effectiveOk > 0);
-
-      // Optimistic UI
-      applyOptimisticDeletion(keys, provider);
-      selected.clear();
-      applyFilters();
-      updateSelCount?.();
-      updateMetrics?.();
-
-      if (anyEffective) {
-        snackbar?.(
-          provider === "ALL"
-            ? `Deleted on available providers for ${Math.max(effectiveOk, totalOk)}/${keys.length} item(s)`
-            : `Deleted ${Math.max(effectiveOk, totalOk)}/${keys.length} from <b>${provider}</b>`
-        );
+    // ----- Messaging -----
+    const ok = any2xx || (totalOk > 0);
+    const n = totalOk || (any2xx ? keys.length : 0);
+    if (ok) {
+      snackbar?.(
+        provider === "ALL"
+          ? `Deleted on available providers for ${n}/${keys.length} item(s)`
+          : `Deleted ${n}/${keys.length} from <b>${provider}</b>`
+      );
+    } else {
+      if (attemptCount === 0) {
+        snackbar?.("No delete attempted");
+      } else if (!anyHttpAttempt) {
+        snackbar?.("No delete attempted (network) — check connectivity");
+      } else if (sawNetworkError || (lastStatus >= 400 || lastStatus === 0)) {
+        snackbar?.(`Delete failed${lastStatus ? ` (HTTP ${lastStatus})` : ""} — check credentials/providers`);
       } else {
-        if (attemptCount === 0) {
-          snackbar?.(`No delete attempted (UI gating)`);
-        } else if (!anyHttpAttempt) {
-          snackbar?.(`No delete attempted (network) — check connectivity`);
-        } else if (sawNetworkError || (lastStatus >= 400 || lastStatus === 0)) {
-          snackbar?.(`Delete failed${lastStatus ? ` (HTTP ${lastStatus})` : ""} — check credentials/providers`);
-        } else {
-          snackbar?.(`Delete completed with no visible changes`);
-        }
+        snackbar?.("Delete completed with no visible changes");
       }
-    } catch {
-      snackbar?.(`Delete failed`);
-    } finally {
-      endBusy?.(btn);
     }
-  });
+  } catch (err) {
+    console.error("[WL] delete flow error:", err);
+    snackbar?.("Delete failed");
+  } finally {
+    endBusy?.(btn);
+  }
+});
 
-  // ---------- hide / unhide ----------
-  hideBtn.addEventListener("click", ()=>{
-    const keys = [...selected];
-    keys.forEach(k => hiddenSet.add(k));
-    persistHidden();
-    selected.clear();
-    applyFilters();
-    snackbar(`Hidden ${keys.length} locally`, [
-      { key:"undo", label:"Undo", onClick:()=>{ keys.forEach(k=>hiddenSet.delete(k)); persistHidden(); applyFilters(); } }
-    ]);
-  });
-  unhideBtn.addEventListener("click", ()=>{
-    const prev = [...hiddenSet];
-    hiddenSet.clear(); persistHidden(); applyFilters();
-    snackbar(`Unhid ${prev.length}`, [
-      { key:"undo", label:"Undo", onClick:()=>{ prev.forEach(k=>hiddenSet.add(k)); persistHidden(); applyFilters(); } }
-    ]);
-  });
 
   // ---------- keyboard ----------
   document.addEventListener("keydown", (e)=>{
