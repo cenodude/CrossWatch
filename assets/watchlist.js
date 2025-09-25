@@ -555,7 +555,7 @@
     (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
 
   const metaKey = (it) => {
-    const typ = (String(it.type||"").toLowerCase()==="tv" || String(it.type||"").toLowerCase()==="show") ? "show" : "movie";
+    const typ = String(it.type||"").toLowerCase() === "tv" ? "tv" : "movie";
     const tmdb = it.tmdb || it.ids?.tmdb || "";
     return `${typ}:${tmdb}`;
   };
@@ -720,8 +720,8 @@
 
   const releaseIso = (it) => {
     const t = String(it.type||"").toLowerCase();
-    if (t === "tv" || t === "show") return it.first_air_date || it.release_date || null;
-    return it.release_date || it.first_air_date || null;
+    return t === "tv" ? (it.first_air_date || it.release_date || null)
+                      : (it.release_date || it.first_air_date || null);
   };
 
   const fetchWatchlist = async () => {
