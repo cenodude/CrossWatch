@@ -140,6 +140,11 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     # fallback
     return now + 3600
 
+# --------------- Helper: media normalizer---
+def _norm_media_type(x: Optional[str]) -> str:
+    t = (x or "").strip().lower()
+    return "show" if t in {"tv", "show", "series", "season", "episode"} else "movie"
+
 
 # --------------- App & assets ---------------
 # app = FastAPI(lifespan=_lifespan if "_lifespan" in globals() else None)
@@ -1002,7 +1007,8 @@ def _wall_items_from_state() -> List[Dict[str, Any]]:
     jelly_items  = _state_items(st, "JELLYFIN")  # <-- include Jellyfin
 
     def norm_type(v: dict) -> str:
-        return "tv" if str(v.get("type", "").lower()) in ("show", "tv", "series") else "movie"
+        t = str((v.get("type") or v.get("entity") or v.get("media_type") or "")).strip().lower()
+        return "tv" if t in ("show", "shows", "tv", "series", "season", "episode") else "movie"
 
     def ids_of(v: dict) -> Dict[str, str]:
         ids = dict(v.get("ids") or {})
@@ -1491,17 +1497,24 @@ def api_metadata_resolve(payload: MetadataResolveIn):
     if _METADATA is None:
         return JSONResponse({"ok": False, "error": "MetadataManager not available"}, status_code=500)
     try:
+        # normalize to "movie"|"show"
+        entity = _norm_media_type(getattr(payload, "entity", None))
         res = _METADATA.resolve(
-            entity=payload.entity,
+            entity=entity,
             ids=payload.ids,
             locale=payload.locale,
             need=payload.need,
             strategy=payload.strategy or "first_success",
         )
+        # ensure type coherence for downstream callers
+        if isinstance(res, dict):
+            res.setdefault("type", entity)
         return JSONResponse({"ok": True, "result": res})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    
+
+
+# --------------- Metadata bulk ---------------
 @app.post("/api/metadata/bulk")
 def api_metadata_bulk(
     payload: Dict[str, Any] = Body(
@@ -1527,9 +1540,7 @@ def api_metadata_bulk(
 ) -> JSONResponse:
     """
     Resolve metadata for many TMDb items in one call.
-    - Input  : payload.items[] of {type|entity, tmdb}
-    - Filters: payload.need (truthy flags) to request only specific fields
-    - Limits : respects metadata.bulk_max (default 300) and caps concurrency
+    - Input  : payload.items[] of {type|entity|media_type, tmdb}
     - Output : map keyed by '<type>:<tmdb>' with requested fields
     """
     cfg = load_config()
@@ -1539,113 +1550,66 @@ def api_metadata_bulk(
     bulk_max = int(md_cfg.get("bulk_max", 300))
     default_workers = 6
 
-    # Validate input
     items = (payload or {}).get("items") or []
     if not isinstance(items, list) or not items:
         return JSONResponse(
-            {
-                "ok": False,
-                "error": "Body must include a non-empty 'items' array.",
-                "missing_tmdb_key": not bool(api_key),
-            },
+            {"ok": False, "error": "Body must include a non-empty 'items' array.", "missing_tmdb_key": not bool(api_key)},
             status_code=200,
         )
-
-    # Clamp to bulk_max
     items = items[:bulk_max]
 
-    # Determine need flags
-    req_need = (payload or {}).get("need") or {
-        "overview": True,
-        "tagline": True,
-        "runtime_minutes": True,
-    }
+    req_need = (payload or {}).get("need") or {"overview": True, "tagline": True, "runtime_minutes": True}
     if overview == "none":
         req_need = dict(req_need, overview=False)
-    elif overview in ("short", "full"):
+    else:
         req_need = dict(req_need, overview=True)
 
-    # Determine locale (explicit -> metadata.locale -> ui.locale)
-    eff_locale = (
-        locale
-        or md_cfg.get("locale")
-        or (cfg.get("ui") or {}).get("locale")
-        or None
-    )
+    eff_locale = locale or md_cfg.get("locale") or (cfg.get("ui") or {}).get("locale") or None
 
-    # Concurrency tuning
     try:
         requested_workers = int((payload or {}).get("concurrency") or default_workers)
     except Exception:
         requested_workers = default_workers
     workers = max(1, min(requested_workers, 12))
 
-    # Helper: safe shortener
     def _shorten(txt: str, limit: int = 280) -> str:
         if not txt or len(txt) <= limit:
             return txt or ""
         cut = txt[:limit].rsplit(" ", 1)[0].rstrip(",.;:!-–—")
         return f"{cut}…"
 
-    # Worker
     def _fetch_one(item: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-        typ = (item.get("type") or item.get("entity") or "movie").lower()
-        if typ == "show":
-            typ = "tv"
-        if typ not in ("movie", "tv"):
-            typ = "movie"
+        typ = _norm_media_type(item.get("type") or item.get("entity") or item.get("media_type"))
         tmdb_id = str(item.get("tmdb") or item.get("id") or "").strip()
-        key = f"{'show' if typ=='tv' else 'movie'}:{tmdb_id or 'UNKNOWN'}"
-
+        key = f"{typ}:{tmdb_id or 'UNKNOWN'}"
         if not tmdb_id:
             return key, {"ok": False, "error": "Missing tmdb id"}
+        # keep the item coherent for callers
+        item["type"] = typ
 
         try:
-            meta = get_meta(
-                api_key,
-                "movie" if typ == "movie" else "show",
-                tmdb_id,
-                CACHE_DIR,
-                need=req_need,
-                locale=eff_locale,
-            ) or {}
+            meta = get_meta(api_key, typ, tmdb_id, CACHE_DIR, need=req_need, locale=eff_locale) or {}
         except Exception as e:
             return key, {"ok": False, "error": f"resolver failed: {e}"}
-
         if not meta:
             return key, {"ok": False, "error": "no metadata"}
-        keep_keys = {
-            "type",
-            "title",
-            "year",
-            "ids",
-            "runtime_minutes",
-            "overview",
-            "tagline",
-            "images",
-            "genres",
-            "videos",
-            "score",
-            "certification",
-            "release",
-            "detail",
+
+        keep = {
+            "type", "title", "year", "ids", "runtime_minutes", "overview", "tagline",
+            "images", "genres", "videos", "score", "certification", "release", "detail",
         }
-        # Always normalize 'type' to movie|show
-        meta_out = {"type": meta.get("type") or ("movie" if typ == "movie" else "show")}
-        for k in keep_keys:
-            if k in meta and k != "type":
-                meta_out[k] = meta[k]
+        out = {"type": meta.get("type") or typ}
+        for k in keep:
+            if k != "type" and k in meta:
+                out[k] = meta[k]
+        if overview == "short" and out.get("overview"):
+            out["overview"] = _shorten(out["overview"], 280)
 
-        # Overview shaping
-        if overview == "short" and meta_out.get("overview"):
-            meta_out["overview"] = _shorten(meta_out["overview"], 280)
-
-        return key, {"ok": True, "meta": meta_out}
+        return key, {"ok": True, "meta": out}
 
     results: Dict[str, Any] = {}
     fetched = 0
 
-    # Fast path: small batches run inline
     if len(items) <= 8:
         for it in items:
             k, v = _fetch_one(it)
@@ -1653,7 +1617,6 @@ def api_metadata_bulk(
             if v.get("ok"):
                 fetched += 1
     else:
-        # Threaded for larger batches
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futs = [ex.submit(_fetch_one, it) for it in items]
             for fut in as_completed(futs):
@@ -1671,11 +1634,12 @@ def api_metadata_bulk(
             "count": len(items),
             "fetched": fetched,
             "missing_tmdb_key": not bool(api_key),
-            "results": results,  # "<type>:<tmdb>" -> { ok, meta | error }
+            "results": results,
             "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
         },
         status_code=200,
     )
+
 # --------------- Watch logs ---------------
 @app.get("/debug/watch/logs")
 def debug_watch_logs(tail: int = Query(20, ge=1, le=200), tag: str = Query("TRAKT")) -> JSONResponse:
@@ -2015,13 +1979,6 @@ def api_watchlist(
         250, ge=0, le=2000, description="Cap how many items are enriched"
     ),
 ) -> JSONResponse:
-    """
-    Returns the merged watchlist. Optional metadata enrichment:
-      - overview=none  : no overview (default; fastest)
-      - overview=short : ~tweet-length summary
-      - overview=full  : full overview text
-    Applies a server-side cap (max_meta) to protect latency on large lists.
-    """
     cfg = load_config()
     st = _load_state()
     api_key = (cfg.get("tmdb", {}) or {}).get("api_key") or ""
@@ -2045,11 +2002,9 @@ def api_watchlist(
             status_code=200,
         )
 
-    # Optional slice for very large lists
     if limit and isinstance(limit, int) and limit > 0:
         items = items[:limit]
 
-    # Optional overview enrichment using MetadataManager
     enriched = 0
     if overview != "none" and _METADATA is not None and api_key:
         eff_locale = (
@@ -2058,32 +2013,50 @@ def api_watchlist(
             or (cfg.get("ui") or {}).get("locale")
             or None
         )
+
+        def _norm_type(x: Optional[str]) -> str:
+            # Keep it strict for TMDb: "movie" or "show"
+            t = (x or "").strip().lower()
+            if t in {"tv", "show", "series", "season", "episode"}:
+                return "show"
+            return "movie"
+
         for it in items:
             if enriched >= int(max_meta):
                 break
+
             tmdb_id = it.get("tmdb")
             if not tmdb_id:
                 continue
+
+            media_type = _norm_type(it.get("type") or it.get("entity") or it.get("media_type"))
+            # Persist normalized type for downstream consumers (harmless if already present)
+            it["type"] = media_type
+
             try:
                 meta = get_meta(
                     api_key,
-                    it.get("type") or "movie",
+                    media_type,  # "movie" or "show"
                     tmdb_id,
                     CACHE_DIR,
                     need={"overview": True, "tagline": True, "title": True, "year": True},
                     locale=eff_locale,
                 ) or {}
+
                 desc = meta.get("overview") or ""
                 if not desc:
                     continue
+
                 if overview == "short":
                     desc = _shorten(desc, 280)  # helper from metadata block
+
                 it["overview"] = desc
                 if overview == "short" and meta.get("tagline"):
                     it["tagline"] = meta["tagline"]
+
                 enriched += 1
             except Exception:
-                # Fail soft on resolver hiccups
+                # Soft-fail on resolver hiccups (network/404/etc.)
                 continue
 
     return JSONResponse(
@@ -2097,44 +2070,36 @@ def api_watchlist(
         status_code=200,
     )
 
+# --------------- Watchlist: Delete single by key ---------------
 @app.delete("/api/watchlist/{key}")
 def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
-    # single-delete by key (provider = PLEX default)
-    sp = STATE_PATH  # <-- use global, no _state_path()
+    sp = STATE_PATH
     try:
         if "%" in (key or ""):
             key = urllib.parse.unquote(key)
 
-        result = delete_watchlist_item(
-            key=key,
-            state_path=sp,
-            cfg=load_config(),
-            log=_append_log,
-        )
+        res = delete_watchlist_item(key=key, state_path=sp, cfg=load_config(), log=_append_log)
+        if not isinstance(res, dict) or "ok" not in res:
+            res = {"ok": False, "error": "unexpected server response"}
 
-        if not isinstance(result, dict) or "ok" not in result:
-            result = {"ok": False, "error": "unexpected server response"}
-
-        if result.get("ok"):
+        if res.get("ok"):
             try:
                 state = _load_state()
-                P = state.get("providers") or {}
-                for prov in ("PLEX", "SIMKL", "TRAKT"):
+                P = (state.get("providers") or {})
+                for prov in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
                     items = (((P.get(prov) or {}).get("watchlist") or {}).get("baseline") or {}).get("items") or {}
                     items.pop(key, None)
                 STATS.refresh_from_state(state)
             except Exception:
                 pass
 
-        status = 200 if result.get("ok") else 400
-        return JSONResponse(result, status_code=status)
-
+        return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
     except Exception as e:
         _append_log("TRBL", f"[WATCHLIST] ERROR: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-# Providers for UI
+# --------------- Watchlist: Providers for UI ---------------
 @app.get("/api/watchlist/providers")
 def api_watchlist_providers():
     cfg = load_config()
@@ -2142,21 +2107,22 @@ def api_watchlist_providers():
     return {"providers": detect_available_watchlist_providers(cfg)}
 
 
-# Delete
+# --------------- Watchlist: Delete (keys + single provider or ALL) ---------------
 @app.post("/api/watchlist/delete")
 def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Body: { "keys": ["imdb:tt123", ...], "provider": "ALL"|"PLEX"|"SIMKL"|"TRAKT"|"JELLYFIN" }
+    Body: { "keys": ["imdb:tt123", ...], "provider": "ALL|PLEX|SIMKL|TRAKT|JELLYFIN" }
     ok => at least one delete succeeded; partial => some failed.
     """
     try:
-        keys = payload.get("keys") or []
-        provider = (payload.get("provider") or "ALL").upper()
+        keys_raw = payload.get("keys") or []
+        provider = (payload.get("provider") or "ALL").upper().strip()
 
-        if not isinstance(keys, list) or not keys:
+        if not isinstance(keys_raw, list) or not keys_raw:
             return {"ok": False, "error": "keys must be a non-empty array"}
 
-        if provider not in ("ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
+        allowed = {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}
+        if provider not in allowed:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
         try:
@@ -2164,15 +2130,18 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         except Exception as e:
             return {"ok": False, "error": f"failed to load config: {e}"}
 
+        # de-dup + normalize
+        keys = [str(k).strip() for k in keys_raw if str(k).strip()]
+        keys = list(dict.fromkeys(keys))  # stable de-dup
+
         state_file = STATE_PATH
         results: List[Dict[str, Any]] = []
         ok_count = 0
 
         for k in keys:
             try:
-                r = delete_watchlist_item(
-                    key=str(k), state_path=state_file, cfg=cfg, provider=provider, log=_append_log
-                )
+                r = delete_watchlist_item(key=k, state_path=state_file, cfg=cfg, provider=provider, log=_append_log)
+                r = r if isinstance(r, dict) else {"ok": bool(r)}
                 results.append({"key": k, **r})
                 if r.get("ok"):
                     ok_count += 1
@@ -2180,10 +2149,11 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
                 _append_log("SYNC", f"[WL] delete {k} on {provider} failed: {e}")
                 results.append({"key": k, "ok": False, "error": str(e)})
 
-        # best-effort stats
+        # best-effort stats refresh
         try:
             state = _load_state()
-            STATS.refresh_from_state(state)
+            if state:
+                STATS.refresh_from_state(state)
         except Exception:
             pass
 
@@ -2195,28 +2165,31 @@ def api_watchlist_delete(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
             "deleted_total": len(keys),
             "results": results,
         }
-
     except Exception as e:
         _append_log("SYNC", f"[WL] delete fatal: {e}")
         return {"ok": False, "error": f"fatal: {e}"}
 
 
-# Delete Batch
+# --------------- Watchlist: Delete Batch across providers ---------------
 @app.post("/api/watchlist/delete_batch")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
-    Body: { "keys": [ "imdb:tt123", "tmdb:456", ... ], "provider": "PLEX|SIMKL|TRAKT|JELLYFIN|ALL" }
+    Body: { "keys": ["imdb:tt123","tmdb:456",...], "provider": "ALL|PLEX|SIMKL|TRAKT|JELLYFIN" }
     """
     try:
-        keys = payload.get("keys") or []
+        keys_raw = payload.get("keys") or []
         provider = (payload.get("provider") or "ALL").upper().strip()
 
-        if not isinstance(keys, list) or not keys:
+        if not isinstance(keys_raw, list) or not keys_raw:
             return {"ok": False, "error": "keys must be a non-empty array"}
 
         allowed = {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}
         if provider not in allowed:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
+
+        # de-dup + normalize
+        keys = [str(k).strip() for k in keys_raw if str(k).strip()]
+        keys = list(dict.fromkeys(keys))
 
         try:
             cfg = load_config()
@@ -2224,31 +2197,30 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         except Exception as e:
             return {"ok": False, "error": f"load failed: {e}"}
 
-        from _watchlist import delete_watchlist_batch as _wl_delete_batch  # local import
+        from _watchlist import delete_watchlist_batch as _wl_delete_batch
 
-        results: List[Dict[str, Any]] = []
         targets = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if provider == "ALL" else [provider]
+        results: List[Dict[str, Any]] = []
 
         for prov in targets:
             try:
                 res = _wl_delete_batch(keys, prov, state, cfg)
-                # normalize shape
-                ok = bool(res.get("ok")) if isinstance(res, dict) else bool(res)
+                ok = bool((res or {}).get("ok")) if isinstance(res, dict) else bool(res)
                 results.append((res if isinstance(res, dict) else {"ok": ok}) | {"provider": prov})
                 _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: {'OK' if ok else 'NOOP'}")
             except Exception as e:
                 _append_log("SYNC", f"[WL] batch-delete on {prov} failed: {e}")
                 results.append({"provider": prov, "ok": False, "error": str(e)})
 
-        # best-effort stats
+        # best-effort stats refresh
         try:
             if state:
                 STATS.refresh_from_state(state)
         except Exception:
             pass
 
-        any_ok = any(isinstance(r, dict) and r.get("ok") for r in results)
-        all_ok = all(isinstance(r, dict) and r.get("ok") for r in results)
+        any_ok = any((isinstance(r, dict) and r.get("ok")) for r in results)
+        all_ok = all((isinstance(r, dict) and r.get("ok")) for r in results)
 
         return {
             "ok": any_ok,
@@ -2257,11 +2229,9 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
             "targets": targets,
             "results": results,
         }
-
     except Exception as e:
         _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
         return {"ok": False, "error": f"fatal: {e}"}
-
     
 # --------------- Icons ---------------
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -2991,6 +2961,7 @@ def _augment_ratings_from_file(summary_obj: dict) -> None:
         return
 
     # --- helpers
+
     def _to_epoch(s: str | None) -> int:
         if not s or not isinstance(s, str):
             return 0
