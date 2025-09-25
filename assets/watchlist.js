@@ -618,7 +618,7 @@
       if (metaCache.has(k)) continue;
       const tmdb = String(it.tmdb || it.ids?.tmdb || "");
       if (!tmdb) continue;
-      const typ = k.startsWith("movie") ? "movie" : "show";
+      const typ = k.startsWith("movie") ? "movie" : "tv";
       const sig = `${typ}:${tmdb}`;
       if (seen.has(sig)) continue;
       seen.add(sig);
