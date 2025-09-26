@@ -33,7 +33,7 @@ TRAKT_HISTORY_GET_MOV  = f"{TRAKT_BASE}/sync/history/movies"
 TRAKT_HISTORY_GET_EP   = f"{TRAKT_BASE}/sync/history/episodes"
 TRAKT_HISTORY_REMOVE   = f"{TRAKT_BASE}/sync/history/remove"
 
-_ID_KEYS = ("trakt", "imdb", "tmdb", "tvdb", "slug")
+_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "slug")
 
 # --- In-memory ETags + body cache ---------------------------------------------
 
@@ -597,6 +597,11 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    try:
+        _RUN_GET_CACHE.clear()
+    except Exception:
+        pass
+
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
 
@@ -642,7 +647,9 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             tmax = 0
             for v in delta.values():
                 wt = v.get("watched_at")
-                if wt: t = int(iso_to_ts(wt) or 0);  tmax = max(tmax, t)
+                if wt:
+                    t = int(iso_to_ts(wt) or 0)
+                    tmax = max(tmax, t)
             if tmax > 0:
                 cursors["history"] = ts_to_iso(tmax)
                 _cursor_store_save(cursors)
@@ -930,25 +937,34 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
         pass
 
     if sent_total > 0:
-        # Advance cursor to max intended watched_at (fallback now)
+        # advance cursor to max intended watched_at (fallback now)
         try:
             tmax = 0
             for _n, wat in ctx_nodes:
                 if isinstance(wat, str) and wat.strip():
-                    t = int(iso_to_ts(wat) or 0);  tmax = max(tmax, t)
+                    t = int(iso_to_ts(wat) or 0)
+                    tmax = max(tmax, t)
             new_cur = ts_to_iso(tmax) if tmax > 0 else now_iso
         except Exception:
             new_cur = now_iso
 
-        curs = _cursor_store_load(); curs["history"] = new_cur; _cursor_store_save(curs)
+        curs = _cursor_store_load()
+        curs["history"] = new_cur
+        _cursor_store_save(curs)
 
-        # Best-effort shadow update for destination view
+        # best-effort shadow update for destination view
         sh = _history_shadow_load(); m: Dict[str, Any] = dict(sh.get("items") or {})
         def _put(n: Mapping[str, Any], wat: Optional[str]) -> None:
             k = canonical_key(n["type"].rstrip("s"), n)
             m[k] = {**n, "watched": True, "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cur)}
         for n, wat in ctx_nodes: _put(n, wat)
         _history_shadow_save(m)
+
+        # ensure next reads don't reuse stale GET responses
+        try:
+            _RUN_GET_CACHE.clear()
+        except Exception:
+            pass
 
     return int(sent_total)
 

@@ -1185,9 +1185,14 @@ def _playlist_remove(http: JFClient, *, uid: str, playlist_id: str, item_ids: Li
 class _JellyfinOPS:
     def name(self) -> str: return "JELLYFIN"
     def label(self) -> str: return "Jellyfin"
-
     def features(self) -> Mapping[str, bool]:
         return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+    def capabilities(self) -> Mapping[str, Any]:
+        return {
+            "bidirectional": True,
+            "provides_ids": False,
+            "ratings": {"types": {"movies": True, "shows": True, "seasons": False, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
+        }
 
     def capabilities(self) -> Mapping[str, Any]:
         return {"bidirectional": True, "ratings": {"types": {"movies": True, "shows": True, "episodes": True}, "upsert": True, "unrate": True, "from_date": False}}

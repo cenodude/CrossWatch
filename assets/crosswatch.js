@@ -2754,6 +2754,13 @@ async function loadWall() {
       img.loading = "lazy";
       img.alt = `${it.title || ""} (${it.year || ""})`;
       img.src = artUrl(it, "w342");
+
+      // Fallback to placeholder if art endpoint returns 404/empty
+      img.onerror = function () {
+        this.onerror = null;
+        this.src = "/assets/placeholder_poster.svg";
+      };
+
       a.appendChild(img);
 
       const ovr = document.createElement("div");

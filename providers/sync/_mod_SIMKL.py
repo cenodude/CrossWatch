@@ -1468,7 +1468,12 @@ class _SimklOPS:
     def features(self) -> Mapping[str, bool]:
         return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
     def capabilities(self) -> Mapping[str, Any]:
-        return {"bidirectional": True, "provides_ids": True}
+        return {
+            "bidirectional": True,
+            "provides_ids": False,
+            "ratings": {"types": {"movies": True, "shows": True, "seasons": False, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
+        }
+     
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         if feature == "watchlist":
             return _watchlist_index(cfg)

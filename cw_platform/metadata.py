@@ -1,12 +1,41 @@
 # /cw_platform/metadata.py
 from __future__ import annotations
 
-import importlib
-import pkgutil
+import importlib, pkgutil
 from typing import Any, Optional
 
-from _logging import log
+try:
+    from _logging import log  # type: ignore
+except Exception:
+    def log(msg: str, *, level: str = "INFO", module: str = "META"):  # noop fallback
+        pass
 
+# Plex GUID → external ids helper (safe fallback if missing)
+try:
+    from id_map import ids_from_guid
+except Exception:
+    def ids_from_guid(_g: str) -> dict: return {}
+
+# ------------------------------------------------------------------ helpers
+
+def _norm_entity(entity: Optional[str]) -> str:
+    e = str(entity or "").strip().lower()
+    return {"series": "show", "tv": "show", "shows": "show", "movies": "movie"}.get(e, e if e in ("movie", "show") else "movie")
+
+def _norm_need(need: Optional[dict]) -> dict:
+    n = dict(need or {})
+    # Back-compat: callers may send {"images": true}; map to poster by default
+    if n.get("images") and not any(n.get(k) for k in ("poster", "backdrop", "logo")):
+        n["poster"] = True
+    return n or {"poster": True, "backdrop": True, "title": True, "year": True}
+
+def _first_non_empty(*vals):
+    for v in vals:
+        if v not in (None, "", [], {}):
+            return v
+    return None
+
+# ------------------------------------------------------------------ manager
 
 class MetadataManager:
     def __init__(self, load_cfg, save_cfg):
@@ -14,7 +43,7 @@ class MetadataManager:
         self.save_cfg = save_cfg
         self.providers: dict[str, Any] = self._discover()
 
-    # ------------------------------------------------------------------ Discovery
+    # ------------------------------ Discovery
 
     def _discover(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -61,7 +90,7 @@ class MetadataManager:
 
         return out
 
-    # ------------------------------------------------------------------ Resolve
+    # ------------------------------ Resolve
 
     def resolve(
         self,
@@ -73,34 +102,22 @@ class MetadataManager:
         strategy: str = "first_success",
     ) -> dict:
         """
-        Resolve metadata using configured providers in priority order.
-
-        Parameters
-        ----------
-        entity : "movie" | "show" (aliases: "tv"/"series" -> "show")
-        ids    : {"tmdb": "...", "imdb": "tt..."}; providers choose what they can use
-        locale : e.g., "nl-NL"; if None, falls back to config
-        need   : field flags, e.g., {"poster": True, "backdrop": True, "title": True, "year": True}
-        strategy : "first_success" (default) or "merge"
+        Resolve metadata via configured providers.
+        entity: "movie" | "show" (aliases: tv/series -> show)
+        ids   : {"tmdb": "...", "imdb": "tt..."} etc.
+        need  : field flags, e.g., {"poster": True, "backdrop": True, ...}
         """
         cfg = self.load_cfg() or {}
         md_cfg = cfg.get("metadata") or {}
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
-        # Normalize entity
-        e = str(entity or "").lower()
-        entity = {"series": "show", "tv": "show", "shows": "show", "movies": "movie"}.get(e, e)
-        if entity not in ("movie", "show"):
-            entity = "movie"
+        entity = _norm_entity(entity)
+        req_need = _norm_need(need)
+        eff_locale = locale or md_cfg.get("locale") or (cfg.get("ui") or {}).get("locale")
 
-        # Determine priority
         default_order = list(self.providers.keys())
         configured = md_cfg.get("priority") or default_order
         order = [str(x).upper() for x in configured if str(x).upper() in self.providers]
-
-        # Defaults
-        req_need = need or {"poster": True, "backdrop": True, "title": True, "year": True}
-        eff_locale = locale or md_cfg.get("locale") or (cfg.get("ui") or {}).get("locale")
 
         results: list[dict] = []
         for name in order:
@@ -136,12 +153,45 @@ class MetadataManager:
 
         return self._merge(results) if strategy == "merge" else (results[0] or {})
 
-    # ------------------------------------------------------------------ Merge policy
+    # ------------------------------ Resolve (batch)
+
+    def resolve_many(self, items: list[dict]) -> list[dict]:
+        """Batch wrapper; prefers ids, upgrades from Plex GUID if present."""
+        out: list[dict] = []
+        for it in items or []:
+            ids = dict(it.get("ids") or {})
+            g = ids.get("guid")
+            if g:
+                try:
+                    ids.update(ids_from_guid(g))
+                except Exception:
+                    pass
+            ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
+            title, year = it.get("title"), it.get("year")
+            try:
+                r = self.resolve(entity=ent, ids=ids) if ids else self.resolve(entity=ent, ids={}, need={"title": True, "year": True})
+            except Exception:
+                r = None
+            if r:
+                r_ids = dict(r.get("ids") or {})
+                merged_ids = ({**ids, **r_ids} if (ids or r_ids) else {})
+                out.append({
+                    "type": r.get("type") or ent,
+                    "title": _first_non_empty(r.get("title"), title),
+                    "year": _first_non_empty(r.get("year"), year),
+                    "ids": merged_ids
+                })
+            else:
+                it2 = dict(it); it2["ids"] = ids
+                out.append(it2)
+        return out
+
+    # ------------------------------ Merge policy
 
     def _merge(self, results: list[dict]) -> dict:
         """
         Merge multiple provider payloads:
-          - images.* : concatenate and de-duplicate by URL (stable order)
+          - images.* : concatenate and de-duplicate (url || file_path || path)
           - scalars  : first non-empty wins
         """
         out: dict = {}
@@ -153,19 +203,24 @@ class MetadataManager:
                     dst = out.setdefault("images", {})
                     for kind, arr in v.items():
                         bucket = dst.setdefault(kind, [])
-                        seen = {x.get("url") for x in bucket if isinstance(x, dict)}
+                        seen = {
+                            (x.get("url") or x.get("file_path") or x.get("path"))
+                            for x in bucket if isinstance(x, dict)
+                        }
                         for x in (arr or []):
-                            url = x.get("url") if isinstance(x, dict) else None
-                            if not url or url in seen:
+                            if not isinstance(x, dict):
                                 continue
-                            bucket.append(x)
+                            key = x.get("url") or x.get("file_path") or x.get("path")
+                            if not key or key in seen:
+                                continue
+                            bucket.append(x); seen.add(key)
                 else:
                     if k not in out and v not in (None, "", [], {}):
                         out[k] = v
 
         if "type" not in out:
             for r in results:
-                t = str(r.get("type") or "").lower()
+                t = _norm_entity(r.get("type"))
                 if t in ("movie", "show"):
                     out["type"] = t
                     break

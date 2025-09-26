@@ -24,18 +24,21 @@
   .wl-table-wrap{border:1px solid rgba(255,255,255,.12);border-radius:10px;overflow:auto}
   .wl-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
   .wl-table col.c-sel{width:44px}
-  .wl-table col.c-title{width:auto}
-  .wl-table col.c-type{width:120px}
-  .wl-table col.c-sync{width:220px}
-  .wl-table col.c-poster{width:110px}
-  .wl-table th,.wl-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left}
+  .wl-table col.c-title{width:20%}        /* was 28% → minder lucht naast Title */
+  .wl-table col.c-type{width:84px}        /* was 90px */
+  .wl-table col.c-sync{width:200px}       /* was 220px */
+  .wl-table col.c-poster{width:56px}      /* was 60px */
+  .wl-table th,.wl-table td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left}
   .wl-table th{position:sticky;top:0;background:#101018;font-weight:600;z-index:1;text-transform:none;letter-spacing:0}
   .wl-table tr:last-child td{border-bottom:none}
   .wl-table .title{white-space:normal}
   .wl-table input[type=checkbox]{width:18px;height:18px}
 
-  .wl-table col.c-rel{width:140px}     /* Release date */
-  .wl-table col.c-genre{width:220px}   /* Genre list */
+  .wl-table col.c-rel{width:110px}     /* Release date (was 120px) */
+  .wl-table col.c-genre{width:220px}   /* Genre list (was 240px) */
+  .wl-table td.genre{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;line-height:1.2}
+  /* Clamp long genre text to 2 lines
+  .wl-table td.genre{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;line-height:1.2}
 
   /* Submeta line under title in list view */
   .wl-submeta{font-size:12px;opacity:.75;margin-top:4px;white-space:normal}
@@ -45,6 +48,20 @@
   .wl-table th.sortable::after{content:"";margin-left:6px;opacity:.6}
   .wl-table th.sort-asc::after{content:"▲"}
   .wl-table th.sort-desc::after{content:"▼"}
+
+  /* Poster column */
+  .wl-table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+  .wl-table col.c-poster{width:56px}                 /* a bit narrower = sits left */
+  .wl-table th.poster,.wl-table td.poster{padding-left:0;padding-right:4px;text-align:right}
+  .wl-table td.poster .wl-mini{width:48px;height:72px;display:block;margin-left:auto;object-fit:cover;border-radius:6px}
+
+  /* Release + Genre cells should wrap */
+  .wl-table td.rel,
+  .wl-table td.genre{
+    white-space:normal;       /* allow wrapping */
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
 
   /* Sources */
   .wl-srcs{display:flex;gap:10px;align-items:center}
@@ -542,10 +559,14 @@
   function loadHidden(){ try { return new Set(JSON.parse(localStorage.getItem("wl.hidden")||"[]")); } catch { return new Set(); } }
   function persistHidden(){ try { localStorage.setItem("wl.hidden", JSON.stringify([...hiddenSet])); } catch {} }
 
+  // artwork URL helper (TMDb-based)
   const artUrl = (it, size) => {
-    const typ = it.type === "tv" ? "tv" : "movie";
-    const tmdb = it.tmdb || (it.ids && it.ids.tmdb);
-    return tmdb ? `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(size || "w92")}` : "";
+    const tmdb = it?.tmdb || it?.ids?.tmdb;
+    if (!tmdb) return "";
+    const raw = String(it?.type || it?.media_type || "").toLowerCase();
+    const typ = (raw === "movie") ? "movie" : "tv";    // default everything else to TV
+    const id  = encodeURIComponent(String(tmdb).trim());
+    return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size || "w342")}`;
   };
 
   const normKey = (it) =>
@@ -583,12 +604,13 @@
       return Math.round(ms / 86400000); // >0 future, <0 past, 0 today
     }catch{ return null; }
   };
+
   /* --- Release helpers (single source of truth) --- */
   function getReleaseIso(it){
     const t = String(it.type || "").toLowerCase();
     const isTV = (t === "tv" || t === "show");
 
-    // First: whatever the list item may carry (some providers might)
+    // Primary: direct fields
     let iso =
       (isTV ? (it.first_air_date || it.firstAired || it.aired) : (it.release_date || it.released)) ||
       (it.release?.date) ||
@@ -898,19 +920,28 @@
     }
   }
 
+  // Update the metrics sidebar (counts of filtered by provider)
   function updateMetrics(){
-    const onPlex     = filtered.filter(it => providersOf(it).includes("PLEX")).length;
-    const onSimkl    = filtered.filter(it => providersOf(it).includes("SIMKL")).length;
-    const onTrakt    = filtered.filter(it => providersOf(it).includes("TRAKT")).length;
-    const onJellyfin = filtered.filter(it => providersOf(it).includes("JELLYFIN")).length;
+    const counts = {
+      PLEX:     filtered.filter(it => providersOf(it).includes("PLEX")).length,
+      SIMKL:    filtered.filter(it => providersOf(it).includes("SIMKL")).length,
+      TRAKT:    filtered.filter(it => providersOf(it).includes("TRAKT")).length,
+      JELLYFIN: filtered.filter(it => providersOf(it).includes("JELLYFIN")).length,
+    };
+    const ICON = {
+      PLEX: "movie_filter",
+      SIMKL: "playlist_add",
+      TRAKT: "featured_play_list",
+      JELLYFIN: "bookmark_added",
+    };
+    const ORDER = ["PLEX","SIMKL","TRAKT","JELLYFIN"];
 
-    metricsEl.innerHTML = `
-      ${metric('movie_filter','PLEX', onPlex, 'PLEX')}
-      ${metric('playlist_add','SIMKL', onSimkl, 'SIMKL')}
-      ${metric('featured_play_list','TRAKT', onTrakt, 'TRAKT')}
-      ${metric('bookmark_added','JELLYFIN', onJellyfin, 'JELLYFIN')}
-    `;
+    metricsEl.innerHTML = ORDER
+      .filter(p => activeProviders.has(p))
+      .map(p => metric(ICON[p], p, counts[p], p))
+      .join("");
   }
+
   function metric(icon, label, val, w){
     return `<div class="metric" data-w="${w}">
       <span class="material-symbol">${icon}</span>
@@ -920,6 +951,7 @@
       </div>
     </div>`;
   }
+
 
   // ---------- sorting (list view only) ----------
   function cmp(a,b){
@@ -1216,6 +1248,21 @@
   }
   function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+    /* --- Only show Active providers --- */
+    let activeProviders = new Set();
+    async function loadActiveProviders(){
+      const r = await fetch("/api/config",{cache:"no-store"});
+      if(!r.ok) return;
+      const cfg = await r.json();
+      const act = new Set();
+      if(cfg?.plex?.account_token)     act.add("PLEX");
+      if(cfg?.simkl?.access_token)     act.add("SIMKL");
+      if(cfg?.trakt?.access_token)     act.add("TRAKT");
+      if(cfg?.jellyfin?.access_token)  act.add("JELLYFIN");
+      activeProviders = act;
+    }
+    const providerChipIfActive = (p, have) => activeProviders.has(p) ? providerChip(p, have) : "";
+
   // ---------- dominant color from image (for tint) ----------
   async function dominantRGB(url){
     return new Promise((resolve) => {
@@ -1356,7 +1403,7 @@
     // Render
     detailEl.innerHTML = `
       <div class="inner" data-key="${key}">
-        <div>${poster ? `<img class="poster" src="${poster}" alt="">` : ""}</div>
+        <div>${poster ? `<img class="poster" src="${poster}" alt="" onerror="this.onerror=null;this.src='/assets/placeholder_poster.svg'">` : ""}</div>
 
         <div>
           <div class="title-row">
@@ -1452,8 +1499,10 @@
         ? `<img ${eager ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'}
                 decoding="async"
                 src="${imgUrl}" alt=""
-                width="342" height="513">`
+                width="342" height="513"
+                onerror="this.onerror=null;this.src='/assets/placeholder_poster.svg'">`
         : `<div style="height:100%"></div>`;
+
 
       // overlays (tags) are hidden via CSS class when prefs.overlays === 'no'
       card.innerHTML = `<div class="wl-tags">${provHtml}</div>${imgTag}`;
@@ -1505,10 +1554,10 @@
 
       const matrix = `
         <div class="wl-matrix">
-          ${providerChip('PLEX', have.PLEX)}
-          ${providerChip('SIMKL', have.SIMKL)}
-          ${providerChip('TRAKT', have.TRAKT)}
-          ${providerChip('JELLYFIN', have.JELLYFIN)}
+          ${providerChipIfActive('PLEX',    have.PLEX)}
+          ${providerChipIfActive('SIMKL',   have.SIMKL)}
+          ${providerChipIfActive('TRAKT',   have.TRAKT)}
+          ${providerChipIfActive('JELLYFIN',have.JELLYFIN)}
         </div>`;
 
       // Release + Genre (separate columns)
@@ -1519,10 +1568,10 @@
         <td style="text-align:center"><input type="checkbox" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
         <td class="title"><div>${esc(it.title || "")}</div></td>
         <td class="rel">${esc(rel)}</td>
-        <td class="genre">${esc(genresList)}</td>
+        <td class="genre" title="${esc(genresList)}">${esc(genresList)}</td>
         <td>${esc(typeLabel)}</td>
         <td>${matrix}</td>
-        <td>${thumb ? `<img class="wl-mini" src="${thumb}" alt="">` : ""}</td>
+        <td>${thumb ? `<img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/placeholder_poster.svg'">` : ""}</td>
       `;
       tr.querySelector('input[type=checkbox]').addEventListener("change", (e)=>{
         if (e.target.checked) selected.add(key); else selected.delete(key);
@@ -1971,6 +2020,9 @@
 
     // panel open/closed state
     morePanel.style.display = prefs.moreOpen ? "" : "none";
+
+    // load active providers 
+    await loadActiveProviders();
 
     // fetch + render
     items = await fetchWatchlist();

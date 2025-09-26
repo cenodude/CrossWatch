@@ -114,8 +114,12 @@ def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
         out["rating"] = item.get("rating")
     if item.get("rated_at") is not None:
         out["rated_at"] = item.get("rated_at")
+    # history: keep scrobble signal
+    if item.get("watched_at") is not None:
+        out["watched_at"] = item["watched_at"]
+    if item.get("watched") is not None:
+        out["watched"] = item["watched"]
     return out
-
 
 # -------------------- state files
 class _Files:
@@ -550,6 +554,38 @@ class Orchestrator:
         return (a.get("rating") == b.get("rating"))
 
     # -------------------- baseline helpers
+    
+    def _write_skipped(self, items: List[Dict[str, Any]], *, feature: str, dst: str) -> None:
+        try:
+            from pathlib import Path
+            import json, time
+            base = Path("/config/.cw_state"); base.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "feature": feature, "dst": dst, "count": len(items),
+                "items": [minimal(x) for x in items],
+            }
+            (base / f"skipped_{dst.lower()}_{feature}.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), "utf-8"
+            )
+        except Exception:
+            pass
+        
+    def _has_ids_for(self, provider: Optional[str], ids: Mapping[str, Any]) -> bool:
+        p = (provider or "").upper()
+        if p == "TRAKT":
+            keys = ("trakt", "tmdb", "imdb", "tvdb")
+        elif p == "SIMKL":
+            keys = ("imdb", "tmdb", "tvdb", "slug")
+        elif p == "PLEX":
+            keys = ("plex", "guid", "imdb", "tmdb", "tvdb", "trakt")
+        elif p == "JELLYFIN":
+            keys = ("jellyfin", "imdb", "tmdb", "tvdb", "slug")
+        else:
+            # strict fallback: only real cross IDs (no plex/guid/jellyfin)
+            keys = ("tmdb", "imdb", "tvdb", "trakt", "slug")
+        return any((ids or {}).get(k) for k in keys)
+
     def _ensure_pf(self, state: Dict[str, Any], prov: str, feature: str) -> Dict[str, Any]:
         p = state.setdefault("providers", {})
         pprov = p.setdefault(prov, {})
@@ -869,27 +905,16 @@ class Orchestrator:
         items: List[Dict[str, Any]],
         *,
         want_ids: bool = True,
-        dst: Optional[str] = None
+        dst: Optional[str] = None,
+        feature: str = "generic"
     ) -> List[Dict[str, Any]]:
         if not items or not want_ids or not self.meta:
             return items
 
-        def _has_ids_for(provider: Optional[str], ids: Mapping[str, Any]) -> bool:
-            p = (provider or "").upper()
-            if p == "TRAKT":
-                keys = ("trakt", "tmdb", "imdb", "tvdb")
-            elif p == "SIMKL":
-                keys = ("imdb", "tmdb", "tvdb", "slug")
-            elif p == "PLEX":
-                keys = ("plex", "guid", "imdb", "tmdb", "tvdb", "trakt")
-            else:
-                keys = ("tmdb", "imdb", "tvdb", "trakt", "slug", "guid", "plex")
-            return any((ids or {}).get(k) for k in keys)
-
         need: List[Dict[str, Any]] = []
         for it in items:
             ids = (it.get("ids") or {})
-            if dst and _has_ids_for(dst, ids):
+            if dst and self._has_ids_for(dst, ids):
                 continue
             if not (ids.get("tmdb") or ids.get("imdb")):
                 need.append(it)
@@ -953,16 +978,27 @@ class Orchestrator:
                 ttl = str(it.get("title") or "").strip().lower()
                 yr  = it.get("year") or ""
                 candidate = _idmap.get(f"{t}|title:{ttl}|year:{yr}")
-
             out_items.append(_merge_preserving(it, candidate or {}))
 
+        skipped: List[Dict[str, Any]] = []
         if dst:
-            out_items = [it for it in out_items if _has_ids_for(dst, it.get("ids") or {})]
+            keep: List[Dict[str, Any]] = []
+            for it in out_items:
+                if self._has_ids_for(dst, it.get("ids") or {}):
+                    keep.append(it)
+                else:
+                    skipped.append(it)
+            out_items = keep
+            if skipped:
+                self._write_skipped(skipped, feature=feature, dst=dst)
+                self._emit_info(f"[i] skipped {len(skipped)} items for {dst}/{feature}, see .cw_state/")
 
-        self._dbg("enrich.done",
-                requested=len(items),
-                enriched=len([o for o in out_items if (o.get('ids') or {}).get('tmdb') or (o.get('ids') or {}).get('imdb')]),
-                )
+        self._dbg(
+            "enrich.done",
+            requested=len(items),
+            enriched=len([o for o in out_items if (o.get('ids') or {}).get('tmdb') or (o.get('ids') or {}).get('imdb')]),
+            skipped=len(skipped),
+        )
         return out_items
 
     # -------------------- retry
@@ -1099,7 +1135,20 @@ class Orchestrator:
 
         # 6) enrich if needed
         want_ids = not bool(dops.capabilities().get("provides_ids"))
-        additions = self.maybe_enrich(additions, want_ids=want_ids, dst=dst)
+        additions = self.maybe_enrich(additions, want_ids=want_ids, dst=dst, feature=feature)
+        
+        # 6b) final hard gate: drop any items that still don't carry ids for dst
+        if additions and dst:
+            keep, skipped = [], []
+            for it in additions:
+                if self._has_ids_for(dst, (it.get("ids") or {})):
+                    keep.append(it)
+                else:
+                    skipped.append(it)
+            if skipped:
+                self._write_skipped(skipped, feature=feature, dst=dst)
+                self._emit_info(f"[i] skipped {len(skipped)} items for {dst}/{feature}, see .cw_state/")
+            additions = keep
 
         # 7) apply adds (incl. rating updates)
         self._emit("apply:add:start", dst=dst, feature=feature, count=len(additions))
@@ -1442,6 +1491,7 @@ class Orchestrator:
 
         # A
         self._emit("two:apply:add:A:start", dst=a, feature=feature, count=len(add_to_A))
+        resA_add = None
         if add_to_A:
             resA_add = self._apply_chunked(
                 "two:apply:add:A",
@@ -1452,17 +1502,23 @@ class Orchestrator:
                 for it in add_to_A:
                     A_eff[canonical_key(it)] = minimal(it)
                 if feature == "ratings":
-                    if 'adds_to_A' in locals() and adds_to_A:
+                    if adds_to_A:
                         self._stats_rating("rate", adds_to_A, a)
-                    if 'updates_on_A' in locals() and updates_on_A:
+                    if updates_on_A:
                         self._stats_rating("update_rating", updates_on_A, a)
+
                 else:
                     self._stats_generic(feature, "add", add_to_A, a)
-        self._emit("two:apply:add:A:done", dst=a, feature=feature, count=len(add_to_A), result=resA_add,
-                   items=[minimal(x) for x in add_to_A][:50] if feature == "ratings" else None)
+        self._emit(
+            "two:apply:add:A:done",
+            dst=a, feature=feature, count=len(add_to_A),
+            result=resA_add,
+            items=[minimal(x) for x in add_to_A][:50] if feature == "ratings" else None,
+        )
 
         # B
         self._emit("two:apply:add:B:start", dst=b, feature=feature, count=len(add_to_B))
+        resB_add = None
         if add_to_B:
             resB_add = self._apply_chunked(
                 "two:apply:add:B",
@@ -1473,15 +1529,18 @@ class Orchestrator:
                 for it in add_to_B:
                     B_eff[canonical_key(it)] = minimal(it)
                 if feature == "ratings":
-                    if 'adds_to_B' in locals() and adds_to_B:
+                    if adds_to_B:
                         self._stats_rating("rate", adds_to_B, b)
-                    if 'updates_on_B' in locals() and updates_on_B:
+                    if updates_on_B:
                         self._stats_rating("update_rating", updates_on_B, b)
                 else:
                     self._stats_generic(feature, "add", add_to_B, b)
-        self._emit("two:apply:add:B:done", dst=b, feature=feature, count=len(add_to_B), result=resB_add,
-                   items=[minimal(x) for x in add_to_B][:50] if feature == "ratings" else None)
-
+        self._emit(
+            "two:apply:add:B:done",
+            dst=b, feature=feature, count=len(add_to_B),
+            result=resB_add,
+            items=[minimal(x) for x in add_to_B][:50] if feature == "ratings" else None,
+        )
 
         # 9) commit baselines from effective post-apply models
         state = self.files.load_state()
@@ -1646,6 +1705,15 @@ class Orchestrator:
         dst = str(pair.get("target") or pair.get("dst") or "").upper()
         if not src or not dst:
             return {"ok": False, "error": "bad_pair"}
+        
+        # validate pair.enabled
+        if not bool(pair.get("enabled", True)):
+            self._emit("pair:skip",
+                       src=src, dst=dst,
+                       mode=(pair.get("mode") or "one-way").lower(),
+                       feature=str(pair.get("feature") or "multi").lower(),
+                       reason="disabled")
+            return {"ok": True, "added": 0, "removed": 0}
 
         mode = (pair.get("mode") or "one-way").lower()
         features = pair.get("features") or {"watchlist": {"enable": True, "add": True, "remove": True}}
@@ -1745,7 +1813,24 @@ class Orchestrator:
         self._emit_info(f"[i] Features: {feat_map}")
 
         pairs = list((self.cfg or {}).get("pairs") or [])
-        pairs = [p for p in pairs if p.get("enabled", True)]
+
+        # emit skip events for disabled pairs, keep only enabled ones
+        enabled_pairs = []
+        for i, p in enumerate(pairs, start=1):
+            if not p.get("enabled", True):
+                self._emit(
+                    "pair:skip",
+                    i=i, n=len(pairs),
+                    src=str(p.get("source") or p.get("src") or "").upper(),
+                    dst=str(p.get("target") or p.get("dst") or "").upper(),
+                    mode=(p.get("mode") or "one-way").lower(),
+                    feature=str(p.get("feature") or "multi").lower(),
+                    reason="disabled",
+                )
+            else:
+                enabled_pairs.append(p)
+        pairs = enabled_pairs
+
         if not pairs:
             self._emit_info("[i] No pairs configured — skipping.")
             return {"ok": True, "added": 0, "removed": 0, "pairs": 0}

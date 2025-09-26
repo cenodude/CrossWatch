@@ -4152,7 +4152,6 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     path, mime = _cache_download(src_url, dest)
     return str(path), mime
 
-
 # --------------- Scheduling endpoints ---------------
 @app.post("/api/scheduling/replan_now")
 def api_scheduling_replan_now() -> Dict[str, Any]:

@@ -947,7 +947,7 @@ class _PlexOPS:
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
-            "provides_ids": True,
+            "provides_ids": False,
             "ratings": {"types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
         }
 

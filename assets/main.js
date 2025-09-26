@@ -13,13 +13,16 @@
 
   const css = `
   #ux-progress, #ux-lanes { margin-top: 12px; }
-  .ux-rail { position: relative; height: 10px; border-radius: 999px; background: #1f1f26; overflow: hidden; }
-  .ux-rail-fill { height: 100%; width: 0%; background: linear-gradient(90deg,#7c4dff,#00d4ff); transition: width .35s ease; }
-  .ux-rail.error .ux-rail-fill { background: linear-gradient(90deg,#ff6b6b,#ff9f43); }
-  .ux-rail-fill.indet { background-size: 200% 100%; animation: uxSweep 1.1s linear infinite; }
-  @keyframes uxSweep { 0%{background-position:0% 0} 100%{background-position:200% 0} }
+  .ux-rail { position: relative; height: 10px; border-radius: 999px; background: #1f1f26; overflow: visible; }
+  .ux-rail.error { background: linear-gradient(90deg,#311, #401818); }
+  .ux-bead { position: absolute; top: 50%; left: 0%; width: 14px; height: 14px; border-radius: 50%;
+             background: linear-gradient(90deg,#7c4dff,#00d4ff); box-shadow: 0 0 14px rgba(124,77,255,.45);
+             transform: translate(-50%,-50%); transition: left .35s ease, transform .2s ease; }
+  .ux-bead.indet { animation: beadPulse 1.1s ease-in-out infinite; }
+  @keyframes beadPulse { 0%,100%{ transform: translate(-50%,-50%) scale(1.0) } 50%{ transform: translate(-50%,-50%) scale(1.15) } }
   .ux-rail-steps { display:flex; justify-content:space-between; font-size:11px; margin-top:6px; opacity:.8; }
   .ux-rail-steps span { white-space:nowrap; }
+
   .lanes { display:grid; grid-template-columns:1fr; gap:10px; }
   @media (min-width: 900px) { .lanes { grid-template-columns:1fr 1fr; } }
   .lane { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px 12px; background:rgba(255,255,255,.02); transition: transform .15s ease; }
@@ -147,17 +150,15 @@
   function renderProgress() {
     elProgress.innerHTML = "";
     const rail = document.createElement("div"); rail.className = "ux-rail";
-    const fill = document.createElement("div"); fill.className = "ux-rail-fill";
+    const bead = document.createElement("div"); bead.className = "ux-bead";
     const measured = Rail.pct(timeline, elProgress);
-    const baseline = measured ?? asPctFromTimeline(timeline);
-    progressPct = timeline?.done ? 100 : Math.max(progressPct || 0, baseline);
-    const pct = timeline?.done ? 100 : Math.min(95, clamp(progressPct, 0, 100));
-    fill.style.width = pct + "%";
+    const pct = timeline?.done ? 100 : Math.round(measured ?? asPctFromTimeline(timeline));
+    bead.style.left = pct + "%";
     const indet = (optimistic && !timeline.pre && !timeline.post && !timeline.done);
-    if (indet) fill.classList.add("indet");
+    if (indet) bead.classList.add("indet");
     const error = (summary?.exit_code != null && summary.exit_code !== 0);
     if (error) rail.classList.add("error"); else rail.classList.remove("error");
-    rail.appendChild(fill);
+    rail.appendChild(bead);
     const steps = document.createElement("div");
     steps.className = "ux-rail-steps muted";
     ["Start","Discovering","Syncing","Done"].forEach(t => { const s = document.createElement("span"); s.textContent = t; steps.appendChild(s); });

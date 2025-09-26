@@ -48,6 +48,19 @@ def _save_hide_set(hide: Set[str]) -> None:
 # Generic helpers (ids / type / state)
 # -----------------------------------------------------------------------------
 
+def _norm_type(x: str | None) -> str:
+    t = (x or "").strip().lower()
+    if t in {"tv", "show", "shows", "series", "season", "episode"}:
+        return "tv"
+    if t in {"movie", "movies", "film", "films"}:
+        return "movie"
+    return ""  # unknown
+
+def _rich_ids_score(item: dict | None) -> int:
+    if not isinstance(item, dict): return 0
+    ids = (item.get("ids") or {}) | {k: item.get(k) for k in ("tmdb","imdb","tvdb","trakt","slug")}
+    return sum(1 for k in ("tmdb","imdb","tvdb","trakt","slug") if ids.get(k))
+
 def _load_state_dict(state_path: Path) -> Dict[str, Any]:
     try:
         if state_path and state_path.exists():
@@ -425,12 +438,22 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
         s = simkl_items.get(key) or {}
         t = trakt_items.get(key) or {}
         j = jelly_items.get(key) or {}
-        info = p or s or t or j
+
+        candidates = [("plex", p), ("simkl", s), ("trakt", t), ("jellyfin", j)]
+        info = max(candidates, key=lambda kv: _rich_ids_score(kv[1]))[1] or (p or s or t or j)
         if not info:
             continue
 
-        typ_raw = (info.get("type") or "").lower()
-        typ = "tv" if typ_raw in ("tv", "show", "series") else "movie"
+        declared = {_norm_type(it.get("type")) for _, it in candidates if it}
+        declared.discard("")
+        if "tv" in declared:
+            typ = "tv"
+        elif "movie" in declared:
+            typ = "movie"
+        else:
+            ids = (info.get("ids") or {}) | {k: info.get(k) for k in ("tmdb","imdb","tvdb","trakt","slug")}
+            typ = "tv" if ids.get("tvdb") else "movie"
+
         title = info.get("title") or info.get("name") or ""
         year = info.get("year") or info.get("release_year")
         tmdb_id = (info.get("ids", {}) or {}).get("tmdb") or info.get("tmdb")
@@ -449,7 +472,7 @@ def build_watchlist(state: Dict[str, Any], tmdb_api_key_present: bool) -> List[D
         else:
             added_when, added_src = _pick_added(j), "jellyfin"
 
-        sources = [name for name, it in (("plex", p), ("simkl", s), ("trakt", t), ("jellyfin", j)) if it]
+        sources = [name for name, it in candidates if it]
         status = {
             1: {"plex": "plex_only", "simkl": "simkl_only", "trakt": "trakt_only", "jellyfin": "jellyfin_only"}[sources[0]],
             2: "both",
