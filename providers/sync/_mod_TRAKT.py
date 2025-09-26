@@ -599,59 +599,57 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
-    acts = _activities(cfg_root)
-    cursors = _cursor_store_load()
-    last_cur = str(cursors.get("history") or "").strip()
-    act_updated = str(acts.get("history.updated_at") or acts.get("history") or "").strip()
 
-    # start from shadow
     sh = _history_shadow_load()
     base: Dict[str, Any] = dict(sh.get("items") or {})
 
-    # Simple pager (Trakt defaults are tiny; we need full coverage for planner guard)
+    cursors = _cursor_store_load()
+    last_cur = str(cursors.get("history") or "").strip()
+
     def _fetch_all(url: str, params0: Optional[Dict[str, Any]] = None) -> List[dict]:
-        out: List[dict] = []
-        page = 1
+        out: List[dict] = []; page = 1
         lim = int(_cfg_get(cfg_root, "history.index.page_limit", 1000) or 1000)
         maxp = int(_cfg_get(cfg_root, "history.index.max_pages", 50) or 50)
         while True:
-            p = dict(params0 or {})
-            p["limit"] = lim
-            p["page"] = page
+            p = dict(params0 or {}); p["limit"] = lim; p["page"] = page
             r = _trakt_get(url, headers=hdr, params=p, timeout=45)
             arr = _json_or_empty_list(r)
             if not arr: break
             out.extend(arr)
-            if len(arr) < lim: break
+            if len(arr) < lim or page >= maxp: break
             page += 1
-            if page > maxp: break
         return out
 
-    params: Dict[str, Any] = {}
-    cold_start = (not base and not last_cur)
-    if not cold_start and last_cur:
-        params["start_at"] = last_cur
+    # If we have no shadow yet, fetch full history (ignore cursor).
+    params_mov: Dict[str, Any] = {}
+    params_ep: Dict[str, Any] = {}
+    if base and last_cur:
+        params_mov["start_at"] = last_cur
+        params_ep["start_at"]  = last_cur
 
-    mov = _fetch_all(TRAKT_HISTORY_GET_MOV, params)
-    eps = _fetch_all(TRAKT_HISTORY_GET_EP,  params)
+    mov = _fetch_all(TRAKT_HISTORY_GET_MOV, params_mov)
+    eps = _fetch_all(TRAKT_HISTORY_GET_EP,  params_ep)
 
     delta: Dict[str, Dict[str, Any]] = {}
     if mov: delta.update(_flatten_history(mov, "movie"))
     if eps: delta.update(_flatten_history(eps, "episode"))
 
-    # activities advanced but API returned empty → keep shadow
-    if last_cur and act_updated and iso_to_ts(act_updated) > iso_to_ts(last_cur) and not delta and base:
-        return base
-
     if delta:
         base.update(delta)
         _history_shadow_save(base)
+        # Advance cursor to the max watched_at we actually got
+        try:
+            tmax = 0
+            for v in delta.values():
+                wt = v.get("watched_at")
+                if wt: t = int(iso_to_ts(wt) or 0);  tmax = max(tmax, t)
+            if tmax > 0:
+                cursors["history"] = ts_to_iso(tmax)
+                _cursor_store_save(cursors)
+        except Exception:
+            pass
 
-    cursors["history"] = act_updated or ts_to_iso(int(time.time()))
-    _cursor_store_save(cursors)
     return base
-
-
 
 # --- Mutations -----------------------------------------------------------------
 
@@ -865,83 +863,94 @@ def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
     hdr = trakt_headers(trakt_cfg)
     now_iso = ts_to_iso(int(time.time()))
 
-    # Guard: skip items already present in Trakt history (by canonical key).
-    existing = _history_index(cfg_root)  # cached/ETag-aware
+    existing = _history_index(cfg_root)
     existing_keys = set(existing.keys())
 
-    # Config: require explicit timestamps (default True). If False, Trakt will stamp "now".
     require_ts = bool(_cfg_get(cfg_root, "history.write.require_timestamp", True))
+    batch = int(_cfg_get(cfg_root, "history.write.batch_size", 200) or 200)
 
-    movies, episodes, ctx_nodes = [], [], []  # ctx_nodes keeps nodes we actually post (for shadow)
+    movies: List[Dict[str, Any]] = []
+    episodes: List[Dict[str, Any]] = []
+
+    ctx_nodes: List[Tuple[Dict[str, Any], Optional[str]]] = []
 
     for it in items or []:
         ids = dict(it.get("ids") or {})
-        node = {
-            "type": _plural(it.get("type") or "movie"),
-            "title": it.get("title"),
-            "year": it.get("year"),
-            "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
-        }
+        node = {"type": _plural(it.get("type") or "movie"),
+                "title": it.get("title"), "year": it.get("year"),
+                "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
         key = canonical_key(node["type"].rstrip("s"), node)
-        if key in existing_keys:
-            continue  # already in Trakt
+        if key in existing_keys:  # already on Trakt index view
+            continue
 
         wat = it.get("watched_at")
         if require_ts and not (isinstance(wat, str) and wat.strip()):
-            continue  # no timestamp → skip (prevents "all today" floods)
+            continue  # don’t invent timestamps
 
-        entry = {"ids": dict(node["ids"])}
+        base_entry = {"ids": dict(node["ids"])}
         if isinstance(wat, str) and wat.strip():
-            entry["watched_at"] = wat  # never invent "now" here
+            base_entry["watched_at"] = wat
 
-        if not entry["ids"]:
-            continue
-
-        ctx_nodes.append((node, wat))
         if node["type"] == "movies":
-            movies.append(entry)
+            if base_entry["ids"]:
+                movies.append(base_entry); ctx_nodes.append((node, wat))
         else:
-            episodes.append(entry)
+            if base_entry["ids"]:
+                episodes.append(base_entry); ctx_nodes.append((node, wat))
 
     if not movies and not episodes:
         return 0
 
-    batch = int(_cfg_get(cfg_root, "history.write.batch_size", 200) or 200)
-    sent = 0
-    ok_once = False
+    def _added_count(r: Optional[requests.Response]) -> int:
+        if not r or not getattr(r, "ok", False): return 0
+        try: j = r.json() or {}
+        except Exception: return 0
+        add = j.get("added") or {}
+        return int(add.get("movies") or 0) + int(add.get("episodes") or 0) + int(add.get("shows") or 0)
+
+    sent_total = 0
+    last_resp_json: Any = None
 
     for chunk in _iter_chunks(movies, batch):
         r = _trakt_post(TRAKT_HISTORY_BASE, headers=hdr, json_payload={"movies": chunk}, timeout=45)
-        if r and r.ok:
-            sent += len(chunk); ok_once = True
+        sent_total += _added_count(r);  last_resp_json = (r.json() if r and r.ok else None)
     for chunk in _iter_chunks(episodes, batch):
         r = _trakt_post(TRAKT_HISTORY_BASE, headers=hdr, json_payload={"episodes": chunk}, timeout=45)
-        if r and r.ok:
-            sent += len(chunk); ok_once = True
+        sent_total += _added_count(r);  last_resp_json = (r.json() if r and r.ok else None)
 
-    if ok_once:
+    # Always persist last post & response for debugging
+    try:
+        _write_json(_state_root() / "trakt_last_post.json",
+                    {"ts": now_iso,
+                     "movies": len(movies), "episodes": len(episodes),
+                     "added_total": int(sent_total),
+                     "sample_node": (ctx_nodes[0][0] if ctx_nodes else None),
+                     "last_response": last_resp_json})
+    except Exception:
+        pass
+
+    if sent_total > 0:
+        # Advance cursor to max intended watched_at (fallback now)
         try:
-            max_wat_ts = 0
-            for _node, wat in ctx_nodes:
+            tmax = 0
+            for _n, wat in ctx_nodes:
                 if isinstance(wat, str) and wat.strip():
-                    t = int(iso_to_ts(wat) or 0)
-                    if t > max_wat_ts:
-                        max_wat_ts = t
-            new_cursor = ts_to_iso(max_wat_ts) if max_wat_ts > 0 else now_iso
+                    t = int(iso_to_ts(wat) or 0);  tmax = max(tmax, t)
+            new_cur = ts_to_iso(tmax) if tmax > 0 else now_iso
         except Exception:
-            new_cursor = now_iso
+            new_cur = now_iso
 
-        cursors = _cursor_store_load()
-        cursors["history"] = new_cursor
-        _cursor_store_save(cursors)
+        curs = _cursor_store_load(); curs["history"] = new_cur; _cursor_store_save(curs)
 
+        # Best-effort shadow update for destination view
         sh = _history_shadow_load(); m: Dict[str, Any] = dict(sh.get("items") or {})
-        for node, wat in ctx_nodes:
-            k = canonical_key(node["type"].rstrip("s"), node)
-            m[k] = {**node, "watched": True, "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cursor)}
+        def _put(n: Mapping[str, Any], wat: Optional[str]) -> None:
+            k = canonical_key(n["type"].rstrip("s"), n)
+            m[k] = {**n, "watched": True, "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cur)}
+        for n, wat in ctx_nodes: _put(n, wat)
         _history_shadow_save(m)
 
-    return sent
+    return int(sent_total)
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})

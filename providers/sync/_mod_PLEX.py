@@ -244,19 +244,28 @@ _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
 _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|tvdb)://(\d+)", re.I)
 
+# in _ids_from_plexobj(obj) — keep current extraction, but also return 'guid'
 def _ids_from_plexobj(obj: Any) -> Dict[str, Any]:
     ids: Dict[str, Any] = {}
     try:
         for g in (getattr(obj, "guids", []) or []):
             gid = getattr(g, "id", None)
-            if isinstance(gid, str):
-                if "imdb" in gid and "imdb" not in ids:
-                    m = _PAT_IMDB.search(gid);  ids["imdb"] = m.group(1) if m else ids.get("imdb")
-                if "tmdb" in gid and "tmdb" not in ids:
-                    m = _PAT_TMDB.search(gid);  ids["tmdb"] = int(m.group(1)) if m else ids.get("tmdb")
-                if "thetvdb" in gid and "tvdb" not in ids:
-                    m = _PAT_TVDB.search(gid);  ids["tvdb"] = int(m.group(1)) if m else ids.get("tvdb")
-    except Exception: pass
+            if not isinstance(gid, str):
+                continue
+            # existing imdb/tmdb/tvdb parsing...
+            if "imdb" in gid and "imdb" not in ids:
+                m = _PAT_IMDB.search(gid);  ids["imdb"] = m.group(1) if m else ids.get("imdb")
+            if "tmdb" in gid and "tmdb" not in ids:
+                m = _PAT_TMDB.search(gid);  ids["tmdb"] = int(m.group(1)) if m else ids.get("tmdb")
+            if "thetvdb" in gid and "tvdb" not in ids:
+                m = _PAT_TVDB.search(gid);  ids["tvdb"] = int(m.group(1)) if m else ids.get("tvdb")
+        # keep the raw canonical guid too
+        if getattr(obj, "guid", None) and "guid" not in ids:
+            ids["guid"] = str(getattr(obj, "guid"))
+    except Exception:
+        pass
+
+    # also try single guid (legacy)
     try:
         gsingle = getattr(obj, "guid", None)
         if isinstance(gsingle, str):
@@ -266,8 +275,12 @@ def _ids_from_plexobj(obj: Any) -> Dict[str, Any]:
                 m = _PAT_TMDB.search(gsingle);  ids["tmdb"] = int(m.group(1)) if m else ids.get("tmdb")
             if "thetvdb" in gsingle and "tvdb" not in ids:
                 m = _PAT_TVDB.search(gsingle);  ids["tvdb"] = int(m.group(1)) if m else ids.get("tvdb")
-    except Exception: pass
+            ids.setdefault("guid", gsingle)
+    except Exception:
+        pass
+
     return {k: v for k, v in ids.items() if v is not None}
+
 
 def _libtype_from_item(item: Mapping[str, Any]) -> str:
     t = (item.get("type") or "").lower()
@@ -686,19 +699,56 @@ def _history_row(obj: Any, kind: str) -> Optional[Dict[str, Any]]:
     try: vc = getattr(obj, "viewCount", 0) or 0
     except Exception: vc = 0
     if vc <= 0: return None
+
     ids = _ids_from_plexobj(obj)
     if not ids: return None
+
     row: Dict[str, Any] = {
-        "type": _singular(kind), "title": getattr(obj, "title", None), "year": getattr(obj, "year", None),
-        "ids": ids, "watched": True,
+        "type": _singular(kind),
+        "title": getattr(obj, "title", None),
+        "year": getattr(obj, "year", None),
+        "ids": ids,
+        "watched": True,
     }
+
+    # timestamp (unchanged)
     try:
         wa = getattr(obj, "lastViewedAt", None)
         iso = _to_utc(wa) if wa else None
         if iso: row["watched_at"] = iso
     except Exception:
         pass
+
+    # EPISODE EXTRAS: season/episode & show ids from grandparent guid
+    if row["type"] == "episode":
+        try:
+            row["season"]  = getattr(obj, "seasonNumber", getattr(obj, "seasonNumberLocal", None))
+            row["episode"] = getattr(obj, "index", None)
+        except Exception:
+            pass
+        # Extract show ids from grandparentGuid if present (cheap and avoids .show() fetch)
+        try:
+            gpg = getattr(obj, "grandparentGuid", None)
+            if isinstance(gpg, str) and gpg:
+                show_ids = {}
+                if "imdb" in gpg:
+                    m = _PAT_IMDB.search(gpg)
+                    if m: show_ids["imdb"] = m.group(1)
+                if "tmdb" in gpg:
+                    m = _PAT_TMDB.search(gpg)
+                    if m: show_ids["tmdb"] = int(m.group(1))
+                if "thetvdb" in gpg:
+                    m = _PAT_TVDB.search(gpg)
+                    if m: show_ids["tvdb"] = int(m.group(1))
+                if gpg and "guid" not in show_ids:
+                    show_ids["guid"] = gpg
+                if show_ids:
+                    row["show_ids"] = show_ids
+        except Exception:
+            pass
+
     return _norm_row(row)
+
 
 def _history_index_full(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     plex_cfg = dict(cfg_root.get("plex") or {})
