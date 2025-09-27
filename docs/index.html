@@ -1,28 +1,72 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- Core -->
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#111523" />
-  <title>CrossWatch</title>
+  <title>CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt</title>
+
+  <!-- SEO -->
+  <link rel="canonical" href="https://cenodude.github.io/CrossWatch/" />
+  <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Simkl, and Trakt. Runs locally in Docker with a clean web UI, scheduler, dry-runs, and modular provider support." />
+  <meta name="keywords" content="CrossWatch, Plex, Jellyfin, Simkl, Trakt, watchlist sync, ratings sync, history sync, scrobbling, Docker, self-hosted" />
+  <meta name="robots" content="index,follow" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
+  <meta property="og:description" content="Local-first sync engine with neon web UI: watchlists, ratings, history, scrobbling, scheduler, and dry-runs." />
+  <meta property="og:url" content="https://cenodude.github.io/CrossWatch/" />
+  <meta property="og:site_name" content="CrossWatch" />
+  <meta property="og:image" content="images/screenshot1.jpg" />
+  <meta property="og:image:width" content="2048" />
+  <meta property="og:image:height" content="1109" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
+  <meta name="twitter:description" content="Local-first sync engine for Plex, Jellyfin, Simkl & Trakt. Scheduler, dry-runs, neon UI." />
+  <meta name="twitter:image" content="images/screenshot1.jpg" />
+
+  <!-- JSON-LD (SoftwareApplication) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "CrossWatch",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Docker, Linux, Windows, macOS",
+    "description": "Local-first synchronization engine for Plex, Jellyfin, Simkl, and Trakt with a clean web UI, scheduler, and dry-runs.",
+    "softwareVersion": "v0.x",
+    "url": "https://cenodude.github.io/CrossWatch/",
+    "image": "https://cenodude.github.io/CrossWatch/images/screenshot1.jpg",
+    "sameAs": "https://github.com/cenodude/CrossWatch",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "creator": { "@type": "Person", "name": "cenodude" }
+  }
+  </script>
+
+  <!-- Assets -->
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- HERO -->
+  <!-- Hero -->
   <header class="hero wrap">
     <img src="images/CrossWatch.png" alt="CrossWatch" class="logo" />
     <h1 class="brand">Cross<span>Watch</span></h1>
     <p class="tag">Sync watchlists, ratings & history across providers.</p>
 
-    <p class="panel" style="margin-top:16px">
-      <strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.
-      It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.
-    </p>
-    <p class="panel" style="margin-top:10px">
-      <strong>CrossWatch</strong> aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
-    </p>
+    <!-- Intro -->
+    <section class="panel center" style="margin-top:16px">
+      <p><strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.</p>
+    </section>
+    <section class="panel center" style="margin-top:10px">
+      <p><strong>CrossWatch</strong> aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.</p>
+    </section>
 
     <p class="cta">
       <a class="btn" href="https://github.com/cenodude/CrossWatch">GitHub</a>
@@ -32,41 +76,33 @@
     </p>
   </header>
 
-  <!-- PROVIDER CHIPS -->
-  <section class="wrap callouts">
-    <div class="chip ok">Plex</div>
-    <div class="chip ok">Jellyfin</div>
-    <div class="chip ok">Simkl</div>
-    <div class="chip ok">Trakt</div>
-  </section>
-
   <main class="wrap">
-    <!-- FEATURES -->
-    <section id="features" class="panel">
+    <!-- Features -->
+    <section id="features" class="panel center">
       <h2>🚀 Features</h2>
       <div class="grid-2">
         <ul>
           <li><strong>Watchlists sync</strong> — one-way or two-way per pair</li>
-          <li><strong>Ratings sync</strong> — one-/two-way, with conflict policy</li>
-          <li><strong>Watch history sync</strong> — one-/two-way with date handling</li>
+          <li><strong>Ratings sync</strong> — one-/two-way, conflict-aware</li>
+          <li><strong>Watch history sync</strong> — one-/two-way with dates</li>
           <li><strong>Playlists sync</strong> — one-/two-way (currently disabled)</li>
-          <li><strong>Live Scrobbling</strong> — Plex → Trakt in real time</li>
+          <li><strong>Live scrobbling</strong> — Plex → Trakt in real time</li>
           <li><strong>Planner</strong> — preview adds/removes before writing</li>
           <li><strong>Dry-run mode</strong> — safe plans, zero writes</li>
         </ul>
         <ul>
           <li><strong>Neon web UI</strong> — list/poster views, filters, insights</li>
-          <li><strong>Scheduler & Watcher</strong> — headless, runs on a timer</li>
+          <li><strong>Scheduler & Watcher</strong> — headless runs on a timer</li>
           <li><strong>TMDb enrichment</strong> — metadata + posters</li>
           <li><strong>ID normalization</strong> — IMDb-first, then TMDb/TVDB/Trakt</li>
-          <li><strong>Conflict handling</strong> — source-of-truth & policies</li>
-          <li><strong>Logs & Reports</strong> — stats, history, copyable summary</li>
+          <li><strong>Conflict policy</strong> — pick your source of truth</li>
+          <li><strong>Logs & reports</strong> — stats, history, copyable summary</li>
           <li><strong>Modular providers</strong> — easy to add new integrations</li>
         </ul>
       </div>
     </section>
 
-    <!-- RUN (CONTAINER ONLY) -->
+    <!-- Run (container only) -->
     <section id="install" class="panel">
       <h2>▶ Run (container only)</h2>
 
@@ -95,7 +131,7 @@ services:
       <p class="hint">Open <code>http://localhost:8787</code> after the container is up. Configure providers, create pairs, dry-run, then enable writes.</p>
     </section>
 
-    <!-- SCREENSHOTS WITH LIGHTBOX -->
+    <!-- Screenshots -->
     <section id="screens" class="panel">
       <h2>Screenshots</h2>
       <div class="gallery" data-gallery>
@@ -108,7 +144,7 @@ services:
     </section>
   </main>
 
-  <!-- LIGHTBOX VIEWER -->
+  <!-- Lightbox -->
   <div class="lightbox" id="viewer" hidden>
     <button class="lb-btn lb-close" aria-label="Close">✕</button>
     <button class="lb-btn lb-prev" aria-label="Previous">‹</button>
@@ -119,14 +155,14 @@ services:
     <button class="lb-btn lb-next" aria-label="Next">›</button>
   </div>
 
-  <!-- FOOTER -->
+  <!-- Footer -->
   <footer class="wrap foot">
     <span>© CrossWatch</span>
     <span><a href="https://github.com/cenodude/CrossWatch">GitHub</a></span>
   </footer>
 
-  <!-- EARLY DEV NOTE (placed last by request) -->
-  <section class="wrap panel" style="margin-top:0">
+  <!-- Early development (last) -->
+  <section class="wrap panel center" style="margin-top:0">
     <h2>⚠️ Early development</h2>
     <p><strong>Testing only — do not use in production.</strong> Always back up your data before a real sync.</p>
     <ul class="status">
@@ -136,56 +172,6 @@ services:
     </ul>
   </section>
 
-  <!-- Inline viewer.js (no deps) -->
-  <script>
-  (() => {
-    const gallery = document.querySelector('[data-gallery]'); if (!gallery) return;
-    const items = [...gallery.querySelectorAll('a')];
-    const viewer = document.getElementById('viewer');
-    const img = document.getElementById('viewer-img');
-    const cap = document.getElementById('viewer-cap');
-    const count = document.getElementById('viewer-count');
-    const btnPrev = viewer.querySelector('.lb-prev');
-    const btnNext = viewer.querySelector('.lb-next');
-    const btnClose = viewer.querySelector('.lb-close');
-    let i = 0, touchX = null;
-
-    const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
-    function preload(idx){ if(idx<0||idx>=items.length) return; const s=items[idx].getAttribute('href'); const im=new Image(); im.src=s; }
-    function show(idx){ const a=items[idx]; img.src=a.getAttribute('href'); img.alt=a.querySelector('img')?.alt||''; cap.textContent=a.dataset.title||img.alt||'Screenshot'; count.textContent=` ${idx+1} / ${items.length}`; i=idx; }
-    function open(idx){ i=clamp(idx,0,items.length-1); show(i); viewer.hidden=false; document.body.style.overflow='hidden'; preload(i-1); preload(i+1); }
-    function close(){ viewer.hidden=true; document.body.style.overflow=''; }
-    const next=()=>show(clamp(i+1,0,items.length-1));
-    const prev=()=>show(clamp(i-1,0,items.length-1));
-
-    items.forEach((a,idx)=>a.addEventListener('click',e=>{e.preventDefault(); open(idx);},{passive:true}));
-    btnClose.addEventListener('click',close); btnNext.addEventListener('click',next); btnPrev.addEventListener('click',prev);
-    viewer.addEventListener('click',e=>{ if(e.target===viewer) close(); });
-    window.addEventListener('keydown',e=>{ if(viewer.hidden) return; if(e.key==='Escape') close(); else if(e.key==='ArrowRight') next(); else if(e.key==='ArrowLeft') prev(); });
-    viewer.addEventListener('touchstart',e=>{ touchX=e.touches[0].clientX; },{passive:true});
-    viewer.addEventListener('touchend',e=>{ if(touchX==null) return; const dx=e.changedTouches[0].clientX - touchX; touchX=null; if(Math.abs(dx)<40) return; dx<0?next():prev(); },{passive:true});
-  })();
-  </script>
-
-  <!-- Favicon SVG (save as docs/favicon.svg) -->
-  <!--
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <defs>
-      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#8a5cff"/>
-        <stop offset="1" stop-color="#20d0ff"/>
-      </linearGradient>
-      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-        <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#8a5cff" flood-opacity=".6"/>
-      </filter>
-    </defs>
-    <rect width="64" height="64" rx="14" fill="#0b0c10"/>
-    <rect x="3" y="3" width="58" height="58" rx="12" fill="url(#g)" opacity=".9"/>
-    <rect x="6" y="6" width="52" height="52" rx="10" fill="#0b0c10"/>
-    <!-- envelope-ish "watch" mark -->
-    <rect x="14" y="22" width="36" height="20" rx="4" fill="none" stroke="url(#g)" stroke-width="3" filter="url(#glow)"/>
-    <path d="M14 22l18 12L50 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" filter="url(#glow)"/>
-  </svg>
-  -->
+  <script src="viewer.js" defer></script>
 </body>
 </html>
