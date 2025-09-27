@@ -21,8 +21,12 @@
 <div align="center">
 
 ⚠️ **EARLY DEVELOPMENT**  
-This project is unstable and may break.  DO NOT USE FOR PRODUCTION!, ONLY FOR TESTING!!
+This project is unstable and may break. **TESTING ONLY — DO NOT USE IN PRODUCTION.**  
+**Road to redemption → v0.2.0:** deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.  
+**What works (mostly):** in my experience, most **Plex** and **Trakt** features work. Including Live scrobbling (Plex → Trakt)
+**Still maturing:** **SIMKL** and **Jellyfin** remain in active testing.  
 **Always back up your data before use.**
+
 
 </div>
 
