@@ -6,13 +6,16 @@
 <!-- Click-to-zoom screenshots (links to full size) -->
 <p align="center">
   <a href="images/screenshot1.jpg">
-    <img src="images/screenshot1.jpg" alt="CrossWatch — Screenshot 1" width="32%">
+    <img src="images/screenshot1.jpg" alt="CrossWatch — Screenshot 1" width="24%">
   </a>
   <a href="images/screenshot2.jpg">
-    <img src="images/screenshot2.jpg" alt="CrossWatch — Screenshot 2" width="32%">
+    <img src="images/screenshot2.jpg" alt="CrossWatch — Screenshot 2" width="24%">
   </a>
   <a href="images/screenshot3.jpg">
-    <img src="images/screenshot3.jpg" alt="CrossWatch — Screenshot 3" width="32%">
+    <img src="images/screenshot3.jpg" alt="CrossWatch — Screenshot 3" width="24%">
+  </a>
+  <a href="images/screenshot4.jpg">
+    <img src="images/screenshot4.jpg" alt="CrossWatch — Screenshot 4" width="24%">
   </a>
 </p>
 
