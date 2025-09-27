@@ -3,69 +3,74 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#111523" />
   <title>CrossWatch</title>
-  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- HERO -->
   <header class="hero wrap">
-    <img src="images/CrossWatch.png" alt="CrossWatch" class="logo">
+    <img src="images/CrossWatch.png" alt="CrossWatch" class="logo" />
     <h1 class="brand">Cross<span>Watch</span></h1>
     <p class="tag">Sync watchlists, ratings & history across providers.</p>
+
+    <!-- REQUIRED INTRO (starts with these lines) -->
+    <p class="panel" style="margin-top:16px">
+      <strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.
+      It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.
+    </p>
+    <p class="panel" style="margin-top:10px">
+      <strong>CrossWatch</strong> aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
+    </p>
+
     <p class="cta">
       <a class="btn" href="https://github.com/cenodude/CrossWatch">GitHub</a>
       <a class="btn ghost" href="#features">Features</a>
       <a class="btn ghost" href="#install">Run</a>
+      <a class="btn ghost" href="#screens">Screens</a>
     </p>
   </header>
 
+  <!-- PROVIDER CHIPS -->
+  <section class="wrap callouts">
+    <div class="chip ok">Plex</div>
+    <div class="chip ok">Jellyfin</div>
+    <div class="chip ok">Simkl</div>
+    <div class="chip ok">Trakt</div>
+  </section>
+
   <main class="wrap">
-    <section class="callouts">
-      <div class="chip ok">Jellyfin</div>
-      <div class="chip ok">Plex</div>
-      <div class="chip ok">Simkl</div>
-      <div class="chip ok">Trakt</div>
-    </section>
-
-    <section class="panel">
-      <h2>⚠️ Early development</h2>
-      <p><strong>Testing only — do not use in production.</strong> Always back up your data before a real sync.</p>
-      <p><strong>Road to v0.2.0:</strong> deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.</p>
-      <ul class="status">
-        <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
-        <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
-      </ul>
-    </section>
-
+    <!-- FEATURES -->
     <section id="features" class="panel">
       <h2>🚀 Features</h2>
       <div class="grid-2">
         <ul>
-          <li>Sync watchlists (one-/two-way)</li>
-          <li>Live scrobbling (Plex → Trakt)</li>
-          <li>Sync ratings (one-/two-way)</li>
-          <li>Sync watch history (one-/two-way)</li>
-          <li>Sync playlists (one-/two-way — disabled)</li>
+          <li><strong>Watchlists sync</strong> — one-way or two-way per pair</li>
+          <li><strong>Ratings sync</strong> — one-/two-way, with conflict policy</li>
+          <li><strong>Watch history sync</strong> — one-/two-way with date handling</li>
+          <li><strong>Playlists sync</strong> — one-/two-way (currently disabled)</li>
+          <li><strong>Live Scrobbling</strong> — Plex → Trakt in real time</li>
+          <li><strong>Planner</strong> — preview adds/removes before writing</li>
+          <li><strong>Dry-run mode</strong> — safe plans, zero writes</li>
         </ul>
         <ul>
-          <li>Simple web UI — JSON state</li>
-          <li>TMDb metadata & posters</li>
-          <li>Stats, history, live logs</li>
-          <li>Headless scheduled runs</li>
-          <li><strong>Trackers:</strong>
-            <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
-            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?logo=trakt&logoColor=white&labelColor=1f2328" />
-          </li>
-          <li><strong>Media servers:</strong>
-            <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
-            &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
-          </li>
+          <li><strong>Neon web UI</strong> — list/poster views, filters, insights</li>
+          <li><strong>Scheduler & Watcher</strong> — headless, runs on a timer</li>
+          <li><strong>TMDb enrichment</strong> — metadata + posters</li>
+          <li><strong>ID normalization</strong> — IMDb-first, then TMDb/TVDB/Trakt</li>
+          <li><strong>Conflict handling</strong> — source-of-truth & policies</li>
+          <li><strong>Logs & Reports</strong> — stats, history, copyable summary</li>
+          <li><strong>Modular providers</strong> — easy to add new integrations</li>
         </ul>
       </div>
     </section>
 
+    <!-- RUN (CONTAINER ONLY) -->
     <section id="install" class="panel">
       <h2>▶ Run (container only)</h2>
+
       <h3>Docker</h3>
       <pre><code>docker run -d \
   --name crosswatch \
@@ -88,24 +93,100 @@ services:
       - /path/to/config:/config
     restart: unless-stopped</code></pre>
 
-      <p class="hint">Open <code>http://localhost:8787</code> after the container is up.</p>
+      <p class="hint">Open <code>http://localhost:8787</code> after the container is up. Configure providers, create pairs, dry-run, then enable writes.</p>
     </section>
 
+    <!-- SCREENSHOTS WITH LIGHTBOX -->
     <section id="screens" class="panel">
       <h2>Screenshots</h2>
-      <div class="shots">
-        <a href="images/screenshot1.jpg"><img src="images/screenshot1.jpg" alt="Screenshot 1"></a>
-        <a href="images/screenshot2.jpg"><img src="images/screenshot2.jpg" alt="Screenshot 2"></a>
-        <a href="images/screenshot3.jpg"><img src="images/screenshot3.jpg" alt="Screenshot 3"></a>
-        <a href="images/screenshot4.jpg"><img src="images/screenshot4.jpg" alt="Screenshot 4"></a>
+      <div class="gallery" data-gallery>
+        <a href="images/screenshot1.jpg" data-title="Main"><img loading="lazy" src="images/screenshot1.jpg" alt="Main"></a>
+        <a href="images/screenshot2.jpg" data-title="Settings"><img loading="lazy" src="images/screenshot2.jpg" alt="Settings"></a>
+        <a href="images/screenshot3.jpg" data-title="Watchlist – List"><img loading="lazy" src="images/screenshot3.jpg" alt="Watchlist – List"></a>
+        <a href="images/screenshot4.jpg" data-title="Watchlist – Posters"><img loading="lazy" src="images/screenshot4.jpg" alt="Watchlist – Posters"></a>
       </div>
-      <p class="hint">Click to view full size.</p>
+      <p class="hint">Click to view full size. Use ← → or swipe. Esc to close.</p>
     </section>
   </main>
 
+  <!-- LIGHTBOX VIEWER -->
+  <div class="lightbox" id="viewer" hidden>
+    <button class="lb-btn lb-close" aria-label="Close">✕</button>
+    <button class="lb-btn lb-prev" aria-label="Previous">‹</button>
+    <figure class="lb-stage">
+      <img id="viewer-img" alt="">
+      <figcaption class="lb-cap"><span id="viewer-cap"></span><span id="viewer-count"></span></figcaption>
+    </figure>
+    <button class="lb-btn lb-next" aria-label="Next">›</button>
+  </div>
+
+  <!-- FOOTER -->
   <footer class="wrap foot">
     <span>© CrossWatch</span>
     <span><a href="https://github.com/cenodude/CrossWatch">GitHub</a></span>
   </footer>
+
+  <!-- EARLY DEV NOTE (placed last by request) -->
+  <section class="wrap panel" style="margin-top:0">
+    <h2>⚠️ Early development</h2>
+    <p><strong>Testing only — do not use in production.</strong> Always back up your data before a real sync.</p>
+    <ul class="status">
+      <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
+      <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
+      <li><strong>Road to v0.2.0:</strong> deep cleanup & refactors; fewer new features, more fixes & polish</li>
+    </ul>
+  </section>
+
+  <!-- Inline viewer.js (no deps) -->
+  <script>
+  (() => {
+    const gallery = document.querySelector('[data-gallery]'); if (!gallery) return;
+    const items = [...gallery.querySelectorAll('a')];
+    const viewer = document.getElementById('viewer');
+    const img = document.getElementById('viewer-img');
+    const cap = document.getElementById('viewer-cap');
+    const count = document.getElementById('viewer-count');
+    const btnPrev = viewer.querySelector('.lb-prev');
+    const btnNext = viewer.querySelector('.lb-next');
+    const btnClose = viewer.querySelector('.lb-close');
+    let i = 0, touchX = null;
+
+    const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
+    function preload(idx){ if(idx<0||idx>=items.length) return; const s=items[idx].getAttribute('href'); const im=new Image(); im.src=s; }
+    function show(idx){ const a=items[idx]; img.src=a.getAttribute('href'); img.alt=a.querySelector('img')?.alt||''; cap.textContent=a.dataset.title||img.alt||'Screenshot'; count.textContent=` ${idx+1} / ${items.length}`; i=idx; }
+    function open(idx){ i=clamp(idx,0,items.length-1); show(i); viewer.hidden=false; document.body.style.overflow='hidden'; preload(i-1); preload(i+1); }
+    function close(){ viewer.hidden=true; document.body.style.overflow=''; }
+    const next=()=>show(clamp(i+1,0,items.length-1));
+    const prev=()=>show(clamp(i-1,0,items.length-1));
+
+    items.forEach((a,idx)=>a.addEventListener('click',e=>{e.preventDefault(); open(idx);},{passive:true}));
+    btnClose.addEventListener('click',close); btnNext.addEventListener('click',next); btnPrev.addEventListener('click',prev);
+    viewer.addEventListener('click',e=>{ if(e.target===viewer) close(); });
+    window.addEventListener('keydown',e=>{ if(viewer.hidden) return; if(e.key==='Escape') close(); else if(e.key==='ArrowRight') next(); else if(e.key==='ArrowLeft') prev(); });
+    viewer.addEventListener('touchstart',e=>{ touchX=e.touches[0].clientX; },{passive:true});
+    viewer.addEventListener('touchend',e=>{ if(touchX==null) return; const dx=e.changedTouches[0].clientX - touchX; touchX=null; if(Math.abs(dx)<40) return; dx<0?next():prev(); },{passive:true});
+  })();
+  </script>
+
+  <!-- Favicon SVG (save as docs/favicon.svg) -->
+  <!--
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#8a5cff"/>
+        <stop offset="1" stop-color="#20d0ff"/>
+      </linearGradient>
+      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#8a5cff" flood-opacity=".6"/>
+      </filter>
+    </defs>
+    <rect width="64" height="64" rx="14" fill="#0b0c10"/>
+    <rect x="3" y="3" width="58" height="58" rx="12" fill="url(#g)" opacity=".9"/>
+    <rect x="6" y="6" width="52" height="52" rx="10" fill="#0b0c10"/>
+    <!-- envelope-ish "watch" mark -->
+    <rect x="14" y="22" width="36" height="20" rx="4" fill="none" stroke="url(#g)" stroke-width="3" filter="url(#glow)"/>
+    <path d="M14 22l18 12L50 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" filter="url(#glow)"/>
+  </svg>
+  -->
 </body>
 </html>
