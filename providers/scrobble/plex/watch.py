@@ -1,5 +1,5 @@
 # providers/scrobble/watch.py
-# Refactoring project: watch.py (v0.1)
+# Refactoring project: watch.py (1.0)
 from __future__ import annotations
 
 import json, os, time, threading

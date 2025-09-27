@@ -1,6 +1,9 @@
-// CrossWatch Scrobbler UI — compact, friendly, no fluff
+// Scrobbler UI 
+//* Refactoring project: scrobbler.js (v0.1) */
+//*------------------------------------------*/
+
 (function (w, d) {
-  // Tiny helpers: obvious, predictable
+  // Tiny helpers
   const $=(s,r)=> (r||d).querySelector(s),
         $all=(s,r)=>[...(r||d).querySelectorAll(s)],
         el=(t,a)=>Object.assign(d.createElement(t),a||{}),

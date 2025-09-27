@@ -1,7 +1,9 @@
+// Client-side log formatter for CrossWatch UI.
+//* Refactoring project: main.js (v0.1) */
+//*-------------------------------------*/
+
 (function (w, d) {
   "use strict";
-
-  // Client-side log formatter for CrossWatch UI.
 
   // -- styles (once) --
   if (!d.getElementById("cf-styles")) {

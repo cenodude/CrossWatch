@@ -1,5 +1,5 @@
 # providers/scrobble/trakt/sink.py
-# Refactoring project: sink.py (v0.1)
+# Refactoring project: sink.py (v1.0)
 from __future__ import annotations
 
 import time, json, requests

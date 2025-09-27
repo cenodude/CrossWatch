@@ -1,4 +1,7 @@
-// UX panel — compact, clean, forward-only progress (no regress), small remarks.
+// UX panel
+//* Refactoring project: main.js (v0.1) */
+//*-------------------------------------*/
+
 (() => {
   const FEATS = [
     { key: "watchlist", icon: "movie",       label: "Watchlist" },

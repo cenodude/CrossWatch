@@ -1,7 +1,4 @@
 // auth.plex-simkl.js
-// Client-side helpers for authenticating with Plex (PIN flow) and SIMKL (OAuth).
-// This file only manages UI interactions and polling; it does not merge or
-// reconcile any server-side state.
 (function (w, d) {
   // --- Small module-local helpers ---
   const $ = (s) => d.getElementById(s);

@@ -1,4 +1,6 @@
 # _authentication.py - authentication routes for FastAPI app
+# Refactoring project: _authentication.py (v0.1)
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

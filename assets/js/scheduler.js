@@ -1,4 +1,6 @@
-// /assets/js/scheduler.js 
+// /assets/js/scheduler.js
+//* Refactoring project: scheduler.js (v0.1) */
+//*------------------------------------------*/
 (() => {
   "use strict";
   if (window.__SCHED_UI_INIT__) return; window.__SCHED_UI_INIT__ = true;

@@ -1,6 +1,8 @@
+// watchlist 
+//* Refactoring project: watchlist.js (v0.1) */
+//*------------------------------------------*/
+
 (function () {
-  /* Refactoring project: watchlist.js (v0.1) */
-  /*------------------------------------------*/
 
   /* ========= styles ========= */
   const css = `
