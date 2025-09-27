@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CrossWatch</title>
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero wrap">
+    <img src="images/CrossWatch.png" alt="CrossWatch" class="logo">
+    <h1 class="brand">Cross<span>Watch</span></h1>
+    <p class="tag">Sync watchlists, ratings & history across providers.</p>
+    <p class="cta">
+      <a class="btn" href="https://github.com/cenodude/CrossWatch">GitHub</a>
+      <a class="btn ghost" href="#features">Features</a>
+      <a class="btn ghost" href="#install">Run</a>
+    </p>
+  </header>
+
+  <main class="wrap">
+    <section class="callouts">
+      <div class="chip ok">Jellyfin</div>
+      <div class="chip ok">Plex</div>
+      <div class="chip ok">Simkl</div>
+      <div class="chip ok">Trakt</div>
+    </section>
+
+    <section class="panel">
+      <h2>⚠️ Early development</h2>
+      <p><strong>Testing only — do not use in production.</strong> Always back up your data before a real sync.</p>
+      <p><strong>Road to v0.2.0:</strong> deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.</p>
+      <ul class="status">
+        <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
+        <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
+      </ul>
+    </section>
+
+    <section id="features" class="panel">
+      <h2>🚀 Features</h2>
+      <div class="grid-2">
+        <ul>
+          <li>Sync watchlists (one-/two-way)</li>
+          <li>Live scrobbling (Plex → Trakt)</li>
+          <li>Sync ratings (one-/two-way)</li>
+          <li>Sync watch history (one-/two-way)</li>
+          <li>Sync playlists (one-/two-way — disabled)</li>
+        </ul>
+        <ul>
+          <li>Simple web UI — JSON state</li>
+          <li>TMDb metadata & posters</li>
+          <li>Stats, history, live logs</li>
+          <li>Headless scheduled runs</li>
+          <li><strong>Trackers:</strong>
+            <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?logo=trakt&logoColor=white&labelColor=1f2328" />
+          </li>
+          <li><strong>Media servers:</strong>
+            <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
+            &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="install" class="panel">
+      <h2>▶ Run (container only)</h2>
+      <h3>Docker</h3>
+      <pre><code>docker run -d \
+  --name crosswatch \
+  -p 8787:8787 \
+  -v /path/to/config:/config \
+  -e TZ=Europe/Amsterdam \
+  ghcr.io/cenodude/crosswatch:latest</code></pre>
+
+      <h3>docker-compose</h3>
+      <pre><code># docker-compose.yml
+services:
+  crosswatch:
+    image: ghcr.io/cenodude/crosswatch:latest
+    container_name: crosswatch
+    ports:
+      - "8787:8787"          # host:container
+    environment:
+      - TZ=Europe/Amsterdam
+    volumes:
+      - /path/to/config:/config
+    restart: unless-stopped</code></pre>
+
+      <p class="hint">Open <code>http://localhost:8787</code> after the container is up.</p>
+    </section>
+
+    <section id="screens" class="panel">
+      <h2>Screenshots</h2>
+      <div class="shots">
+        <a href="images/screenshot1.jpg"><img src="images/screenshot1.jpg" alt="Screenshot 1"></a>
+        <a href="images/screenshot2.jpg"><img src="images/screenshot2.jpg" alt="Screenshot 2"></a>
+        <a href="images/screenshot3.jpg"><img src="images/screenshot3.jpg" alt="Screenshot 3"></a>
+        <a href="images/screenshot4.jpg"><img src="images/screenshot4.jpg" alt="Screenshot 4"></a>
+      </div>
+      <p class="hint">Click to view full size.</p>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <span>© CrossWatch</span>
+    <span><a href="https://github.com/cenodude/CrossWatch">GitHub</a></span>
+  </footer>
+</body>
+</html>
