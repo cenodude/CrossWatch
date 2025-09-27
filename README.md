@@ -19,13 +19,14 @@
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
 <div align="center">
-⚠️ **EARLY DEVELOPMENT**  
-This project is unstable and may break. **TESTING ONLY — DO NOT USE IN PRODUCTION.**  
-**Road to redemption → v0.2.0:** deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.  
-**What works (mostly):** in my experience, most **Plex** and **Trakt** features work. Including Live scrobbling (Plex → Trakt)
-**Still maturing:** **SIMKL** and **Jellyfin** remain in active testing.  
-**Always back up your data before use.**
+<strong>⚠️ EARLY DEVELOPMENT</strong><br>
+This project is unstable and may break. <strong>TESTING ONLY — DO NOT USE IN PRODUCTION.</strong><br>
+<strong>Road to redemption → v0.2.0:</strong> deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.<br>
+<strong>What works (mostly):</strong> most <strong>Plex</strong> and <strong>Trakt</strong> features, including live scrobbling (Plex → Trakt).<br>
+<strong>Still maturing:</strong> <strong>SIMKL</strong> and <strong>Jellyfin</strong> remain in active testing.<br>
+<strong>Always back up your data before use.</strong>
 </div>
+
 
 ---
 
