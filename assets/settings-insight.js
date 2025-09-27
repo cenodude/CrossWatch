@@ -39,7 +39,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: url("/assets/background.svg") center/220px no-repeat;
+    background: url("/assets/img/background.svg") center/220px no-repeat;
     opacity: 0.12;
     pointer-events: none;
   }

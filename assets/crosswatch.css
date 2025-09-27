@@ -183,7 +183,7 @@ main.single #stats-card {
   content: "";
   position: absolute;
   inset: -2px;
-  background: url("/assets/background.svg") no-repeat 50% 96% / cover;
+  background: url("/assets/img/background.svg") no-repeat 50% 96% / cover;
   opacity: .14;
   mix-blend-mode: screen;
   pointer-events: none
@@ -1593,24 +1593,6 @@ select {
   border-left: 3px solid var(--jellyfin);
   padding-left: 10px;
 }
-.prov-card[data-prov="PLEX"] .prov-head::after {
-  content: " ";
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  width: 28px;
-  height: 28px;
-  display: block;
-  z-index: 50;
-  background-color: rgba(0,0,0,.55) !important;
-  background-image: url("/assets/PLEX.svg?v=1") !important;
-  background-repeat: no-repeat !important;
-  background-position: center !important;
-  background-size: contain !important;
-  border-radius: 8px;
-  filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
-  outline: 2px solid magenta !important
-}
 .prov-card[data-prov="Plex"] .prov-head::after {
   content: " ";
   position: absolute;
@@ -1621,7 +1603,7 @@ select {
   display: block;
   z-index: 50;
   background-color: rgba(0,0,0,.55) !important;
-  background-image: url("/assets/PLEX.svg?v=1") !important;
+  background-image: url("/assets/img/Plex.svg?v=1") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
   background-size: contain !important;
@@ -1639,7 +1621,7 @@ select {
   display: block;
   z-index: 50;
   background-color: rgba(0,0,0,.55) !important;
-  background-image: url("/assets/SIMKL.svg?v=1") !important;
+  background-image: url("/assets/img/SIMKL.svg?v=1") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
   background-size: contain !important;
@@ -1657,7 +1639,7 @@ select {
   display: block;
   z-index: 50;
   background-color: rgba(0,0,0,.55) !important;
-  background-image: url("/assets/SIMKL.svg?v=1") !important;
+  background-image: url("/assets/img/SIMKL.svg?v=1") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
   background-size: contain !important;
@@ -3634,7 +3616,7 @@ select {
 /* ==================================================================
    Animations
    ================================================================== */
-@keyframes spin { to { } }
+@keyframes spin { to { transform: rotate(360deg) } }
 @keyframes pulseSpin {
  0% { transform: rotate(0deg) scale(1); }
  50% { transform: rotate(180deg) scale(1.2); }

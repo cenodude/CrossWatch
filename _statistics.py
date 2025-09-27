@@ -1,6 +1,5 @@
 from __future__ import annotations
 #_statistics.py
-# Thread-safe statistics with minimal I/O 
 
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -401,45 +400,66 @@ class Stats:
         now_epoch = int(time.time())
         with self.lock:
             prev = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
-            cur = self._build_union_map(state)
+            cur  = self._build_union_map(state)
 
-            prev_keys, cur_keys = set(prev.keys()), set(cur.keys())
-            added_keys = sorted(cur_keys - prev_keys)
-            removed_keys = sorted(prev_keys - cur_keys)
+            pk, ck = set(prev), set(cur)
+            added_keys, removed_keys = sorted(ck - pk), sorted(pk - ck)
 
             ev = self.data.get("events") or []
+
+            # --- de-noise re-keys (title match OR same id core) into a single "update"
+            import re
+            def _title_key(m): return (m.get("title") or "").strip().casefold()
+            def _provset(m):  return {k for k in ("p","s","t","j") if m.get(k)} or {str(m.get("src") or "")}
+            _IDCORE = re.compile(r"^(?P<p>[a-z0-9]+):(?:(?:movie|tv|show):)?(?P<i>[^:]+)$", re.I)
+            def _idcore(k):
+                m = _IDCORE.match(str(k) or ""); 
+                return (m.group("p"), m.group("i")) if m else (None, None)
+
+            for rk in list(removed_keys):
+                rm = prev.get(rk) or {}
+                rt, rp = _title_key(rm), _provset(rm)
+                rp_name, rp_id = _idcore(rk)
+                for ak in list(added_keys):
+                    am = cur.get(ak) or {}
+                    at, ap = _title_key(am), _provset(am)
+                    ap_name, ap_id = _idcore(ak)
+
+                    same_title = rt and at and (rt == at)
+                    same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
+                    if (same_title or same_idcore) and (rp & ap or same_idcore):
+                        # treat as rename/update (e.g., tmdb:movie→tmdb:tv, guid→tmdb)
+                        removed_keys.remove(rk); added_keys.remove(ak)
+                        ev.append({"ts": now_epoch, "action": "update", "key": ak,
+                                "source": am.get("src",""), "title": am.get("title",""), "type": am.get("type","")})
+                        break
+
+            # --- true adds/removes after coalescing
             for k in added_keys:
                 m = cur.get(k) or {}
-                ev.append({
-                    "ts": now_epoch, "action": "add", "key": k,
-                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
-                })
+                ev.append({"ts": now_epoch, "action": "add", "key": k,
+                        "source": m.get("src",""), "title": m.get("title",""), "type": m.get("type","")})
             for k in removed_keys:
                 m = prev.get(k) or {}
-                ev.append({
-                    "ts": now_epoch, "action": "remove", "key": k,
-                    "source": m.get("src", ""), "title": m.get("title", ""), "type": m.get("type", "")
-                })
+                ev.append({"ts": now_epoch, "action": "remove", "key": k,
+                        "source": m.get("src",""), "title": m.get("title",""), "type": m.get("type","")})
+
             self.data["events"] = ev[-5000:]
 
             c = self._ensure_counters()
-            c["added"] = int(c.get("added", 0)) + len(added_keys)
+            c["added"]   = int(c.get("added", 0))   + len(added_keys)
             c["removed"] = int(c.get("removed", 0)) + len(removed_keys)
             self.data["counters"] = c
 
             self.data["last_run"] = {"added": len(added_keys), "removed": len(removed_keys), "ts": now_epoch}
-            self.data["current"] = cur
+            self.data["current"]  = cur
 
             samples = self.data.get("samples") or []
             samples.append({"ts": now_epoch, "count": len(cur)})
             self.data["samples"] = samples[-4000:]
 
             self._save()
-            return {
-                "now": len(cur),
-                "week": self._count_at(now_epoch - 7 * 86400),
-                "month": self._count_at(now_epoch - 30 * 86400),
-            }
+            return {"now": len(cur), "week": self._count_at(now_epoch - 7*86400), "month": self._count_at(now_epoch - 30*86400)}
 
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "", typ: str = "") -> None:
         now_epoch = int(time.time())

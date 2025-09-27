@@ -1,4 +1,4 @@
-// auth.trakt.js — Secrets hydration and Trakt device flow helpers.
+// auth.trakt.js
 (function () {
   if (window._traktPatched) return;
   window._traktPatched = true;

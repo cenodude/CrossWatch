@@ -1,7 +1,7 @@
 from __future__ import annotations
 # providers/sync/_mod_SIMKL.py
 
-__VERSION__ = "1.3.0"
+__VERSION__ = "0.1.0"
 __all__ = ["OPS", "SIMKLModule", "get_manifest"]
 
 import json
@@ -9,7 +9,8 @@ import time
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, DefaultDict
+from collections import defaultdict
 
 import requests
 
@@ -35,20 +36,26 @@ SIMKL_BASE = "https://api.simkl.com"
 
 SIMKL_SYNC_ACTIVITIES = f"{SIMKL_BASE}/sync/activities"
 
+# Watchlist (plan-to-watch)
+SIMKL_ADD_TO_LIST          = f"{SIMKL_BASE}/sync/add-to-list"
+SIMKL_REMOVE_FROM_LIST     = f"{SIMKL_BASE}/sync/remove-from-list"
+
 SIMKL_ALL_ITEMS_MOVIES_PTW = f"{SIMKL_BASE}/sync/all-items/movies/plantowatch"
 SIMKL_ALL_ITEMS_SHOWS_PTW  = f"{SIMKL_BASE}/sync/all-items/shows/plantowatch"
 SIMKL_ALL_ITEMS_ANIME_PTW  = f"{SIMKL_BASE}/sync/all-items/anime/plantowatch"
 
-SIMKL_ADD_TO_LIST          = f"{SIMKL_BASE}/sync/add-to-list"
-SIMKL_REMOVE_FROM_LIST     = f"{SIMKL_BASE}/sync/remove-from-list"
+# Completed (history reads)
+SIMKL_ALL_ITEMS_MOVIES_COMPLETED = f"{SIMKL_BASE}/sync/all-items/movies/completed"
+SIMKL_ALL_ITEMS_SHOWS_COMPLETED  = f"{SIMKL_BASE}/sync/all-items/shows/completed"
 
-SIMKL_HISTORY_ADD          = f"{SIMKL_BASE}/sync/history"
-SIMKL_HISTORY_GET          = f"{SIMKL_BASE}/sync/history" 
-SIMKL_HISTORY_REMOVE       = f"{SIMKL_BASE}/sync/history/remove"
+# History add/remove
+SIMKL_HISTORY_ADD    = f"{SIMKL_BASE}/sync/history"
+SIMKL_HISTORY_REMOVE = f"{SIMKL_BASE}/sync/history/remove"
 
-SIMKL_RATINGS_GET          = f"{SIMKL_BASE}/sync/ratings"
-SIMKL_RATINGS_SET          = f"{SIMKL_BASE}/sync/ratings"
-SIMKL_RATINGS_REMOVE       = f"{SIMKL_BASE}/sync/ratings/remove"
+# Ratings
+SIMKL_RATINGS_GET    = f"{SIMKL_BASE}/sync/ratings"
+SIMKL_RATINGS_SET    = f"{SIMKL_BASE}/sync/ratings"
+SIMKL_RATINGS_REMOVE = f"{SIMKL_BASE}/sync/ratings/remove"
 
 
 _ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
@@ -83,6 +90,49 @@ def _cfg_get(cfg_root: Mapping[str, Any], path: str, default: Any = None) -> Any
         return cur
     except Exception:
         return default
+
+def _history_fetch_all(
+    hdr: Mapping[str, str],
+    date_from_iso: str,
+    *,
+    cfg_root: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """
+    Fetch all history items (movies, shows, episodes) via pagination.
+    Returns a dict with keys "movies", "shows", "episodes".
+    """
+    all_movies: List[dict] = []
+    all_shows: List[dict] = []
+    all_episodes: List[dict] = []
+    page = 1
+    limit = 100  # default page size, can adjust
+
+    while True:
+        params = {
+            "extended": "full",
+            "episode_watched_at": "yes",
+            "page": page,
+            "limit": limit,
+            "date_from": date_from_iso,
+        }
+        r = _simkl_get(SIMKL_HISTORY_GET, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+        if not r or not getattr(r, "ok", False):
+            break
+        j = r.json()
+        movies = _read_as_list(j, "movies")
+        shows = _read_as_list(j, "shows")
+        eps   = _read_as_list(j, "episodes")
+
+        if not movies and not shows and not eps:
+            break
+
+        all_movies.extend(movies)
+        all_shows.extend(shows)
+        all_episodes.extend(eps)
+
+        page += 1
+
+    return {"movies": all_movies, "shows": all_shows, "episodes": all_episodes}
 
 def _emit_rating_event(*, action: str, node: Mapping[str, Any], prev: Optional[int], value: Optional[int]) -> None:
     try:
@@ -666,16 +716,51 @@ def simkl_headers(simkl_cfg: Mapping[str, Any]) -> Dict[str, str]:
         "simkl-api-key": simkl_cfg.get("client_id",""),
     }
 
-def canonical_key(item: Mapping[str, Any]) -> str:
-    ids = item.get("ids") or {}
+def _first_id_key(ids: Mapping[str, Any]) -> Optional[Tuple[str, str]]:
     for k in _ID_KEYS:
         v = ids.get(k)
         if v:
-            return f"{k}:{v}".lower()
+            return k, str(v)
+    return None
+
+def canonical_key(item: Mapping[str, Any]) -> str:
+    # Make keys type-aware; episodes must include S/E to avoid collisions with the parent show.
+    typ = (item.get("type") or "").strip().lower() or "unknown"
+    ids = dict(item.get("ids") or {})
+    s = item.get("season")
+    e = item.get("episode")
+
+    # Normalize S/E
+    def _to_int(x):
+        try:
+            return int(str(x).strip())
+        except Exception:
+            return 0
+    s_i = _to_int(s)
+    e_i = _to_int(e)
+
+    if typ == "episode":
+        # Prefer id-based key + season/episode
+        for k in _ID_KEYS:
+            v = ids.get(k)
+            if v:
+                return f"episode|{k}:{v}|s{s_i:02d}e{e_i:02d}".lower()
+        # Fallback title/year if no ids
+        t = (item.get("title") or "").strip().lower()
+        y = str(item.get("year") or "")
+        return f"episode|title:{t}|year:{y}|s{s_i:02d}e{e_i:02d}"
+
+    # Movies / shows: include type in the id-based key to avoid cross-type clashes
+    for k in _ID_KEYS:
+        v = ids.get(k)
+        if v:
+            return f"{typ}|{k}:{v}".lower()
+
+    # Title/year fallback
     t = (item.get("title") or "").strip().lower()
-    y = item.get("year") or ""
-    typ = (item.get("type") or "").lower()
+    y = str(item.get("year") or "")
     return f"{typ}|title:{t}|year:{y}"
+
 
 def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
     return {
@@ -704,6 +789,43 @@ def _ids_from_simkl_node(node: Mapping[str, Any]) -> Dict[str, Any]:
         if v is not None:
             out[k] = str(v)
     return out
+
+def _completed_fetch_delta(hdr: Mapping[str, str], date_from_iso: str, *, cfg_root: Optional[Mapping[str, Any]] = None) -> Dict[str, List[dict]]:
+    params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": date_from_iso}
+    def _get(url: str, key: str) -> List[dict]:
+        r = _simkl_get(url, headers=hdr, params=params, timeout=45, cfg_root=cfg_root, force_refresh=False)
+        return _json_or_empty_list(r, key)
+    movies = _get(SIMKL_ALL_ITEMS_MOVIES_COMPLETED, "movies")
+    shows  = _get(SIMKL_ALL_ITEMS_SHOWS_COMPLETED,  "shows")
+    # anime optioneel: anime = _get(SIMKL_ALL_ITEMS_ANIME_COMPLETED, "anime")
+    return {"movies": movies, "shows": shows}
+
+def _completed_fetch_present(
+    hdr: Mapping[str, str],
+    *,
+    cfg_root: Optional[Mapping[str, Any]] = None,
+    force_refresh: bool = False,
+) -> Tuple[Dict[str, Any], bool]:
+    params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": "1970-01-01T00:00:00Z"}
+    r_m = _simkl_get(SIMKL_ALL_ITEMS_MOVIES_COMPLETED, headers=hdr, params=params, timeout=45, cfg_root=cfg_root, force_refresh=force_refresh)
+    r_s = _simkl_get(SIMKL_ALL_ITEMS_SHOWS_COMPLETED,  headers=hdr, params=params, timeout=45, cfg_root=cfg_root, force_refresh=force_refresh)
+    movies = _json_or_empty_list(r_m, "movies")
+    shows  = _json_or_empty_list(r_s, "shows")
+    ok = bool((r_m is not None and getattr(r_m, "ok", False)) or (r_s is not None and getattr(r_s, "ok", False)))
+    items: Dict[str, Any] = {}
+    if movies:
+        for it in movies:
+            if _looks_removed(it):
+                continue
+            node = _ptw_flatten_item("movie", it)
+            items[_ptw_key_for("movie", node)] = node
+    if shows:
+        for it in shows:
+            if _looks_removed(it):
+                continue
+            node = _ptw_flatten_item("show", it)
+            items[_ptw_key_for("show", node)] = node
+    return items, ok
 
 def _ptw_fetch_delta(hdr: Mapping[str, str], date_from_iso: str, *, cfg_root: Optional[Mapping[str, Any]] = None) -> Dict[str, List[dict]]:
     params = {"extended": "full", "episode_watched_at": "yes", "memos": "yes", "date_from": date_from_iso}
@@ -990,7 +1112,6 @@ def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, 
             typ = "show"
         entry = {
             "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
-            # PTW list is the target to remove from
             "from": "plantowatch",
         }
         if entry["ids"]:
@@ -1166,6 +1287,7 @@ def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]
                 "rating": new_val,
                 "rated_at": now_iso,
             }
+            # Keep this short and professional
             if prev_val is None:
                 _emit_rating_event(action="rate", node=smap[key], prev=None, value=new_val)
             elif prev_val != new_val:
@@ -1257,21 +1379,34 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     cursor = store.get("history") or simkl_cfg.get("last_date") or simkl_cfg.get("date_from")
     act_hint = acts.get("history") or acts.get("completed")
 
-    params: Dict[str, Any] = {"extended": "full"}
     if cursor:
         try:
             cts = int(iso_to_ts(str(cursor)) or 0)
         except Exception:
             cts = 0
-        if cts > 0:
-            params["date_from"] = ts_to_iso(max(0, cts - 5))
-        else:
-            params["date_from"] = str(cursor)
+        date_from_iso = ts_to_iso(max(0, cts - 5)) if cts > 0 else str(cursor)
     elif act_hint:
-        params["date_from"] = act_hint
+        date_from_iso = act_hint
+    else:
+        date_from_iso = "1970-01-01T00:00:00Z"
 
-    r = _simkl_get(SIMKL_HISTORY_GET, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
-    data = _json_or_empty_dict(r)
+    params: Dict[str, Any] = {
+        "extended": "full",
+        "episode_watched_at": "yes",
+        "memos": "yes",
+        "date_from": date_from_iso,
+    }
+    url_movies_completed = f"{SIMKL_BASE}/sync/all-items/movies/completed"
+    url_shows_completed  = f"{SIMKL_BASE}/sync/all-items/shows/completed"
+
+    r_m = _simkl_get(url_movies_completed, headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+    r_s = _simkl_get(url_shows_completed,  headers=hdr, params=params, timeout=45, cfg_root=cfg_root)
+
+    data: Dict[str, Any] = {
+        "movies": _json_or_empty_list(r_m, "movies"),
+        "shows":  _json_or_empty_list(r_s, "shows"),
+        "episodes": [],
+    }
 
     delta: Dict[str, Dict[str, Any]] = {}
     max_wat_ts = 0
@@ -1283,7 +1418,6 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             ids = _ids_from_simkl_node(node)
             if not ids and (node.get("title") is None):
                 continue
-
             row = {
                 "type": kind,
                 "title": node.get("title"),
@@ -1291,7 +1425,6 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                 "ids":   ids,
                 "watched": True,
             }
-
             wat = it.get("watched_at") or it.get("watched")
             if isinstance(wat, str) and wat.strip():
                 row["watched_at"] = wat
@@ -1300,14 +1433,79 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
                     if ts > max_wat_ts: max_wat_ts = ts
                 except Exception:
                     pass
-
             k = canonical_key(row)
             delta[k] = row
 
     handle(_read_as_list(data, "movies"), "movie")
     handle(_read_as_list(data, "shows"),  "show")
 
-    # If activities advanced but API returned empty, keep shadow
+    eps = _read_as_list(data, "episodes")
+    for it in eps or []:
+        show = it.get("show") or {}
+        ids = _ids_from_simkl_node(show)
+        if not ids and (show.get("title") is None):
+            continue
+        ep = it.get("episode") or {}
+        s = int(ep.get("season") or 0)
+        e = int(ep.get("number") or 0)
+        if s <= 0 or e <= 0:
+            continue
+        row = {
+            "type": "episode",
+            "title": show.get("title"),
+            "year":  show.get("year"),
+            "ids":   ids,
+            "season": s,
+            "episode": e,
+            "watched": True,
+        }
+        wat = it.get("watched_at") or it.get("watched")
+        if isinstance(wat, str) and wat.strip():
+            row["watched_at"] = wat
+            try:
+                ts = iso_to_ts(wat) or 0
+                if ts > max_wat_ts: max_wat_ts = ts
+            except Exception:
+                pass
+        k = canonical_key(row)
+        delta[k] = row
+
+    try:
+        for it in _read_as_list(data, "shows") or []:
+            show = it.get("show") or {}
+            ids = _ids_from_simkl_node(show)
+            seasons = it.get("seasons")
+            if not isinstance(seasons, list):
+                continue
+            for sn in seasons:
+                s = int(sn.get("number") or 0)
+                eps_arr = sn.get("episodes") or []
+                for en in eps_arr:
+                    e = int(en.get("number") or 0)
+                    if s <= 0 or e <= 0:
+                        continue
+                    row = {
+                        "type": "episode",
+                        "title": show.get("title"),
+                        "year":  show.get("year"),
+                        "ids":   ids,
+                        "season": s,
+                        "episode": e,
+                        "watched": True,
+                    }
+                    wat = en.get("watched_at") or en.get("watched")
+                    if isinstance(wat, str) and wat.strip():
+                        row["watched_at"] = wat
+                        try:
+                            ts = iso_to_ts(wat) or 0
+                            if ts > max_wat_ts: max_wat_ts = ts
+                        except Exception:
+                            pass
+                    k = canonical_key(row)
+                    delta[k] = row
+    except Exception:
+        pass
+
     try:
         act_ts = iso_to_ts(str(act_hint or "")) or 0
         cur_ts = iso_to_ts(str(cursor or "")) or 0
@@ -1324,7 +1522,6 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     if delta:
         base.update(delta)
         _history_shadow_save(cfg_root, base)
-        # Advance cursor to the newest real watched_at, else activity hint, else now.
         try:
             if max_wat_ts:
                 store.set("history", ts_to_iso(int(max_wat_ts)))
@@ -1342,125 +1539,229 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         pass
     return base
 
-
 def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    items_list = list(items)
+    def _is_tv_like(ids: Mapping[str, Any]) -> bool:
+        return any(k in ids and ids[k] for k in ("tvdb", "mal", "anidb", "anilist", "kitsu", "crunchyroll", "livechart", "anisearch", "animeplanet"))
 
-    # GMT suppression stays
+    items_list = list(items)
     store_gmt = _gmt_store_from_cfg(cfg_root)
     if store_gmt and items_list:
         op_add, _ = _gmt_ops_for_feature("history")
         items_list = [it for it in items_list if not _gmt_suppress(store=store_gmt, item=it, feature="history", write_op=op_add)]
 
-    # Planner guard: skip things already in SIMKL history (by canonical key)
-    existing = _history_index(cfg_root)  # cached
+    existing = _history_index(cfg_root)
     existing_keys = set(existing.keys())
-
-    # Require explicit timestamps by default (do NOT force True)
     require_ts = bool(_cfg_get(cfg_root, "history.write.require_timestamp", True))
+    allow_no_ts_eps = bool(_cfg_get(cfg_root, "simkl.history.write.allow_no_timestamp_episodes", True))
 
+    shows_eps: Dict[str, Dict[str, Any]] = {}
     movies: List[Dict[str, Any]] = []
-    shows:  List[Dict[str, Any]] = []
     ctx_nodes: List[Tuple[Dict[str, Any], Optional[str]]] = []
-    now_iso = ts_to_iso(int(time.time()))
 
     for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        typ = (it.get("type") or "movie").lower()
-        node = {
-            "type": "movie" if typ == "movie" else "show",
-            "title": it.get("title"),
-            "year":  it.get("year"),
-            "ids":   {k: ids.get(k) for k in _ID_KEYS if ids.get(k)},
-        }
-        key = canonical_key(node)
-        if key in existing_keys:
-            continue  # already in SIMKL
-
-        wat = it.get("watched_at")
-        if require_ts and not (isinstance(wat, str) and wat.strip()):
-            continue  # no timestamp → skip
-
-        entry = {"ids": dict(node["ids"])}
-        if isinstance(wat, str) and wat.strip():
-            entry["watched_at"] = wat  # never invent "now"
-        if not entry["ids"]:
+        ids_all = dict(it.get("ids") or {})
+        ids = {k: ids_all.get(k) for k in _ID_KEYS if ids_all.get(k)}
+        if not ids:
             continue
 
-        ctx_nodes.append((node, wat))
-        (movies if node["type"] == "movie" else shows).append(entry)
+        typ_raw = (it.get("type") or "").lower()
+        s, e = int(it.get("season") or 0), int(it.get("episode") or 0)
 
-    payload = {k: v for k, v in {"movies": movies, "shows": shows}.items() if v}
-    if not payload:
-        return 0
+        is_episode = (s > 0 and e > 0) or (typ_raw in ("show", "episode", "tv")) or _is_tv_like(ids)
+        wat = it.get("watched_at")
+
+        if not is_episode:
+            if require_ts and not (isinstance(wat, str) and wat.strip()):
+                continue
+            node: Dict[str, Any] = {"type": "movie", "title": it.get("title"), "year": it.get("year"), "ids": ids}
+            key = canonical_key(node)
+            if key in existing_keys:
+                continue
+            entry = {"ids": dict(ids)}
+            if isinstance(wat, str) and wat.strip():
+                entry["watched_at"] = wat
+            movies.append(entry)
+            ctx_nodes.append((node, wat))
+        else:
+            if s <= 0 or e <= 0:
+                # If we only know it's a show (no S/E), record status to ensure it becomes a show in SIMKL
+                node = {"type": "show", "title": it.get("title"), "year": it.get("year"), "ids": ids}
+                key = canonical_key(node)
+                if key in existing_keys:
+                    continue
+                ctx_nodes.append((node, None))
+                continue
+            node = {"type": "episode", "title": it.get("title"), "year": it.get("year"), "ids": ids, "season": s, "episode": e}
+            key = canonical_key(node)
+            if key in existing_keys:
+                continue
+            show_key = json.dumps(ids, sort_keys=True)
+            bucket = shows_eps.setdefault(show_key, {"ids": ids, "seasons": {}})
+            season_dict: List[Dict[str, Any]] = bucket["seasons"].setdefault(s, [])
+            ep_entry: Dict[str, Any] = {"number": e}
+            if isinstance(wat, str) and wat.strip():
+                ep_entry["watched_at"] = wat
+            elif not require_ts and allow_no_ts_eps:
+                pass
+            elif allow_no_ts_eps:
+                pass
+            else:
+                continue
+            season_dict.append(ep_entry)
+            ctx_nodes.append((node, wat))
+
+    shows_payload: List[Dict[str, Any]] = []
+    for _, v in shows_eps.items():
+        seasons_payload: List[Dict[str, Any]] = []
+        for s, eps in v["seasons"].items():
+            eps_clean = []
+            for ep in eps:
+                if "watched_at" in ep and isinstance(ep["watched_at"], str) and ep["watched_at"].strip():
+                    eps_clean.append({"number": ep["number"], "watched_at": ep["watched_at"]})
+                else:
+                    eps_clean.append({"number": ep["number"]})
+            if eps_clean:
+                seasons_payload.append({"number": s, "episodes": eps_clean})
+        if seasons_payload:
+            shows_payload.append({"ids": v["ids"], "seasons": seasons_payload})
 
     simkl_cfg = dict(cfg_root.get("simkl") or {})
-    r = _simkl_post(SIMKL_HISTORY_ADD, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
-    if r and r.ok:
+    hdr = simkl_headers(simkl_cfg)
+
+    total, now_iso = 0, ts_to_iso(int(time.time()))
+    chunk_size = int(_cfg_get(cfg_root, "runtime.apply_chunk_size", 100))
+    pause_ms   = int(_cfg_get(cfg_root, "runtime.apply_chunk_pause_ms", 0))
+
+    def _chunks(lst: List[Dict[str, Any]], n: int):
+        for i in range(0, len(lst), n):
+            yield lst[i:i+n]
+
+    def _added_count(resp: Optional[requests.Response]) -> int:
+        if not resp or not getattr(resp, "ok", False):
+            return 0
         try:
-            max_wat_ts = 0
-            for _node, wat in ctx_nodes:
-                if isinstance(wat, str) and wat.strip():
-                    t = int(iso_to_ts(wat) or 0)
-                    if t > max_wat_ts:
-                        max_wat_ts = t
-            new_cursor = ts_to_iso(max_wat_ts) if max_wat_ts > 0 else now_iso
+            j = resp.json() or {}
         except Exception:
-            new_cursor = now_iso
+            return 0
+        a = j.get("added") or {}
+        return int(a.get("movies") or 0) + int(a.get("episodes") or 0) + int(a.get("shows") or 0)
 
-        _CursorStore(cfg_root).set("history", new_cursor)
+    for chunk in _chunks(movies, chunk_size):
+        r = _simkl_post(SIMKL_HISTORY_ADD, headers=hdr, json_payload={"movies": chunk}, timeout=45)
+        total += _added_count(r)
+        if pause_ms: time.sleep(pause_ms/1000.0)
 
+    for chunk in _chunks(shows_payload, chunk_size):
+        r = _simkl_post(SIMKL_HISTORY_ADD, headers=hdr, json_payload={"shows": chunk}, timeout=60)
+        total += _added_count(r)
+        if pause_ms: time.sleep(pause_ms/1000.0)
+
+    if total:
         shadow = _history_shadow_load(cfg_root)
-        m: Dict[str, Any] = dict(shadow.get("items") or {})
+        m = dict(shadow.get("items") or {})
         for node, wat in ctx_nodes:
-            k = canonical_key(node)
-            m[k] = {
+            m[canonical_key(node)] = {
                 **node,
                 "watched": True,
-                "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cursor),
+                "watched_at": (wat if isinstance(wat, str) and wat.strip() else now_iso),
             }
         _history_shadow_save(cfg_root, m)
+        try:
+            _CursorStore(cfg_root).set("history", now_iso)
+        except Exception:
+            pass
 
-        return sum(len(v) for v in payload.values())
-    return 0
+    return total
 
 
 def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
+    def _is_tv_like(ids: Mapping[str, Any]) -> bool:
+        return any(k in ids and ids[k] for k in ("tvdb", "mal", "anidb", "anilist", "kitsu", "crunchyroll", "livechart", "anisearch", "animeplanet"))
+
     items_list = list(items)
     movies: List[Dict[str, Any]] = []
-    shows:  List[Dict[str, Any]] = []
-    for it in items_list:
-        ids = dict((it.get("ids") or {}))
-        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]:
-            continue
-        (movies if (it.get("type") or "movie") == "movie" else shows).append(entry)
-    payload = {k: v for k, v in {"movies": movies, "shows": shows}.items() if v}
-    if not payload:
-        return 0
-    simkl_cfg = dict(cfg_root.get("simkl") or {})
-    r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=simkl_headers(simkl_cfg), json_payload=payload, timeout=45)
-    if r and r.ok:
-        _CursorStore(cfg_root).set("history", ts_to_iso(int(time.time())))
-        shadow = _history_shadow_load(cfg_root)
-        m: Dict[str, Any] = dict(shadow.get("items") or {})
-        for it in items_list:
-            node = {
-                "type": (it.get("type") or "movie"),
-                "title": it.get("title"),
-                "year":  it.get("year"),
-                "ids":   {k: (it.get("ids") or {}).get(k) for k in _ID_KEYS if (it.get("ids") or {}).get(k)},
-            }
-            k = canonical_key(node)
-            m.pop(k, None)
-        _history_shadow_save(cfg_root, m)
-        store_gmt = _gmt_store_from_cfg(cfg_root)
-        if store_gmt:
-            for it in items_list:
-                _gmt_record(store=store_gmt, item=it, feature="history", op="unscrobble", origin="SIMKL")
-        return sum(len(v) for v in payload.values())
-    return 0
+    shows_eps: Dict[str, Dict[str, Any]] = {}
 
+    for it in items_list:
+        ids_all = dict(it.get("ids") or {})
+        ids = {k: ids_all.get(k) for k in _ID_KEYS if ids_all.get(k)}
+        if not ids:
+            continue
+        typ_raw = (it.get("type") or "").lower()
+        s, e = int(it.get("season") or 0), int(it.get("episode") or 0)
+        is_episode = (s > 0 and e > 0) or (typ_raw in ("show", "episode", "tv")) or _is_tv_like(ids)
+
+        if not is_episode:
+            movies.append({"ids": ids})
+        else:
+            if s <= 0 or e <= 0:
+                # remove whole show
+                key = json.dumps(ids, sort_keys=True)
+                shows_eps.setdefault(key, {"ids": ids, "seasons": {}})
+                continue
+            key = json.dumps(ids, sort_keys=True)
+            bucket = shows_eps.setdefault(key, {"ids": ids, "seasons": {}})
+            bucket["seasons"].setdefault(s, []).append(e)
+
+    shows_payload: List[Dict[str, Any]] = []
+    for _, v in shows_eps.items():
+        if not v["seasons"]:
+            shows_payload.append({"ids": v["ids"]})
+            continue
+        seasons_payload: List[Dict[str, Any]] = []
+        for s, eps_list in v["seasons"].items():
+            if eps_list:
+                seasons_payload.append({"number": s, "episodes": [{"number": n} for n in sorted(eps_list)]})
+        shows_payload.append({"ids": v["ids"], "seasons": seasons_payload})
+
+    if not movies and not shows_payload:
+        return 0
+
+    simkl_cfg = dict(cfg_root.get("simkl") or {})
+    hdr = simkl_headers(simkl_cfg)
+
+    total = 0
+    chunk_size = int(_cfg_get(cfg_root, "runtime.apply_chunk_size", 100))
+    pause_ms   = int(_cfg_get(cfg_root, "runtime.apply_chunk_pause_ms", 0))
+
+    def _chunks(lst: List[Dict[str, Any]], n: int):
+        for i in range(0, len(lst), n):
+            yield lst[i:i+n]
+
+    for chunk in _chunks(movies, chunk_size):
+        r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=hdr, json_payload={"movies": chunk}, timeout=45)
+        if r and r.ok:
+            total += len(chunk)
+        if pause_ms: time.sleep(pause_ms / 1000.0)
+
+    for chunk in _chunks(shows_payload, chunk_size):
+        r = _simkl_post(SIMKL_HISTORY_REMOVE, headers=hdr, json_payload={"shows": chunk}, timeout=60)
+        if r and r.ok:
+            total += len(chunk)
+        if pause_ms: time.sleep(pause_ms / 1000.0)
+
+    if total:
+        shadow = _history_shadow_load(cfg_root)
+        m = dict(shadow.get("items") or {})
+        for it in items_list:
+            ids_all = dict(it.get("ids") or {})
+            ids = {k: ids_all.get(k) for k in _ID_KEYS if ids_all.get(k)}
+            if not ids:
+                continue
+            typ_raw = (it.get("type") or "").lower()
+            s, e = int(it.get("season") or 0), int(it.get("episode") or 0)
+            is_episode = (s > 0 and e > 0) or (typ_raw in ("show", "episode", "tv")) or _is_tv_like(ids)
+
+            if is_episode and s > 0 and e > 0:
+                node = {"type": "episode", "title": it.get("title"), "year": it.get("year"), "ids": ids, "season": s, "episode": e}
+            elif is_episode:
+                node = {"type": "show", "title": it.get("title"), "year": it.get("year"), "ids": ids}
+            else:
+                node = {"type": "movie", "title": it.get("title"), "year": it.get("year"), "ids": ids}
+            m.pop(canonical_key(node), None)
+        _history_shadow_save(cfg_root, m)
+
+    return total
 
 class _SimklOPS:
     def name(self) -> str: return "SIMKL"
@@ -1472,6 +1773,7 @@ class _SimklOPS:
             "bidirectional": True,
             "provides_ids": False,
             "ratings": {"types": {"movies": True, "shows": True, "seasons": False, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
+            "history": {"episodes": True}
         }
      
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
@@ -1484,6 +1786,7 @@ class _SimklOPS:
         if feature == "playlists":
             return {}
         return {}
+    
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
         items_list = list(items)
         if dry_run:
@@ -1500,6 +1803,7 @@ class _SimklOPS:
         if feature == "playlists":
             return {"ok": False, "count": 0, "error": "SIMKL playlists API not supported"}
         return {"ok": True, "count": 0}
+    
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
         items_list = list(items)
         if dry_run:
@@ -1593,14 +1897,14 @@ class SIMKLModule(SyncModule):
     )
     @staticmethod
     def supported_features() -> dict:
-        return {"watchlist": True, "ratings": True, "history": False, "playlists": False}
+        return {"watchlist": True, "ratings": False, "history": False, "playlists": False}
 
 def get_manifest() -> dict:
     return {
         "name": SIMKLModule.info.name,
         "label": "Simkl",
         "features": SIMKLModule.supported_features(),
-        "capabilities": {"bidirectional": True},
+        "capabilities": {"bidirectional": True, "history": {"episodes": True}},
         "version": SIMKLModule.info.version,
         "vendor": SIMKLModule.info.vendor,
         "description": SIMKLModule.info.description,

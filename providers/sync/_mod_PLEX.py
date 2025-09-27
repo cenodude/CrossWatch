@@ -2,7 +2,7 @@ from __future__ import annotations
 # providers/sync/_mod_PLEX.py
 # Plex provider (watchlist, ratings, history, playlists) via PlexAPI only.
 
-__VERSION__ = "2.2.0"
+__VERSION__ = "2.2.1"
 __all__ = ["OPS", "PLEXModule", "get_manifest"]
 
 import os, re, json, time
@@ -10,6 +10,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, cast
 import datetime as _dt
+
+try:
+    from cw_platform.metadata import MetadataManager
+except Exception:  # flat runs / tests
+    from metadata import MetadataManager  # type: ignore
 
 # --- optional host hooks ------------------------------------------------------
 try:
@@ -434,10 +439,8 @@ def _unresolved_reset_if_library_grew(feature: str, live_count: int) -> None:
 def _watchlist_index(acct: MyPlexAccount) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for kind in ("movie", "show"):
-        try:
-            items = acct.watchlist(libtype=kind) or []
-        except Exception:
-            items = []
+        try: items = acct.watchlist(libtype=kind) or []
+        except Exception: items = []
         for it in items:
             ids = _ids_from_plexobj(it)
             if not any(ids.get(k) for k in ("imdb","tmdb","tvdb")): continue
@@ -445,7 +448,21 @@ def _watchlist_index(acct: MyPlexAccount) -> Dict[str, Dict[str, Any]]:
                    "ids": {k: ids.get(k) for k in ("imdb","tmdb","tvdb") if ids.get(k)}}
             nr = _norm_row(row)
             out[canonical_key(nr)] = nr
-    return out
+
+    if not out: return out
+    try:
+        mm = MetadataManager(lambda: {}, lambda _cfg: None)
+        healed = mm.reconcile_ids(list(out.values()))
+        fixed: Dict[str, Dict[str, Any]] = {}
+        for r in healed:
+            nr = _norm_row({
+                "type": r.get("type"), "title": r.get("title"), "year": r.get("year"),
+                "ids": {k: (r.get("ids") or {}).get(k) for k in ("imdb","tmdb","tvdb") if (r.get("ids") or {}).get(k)}
+            })
+            fixed[canonical_key(nr)] = nr
+        return fixed
+    except Exception:
+        return out
 
 def _resolve_discover_item(acct: MyPlexAccount, ids: dict, libtype: str) -> Optional[Any]:
     queries: List[str] = []
@@ -610,16 +627,32 @@ def _match_section(sec: Any, include: set, exclude: set) -> bool:
 def _ratings_index(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     ttl_min = int(((cfg_root.get("ratings") or {}).get("cache") or {}).get("ttl_minutes") or 0)
     ttl_sec = max(0, ttl_min * 60)
+
     shadow = _ratings_shadow_load()
     items = dict(shadow.get("items") or {}); ts = int(shadow.get("ts") or 0)
     now = int(time.time())
     if ttl_sec > 0 and ts > 0 and (now - ts) < ttl_sec and items:
         return _normalize_shadow_items(items)
+
     idx = _ratings_index_full(env, cfg_root)
-    if idx:
-        norm = _normalize_shadow_items(idx)
-        _ratings_shadow_save(norm)
-        return norm
+    if not idx:
+        return _normalize_shadow_items(items)
+
+    # heal ids; keep rating/rated_at
+    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
+    healed = mm.reconcile_ids(list(idx.values()))
+    healed_idx: Dict[str, Dict[str, Any]] = {}
+    for r, orig in zip(healed, idx.values()):
+        node = dict(r)
+        if orig.get("rating") is not None: node["rating"] = orig.get("rating")
+        if orig.get("rated_at"): node["rated_at"] = orig.get("rated_at")
+        nr = _norm_row(node)
+        healed_idx[canonical_key(nr)] = nr
+
+    if healed_idx:
+        _ratings_shadow_save(healed_idx)
+        return _normalize_shadow_items(healed_idx)
+
     return _normalize_shadow_items(items)
 
 def _ratings_apply(env: PlexEnv, items: Iterable[Mapping[str, Any]], *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
@@ -790,17 +823,47 @@ def _history_index_full(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, 
 def _history_index(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     ttl_min = int(((cfg_root.get("history") or {}).get("cache") or {}).get("ttl_minutes") or 0)
     ttl_sec = max(0, ttl_min * 60)
+
     shadow = _history_shadow_load()
     items = dict(shadow.get("items") or {}); ts = int(shadow.get("ts") or 0)
     now = int(time.time())
     if ttl_sec > 0 and ts > 0 and (now - ts) < ttl_sec and items:
         return _normalize_shadow_items(items)
+
     idx = _history_index_full(env, cfg_root)
-    if idx:
-        norm = _normalize_shadow_items(idx)
-        _history_shadow_save(norm)
-        return norm
+    if not idx:
+        return _normalize_shadow_items(items)
+
+    # Heal ids (movies as movies; seasons/episodes as shows). Keep watched flags/timestamps.
+    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
+    keys = list(idx.keys())
+    rows = []
+    for v in idx.values():
+        ent = "movie" if (str(v.get("type") or "").startswith("movie")) else "show"
+        rows.append({"type": ent, "title": v.get("title"), "year": v.get("year"), "ids": v.get("ids")})
+
+    healed = mm.reconcile_ids(rows)
+
+    healed_idx: Dict[str, Dict[str, Any]] = {}
+    for k, v, h in zip(keys, idx.values(), healed):
+        merged_ids = dict(v.get("ids") or {}); merged_ids.update((h.get("ids") or {}))
+        node = {
+            "type": (v.get("type") or "movie"),
+            "title": v.get("title"),
+            "year": v.get("year"),
+            "ids": {kk: vv for kk, vv in merged_ids.items() if vv not in (None, "", [], {})},
+        }
+        if v.get("watched"): node["watched"] = True
+        if v.get("watched_at"): node["watched_at"] = v.get("watched_at")
+        nr = _norm_row(node)
+        healed_idx[canonical_key(nr)] = nr
+
+    if healed_idx:
+        _history_shadow_save(healed_idx)
+        return _normalize_shadow_items(healed_idx)
+
     return _normalize_shadow_items(items)
+
 
 def _history_change(env: PlexEnv, items: Iterable[Mapping[str, Any]], *, watched: bool, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
     changed = 0; suppressed = 0

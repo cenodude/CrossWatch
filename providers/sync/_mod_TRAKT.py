@@ -1,16 +1,20 @@
 from __future__ import annotations
+# providers/sync/_mod_TRAKT.py
+# Trakt provider (watchlist, ratings, history, playlists)
 
-__VERSION__ = "1.3.0"
+__VERSION__ = "1.3.1"
 __all__ = ["OPS", "TRAKTModule", "get_manifest"]
 
-import json
-import time
-import os
-from dataclasses import dataclass
+import os, re, json, time
+import requests
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
-import requests
+try:
+    from cw_platform.metadata import MetadataManager
+except Exception:  # flat runs / tests
+    from metadata import MetadataManager  # type: ignore
 
 # --- Trakt constants -----------------------------------------------------------
 
@@ -497,59 +501,57 @@ class InventoryOps(Protocol):
 def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
-
     try: _RUN_GET_CACHE.clear()
     except Exception: pass
 
     acts = _activities(cfg_root)
     shadow = _watchlist_shadow_load()
     items: Dict[str, Dict[str, Any]] = dict(shadow.get("items") or {})
-
     params = {"extended": "full"}
+    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
 
-    r_mov = _trakt_get(
-        TRAKT_WATCHLIST_MOVIES, headers=hdr, params=params, timeout=45,
-        force_refresh=False, use_etag_key="watchlist_movies",
-    )
-    r_sho = _trakt_get(
-        TRAKT_WATCHLIST_SHOWS, headers=hdr, params=params, timeout=45,
-        force_refresh=False, use_etag_key="watchlist_shows",
-    )
+    r_mov = _trakt_get(TRAKT_WATCHLIST_MOVIES, headers=hdr, params=params, timeout=45,
+                       force_refresh=False, use_etag_key="watchlist_movies")
+    r_sho = _trakt_get(TRAKT_WATCHLIST_SHOWS,  headers=hdr, params=params, timeout=45,
+                       force_refresh=False, use_etag_key="watchlist_shows")
 
-    mov = _json_or_empty_list(r_mov)
-    sho = _json_or_empty_list(r_sho)
-
+    mov, sho = _json_or_empty_list(r_mov), _json_or_empty_list(r_sho)
     updated = False
-    if (r_mov is not None and getattr(r_mov, "ok", False) and getattr(r_mov, "status_code", 0) == 200) or \
-       (r_sho is not None and getattr(r_sho, "ok", False) and getattr(r_sho, "status_code", 0) == 200):
+
+    if ((r_mov is not None and getattr(r_mov, "ok", False) and getattr(r_mov, "status_code", 0) == 200) or
+        (r_sho is not None and getattr(r_sho, "ok", False) and getattr(r_sho, "status_code", 0) == 200)):
         out: Dict[str, Dict[str, Any]] = {}
         if mov: out.update(_flatten_watchlist(mov, "movie"))
         if sho: out.update(_flatten_watchlist(sho, "show"))
-        items = out
+        healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in out.values()])
+        items = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
         _watchlist_shadow_save(items)
         updated = True
 
     if not items:
-        r_all = _trakt_get(
-            TRAKT_WATCHLIST_ALL, headers=hdr, params=params, timeout=45,
-            force_refresh=False, use_etag_key="watchlist_all",
-        )
+        r_all = _trakt_get(TRAKT_WATCHLIST_ALL, headers=hdr, params=params, timeout=45,
+                           force_refresh=False, use_etag_key="watchlist_all")
         all_rows = _json_or_empty_list(r_all)
         if all_rows:
-            items = _flatten_watchlist_combined(all_rows)
-            if items:
-                _watchlist_shadow_save(items)
-                updated = True
+            out = _flatten_watchlist_combined(all_rows)
+            healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in out.values()])
+            items = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
+            _watchlist_shadow_save(items)
+            updated = True
+
+    # self-repair cached data when no fresh 200 (e.g., 304)
+    if items and not updated:
+        healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in items.values()])
+        healed_map = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
+        if healed_map != items:
+            items = healed_map
+            _watchlist_shadow_save(items)
 
     cursors = _cursor_store_load()
     act_updated = str(acts.get("watchlist.updated_at") or acts.get("watchlist") or acts.get("lists") or "")
-    if act_updated:
-        cursors["watchlist"] = act_updated
-    elif updated:
-        cursors["watchlist"] = ts_to_iso(int(time.time()))
+    cursors["watchlist"] = act_updated or (ts_to_iso(int(time.time())) if updated else cursors.get("watchlist"))
     _cursor_store_save(cursors)
     return items
-
 
 def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
@@ -567,27 +569,23 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     items = dict(shadow.get("items") or {})
     shadow_ts = int(shadow.get("ts") or 0)
 
-    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur):
-        return items
+    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur): return items
     now = int(time.time())
-    if ttl_sec > 0 and shadow_ts > 0 and (now - shadow_ts) < ttl_sec and items:
-        return items
+    if ttl_sec > 0 and shadow_ts > 0 and (now - shadow_ts) < ttl_sec and items: return items
 
     m = _trakt_get(TRAKT_USER_RATINGS_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="rt.movies", timeout=45)
     s = _trakt_get(TRAKT_USER_RATINGS_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="rt.shows",  timeout=45)
 
-    mov = _json_or_empty_list(m)
-    sho = _json_or_empty_list(s)
-
-    if (m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items:
-        pass
-    else:
+    mov, sho = _json_or_empty_list(m), _json_or_empty_list(s)
+    if not ((m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items):
         out: Dict[str, Any] = {}
-        got_any = False
-        if mov: out.update(_flatten_ratings(mov, "movie")); got_any = True
-        if sho: out.update(_flatten_ratings(sho,  "show"));  got_any = True
-        if got_any:
-            items = out
+        if mov: out.update(_flatten_ratings(mov, "movie"))
+        if sho: out.update(_flatten_ratings(sho, "show"))
+        if out:
+            mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
+            healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie")) for v in out.values()])
+            items = { canonical_key(h["type"], h): minimal_node(h["type"], h) | ({"rating": out[k].get("rating"), "rated_at": out[k].get("rated_at")} if True else {})
+                      for k, h in zip(out.keys(), healed) }
             _ratings_shadow_save(items)
 
     if act_updated:
@@ -595,12 +593,9 @@ def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
         _cursor_store_save(cursors)
     return items
 
-
 def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    try:
-        _RUN_GET_CACHE.clear()
-    except Exception:
-        pass
+    try: _RUN_GET_CACHE.clear()
+    except Exception: pass
 
     trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
     hdr = trakt_headers(trakt_cfg)
@@ -625,7 +620,6 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
             page += 1
         return out
 
-    # If we have no shadow yet, fetch full history (ignore cursor).
     params_mov: Dict[str, Any] = {}
     params_ep: Dict[str, Any] = {}
     if base and last_cur:
@@ -640,9 +634,20 @@ def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     if eps: delta.update(_flatten_history(eps, "episode"))
 
     if delta:
+        # Heal ids (episodes heal their show's ids)
+        mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
+        rows = []
+        keys = list(delta.keys())
+        for v in delta.values():
+            t = (v.get("type") or "movie").rstrip("s")
+            rows.append(v if t == "movie" else {"type": "show", "title": v.get("title"), "year": v.get("year"), "ids": v.get("ids")})
+        healed = mm.reconcile_ids(rows)
+        for k, h in zip(keys, healed):
+            v = delta[k]; ids = dict(v.get("ids") or {}); ids.update(h.get("ids") or {}); v["ids"] = {kk: vv for kk, vv in ids.items() if vv not in (None, "", [], {})}
+
         base.update(delta)
         _history_shadow_save(base)
-        # Advance cursor to the max watched_at we actually got
+
         try:
             tmax = 0
             for v in delta.values():

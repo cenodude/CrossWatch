@@ -1,4 +1,4 @@
-// /assets/schedulerbanner.js
+// /assets/js/schedulerbanner.js
 (()=>{ if(window.__SCHED_BANNER_INIT__) return; window.__SCHED_BANNER_INIT__=1; const $=(s,r=document)=>r.querySelector(s);
 
 /* CSS */

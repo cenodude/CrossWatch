@@ -1,9 +1,10 @@
 # providers/scrobble/watch.py
+# Refactoring project: watch.py (v0.1)
 from __future__ import annotations
 
-import os, json, time, threading
+import json, os, time, threading
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Set, Tuple
+from typing import Any, Iterable
 
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
@@ -18,76 +19,61 @@ from providers.scrobble.scrobble import (
     from_plex_pssn, from_plex_flat_playing,
 )
 
-# --- config / utils -------------------------------------------------------------
-def _cfg_paths() -> list[Path]:
-    p = os.getenv("CROSSWATCH_CONFIG")
-    if p:
-        p = Path(p)
-        return [p / "config.json" if p.is_dir() else p]
-    return [Path("/config/config.json"), Path("/app/config/config.json"), Path("./config.json")]
-
-def _cfg() -> Dict[str, Any]:
-    try:
-        from crosswatch import load_config
-        v = load_config()
-        if v: return v
-    except Exception: pass
-    for p in _cfg_paths():
-        try:
-            if p.exists(): return json.loads(p.read_text(encoding="utf-8"))
-        except Exception: pass
-    return {}
+# --- config / utils ------------------------------------------------------------
+def _cfg() -> dict[str, Any]:
+    p = Path("/config/config.json")
+    try: return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception: return {}
 
 def _is_debug() -> bool:
     try: return bool((( _cfg().get("runtime") or {}).get("debug")))
     except Exception: return False
 
-def _plex_btok(cfg: Dict[str, Any]) -> Tuple[str, str]:
+def _plex_btok(cfg: dict[str, Any]) -> tuple[str, str]:
     px = cfg.get("plex") or {}
     base = (px.get("server_url") or px.get("base_url") or "http://127.0.0.1:32400").strip().rstrip("/")
     if "://" not in base: base = f"http://{base}"
     return base, (px.get("account_token") or px.get("token") or "")
 
-def _safe_int(x: Any) -> Optional[int]:
+def _safe_int(x: Any) -> int | None:
     try: return int(x)
     except Exception: return None
 
 # --- service -------------------------------------------------------------------
 class WatchService:
-    def __init__(self, sinks: Optional[Iterable[ScrobbleSink]] = None, dispatcher: Optional[Dispatcher] = None) -> None:
+    def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, dispatcher: Dispatcher | None = None) -> None:
         self._dispatch = dispatcher or Dispatcher(list(sinks or []), _cfg)
-        self._plex: Optional[PlexServer] = None
-        self._listener: Optional[AlertListener] = None
+        self._plex: PlexServer | None = None
+        self._listener: AlertListener | None = None
         self._stop = threading.Event()
-        self._bg: Optional[threading.Thread] = None
+        self._bg: threading.Thread | None = None
 
-        self._psn_sessions: Set[str] = set()
-        self._allowed_sessions: Set[str] = set()
-        self._last_seen: Dict[str, float] = {}
-        self._last_emit: Dict[str, Tuple[str, int]] = {}
+        self._psn_sessions: set[str] = set()
+        self._allowed_sessions: set[str] = set()
+        self._last_seen: dict[str, float] = {}
+        self._last_emit: dict[str, tuple[str, int]] = {}
         self._attempt = 0
 
     # logging
     def _log(self, msg: str, level: str = "INFO") -> None:
         if BASE_LOG:
-            try: BASE_LOG(str(msg), level=level.upper(), module="WATCH")
+            try: BASE_LOG(str(msg), level=level.upper(), module="WATCH"); return
             except Exception: pass
         print(f"{level} [WATCH] {msg}")
 
     def _dbg(self, msg: str) -> None:
-        if _is_debug():
-            print(f"DEBUG [WATCH] {msg}")
+        if _is_debug(): print(f"DEBUG [WATCH] {msg}")
 
     def sinks_count(self) -> int:
         try: return len(getattr(self._dispatch, "_sinks", []) or [])
         except Exception: return 0
 
     # filtering helpers
-    def _find_psn(self, o):
+    def _find_psn(self, o: Any):
         if isinstance(o, dict):
-            for k,v in o.items():
-                if isinstance(k,str) and k.lower()=="playsessionstatenotification":
-                    return v if isinstance(v,list) else [v]
+            for k, v in o.items():
+                if isinstance(k, str) and k.lower() == "playsessionstatenotification":
+                    return v if isinstance(v, list) else [v]
             for v in o.values():
                 r = self._find_psn(v)
                 if r: return r
@@ -105,19 +91,21 @@ class WatchService:
         want = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
         if want and ev.server_uuid and str(ev.server_uuid) != str(want): return False
 
-        def _allow():
-            if ev.session_key: self._allowed_sessions.add(ev.session_key)
+        def _allow() -> bool:
+            if ev.session_key: self._allowed_sessions.add(str(ev.session_key))
             return True
 
         if not wl: return _allow()
 
         import re as _re
-        norm = lambda s: _re.sub(r"[^a-z0-9]+","", (s or "").lower())
+        def norm(s: str) -> str: return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
         wl_list = wl if isinstance(wl, list) else [wl]
 
-        if any(not str(x).lower().startswith(("id:","uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
+        # username match
+        if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
             return _allow()
 
+        # id/uuid match from raw PSN
         n = (self._find_psn(ev.raw or {}) or [None])[0] or {}
         acc_id, acc_uuid = str(n.get("accountID") or ""), str(n.get("accountUUID") or "").lower()
         for e in wl_list:
@@ -127,7 +115,7 @@ class WatchService:
         return False
 
     # enrichment
-    def _find_rating_key(self, raw: Dict[str, Any]) -> Optional[int]:
+    def _find_rating_key(self, raw: dict[str, Any]) -> int | None:
         if not isinstance(raw, dict): return None
         psn = raw.get("PlaySessionStateNotification")
         if isinstance(psn, list) and psn:
@@ -138,8 +126,8 @@ class WatchService:
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
 
-    def _ids_from_guids(self, guids: Any) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
+    def _ids_from_guids(self, guids: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {}
         try:
             for g in (guids or []):
                 gid = str(getattr(g, "id", "")).lower()
@@ -150,19 +138,20 @@ class WatchService:
                 elif "thetvdb://" in gid or "tvdb://" in gid:
                     v = gid.split("://",1)[1]
                     if v.isdigit(): out.setdefault("tvdb", int(v))
-        except Exception: pass
+        except Exception:
+            pass
         return out
 
-    def _resolve_account_from_session(self, session_key: Optional[str]) -> Optional[str]:
+    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
         if not (self._plex and session_key): return None
         try:
             el = self._plex.query("/status/sessions")
-            if not hasattr(el,"iter"): return None
+            if not hasattr(el, "iter"): return None
             for v in el.iter("Video"):  # type: ignore[attr-defined]
                 if v.get("sessionKey") == str(session_key):
-                    u = v.find("User")
-                    return (u.get("title") if u is not None else None)
-        except Exception: pass
+                    u = v.find("User"); return (u.get("title") if u is not None else None)
+        except Exception:
+            pass
         return None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
@@ -206,7 +195,7 @@ class WatchService:
             return ev
 
     # probe
-    def _probe_session_progress(self, ev: ScrobbleEvent) -> Optional[int]:
+    def _probe_session_progress(self, ev: ScrobbleEvent) -> int | None:
         try:
             if not self._plex: return None
             sessions = self._plex.sessions()
@@ -219,21 +208,23 @@ class WatchService:
             try:
                 if (sid and str(getattr(v,"sessionKey","")) == sid) or (rk and str(getattr(v,"ratingKey","")) == rk):
                     tgt = v; break
-            except Exception: pass
+            except Exception:
+                pass
         if not tgt: return None
         d, vo = getattr(tgt,"duration",None), getattr(tgt,"viewOffset",None)
         try:
             d = int(d) if d is not None else None
             vo = int(vo) if vo is not None else None
-        except Exception: return None
+        except Exception:
+            return None
         if not d or vo is None: return None
         return int(round(100 * max(0, min(vo, d)) / float(d)))
 
     # alert handling
-    def _handle_alert(self, alert: Dict[str, Any]) -> None:
+    def _handle_alert(self, alert: dict[str, Any]) -> None:
         try:
             t = (alert.get("type") or "").lower()
-            if t not in ("playing","transcodesession.start","transcodesession.end"): return
+            if t != "playing": return
         except Exception:
             return
         try:
@@ -243,19 +234,15 @@ class WatchService:
             defaults = {"username": (cfg.get("plex") or {}).get("username") or "",
                         "server_uuid": server_uuid or (cfg.get("plex") or {}).get("server_uuid") or ""}
 
-            ev: Optional[ScrobbleEvent] = None
-            if t == "playing":
-                psn = alert.get("PlaySessionStateNotification")
-                if isinstance(psn, list) and psn:
-                    ev = from_plex_pssn({"PlaySessionStateNotification": psn}, defaults=defaults)
-                    if ev and ev.session_key: self._psn_sessions.add(str(ev.session_key))
-                if not ev:
-                    flat = dict(alert); flat["_type"] = "playing"
-                    ev = from_plex_flat_playing(flat, defaults=defaults)
-                    if ev and ev.session_key: self._psn_sessions.add(str(ev.session_key))
-            else:
-                return
-
+            ev: ScrobbleEvent | None = None
+            psn = alert.get("PlaySessionStateNotification")
+            if isinstance(psn, list) and psn:
+                ev = from_plex_pssn({"PlaySessionStateNotification": psn}, defaults=defaults)
+                if ev and ev.session_key: self._psn_sessions.add(str(ev.session_key))
+            if not ev:
+                flat = dict(alert); flat["_type"] = "playing"
+                ev = from_plex_flat_playing(flat, defaults=defaults)
+                if ev and ev.session_key: self._psn_sessions.add(str(ev.session_key))
             if not ev:
                 self._dbg("alert parsed but no event produced (unknown shape)"); return
 
@@ -278,14 +265,13 @@ class WatchService:
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
 
-            # debounce stop
+            # debounce stop (allow only if force_stop_at or idle > 2s)
             if ev.session_key and ev.action == "stop":
                 skd, now = str(ev.session_key), time.time()
                 force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95)))
                 elapsed = now - self._last_seen.get(skd, 0.0)
                 if ev.progress < force_at and elapsed < 2.0:
-                    self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={force_at} dt={elapsed:.2f}s")
-                    return
+                    self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={force_at} dt={elapsed:.2f}s"); return
 
             if ev.session_key: self._last_seen[str(ev.session_key)] = time.time()
 
@@ -306,17 +292,17 @@ class WatchService:
     # lifecycle
     def start(self) -> None:
         self._stop.clear()
-        self._log(f"Ensuring AlertListener is running (plexapi); wired sinks: {self.sinks_count()}")
+        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}")
         while not self._stop.is_set():
             try:
                 base, token = _plex_btok(_cfg())
                 self._plex = PlexServer(base, token)
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,
-                    callbackError=lambda e: self._log(f"listener error: {e}", "ERROR"),
+                    callbackError=lambda e: self._log(f"Watcher error: {e}", "ERROR"),
                 )
                 self._attempt = 0
-                self._log("AlertListener connected")
+                self._log("Watcher connected")
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
                     time.sleep(0.5)
             except Exception as e:
@@ -331,7 +317,8 @@ class WatchService:
         self._stop.set()
         try:
             if self._listener: self._listener.stop()
-        except Exception: pass
+        except Exception:
+            pass
         self._log("Watch service stopping")
 
     def start_async(self) -> None:
@@ -339,20 +326,16 @@ class WatchService:
         self._bg = threading.Thread(target=self.start, name="PlexWatch", daemon=True)
         self._bg.start()
 
-    def is_alive(self) -> bool:
-        return bool(self._bg and self._bg.is_alive())
-
-    def is_stopping(self) -> bool:
-        return bool(self._stop and self._stop.is_set())
+    def is_alive(self) -> bool:    return bool(self._bg and self._bg.is_alive())
+    def is_stopping(self) -> bool: return bool(self._stop and self._stop.is_set())
 
 def make_default_watch(sinks: Iterable[ScrobbleSink]) -> WatchService:
     return WatchService(sinks=sinks)
 
 # --- autostart -----------------------------------------------------------------
-_AUTO_WATCH: Optional[WatchService] = None
+_AUTO_WATCH: WatchService | None = None
 
-def autostart_from_config() -> Optional[WatchService]:
-    """Start automatically when scrobble.enabled=true, mode='watch', watch.autostart=true."""
+def autostart_from_config() -> WatchService | None:
     global _AUTO_WATCH
     cfg = _cfg() or {}
     sc  = (cfg.get("scrobble") or {})
@@ -360,16 +343,11 @@ def autostart_from_config() -> Optional[WatchService]:
     if not ((sc.get("watch") or {}).get("autostart")): return None
     if _AUTO_WATCH and _AUTO_WATCH.is_alive(): return _AUTO_WATCH
 
-    sinks: list[ScrobbleSink] = []
     try:
         from providers.scrobble.trakt.sink import TraktSink
-        sinks.append(TraktSink())
+        sinks: list[ScrobbleSink] = [TraktSink()]
     except Exception:
-        try:
-            from providers.scrobble.sink import TraktSink  # back-compat
-            sinks.append(TraktSink())
-        except Exception:
-            pass
+        return None  # no sink available
 
     _AUTO_WATCH = WatchService(sinks=sinks); _AUTO_WATCH.start_async()
     return _AUTO_WATCH

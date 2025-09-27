@@ -159,10 +159,10 @@ def get_index_html() -> str:
           <div class="head" onclick="toggleSection('sec-auth')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Authentication Providers</strong>
             <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
             </span>
           </div>
           <div class="body"><div id="auth-providers"></div></div>
@@ -198,8 +198,8 @@ def get_index_html() -> str:
           <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Scrobbler</strong>
             <span title="Currently only for Plex with Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
             </span>
           </div>
           <div class="body" id="scrobble-mount">
@@ -249,21 +249,21 @@ def get_index_html() -> str:
   </div>
 </main>
 
-<script src="/assets/client-formatter.js" defer></script>
+<script src="/assets/js/client-formatter.js" defer></script>
 <script src="/assets/crosswatch.js" defer></script>
-<script src="/assets/main.js" defer></script>
+<script src="/assets/js/main.js" defer></script>
 <script src="/assets/modals.js" defer></script>
 <script src="/assets/connections.overlay.js" defer></script>
 <script src="/assets/connections.pairs.overlay.js" defer></script>
-<script src="/assets/watchlist.js" defer></script>
-<script src="/assets/scheduler.js" defer></script>
-<script src="/assets/schedulerbanner.js" defer></script>
+<script src="/assets/js/watchlist.js" defer></script>
+<script src="/assets/js/scheduler.js" defer></script>
+<script src="/assets/js/schedulerbanner.js" defer></script>
 <script src="/assets/insights.js" defer></script>
 <script src="/assets/settings-insight.js" defer></script>
-<script src="/assets/scrobbler.js" defer></script>
-<script src="/assets/auth.plex-simkl.js" defer></script>
-<script src="/assets/auth.trakt.js" defer></script>
-<script src="/assets/auth.jellyfin.js" defer></script>
+<script src="/assets/js/scrobbler.js" defer></script>
+<script src="/assets/auth/auth.plex-simkl.js" defer></script>
+<script src="/assets/auth/auth.trakt.js" defer></script>
+<script src="/assets/auth/auth.jellyfin.js" defer></script>
 
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 

@@ -1,7 +1,5 @@
 /* assets/crosswatch.js *
 
-
-
 /* Global showTab bootstrap (runs first) */
 (function(){
   if (typeof window.showTab !== "function") {
@@ -189,7 +187,6 @@ function applySyncVisibility() {
 
 }
 
-
 // Debounced applySyncVisibility using rAF or setTimeout
 let __syncVisTick = 0;
 function scheduleApplySyncVisibility() {
@@ -227,7 +224,6 @@ function bindSyncVisibilityObservers() {
   // Initial pass
   scheduleApplySyncVisibility();
 }
-
 
 // ---- BEGIN Watchlist Preview visibility based on /api/pairs ----
 const PAIRS_CACHE_KEY = "cw.pairs.v1";
@@ -276,8 +272,6 @@ window.updatePreviewVisibility = updatePreviewVisibility;
 
 // Run once during page load
 document.addEventListener("DOMContentLoaded", () => { updatePreviewVisibility(); });
-
-// ---- END   Watchlist Preview visibility based on /api/pairs ----
 
 const AUTO_STATUS = false; // DISABLE by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
 let lastStatusMs = 0;
@@ -628,18 +622,11 @@ function recomputeRunDisabled() {
   btn.disabled = busyNow || running || !canRun;
 }
 
-// Bridge-friendly + null-safe
-function setTimeline(tl) {
-  const keys = ["start", "pre", "post", "done"];
-  for (const k of keys) {
-    const el = document.getElementById("tl-" + k);
-    if (el) el.classList.toggle("on", !!(tl && tl[k]));
-  }
-  window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
-  if (window.UX && typeof window.UX.updateTimeline === "function") {
-    window.UX.updateTimeline(tl || {});
-  }
-}
+// Bridge only; no UI here.
+window.setTimeline = function setTimeline(tl){
+  if (window.UX?.updateTimeline) window.UX.updateTimeline(tl || {});
+  else window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
+};
 
 function setSyncHeader(status, msg) {
   const icon = document.getElementById("sync-icon");
@@ -724,6 +711,8 @@ async function hardRefreshMain({ layout, statsCard }) {
 
 /* Tabs & Navigation */
 async function showTab(n) {
+  document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: n } }));
+
   const pageSettings  = document.getElementById("page-settings");
   const pageWatchlist = document.getElementById("page-watchlist");
   const logPanel      = document.getElementById("log-panel");
@@ -731,74 +720,59 @@ async function showTab(n) {
   const statsCard     = document.getElementById("stats-card");
   const ph            = document.getElementById("placeholder-card");
 
-  // tab header
+  // Tab header state
   document.getElementById("tab-main")?.classList.toggle("active", n === "main");
   document.getElementById("tab-watchlist")?.classList.toggle("active", n === "watchlist");
   document.getElementById("tab-settings")?.classList.toggle("active", n === "settings");
 
-  // main cards
+  // Cards visibility
   document.getElementById("ops-card")?.classList.toggle("hidden", n !== "main");
   statsCard?.classList.toggle("hidden", n !== "main");
   if (ph && n !== "main") ph.classList.add("hidden");
 
-  // pages
+  // Pages
   pageWatchlist?.classList.toggle("hidden", n !== "watchlist");
   pageSettings?.classList.toggle("hidden", n !== "settings");
 
   document.documentElement.dataset.tab = n;
   if (document.body) document.body.dataset.tab = n;
 
-  // Main
+  // MAIN
   if (n === "main") {
     enforceMainLayout();
-    if (__currentTab === "main") { await softRefreshMain(); }
-    else { await hardRefreshMain({ layout, statsCard }); }
+    if (__currentTab === "main") await softRefreshMain();
+    else await hardRefreshMain({ layout, statsCard });
     logPanel?.classList.remove("hidden");
     __currentTab = "main";
     return;
   }
 
-  // Watchlist
+  // WATCHLIST
   if (n === "watchlist") {
-    layout?.classList.add("single");
-    layout?.classList.remove("full");
+    layout?.classList.add("single"); layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
 
-    try { await fetch("/api/debug/clear_probe_cache", { method: "POST", cache: "no-store" }); } catch {}
-    try { if (typeof lastStatusMs !== "undefined") lastStatusMs = 0; } catch {}
-    await refreshStatus(true);
-    window.manualRefreshStatus?.();
-    await refreshStats(true);
-    window.refreshInsights?.(true);
-
     try {
-      const host = document.getElementById("watchlist-root") || pageWatchlist;
-      const mountIt = async () => {
-        const m = window.Watchlist || window.WatchlistPage || window.WatchlistUI || null;
-        if (!m) return false;
-        const mountFn = m.mount || m.init || m.render || (typeof m === "function" ? m : null);
-        if (!mountFn) return false;
-        if (!window.Watchlist || !window.Watchlist.mount) {
-          window.Watchlist = { mount: (el) => mountFn.call(m, el), refresh: m.refresh || m.update || null };
-        }
-        if (!window._watchlistMounted) { await window.Watchlist.mount(host); window._watchlistMounted = true; }
-        else { await window.Watchlist?.refresh?.(); }
-        return true;
-      };
-      let ok = await mountIt();
-      if (!ok && !window.Watchlist) {
-        try {
-          const mod = await import("/assets/watchlist.js").catch(() => null);
-          if (mod && !window.Watchlist) window.Watchlist = mod.Watchlist || mod.default || mod;
-          ok = await mountIt();
-        } catch {}
+      const firstLoad = !window.__watchlistLoaded;
+      if (firstLoad) {
+        // Initial import; watchlist.js init() does its own fetch+render
+        await import("/assets/js/watchlist.js");
+        window.__watchlistLoaded = true;
+      } else {
+        // Subsequent visits only
+        if (window.Watchlist?.refresh) await window.Watchlist.refresh();
+        else window.dispatchEvent(new CustomEvent("watchlist:refresh"));
       }
-    } catch {}
+    } catch (e) {
+      console.warn("Watchlist load/refresh failed:", e);
+    }
+
     __currentTab = "watchlist";
     return;
   }
 
-  // Settings
+
+  // SETTINGS
   if (n === "settings") {
     layout?.classList.add("single");
     layout?.classList.remove("full");
@@ -822,7 +796,7 @@ async function showTab(n) {
   __currentTab = n || "main";
 }
 
-// Extra safety for any external tab trigger
+// Keep main layout in sync for external triggers
 document.addEventListener("tab-changed", e => {
   if (String(e?.detail?.id).toLowerCase() === "main") enforceMainLayout();
 });
@@ -851,7 +825,6 @@ function ensureScrobbler() {
     __scrobInit = true;
   };
 
-  // If script is already loaded (<script defer src="/assets/scrobbler.js">), start immediately
   if (window.Scrobbler) { start(); return; }
 
   // Otherwise, load the scrobbler script once and start onload
@@ -859,7 +832,7 @@ function ensureScrobbler() {
   if (!s) {
     s = document.createElement("script");
     s.id = "scrobbler-js";
-    s.src = "/assets/scrobbler.js";
+    s.src = "/assets/js/scrobbler.js";
     s.defer = true;
     s.onload = start;
     s.onerror = () => console.warn("[scrobbler] script failed to load");
@@ -871,167 +844,6 @@ function ensureScrobbler() {
 
 // ---- Run + Header progress UI helpers (drop-in) -----------------
 
-(function () {
-  let lastPct = 0;
-  let finishTimer = null;
-  let pulseTimer = null;
-
-  const qs = (sel) => document.querySelector(sel);
-  const btn = () => document.getElementById("run");
-  const rail = () => qs(".sync-rail") || qs('[data-role="sync-rail"]');
-  const railFill = () => (rail() ? rail().querySelector(".fill") : null);
-
-  // Internal: set header bar percentage (0..100)
-  function setRail(pct) {
-    const r = rail();
-    if (!r) return;
-    const f = railFill();
-    const v = Math.max(0, Math.min(100, Math.floor(Number(pct) || 0)));
-    // Prefer setting on the .fill (width), fallback to CSS var
-    if (f) f.style.width = v + "%";
-    else r.style.setProperty("--pct", v + "%");
-  }
-
-  // Public: set numeric progress (0..100) for both button + rail
-  function setRunProgress(pct) {
-    const b = btn();
-    const p = Math.max(0, Math.min(100, Math.floor(Number(pct) || 0)));
-    if (p === lastPct) return;
-    lastPct = p;
-
-    // Button ring
-    if (b) {
-      b.style.setProperty("--prog", String(p));
-      // a11y
-      b.setAttribute("aria-valuemin", "0");
-      b.setAttribute("aria-valuemax", "100");
-      b.setAttribute("aria-valuenow", String(p));
-    }
-    // Header rail
-    setRail(p);
-  }
-
-  // Start visuals; indeterminate pulse until we get real events
-  function startRunVisuals(indeterminate = true) {
-    clearTimeout(finishTimer);
-    clearInterval(pulseTimer);
-
-    const b = btn();
-    const r = rail();
-    if (b) {
-      b.classList.add("loading");
-      b.classList.toggle("indet", !!indeterminate);
-      b.setAttribute("aria-busy", "true");
-      b.setAttribute("aria-live", "polite");
-    }
-    if (r) {
-      r.classList.toggle("indet", !!indeterminate);
-    }
-
-    // show immediate feedback
-    setRunProgress(0);
-
-    // gentle pulse so the bar never looks "stuck"
-    if (indeterminate) {
-      pulseTimer = setInterval(() => {
-        const target = Math.min(92, (lastPct || 8) + 0.4);
-        setRunProgress(target);
-      }, 500);
-    }
-  }
-
-  // Complete and reset after a short dwell (so users see 100%)
-  function stopRunVisuals() {
-    clearInterval(pulseTimer);
-
-    const b = btn();
-    const r = rail();
-
-    setRunProgress(100);
-
-    if (b) {
-      b.classList.remove("indet");
-      b.setAttribute("aria-busy", "false");
-    }
-    if (r) r.classList.remove("indet");
-
-    finishTimer = setTimeout(() => {
-      if (b) b.classList.remove("loading");
-      setRunProgress(0);
-    }, 700);
-  }
-
-  // Expose globally
-  window.setRunProgress  = setRunProgress;
-  window.startRunVisuals = startRunVisuals;
-  window.stopRunVisuals  = stopRunVisuals;
-})();
-
-  // Auto-align the sync rail to the actual Start/Done labels
-  (function () {
-    // Optionele directe selectors als je ze hebt
-    const SEL = {
-      start: '[data-step="start"], .sync-step--start, .sync-start',
-      done:  '[data-step="done"],  .sync-step--done,  .sync-done'
-    };
-
-    function findByText(root, word) {
-      const re = new RegExp(`(^|\\s)${word}(\\s|$)`, 'i');
-      let best = null, bestScore = Infinity;
-      root.querySelectorAll('*').forEach(el => {
-        if (!el.offsetParent) return;                    // only visible
-        const t = (el.textContent || '').trim();
-        if (!t || !re.test(t)) return;
-        const r = el.getBoundingClientRect();
-        // kies het kleinst-omlijnde element (meestal het labelspan)
-        const score = r.width * r.height;
-        if (score < bestScore) { best = el; bestScore = score; }
-      });
-      return best;
-    }
-
-    function findLabel(root, name) {
-      return root.querySelector(SEL[name]) || findByText(root, name);
-    }
-
-    function alignSyncRail() {
-      const rail = document.querySelector('.sync-rail, [data-role="sync-rail"]');
-      if (!rail) return;
-
-      // container die labels + rail bevat (pas aan indien nodig)
-      const host = rail.closest('.sync-header') || rail.parentElement || document.body;
-
-      const elStart = findLabel(host, 'start');
-      const elDone  = findLabel(host, 'done');
-      if (!elStart || !elDone) return;
-
-      const h = host.getBoundingClientRect();
-      const a = elStart.getBoundingClientRect();
-      const z = elDone.getBoundingClientRect();
-
-      const ml = Math.max(0, Math.round(a.left - h.left));
-      const mr = Math.max(0, Math.round(h.right - z.right));
-
-      rail.style.marginLeft  = ml + 'px';
-      rail.style.marginRight = mr + 'px';
-    }
-
-    // align wanneer layout klaar is en wanneer iets verandert
-    const requestAlign = () => requestAnimationFrame(alignSyncRail);
-    window.addEventListener('load', requestAlign);
-    window.addEventListener('resize', requestAlign);
-    // haak mee op jouw progress-events zodat late renders ook goed komen
-    window.addEventListener('ux:progress', requestAlign, { passive: true });
-
-    // als labels asynchroon verschijnen, observer helpt
-    const railHost = document.querySelector('.sync-rail, [data-role="sync-rail"]')?.parentElement;
-    if (railHost && 'MutationObserver' in window) {
-      new MutationObserver(() => requestAlign()).observe(railHost, { childList: true, subtree: true });
-    }
-  })();
-
-
-
 function toggleSection(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle("open");
@@ -1041,39 +853,35 @@ function setBusy(v) {
   recomputeRunDisabled();
 }
 
-/* Run Sync (Trigger + UI State) */
-async function runSync() {
+/* Run Sync (Trigger + bridge to UI) */
+async function runSync(){
   if (busy) return;
-  const btn = document.getElementById("run");
-  setBusy(true);
-  startRunVisuals(true);
+  setBusy?.(true);
 
-  const detLog = document.getElementById("det-log");
-  if (detLog) detLog.textContent = "";
+  try{ window.UX?.updateTimeline({ start:true, pre:false, post:false, done:false }); window.UX?.updateProgress({ pct:0 }); }catch{}
 
-  if (esDet) {
-    try { esDet.close(); } catch (_) {}
-    esDet = null;
-  }
-  openDetailsLog(); 
+  try{
+    const detLog = document.getElementById("det-log");
+    if (detLog) detLog.textContent = "";
+    if (esDet) { try{ esDet.close(); }catch{} esDet = null; }
+    typeof openDetailsLog === "function" && openDetailsLog();
+  }catch{}
 
-  try {
-    btn?.classList.add("glass");
-    const resp = await fetch("/api/run", { method: "POST" });
-    const j = await resp.json();
-    if (!resp.ok || !j || j.ok !== true) {
-      setSyncHeader(
-        "sync-bad",
-        `Failed to start${j?.error ? ` – ${j.error}` : ""}`
-      );
-    } else {
+  try{
+    const resp = await fetch("/api/run", { method:"POST" });
+    let j = null; try{ j = await resp.json(); }catch{}
+    if (!resp.ok || !j || j.ok !== true){
+      typeof setSyncHeader === "function" && setSyncHeader("sync-bad", `Failed to start${j?.error ? ` – ${j.error}` : ""}`);
+      try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
+      return;
     }
-  } catch (e) {
-    setSyncHeader("sync-bad", "Failed to reach server");
-  } finally {
-    setBusy(false);
-    recomputeRunDisabled();
-    if (AUTO_STATUS) refreshStatus(false);
+  }catch(_){
+    typeof setSyncHeader === "function" && setSyncHeader("sync-bad", "Failed to reach server");
+    try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
+  }finally{
+    setBusy?.(false);
+    typeof recomputeRunDisabled === "function" && recomputeRunDisabled();
+    if (AUTO_STATUS) try{ refreshStatus(false); }catch{}
   }
 }
 
@@ -1164,7 +972,6 @@ async function refreshInsights(){ if (window.Insights && window.Insights.refresh
 
 function renderSparkline(){ if (window.Insights && window.Insights.renderSparkline) return window.Insights.renderSparkline.apply(this, arguments); }
 document.addEventListener("DOMContentLoaded", refreshInsights);
-
 
 // --- once-only bootstrap (no double timers) ---
 (() => {
@@ -1291,7 +1098,6 @@ async function checkForUpdate() {
     console.debug('Version check failed:', err);
   }
 }
-
 
 function renderSummary(sum) {
   currentSummary = sum;
@@ -2591,8 +2397,8 @@ function cxBrandInfo(name) {
   const key = String(name || "").toUpperCase();
   
   const map = {
-    PLEX: { cls: "brand-plex", icon: "/assets/PLEX.svg" },
-    SIMKL: { cls: "brand-simkl", icon: "/assets/SIMKL.svg" },
+    PLEX: { cls: "brand-plex", icon: "/assets/img/PLEX.svg" },
+    SIMKL: { cls: "brand-simkl", icon: "/assets/img/SIMKL.svg" },
   };
   return map[key] || { cls: "", icon: "" };
 }
@@ -2600,11 +2406,11 @@ function cxBrandInfo(name) {
 function cxBrandLogo(providerName) {
   const key = (providerName || "").toUpperCase();
   const ICONS = {
-    PLEX:  "/assets/PLEX.svg",
-    SIMKL: "/assets/SIMKL.svg",
-    TRAKT: "/assets/TRAKT.svg",
-    TMDB:  "/assets/TMDB.svg",
-    JELLYFIN: "/assets/JELLYFIN.svg",
+    PLEX:  "/assets/img/PLEX.svg",
+    SIMKL: "/assets/img/SIMKL.svg",
+    TRAKT: "/assets/img/TRAKT.svg",
+    TMDB:  "/assets/img/TMDB.svg",
+    JELLYFIN: "/assets/img/JELLYFIN.svg",
   };
   const src = ICONS[key];
   return src
@@ -2628,7 +2434,7 @@ function updateFlowRailLogos() {
 
   const setToken = (el, key) => {
     el.innerHTML = key
-      ? `<img class="token-logo" src="/assets/${key}.svg" alt="${key}">`
+      ? `<img class="token-logo" src="/assets/img/${key}.svg" alt="${key}">`
       : '';
   };
 
@@ -2652,7 +2458,6 @@ function artUrl(item, size) {
 }
 
 async function loadWall() {
-  // Hide early if watchlist feature isn’t enabled in any pair
   try {
     const enabled = typeof isWatchlistEnabledInPairs === "function"
       ? await isWatchlistEnabledInPairs()
@@ -2735,6 +2540,10 @@ async function loadWall() {
     // newest first
     items = items.slice().sort((a, b) => getTs(b) - getTs(a));
 
+    // cap preview size (Watchlist Preview only - currently on 20 max)
+    const MAX = Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20;
+    items = items.slice(0, MAX);
+
     for (const it of items) {
       if (!it.tmdb) continue;
 
@@ -2755,11 +2564,8 @@ async function loadWall() {
       img.alt = `${it.title || ""} (${it.year || ""})`;
       img.src = artUrl(it, "w342");
 
-      // Fallback to placeholder if art endpoint returns 404/empty
-      img.onerror = function () {
-        this.onerror = null;
-        this.src = "/assets/placeholder_poster.svg";
-      };
+      // fallback poster
+      img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
 
       a.appendChild(img);
 
@@ -2789,19 +2595,13 @@ async function loadWall() {
       a.addEventListener("mouseenter", async () => {
         const descEl = document.getElementById(`desc-${it.type}-${it.tmdb}`);
         if (!descEl || descEl.dataset.loaded) return;
-
         try {
           const entity = isTV(it.type) ? "tv" : "movie";
           const res = await fetch("/api/metadata/resolve", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              entity,
-              ids: { tmdb: String(it.tmdb) },
-              need: { overview: true }
-            })
+            body: JSON.stringify({ entity, ids: { tmdb: String(it.tmdb) }, need: { overview: true } })
           });
-
           const j = await res.json();
           const meta = j?.ok ? j.result : null;
           descEl.textContent = meta?.overview || "—";
@@ -2816,6 +2616,7 @@ async function loadWall() {
     }
 
     initWallInteractions();
+
   } catch {
     msg.textContent = "Failed to load preview.";
   }
@@ -2978,7 +2779,6 @@ async function mountAuthProviders() {
     console.warn("mountAuthProviders failed", e);
   }
 }
-
 
 async function mountMetadataProviders() {
   try {

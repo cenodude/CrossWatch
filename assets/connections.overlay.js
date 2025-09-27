@@ -10,10 +10,10 @@
    */
   function _brandInfo(name) {
     const key = String(name || "").trim().toUpperCase();
-    if (key === "PLEX") return { cls: "brand-plex", icon: "/assets/PLEX.svg" };
-    if (key === "SIMKL") return { cls: "brand-simkl", icon: "/assets/SIMKL.svg" };
-    if (key === "TRAKT") return { cls: "brand-trakt", icon: "/assets/TRAKT.svg" };
-    if (key === "JELLYFIN") return { cls: "brand-jellyfin", icon: "/assets/JELLYFIN.svg" };
+    if (key === "PLEX") return { cls: "brand-plex", icon: "/assets/img/PLEX.svg" };
+    if (key === "SIMKL") return { cls: "brand-simkl", icon: "/assets/img/SIMKL.svg" };
+    if (key === "TRAKT") return { cls: "brand-trakt", icon: "/assets/img/TRAKT.svg" };
+    if (key === "JELLYFIN") return { cls: "brand-jellyfin", icon: "/assets/img/JELLYFIN.svg" };
     return { cls: "", icon: "" };
   }
 

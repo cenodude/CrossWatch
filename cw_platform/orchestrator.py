@@ -1705,15 +1705,6 @@ class Orchestrator:
         dst = str(pair.get("target") or pair.get("dst") or "").upper()
         if not src or not dst:
             return {"ok": False, "error": "bad_pair"}
-        
-        # validate pair.enabled
-        if not bool(pair.get("enabled", True)):
-            self._emit("pair:skip",
-                       src=src, dst=dst,
-                       mode=(pair.get("mode") or "one-way").lower(),
-                       feature=str(pair.get("feature") or "multi").lower(),
-                       reason="disabled")
-            return {"ok": True, "added": 0, "removed": 0}
 
         mode = (pair.get("mode") or "one-way").lower()
         features = pair.get("features") or {"watchlist": {"enable": True, "add": True, "remove": True}}
@@ -1813,24 +1804,7 @@ class Orchestrator:
         self._emit_info(f"[i] Features: {feat_map}")
 
         pairs = list((self.cfg or {}).get("pairs") or [])
-
-        # emit skip events for disabled pairs, keep only enabled ones
-        enabled_pairs = []
-        for i, p in enumerate(pairs, start=1):
-            if not p.get("enabled", True):
-                self._emit(
-                    "pair:skip",
-                    i=i, n=len(pairs),
-                    src=str(p.get("source") or p.get("src") or "").upper(),
-                    dst=str(p.get("target") or p.get("dst") or "").upper(),
-                    mode=(p.get("mode") or "one-way").lower(),
-                    feature=str(p.get("feature") or "multi").lower(),
-                    reason="disabled",
-                )
-            else:
-                enabled_pairs.append(p)
-        pairs = enabled_pairs
-
+        pairs = [p for p in pairs if p.get("enabled", True)]
         if not pairs:
             self._emit_info("[i] No pairs configured — skipping.")
             return {"ok": True, "added": 0, "removed": 0, "pairs": 0}

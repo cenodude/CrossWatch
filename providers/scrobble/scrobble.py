@@ -1,24 +1,18 @@
 # providers/scrobble/scrobble.py
+# Refactoring project: scrobble.py (v0.1)
 from __future__ import annotations
-"""Scrobble core
-- Normalized ScrobbleEvent + sink protocol
-- Plex PSN + flat parsers
-- Dispatcher with username/server filters and configurable pause debounce
-- Suppress near-end start flaps (credits overlay)
-- Config-aware loader (honors CROSSWATCH_CONFIG)
-"""
+
 import os, json, re, time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional, Protocol, Set, Tuple
+from typing import Any, Iterable, Literal, Protocol
 
-# Optional project logger
+# --- utils ---------------------------------------------------------------------
 try:
     from _logging import log as BASE_LOG
 except Exception:
-    BASE_LOG = None
+    BASE_LOG = None  # Fallback to print
 
-# --- utils ---------------------------------------------------------------------
 def _log(msg: str, lvl: str = "INFO") -> None:
     if BASE_LOG:
         try:
@@ -27,28 +21,17 @@ def _log(msg: str, lvl: str = "INFO") -> None:
             pass
     print(f"{lvl} [SCROBBLE] {msg}")
 
-def _load_config() -> Dict[str, Any]:
-    """Load config from CROSSWATCH_CONFIG (file or dir) or common fallbacks."""
-    paths: List[Path] = []
-    env = os.getenv("CROSSWATCH_CONFIG")
-    if env:
-        p = Path(env)
-        paths.append(p / "config.json" if p.is_dir() else p)
-    paths += [
-        Path("/config/config.json"),
-        Path("/app/config/config.json"),
-        Path("./config.json"),
-        Path("/mnt/data/config.json"),
-    ]
-    for p in paths:
-        try:
-            if p.exists():
-                return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+def _load_config() -> dict[str, Any]:
+    from pathlib import Path
+    import json
+    p = Path("/config/config.json")
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        return {}
 
-def _i(x: Any) -> Optional[int]:
+
+def _i(x: Any) -> int | None:
     try: return int(x)
     except Exception: return None
 
@@ -57,33 +40,32 @@ _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
 _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)", re.I)
 
-def _grab(s: str, pat: re.Pattern) -> Optional[str]:
+def _grab(s: str, pat: re.Pattern) -> str | None:
     m = pat.search(s or ""); return m.group(1) if m else None
 
-def _ids_from_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+def _ids_from_meta(meta: dict[str, Any]) -> dict[str, str]:
     guid = str(meta.get("guid") or "")
-    ids = {"imdb": _grab(guid,_PAT_IMDB), "tmdb": _grab(guid,_PAT_TMDB), "tvdb": _grab(guid,_PAT_TVDB)}
-    gpg  = str(meta.get("grandparentGuid") or "")
+    ids: dict[str, str] = {}
+    for k, pat in (("imdb", _PAT_IMDB), ("tmdb", _PAT_TMDB), ("tvdb", _PAT_TVDB)):
+        v = _grab(guid, pat)
+        if v: ids[k] = v
+    gpg = str(meta.get("grandparentGuid") or "")
     if gpg:
-        ids["imdb_show"] = _grab(gpg,_PAT_IMDB)
-        ids["tmdb_show"] = _grab(gpg,_PAT_TMDB)
-        ids["tvdb_show"] = _grab(gpg,_PAT_TVDB)
-    return {k:v for k,v in ids.items() if v}
+        for k, pat in (("imdb_show", _PAT_IMDB), ("tmdb_show", _PAT_TMDB), ("tvdb_show", _PAT_TVDB)):
+            v = _grab(gpg, pat)
+            if v: ids[k] = v
+    return ids
 
-def _progress(state: str, view_offset: int, duration: int) -> Tuple[int, "ScrobbleAction"]:
-    d = max(1, _i(duration) or 0)
-    vo = max(0, min(_i(view_offset) or 0, d))
+def _progress(state: str, view_offset: int, duration: int) -> tuple[int, ScrobbleAction]:
+    d = max(1, _i(duration) or 0); vo = max(0, min(_i(view_offset) or 0, d))
     pct = max(0, min(100, int(round((vo / float(d)) * 100))))
     s = (state or "").lower()
-    if   s == "playing": act: ScrobbleAction = "start"
-    elif s == "paused":  act = "pause"
-    elif s in ("stopped","bufferingstopped"): act = "stop"
-    else: act = "start"
+    act: ScrobbleAction = "start" if s == "playing" else "pause" if s == "paused" else "stop" if s in ("stopped", "bufferingstopped") else "start"
     return pct, act
 
-def _event_from_meta(meta: Dict[str, Any], raw: Dict[str, Any]) -> "ScrobbleEvent":
+def _event_from_meta(meta: dict[str, Any], raw: dict[str, Any]) -> ScrobbleEvent:
     ids = _ids_from_meta(meta)
-    pct, act = _progress(meta.get("state",""), meta.get("viewOffset",0) or 0, meta.get("duration",0) or 0)
+    pct, act = _progress(meta.get("state", ""), meta.get("viewOffset", 0) or 0, meta.get("duration", 0) or 0)
     mtype: MediaType = "episode" if (meta.get("type") or "").lower() == "episode" else "movie"
     title  = meta.get("grandparentTitle") if mtype == "episode" else meta.get("title")
     season = meta.get("grandparentIndex") if mtype == "episode" else None
@@ -105,28 +87,28 @@ MediaType      = Literal["movie", "episode"]
 class ScrobbleEvent:
     action: ScrobbleAction
     media_type: MediaType
-    ids: Dict[str, Any]
-    title: Optional[str]
-    year: Optional[int]
-    season: Optional[int]
-    number: Optional[int]
+    ids: dict[str, str]
+    title: str | None
+    year: int | None
+    season: int | None
+    number: int | None
     progress: int
-    account: Optional[str]
-    server_uuid: Optional[str]
-    session_key: Optional[str]
-    raw: Dict[str, Any]
+    account: str | None
+    server_uuid: str | None
+    session_key: str | None
+    raw: dict[str, Any]
 
 class ScrobbleSink(Protocol):
     def send(self, event: ScrobbleEvent) -> None: ...
 
 # --- webhook (compat) ----------------------------------------------------------
-def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
+def from_plex_webhook(payload: Any, defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
     try:
         if isinstance(payload, dict) and "payload" in payload:
             obj = json.loads(payload["payload"])
         elif isinstance(payload, (str, bytes, bytearray)):
-            obj = json.loads(payload if isinstance(payload,str) else payload.decode("utf-8"))
+            obj = json.loads(payload if isinstance(payload, str) else payload.decode("utf-8"))
         elif isinstance(payload, dict):
             obj = payload
         else:
@@ -138,7 +120,7 @@ def from_plex_webhook(payload: Any, defaults: Optional[Dict[str, Any]] = None) -
     return None
 
 # --- parsers -------------------------------------------------------------------
-def from_plex_pssn(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
+def from_plex_pssn(payload: dict[str, Any], defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
     arr = payload.get("PlaySessionStateNotification")
     if not (isinstance(arr, list) and arr): return None
@@ -154,7 +136,7 @@ def from_plex_pssn(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] =
     }
     return _event_from_meta(meta, payload)
 
-def from_plex_flat_playing(payload: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Optional[ScrobbleEvent]:
+def from_plex_flat_playing(payload: dict[str, Any], defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
     if int(payload.get("size") or 0) < 1: return None
     if (payload.get("_type") or payload.get("type") or "").lower() != "playing": return None
@@ -178,10 +160,10 @@ class Dispatcher:
     def __init__(self, sinks: Iterable[ScrobbleSink], cfg_provider=None) -> None:
         self._sinks = list(sinks or [])
         self._cfg_provider = cfg_provider or _load_config
-        self._session_ok: Set[str] = set()
-        self._debounce: Dict[str, float] = {}
-        self._last_action: Dict[str, str] = {}
-        self._last_progress: Dict[str, int] = {}
+        self._session_ok: set[str] = set()
+        self._debounce: dict[str, float] = {}
+        self._last_action: dict[str, str] = {}
+        self._last_progress: dict[str, int] = {}
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         if ev.session_key and str(ev.session_key) in self._session_ok: return True
@@ -191,25 +173,25 @@ class Dispatcher:
         want_server = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
         if want_server and ev.server_uuid and str(ev.server_uuid) != str(want_server): return False
 
-        def _allow():
+        def _allow() -> bool:
             if ev.session_key: self._session_ok.add(str(ev.session_key))
             return True
 
         if not wl: return _allow()
 
-        def norm(s: str) -> str: return re.sub(r"[^a-z0-9]+","",(s or "").lower())
+        def norm(s: str) -> str: return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
         wl_list = wl if isinstance(wl, list) else [wl]
 
         # Plain username match
-        if any(not str(x).lower().startswith(("id:","uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
+        if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
             return _allow()
 
         # Extract id/uuid from raw PSN if present
-        def find_psn(o):
+        def find_psn(o: Any) -> list[dict[str, Any]] | None:
             if isinstance(o, dict):
-                for k,v in o.items():
-                    if isinstance(k,str) and k.lower()=="playsessionstatenotification":
-                        return v if isinstance(v,list) else [v]
+                for k, v in o.items():
+                    if isinstance(k, str) and k.lower() == "playsessionstatenotification":
+                        return v if isinstance(v, list) else [v]
                 for v in o.values():
                     r = find_psn(v)
                     if r: return r
@@ -225,8 +207,8 @@ class Dispatcher:
 
         for e in wl_list:
             s = str(e).strip().lower()
-            if s.startswith("id:")   and acc_id   and s.split(":",1)[1].strip()==acc_id:   return _allow()
-            if s.startswith("uuid:") and acc_uuid and s.split(":",1)[1].strip()==acc_uuid: return _allow()
+            if s.startswith("id:")   and acc_id   and s.split(":", 1)[1].strip() == acc_id:   return _allow()
+            if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid: return _allow()
         return False
 
     def _should_send(self, ev: ScrobbleEvent) -> bool:
@@ -241,15 +223,15 @@ class Dispatcher:
             sup, pause_db = 99, 5.0
 
         # suppress near-end start flaps (credits overlay)
-        if ev.action == "start" and last_p >= sup and ev.progress >= sup:
+        if ev.action == "start" and last_p is not None and last_p >= sup and ev.progress >= sup:
             return False
 
-        changed = (ev.action != last_a) or (abs(ev.progress - last_p) >= 1)
+        changed = (ev.action != last_a) or (abs(ev.progress - (last_p or -1)) >= 1)
 
         # configurable pause debounce
         if ev.action == "pause":
             now, k = time.time(), f"{sk}|pause"
-            if now - self._debounce.get(k, 0) < pause_db and ev.action == last_a:
+            if now - self._debounce.get(k, 0.0) < pause_db and ev.action == last_a:
                 return False
             self._debounce[k] = now
 
@@ -267,4 +249,4 @@ class Dispatcher:
             except Exception as e: _log(f"Sink error: {e}", "ERROR")
 
 # --- exports -------------------------------------------------------------------
-__all__ = ["ScrobbleEvent","ScrobbleSink","Dispatcher","from_plex_webhook","from_plex_pssn","from_plex_flat_playing"]
+__all__ = ("ScrobbleEvent", "ScrobbleSink", "Dispatcher", "from_plex_webhook", "from_plex_pssn", "from_plex_flat_playing")
