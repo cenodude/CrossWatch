@@ -1,4 +1,4 @@
-/* CrossWatch neon theme for docs site */
+/* CrossWatch neon */
 
 /* Theme */
 :root{
@@ -49,7 +49,13 @@ a:hover{text-decoration:underline}
 .panel.center{ text-align:center; }
 .panel.center h2{ text-align:center; }
 .panel.center .grid-2{ justify-items:center; }
-.panel.center ul{ display:inline-block; text-align:left; margin:0; max-width:44ch; }
+.panel.center ul{ display:inline-block; text-align:left; margin:0; }
+
+/* Features — keep one line where possible */
+.features .grid-2{ grid-template-columns:repeat(2, minmax(360px, 1fr)); gap:18px; }
+.features li{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:clamp(14px, 1.2vw, 17px);
+}
 
 /* Small centered box variant */
 .panel.centered{ max-width:980px; margin:14px auto; }
@@ -64,6 +70,19 @@ ul{margin:0; padding-left:1.1em}
 .status{list-style:"✔  "; padding-left:1rem}
 .muted{ color:var(--muted); }
 .hint{color:var(--muted); font-size:13px; margin-top:6px}
+
+/* Integrations badges */
+.compact{ max-width:980px; margin-left:auto; margin-right:auto; }
+.stack{ display:grid; gap:8px; justify-items:center; }
+.row{ display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
+.badge{
+  display:inline-flex; align-items:center; padding:.25rem .5rem; border-radius:8px;
+  border:1px solid var(--border); font-weight:600; font-size:13px; margin:.1rem .15rem;
+}
+.badge.simkl{ background:#0AAEEF; color:#001018; }
+.badge.trakt{ background:#ED1C24; color:#fff; }
+.badge.plex{ background:#FFA620; color:#111; }
+.badge.jellyfin{ background:#946AD9; color:#fff; }
 
 /* Code blocks */
 pre{

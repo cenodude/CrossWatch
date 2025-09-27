@@ -13,8 +13,6 @@
   <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Simkl, and Trakt. Local-first Docker app with neon web UI, scheduler, dry-runs, and modular providers." />
   <meta name="keywords" content="CrossWatch, Plex, Jellyfin, Simkl, Trakt, watchlist sync, ratings sync, history sync, scrobbling, Docker, self-hosted" />
   <meta name="robots" content="index,follow" />
-
-  <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
   <meta property="og:description" content="Local-first sync engine with neon web UI: watchlists, ratings, history, scrobbling, scheduler, and dry-runs." />
@@ -24,8 +22,6 @@
   <meta property="og:image:width" content="2048" />
   <meta property="og:image:height" content="1109" />
   <meta property="og:locale" content="en_US" />
-
-  <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
   <meta name="twitter:description" content="Local-first sync engine for Plex, Jellyfin, Simkl & Trakt. Scheduler, dry-runs, neon UI." />
@@ -40,12 +36,12 @@
   <header class="hero wrap">
     <img src="images/CrossWatch.png" alt="CrossWatch" class="logo" />
     <h1 class="brand">Cross<span>Watch</span></h1>
-    <p class="tag">Sync watchlists, ratings & history across trackers and media servers.</p>
+    <p class="tag">Sync watchlists, ratings & history across providers.</p>
 
-    <!-- Intro (must start with these lines) -->
+    <!-- Intro -->
     <section class="panel center" style="margin-top:16px">
       <p><strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.</p>
-      <p>It aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.</p>
+      <p><strong>CrossWatch</strong> aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.</p>
     </section>
 
     <p class="cta">
@@ -58,7 +54,7 @@
 
   <main class="wrap">
     <!-- Features -->
-    <section id="features" class="panel center">
+    <section id="features" class="panel center features">
       <h2>🚀 Features</h2>
       <div class="grid-2">
         <ul>
@@ -82,7 +78,24 @@
       </div>
     </section>
 
-    <!-- Run (container only) -->
+    <!-- Integrations (trackers + media servers) -->
+    <section id="integrations" class="panel center compact">
+      <h2>Integrations</h2>
+      <div class="stack">
+        <div class="row">
+          <strong>Trackers:</strong>
+          <span class="badge simkl">SIMKL</span>
+          <span class="badge trakt">Trakt</span>
+        </div>
+        <div class="row">
+          <strong>Media servers:</strong>
+          <span class="badge plex">Plex</span>
+          <span class="badge jellyfin">Jellyfin</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Run -->
     <section id="install" class="panel">
       <h2>▶ Run (container only)</h2>
 
@@ -111,19 +124,19 @@ services:
       <p class="hint">Open <code>http://localhost:8787</code> after the container is up. Configure providers, create pairs, dry-run, then enable writes.</p>
     </section>
 
-    <!-- Screenshots -->
+    <!-- Screenshots (anchors use data-full to avoid navigation) -->
     <section id="screens" class="panel">
       <h2>Screenshots</h2>
       <div class="gallery" data-gallery>
-        <a href="images/screenshot1.jpg" data-title="Main"><img loading="lazy" src="images/screenshot1.jpg" alt="Main"></a>
-        <a href="images/screenshot2.jpg" data-title="Settings"><img loading="lazy" src="images/screenshot2.jpg" alt="Settings"></a>
-        <a href="images/screenshot3.jpg" data-title="Watchlist – List"><img loading="lazy" src="images/screenshot3.jpg" alt="Watchlist – List"></a>
-        <a href="images/screenshot4.jpg" data-title="Watchlist – Posters"><img loading="lazy" src="images/screenshot4.jpg" alt="Watchlist – Posters"></a>
+        <a href="#" data-full="images/screenshot1.jpg" data-title="Main"><img loading="lazy" src="images/screenshot1.jpg" alt="Main"></a>
+        <a href="#" data-full="images/screenshot2.jpg" data-title="Settings"><img loading="lazy" src="images/screenshot2.jpg" alt="Settings"></a>
+        <a href="#" data-full="images/screenshot3.jpg" data-title="Watchlist – List"><img loading="lazy" src="images/screenshot3.jpg" alt="Watchlist – List"></a>
+        <a href="#" data-full="images/screenshot4.jpg" data-title="Watchlist – Posters"><img loading="lazy" src="images/screenshot4.jpg" alt="Watchlist – Posters"></a>
       </div>
       <p class="hint">Click to view full size. Use ← → or swipe. Esc to close.</p>
     </section>
 
-    <!-- Early development (single centered box, below screenshots) -->
+    <!-- Early development (one centered box) -->
     <section id="status" class="panel center centered">
       <h2>⚠️ Early development</h2>
       <p class="lead">Testing only — do not use in production. <span class="muted">Always back up your data before a real sync.</span></p>
@@ -134,6 +147,17 @@ services:
       </ul>
     </section>
   </main>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="viewer" hidden>
+    <button class="lb-btn lb-close" aria-label="Close">✕</button>
+    <button class="lb-btn lb-prev" aria-label="Previous">‹</button>
+    <figure class="lb-stage">
+      <img id="viewer-img" alt="">
+      <figcaption class="lb-cap"><span id="viewer-cap"></span><span id="viewer-count"></span></figcaption>
+    </figure>
+    <button class="lb-btn lb-next" aria-label="Next">›</button>
+  </div>
 
   <!-- Footer -->
   <footer class="wrap foot">
