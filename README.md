@@ -21,7 +21,7 @@
 <div align="center">
 
 ⚠️ **EARLY DEVELOPMENT**  
-This project is unstable and may break.  DO NOT USE FOR PRODUCTION YET, ONLY FOR TESTING!!
+This project is unstable and may break.  DO NOT USE FOR PRODUCTION!, ONLY FOR TESTING!!
 **Always back up your data before use.**
 
 </div>
@@ -32,16 +32,6 @@ This project is unstable and may break.  DO NOT USE FOR PRODUCTION YET, ONLY FOR
 
 CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
 
-
----
-
-<div align="center">
-
-⚠️ **EARLY DEVELOPMENT**  
-This project is unstable and may break.  
-**Always back up your data before use.**
-
-</div>
 
 ---
 
