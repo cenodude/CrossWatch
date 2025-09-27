@@ -1,4 +1,4 @@
-/* CrossWatch neon theme */
+/* CrossWatch neon theme for docs site */
 
 /* Theme */
 :root{
@@ -51,11 +51,18 @@ a:hover{text-decoration:underline}
 .panel.center .grid-2{ justify-items:center; }
 .panel.center ul{ display:inline-block; text-align:left; margin:0; max-width:44ch; }
 
+/* Small centered box variant */
+.panel.centered{ max-width:980px; margin:14px auto; }
+.panel.centered .lead{ text-align:center; font-weight:600; }
+.panel.centered .status{ text-align:left; margin:10px auto 0; max-width:70ch; }
+.status.compact li{ margin:6px 0; }
+
 h2{margin:.2rem 0 8px; font-size:20px}
 h3{margin:14px 0 8px; font-size:16px}
 ul{margin:0; padding-left:1.1em}
 .grid-2{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px}
 .status{list-style:"✔  "; padding-left:1rem}
+.muted{ color:var(--muted); }
 .hint{color:var(--muted); font-size:13px; margin-top:6px}
 
 /* Code blocks */

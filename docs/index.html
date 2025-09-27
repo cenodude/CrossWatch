@@ -10,7 +10,7 @@
 
   <!-- SEO -->
   <link rel="canonical" href="https://cenodude.github.io/CrossWatch/" />
-  <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Simkl, and Trakt. Runs locally in Docker with a clean web UI, scheduler, dry-runs, and modular provider support." />
+  <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Simkl, and Trakt. Local-first Docker app with neon web UI, scheduler, dry-runs, and modular providers." />
   <meta name="keywords" content="CrossWatch, Plex, Jellyfin, Simkl, Trakt, watchlist sync, ratings sync, history sync, scrobbling, Docker, self-hosted" />
   <meta name="robots" content="index,follow" />
 
@@ -31,24 +31,6 @@
   <meta name="twitter:description" content="Local-first sync engine for Plex, Jellyfin, Simkl & Trakt. Scheduler, dry-runs, neon UI." />
   <meta name="twitter:image" content="images/screenshot1.jpg" />
 
-  <!-- JSON-LD (SoftwareApplication) -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "CrossWatch",
-    "applicationCategory": "UtilitiesApplication",
-    "operatingSystem": "Docker, Linux, Windows, macOS",
-    "description": "Local-first synchronization engine for Plex, Jellyfin, Simkl, and Trakt with a clean web UI, scheduler, and dry-runs.",
-    "softwareVersion": "v0.x",
-    "url": "https://cenodude.github.io/CrossWatch/",
-    "image": "https://cenodude.github.io/CrossWatch/images/screenshot1.jpg",
-    "sameAs": "https://github.com/cenodude/CrossWatch",
-    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-    "creator": { "@type": "Person", "name": "cenodude" }
-  }
-  </script>
-
   <!-- Assets -->
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
@@ -60,7 +42,7 @@
     <h1 class="brand">Cross<span>Watch</span></h1>
     <p class="tag">Sync watchlists, ratings & history across providers.</p>
 
-    <!-- Intro -->
+    <!-- Intro (must start with these lines) -->
     <section class="panel center" style="margin-top:16px">
       <p><strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.</p>
     </section>
@@ -142,35 +124,24 @@ services:
       </div>
       <p class="hint">Click to view full size. Use ← → or swipe. Esc to close.</p>
     </section>
-  </main>
 
-  <!-- Lightbox -->
-  <div class="lightbox" id="viewer" hidden>
-    <button class="lb-btn lb-close" aria-label="Close">✕</button>
-    <button class="lb-btn lb-prev" aria-label="Previous">‹</button>
-    <figure class="lb-stage">
-      <img id="viewer-img" alt="">
-      <figcaption class="lb-cap"><span id="viewer-cap"></span><span id="viewer-count"></span></figcaption>
-    </figure>
-    <button class="lb-btn lb-next" aria-label="Next">›</button>
-  </div>
+    <!-- Early development (single centered box, below screenshots) -->
+    <section id="status" class="panel center centered">
+      <h2>⚠️ Early development</h2>
+      <p class="lead">Testing only — do not use in production. <span class="muted">Always back up your data before a real sync.</span></p>
+      <ul class="status compact">
+        <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
+        <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
+        <li><strong>Road to v0.2.0:</strong> deep cleanup & refactors; fewer new features, more fixes & polish</li>
+      </ul>
+    </section>
+  </main>
 
   <!-- Footer -->
   <footer class="wrap foot">
     <span>© CrossWatch</span>
     <span><a href="https://github.com/cenodude/CrossWatch">GitHub</a></span>
   </footer>
-
-  <!-- Early development (last) -->
-  <section class="wrap panel center" style="margin-top:0">
-    <h2>⚠️ Early development</h2>
-    <p><strong>Testing only — do not use in production.</strong> Always back up your data before a real sync.</p>
-    <ul class="status">
-      <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
-      <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
-      <li><strong>Road to v0.2.0:</strong> deep cleanup & refactors; fewer new features, more fixes & polish</li>
-    </ul>
-  </section>
 
   <script src="viewer.js" defer></script>
 </body>

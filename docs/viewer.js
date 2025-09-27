@@ -1,4 +1,4 @@
-// lightbox viewer for gallery
+// Lightbox viewer for gallery
 (() => {
   const gallery = document.querySelector('[data-gallery]');
   if (!gallery) return;
@@ -42,7 +42,7 @@
   const next = () => show(clamp(i + 1, 0, items.length - 1));
   const prev = () => show(clamp(i - 1, 0, items.length - 1));
 
-  // Important: no passive listener here; we need preventDefault() to avoid navigating to the image.
+  // No passive here; we must preventDefault() to avoid navigating to the image.
   items.forEach((a, idx) => a.addEventListener('click', (e) => { e.preventDefault(); open(idx); }));
 
   btnClose.addEventListener('click', close);
@@ -60,13 +60,13 @@
     else if (e.key === 'ArrowLeft') prev();
   });
 
-  // Touch swipe (can be passive)
+  // Touch swipe
   viewer.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
   viewer.addEventListener('touchend', (e) => {
     if (touchX == null) return;
     const dx = e.changedTouches[0].clientX - touchX;
     touchX = null;
-    if (Math.abs(dx) < 40) return; // small moves ignored
+    if (Math.abs(dx) < 40) return;
     dx < 0 ? next() : prev();
   }, { passive: true });
 })();
