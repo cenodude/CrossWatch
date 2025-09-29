@@ -312,7 +312,7 @@ class TmdbProvider:
         if ent_in not in {"movie", "tv"}:
             return {}
 
-        tmdb_id = (ids.get("tmdb") or ids.get("id") or "").strip()
+        tmdb_id = str(ids.get("tmdb") or ids.get("id") or "").strip()
         if not tmdb_id:
             return {}
 

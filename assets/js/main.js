@@ -1,5 +1,5 @@
 // UX panel
-//* Refactoring project: main.js (v0.1) */
+//* Refactoring project: main.js (v0.2) */
 //*-------------------------------------*/
 
 (() => {
@@ -54,6 +54,10 @@
 .spot .t-upd{color:#9ecbff;border-color:rgba(158,203,255,.25)}
 .muted{opacity:.7}
 .small{font-size:11px}
+#run[disabled]{pointer-events:none;opacity:.6;filter:saturate(.7)}
+#run.glass{position:relative}
+#run.glass::after{content:"";position:absolute;inset:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 `
   }));
 
@@ -121,6 +125,14 @@
     window.addEventListener("resize", () => { cache=null; requestAnimationFrame(()=>align(document)); });
     return { align, pct:pctFromTimeline, _invalidate(){ cache=null; } };
   })();
+
+  // run button state
+  function setRunButtonState(running){
+  const btn=document.getElementById("run"); if(!btn) return;
+  btn.toggleAttribute("disabled", !!running);
+  btn.setAttribute("aria-busy", running?"true":"false");
+  btn.classList.toggle("glass", !!running);
+}
 
   // progress rail
   function renderProgress(){
@@ -388,6 +400,7 @@
 
     const tl = s?.timeline || s?.tl || null;
     const running = s?.running===true || s?.state==="running";
+    setRunButtonState(running);
     const exitedOk = (s?.exit_code===0) || (s?.exit===0) || (s?.status==="ok");
 
     let mapped = {
@@ -410,15 +423,25 @@
     const baseline = (Rail.pct(timeline, elProgress) ?? asPctFromTimeline(timeline));
     progressPct = monotonePct(timeline, baseline);
 
-    try{
-      if (typeof updateProgressFromTimeline==="function") updateProgressFromTimeline(timeline);
-      const btn = document.getElementById("run");
-      if (typeof startRunVisuals==="function" && typeof stopRunVisuals==="function"){
-        if (running && !prevRunning){ _insightsTried=false; const indet=!(timeline.pre||timeline.post||timeline.done); startRunVisuals(indet); btn?.classList.add("glass"); }
-        if (!running && prevRunning){ stopRunVisuals(); btn?.classList.remove("glass"); }
+    try {
+      updateProgressFromTimeline?.(timeline);
+
+      const nowRunning  = !!running;
+      const justStarted =  nowRunning && !prevRunning;
+      const justStopped = !nowRunning &&  prevRunning;
+
+      if (justStarted) {
+        _insightsTried = false;
+        const indet = !(timeline.pre || timeline.post || timeline.done);
+        startRunVisuals?.(indet);
       }
-      if (typeof recomputeRunDisabled==="function") recomputeRunDisabled();
-    }catch{}
+      if (justStopped) {
+        stopRunVisuals?.();
+      }
+
+      setRunButtonState(nowRunning);
+      recomputeRunDisabled?.();
+    } catch {}
 
     const wasInProgress = prevRunning || (prevTL.start && !prevTL.done) || optimistic;
     const nowInProgress = running || (timeline.start && !timeline.done);
@@ -475,6 +498,8 @@
     const btn=document.getElementById("run"); if (!btn || wireRunButton._done) return;
     wireRunButton._done = true;
     btn.addEventListener("click", () => {
+      if (btn.disabled || btn.classList.contains("glass")) return;
+      setRunButtonState(true);
       resetProgress(); optimistic=true;
       window.startRunVisuals?.(true); window.recomputeRunDisabled?.();
       timeline={ start:true, pre:false, post:false, done:false };

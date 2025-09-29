@@ -1,10 +1,9 @@
 # _watchlist.py
-# Helpers for building merged watchlist view and performing deletes
 # Refactoring project: watchlist.py (v0.1)
 
 from __future__ import annotations
 
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, List
 from pathlib import Path
 import json
 
@@ -14,7 +13,7 @@ from cw_platform.config_base import CONFIG
 # Paths
 # ---------------------------------------------------------------------
 def _state_path() -> Path:
-    return CONFIG / "watchlist_state.json"
+    return CONFIG / "state.json"
 
 HIDE_PATH: Path = CONFIG / "watchlist_hide.json"
 # ---------------------------------------------------------------------
@@ -488,7 +487,7 @@ def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg
         _delete_on_jellyfin_batch(items,cfg.get("jellyfin",{}) or {})
     else: raise RuntimeError(f"unknown provider: {prov}")
     if any(_del_key_from_provider_items(state,prov,k) for k in keys): _save_state_dict(_state_path(),state)
-    return {"deleted":len(keys),"provider":prov,"status":"ok"}
+    return {"ok": True, "deleted": len(keys), "provider": prov, "status": "ok"}
 
 # ---------------------------------------------------------------------
 # Public: single delete
@@ -531,3 +530,51 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
     except Exception as e:
         _log("TRBL",f"[WATCHLIST] {prov} delete failed: {e}")
         return {"ok":False,"error":str(e),"provider":prov}
+    
+# ---------------------------------------------------------------------
+# Provider detection
+# ---------------------------------------------------------------------
+def detect_available_watchlist_providers(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Compact + fast provider manifest."""
+    def _configured(pid: str) -> bool:
+        p=pid.upper()
+        if p=="PLEX":     return bool((cfg.get("plex") or {}).get("account_token"))
+        if p=="SIMKL":    return bool((cfg.get("simkl") or {}).get("access_token"))
+        if p=="TRAKT":
+            t=(cfg.get("trakt") or {}); a=((cfg.get("auth") or {}).get("trakt") or {})
+            return bool(t.get("access_token") or t.get("token") or a.get("access_token"))
+        if p=="JELLYFIN":
+            jf=(cfg.get("jellyfin") or {})
+            return bool((jf.get("server") or "").strip() and (jf.get("access_token") or jf.get("api_key") or jf.get("token") or "").strip() and jf.get("user_id"))
+        return False
+
+    defs=[("PLEX","Plex"),("SIMKL","SIMKL"),("TRAKT","Trakt"),("JELLYFIN","Jellyfin")]
+    counts={k:0 for k,_ in defs}
+
+    try:
+        from crosswatch import _load_state
+        st=_load_state() or {}
+        P=(st.get("providers") or {})
+        for pid,_ in defs:
+            items=(((P.get(pid) or {}).get("watchlist") or {}).get("baseline") or {}).get("items") or {}
+            counts[pid]=len(items) if isinstance(items,(dict,list,set,tuple)) else 0
+    except Exception:
+        pass
+
+    if not any(counts.values()):
+        try:
+            from cw_platform.orchestrator import Orchestrator
+            snaps=Orchestrator(config=cfg).build_snapshots(feature="watchlist") or {}
+            for pid,_ in defs:
+                counts[pid]=len(snaps.get(pid) or {})
+        except Exception:
+            pass
+
+    arr: List[Dict[str, Any]]=[]
+    for pid,label in defs:
+        conf=_configured(pid)
+        arr.append({"id":pid,"label":label,"configured":conf,"supports_delete":True,"supports_batch":True,"count":(counts[pid] if conf else 0)})
+
+    any_conf=any(p["configured"] for p in arr)
+    arr.append({"id":"ALL","label":"All providers","configured":any_conf,"supports_delete":True,"supports_batch":True,"count":sum(p["count"] for p in arr)})
+    return arr

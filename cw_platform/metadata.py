@@ -18,6 +18,20 @@ except Exception:
 
 # ------------------------------------------------------------------ helpers
 
+def _norm_ids(ids: dict | None) -> dict:
+    out = {}
+    for k, v in (ids or {}).items():
+        if v in (None, "", [], {}): 
+            continue
+        if isinstance(v, (int, float)):
+            v = str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+        elif not isinstance(v, str):
+            v = str(v)
+        else:
+            v = v.strip()
+        out[str(k).lower()] = v
+    return out
+
 def _norm_entity(entity: Optional[str]) -> str:
     e = str(entity or "").strip().lower()
     return {"series": "show", "tv": "show", "shows": "show", "movies": "movie"}.get(e, e if e in ("movie", "show") else "movie")
@@ -83,6 +97,8 @@ class MetadataManager:
         debug = bool((cfg.get("runtime") or {}).get("debug"))
         entity = _norm_entity(entity); req_need = _norm_need(need)
         eff_locale = locale or md_cfg.get("locale") or (cfg.get("ui") or {}).get("locale")
+        
+        ids = _norm_ids(ids)
 
         default_order = list(self.providers.keys())
         order = [str(x).upper() for x in (md_cfg.get("priority") or default_order) if str(x).upper() in self.providers]
@@ -119,6 +135,7 @@ class MetadataManager:
             if g:
                 try: ids.update(ids_from_guid(g))
                 except Exception: pass
+            ids = _norm_ids(ids)
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
             title, year = it.get("title"), it.get("year")
             try: r = self.resolve(entity=ent, ids=ids) if ids else self.resolve(entity=ent, ids={}, need={"title": True, "year": True})
@@ -140,6 +157,8 @@ class MetadataManager:
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
             ids: Dict[str, Any] = dict(it.get("ids") or {})
             title, year = it.get("title"), it.get("year")
+            
+            ids = _norm_ids(ids)
 
             try:
                 if ent == "movie":
@@ -164,7 +183,7 @@ class MetadataManager:
             except Exception:
                 pass
 
-            node = {"type": ent, "title": title, "year": year, "ids": {k: v for k, v in ids.items() if v not in (None, "", [], {})}}
+            node = {"type": ent, "title": title, "year": year, "ids": _norm_ids(ids)}
             healed.append(node)
         return healed
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 # providers/sync/_mod_PLEX.py
 # Plex provider (watchlist, ratings, history, playlists) via PlexAPI only.
 
-__VERSION__ = "2.2.1"
+__VERSION__ = "2.2.2"
 __all__ = ["OPS", "PLEXModule", "get_manifest"]
 
 import os, re, json, time
@@ -436,7 +436,7 @@ def _unresolved_reset_if_library_grew(feature: str, live_count: int) -> None:
 
 
 # --- watchlist (PlexAPI account only) -----------------------------------------
-def _watchlist_index(acct: MyPlexAccount) -> Dict[str, Dict[str, Any]]:
+def _watchlist_index(acct: MyPlexAccount, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for kind in ("movie", "show"):
         try: items = acct.watchlist(libtype=kind) or []
@@ -451,7 +451,7 @@ def _watchlist_index(acct: MyPlexAccount) -> Dict[str, Dict[str, Any]]:
 
     if not out: return out
     try:
-        mm = MetadataManager(lambda: {}, lambda _cfg: None)
+        mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
         healed = mm.reconcile_ids(list(out.values()))
         fixed: Dict[str, Dict[str, Any]] = {}
         for r in healed:
@@ -1019,7 +1019,7 @@ class _PlexOPS:
         policy = pol["policy"]
         if feature == "watchlist":
             acct = _ensure_account(cfg)
-            live = _watchlist_index(acct)
+            live = _watchlist_index(acct, cfg)
             virt = _unresolved_virtual_for_index("watchlist", policy)
             merged = dict(virt); merged.update(live)
             _cursor_save("watchlist.fingerprint", {"count": len(live)})
