@@ -2,7 +2,9 @@
 from fastapi import APIRouter, Query, Body, Path as FPath
 from fastapi.responses import JSONResponse
 from typing import Optional, Literal, Dict, Any, List
+from _watchlist import delete_watchlist_batch
 import urllib.parse
+
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -104,34 +106,30 @@ def api_watchlist(
     )
 
 @router.delete("/{key}")
-def api_watchlist_delete(key: str = FPath(...)) -> JSONResponse:
+def api_watchlist_delete(
+    key: str = FPath(...),
+    provider: Optional[str] = Query("ALL", description="PLEX|TRAKT|SIMKL|JELLYFIN|ALL"),
+) -> JSONResponse:
     from cw_platform.config_base import load_config
     from crosswatch import STATE_PATH, _load_state, STATS, _append_log
     from _watchlist import delete_watchlist_item
 
-    try:
-        if "%" in (key or ""):
-            key = urllib.parse.unquote(key)
+    if "%" in (key or ""):
+        key = urllib.parse.unquote(key)
+    prov = (provider or "ALL").upper().strip()
 
-        res = delete_watchlist_item(key=key, state_path=STATE_PATH, cfg=load_config(), log=_append_log)
-        if not isinstance(res, dict) or "ok" not in res:
-            res = {"ok": False, "error": "unexpected server response"}
+    res = delete_watchlist_item(key=key, state_path=STATE_PATH, cfg=load_config(), provider=prov, log=_append_log)
+    if not isinstance(res, dict):
+        res = {"ok": bool(res)}
+    if res.get("ok"):
+        try:
+            state = _load_state()
+            if state: STATS.refresh_from_state(state)
+        except Exception:
+            pass
+    res.setdefault("provider", prov)
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
-        if res.get("ok"):
-            try:
-                state = _load_state()
-                P = (state.get("providers") or {})
-                for prov in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
-                    items = (((P.get(prov) or {}).get("watchlist") or {}).get("baseline") or {}).get("items") or {}
-                    items.pop(key, None)
-                STATS.refresh_from_state(state)
-            except Exception:
-                pass
-
-        return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
-    except Exception as e:
-        _append_log("TRBL", f"[WATCHLIST] ERROR: {e}")
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 @router.get("/providers")
 def api_watchlist_providers():
@@ -141,49 +139,51 @@ def api_watchlist_providers():
 
 @router.post("/delete")
 def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    # single/bulk delete via batch helper; simple + consistent
     from cw_platform.config_base import load_config
-    from crosswatch import STATE_PATH, _load_state, STATS, _append_log
-    from _watchlist import delete_watchlist_item
+    from crosswatch import _load_state, STATS, _append_log
+    from _watchlist import delete_watchlist_batch
 
     try:
         keys_raw = payload.get("keys") or []
         provider = (payload.get("provider") or "ALL").upper().strip()
-        if not isinstance(keys_raw, list) or not keys_raw:
-            return {"ok": False, "error": "keys must be a non-empty array"}
-        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}:
-            return {"ok": False, "error": f"unknown provider '{provider}'"}
+        if not isinstance(keys_raw, list) or not keys_raw: return {"ok": False, "error": "keys must be a non-empty array"}
+        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}: return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        try:
-            cfg = load_config()
-        except Exception as e:
-            return {"ok": False, "error": f"failed to load config: {e}"}
+        # normalize keys
+        keys = [urllib.parse.unquote(str(k).strip()) if "%" in str(k) else str(k).strip() for k in keys_raw]
+        keys = list(dict.fromkeys([k for k in keys if k]))
 
-        keys = list(dict.fromkeys([str(k).strip() for k in keys_raw if str(k).strip()]))
+        cfg = load_config()
+        state = _load_state()
+
+        targets = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if provider == "ALL" else [provider]
         results: List[Dict[str, Any]] = []
-        ok_count = 0
-        for k in keys:
+        deleted_sum = 0
+
+        for prov in targets:
             try:
-                r = delete_watchlist_item(key=k, state_path=STATE_PATH, cfg=cfg, provider=provider, log=_append_log)
-                r = r if isinstance(r, dict) else {"ok": bool(r)}
-                results.append({"key": k, **r})
-                if r.get("ok"):
-                    ok_count += 1
+                res = delete_watchlist_batch(keys, prov, state, cfg) or {}
+                deleted = int(res.get("deleted", 0)) if isinstance(res, dict) else 0
+                results.append({"provider": prov, "ok": deleted > 0, "deleted": deleted, **(res if isinstance(res, dict) else {})})
+                deleted_sum += deleted
+                _append_log("SYNC", f"[WL] delete {len(keys)} on {prov}: {'OK' if deleted else 'NOOP'}")
             except Exception as e:
-                _append_log("SYNC", f"[WL] delete {k} on {provider} failed: {e}")
-                results.append({"key": k, "ok": False, "error": str(e)})
+                results.append({"provider": prov, "ok": False, "error": str(e)})
+                _append_log("SYNC", f"[WL] delete on {prov} failed: {e}")
 
         try:
-            state = _load_state()
-            if state:
-                STATS.refresh_from_state(state)
+            if state: STATS.refresh_from_state(state)
         except Exception:
             pass
 
+        any_ok = any(r.get("ok") for r in results)
+        all_ok = all(r.get("ok") for r in results)
         return {
-            "ok": ok_count > 0,
-            "partial": ok_count != len(keys),
+            "ok": any_ok,
+            "partial": any_ok and not all_ok,
             "provider": provider,
-            "deleted_ok": ok_count,
+            "deleted_ok": deleted_sum,          # UI reads this
             "deleted_total": len(keys),
             "results": results,
         }
@@ -191,49 +191,58 @@ def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         _append_log("SYNC", f"[WL] delete fatal: {e}")
         return {"ok": False, "error": f"fatal: {e}"}
 
+
 @router.post("/delete_batch")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    # same semantics; kept for compatibility
     from cw_platform.config_base import load_config
     from crosswatch import _load_state, STATS, _append_log
-    from _watchlist import delete_watchlist_batch as _wl_delete_batch
+    from _watchlist import delete_watchlist_batch
 
     try:
         keys_raw = payload.get("keys") or []
         provider = (payload.get("provider") or "ALL").upper().strip()
-        if not isinstance(keys_raw, list) or not keys_raw:
-            return {"ok": False, "error": "keys must be a non-empty array"}
-        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}:
-            return {"ok": False, "error": f"unknown provider '{provider}'"}
+        if not isinstance(keys_raw, list) or not keys_raw: return {"ok": False, "error": "keys must be a non-empty array"}
+        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}: return {"ok": False, "error": f"unknown provider '{provider}'"}
 
-        keys = list(dict.fromkeys([str(k).strip() for k in keys_raw if str(k).strip()]))
-        try:
-            cfg = load_config()
-            state = _load_state()
-        except Exception as e:
-            return {"ok": False, "error": f"load failed: {e}"}
+        keys = [urllib.parse.unquote(str(k).strip()) if "%" in str(k) else str(k).strip() for k in keys_raw]
+        keys = list(dict.fromkeys([k for k in keys if k]))
+
+        cfg = load_config()
+        state = _load_state()
 
         targets = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if provider == "ALL" else [provider]
         results: List[Dict[str, Any]] = []
+        deleted_sum = 0
 
         for prov in targets:
             try:
-                res = _wl_delete_batch(keys, prov, state, cfg)
-                ok = bool((res or {}).get("ok")) if isinstance(res, dict) else bool(res)
-                results.append((res if isinstance(res, dict) else {"ok": ok}) | {"provider": prov})
-                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: {'OK' if ok else 'NOOP'}")
+                res = delete_watchlist_batch(keys, prov, state, cfg) or {}
+                deleted = int(res.get("deleted", 0)) if isinstance(res, dict) else 0
+                results.append({"provider": prov, "ok": deleted > 0, "deleted": deleted, **(res if isinstance(res, dict) else {})})
+                deleted_sum += deleted
+                _append_log("SYNC", f"[WL] batch-delete {len(keys)} on {prov}: {'OK' if deleted else 'NOOP'}")
             except Exception as e:
-                _append_log("SYNC", f"[WL] batch-delete on {prov} failed: {e}")
                 results.append({"provider": prov, "ok": False, "error": str(e)})
+                _append_log("SYNC", f"[WL] batch-delete on {prov} failed: {e}")
 
         try:
-            if state:
-                STATS.refresh_from_state(state)
+            if state: STATS.refresh_from_state(state)
         except Exception:
             pass
 
-        any_ok = any((isinstance(r, dict) and r.get("ok")) for r in results)
-        all_ok = all((isinstance(r, dict) and r.get("ok")) for r in results)
-        return {"ok": any_ok, "partial": any_ok and not all_ok, "provider": provider, "targets": targets, "results": results}
+        any_ok = any(r.get("ok") for r in results)
+        all_ok = all(r.get("ok") for r in results)
+        return {
+            "ok": any_ok,
+            "partial": any_ok and not all_ok,
+            "provider": provider,
+            "targets": targets,
+            "deleted_ok": deleted_sum,
+            "deleted_total": len(keys),
+            "results": results,
+        }
     except Exception as e:
         _append_log("SYNC", f"[WL] batch-delete fatal: {e}")
         return {"ok": False, "error": f"fatal: {e}"}
+

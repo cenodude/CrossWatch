@@ -6,8 +6,17 @@ from __future__ import annotations
 from typing import Any, Dict, Set, List
 from pathlib import Path
 import json
+import requests
 
 from cw_platform.config_base import CONFIG
+
+try:
+    from plexapi.myplex import MyPlexAccount
+    _HAVE_PLEXAPI = True
+except Exception:
+    MyPlexAccount = None  # type: ignore
+    _HAVE_PLEXAPI = False
+    
 
 # ---------------------------------------------------------------------
 # Paths
@@ -98,14 +107,27 @@ def _find_item_in_state_for_provider(state: Dict[str, Any], key: str, provider: 
     return dict(it) if it else {}
 
 def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
-    ids = dict(item.get("ids") or {})
-    pref, _, val = (key or "").partition(":")
-    pref = pref.lower().strip()
-    if pref in {"imdb","tmdb","tvdb","trakt","slug","jellyfin"} and val:
-        ids.setdefault(pref, val)
+    ids = dict((item or {}).get("ids") or {})
+    parts = [t for t in str(key or "").split(":") if t]
+    if len(parts) >= 2:
+        k = parts[-2].lower().strip()
+        v = parts[-1].strip()
+        if k in {"imdb","tmdb","tvdb","trakt","slug","jellyfin"} and v:
+            ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
-    return {k: str(ids[k]) for k in ("simkl","imdb","tmdb","tvdb","trakt","slug","jellyfin") if ids.get(k)}
+    imdb = str(ids.get("imdb") or "").strip()
+    if imdb and imdb.isdigit():
+        ids["imdb"] = f"tt{imdb}"
+    out: Dict[str, str] = {}
+    for k in ("simkl","imdb","tmdb","tvdb","trakt","slug","jellyfin"):
+        v = ids.get(k)
+        if v is None: 
+            continue
+        s = str(v).strip()
+        if s:
+            out[k] = s
+    return out
 
 def _type_from_item_or_guess(item: Dict[str, Any], key: str) -> str:
     typ = (item.get("type") or "").lower()
@@ -351,32 +373,97 @@ def build_watchlist(state: dict[str,Any], tmdb_ok: bool) -> list[dict[str,Any]]:
 # Provider deletes
 # ---------------------------------------------------------------------
 def _delete_on_plex_single(key: str, state: dict[str,Any], cfg: dict[str,Any]) -> None:
+    try:
+        from plexapi.myplex import MyPlexAccount  # type: ignore
+    except Exception:
+        raise RuntimeError("plexapi is not available")
+
+    def _id_tokens_from_key(k: str) -> set[str]:
+        p = [t.strip() for t in str(k or "").split(":") if t]
+        if len(p) == 2:
+            t, v = p[-2].lower(), p[-1]
+            if t == "imdb" and v.isdigit(): v = f"tt{v}"
+            return {f"{t}:{v}"}
+        return set()
+
+    def _id_tokens_from_item(it: dict) -> set[str]:
+        ids = dict((it or {}).get("ids") or {})
+        out = set()
+        for t in ("tmdb","imdb","tvdb","trakt"):
+            v = ids.get(t)
+            if v is None: continue
+            s = str(v).strip()
+            if not s: continue
+            if t == "imdb" and s.isdigit(): s = f"tt{s}"
+            out.add(f"{t}:{s}")
+        return out
+
+    def _tokens_from_plex_obj(m) -> set[str]:
+        toks: set[str] = set()
+        def _one(val: str):
+            val = (val or "").split("?", 1)[0]
+            if "://" in val:
+                scheme, ident = val.split("://", 1)
+                if scheme and ident:
+                    toks.add(f"{scheme.lower()}:{ident}")
+        _one(getattr(m, "guid", "") or "")
+        try:
+            for g in getattr(m, "guids", []) or []:
+                raw = getattr(g, "id", g)
+                _one(str(raw or ""))
+        except:
+            pass
+        rk = str(getattr(m, "ratingKey", "") or getattr(m, "id", "")).strip()
+        if rk: toks.add(f"rk:{rk}")
+        return toks
+
     token = (cfg.get("plex") or {}).get("account_token","").strip()
     if not token: raise RuntimeError("missing plex token")
     account = MyPlexAccount(token=token)
-    item = (_get_items(state,"PLEX").get(key) or _get_items(state,"SIMKL").get(key) 
-           or _get_items(state,"TRAKT").get(key) or _get_items(state,"JELLYFIN").get(key) or {})
-    guid,rk = _extract_plex_identifiers(item); variants=_guid_variants_from_key_or_item(key,item)
-    if guid: variants=list(dict.fromkeys(variants+[guid]))
-    targets={_norm_guid(v) for v in variants if v}; rk=str(rk or "").strip()
+
+    item = (_get_items(state,"PLEX").get(key) or _get_items(state,"SIMKL").get(key)
+            or _get_items(state,"TRAKT").get(key) or _get_items(state,"JELLYFIN").get(key) or {})
+
+    guid, rk = _extract_plex_identifiers(item)
+    variants = _guid_variants_from_key_or_item(key, item)
+    if guid: variants = list(dict.fromkeys(variants + [guid]))
+    targets_guid = {_norm_guid(v) for v in variants if v}
+
+    target_tokens = set()
+    target_tokens |= _id_tokens_from_key(key)
+    target_tokens |= _id_tokens_from_item(item)
+    if str(rk or "").strip():
+        target_tokens.add(f"rk:{str(rk).strip()}")
+
     wl = account.watchlist(maxresults=100000)
+
     def matches(m) -> bool:
-        cand={(getattr(m,"guid","") or "").split("?",1)[0]}
-        try:
-            for g in getattr(m,"guids",[]) or []: cand.add(str(getattr(g,"id",g) or "").split("?",1)[0])
-        except: pass
-        if any(_norm_guid(c) in targets for c in cand): return True
-        return rk and str(getattr(m,"ratingKey","") or getattr(m,"id","")).strip()==rk
-    found = next((m for m in wl if matches(m)),None)
+        cand_tokens = _tokens_from_plex_obj(m)
+        if targets_guid:
+            cand_guids = { _norm_guid((getattr(m, "guid", "") or "").split("?",1)[0]) }
+            try:
+                for g in getattr(m,"guids",[]) or []:
+                    cand_guids.add(_norm_guid(str(getattr(g,"id",g) or "").split("?",1)[0]))
+            except:
+                pass
+            if any(c in targets_guid for c in cand_guids):
+                return True
+        return bool(target_tokens & cand_tokens)
+
+    found = next((m for m in wl if matches(m)), None)
     if not found: raise RuntimeError("item not found in Plex watchlist")
-    removed=False
+
+    removed = False
     try:
-        rm=getattr(found,"removeFromWatchlist",None)
-        if callable(rm): rm(); removed=True
-    except: pass
+        rm = getattr(found, "removeFromWatchlist", None)
+        if callable(rm): rm(); removed = True
+    except:
+        pass
     if not removed: account.removeFromWatchlist([found])
+
     if any(matches(m) for m in account.watchlist(maxresults=100000)):
         raise RuntimeError("PlexAPI reported removal but item still present")
+
 
 _SIMKL_HIST, _SIMKL_WL = "https://api.simkl.com/sync/history/remove","https://api.simkl.com/sync/watchlist/remove"
 
@@ -472,21 +559,34 @@ def _delete_on_jellyfin_batch(items: list[dict[str,Any]], cfg: dict[str,Any]) ->
 # Public facade
 # ---------------------------------------------------------------------
 def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg: dict[str,Any]) -> dict[str,Any]:
-    prov=(prov or "").upper().strip(); keys=[k for k in keys or [] if isinstance(k,str) and k.strip()]
-    if not keys: return {"deleted":0,"provider":prov,"note":"no-keys"}
-    if prov=="SIMKL":
-        items=[{"key":k,"item":_find_item_in_state_for_provider(state,k,"SIMKL") or _find_item_in_state(state,k),"type":_type_from_item_or_guess(_find_item_in_state(state,k),k)} for k in keys]
-        _delete_on_simkl_batch(items,cfg.get("simkl",{}) or {})
-    elif prov=="TRAKT":
-        items=[{"key":k,"item":_find_item_in_state_for_provider(state,k,"TRAKT") or _find_item_in_state(state,k),"type":_type_from_item_or_guess(_find_item_in_state(state,k),k)} for k in keys]
-        _delete_on_trakt_batch(items,cfg.get("trakt",{}) or {})
-    elif prov=="PLEX":
-        for k in keys: _delete_on_plex_single(k,state,cfg)
-    elif prov=="JELLYFIN":
-        items=[{"key":k,"item":_find_item_in_state_for_provider(state,k,"JELLYFIN") or _find_item_in_state(state,k),"type":_type_from_item_or_guess(_find_item_in_state(state,k),k)} for k in keys]
-        _delete_on_jellyfin_batch(items,cfg.get("jellyfin",{}) or {})
-    else: raise RuntimeError(f"unknown provider: {prov}")
-    if any(_del_key_from_provider_items(state,prov,k) for k in keys): _save_state_dict(_state_path(),state)
+    prov = (prov or "").upper().strip()
+    keys = [k for k in (keys or []) if isinstance(k, str) and k.strip()]
+    if not keys:
+        return {"deleted": 0, "provider": prov, "note": "no-keys"}
+
+    def _build_items(for_provider: str|None) -> list[dict]:
+        arr: list[dict] = []
+        for k in keys:
+            it = (_find_item_in_state_for_provider(state, k, for_provider) if for_provider
+                  else _find_item_in_state(state, k)) or {}
+            arr.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
+        return arr
+
+    if prov == "SIMKL":
+        _delete_on_simkl_batch(_build_items("SIMKL"), cfg.get("simkl", {}) or {})
+    elif prov == "TRAKT":
+        _delete_on_trakt_batch(_build_items("TRAKT"), cfg.get("trakt", {}) or {})
+    elif prov == "PLEX":
+        for k in keys:
+            _delete_on_plex_single(k, state, cfg)
+    elif prov == "JELLYFIN":
+        _delete_on_jellyfin_batch(_build_items("JELLYFIN"), cfg.get("jellyfin", {}) or {})
+    else:
+        raise RuntimeError(f"unknown provider: {prov}")
+
+    if any(_del_key_from_provider_items(state, prov, k) for k in keys):
+        _save_state_dict(_state_path(), state)
+
     return {"ok": True, "deleted": len(keys), "provider": prov, "status": "ok"}
 
 # ---------------------------------------------------------------------
