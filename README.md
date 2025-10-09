@@ -21,13 +21,13 @@
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
+
 <div align="center">
-<strong>⚠️ EARLY DEVELOPMENT</strong><br>
-This project is unstable and may break. <strong>TESTING ONLY — DO NOT USE IN PRODUCTION.</strong><br>
-<strong>Road to redemption → v0.2.0:</strong> deep cleanup & refactors to future-proof the codebase. Fewer new features; more fixes and polish.<br>
-<strong>What works (mostly):</strong> most <strong>Plex</strong> and <strong>Trakt</strong> features, including live scrobbling (Plex → Trakt).<br>
-<strong>Still maturing:</strong> <strong>SIMKL</strong> and <strong>Jellyfin</strong> remain in active testing.<br>
-<strong>Always back up your data before use.</strong>
+  <a href="https://github.com/cenodude/CrossWatch/wiki"
+     target="_blank" rel="noopener noreferrer"
+     style="display:inline-block;margin-top:6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
+    📘 Read the CrossWatch Wiki
+  </a>
 </div>
 
 
