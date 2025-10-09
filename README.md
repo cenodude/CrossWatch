@@ -30,7 +30,7 @@
   </a>
 </div>
 
-
+<p align="center"><B>New version 0.2.0 is expected this week with huge improvements, wait for this version</B></p>
 ---
 
 **CrossWatch** is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
