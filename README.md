@@ -128,19 +128,6 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 5. Track stats, logs, and history from the UI
 
 ---
-
-## 🛠 Troubleshooting
-
-Open **Settings → Troubleshoot** to access three quick-fix actions:
-
-- **Clear cache** — Purges cached data so fresh metadata is fetched next time.  
-  `POST /api/troubleshoot/clear-cache`
-- **Reset stats** — Resets usage/summary counters used for insights.  
-  `POST /api/troubleshoot/reset-stats`
-- **Reset state** — Reinitializes app state (filters, view prefs, local UI). Linked accounts are not touched.  
-  `POST /api/troubleshoot/reset-state`
-
----
 # 🎬 Live Scrobbling (Plex → Trakt)
 
 CrossWatch can **scrobble your real-time Plex playback to Trakt** — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.
