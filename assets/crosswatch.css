@@ -1682,7 +1682,9 @@ select {
   inset: 0;
   background: rgba(4,6,12,.66);
   backdrop-filter: blur(6px);
-  display: block
+  display: grid;
+  place-items: center;
+  padding: 12px;
 }
 
 /* ==================================================================
@@ -4232,3 +4234,33 @@ main.single #ops-card.card { padding-bottom: 120px !important; }
 
 /* When a modal is open we already hide the save bar; shrink padding */
 body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important; }
+
+/* --- Sync rail fallback (keeps bar visible even if JS-injected styles are late) --- */
+#ux-progress { margin-top: 12px; position: relative; z-index: 1; }
+#ux-progress .ux-rail {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: #1f1f26;
+  overflow: hidden;
+}
+#ux-progress .ux-bead {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg,#7c4dff,#00d4ff);
+  box-shadow: inset 0 0 14px rgba(124,77,255,.35);
+  transition: width .35s ease;
+}
+#ux-progress .ux-rail.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(120deg,transparent 0%,rgba(255,255,255,.08) 20%,transparent 40%);
+  transform: translateX(-100%);
+  animation: shimmer 1.6s linear infinite;
+}
+

@@ -7,7 +7,8 @@ import os, json, shutil
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 def _cw():
-    from crosswatch import CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log
+    from _syncAPI import _load_state
+    from crosswatch import CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _append_log
     return CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log
 
 def _safe_remove_path(p: Path) -> bool:
@@ -42,20 +43,78 @@ def clear_cache() -> Dict[str, Any]:
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
 @router.post("/reset-stats")
-def reset_stats(recalc: bool=Body(False), purge_file: bool=Body(False)) -> Dict[str, Any]:
-    _, _, _, STATS, _load_state, _ = _cw()
+def reset_stats(
+    recalc: bool = Body(False),
+    purge_file: bool = Body(False),
+    purge_state: bool = Body(False),
+    purge_reports: bool = Body(False),
+) -> Dict[str, Any]:
+    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
     try:
+        # in-memory cleanup
+        try:
+            from _syncAPI import _summary_reset, _PROVIDER_COUNTS_CACHE, _find_state_path
+        except Exception:
+            _summary_reset = None; _PROVIDER_COUNTS_CACHE = None; _find_state_path = None
+        try:
+            from crosswatch import LOG_BUFFERS
+        except Exception:
+            LOG_BUFFERS = {}
+
+        if _summary_reset: _summary_reset()
+        if isinstance(LOG_BUFFERS, dict): LOG_BUFFERS["SYNC"] = []
+        if isinstance(_PROVIDER_COUNTS_CACHE, dict):
+            _PROVIDER_COUNTS_CACHE["ts"] = 0.0
+            _PROVIDER_COUNTS_CACHE["data"] = None
+
+        # stats reset
         STATS.reset()
+
+        # drop statistics.json
         if purge_file:
             try: STATS.path.unlink(missing_ok=True)
             except Exception: pass
             STATS._load(); STATS._save()
+
+        # drop state.json
+        if purge_state and _find_state_path:
+            try:
+                sp = _find_state_path()
+                if sp and sp.exists(): sp.unlink()
+            except Exception: pass
+
+        # drop sync-*.json to prevent re-ingest
+        if purge_reports:
+            try:
+                try:
+                    from _statistics import REPORT_DIR
+                except Exception:
+                    from pathlib import Path
+                    REPORT_DIR = Path("/config/sync_reports")
+                for f in REPORT_DIR.glob("sync-*.json"):
+                    try: f.unlink()
+                    except Exception: pass
+            except Exception: pass
+
+        # optional rebuild from current state
         if recalc:
-            state=_load_state()
-            if state: STATS.refresh_from_state(state)
-        return {"ok": True}
+            try:
+                state = _load_state()
+                if state: STATS.refresh_from_state(state)
+            except Exception: pass
+
+        return {
+            "ok": True,
+            "dropped": {
+                "stats_file": bool(purge_file),
+                "state_file": bool(purge_state),
+                "reports": bool(purge_reports),
+            },
+            "recalculated": bool(recalc),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
 
 @router.post("/reset-state")
 def reset_state(
@@ -106,7 +165,7 @@ def reset_state(
         if mode == "rebuild":
             try:
                 from cw_platform.config_base import load_config
-                from crosswatch import _persist_state_via_orc
+                from _syncAPI import _persist_state_via_orc
                 from cw_platform.orchestrator import Orchestrator
                 state=_persist_state_via_orc(Orchestrator(config=load_config()), feature=feature)
                 STATS.refresh_from_state(state)
@@ -119,9 +178,3 @@ def reset_state(
         return {"ok": True, "mode": mode, "cleared": cleared, "cw_state": cw_state}
     except Exception as e:
         return {"ok": False, "error": str(e)}
-
-# Backward-compat aliases (/api/troubleshoot/*)
-compat = APIRouter(prefix="/api/troubleshoot", tags=["maintenance-compat"])
-compat.post("/clear-cache")(clear_cache)
-compat.post("/reset-stats")(reset_stats)
-compat.post("/reset-state")(reset_state)

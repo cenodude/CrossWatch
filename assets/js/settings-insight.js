@@ -2,6 +2,9 @@
 (function (w, d) {
   "use strict";
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Tiny helpers (DOM, sleep, fetch, time, misc)
+  // ────────────────────────────────────────────────────────────────────────────
   const $  = (sel, root) => (root || d).querySelector(sel);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function fetchJSON(url){ try{ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) return null; return await r.json(); }catch{ return null; } }
@@ -12,6 +15,9 @@
   }
   const coalesceNextRun = o => o ? (o.next_run_at ?? o.next_run ?? o.next ?? null) : null;
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Styles (scoped to the insight card)
+  // ────────────────────────────────────────────────────────────────────────────
   const css = `
   #cw-settings-grid{
     width:100%; margin-top:12px; display:grid;
@@ -98,10 +104,14 @@
   }
   `;
 
-  // Ensure the settings insight stylesheet is present
+  // ────────────────────────────────────────────────────────────────────────────
+  // Style injection (idempotent)
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureStyle(){ if($("#cw-settings-insight-style")) return; const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 
-  // Create a two-column settings grid and an aside for the insight card if needed
+  // ────────────────────────────────────────────────────────────────────────────
+  // DOM scaffolding (grid + aside + card)
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureGrid(){
     const page=$("#page-settings"); if(!page) return null;
     let left=page.querySelector("#cw-settings-left, .settings-wrap, .settings, .accordion, .content, .page-inner");
@@ -120,7 +130,6 @@
     return { grid, left, right:aside };
   }
 
-  // Ensure the insight card exists in the aside (creates markup if missing)
   function ensureCard(){
     const nodes=ensureGrid(); if(!nodes) return null;
     const { right }=nodes;
@@ -134,30 +143,27 @@
     return nodes;
   }
 
-// Read current config (no caching)
-async function readConfig() {
-  const cfg = await fetchJSON("/api/config?t=" + Date.now());
-  return cfg || {};
-}
+  // ────────────────────────────────────────────────────────────────────────────
+  // Data sources (config + summaries)
+  // ────────────────────────────────────────────────────────────────────────────
+  async function readConfig() {
+    const cfg = await fetchJSON("/api/config?t=" + Date.now());
+    return cfg || {};
+  }
 
-// Summarize authentication providers (detected via backend; configured via tokens)
-async function getAuthSummary(cfg) {
-  // Ask backend which auth providers exist
-  const list = await fetchJSON("/api/auth/providers?t=" + Date.now());
-  const detected = Array.isArray(list) ? list.length : 4; // fallback to known set
+  async function getAuthSummary(cfg) {
+    const list = await fetchJSON("/api/auth/providers?t=" + Date.now());
+    const detected = Array.isArray(list) ? list.length : 4;
 
-  // Count providers that actually have valid credentials/tokens
-  const plexOK     = !!(cfg?.plex?.account_token);
-  const simklOK    = !!(cfg?.simkl?.access_token);
-  const traktOK    = !!(cfg?.trakt?.access_token);
-  // Jellyfin considered configured if we have an access token or a resolved user_id
-  const jellyfinOK = !!(cfg?.jellyfin?.access_token || cfg?.jellyfin?.user_id);
+    const plexOK     = !!(cfg?.plex?.account_token);
+    const simklOK    = !!(cfg?.simkl?.access_token);
+    const traktOK    = !!(cfg?.trakt?.access_token);
+    const jellyfinOK = !!(cfg?.jellyfin?.access_token || cfg?.jellyfin?.user_id);
 
-  const configured = [plexOK, simklOK, traktOK, jellyfinOK].filter(Boolean).length;
-  return { detected, configured };
-}
+    const configured = [plexOK, simklOK, traktOK, jellyfinOK].filter(Boolean).length;
+    return { detected, configured };
+  }
 
-  // Retrieve synchronization pairs (prefer API; fallback to config)
   async function getPairsSummary(cfg) {
     let list = await fetchJSON("/api/pairs?t=" + Date.now());
     if (!Array.isArray(list)) {
@@ -167,7 +173,6 @@ async function getAuthSummary(cfg) {
     return { count: list.length };
   }
 
-  // Summarize metadata providers and TMDB key readiness
   async function getMetadataSummary() {
     const [cfg, mansRaw] = await Promise.all([
       fetchJSON("/api/config?t=" + Date.now()),
@@ -177,12 +182,10 @@ async function getAuthSummary(cfg) {
     const mans = Array.isArray(mansRaw) ? mansRaw : [];
     let detected = mans.length;
 
-    // TMDB key may be present or masked (e.g., "••••••••")
     const rawKey     = String(cfg?.tmdb?.api_key ?? "").trim();
     const isMasked   = rawKey.length > 0 && /^[•]+$/.test(rawKey);
     const hasTmdbKey = rawKey.length > 0 || isMasked;
 
-    // Default: if provider manifests fail to load, still count TMDB when a key exists
     let configured = hasTmdbKey ? 1 : 0;
 
     if (detected > 0) {
@@ -194,10 +197,8 @@ async function getAuthSummary(cfg) {
         const isTmdb = id.includes("tmdb");
         if (isTmdb) hasTmdbProvider = true;
 
-        // Treat TMDB as enabled if a key exists (ignore provider's enabled flag)
         const enabled = isTmdb && hasTmdbKey ? true : (m?.enabled !== false);
 
-        // Derive readiness; then force TMDB ready if a key exists
         let ready = (typeof m?.ready === "boolean") ? m.ready
                 : (typeof m?.ok    === "boolean") ? m.ok
                 : undefined;
@@ -207,17 +208,14 @@ async function getAuthSummary(cfg) {
         if (enabled && ready === true) configured++;
       }
 
-      // If TMDB key exists but TMDB provider isn't listed, still count it as configured
       if (hasTmdbKey && !hasTmdbProvider) configured += 1;
     }
 
-    // If manifests failed but we do have a TMDB key, report at least one detected
     if (detected === 0 && hasTmdbKey) detected = 1;
 
     return { detected, configured };
   }
 
-  // Get scheduling enabled state and next run time
   async function getSchedulingSummary(){
     const cfg = await fetchJSON("/api/scheduling?t=" + Date.now());
     const st  = await fetchJSON("/api/scheduling/status?t=" + Date.now());
@@ -225,7 +223,7 @@ async function getAuthSummary(cfg) {
     let next = coalesceNextRun(st); if (next===null) next = coalesceNextRun(cfg);
     return { enabled, nextRun: next };
   }
-  // Get scrobbler (webhook/watcher) summary and watcher status when applicable
+
   async function getScrobblerSummary(cfg){
     const sc=cfg?.scrobble||{}; const mode=(sc?.mode||"").toLowerCase(); const enabled=!!sc?.enabled;
     let watcher={ alive:false, has_watch:false, stop_set:false };
@@ -233,6 +231,9 @@ async function getAuthSummary(cfg) {
     return { mode: enabled ? (mode||"webhook") : "", enabled, watcher };
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // UI builders (icons, rows, empty states, render)
+  // ────────────────────────────────────────────────────────────────────────────
   const I = (name, size) => `<span class="material-symbols-rounded" style="font-size:${size||30}px">${name}</span>`;
 
   function row(iconName, title, oneLine){
@@ -246,7 +247,6 @@ async function getAuthSummary(cfg) {
     return el;
   }
 
-  // Empty state when no authentication providers are configured
   function renderWizard() {
     const body = $("#cw-si-body"); if (!body) return;
     body.innerHTML = `
@@ -262,7 +262,6 @@ async function getAuthSummary(cfg) {
     `;
   }
 
-  // Empty state when no synchronization pairs exist
   function renderPairsWizard() {
     const body = $("#cw-si-body"); if (!body) return;
     body.innerHTML = `
@@ -277,15 +276,12 @@ async function getAuthSummary(cfg) {
     `;
   }
 
-  // Render the insight rows based on collected summaries
   function render(data){
     const body=$("#cw-si-body"); if(!body) return;
 
-    // Show the right empty state
     if (!data.auth.configured) return renderWizard();
     if (data.auth.configured && data.pairs.count === 0) return renderPairsWizard();
 
-    // Normal info rows
     body.innerHTML="";
     body.appendChild(row("lock","Authentication Providers",
       `Detected providers: ${data.auth.detected}, Configured: ${data.auth.configured}`));
@@ -310,7 +306,9 @@ async function getAuthSummary(cfg) {
     body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}`));
   }
 
-  // Adjust the insight card height to match the left column and viewport
+  // ────────────────────────────────────────────────────────────────────────────
+  // Layout sync (keeps the card height sensible)
+  // ────────────────────────────────────────────────────────────────────────────
   function syncHeight(){
     const left=$("#cw-settings-left") || $("#page-settings .settings-wrap, #page-settings .settings, #page-settings .accordion, #page-settings .content, #page-settings .page-inner");
     const scroll=$("#cw-si-scroll");
@@ -320,10 +318,11 @@ async function getAuthSummary(cfg) {
     scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
   }
 
-  // Prevent multiple overlapping refresh loops
+  // ────────────────────────────────────────────────────────────────────────────
+  // Refresh loop (state + scheduler)
+  // ────────────────────────────────────────────────────────────────────────────
   let _loopTimer = null;
 
-  // Periodic refresh loop: gather data and render when settings page is visible
   async function tick(){
     const nodes=ensureCard(); if(!nodes){ _loopTimer = setTimeout(tick,1200); return; }
     const page=$("#page-settings"); const visible=!!(page && !page.classList.contains("hidden"));
@@ -342,14 +341,14 @@ async function getAuthSummary(cfg) {
     }
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Bootstrapping & event wiring (safe to call multiple times)
+  // ────────────────────────────────────────────────────────────────────────────
   (async function boot(){
-    // Ensure style is present
     if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 
-    // Refresh when user navigates to the settings tab
     d.addEventListener("tab-changed",(e)=>{ if(e?.detail?.id==="settings") setTimeout(()=>{ tick(); syncHeight(); },150); });
 
-    // Refresh on saves (including pairs/connections/sync)
     d.addEventListener("config-saved", (e) => {
       const sec = e?.detail?.section;
       if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections") {
@@ -360,13 +359,11 @@ async function getAuthSummary(cfg) {
     d.addEventListener("visibilitychange", () => { if (!d.hidden) tick(); });
     w.addEventListener("focus", () => tick());
 
-    // Wait for the settings page to exist, but don't wait forever
     let tries=0; while(!$("#page-settings") && tries<40){ tries++; await sleep(250); }
     tick();
     w.addEventListener("resize", syncHeight);
     w.addEventListener("scroll", syncHeight, { passive:true });
 
-    // Manual refresh hook for other modules
     w.refreshSettingsInsight = () => tick();
   })();
 })(window, document);

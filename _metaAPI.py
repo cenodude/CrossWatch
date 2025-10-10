@@ -1,35 +1,45 @@
 # _metaAPI.py
+
+# --- stdlib ---
 from typing import Dict, Any, Tuple, Optional, List
 from functools import lru_cache
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time, json, requests
+
+# --- third-party ---
 from fastapi import APIRouter, Query, Path as FPath, Body
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
-from cw_platform.config_base import load_config
-import time, json, requests
 
-# docs group
+# --- app config ---
+from cw_platform.config_base import load_config
+
+# Router: metadata surface
 router = APIRouter(tags=["metadata"])
 
-# provider registry (best-effort)
+# Provider registry (best-effort; keeps API up even if providers are missing)
 try:
     from providers.metadata.registry import metadata_providers_html, metadata_providers_manifests
 except Exception:
     metadata_providers_html = lambda: "<div class='sub'>No metadata providers found.</div>"
     metadata_providers_manifests = lambda: []
 
+# ----- Public: Providers -----
+
 @router.get("/api/metadata/providers", tags=["metadata"])
 def api_metadata_providers():
-    # JSON-safe
+    # JSON-safe provider manifests
     return JSONResponse(jsonable_encoder(metadata_providers_manifests()))
 
 @router.get("/api/metadata/providers/html", tags=["metadata"])
 def api_metadata_providers_html():
+    # Simple HTML listing
     return HTMLResponse(metadata_providers_html())
 
-# --- runtime env (lazy; avoids cycles) ---
+# ----- Runtime bridge (lazy to avoid import cycles) -----
+
 def _env():
     try:
         import crosswatch as CW
@@ -37,7 +47,8 @@ def _env():
     except Exception:
         return None, Path("./.cache"), (lambda: {})
 
-# --- tiny utils ---
+# ----- Small utils -----
+
 def _norm_media_type(x: Optional[str]) -> str:
     t = (x or "").strip().lower()
     if t in {"tv","show","shows","series","season","episode"}: return "show"
@@ -49,7 +60,8 @@ def _shorten(txt: str, limit: int = 280) -> str:
     cut = txt[:limit].rsplit(" ", 1)[0].rstrip(",.;:!-–—")
     return f"{cut}…"
 
-# --- cache/TTL helpers ---
+# ----- Cache/TTL helpers -----
+
 def _cfg_meta_ttl_secs() -> int:
     try:
         md = (load_config() or {}).get("metadata") or {}
@@ -127,7 +139,8 @@ def _prune_meta_cache_if_needed() -> None:
     except Exception:
         pass
 
-# --- manager bridge ---
+# ----- Manager bridge -----
+
 def _ttl_bucket(seconds: int) -> int:
     return int(time.time() // max(1, seconds))
 
@@ -141,7 +154,8 @@ def _resolve_tmdb_cached(ttl_key: int, entity: str, tmdb_id: str, locale: str | 
     except Exception:
         return {}
 
-# --- public helpers ---
+# ----- Public helpers (import-safe) -----
+
 def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str, *, need: dict | None = None, locale: str | None = None) -> dict:
     entity = "movie" if str(typ).lower() == "movie" else "show"
     eff_need = need or {"poster": True, "backdrop": True, "logo": False}
@@ -197,7 +211,8 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     path, mime = _cache_download(src_url, dest)
     return str(path), mime
 
-# --- artwork proxy ---
+# ----- Artwork proxy -----
+
 @router.get("/art/tmdb/{typ}/{tmdb_id}", tags=["artwork"])
 def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Query("w342")):
     t = typ.lower()
@@ -205,7 +220,7 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
     if t not in {"movie","tv"}:
         return PlainTextResponse("Bad type", status_code=400)
     cfg = load_config()
-    api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()  # ← cast
+    api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
     if not api_key:
         return PlainTextResponse("TMDb key missing", status_code=404)
     try:
@@ -216,7 +231,8 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
     except Exception as e:
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
 
-# --- resolver ---
+# ----- Resolve (single) -----
+
 class MetadataResolveIn(BaseModel):
     entity: Optional[str] = None
     ids: Dict[str, Any]
@@ -224,7 +240,7 @@ class MetadataResolveIn(BaseModel):
     need: Optional[Dict[str, Any]] = None
     strategy: Optional[str] = None  # e.g., first_success
 
-@router.post("/api/metadata/resolve")
+@router.post("/api/metadata/resolve", tags=["metadata"])
 def api_metadata_resolve(payload: MetadataResolveIn = Body(...)):
     _METADATA, _, _ = _env()
     if _METADATA is None:
@@ -239,8 +255,9 @@ def api_metadata_resolve(payload: MetadataResolveIn = Body(...)):
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
-# --- bulk ---
-@router.post("/api/metadata/bulk")
+# ----- Resolve (bulk) -----
+
+@router.post("/api/metadata/bulk", tags=["metadata"])
 def api_metadata_bulk(
     payload: Dict[str, Any] = Body(..., description="items[] with {type|entity|media_type, tmdb}; need{} optional"),
     overview: Optional[str] = Query("full", description="none|short|full"),

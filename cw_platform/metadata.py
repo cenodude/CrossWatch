@@ -1,5 +1,4 @@
 # /cw_platform/metadata.py
-# code optimize 27092025
 from __future__ import annotations
 
 import importlib, pkgutil
@@ -15,6 +14,22 @@ try:
     from id_map import ids_from_guid
 except Exception:
     def ids_from_guid(_g: str) -> dict: return {}
+
+# Fill-only ID merge with IMDb-first priority
+try:
+    from id_map import merge_ids as _merge_ids, KEY_PRIORITY as _KEY_PRIORITY  # type: ignore
+except Exception:
+    _KEY_PRIORITY = ("imdb", "tmdb", "tvdb", "trakt", "plex", "guid", "slug", "simkl")
+    def _merge_ids(old: dict | None, new: dict | None) -> dict:
+        old, new = (old or {}), (new or {})
+        out: Dict[str, Any] = {}
+        for k in _KEY_PRIORITY:
+            out[k] = old.get(k) or new.get(k) or out.get(k)
+        for k, v in new.items():
+            if k not in out or out[k] is None: out[k] = v
+        for k, v in old.items():
+            if k not in out or out[k] is None: out[k] = v
+        return {k: v for k, v in out.items() if v}
 
 # ------------------------------------------------------------------ helpers
 
@@ -138,12 +153,20 @@ class MetadataManager:
             ids = _norm_ids(ids)
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
             title, year = it.get("title"), it.get("year")
-            try: r = self.resolve(entity=ent, ids=ids) if ids else self.resolve(entity=ent, ids={}, need={"title": True, "year": True})
-            except Exception: r = None
+            try:
+                # Ask for ids enrichment explicitly
+                r = self.resolve(entity=ent, ids=ids, need={"ids": True}) if ids \
+                    else self.resolve(entity=ent, ids={}, need={"title": True, "year": True, "ids": True})
+            except Exception:
+                r = None
             if r:
                 r_ids = dict(r.get("ids") or {})
-                out.append({"type": r.get("type") or ent, "title": _first_non_empty(r.get("title"), title),
-                            "year": _first_non_empty(r.get("year"), year), "ids": ({**ids, **r_ids} if (ids or r_ids) else {})})
+                out.append({
+                    "type": r.get("type") or ent,
+                    "title": _first_non_empty(r.get("title"), title),
+                    "year": _first_non_empty(r.get("year"), year),
+                    "ids": _merge_ids(ids, r_ids)
+                })
             else:
                 it2 = dict(it); it2["ids"] = ids; out.append(it2)
         return out
@@ -151,40 +174,40 @@ class MetadataManager:
     # ------------------------------ Reconcile (heal ids)
 
     def reconcile_ids(self, items: List[dict]) -> List[dict]:
-        """Heal ids: movies prefer IMDb→TMDB; shows prefer TMDB (fallback via IMDb/title)."""
+        """Heal ids with fill-only policy. Movies: IMDb↔TMDb; Shows: TMDb↔IMDb; title as fallback."""
         healed: List[dict] = []
         for it in items or []:
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
-            ids: Dict[str, Any] = dict(it.get("ids") or {})
+            ids: Dict[str, Any] = _norm_ids(dict(it.get("ids") or {}))
             title, year = it.get("title"), it.get("year")
-            
-            ids = _norm_ids(ids)
 
             try:
+                r = {}
                 if ent == "movie":
                     if ids.get("imdb"):
-                        r = self.resolve(entity="movie", ids={"imdb": ids["imdb"]})
-                        rid = dict(r.get("ids") or {})
-                        if rid.get("tmdb"): ids["tmdb"] = rid["tmdb"]  # IMDb is source of truth
+                        r = self.resolve(entity="movie", ids={"imdb": ids["imdb"]}, need={"ids": True})
                     elif ids.get("tmdb"):
-                        r = self.resolve(entity="movie", ids={"tmdb": ids["tmdb"]})
-                        ids.update(r.get("ids") or {})
+                        r = self.resolve(entity="movie", ids={"tmdb": ids["tmdb"]}, need={"ids": True})
                     elif title:
-                        r = self.resolve(entity="movie", ids={"title": title, "year": year} if year else {"title": title})
-                        ids.update(r.get("ids") or {})
-                else:  # show
+                        payload = {"title": title}; 
+                        if year: payload["year"] = year
+                        r = self.resolve(entity="movie", ids=payload, need={"ids": True})
+                else:
                     if ids.get("tmdb"):
-                        r = self.resolve(entity="show", ids={"tmdb": ids["tmdb"]}); ids.update(r.get("ids") or {})
+                        r = self.resolve(entity="show", ids={"tmdb": ids["tmdb"]}, need={"ids": True})
                     elif ids.get("imdb"):
-                        r = self.resolve(entity="show", ids={"imdb": ids["imdb"]}); ids.update(r.get("ids") or {})
+                        r = self.resolve(entity="show", ids={"imdb": ids["imdb"]}, need={"ids": True})
                     elif title:
-                        r = self.resolve(entity="show", ids={"title": title, "year": year} if year else {"title": title})
-                        ids.update(r.get("ids") or {})
+                        payload = {"title": title}; 
+                        if year: payload["year"] = year
+                        r = self.resolve(entity="show", ids=payload, need={"ids": True})
             except Exception:
-                pass
+                r = {}
 
-            node = {"type": ent, "title": title, "year": year, "ids": _norm_ids(ids)}
-            healed.append(node)
+            rid = _norm_ids(dict((r or {}).get("ids") or {}))
+            ids = _merge_ids(ids, rid)  # fill-only; never clobber existing strong ids
+
+            healed.append({"type": ent, "title": title, "year": year, "ids": ids})
         return healed
 
     # ------------------------------ Merge policy

@@ -1,6 +1,9 @@
 /* Insights module: multi-feature stats (watchlist/ratings/history/playlists). */
+
 (function (w, d) {
-  // --- helpers ---------------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Helpers & constants
+  // ────────────────────────────────────────────────────────────────────────────
   const FEATS = ["watchlist","ratings","history","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
   const $  = (s,r)=> (r||d).querySelector(s);
@@ -8,9 +11,22 @@
   const txt= (el,v)=> el && (el.textContent = v==null ? "—" : String(v));
   const clampFeature = n => FEATS.includes(n) ? n : "watchlist";
   let _feature = clampFeature(localStorage.getItem("insights.feature") || "watchlist");
-  const fetchJSON = async (url)=>{ try{ const r=await fetch(url,{cache:"no-store"}); return r.ok? r.json():null; }catch{ return null; } };
 
-  // configured providers cache (gate tiles)
+  const fetchJSON=async(url,fallback=null)=>{
+    try{
+      const r=await fetch(url+(url.includes("?")?"&":"?")+"_ts="+Date.now(),{
+        credentials:"same-origin",
+        cache:"no-store"
+      });
+      return r.ok ? r.json() : fallback;
+    }catch{ return fallback; }
+  };
+  const fetchFirstJSON=async(urls,fallback=null)=>{
+    for(const u of urls){ const j=await fetchJSON(u,null); if(j) return j; }
+    return fallback;
+  };
+
+  // Configured providers cache (used to gate provider tiles)
   const _lc = s=>String(s||"").toLowerCase();
   let _cfgSet = null, _cfgAt = 0; const CFG_TTL=60_000;
   async function getConfiguredProviders(force=false){
@@ -25,7 +41,9 @@
     _cfgSet=S; _cfgAt=Date.now(); return S;
   }
 
-  // --- sparkline -------------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Micro charts: sparkline + animated counters/bars
+  // ────────────────────────────────────────────────────────────────────────────
   function renderSparkline(id, points) {
     const el = d.getElementById(id); if (!el) return;
     if (!points?.length) { el.innerHTML = '<div class="muted">No data</div>'; return; }
@@ -39,7 +57,6 @@
     el.innerHTML = `<svg viewBox="0 0 ${wv} ${hv}" preserveAspectRatio="none"><path class="line" d="${dStr}"></path>${dots}</svg>`;
   }
 
-  // --- number + bars ---------------------------------------------------------
   const _ease = t => t<.5 ? 2*t*t : -1 + (4-2*t)*t;
   function animateNumber(el, to, duration=650) {
     if (!el) return;
@@ -58,7 +75,9 @@
     bars.now  && (bars.now.style.transform  = `scaleY(${h(now)})`);
   }
 
-  // --- footer host -----------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Footer host (provides switcher + provider tiles area)
+  // ────────────────────────────────────────────────────────────────────────────
   const footWrap = (()=>{ let _padTimer=0;
     function ensureFooter(){
       let foot = d.getElementById("insights-footer");
@@ -75,7 +94,9 @@
     return Object.assign(ensureFooter, { reserve });
   })();
 
-  // --- feature switcher ------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Feature switcher (tabs for watchlist/ratings/history/playlists)
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureSwitch() {
     const wrap = footWrap();
     let host = d.getElementById("insights-switch");
@@ -117,7 +138,9 @@
     _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
   }
 
-  // --- provider tiles (only when configured) ---------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Provider tiles (only show for configured providers)
+  // ────────────────────────────────────────────────────────────────────────────
   function renderProviderStats(provTotals, provActive, configuredSet) {
     const wrap = footWrap();
     const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
@@ -131,7 +154,7 @@
       ...Array.from(conf)
     ])).filter(k=> conf.has(_lc(k))).sort();
 
-    // Always show at least one tile (if none configured, show empty state)
+    // If nothing is configured, hide the grid.
     if (!keys.length) {
       host.hidden = true;
       footWrap.reserve();
@@ -161,9 +184,11 @@
     placeSwitchBeforeTiles(); footWrap.reserve();
   }
 
-  // --- history tabs ------------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // History tabs (recent runs per feature)
+  // ────────────────────────────────────────────────────────────────────────────
   function renderHistoryTabs(hist){
-    const LIMIT_HISTORY = +(localStorage.getItem("insights.history.limit") || 3);
+    const LIMIT_HISTORY = +(localStorage.getItem("insights.history.limit") || 4);
     const wrap = $("#sync-history") || $("[data-role='sync-history']") || $(".sync-history");
     if (!wrap) return;
 
@@ -208,7 +233,7 @@
       return "warn";
     };
 
-    // Precompute latest finished timestamp to allow zero-delta fallback only for newest run....i hope...
+    // Compute latest finished timestamp; allows a zero-delta fallback for the newest run only.
     const all = Array.isArray(hist) ? hist.slice() : [];
     const latestTs = all.reduce((mx,row)=>{
       const t = Date.parse(row?.finished_at || row?.started_at || "");
@@ -219,17 +244,17 @@
       const paneList = wrap.querySelector(`.pane[data-pane="${feat}"] .list`);
       if (!paneList) return;
 
-      const rows = (list||[])
-        .filter(row => {
-          const t = totalsFor(row, feat);
-          if (t.sum > 0) return true;
-          const fin = Date.parse(row?.finished_at || row?.started_at || "");
-          const isLatest = Number.isFinite(fin) && fin === latestTs;
-          const en = row?.features_enabled;
-          return isLatest && !!(en && en[feat] === true);
-        })
-        .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0))
-        .slice(0, LIMIT_HISTORY);
+      const sorted = (list || [])
+        .slice()
+        .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0));
+
+      const rows = [];
+      for (const row of sorted) {
+        const en = row?.features_enabled;
+        if (en && en[feat] === false) continue;
+        rows.push(row);
+        if (rows.length >= LIMIT_HISTORY) break;
+      }
 
       if (!rows.length){ paneList.innerHTML = emptyMsg; return; }
 
@@ -254,8 +279,9 @@
     FEATS.forEach(n => renderPane(all, n));
   }
 
-
-  // --- top counters ----------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Top counters (now / week / month / added / removed)
+  // ────────────────────────────────────────────────────────────────────────────
   function renderTopStats(s) {
     const now=+(s?.now||0), week=+(s?.week||0), month=+(s?.month||0), added=+(s?.added||0), removed=+(s?.removed||0);
     const elNow=$("#stat-now"), elW=$("#stat-week"), elM=$("#stat-month"), elA=$("#stat-added"), elR=$("#stat-removed");
@@ -270,9 +296,11 @@
     const chip=$("#trend-week")||$("#stat-delta-chip"); if (chip){ const diff=(now|0)-(week|0); chip.textContent = diff===0 ? "no change" : (diff>0?`+${diff} vs last week`:`${diff} vs last week`); chip.classList.toggle("muted", diff===0); }
   }
 
-  // --- fetch & render --------------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Fetch & render pipeline
+  // ────────────────────────────────────────────────────────────────────────────
   async function refreshInsights(force=false) {
-    const data = await fetchJSON(`/api/insights?limit_samples=60&history=3${force ? "&t="+Date.now() : ""}`); if (!data) return;
+    const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? "&t="+Date.now() : ""}`); if (!data) return;
     footWrap(); ensureSwitch(); const blk = pickBlock(data, _feature);
     try{ renderSparkline("sparkline", blk.series||[]); }catch{}
     renderHistoryTabs(data.history||[]);
@@ -290,7 +318,7 @@
   let _lastStatsFetch = 0;
   async function refreshStats(force=false) {
     const nowT=Date.now(); if(!force && nowT - _lastStatsFetch < 900) return; _lastStatsFetch=nowT;
-    const data = await fetchJSON("/api/insights?limit_samples=0&history=0"); if (!data) return;
+    const data = await fetchJSON("/api/insights?limit_samples=0&history=60");if (!data) return;
     const blk = pickBlock(data, _feature);
     renderTopStats({ now:blk.now, week:blk.week, month:blk.month, added:blk.added, removed:blk.removed });
     const configured = await getConfiguredProviders();
@@ -298,7 +326,9 @@
     footWrap.reserve();
   }
 
-  // --- shape per feature -----------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Shape per feature (normalizes API payloads)
+  // ────────────────────────────────────────────────────────────────────────────
   function pickBlock(data, feat) {
     const featureBlock = (data?.features?.[feat] || data?.stats?.[feat] || data?.[feat]) || null;
     const block  = featureBlock || data || {};
@@ -316,45 +346,50 @@
 
     let { now, week, month, added, removed } = featureBlock ? block : { now: undefined, week: undefined, month: undefined, added: undefined, removed: undefined };
 
+    const unionNow = Math.max(0, ...Object.values(providers || {}).map(v => +v || 0));
+    if (!Number.isFinite(+now) || (+now === 0 && unionNow > 0)) now = unionNow;
+
     const MS = { w:7*86400000, m:30*86400000 }, nowMs=Date.now();
-    const rowTs = r => { const t=r?.finished_at||r?.started_at, ts=t? new Date(t).getTime():NaN; return Number.isFinite(ts)? ts:null; };
+    const rowTs = r => { const t=r?.finished_at||r?.started_at; const ts=t? new Date(t).getTime():NaN; return Number.isFinite(ts)? ts:null; };
     const totalsFor = r => {
       const f=(r?.features?.[feat])||{};
       const a=+((f.added??f.adds)||0), rr=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
       return { a:a|0, r:rr|0, u:u|0, sum:(a|0)+(rr|0)+(u|0) };
     };
 
-    // Strict match: explicit tag/list OR non-zero lane totals. Ignore enabled flags.
-    const rowHasFeat = r => {
-      if(!r) return false;
-      const explicit=(r.feature||r.run_feature||r.target_feature||r.meta?.feature||"");
-      if (explicit && String(explicit).toLowerCase()===feat) return true;
+    const rowsAll = history.map(r=>({r,ts:rowTs(r)})).filter(x=>x.ts!=null).sort((a,b)=>a.ts-b.ts);
 
-      const listedRaw = r.feature_list ?? r.features_list ?? r.meta?.features ?? null;
-      if (Array.isArray(listedRaw)) {
-        if (listedRaw.map(s=>String(s).toLowerCase()).includes(feat)) return true;
-      } else if (listedRaw) {
-        if ((","+String(listedRaw).toLowerCase()+",").includes(","+feat+",")) return true;
+    if (!Number.isFinite(+now)) now = rowsAll.length ? totalsFor(rowsAll.at(-1).r).sum : 0;
+
+    const sumSince = since =>
+      rowsAll.reduce((acc,{r,ts})=>{
+        if (ts < since) return acc;
+        const t = totalsFor(r);
+        acc.A += t.a; acc.R += t.r; acc.S += t.sum; return acc;
+      }, {A:0,R:0,S:0});
+
+    const needRange = v => !Number.isFinite(+v) || (+v===0 && feat!=="watchlist");
+    if (needRange(week))  week  = sumSince(nowMs - MS.w).S;
+    if (needRange(month)) month = sumSince(nowMs - MS.m).S;
+
+    const needAR = v => !Number.isFinite(+v) || (+v===0 && feat!=="watchlist");
+    if (needAR(added) || needAR(removed)) {
+      const m = sumSince(nowMs - MS.m);
+      if (needAR(added))   added   = m.A;
+      if (needAR(removed)) removed = m.R;
+
+      if ((+added===0 && +removed===0)) {
+        const lastNZ = rowsAll.slice().reverse().find(({r}) => { const t=totalsFor(r); return t.a||t.r||t.u; });
+        if (lastNZ) { const t = totalsFor(lastNZ.r); added = t.a; removed = t.r; }
       }
-      return totalsFor(r).sum > 0;
-    };
-
-    const rows = history.map(r=>({r,ts:rowTs(r)})).filter(x=>x.ts!=null && rowHasFeat(x.r)).sort((a,b)=>a.ts-b.ts);
-
-    if (!Number.isFinite(+now))   now   = rows.length ? totalsFor(rows.at(-1).r).sum : 0;
-    const sumSince = since => rows.reduce((acc,{r,ts})=> ts<since ? acc : (t=>({A:acc.A+t.a,R:acc.R+t.r,U:acc.U+t.u,S:acc.S+t.sum}))(totalsFor(r)), {A:0,R:0,U:0,S:0});
-    if (!Number.isFinite(+week))  week  = sumSince(nowMs-MS.w).S;
-    if (!Number.isFinite(+month)) month = sumSince(nowMs-MS.m).S;
-    if (!Number.isFinite(+added) || !Number.isFinite(+removed)) {
-      const m = sumSince(nowMs-MS.m);
-      if (!Number.isFinite(+added))   added   = m.A;
-      if (!Number.isFinite(+removed)) removed = m.R;
     }
 
     return { series, providers, active, now:n(now), week:n(week), month:n(month), added:n(added), removed:n(removed), raw:block };
   }
 
-  // --- public api & boot -----------------------------------------------------
+  // ────────────────────────────────────────────────────────────────────────────
+  // Public API & bootstrapping
+  // ────────────────────────────────────────────────────────────────────────────
   w.Insights = Object.assign(w.Insights||{}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart,
     switchFeature, get feature(){ return _feature; }
@@ -367,10 +402,11 @@
   d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
 
   // IIFE closer
-  })(window, document);
+})(window, document);
 
 
 /* ---- History tabs layout -------------------------------------------------- */
+// Small CSS shim for the history tabs layout.
 (function(){
   const id='insights-tabs-layout-fix'; if (document.getElementById(id)) return;
   const s=document.createElement('style'); s.id=id; s.textContent = `
@@ -381,6 +417,7 @@
 })();
 
 /* glassy tabs for Recent syncs */
+// Visual-only: keeps existing markup, just adds style.
 (() => {
   const id = 'insights-tabs-style-v2';
   if (document.getElementById(id)) return;
@@ -411,6 +448,7 @@
 })();
 
 /* provider tiles + switcher */
+// Visual-only style block for provider tiles and the feature switcher.
 (()=>{const old=document.getElementById("insights-provider-styles");if(old)old.remove();
 const id="insights-provider-styles-v6";if(document.getElementById(id))return;
 const s=document.createElement("style");s.id=id;s.textContent=`
@@ -443,9 +481,10 @@ const s=document.createElement("style");s.id=id;s.textContent=`
 #stats-card #stat-providers [data-provider=jellyfin]{--brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg")}
 #stats-card #stat-providers{ --prov-cols:4; --tile-h:96px; }
 #stats-card #stat-providers .tile .n{
-  position:absolute; top:50%; left:50%; bottom:auto; transform:translate(-50%,-50%);
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
   margin:0; font-weight:900; letter-spacing:.25px; font-variant-numeric:tabular-nums;
   font-size:clamp(26px, calc(var(--tile-h)*.48), 56px); line-height:1; color:rgba(255,255,255,.36);
+}
 
 #stats-card #stat-providers .provider-empty{
   grid-column:1/-1; display:flex; align-items:center; justify-content:center;

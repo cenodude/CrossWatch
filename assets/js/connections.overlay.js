@@ -1,8 +1,15 @@
-// connections.overlay.js — Providers connection UI
+// connections.overlay.js — Providers connection UI 
+
 (function () {
+  // ────────────────────────────────────────────────────────────────────────────
+  // Globals (drag state)
+  // ────────────────────────────────────────────────────────────────────────────
   let dragSrc = null;
   let isDragging = false;
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Branding helper
+  // ────────────────────────────────────────────────────────────────────────────
   /**
    * Brand details (class + icon) for a provider name.
    * @param {string} name
@@ -17,6 +24,9 @@
     return { cls: "", icon: "" };
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Styles (injected once)
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
@@ -138,6 +148,9 @@
     document.head.appendChild(s);
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Capability helper
+  // ────────────────────────────────────────────────────────────────────────────
   /**
    * capability check for a provider object.
    * @param {any} obj provider manifest-like object
@@ -148,6 +161,9 @@
     try { return !!(obj && obj.features && obj.features[key]); } catch (_) { return false; }
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // UI: (Re)build providers list
+  // ────────────────────────────────────────────────────────────────────────────
   /** (Re)build the providers list UI based on current state in window.cx. */
   function rebuildProviders() {
     ensureStyles();
@@ -213,14 +229,18 @@
     try { rebuildProviders(); } catch (_) {}
   });
 
-  // glue original
+  // ────────────────────────────────────────────────────────────────────────────
+  // Glue: keep original render
+  // ────────────────────────────────────────────────────────────────────────────
   const _origRender = window.renderConnections;
   window.renderConnections = function () {
     try { if (typeof _origRender === "function") _origRender(); } catch {}
     rebuildProviders();
   };
 
-  // Keep originals working
+  // ────────────────────────────────────────────────────────────────────────────
+  // Glue: keep original start + update selection
+  // ────────────────────────────────────────────────────────────────────────────
   const _origStart = window.cxStartConnect;
   window.cxStartConnect = function (name) {
     try { if (typeof _origStart === "function") _origStart(name); } catch {}
@@ -229,6 +249,9 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Actions: pick target / toggle connect
+  // ────────────────────────────────────────────────────────────────────────────
   /**
    * Set the target provider for an in-progress connect action. If a modal
    * opener is available, it is used; otherwise, a custom event is dispatched.
@@ -264,7 +287,9 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
-  // ---- Drag & Drop without button conflict ----
+  // ────────────────────────────────────────────────────────────────────────────
+  // Drag & Drop (button-safe)
+  // ────────────────────────────────────────────────────────────────────────────
   // Disable button clicks during drag so a drop can be performed cleanly.
   document.addEventListener("click", (e) => {
     if (!isDragging) return;
@@ -320,7 +345,9 @@
     document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok','dragging'));
   });
 
-  // keyboard helpers
+  // ────────────────────────────────────────────────────────────────────────────
+  // Keyboard helpers
+  // ────────────────────────────────────────────────────────────────────────────
   document.addEventListener("keydown", (e)=>{
     const card = e.target.closest && e.target.closest(".prov-card");
     if (!card) return;
@@ -336,6 +363,9 @@
     }
   });
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Init
+  // ────────────────────────────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     try { window.renderConnections && window.renderConnections(); } catch (_) {}
   });

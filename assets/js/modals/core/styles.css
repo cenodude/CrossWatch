@@ -1,0 +1,272 @@
+/* Modal chrome */
+.cx-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(1px);z-index:9998;display:flex;align-items:center;justify-content:center}
+.cx-modal-shell{
+  position:fixed;width:auto;
+  max-width:min(var(--cxModalMaxW,1200px),calc(100vw - 40px));
+  height:min(var(--cxModalMaxH,92vh),calc(100vh - 40px));
+  overflow:hidden;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.55);
+  display:flex;flex-direction:column;background:#14161c;border:1px solid rgba(255,255,255,.08)
+}
+
+/* Hide foreign save UIs while a modal is open */
+body.cx-modal-open #save-fab,
+body.cx-modal-open #save-frost,
+body.cx-modal-open .savebar,
+body.cx-modal-open .actions.sticky{display:none!important}
+
+/* Card + body (tight) */
+.cx-card{display:flex;flex-direction:column;min-height:0;height:100%}
+.cx-head{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,.08);cursor:move;user-select:none}
+.cx-head .switch,.cx-head input,.cx-head button{cursor:auto}
+.cx-body{padding:8px 16px 12px;overflow:auto;flex:1;min-height:0}
+
+/* Inputs / layout */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.grid2.compact{gap:8px 10px}
+.cx-top{align-items:start;margin-bottom:0}
+.cx-row{margin:4px 0}
+.field label{display:block;opacity:.8;font-size:12px;margin-bottom:6px}
+.input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;height:36px}
+.input.static{display:flex;align-items:center;height:36px}
+.cx-st-row{align-items:end}
+select.input{background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.12)}
+select.input:focus{outline:2px solid rgba(124,77,255,.55)}
+select.input option{background:#14161c;color:#fff}
+input[type="date"].input{color-scheme:dark}
+.material-symbols-rounded{font-variation-settings:'FILL' 1,'wght' 600,'GRAD' 0,'opsz' 24}
+
+/* Source + Target inline (stack on small) */
+#cx-modal .cx-top{grid-template-columns:minmax(520px,1fr) minmax(360px,.8fr);align-items:start}
+#cx-modal .cx-st-row{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+@media (max-width:980px){
+  #cx-modal .cx-top{grid-template-columns:1fr}
+  #cx-modal .cx-st-row{grid-template-columns:1fr}
+}
+
+/* Flow card + animation */
+.flow-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:8px 10px}
+.flow-title{font-weight:700;margin-bottom:4px;opacity:.9}
+.flow-rail.pretty{display:flex;align-items:center;gap:10px;--flowColor:currentColor}
+.flow-rail.pretty .token{min-width:40px;text-align:center;opacity:.9;display:flex;align-items:center;justify-content:center}
+.flow-rail.pretty .arrow{position:relative;display:block;flex:1;min-width:120px;height:12px}
+.flow-rail.pretty .arrow::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:var(--flowColor);opacity:.25;transform:translateY(-50%);border-radius:2px}
+.flow-rail.pretty .dot.flow{position:absolute;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--flowColor);opacity:.6}
+@keyframes cx-flow-one{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
+@keyframes cx-flow-two-a{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
+@keyframes cx-flow-two-b{0%{left:calc(100% - 8px);opacity:.2}50%{opacity:1}100%{left:0;opacity:.2}}
+.flow-rail.pretty.anim-one .dot.flow.a{animation:cx-flow-one 1.2s ease-in-out infinite}
+.flow-rail.pretty.anim-one .dot.flow.b{animation:cx-flow-one 1.2s ease-in-out .6s infinite}
+.flow-rail.pretty.anim-two .dot.flow.a{animation:cx-flow-two-a 1.2s ease-in-out infinite}
+.flow-rail.pretty.anim-two .dot.flow.b{animation:cx-flow-two-b 1.2s ease-in-out infinite}
+/* keep running */
+.flow-rail.pretty .dot.flow{will-change:left,opacity;animation-play-state:running}
+
+/* Provider visuals */
+.prov-wrap{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px}
+.prov-logo{width:36px;height:36px;object-fit:contain;display:block;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+.prov-fallback{font-size:12px;opacity:.8}
+
+/* Tabs & main panels (tight) */
+.feature-tabs{margin:0}
+.cx-main{margin-top:6px}
+.cx-main .left .panel{margin-top:0;padding-top:8px}
+.cx-mode-row{margin:6px 0 4px}
+.feature-tabs + .panel{border-top-left-radius:12px;border-top-right-radius:12px}
+#cx-modal .panel:empty{display:none}
+
+/* Sticky footer — flat, no shimmer; sits flush */
+.cx-actions{
+  position:sticky;bottom:0;z-index:3;
+  display:flex;justify-content:flex-end;align-items:center;gap:12px;
+  padding:8px 16px;border-top:1px solid rgba(255,255,255,.06);
+  background:#14161c; /* solid, no gradient */
+  min-height:0;margin:0
+}
+/* Ensure content never hides behind footer */
+.cx-body{padding-bottom:14px}
+
+/* Buttons */
+.cx-btn{appearance:none;cursor:pointer;user-select:none;font-weight:800;text-transform:uppercase;letter-spacing:.02em;border-radius:14px;padding:10px 16px;line-height:1.1;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#fff;transition:transform .12s,box-shadow .12s,opacity .12s}
+.cx-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.cx-btn:active{transform:none}
+.cx-btn.primary{background:linear-gradient(135deg,#4c7dff,#6b9bff 40%,#8ab0ff 100%);border-color:#7aa0ff66;color:#fff;box-shadow:0 10px 28px rgba(43,88,255,.35),0 0 14px rgba(122,160,255,.28)}
+.cx-btn[disabled]{opacity:.6;cursor:default}
+
+/* Alerts */
+.simkl-alert{margin-top:12px;padding:12px 14px;border-radius:14px;background:linear-gradient(180deg,rgba(255,170,54,.12),rgba(255,170,54,.05));border:1px solid rgba(255,170,54,.55);box-shadow:0 8px 28px rgba(255,170,54,.1),0 0 0 1px rgba(255,170,54,.25) inset}
+.simkl-alert .title{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.2px;margin:0 0 6px;color:#ffd79a}
+.simkl-alert .title .ic{font-size:14px;line-height:1;transform:translateY(-1px)}
+.simkl-alert .body{color:#fff;opacity:.92}
+.simkl-alert .mini{margin-top:8px;font-size:12.5px;opacity:.85}
+
+/* About modal fold */
+.mods-card{margin-top:16px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(255,255,255,.03)}
+.fold-head{width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:rgba(255,255,255,.02);border:0;border-bottom:1px solid rgba(255,255,255,.06);border-radius:12px 12px 0 0;color:#fff;font-weight:700;cursor:pointer}
+.fold-head .chev{font-family:"Material Symbols Rounded";transition:transform .18s ease}
+.fold.open .fold-head .chev{transform:rotate(180deg)}
+.fold-body{overflow:hidden;opacity:0;transform:translateY(-2px);height:0}
+.fold.open .fold-body{opacity:1;transform:none;height:auto}
+.mods-section{border-top:1px solid rgba(255,255,255,.06)}
+.mods-section:first-child{border-top:0}
+.fold-sub{width:100%;display:flex;align-items:center;justify-content:space-between;background:transparent;border:0;color:#fff;font-weight:600;padding:10px 12px;cursor:pointer;opacity:.9}
+.mods-rows{display:grid;grid-template-columns:minmax(120px,160px) 1fr auto;gap:8px 12px;padding:0 12px 12px}
+.mods-name{opacity:.9}
+.mods-key{opacity:.7}
+.mods-ver{justify-self:end;font-variant-numeric:tabular-nums;opacity:.95}
+@media (max-width:520px){.mods-rows{grid-template-columns:1fr auto}.mods-key{display:none}}
+@media (prefers-reduced-motion:reduce){.fold-body{transition:none!important}}
+
+/* Keep animations alive */
+.flow-rail.pretty .dot.flow{will-change:left,opacity;animation-play-state:running}
+
+/* === HARD OVERRIDES: remove top/bottom space in Pair Config modal === */
+
+/* zero internal padding/margins that cause bands */
+.cx-modal-shell{padding:0 !important; background:#14161c !important;}
+.cx-card{margin:0 !important; min-height:0 !important; height:100% !important; display:flex !important; flex-direction:column !important;}
+.cx-head{padding:6px 14px !important; border-bottom:1px solid rgba(255,255,255,.08) !important;}
+.cx-body{
+  flex:1 1 auto !important;
+  min-height:0 !important;
+  overflow:auto !important;
+  padding:8px 14px 8px !important; /* trimmed bottom */
+}
+.cx-body > :first-child{margin-top:0 !important;}
+.cx-body > :last-child{margin-bottom:0 !important;}
+
+/* tighten inner layout */
+.feature-tabs{margin:0 !important;}
+.cx-main{margin-top:0 !important;}
+#cx-modal .panel{margin-bottom:0 !important;}
+.cx-mode-row{margin:6px 0 4px !important;}
+
+/* footer: flat, flush, no gradient/shimmer, no extra height */
+.cx-actions{
+  position:sticky !important;
+  bottom:0 !important;
+  z-index:3 !important;
+  margin:0 !important;
+  min-height:0 !important;
+  padding:8px 14px !important;
+  background:#14161c !important;
+  border-top:1px solid rgba(255,255,255,.06) !important;
+  backdrop-filter:none !important;
+  box-shadow:none !important;
+}
+.cx-actions::before,
+.cx-actions::after{display:none !important;}
+
+/* make sure nothing reserves space after actions */
+.cx-card > :last-child{margin-bottom:0 !important;}
+
+/* flow card stays compact */
+.flow-card{padding:8px 10px !important;}
+.flow-title{margin-bottom:4px !important;}
+
+/* keep anim smooth (no shimmer side-effects) */
+.flow-rail.pretty .dot.flow{will-change:left,opacity;animation-play-state:running !important;}
+
+/* ==== Pair Config modal: solid grid layout (no gaps, no shimmer) ==== */
+
+/* Shell blijft zoals hij is */
+.cx-modal-shell{position:fixed !important; display:flex !important; flex-direction:column !important}
+
+/* Card = 3-rijen grid: head | body (scroll) | actions  */
+.cx-card{
+  display:grid !important;
+  grid-template-rows:auto 1fr auto !important;
+  height:100% !important;
+  min-height:0 !important;
+  margin:0 !important;
+}
+
+/* Strakke header */
+.cx-head{
+  padding:6px 14px !important;
+  border-bottom:1px solid rgba(255,255,255,.08) !important;
+}
+
+/* Scrollende body — geen extra ruimte */
+.cx-body{
+  min-height:0 !important;
+  overflow:auto !important;
+  padding:8px 14px 6px !important;  /* compact; geen onderband */
+}
+
+/* Footer staat in de 3e grid-rij (geen sticky/absolute) */
+.cx-actions{
+  position:static !important;
+  height:auto !important;
+  min-height:0 !important;
+  margin:0 !important;
+  padding:6px 14px !important;
+  background:#14161c !important;
+  border-top:1px solid rgba(255,255,255,.06) !important;
+  box-shadow:none !important;
+  backdrop-filter:none !important;
+}
+
+/* Verwijder restmarges in content */
+.feature-tabs{margin:0 !important}
+.cx-main{margin:0 !important}
+#cx-modal .panel{margin:0 !important}
+#cx-modal .panel:last-child{margin-bottom:0 !important}
+
+/* Flow card/anim: compact en stabiel */
+.flow-card{padding:6px 8px !important}
+.flow-title{margin-bottom:4px !important}
+.flow-rail.pretty .dot.flow{animation-play-state:running !important;will-change:left,opacity}
+
+/* details[open] fallback so it works either way */
+.fold[open] .fold-body{opacity:1;transform:none;height:auto}
+.fold[open] .fold-head .chev{transform:rotate(180deg)}
+
+.cx-group{
+  border:1px solid var(--line,rgba(255,255,255,.08));
+  border-radius:14px;
+  padding:12px;
+  background:var(--panel-deeper,rgba(255,255,255,.02));
+  margin:10px 0 12px;
+}
+.cx-group-title{
+  font-weight:600;
+  opacity:.9;
+  margin:0 0 8px 2px;
+}
+.prov-box{
+  background: var(--panel-deeper, rgba(255,255,255,.02));
+  border: 1px solid var(--line, rgba(255,255,255,.08));
+  border-radius: 14px;
+  padding: 12px;
+  margin: 10px 0 12px;
+}
+.prov-box .panel-title.small{
+  margin: 0 0 8px 2px;
+}
+.prov-warning{
+  grid-column:1/-1;
+  display:flex;align-items:center;gap:10px;
+  margin:12px 6px 0;padding:12px 14px;border-radius:12px;
+  background:rgba(255,0,64,.08);
+  border:1px solid rgba(255,64,96,.55);
+  color:#ff5e79;font-weight:600;
+  box-shadow:0 0 0 1px rgba(255,64,96,.35) inset,0 0 18px rgba(255,0,72,.25);
+}
+.prov-warning .material-symbols-rounded{font-size:20px;line-height:1}
+
+/* Experimental module banner */
+.module-alert{
+  margin-top:10px;padding:8px 12px;border-radius:10px;
+  background:linear-gradient(180deg,rgba(255,170,54,.12),rgba(255,170,54,.05));
+  border:1px solid rgba(255,170,54,.55);
+  box-shadow:0 6px 18px rgba(255,170,54,.1),0 0 0 1px rgba(255,170,54,.25) inset
+}
+#cx-flow-warn .module-alert,
+.cx-bottom-warn .module-alert{display:flex;align-items:center;gap:8px}
+
+.module-alert .title{display:flex;align-items:center;gap:6px;font-weight:700;letter-spacing:.2px;margin:0;color:#ffd79a;white-space:nowrap}
+.module-alert .title .ic{font-size:13px;line-height:1;transform:none}
+.module-alert .body{margin:0;color:#fff;opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+
+.cx-bottom-warn{grid-column:1/-1;margin:10px 0 0}
+.cx-bottom-warn .module-alert{width:100%;box-sizing:border-box}

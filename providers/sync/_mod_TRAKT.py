@@ -1,1184 +1,463 @@
+# /providers/sync/_mod_TRAKT.py
+# Trakt adapter: manifest + client + OPS bridge.
+
 from __future__ import annotations
-# providers/sync/_mod_TRAKT.py
-# Trakt provider (watchlist, ratings, history, playlists)
+__VERSION__ = "2.0.0"
+__all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
-__VERSION__ = "1.3.1"
-__all__ = ["OPS", "TRAKTModule", "get_manifest"]
-
-import os, re, json, time
-import requests
-from pathlib import Path
+# stdlib
+import os, time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List, Callable
+
+# shared trakt helpers + features
+from .trakt._common import build_headers, normalize as trakt_normalize, key_of as trakt_key_of
 
 try:
-    from cw_platform.metadata import MetadataManager
-except Exception:  # flat runs / tests
-    from metadata import MetadataManager  # type: ignore
-
-# --- Trakt constants -----------------------------------------------------------
-
-UA = "CrossWatch/TraktModule"
-TRAKT_BASE = "https://api.trakt.tv"
-
-TRAKT_LAST_ACTIVITIES = f"{TRAKT_BASE}/sync/last_activities"
-
-TRAKT_WATCHLIST_MOVIES = f"{TRAKT_BASE}/sync/watchlist/movies"
-TRAKT_WATCHLIST_SHOWS  = f"{TRAKT_BASE}/sync/watchlist/shows"
-TRAKT_WATCHLIST_ALL    = f"{TRAKT_BASE}/sync/watchlist"
-
-TRAKT_USER_RATINGS_MOVIES = f"{TRAKT_BASE}/users/me/ratings/movies/all"
-TRAKT_USER_RATINGS_SHOWS  = f"{TRAKT_BASE}/users/me/ratings/shows/all"
-TRAKT_RATINGS_POST        = f"{TRAKT_BASE}/sync/ratings"
-TRAKT_RATINGS_REMOVE      = f"{TRAKT_BASE}/sync/ratings/remove"
-
-TRAKT_HISTORY_BASE     = f"{TRAKT_BASE}/sync/history"
-TRAKT_HISTORY_GET_MOV  = f"{TRAKT_BASE}/sync/history/movies"
-TRAKT_HISTORY_GET_EP   = f"{TRAKT_BASE}/sync/history/episodes"
-TRAKT_HISTORY_REMOVE   = f"{TRAKT_BASE}/sync/history/remove"
-
-_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "slug")
-
-# --- In-memory ETags + body cache ---------------------------------------------
-
-_TRAKT_ETAGS: Dict[str, str] = {}
-_TRAKT_BODY_CACHE: Dict[str, Dict[str, Any]] = {}
-
-def _bust_trakt_watchlist_cache() -> None:
-    for k in ("watchlist_movies", "watchlist_shows", "watchlist_all"):
-        _TRAKT_ETAGS.pop(k, None)
-        _TRAKT_BODY_CACHE.pop(k, None)
-    try: _save_etags(_TRAKT_ETAGS)
-    except Exception: pass
-
-def _bust_trakt_ratings_cache() -> None:
-    for k in ("rt.movies", "rt.shows"):
-        _TRAKT_ETAGS.pop(k, None)
-        _TRAKT_BODY_CACHE.pop(k, None)
-    try: _save_etags(_TRAKT_ETAGS)
-    except Exception: pass
-
-def _bust_run_memo_for(use_keys: Iterable[str]) -> None:
-    try:
-        bad = [k for k in list(_RUN_GET_CACHE.keys()) if len(k) >= 3 and (k[2] in set(use_keys))]
-        for k in bad: _RUN_GET_CACHE.pop(k, None)
-    except Exception: pass
-
-# --- Optional host integrations ------------------------------------------------
-
-try:
-    from _logging import log as host_log
-except Exception:  # pragma: no cover
-    def host_log(*_a, **_k):  # type: ignore
-        pass
-
-try:
-    from _statistics import Stats  # type: ignore
-    _stats = Stats()
+    from ..auth._auth_TRAKT import PROVIDER as AUTH_TRAKT  # token refresh hook
 except Exception:
-    _stats = None
+    from providers.auth._auth_TRAKT import PROVIDER as AUTH_TRAKT
+    
+from .trakt import _watchlist as feat_watchlist
+try:
+    from .trakt import _history as feat_history
+except Exception:
+    feat_history = None
+try:
+    from .trakt import _ratings as feat_ratings
+except Exception:
+    feat_ratings = None
+try:
+    from .trakt import _playlists as feat_playlists
+except Exception:
+    feat_playlists = None
 
-def _emit_rating_event(*, action: str, node: Mapping[str, Any], prev: Optional[int], value: Optional[int]) -> None:
-    try:
-        payload = {
-            "feature": "ratings",
-            "action": action,
-            "title": node.get("title"),
-            "type": node.get("type") or _plural(node.get("type") or "movie"),
-            "ids": dict(node.get("ids") or {}),
-            "value": value,
-            "prev": prev,
-            "provider": "TRAKT",
-            "ts": ts_to_iso(int(time.time())),
-        }
-        if _stats and hasattr(_stats, "record_event"):
-            try: _stats.record_event(payload)
-            except Exception: pass
-        try: host_log("event", payload)
-        except Exception: pass
-    except Exception:
-        pass
+# ---- common instrumentation (shared) ----------------------------------------
+from ._mod_common import (
+    build_session,
+    request_with_retries,
+    parse_rate_limit,
+    label_trakt,
+    make_snapshot_progress,
+)
+# orchestrator ctx (fallback if not injected)
+try:  # type: ignore[name-defined]
+    ctx  # type: ignore
+except Exception:
+    ctx = None  # type: ignore
 
-# --- Global call counters ------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# debug
 
-_CALLS = getattr(globals(), "_CALLS", {"GET": 0, "POST": 0})
-globals()["_CALLS"] = _CALLS
+def _log(msg: str):
+    #Enable with CW_DEBUG=1 or CW_TRAKT_DEBUG=1
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_TRAKT_DEBUG"):
+        print(f"[TRAKT] {msg}")
 
-# --- Durable state under /config ----------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# feature registry (register only what exists)
+_FEATURES: Dict[str, Any] = {}
+if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
+if feat_history:   _FEATURES["history"]   = feat_history
+if feat_ratings:   _FEATURES["ratings"]   = feat_ratings
+if feat_playlists: _FEATURES["playlists"] = feat_playlists
 
-def _state_root() -> Path:
-    base = Path("/config")
-    try: base.mkdir(parents=True, exist_ok=True)
-    except Exception: pass
-    return base / ".cw_state"
-
-# --- Small utils ---------------------------------------------------------------
-
-def iso_to_ts(s: str) -> int:
-    if not s: return 0
-    try:
-        import datetime as dt
-        s2 = s.replace("Z", "+0000").split(".")[0]
-        return int(dt.datetime.strptime(s2, "%Y-%m-%dT%H:%M:%S%z").timestamp())
-    except Exception:
-        try:
-            import datetime as dt
-            return int(dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
-        except Exception:
-            return 0
-
-def ts_to_iso(ts: int) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
-
-def _record_http_trakt(r: Optional[requests.Response], *, endpoint: str, method: str, payload: Any = None) -> None:
-    try:
-        if method == "GET": _CALLS["GET"] = _CALLS.get("GET", 0) + 1
-        elif method == "POST": _CALLS["POST"] = _CALLS.get("POST", 0) + 1
-    except Exception: pass
-    if not _stats: return
-    try:
-        status = int(getattr(r, "status_code", 0) or 0)
-        ok = bool(getattr(r, "ok", False))
-        bytes_in = len(getattr(r, "content", b"") or b"") if r is not None else 0
-        if isinstance(payload, (bytes, bytearray)): bytes_out = len(payload)
-        elif payload is None: bytes_out = 0
-        else:
-            try: bytes_out = len(json.dumps(payload))
-            except Exception: bytes_out = 0
-        ms = int(getattr(r, "elapsed", 0).total_seconds() * 1000) if (r is not None and getattr(r, "elapsed", None)) else 0
-        rate_remaining = None; rate_reset_iso = None
-        try:
-            if r is not None:
-                rem = r.headers.get("X-RateLimit-Remaining"); rst = r.headers.get("X-RateLimit-Reset")
-                if rem is not None: rate_remaining = int(rem)
-                if rst:
-                    try:
-                        rst_i = int(rst)
-                        rate_reset_iso = ts_to_iso(rst_i) if rst_i > 0 else None
-                    except Exception: rate_reset_iso = None
-        except Exception: pass
-        _stats.record_http(
-            provider="TRAKT", endpoint=endpoint, method=method, status=status, ok=ok,
-            bytes_in=bytes_in, bytes_out=bytes_out, ms=ms,
-            rate_remaining=rate_remaining, rate_reset_iso=rate_reset_iso,
-        )
-    except Exception:
-        pass
-
-class _CachedRespTR:
-    def __init__(self, status: int, headers: Mapping[str, Any], body: str):
-        self.status_code = int(status)
-        self.ok = 200 <= self.status_code < 300
-        self.headers = dict(headers or {})
-        self.content = body.encode("utf-8")
-        self.elapsed = 0
-    def json(self) -> Any:
-        try: return json.loads(self.content.decode("utf-8") or "null")
-        except Exception: return None
-
-def _norm_params_trakt(p: Optional[dict]) -> Tuple[Tuple[str, str], ...]:
-    if not p: return tuple()
-    out = []
-    for k, v in p.items():
-        if isinstance(v, (list, tuple)): out.append((str(k), ",".join(map(str, v))))
-        else: out.append((str(k), str(v)))
-    out.sort(); return tuple(out)
-
-def _trakt_cache_key(use_etag_key: Optional[str], url: str, params: Optional[dict]) -> str:
-    if use_etag_key: return use_etag_key
-    return f"{url}::{json.dumps(dict(params or {}), sort_keys=True)}"
-
-# --- HTTP helpers (backoff + memo + ETag) -------------------------------------
-
-_RUN_GET_CACHE: Dict[Tuple[str, Tuple[Tuple[str, str], ...], str], Optional[requests.Response]] = {}
-
-def trakt_headers(trakt_cfg: Mapping[str, Any]) -> Dict[str, str]:
+def _features_flags() -> Dict[str, bool]:
+    # Truth comes from actual modules present
     return {
-        "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json",
-        "Authorization": f"Bearer {trakt_cfg.get('access_token','')}",
-        "trakt-api-key": trakt_cfg.get("client_id",""), "trakt-api-version": "2",
+        "watchlist": "watchlist" in _FEATURES,
+        "ratings":   "ratings"   in _FEATURES,
+        "history":   "history"   in _FEATURES,
+        "playlists": "playlists" in _FEATURES,
     }
 
-def _with_backoff(req_fn, *a, **kw) -> Optional[requests.Response]:
-    delay = 1.0; last: Optional[requests.Response] = None
-    for _ in range(5):
-        try: r: requests.Response = req_fn(*a, **kw); last = r
-        except Exception: r = None  # type: ignore
-        if r is not None:
-            try:
-                rem = r.headers.get("X-RateLimit-Remaining")
-                if rem is not None and int(rem) <= 0:
-                    rst = r.headers.get("X-RateLimit-Reset")
-                    if rst:
-                        try: time.sleep(min(max(0, int(rst) - int(time.time())), 10))
-                        except Exception: time.sleep(delay)
-                    else: time.sleep(delay)
-                if r.status_code in (429,) or (500 <= r.status_code < 600):
-                    time.sleep(delay); delay = min(delay * 2, 10); continue
-                return r
+# ──────────────────────────────────────────────────────────────────────────────
+# manifest
+
+def get_manifest() -> Mapping[str, Any]:
+    return {
+        "name": "TRAKT",
+        "label": "Trakt",
+        "version": __VERSION__,
+        "type": "sync",
+        "bidirectional": True,
+        "features": _features_flags(),
+        "requires": [],
+        "capabilities": {
+            "bidirectional": True,
+            "provides_ids": True,
+            "index_semantics": "present",
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True, "unrate": True, "from_date": False
+            },
+        },
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# config + client
+
+@dataclass
+class TRAKTConfig:
+    client_id: str
+    access_token: str
+    timeout: float = 15.0
+    max_retries: int = 3
+
+class TRAKTClient:
+    BASE = "https://api.trakt.tv"
+
+    def __init__(self, cfg: "TRAKTConfig", raw_cfg: Mapping[str, Any]):
+        self.cfg = cfg
+        self.raw_cfg = raw_cfg
+        self.session = build_session("TRAKT", ctx, feature_label=label_trakt)
+        self._apply_headers(cfg.access_token)
+
+    # --- internals ------------------------------------------------------------
+    def _trakt_dict(self) -> Dict[str, Any]:
+        try:
+            return dict(self.raw_cfg.get("trakt") or {})
+        except Exception:
+            return {}
+
+    def _apply_headers(self, access_token: Optional[str]):
+        self.session.headers.update(build_headers({"trakt": {
+            "client_id": self.cfg.client_id,
+            "access_token": (access_token or "")
+        }}))
+
+    def _reload_token_from_cfg(self) -> str:
+        tok = str(self._trakt_dict().get("access_token") or "").strip()
+        if tok and tok != (self.cfg.access_token or ""):
+            self.cfg.access_token = tok
+            self._apply_headers(tok)
+            _log("TRAKT: applied refreshed token")
+        return tok
+
+    def _about_to_expire(self, threshold: int = 120) -> bool:
+        try:
+            exp = int(self._trakt_dict().get("expires_at") or 0)
+            now = int(__import__("time").time())
+            return bool(exp and (exp - now) <= max(0, threshold))
+        except Exception:
+            return False
+
+    def _try_refresh(self) -> bool:
+        # Calls existing OAuth refresh in providers/auth/_auth_TRAKT.py
+        try:
+            res = AUTH_TRAKT.refresh(self.raw_cfg)
+            ok = bool(isinstance(res, dict) and res.get("ok"))
+            if ok:
+                self._reload_token_from_cfg()
+            else:
+                _log(f"TRAKT: token refresh failed ({res!r})")
+            return ok
+        except Exception as e:
+            _log(f"TRAKT: token refresh error: {e}")
+            return False
+
+    def _preflight(self):
+        if self._about_to_expire():
+            self._try_refresh()
+
+    def _do(self, method: str, url: str, **kw):
+        self._preflight()
+        r = request_with_retries(self.session, method, url,
+                                 timeout=self.cfg.timeout,
+                                 max_retries=self.cfg.max_retries, **kw)
+        if r.status_code in (401, 403):
+            if self._try_refresh():
+                r = request_with_retries(self.session, method, url,
+                                         timeout=self.cfg.timeout,
+                                         max_retries=self.cfg.max_retries, **kw)
+        return r
+
+    # --- public ---------------------------------------------------------------
+    def connect(self) -> "TRAKTClient":
+        try:
+            r = self._do("GET", f"{self.BASE}/sync/last_activities")
+            if r.status_code in (401, 403):
+                raise TRAKTAuthError("Trakt auth failed")
+            _log("Connected to Trakt API")
+        except Exception as e:
+            raise TRAKTError(f"Trakt connect failed: {e}") from e
+        return self
+
+    def get(self, url: str, **kw):
+        return self._do("GET", url, **kw)
+
+    def post(self, url: str, json: Mapping[str, Any], **kw):
+        return self._do("POST", url, json=json, **kw)
+
+    def delete(self, url: str, json: Optional[Mapping[str, Any]] = None, **kw):
+        return self._do("DELETE", url, json=json, **kw)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# errors
+
+class TRAKTError(RuntimeError): pass
+class TRAKTAuthError(TRAKTError): pass
+
+# ──────────────────────────────────────────────────────────────────────────────
+# adapter wrapper
+
+class TRAKTModule:
+    def __init__(self, cfg: Mapping[str, Any]):
+        t = dict((cfg.get("trakt") or {}))
+        self.cfg = TRAKTConfig(
+            client_id=str(t.get("client_id") or "").strip(),
+            access_token=str(t.get("access_token") or "").strip(),
+            timeout=float((t.get("timeout") or cfg.get("timeout") or 15.0)),
+            max_retries=int((t.get("max_retries") or cfg.get("max_retries") or 3)),
+        )
+        if not self.cfg.client_id or not self.cfg.access_token:
+            raise TRAKTAuthError("Missing Trakt client_id/access_token")
+
+        if t.get("debug") in (True, "1", 1):
+            os.environ.setdefault("CW_TRAKT_DEBUG", "1")
+        self.client = TRAKTClient(self.cfg, cfg).connect()
+        self.raw_cfg = cfg
+
+        def _mk_prog(feature: str):
+            try: return make_snapshot_progress(ctx, dst="TRAKT", feature=feature)
             except Exception:
-                time.sleep(delay); delay = min(delay * 2, 10); continue
-        else:
-            time.sleep(delay); delay = min(delay * 2, 10)
-    return last
+                class _Noop:
+                    def tick(self, *a, **k): pass
+                    def done(self, *a, **k): pass
+                return _Noop()
+        self.progress_factory: Callable[[str], Any] = _mk_prog
 
-def _etag_store_path() -> Path: return _state_root() / "trakt_etags.json"
+    # ---- feature toggles ------------------
+    @staticmethod
+    def supported_features() -> Dict[str, bool]:
+        toggles = {
+            "watchlist": True,
+            "ratings":   True,
+            "history":   True,
+            "playlists": False,
+        }
+        present = _features_flags()
+        return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
-def _load_etags() -> Dict[str, str]:
-    try: return json.loads(_etag_store_path().read_text("utf-8"))
-    except Exception: return {}
+    def _is_enabled(self, feature: str) -> bool:
+        return bool(self.supported_features().get(feature, False))
 
-def _save_etags(d: Mapping[str, str]) -> None:
-    try:
-        p = _etag_store_path(); p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(json.dumps(dict(d), ensure_ascii=False, indent=2), "utf-8")
-        os.replace(tmp, p)
-    except Exception: pass
+    def manifest(self) -> Mapping[str, Any]:
+        return get_manifest()
 
-try: _TRAKT_ETAGS.update(_load_etags() or {})
-except Exception: pass
+    # shared delegates
+    @staticmethod
+    def normalize(obj) -> Dict[str, Any]: return trakt_normalize(obj)
+    @staticmethod
+    def key_of(obj) -> str: return trakt_key_of(obj)
 
-def _trakt_get(
-    url: str, *, headers: Mapping[str, str], params: Optional[dict] = None, timeout: int = 45,
-    cfg_root: Optional[Mapping[str, Any]] = None, force_refresh: bool = False, use_etag_key: Optional[str] = None
-) -> Optional[requests.Response]:
-    key = (url, _norm_params_trakt(params), use_etag_key)
-    if not force_refresh and key in _RUN_GET_CACHE:
-        r = _RUN_GET_CACHE[key]; _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET"); return r
-    hdrs = dict(headers or {}); ck = _trakt_cache_key(use_etag_key, url, params); et = _TRAKT_ETAGS.get(ck)
-    if et: hdrs["If-None-Match"] = et
-    try: r = _with_backoff(requests.get, url, headers=hdrs, params=(params or {}), timeout=timeout)
-    except Exception:
-        _RUN_GET_CACHE[key] = None; _record_http_trakt(None, endpoint=url.replace(TRAKT_BASE, ""), method="GET"); return None
-    if r is not None and getattr(r, "status_code", 0) == 304:
-        prev = _TRAKT_BODY_CACHE.get(ck)
-        if prev:
-            r2 = _CachedRespTR(prev.get("status", 200), prev.get("headers", {}), prev.get("body", ""))
-            _RUN_GET_CACHE[key] = r2  # type: ignore[assignment]
-            _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET"); return r2
-        try:
-            hdrs2 = dict(headers or {}); hdrs2.pop("If-None-Match", None)
-            r_force = _with_backoff(requests.get, url, headers=hdrs2, params=(params or {}), timeout=timeout)
-        except Exception: r_force = None
-        if r_force is not None and getattr(r_force, "ok", False):
+    # health probe (standardized for orchestrator; probes only enabled features)
+    def health(self) -> Mapping[str, Any]:
+        """
+        Uses instrumented session. Activities + watchlist probe if enabled.
+        """
+        enabled = self.supported_features()
+        need_core = any(enabled.values())
+        need_wl = bool(enabled.get("watchlist"))
+
+        tmo = max(3.0, min(self.cfg.timeout, 15.0))
+        base = self.client.BASE
+        sess = self.client.session
+
+        start = time.perf_counter()
+
+        # ---- Core probe: /sync/last_activities
+        core_ok = False
+        core_reason: Optional[str] = None
+        core_code: Optional[int] = None
+        retry_after: Optional[int] = None
+        rate = {"limit": None, "remaining": None, "reset": None}
+
+        if need_core:
             try:
-                et_new = r_force.headers.get("ETag")
-                if et_new: _TRAKT_ETAGS[ck] = et_new; _save_etags(_TRAKT_ETAGS)
-                _TRAKT_BODY_CACHE[ck] = {
-                    "status": int(getattr(r_force, "status_code", 200) or 200),
-                    "headers": dict(getattr(r_force, "headers", {}) or {}),
-                    "body": (r_force.content or b"").decode("utf-8", errors="ignore"),
-                    "ts": time.time(),
-                }
-            except Exception: pass
-            _RUN_GET_CACHE[key] = r_force  # type: ignore[assignment]
-            _record_http_trakt(r_force, endpoint=url.replace(TRAKT_BASE, ""), method="GET"); return r_force
-        r2 = _CachedRespTR(200, {}, "[]")
-        _RUN_GET_CACHE[key] = r2  # type: ignore[assignment]
-        _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET"); return r2
-    if r is not None and getattr(r, "ok", False):
-        try:
-            et_new = r.headers.get("ETag")
-            if et_new: _TRAKT_ETAGS[ck] = et_new; _save_etags(_TRAKT_ETAGS)
-            _TRAKT_BODY_CACHE[ck] = {
-                "status": int(getattr(r, "status_code", 200) or 200),
-                "headers": dict(getattr(r, "headers", {}) or {}),
-                "body": (r.content or b"").decode("utf-8", errors="ignore"),
-                "ts": time.time(),
-            }
-        except Exception: pass
-    _RUN_GET_CACHE[key] = r  # type: ignore[assignment]
-    _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="GET")
-    return r
-
-def _trakt_post(url: str, *, headers: Mapping[str, str], json_payload: Mapping[str, Any], timeout: int = 45) -> Optional[requests.Response]:
-    try: r = _with_backoff(requests.post, url, headers=headers, json=json_payload, timeout=timeout)
-    except Exception:
-        _record_http_trakt(None, endpoint=url.replace(TRAKT_BASE, ""), method="POST", payload=json_payload); return None
-    _record_http_trakt(r, endpoint=url.replace(TRAKT_BASE, ""), method="POST", payload=json_payload); return r
-
-def _json_or_empty_list(r: Optional[requests.Response]) -> List[Any]:
-    if not r: return []
-    if r.status_code == 304: return []
-    if not getattr(r, "ok", False): return []
-    try: data = r.json()
-    except Exception: return []
-    return data if isinstance(data, list) else []
-
-def _json_or_empty_dict(r: Optional[requests.Response]) -> Dict[str, Any]:
-    if not r: return {}
-    if r.status_code == 304: return {}
-    if not getattr(r, "ok", False): return {}
-    try: data = r.json()
-    except Exception: return {}
-    return data if isinstance(data, dict) else {}
-
-# --- Config helpers ------------------------------------------------------------
-
-def _cfg_get(cfg_root: Mapping[str, Any], path: str, default: Any) -> Any:
-    parts = path.split(".")
-    def dig(root: Mapping[str, Any]) -> Any:
-        cur: Any = root
-        for k in parts:
-            if not isinstance(cur, Mapping): return default
-            cur = cur.get(k)
-            if cur is None: return default
-        return cur
-    candidates = [
-        cfg_root,
-        cfg_root.get("ratings") or {},
-        cfg_root.get("history") or {},
-        cfg_root.get("sync") or {},
-        cfg_root.get("runtime") or {},
-    ]
-    for root in candidates:
-        try:
-            val = dig(root)
-            if val is not None: return val
-        except Exception:
-            pass
-    return default
-
-def _iter_chunks(seq: List[Dict[str, Any]], size: int) -> Iterable[List[Dict[str, Any]]]:
-    if size <= 0:
-        yield seq; return
-    for i in range(0, len(seq), size): yield seq[i:i+size]
-
-# --- Shadows + cursors ---------------------------------------------------------
-
-def _shadow_path(name: str) -> Path: return _state_root() / name
-
-def _read_json(path: Path, fallback: Any) -> Any:
-    try: return json.loads(path.read_text("utf-8"))
-    except Exception: return fallback
-
-def _write_json(path: Path, data: Any) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-        os.replace(tmp, path)
-    except Exception: pass
-
-def _watchlist_shadow_load() -> Dict[str, Any]:
-    return _read_json(_shadow_path("trakt_watchlist.shadow.json"), {"items": {}, "ts": 0})
-
-def _watchlist_shadow_save(items: Mapping[str, Any]) -> None:
-    _write_json(_shadow_path("trakt_watchlist.shadow.json"), {"items": dict(items), "ts": int(time.time())})
-
-def _ratings_shadow_load() -> Dict[str, Any]:
-    return _read_json(_shadow_path("trakt_ratings.shadow.json"), {"items": {}, "ts": 0})
-
-def _ratings_shadow_save(items: Mapping[str, Any]) -> None:
-    _write_json(_shadow_path("trakt_ratings.shadow.json"), {"items": dict(items), "ts": int(time.time())})
-
-def _history_shadow_load() -> Dict[str, Any]:
-    return _read_json(_shadow_path("trakt_history.shadow.json"), {"items": {}, "ts": 0})
-
-def _history_shadow_save(items: Mapping[str, Any]) -> None:
-    _write_json(_shadow_path("trakt_history.shadow.json"), {"items": dict(items), "ts": int(time.time())})
-
-def _cursor_store_load() -> Dict[str, Any]:
-    return _read_json(_shadow_path("trakt_history.cursor.json"), {})
-
-def _cursor_store_save(d: Mapping[str, Any]) -> None:
-    _write_json(_shadow_path("trakt_history.cursor.json"), dict(d))
-
-# --- Activities (short TTL) ----------------------------------------------------
-
-_RUN_ACT: Dict[str, Any] = {"ts": 0.0, "data": None}
-_ACT_TTL_SEC = 60
-
-def _activities(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
-    now = time.time()
-    if (now - float(_RUN_ACT.get("ts") or 0)) < _ACT_TTL_SEC and (_RUN_ACT.get("data") is not None):
-        return dict(_RUN_ACT["data"])
-    cache_file = _shadow_path("trakt_activities.cache.json")
-    try:
-        j = json.loads(cache_file.read_text("utf-8")); ts = float(j.get("ts") or 0)
-        if (now - ts) < _ACT_TTL_SEC and isinstance(j.get("data"), dict):
-            _RUN_ACT.update(ts=ts, data=j["data"]); return dict(j["data"])
-    except Exception: pass
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or cfg_root.get("Trakt") or {})
-    hdr = trakt_headers(trakt_cfg)
-    r = _trakt_get(TRAKT_LAST_ACTIVITIES, headers=hdr, params=None, use_etag_key="last_activities", timeout=30)
-    data = _json_or_empty_dict(r)
-    flat: Dict[str, Any] = {}
-    def _copy_ts(root: str) -> None:
-        sub = data.get(root) or {}
-        if isinstance(sub, dict):
-            for k, v in sub.items():
-                if isinstance(v, str): flat[f"{root}.{k}"] = v
-        if isinstance(data.get(root), str): flat[root] = data[root]
-    for key in ("watchlist", "ratings", "history", "movies", "shows", "episodes", "lists"):
-        _copy_ts(key)
-    _RUN_ACT.update(ts=now, data=flat)
-    try: cache_file.parent.mkdir(parents=True, exist_ok=True); cache_file.write_text(json.dumps({"ts": now, "data": flat}, ensure_ascii=False), "utf-8")
-    except Exception: pass
-    return flat
-
-# --- Shapes --------------------------------------------------------------------
-
-def _plural(kind: str) -> str:
-    k = (kind or "").lower()
-    if k == "movie": return "movies"
-    if k == "show": return "shows"
-    if k == "season": return "seasons"
-    if k == "episode": return "episodes"
-    return k or "movies"
-
-def canonical_key(kind: str, node: Mapping[str, Any]) -> str:
-    ids = dict(node.get("ids") or {})
-    for k in _ID_KEYS:
-        v = ids.get(k)
-        if v: return f"{k}:{v}".lower()
-    t = (node.get("title") or "").strip().lower()
-    y = node.get("year") or ""
-    return f"{_plural(kind)}|title:{t}|year:{y}"
-
-def minimal_node(kind: str, node: Mapping[str, Any]) -> Dict[str, Any]:
-    ids = dict(node.get("ids") or {})
-    return {"type": _plural(kind), "title": node.get("title"), "year": node.get("year"), "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-
-def _flatten_watchlist(arr: List[dict], kind: str) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for it in arr or []:
-        node = it.get(kind) or {}
-        key = canonical_key(kind, node)
-        out[key] = minimal_node(kind, node)
-    return out
-
-def _flatten_watchlist_combined(arr: List[dict]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for it in arr or []:
-        k = (it.get("type") or "").lower()
-        if k not in ("movie", "show"): continue
-        node = it.get(k) or {}; key = canonical_key(k, node)
-        out[key] = minimal_node(k, node)
-    return out
-
-def _flatten_ratings(arr: List[dict], kind: str) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for it in arr or []:
-        node = it.get(kind) or {}
-        key = canonical_key(kind, node)
-        rating = None
-        if isinstance(it.get("rating"), (int, float)):
-            try: rating = int(it.get("rating"))
-            except Exception: rating = None
-        row = minimal_node(kind, node)
-        if rating is not None: row["rating"] = rating
-        ra = it.get("rated_at")
-        if isinstance(ra, str) and ra: row["rated_at"] = ra
-        out[key] = row
-    return out
-
-def _flatten_history(arr: List[dict], kind: str) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for it in arr or []:
-        node = it.get(kind) or {}
-        key = canonical_key(kind, node)
-        row = minimal_node(kind, node)
-        row["watched"] = True
-        if isinstance(it.get("watched_at"), str): row["watched_at"] = it.get("watched_at")
-        out[key] = row
-    return out
-
-# --- Provider protocol ---------------------------------------------------------
-
-class InventoryOps(Protocol):
-    def name(self) -> str: ...
-    def label(self) -> str: ...
-    def features(self) -> Mapping[str, bool]: ...
-    def capabilities(self) -> Mapping[str, Any]: ...
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]: ...
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]: ...
-
-# --- Indices -------------------------------------------------------------------
-
-def _watchlist_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-    try: _RUN_GET_CACHE.clear()
-    except Exception: pass
-
-    acts = _activities(cfg_root)
-    shadow = _watchlist_shadow_load()
-    items: Dict[str, Dict[str, Any]] = dict(shadow.get("items") or {})
-    params = {"extended": "full"}
-    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-
-    r_mov = _trakt_get(TRAKT_WATCHLIST_MOVIES, headers=hdr, params=params, timeout=45,
-                       force_refresh=False, use_etag_key="watchlist_movies")
-    r_sho = _trakt_get(TRAKT_WATCHLIST_SHOWS,  headers=hdr, params=params, timeout=45,
-                       force_refresh=False, use_etag_key="watchlist_shows")
-
-    mov, sho = _json_or_empty_list(r_mov), _json_or_empty_list(r_sho)
-    updated = False
-
-    if ((r_mov is not None and getattr(r_mov, "ok", False) and getattr(r_mov, "status_code", 0) == 200) or
-        (r_sho is not None and getattr(r_sho, "ok", False) and getattr(r_sho, "status_code", 0) == 200)):
-        out: Dict[str, Dict[str, Any]] = {}
-        if mov: out.update(_flatten_watchlist(mov, "movie"))
-        if sho: out.update(_flatten_watchlist(sho, "show"))
-        healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in out.values()])
-        items = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
-        _watchlist_shadow_save(items)
-        updated = True
-
-    if not items:
-        r_all = _trakt_get(TRAKT_WATCHLIST_ALL, headers=hdr, params=params, timeout=45,
-                           force_refresh=False, use_etag_key="watchlist_all")
-        all_rows = _json_or_empty_list(r_all)
-        if all_rows:
-            out = _flatten_watchlist_combined(all_rows)
-            healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in out.values()])
-            items = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
-            _watchlist_shadow_save(items)
-            updated = True
-
-    # self-repair cached data when no fresh 200 (e.g., 304)
-    if items and not updated:
-        healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie").rstrip("s")) for v in items.values()])
-        healed_map = { canonical_key(h["type"], h): minimal_node(h["type"], h) for h in healed }
-        if healed_map != items:
-            items = healed_map
-            _watchlist_shadow_save(items)
-
-    cursors = _cursor_store_load()
-    act_updated = str(acts.get("watchlist.updated_at") or acts.get("watchlist") or acts.get("lists") or "")
-    cursors["watchlist"] = act_updated or (ts_to_iso(int(time.time())) if updated else cursors.get("watchlist"))
-    _cursor_store_save(cursors)
-    return items
-
-def _ratings_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    ttl_min = int(_cfg_get(cfg_root, "ratings.cache.ttl_minutes", 0) or 0)
-    ttl_sec = max(0, ttl_min * 60)
-
-    acts = _activities(cfg_root)
-    cursors = _cursor_store_load()
-    last_cur = str(cursors.get("ratings") or "")
-    act_updated = str(acts.get("ratings.updated_at") or acts.get("ratings") or "")
-
-    shadow = _ratings_shadow_load()
-    items = dict(shadow.get("items") or {})
-    shadow_ts = int(shadow.get("ts") or 0)
-
-    if last_cur and act_updated and iso_to_ts(act_updated) <= iso_to_ts(last_cur): return items
-    now = int(time.time())
-    if ttl_sec > 0 and shadow_ts > 0 and (now - shadow_ts) < ttl_sec and items: return items
-
-    m = _trakt_get(TRAKT_USER_RATINGS_MOVIES, headers=hdr, params={"extended": "full"}, use_etag_key="rt.movies", timeout=45)
-    s = _trakt_get(TRAKT_USER_RATINGS_SHOWS,  headers=hdr, params={"extended": "full"}, use_etag_key="rt.shows",  timeout=45)
-
-    mov, sho = _json_or_empty_list(m), _json_or_empty_list(s)
-    if not ((m is not None and m.status_code == 304) and (s is not None and s.status_code == 304) and items):
-        out: Dict[str, Any] = {}
-        if mov: out.update(_flatten_ratings(mov, "movie"))
-        if sho: out.update(_flatten_ratings(sho, "show"))
-        if out:
-            mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-            healed = mm.reconcile_ids([dict(v, type=(v.get("type") or "movie")) for v in out.values()])
-            items = { canonical_key(h["type"], h): minimal_node(h["type"], h) | ({"rating": out[k].get("rating"), "rated_at": out[k].get("rated_at")} if True else {})
-                      for k, h in zip(out.keys(), healed) }
-            _ratings_shadow_save(items)
-
-    if act_updated:
-        cursors["ratings"] = act_updated
-        _cursor_store_save(cursors)
-    return items
-
-def _history_index(cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    try: _RUN_GET_CACHE.clear()
-    except Exception: pass
-
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    sh = _history_shadow_load()
-    base: Dict[str, Any] = dict(sh.get("items") or {})
-
-    cursors = _cursor_store_load()
-    last_cur = str(cursors.get("history") or "").strip()
-
-    def _fetch_all(url: str, params0: Optional[Dict[str, Any]] = None) -> List[dict]:
-        out: List[dict] = []; page = 1
-        lim = int(_cfg_get(cfg_root, "history.index.page_limit", 1000) or 1000)
-        maxp = int(_cfg_get(cfg_root, "history.index.max_pages", 50) or 50)
-        while True:
-            p = dict(params0 or {}); p["limit"] = lim; p["page"] = page
-            r = _trakt_get(url, headers=hdr, params=p, timeout=45)
-            arr = _json_or_empty_list(r)
-            if not arr: break
-            out.extend(arr)
-            if len(arr) < lim or page >= maxp: break
-            page += 1
-        return out
-
-    params_mov: Dict[str, Any] = {}
-    params_ep: Dict[str, Any] = {}
-    if base and last_cur:
-        params_mov["start_at"] = last_cur
-        params_ep["start_at"]  = last_cur
-
-    mov = _fetch_all(TRAKT_HISTORY_GET_MOV, params_mov)
-    eps = _fetch_all(TRAKT_HISTORY_GET_EP,  params_ep)
-
-    delta: Dict[str, Dict[str, Any]] = {}
-    if mov: delta.update(_flatten_history(mov, "movie"))
-    if eps: delta.update(_flatten_history(eps, "episode"))
-
-    if delta:
-        # Heal ids (episodes heal their show's ids)
-        mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-        rows = []
-        keys = list(delta.keys())
-        for v in delta.values():
-            t = (v.get("type") or "movie").rstrip("s")
-            rows.append(v if t == "movie" else {"type": "show", "title": v.get("title"), "year": v.get("year"), "ids": v.get("ids")})
-        healed = mm.reconcile_ids(rows)
-        for k, h in zip(keys, healed):
-            v = delta[k]; ids = dict(v.get("ids") or {}); ids.update(h.get("ids") or {}); v["ids"] = {kk: vv for kk, vv in ids.items() if vv not in (None, "", [], {})}
-
-        base.update(delta)
-        _history_shadow_save(base)
-
-        try:
-            tmax = 0
-            for v in delta.values():
-                wt = v.get("watched_at")
-                if wt:
-                    t = int(iso_to_ts(wt) or 0)
-                    tmax = max(tmax, t)
-            if tmax > 0:
-                cursors["history"] = ts_to_iso(tmax)
-                _cursor_store_save(cursors)
-        except Exception:
-            pass
-
-    return base
-
-# --- Mutations -----------------------------------------------------------------
-
-def _watchlist_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []
-    for it in items or []:
-        ids = dict(it.get("ids") or {})
-        typ = _plural(it.get("type") or "movie")
-        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]: continue
-        (movies if typ == "movies" else shows).append(entry)
-
-    payload: Dict[str, Any] = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["shows"]  = shows
-    if not payload: return 0
-
-    r = _trakt_post(f"{TRAKT_BASE}/sync/watchlist", headers=hdr, json_payload=payload, timeout=45)
-    if r and r.ok:
-        try:
-            _bust_trakt_watchlist_cache()
-            _bust_run_memo_for(["watchlist_movies", "watchlist_shows", "watchlist_all"])
-        except Exception: pass
-
-        cursors = _cursor_store_load()
-        now_iso = ts_to_iso(int(time.time()))
-        cursors["watchlist"] = now_iso
-        _cursor_store_save(cursors)
-
-        sh = _watchlist_shadow_load()
-        m = dict(sh.get("items") or {})
-        for it in items or []:
-            typ = _plural(it.get("type") or "movie")
-            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ.rstrip("s"), node)
-            m[key] = {"type": typ, "title": node["title"], "year": node["year"], "ids": {k: node["ids"].get(k) for k in _ID_KEYS if node["ids"].get(k)}}
-        _watchlist_shadow_save(m)
-        return sum(len(v) for v in payload.values())
-    return 0
-
-
-def _watchlist_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []
-    for it in items or []:
-        ids = dict(it.get("ids") or {})
-        typ = _plural(it.get("type") or "movie")
-        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]: continue
-        (movies if typ == "movies" else shows).append(entry)
-
-    payload: Dict[str, Any] = {}
-    if movies: payload["movies"] = movies
-    if shows:  payload["shows"]  = shows
-    if not payload: return 0
-
-    r = _trakt_post(f"{TRAKT_BASE}/sync/watchlist/remove", headers=hdr, json_payload=payload, timeout=45)
-    if r and r.ok:
-        try:
-            _bust_trakt_watchlist_cache()
-            _bust_run_memo_for(["watchlist_movies", "watchlist_shows", "watchlist_all"])
-        except Exception: pass
-
-        cursors = _cursor_store_load()
-        cursors["watchlist"] = ts_to_iso(int(time.time()))
-        _cursor_store_save(cursors)
-
-        sh = _watchlist_shadow_load()
-        m = dict(sh.get("items") or {})
-        for it in items or []:
-            typ = _plural(it.get("type") or "movie")
-            node = {"ids": it.get("ids") or {}, "title": it.get("title"), "year": it.get("year")}
-            key = canonical_key(typ.rstrip("s"), node)
-            m.pop(key, None)
-        _watchlist_shadow_save(m)
-        return sum(len(v) for v in payload.values())
-    return 0
-
-
-def _ratings_set(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    batch_size = int(_cfg_get(cfg_root, "ratings.write.batch_size", 200) or 200)
-
-    movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []; ctx: List[Dict[str, Any]] = []
-    for it in items or []:
-        ids = dict(it.get("ids") or {}); rating = it.get("rating")
-        if rating is None: continue
-        entry: Dict[str, Any] = {"rating": int(rating), "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]: continue
-        ra = it.get("rated_at"); typ = _plural(it.get("type") or "movie")
-        if isinstance(ra, str) and ra: entry["rated_at"] = ra
-        node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": entry["ids"], "rating": int(rating), "rated_at": ra if isinstance(ra, str) else None}
-        ctx.append(node)
-        (movies if typ == "movies" else shows).append(entry)
-
-    total = 0
-    if not movies and not shows: return total
-
-    def _post(payload: Dict[str, Any]) -> bool:
-        r = _trakt_post(TRAKT_RATINGS_POST, headers=hdr, json_payload=payload, timeout=45); return bool(r and r.ok)
-
-    sh = _ratings_shadow_load(); shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
-
-    for chunk in _iter_chunks(movies, batch_size):
-        if _post({"movies": chunk}): total += len(chunk)
-        else: continue
-        for entry in chunk:
-            node = next((n for n in ctx if n["ids"] == entry["ids"]), None); 
-            if not node: continue
-            key = canonical_key("movie", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
-            prev_val = None
-            if key in shadow_map and isinstance(shadow_map[key], dict):
-                p = shadow_map[key].get("rating"); prev_val = p if isinstance(p, int) else None
-            new_val = int(node.get("rating")) if isinstance(node.get("rating"), int) else None
-            shadow_map[key] = {"type": "movies", "title": node.get("title"), "year": node.get("year"), "ids": node.get("ids"),
-                               "rating": new_val, "rated_at": node.get("rated_at") or ts_to_iso(int(time.time()))}
-            if prev_val is None and new_val is not None: _emit_rating_event(action="rate", node=shadow_map[key], prev=None, value=new_val)
-            elif prev_val is not None and new_val is not None and prev_val != new_val: _emit_rating_event(action="update", node=shadow_map[key], prev=prev_val, value=new_val)
-            else: _emit_rating_event(action="rate", node=shadow_map[key], prev=prev_val, value=new_val)
-
-    for chunk in _iter_chunks(shows, batch_size):
-        if _post({"shows": chunk}): total += len(chunk)
-        else: continue
-        for entry in chunk:
-            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
-            if not node: continue
-            key = canonical_key("show", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
-            prev_val = None
-            if key in shadow_map and isinstance(shadow_map[key], dict):
-                p = shadow_map[key].get("rating"); prev_val = p if isinstance(p, int) else None
-            new_val = int(node.get("rating")) if isinstance(node.get("rating"), int) else None
-            shadow_map[key] = {"type": "shows", "title": node.get("title"), "year": node.get("year"), "ids": node.get("ids"),
-                               "rating": new_val, "rated_at": node.get("rated_at") or ts_to_iso(int(time.time()))}
-            if prev_val is None and new_val is not None: _emit_rating_event(action="rate", node=shadow_map[key], prev=None, value=new_val)
-            elif prev_val is not None and new_val is not None and prev_val != new_val: _emit_rating_event(action="update", node=shadow_map[key], prev=prev_val, value=new_val)
-            else: _emit_rating_event(action="rate", node=shadow_map[key], prev=prev_val, value=new_val)
-
-    if total > 0:
-        try: _bust_trakt_ratings_cache(); _bust_run_memo_for(["rt.movies", "rt.shows"])
-        except Exception: pass
-        cursors = _cursor_store_load(); cursors["ratings"] = ts_to_iso(int(time.time())); _cursor_store_save(cursors)
-        _ratings_shadow_save(shadow_map)
-    return total
-
-
-def _ratings_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    batch_size = int(_cfg_get(cfg_root, "ratings.write.batch_size", 200) or 200)
-
-    movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []; ctx: List[Dict[str, Any]] = []
-    for it in items or []:
-        ids = dict(it.get("ids") or {}); entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]: continue
-        typ = _plural(it.get("type") or "movie")
-        node = {"type": typ, "title": it.get("title"), "year": it.get("year"), "ids": entry["ids"]}
-        ctx.append(node)
-        (movies if typ == "movies" else shows).append(entry)
-
-    total = 0
-    if not movies and not shows: return total
-
-    def _post(payload: Dict[str, Any]) -> bool:
-        r = _trakt_post(TRAKT_RATINGS_REMOVE, headers=hdr, json_payload=payload, timeout=45); return bool(r and r.ok)
-
-    sh = _ratings_shadow_load(); shadow_map: Dict[str, Any] = dict(sh.get("items") or {})
-
-    for chunk in _iter_chunks(movies, batch_size):
-        if _post({"movies": chunk}): total += len(chunk)
-        else: continue
-        for entry in chunk:
-            node = next((n for n in ctx if n["ids"] == entry["ids"]), None); 
-            if not node: continue
-            key = canonical_key("movie", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
-            prev_val = None
-            if key in shadow_map and isinstance(shadow_map[key], dict):
-                p = shadow_map[key].get("rating"); prev_val = p if isinstance(p, int) else None
-                shadow_map[key].pop("rating", None)
-            _emit_rating_event(action="unrate", node={"type": "movies", "title": node.get("title"), "ids": node.get("ids")}, prev=prev_val, value=None)
-
-    for chunk in _iter_chunks(shows, batch_size):
-        if _post({"shows": chunk}): total += len(chunk)
-        else: continue
-        for entry in chunk:
-            node = next((n for n in ctx if n["ids"] == entry["ids"]), None)
-            if not node: continue
-            key = canonical_key("show", {"ids": node["ids"], "title": node.get("title"), "year": node.get("year")})
-            prev_val = None
-            if key in shadow_map and isinstance(shadow_map[key], dict):
-                p = shadow_map[key].get("rating"); prev_val = p if isinstance(p, int) else None
-                shadow_map[key].pop("rating", None)
-            _emit_rating_event(action="unrate", node={"type": "shows", "title": node.get("title"), "ids": node.get("ids")}, prev=prev_val, value=None)
-
-    if total > 0:
-        try: _bust_trakt_ratings_cache(); _bust_run_memo_for(["rt.movies", "rt.shows"])
-        except Exception: pass
-        cursors = _cursor_store_load(); cursors["ratings"] = ts_to_iso(int(time.time())); _cursor_store_save(cursors)
-        _ratings_shadow_save(shadow_map)
-    return total
-
-def _history_add(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-    now_iso = ts_to_iso(int(time.time()))
-
-    existing = _history_index(cfg_root)
-    existing_keys = set(existing.keys())
-
-    require_ts = bool(_cfg_get(cfg_root, "history.write.require_timestamp", True))
-    batch = int(_cfg_get(cfg_root, "history.write.batch_size", 200) or 200)
-
-    movies: List[Dict[str, Any]] = []
-    episodes: List[Dict[str, Any]] = []
-
-    ctx_nodes: List[Tuple[Dict[str, Any], Optional[str]]] = []
-
-    for it in items or []:
-        ids = dict(it.get("ids") or {})
-        node = {"type": _plural(it.get("type") or "movie"),
-                "title": it.get("title"), "year": it.get("year"),
-                "ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        key = canonical_key(node["type"].rstrip("s"), node)
-        if key in existing_keys:  # already on Trakt index view
-            continue
-
-        wat = it.get("watched_at")
-        if require_ts and not (isinstance(wat, str) and wat.strip()):
-            continue  # don’t invent timestamps
-
-        base_entry = {"ids": dict(node["ids"])}
-        if isinstance(wat, str) and wat.strip():
-            base_entry["watched_at"] = wat
-
-        if node["type"] == "movies":
-            if base_entry["ids"]:
-                movies.append(base_entry); ctx_nodes.append((node, wat))
+                r = request_with_retries(
+                    sess, "GET", f"{base}/sync/last_activities",
+                    timeout=tmo, max_retries=self.cfg.max_retries,
+                )
+                core_code = r.status_code
+                if r.status_code in (401, 403):
+                    core_reason = "unauthorized"
+                elif 200 <= r.status_code < 300:
+                    core_ok = True
+                else:
+                    core_reason = f"http:{r.status_code}"
+                ra = r.headers.get("Retry-After")
+                if ra:
+                    try: retry_after = int(ra)
+                    except Exception: pass
+                rate = parse_rate_limit(r.headers)
+            except Exception as e:
+                core_reason = f"exception:{e.__class__.__name__}"
+
+        # ---- Watchlist read probe (only if enabled AND core_ok)
+        wl_ok = False
+        wl_reason: Optional[str] = None
+        wl_code: Optional[int] = None
+        if need_wl and core_ok:
+            try:
+                r2 = request_with_retries(
+                    sess, "GET", f"{base}/sync/watchlist",
+                    params={"limit": 1, "page": 1},
+                    timeout=tmo, max_retries=self.cfg.max_retries,
+                )
+                wl_code = r2.status_code
+                if 200 <= r2.status_code < 300:
+                    wl_ok = True
+                elif r2.status_code in (401, 403):
+                    wl_reason = "unauthorized"
+                elif r2.status_code == 429:
+                    wl_reason = "rate_limited"
+                    ra2 = r2.headers.get("Retry-After")
+                    if ra2:
+                        try: retry_after = int(ra2)
+                        except Exception: pass
+                else:
+                    wl_reason = f"http:{r2.status_code}"
+            except Exception as e:
+                wl_reason = f"exception:{e.__class__.__name__}"
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        # ---- Feature readiness (reflect only enabled features)
+        features = {
+            "watchlist": (core_ok and wl_ok) if (need_wl and "watchlist" in _FEATURES) else False,
+            "ratings":   (core_ok)           if (enabled.get("ratings")   and "ratings"   in _FEATURES) else False,
+            "history":   (core_ok)           if (enabled.get("history")   and "history"   in _FEATURES) else False,
+            "playlists": (core_ok)           if (enabled.get("playlists") and "playlists" in _FEATURES) else False,
+        }
+
+        checks: List[bool] = []
+        if need_core: checks.append(core_ok)
+        if need_wl:   checks.append(wl_ok)
+
+        core_auth_failed = need_core and (core_code in (401, 403) or core_reason == "unauthorized")
+        wl_auth_failed   = need_wl and (wl_code in (401, 403) or wl_reason == "unauthorized")
+
+        if not checks:
+            status = "ok"  # nothing enabled → OK
+        elif all(checks):
+            status = "ok"
+        elif any(checks):
+            status = "degraded"
         else:
-            if base_entry["ids"]:
-                episodes.append(base_entry); ctx_nodes.append((node, wat))
+            status = "auth_failed" if (core_auth_failed or wl_auth_failed) else "down"
 
-    if not movies and not episodes:
-        return 0
+        ok = status in ("ok", "degraded")
 
-    def _added_count(r: Optional[requests.Response]) -> int:
-        if not r or not getattr(r, "ok", False): return 0
-        try: j = r.json() or {}
-        except Exception: return 0
-        add = j.get("added") or {}
-        return int(add.get("movies") or 0) + int(add.get("episodes") or 0) + int(add.get("shows") or 0)
+        # Reasons / details
+        details: Dict[str, Any] = {}
+        disabled = [k for k, v in enabled.items() if not v]
+        if disabled:
+            details["disabled"] = disabled
 
-    sent_total = 0
-    last_resp_json: Any = None
+        reasons = []
+        if need_core and not core_ok:
+            reasons.append(f"core:{core_reason or 'down'}")
+        if need_wl and not wl_ok:
+            reasons.append(f"watchlist:{wl_reason or 'down'}")
+        if reasons:
+            details["reason"] = "; ".join(reasons)
+        if retry_after is not None:
+            details["retry_after_s"] = retry_after
 
-    for chunk in _iter_chunks(movies, batch):
-        r = _trakt_post(TRAKT_HISTORY_BASE, headers=hdr, json_payload={"movies": chunk}, timeout=45)
-        sent_total += _added_count(r);  last_resp_json = (r.json() if r and r.ok else None)
-    for chunk in _iter_chunks(episodes, batch):
-        r = _trakt_post(TRAKT_HISTORY_BASE, headers=hdr, json_payload={"episodes": chunk}, timeout=45)
-        sent_total += _added_count(r);  last_resp_json = (r.json() if r and r.ok else None)
+        api = {
+            "last_activities": {
+                "status": (core_code if need_core else None),
+                "retry_after": (retry_after if need_core else None),
+                "rate": rate if need_core else {"limit": None, "remaining": None, "reset": None},
+            },
+            "watchlist": {
+                "status": (wl_code if need_wl else None),
+                "retry_after": (retry_after if need_wl else None),
+            },
+        }
 
-    # Always persist last post & response for debugging
-    try:
-        _write_json(_state_root() / "trakt_last_post.json",
-                    {"ts": now_iso,
-                     "movies": len(movies), "episodes": len(episodes),
-                     "added_total": int(sent_total),
-                     "sample_node": (ctx_nodes[0][0] if ctx_nodes else None),
-                     "last_response": last_resp_json})
-    except Exception:
-        pass
+        _log(f"health status={status} ok={ok} latency_ms={latency_ms} reasons={details.get('reason')}")
+        return {
+            "ok": ok,
+            "status": status,
+            "latency_ms": latency_ms,
+            "features": features,
+            "details": details or None,
+            "api": api,
+        }
 
-    if sent_total > 0:
-        # advance cursor to max intended watched_at (fallback now)
+    # dispatch
+    def feature_names(self) -> Tuple[str, ...]:
+        return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
+
+    def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            return {}
+        mod = _FEATURES.get(feature)
+        return mod.build_index(self, **kwargs) if mod else {}
+
+    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+        lst = list(items)
+        if not lst: return {"ok": True, "count": 0}
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"add skipped: feature disabled or missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
         try:
-            tmax = 0
-            for _n, wat in ctx_nodes:
-                if isinstance(wat, str) and wat.strip():
-                    t = int(iso_to_ts(wat) or 0)
-                    tmax = max(tmax, t)
-            new_cur = ts_to_iso(tmax) if tmax > 0 else now_iso
-        except Exception:
-            new_cur = now_iso
+            cnt, unresolved = mod.add(self, lst)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
-        curs = _cursor_store_load()
-        curs["history"] = new_cur
-        _cursor_store_save(curs)
-
-        # best-effort shadow update for destination view
-        sh = _history_shadow_load(); m: Dict[str, Any] = dict(sh.get("items") or {})
-        def _put(n: Mapping[str, Any], wat: Optional[str]) -> None:
-            k = canonical_key(n["type"].rstrip("s"), n)
-            m[k] = {**n, "watched": True, "watched_at": (wat if (isinstance(wat, str) and wat.strip()) else new_cur)}
-        for n, wat in ctx_nodes: _put(n, wat)
-        _history_shadow_save(m)
-
-        # ensure next reads don't reuse stale GET responses
+    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+        lst = list(items)
+        if not lst: return {"ok": True, "count": 0}
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"remove skipped: feature disabled or missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
         try:
-            _RUN_GET_CACHE.clear()
-        except Exception:
-            pass
+            cnt, unresolved = mod.remove(self, lst)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
-    return int(sent_total)
-
-def _history_remove(cfg_root: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> int:
-    trakt_cfg = dict(cfg_root.get("trakt") or cfg_root.get("TRAKT") or {})
-    hdr = trakt_headers(trakt_cfg)
-
-    movies, episodes = [], []
-    for it in items or []:
-        ids = dict(it.get("ids") or {})
-        entry = {"ids": {k: ids.get(k) for k in _ID_KEYS if ids.get(k)}}
-        if not entry["ids"]: continue
-        (_ := _plural(it.get("type") or "movie"))
-        (movies if _ == "movies" else episodes).append(entry)
-
-    if not movies and not episodes: return 0
-
-    batch = int(_cfg_get(cfg_root, "history.remove.batch_size", 400) or 400)
-    removed = 0; ok_once = False
-
-    for chunk in _iter_chunks(movies, batch):
-        r = _trakt_post(TRAKT_HISTORY_REMOVE, headers=hdr, json_payload={"movies": chunk}, timeout=45)
-        if r and r.ok: removed += len(chunk); ok_once = True
-    for chunk in _iter_chunks(episodes, batch):
-        r = _trakt_post(TRAKT_HISTORY_REMOVE, headers=hdr, json_payload={"episodes": chunk}, timeout=45)
-        if r and r.ok: removed += len(chunk); ok_once = True
-
-    if ok_once:
-        cursors = _cursor_store_load(); cursors["history"] = ts_to_iso(int(time.time())); _cursor_store_save(cursors)
-        sh = _history_shadow_load(); m: Dict[str, Any] = dict(sh.get("items") or {})
-        for it in items or []:
-            node = {"type": _plural(it.get("type") or "movie"), "title": it.get("title"), "year": it.get("year"),
-                    "ids": {k: (it.get("ids") or {}).get(k) for k in _ID_KEYS if (it.get("ids") or {}).get(k)}}
-            k = canonical_key(node["type"].rstrip("s"), node); m.pop(k, None)
-        _history_shadow_save(m)
-    return removed
-
-# --- OPS adapter ---------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# orchestrator bridge
 
 class _TraktOPS:
     def name(self) -> str: return "TRAKT"
     def label(self) -> str: return "Trakt"
-    def features(self) -> Mapping[str, bool]: return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+    def features(self) -> Mapping[str, bool]:
+        return TRAKTModule.supported_features()
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
-            "provides_ids": False,
-            "ratings": {"types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "unrate": True, "from_date": False},
+            "provides_ids": True,
+            "index_semantics": "present",
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True, "unrate": True, "from_date": False
+            },
         }
 
+    def _adapter(self, cfg: Mapping[str, Any]) -> TRAKTModule:
+        return TRAKTModule(cfg)
+
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
-        if feature == "watchlist":
-            res = _watchlist_index(cfg)
-            try:
-                if (cfg.get("runtime") or {}).get("debug"):
-                    host_log("TRAKT.calls", {"feature": "watchlist", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
-            except Exception: pass
-            return res
-        if feature == "ratings":
-            res = _ratings_index(cfg)
-            try:
-                if (cfg.get("runtime") or {}).get("debug"):
-                    host_log("TRAKT.calls", {"feature": "ratings", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
-            except Exception: pass
-            return res
-        if feature == "history":
-            res = _history_index(cfg)
-            try:
-                if (cfg.get("runtime") or {}).get("debug"):
-                    host_log("TRAKT.calls", {"feature": "history", "GET": _CALLS.get("GET", 0), "POST": _CALLS.get("POST", 0)})
-            except Exception: pass
-            return res
-        return {}
+        return self._adapter(cfg).build_index(feature)
 
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
-        if feature == "watchlist":
-            if dry_run:
-                movies = shows = 0
-                for it in items or []:
-                    typ = _plural(it.get("type") or "movie")
-                    if typ == "movies": movies += 1
-                    elif typ == "shows": shows += 1
-                return {"ok": True, "count": movies + shows, "dry_run": True}
-            return {"ok": True, "count": int(_watchlist_add(cfg, items))}
-        if feature == "ratings":
-            if dry_run:
-                payload = 0
-                for it in items or []:
-                    if it.get("rating") is not None and _plural(it.get("type") or "movie") in ("movies", "shows"):
-                        payload += 1
-                return {"ok": True, "count": payload, "dry_run": True}
-            return {"ok": True, "count": int(_ratings_set(cfg, items))}
-        if feature == "history":
-            if dry_run:
-                movies = episodes = 0
-                for it in items or []:
-                    if _plural(it.get("type") or "movie") == "movies": movies += 1
-                    else: episodes += 1
-                return {"ok": True, "count": movies + episodes, "dry_run": True}
-            return {"ok": True, "count": int(_history_add(cfg, items))}
-        return {"ok": True, "count": 0}
+        return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
-        if feature == "watchlist":
-            if dry_run:
-                movies = shows = 0
-                for it in items or []:
-                    typ = _plural(it.get("type") or "movie")
-                    if typ == "movies": movies += 1
-                    elif typ == "shows": shows += 1
-                return {"ok": True, "count": movies + shows, "dry_run": True}
-            return {"ok": True, "count": int(_watchlist_remove(cfg, items))}
-        if feature == "ratings":
-            if dry_run:
-                movies = shows = 0
-                for it in items or []:
-                    typ = _plural(it.get("type") or "movie")
-                    if typ == "movies": movies += 1
-                    elif typ == "shows": shows += 1
-                return {"ok": True, "count": movies + shows, "dry_run": True}
-            return {"ok": True, "count": int(_ratings_remove(cfg, items))}
-        if feature == "history":
-            if dry_run:
-                movies = episodes = 0
-                for it in items or []:
-                    if _plural(it.get("type") or "movie") == "movies": movies += 1
-                    else: episodes += 1
-                return {"ok": True, "count": movies + episodes, "dry_run": True}
-            return {"ok": True, "count": int(_history_remove(cfg, items))}
-        return {"ok": True, "count": 0}
+        return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
-OPS: InventoryOps = _TraktOPS()
+    def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
+        return self._adapter(cfg).health()
 
-# --- Module manifest -----------------------------------------------------------
-
-try:
-    from providers.sync._base import SyncModule, ModuleInfo, ModuleCapabilities  # type: ignore
-except Exception:  # pragma: no cover
-    class SyncModule: ...
-    @dataclass
-    class ModuleCapabilities:
-        supports_dry_run: bool = True
-        supports_cancel: bool = True
-        supports_timeout: bool = True
-        status_stream: bool = True
-        bidirectional: bool = True
-        config_schema: dict | None = None
-    @dataclass
-    class ModuleInfo:
-        name: str
-        version: str
-        description: str
-        vendor: str
-        capabilities: ModuleCapabilities
-
-class TRAKTModule(SyncModule):
-    info = ModuleInfo(
-        name="TRAKT",
-        version=__VERSION__,
-        description="Trakt connector with activities/ETag/TTL guards, shadows for watchlist/ratings/history, batch writes, and rating events under /config.",
-        vendor="community",
-        capabilities=ModuleCapabilities(
-            supports_dry_run=True,
-            supports_cancel=True,
-            supports_timeout=True,
-            status_stream=True,
-            bidirectional=True,
-            config_schema={
-                "type": "object",
-                "properties": {
-                    "trakt": {
-                        "type": "object",
-                        "properties": {
-                            "client_id": {"type": "string", "minLength": 1},
-                            "access_token": {"type": "string", "minLength": 1},
-                        },
-                        "required": ["client_id", "access_token"],
-                    },
-                    "ratings": {
-                        "type": "object",
-                        "properties": {
-                            "cache": {"type": "object", "properties": {"ttl_minutes": {"type": "integer", "minimum": 0}}},
-                            "write": {"type": "object", "properties": {"batch_size": {"type": "integer", "minimum": 1}}},
-                        },
-                    },
-                    "history": {
-                        "type": "object",
-                        "properties": {
-                            "write": {"type": "object", "properties": {"batch_size": {"type": "integer", "minimum": 1}}},
-                            "remove": {"type": "object", "properties": {"batch_size": {"type": "integer", "minimum": 1}}},
-                        },
-                    },
-                    "runtime": {"type": "object", "properties": {"debug": {"type": "boolean"}}},
-                },
-                "required": ["trakt"],
-            },
-        ),
-    )
-    @staticmethod
-    def supported_features() -> dict:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
-
-def get_manifest() -> dict:
-    return {
-        "name": TRAKTModule.info.name,
-        "label": "Trakt",
-        "features": TRAKTModule.supported_features(),
-        "capabilities": {"bidirectional": True},
-        "version": TRAKTModule.info.version,
-        "vendor": TRAKTModule.info.vendor,
-        "description": TRAKTModule.info.description,
-    }
+OPS = _TraktOPS()

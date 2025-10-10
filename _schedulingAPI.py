@@ -1,18 +1,19 @@
 # _schedulingAPI.py
 from fastapi import APIRouter, Body
+
 from typing import Dict, Any
 import time
 
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
 
 def _env():
-    # lazy to avoid cycles; fast on hot path
+    # import here to avoid circular imports
     from cw_platform.config_base import load_config, save_config
     from crosswatch import scheduler, _SCHED_HINT, _compute_next_run_from_cfg, _UIHostLogger
     return load_config, save_config, scheduler, _SCHED_HINT, _compute_next_run_from_cfg, _UIHostLogger
 
 @router.post("/replan_now")
-def replan_now() -> Dict[str, Any]:
+def replan_now():
     load_config, _, scheduler, HINT, compute_next, log = _env()
     cfg = load_config(); scfg = (cfg.get("scheduling") or {})
     nxt = int(compute_next(scfg))
@@ -26,10 +27,13 @@ def replan_now() -> Dict[str, Any]:
         try: log("SYNC","SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
         except Exception: pass
     try:
-        st = scheduler.status(); st["config"] = scfg; st["next_run_at"] = HINT.get("next_run_at", nxt)
+        st = scheduler.status(); st["config"] = scfg
+        if not int(st.get("next_run_at") or 0):
+            st["next_run_at"] = HINT.get("next_run_at", nxt)  # fallback only
     except Exception:
         st = {"next_run_at": nxt, "config": scfg}
     return {"ok": True, **st}
+
 
 @router.get("")
 def sched_get():
@@ -52,20 +56,26 @@ def sched_post(payload: dict = Body(...)):
         else:
             if hasattr(scheduler, "stop"): scheduler.stop()
         st = scheduler.status(); st["config"] = cfg.get("scheduling") or {}
-        if HINT.get("next_run_at"): st["next_run_at"] = int(HINT["next_run_at"])
+        return {"ok": True, "next_run_at": int(st.get("next_run_at") or nxt)}
     except Exception:
-        st = {"next_run_at": int(nxt) if nxt else 0, "config": cfg.get("scheduling") or {}}
-    return {"ok": True, "next_run_at": st.get("next_run_at", int(nxt) if nxt else 0)}
+        return {"ok": True, "next_run_at": int(nxt) if nxt else 0}
+
 
 @router.get("/status")
 def sched_status():
     load_config, _, scheduler, HINT, *_ = _env()
-    try: st = scheduler.status()
-    except Exception: st = {}
+    try:
+        st = scheduler.status()
+    except Exception:
+        st = {}
     try:
         st["config"] = (load_config().get("scheduling") or {})
-        if HINT.get("next_run_at"): st["next_run_at"] = int(HINT["next_run_at"])
-    except Exception: pass
+        live = int(st.get("next_run_at") or 0)
+        hint = int((HINT.get("next_run_at") or 0))
+        if not live and hint:
+            st["next_run_at"] = hint   # fallback only
+    except Exception:
+        pass
     return st
 
 # tiny helper

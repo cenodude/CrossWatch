@@ -10,7 +10,7 @@ OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
 VERIFY_URL = "https://trakt.tv/activate"
 
-__VERSION__ = "1.0.1"
+__VERSION__ = "1.0.0"
 
 
 # in providers/auth/_auth_TRAKT.py
@@ -20,7 +20,6 @@ _H = {
     "Accept": "application/json",
     "Content-Type": "application/json",
     "trakt-api-version": "2",
-    # we'll add the client id per-call
 }
 
 def _post(url: str, json_payload: dict, client_id: str, timeout=20):
@@ -30,7 +29,6 @@ def _post(url: str, json_payload: dict, client_id: str, timeout=20):
     except Exception as e:
         return {"ok": False, "error": "network_error", "detail": str(e)}
     if not r.ok:
-        # bubble up status + body so UI shows it
         text = ""
         try: text = r.text[:500]
         except Exception: pass
@@ -169,8 +167,6 @@ class _TraktProvider:
         if not cid:
             return {"ok": False, "error": "missing_client_id"}
 
-        # Trakt docs: for OAuth endpoints you MUST send trakt-api-version: 2
-        # and JSON body with client_id. Do NOT send trakt-api-key here.
         headers_primary = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -185,12 +181,7 @@ class _TraktProvider:
             except requests.RequestException as e:
                 return None, 0, str(e), {}
 
-        # Try exactly per spec
         r, status, text, hdrs = _call(headers_primary)
-
-        # Some edge WAFs behave differently if you also pass the api-key header.
-        # If the first attempt was 403/401, try once more WITHOUT any extra headers beyond the spec (already done).
-        # (Kept here for clarity—no second call needed unless you want to experiment with different headers.)
 
         if status != 200 or not r:
             return {
@@ -272,8 +263,6 @@ class _TraktProvider:
             tr.pop("_pending_device", None)
         except Exception:
             pass
-
-        # opruimen oude locatie als die bestaat
         try:
             ((cfg.get("auth") or {}).get("trakt") or {}).clear()
         except Exception:
@@ -321,7 +310,6 @@ class _TraktProvider:
         if isinstance(tr, dict):
             for k in ("access_token","refresh_token","scope","token_type","expires_at","_pending_device"):
                 tr.pop(k, None)
-        # ook oude locatie opschonen
         try:
             ((cfg.get("auth") or {}).get("trakt") or {}).clear()
         except Exception:

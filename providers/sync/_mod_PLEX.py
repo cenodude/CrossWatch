@@ -1,1236 +1,570 @@
+# /providers/sync/_mod_PLEX.py
+# Plex adapter: manifest + client + shared utils + feature registry + wrapper
+
 from __future__ import annotations
-# providers/sync/_mod_PLEX.py
-# Plex provider (watchlist, ratings, history, playlists) via PlexAPI only.
+__VERSION__ = "2.0.0"
+__all__ = ["get_manifest","PLEXModule","PLEXClient","PLEXError","PLEXAuthError","PLEXNotFound","OPS"]
 
-__VERSION__ = "2.2.2"
-__all__ = ["OPS", "PLEXModule", "get_manifest"]
-
-import os, re, json, time
-from pathlib import Path
+# stdlib
+import os, time, json
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, cast
-import datetime as _dt
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+# deps
 try:
-    from cw_platform.metadata import MetadataManager
-except Exception:  # flat runs / tests
-    from metadata import MetadataManager  # type: ignore
+    from plexapi.myplex import MyPlexAccount
+    from plexapi.server import PlexServer
+except Exception as e:
+    raise RuntimeError("plexapi is required for _mod_PLEX") from e
 
-# --- optional host hooks ------------------------------------------------------
+from .plex._common import configure_plex_context
+
+# ids (minimal fallback use)
 try:
-    from _logging import log as host_log
+    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 except Exception:
-    def host_log(*a, **k): pass  # type: ignore
+    from _id_map import canonical_key, minimal as id_minimal, ids_from_guid  # type: ignore
+
+# shared plex helpers + features
+from .plex._common import (
+    normalize as plex_normalize,
+    key_of as plex_key_of,
+    plex_headers,
+    DISCOVER,
+)
 try:
-    from _statistics import Stats  # type: ignore
-    _stats = Stats()
+    from .plex import _watchlist as feat_watchlist
+except Exception as e:
+    feat_watchlist = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX] failed to import watchlist: {e}")
+
+try:
+    from .plex import _history as feat_history
+except Exception as e:
+    feat_history = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX] failed to import history: {e}")
+
+try:
+    from .plex import _ratings as feat_ratings
+except Exception as e:
+    feat_ratings = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX] failed to import ratings: {e}")
+
+try:
+    from .plex import _playlists as feat_playlists
+except Exception as e:
+    feat_playlists = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX] failed to import playlists: {e}")
+
+# new utils (centralized user/server resolve + persistence)
+from .plex._utils import (
+    resolve_user_scope,
+    patch_history_with_account_id,
+    discover_server_url_from_server,
+    persist_user_scope_if_empty,
+    persist_server_url_if_empty,
+)
+
+# instrumentation + progress
+from ._mod_common import (
+    build_session,
+    request_with_retries,
+    parse_rate_limit,
+    label_plex,
+    make_snapshot_progress,   # ← progress factory (human-friendly ticks)
+)
+
+# orchestrator ctx (fallback if not injected)
+try:  # type: ignore[name-defined]
+    ctx  # type: ignore
 except Exception:
-    _stats = None
+    ctx = None  # type: ignore
 
-# --- PlexAPI (hard requirement) ----------------------------------------------
-try:
-    import plexapi  # type: ignore
-    from plexapi.myplex import MyPlexAccount  # type: ignore
-    HAS_PLEXAPI = True
-except Exception:  # pragma: no cover
-    HAS_PLEXAPI = False
-    MyPlexAccount = object  # type: ignore
+CONFIG_PATH = "/config/config.json"
 
-PROGRESS_EVERY = 50
-THROTTLE_EVERY = 200
+# ──────────────────────────────────────────────────────────────────────────────
+# errors
 
-# --- small state helpers ------------------------------------------------------
-def _base_config_dir() -> Path:
-    env = os.environ.get("CW_STATE_DIR")
-    if env: return Path(env).resolve()
-    try:
-        from cw_platform.config_base import CONFIG as CONFIG_DIR  # type: ignore
-        return Path(CONFIG_DIR)
-    except Exception:
-        return Path(".").resolve()
+class PLEXError(RuntimeError): pass
+class PLEXAuthError(PLEXError): pass
+class PLEXNotFound(PLEXError): pass
 
-def _state_root() -> Path:
-    p = _base_config_dir() / ".cw_state"
-    try: p.mkdir(parents=True, exist_ok=True)
-    except Exception: pass
-    return p
+def _log(msg: str):
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX] {msg}")
 
-def _read_json(path: Path, fallback: Any) -> Any:
-    try: return json.loads(path.read_text("utf-8"))
-    except Exception: return fallback
+# ──────────────────────────────────────────────────────────────────────────────
+# manifest
 
-def _write_json(path: Path, data: Any) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-        os.replace(tmp, path)
-    except Exception:
-        pass
-
-# snapshots (ratings/history) kept normalized on read/write
-def _ratings_shadow_path() -> Path:  return _state_root() / "plex_ratings.shadow.json"
-def _history_shadow_path() -> Path:  return _state_root() / "plex_history.shadow.json"
-def _ratings_shadow_load() -> Dict[str, Any]: return _read_json(_ratings_shadow_path(), {"items": {}, "ts": 0})
-def _ratings_shadow_save(items: Mapping[str, Any]) -> None: _write_json(_ratings_shadow_path(), {"items": dict(items), "ts": int(time.time())})
-def _history_shadow_load() -> Dict[str, Any]: return _read_json(_history_shadow_path(), {"items": {}, "ts": 0})
-def _history_shadow_save(items: Mapping[str, Any]) -> None: _write_json(_history_shadow_path(), {"items": dict(items), "ts": int(time.time())})
-
-# cursors (for fingerprints)
-_CUR_FILE = "plex_cursors.json"
-def _cursors_path() -> Path: return _state_root() / _CUR_FILE
-def _cursor_key(scope: str) -> str: return f"plex__{scope}.json"
-def _cursor_save(scope: str, data: Mapping[str, Any]) -> None:
-    entry = dict(data); entry.setdefault("updated_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    cur = _read_json(_cursors_path(), {})
-    if not isinstance(cur, dict): cur = {}
-    cur[_cursor_key(scope)] = entry
-    _write_json(_cursors_path(), cur)
-def _cursor_load(scope: str) -> Dict[str, Any]:
-    cur = _read_json(_cursors_path(), {})
-    return (cur or {}).get(_cursor_key(scope)) or {}
-
-# unresolved/backoff store (per spec)
-def _unresolved_path() -> Path: return _state_root() / "plex_unresolved.shadow.json"
-def _unresolved_defaults() -> Dict[str, Any]:
-    return {"policy": "backoff", "base_hours": 6, "max_days": 30, "max_retries": 8, "ttl_days": 90}
-def _unresolved_load() -> Dict[str, Any]:
-    obj = _read_json(_unresolved_path(), {"items": {}, "ts": 0})
-    if not isinstance(obj, dict): obj = {"items": {}, "ts": 0}
-    obj.setdefault("items", {}); obj.setdefault("ts", 0)
-    return obj
-def _unresolved_save(items: Mapping[str, Any]) -> None:
-    _write_json(_unresolved_path(), {"items": dict(items), "ts": int(time.time())})
-
-# --- canonical & normalization -------------------------------------------------
-_ID_ORDER = ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid")
-
-def _norm_type(t: Any) -> str:
-    x = (str(t or "")).strip().lower()
-    if x in ("movies", "movie"): return "movie"
-    if x in ("shows", "show", "series"): return "show"
-    if x in ("seasons", "season"): return "season"
-    if x in ("episodes", "episode"): return "episode"
-    return x or "movie"
-
-def _to_utc(dt_obj: Any) -> Optional[str]:
-    """Return ISO8601 UTC '...Z'. Accepts datetime or epoch."""
-    try:
-        if isinstance(dt_obj, _dt.datetime):
-            # If tz-aware, trust it; if naive, assume local time.
-            if dt_obj.tzinfo and dt_obj.tzinfo.utcoffset(dt_obj) is not None:
-                ts = dt_obj.timestamp()
-            else:
-                ts = time.mktime(dt_obj.timetuple())
-            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
-        if isinstance(dt_obj, (int, float)):
-            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(dt_obj)))
-    except Exception:
-        pass
-    return None
-
-def _clamp_ts(ts: Any) -> Any:
-    if not isinstance(ts, str) or not ts: return ts
-    s = ts.strip()
-    for sep in ("+", "-"):
-        if sep in s[19:]: s = s[:s.find(sep)]; break
-    if s.endswith("Z"): s = s[:-1]
-    s = s.split(".", 1)[0]
-    if len(s) >= 19: s = s[:19]
-    return s + "Z"
-
-def _norm_ids(ids: Any) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    if isinstance(ids, Mapping):
-        for k in ("imdb", "tmdb", "tvdb", "trakt"):
-            v = ids.get(k)
-            if v is not None and str(v).strip():
-                out[k] = v if k not in ("tmdb","tvdb") else int(v)
-    return out
-
-def _norm_row(row: Mapping[str, Any]) -> Dict[str, Any]:
-    r = dict(row or {})
-    r["type"] = _norm_type(r.get("type"))
-    r["ids"]  = _norm_ids(r.get("ids") or {})
-    if "watched_at" in r: r["watched_at"] = _clamp_ts(r.get("watched_at"))
-    if "rated_at"   in r: r["rated_at"]   = _clamp_ts(r.get("rated_at"))
-    return r
-
-def _normalize_shadow_items(items: Mapping[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for _, v in (items or {}).items():
-        nr = _norm_row(v)
-        out[canonical_key(nr)] = nr
-    return out
-
-def _singular(t: str) -> str:
-    x = (t or "").lower()
-    if x.startswith("movie"): return "movie"
-    if x.startswith("show"): return "show"
-    if x.startswith("season"): return "season"
-    if x.startswith("episode"): return "episode"
-    return "movie"
-
-def canonical_key(item: Mapping[str, Any]) -> str:
-    ids = dict((item.get("ids") or {}))
-    for k in _ID_ORDER:
-        v = ids.get(k)
-        if v is not None and str(v) != "":
-            return f"{k}:{v}".lower()
-    title = (item.get("title") or "").strip().lower()
-    year  = item.get("year") or ""
-    typ   = _singular(item.get("type") or "")
-    return f"{typ}|title:{title}|year:{year}"
-
-def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
-    return {"ids": {k: (item.get("ids") or {}).get(k) for k in _ID_ORDER if (item.get("ids") or {}).get(k)},
-            "title": item.get("title"), "year": item.get("year"), "type": _singular(item.get("type") or "") or None}
-
-# --- config helpers ------------------------------------------------------------
-def _cfg_unresolved(cfg_root: Mapping[str, Any]) -> Dict[str, Any]:
-    pr = dict(cfg_root.get("plex") or {})
-    un = dict(pr.get("unresolved") or {})
-    d = _unresolved_defaults()
+def get_manifest() -> Mapping[str, Any]:
     return {
-        "policy": (un.get("policy") or d["policy"]).lower(),
-        "base_hours": int(un.get("base_hours") or d["base_hours"]),
-        "max_days": int(un.get("max_days") or d["max_days"]),
-        "max_retries": int(un.get("max_retries") or d["max_retries"]),
-        "ttl_days": int(un.get("ttl_days") or d["ttl_days"]),
+        "name": "PLEX",
+        "label": "Plex",
+        "version": __VERSION__,
+        "type": "sync",
+        "bidirectional": True,
+        "features": {  # wired via providers/sync/plex/*
+            "watchlist": True,
+            "history":   True,
+            "ratings":   True,
+            "playlists": False,
+        },
+        "requires": ["plexapi"],
+        "capabilities": {
+            "bidirectional": True,
+            "provides_ids": True,
+            "index_semantics": "present",
+            "watchlist": {"writes": "discover_first", "pms_fallback": True},
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True, "unrate": True, "from_date": False
+            },
+        },
     }
 
-def _cfg_token(cfg_root: Mapping[str, Any]) -> str:
-    plex_cfg = dict(cfg_root.get("plex") or {})
-    token = (plex_cfg.get("account_token") or "").strip()
-    if not token: raise ValueError("plex.account_token is required")
-    return token
+# ──────────────────────────────────────────────────────────────────────────────
+# config + client
 
-# --- PlexAPI env ---------------------------------------------------------------
 @dataclass
-class PlexEnv:
-    account: MyPlexAccount
-    servers: List[Any]  # plexapi.server.PlexServer
+class PLEXConfig:
+    token: Optional[str] = None
+    baseurl: Optional[str] = None          # alias 'server_url' supported
+    client_id: Optional[str] = None
+    server_name: Optional[str] = None
+    machine_id: Optional[str] = None
+    username: Optional[str] = None         # preferred user (global PMS scope)
+    account_id: Optional[int] = None       # server-scoped Plex Home account id
+    password: Optional[str] = None
+    timeout: float = 10.0
+    max_retries: int = 3
+    watchlist_allow_pms_fallback: bool = True
 
-def _ensure_account(cfg_root: Mapping[str, Any]) -> MyPlexAccount:
-    if not HAS_PLEXAPI: raise RuntimeError("plexapi is required")
-    return MyPlexAccount(token=_cfg_token(cfg_root))  # type: ignore
+class PLEXClient:
+    """
+    Thin wrapper around PlexServer + MyPlexAccount.
+    - Single instrumented Session for all HTTP.
+    - User scoping: prefer cfg.username, else owner. account_id resolved via utils.
+    - History is transparently filtered by accountID via a patched srv.history().
+    """
+    def __init__(self, cfg: PLEXConfig):
+        self.cfg = cfg
+        self.server: Optional[PlexServer] = None
+        self._account: Optional[MyPlexAccount] = None
+        self.session = build_session("PLEX", ctx, feature_label=label_plex)
+        self.user_username: Optional[str] = None      # chosen Plex user (Home profile or owner)
+        self.user_account_id: Optional[int] = None    # server-local accountID (critical for history)
 
-def _section_filters(plex_cfg: Mapping[str, Any]) -> Tuple[set, set]:
-    sec_cfg = dict(plex_cfg.get("servers", {}).get("sections") or {})
-    def _norm(v: Any) -> str: return str(v).strip().lower()
-    include = {_norm(v) for v in (sec_cfg.get("include") or []) if str(v).strip()}
-    exclude = {_norm(v) for v in (sec_cfg.get("exclude") or []) if str(v).strip()}
-    return include, exclude
-
-def _connect_servers(acct: MyPlexAccount, plex_cfg: Mapping[str, Any]) -> List[Any]:
-    wanted_ids: List[str] = list(plex_cfg.get("servers", {}).get("machine_ids") or [])
-    servers: List[Any] = []
-    for res in acct.resources():
-        if "server" not in (res.provides or ""): continue
-        if wanted_ids and res.clientIdentifier not in wanted_ids: continue
-        try: servers.append(res.connect(timeout=6))
-        except Exception: continue
-    if not servers:
-        for res in acct.resources():
-            if "server" in (res.provides or ""):
-                try: servers.append(res.connect(timeout=6)); break
-                except Exception: continue
-    return servers
-
-def _env_from_config(cfg_root: Mapping[str, Any]) -> PlexEnv:
-    plex_cfg = dict(cfg_root.get("plex") or {})
-    acct = _ensure_account(cfg_root)
-    servers = _connect_servers(acct, plex_cfg)
-    if not servers: raise RuntimeError("No reachable Plex server via PlexAPI")
-    return PlexEnv(account=acct, servers=servers)
-
-# --- id extraction / resolution -----------------------------------------------
-_PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
-_PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
-_PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|tvdb)://(\d+)", re.I)
-
-# in _ids_from_plexobj(obj) — keep current extraction, but also return 'guid'
-def _ids_from_plexobj(obj: Any) -> Dict[str, Any]:
-    ids: Dict[str, Any] = {}
-    try:
-        for g in (getattr(obj, "guids", []) or []):
-            gid = getattr(g, "id", None)
-            if not isinstance(gid, str):
-                continue
-            # existing imdb/tmdb/tvdb parsing...
-            if "imdb" in gid and "imdb" not in ids:
-                m = _PAT_IMDB.search(gid);  ids["imdb"] = m.group(1) if m else ids.get("imdb")
-            if "tmdb" in gid and "tmdb" not in ids:
-                m = _PAT_TMDB.search(gid);  ids["tmdb"] = int(m.group(1)) if m else ids.get("tmdb")
-            if "thetvdb" in gid and "tvdb" not in ids:
-                m = _PAT_TVDB.search(gid);  ids["tvdb"] = int(m.group(1)) if m else ids.get("tvdb")
-        # keep the raw canonical guid too
-        if getattr(obj, "guid", None) and "guid" not in ids:
-            ids["guid"] = str(getattr(obj, "guid"))
-    except Exception:
-        pass
-
-    # also try single guid (legacy)
-    try:
-        gsingle = getattr(obj, "guid", None)
-        if isinstance(gsingle, str):
-            if "imdb" in gsingle and "imdb" not in ids:
-                m = _PAT_IMDB.search(gsingle);  ids["imdb"] = m.group(1) if m else ids.get("imdb")
-            if "tmdb" in gsingle and "tmdb" not in ids:
-                m = _PAT_TMDB.search(gsingle);  ids["tmdb"] = int(m.group(1)) if m else ids.get("tmdb")
-            if "thetvdb" in gsingle and "tvdb" not in ids:
-                m = _PAT_TVDB.search(gsingle);  ids["tvdb"] = int(m.group(1)) if m else ids.get("tvdb")
-            ids.setdefault("guid", gsingle)
-    except Exception:
-        pass
-
-    return {k: v for k, v in ids.items() if v is not None}
-
-
-def _libtype_from_item(item: Mapping[str, Any]) -> str:
-    t = (item.get("type") or "").lower()
-    if t in ("movie","movies"): return "movie"
-    if t in ("show","shows"): return "show"
-    if t in ("season","seasons"): return "season"
-    if t in ("episode","episodes"): return "episode"
-    return "movie"
-
-def _server_find_item(server: Any, q: Mapping[str, Any], libtype: str) -> Optional[Any]:
-    ids = (q.get("ids") or q) or {}
-    for key in ("imdb", "tmdb", "tvdb"):
-        val = ids.get(key)
-        if not val: continue
-        variants = [f"{key}://{val}"]
-        if key == "imdb": variants.append(f"com.plexapp.agents.imdb://{val}")
-        elif key == "tmdb": variants.append(f"com.plexapp.agents.tmdb://{val}")
-        elif key == "tvdb": variants.append(f"com.plexapp.agents.thetvdb://{val}")
-        for g in variants:
-            try:
-                hits = server.search(guid=g, libtype=libtype) or []
-                if hits: return hits[0]
-            except Exception: pass
-    title = q.get("title"); year = q.get("year")
-    try:
-        hits = server.search(title=title, year=year, libtype=libtype) or []
-        if hits: return hits[0]
-    except Exception: pass
-    return None
-
-def _resolve_on_servers(env: PlexEnv, q: Mapping[str, Any], mtype: str) -> Optional[Any]:
-    for s in env.servers:
-        it = _server_find_item(s, q, mtype)
-        if it: return it
-    return None
-
-# --- unresolved/backoff core ---------------------------------------------------
-def _now_iso() -> str: return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-def _compute_next_due(tries: int, base_hours: int, max_days: int) -> str:
-    delay_h = base_hours * (2 ** max(0, tries - 1))
-    delay_h = min(delay_h, max_days * 24)
-    due = int(time.time() + delay_h * 3600)
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(due))
-
-def _unresolved_key_for(item: Mapping[str, Any]) -> str:
-    return canonical_key(_norm_row(item))
-
-def _unresolved_upsert(provider: str, feature: str, item: Mapping[str, Any], *,
-                       reason: str, last_error: Optional[str],
-                       cfg_root: Mapping[str, Any],
-                       hint: Optional[Mapping[str, Any]] = None) -> None:
-    # accepts and persists a tiny normalized hint so virtual rows are stable
-    pol = _cfg_unresolved(cfg_root)
-    sh = _unresolved_load()
-    m = dict(sh.get("items") or {})
-    key = _unresolved_key_for(item)
-    node = dict(m.get(key) or {})
-    tries = min(int(node.get("tries") or 0) + 1, int(pol["max_retries"]))
-    first_seen = node.get("first_seen_at") or _now_iso()
-    next_due = _compute_next_due(tries, pol["base_hours"], pol["max_days"])
-
-    ent = {
-        "feature": feature,
-        "reason": reason,
-        "tries": tries,
-        "type": _singular(item.get("type") or "movie"),
-        "first_seen_at": first_seen,
-        "last_tried_at": _now_iso(),
-        "next_due_at": next_due,
-    }
-    if last_error:
-        ent["last_error"] = str(last_error)[:500]
-
-    if hint and isinstance(hint, Mapping):
-        safe = {k: hint.get(k) for k in ("type", "title", "year", "ids", "rating", "watched_at") if hint.get(k) is not None}
-        if safe:
-            ent["hint"] = _norm_row(safe)
-
-    m[key] = ent
-    _unresolved_save(m)
-    try: host_log(f"{provider}.unresolved.upsert", {"feature": feature, "reason": reason, "tries": tries})
-    except Exception: pass
-
-def _unresolved_clear(item: Mapping[str, Any]) -> None:
-    sh = _unresolved_load()
-    m = dict(sh.get("items") or {})
-    key = _unresolved_key_for(item)
-    if key in m:
-        m.pop(key, None)
-        _unresolved_save(m)
-
-def _unresolved_prune_ttl(ttl_days: int) -> None:
-    sh = _unresolved_load()
-    m = dict(sh.get("items") or {})
-    if not m: return
-    now = int(time.time()); ttl = max(1, ttl_days) * 86400
-    changed = False
-    for k, v in list(m.items()):
-        t0 = v.get("first_seen_at")
+    # --- connect --------------------------------------------------------------
+    def connect(self) -> "PLEXClient":
         try:
-            if t0 and isinstance(t0, str):
-                ts = time.mktime(time.strptime(t0.replace("Z","+0000"), "%Y-%m-%dT%H:%M:%S%z"))
-                if (now - int(ts)) > ttl:
-                    m.pop(k, None); changed = True
-        except Exception:
-            pass
-    if changed: _unresolved_save(m)
+            # Account (required for Discover/watchlist)
+            if self.cfg.token:
+                self._account = MyPlexAccount(token=self.cfg.token)
+                _ = self._account.username
+            elif self.cfg.username and self.cfg.password:
+                self._account = MyPlexAccount(self.cfg.username, self.cfg.password)
+                _ = self._account.username
+            else:
+                raise PLEXAuthError("Missing Plex auth (account token or username/password)")
 
-def _unresolved_virtual_for_index(feature: str, policy: str) -> Dict[str, Dict[str, Any]]:
-    sh = _unresolved_load()
-    now = _now_iso()
-    out: Dict[str, Dict[str, Any]] = {}
-    for k, v in (sh.get("items") or {}).items():
-        if v.get("feature") != feature:
-            continue
-        due = str(v.get("next_due_at") or "")
-        include = (policy == "virtual") or (policy == "backoff" and due > now)
-        if not include:
-            continue
-        # Prefer stored hint; fall back to type-only row
-        row: Dict[str, Any] = {"type": (v.get("type") or "movie"), "ids": {}}
-        h = v.get("hint")
-        if isinstance(h, Mapping):
-            for fld in ("title", "year", "ids", "rating", "watched_at"):
-                if h.get(fld) is not None:
-                    row[fld] = h.get(fld)
-        out[k] = _norm_row(row)
-    return out
+            token = self.cfg.token or self._account.authenticationToken
 
-def _unresolved_reset_if_library_grew(feature: str, live_count: int) -> None:
-    prev = _cursor_load(f"{feature}.fingerprint") or {}
-    prev_cnt = int(prev.get("count") or 0)
-    _cursor_save(f"{feature}.fingerprint", {"count": int(live_count)})
-    if live_count <= prev_cnt:
-        return
-    sh = _unresolved_load()
-    m = dict(sh.get("items") or {})
-    changed = False
-    for k, v in list(m.items()):
-        if v.get("feature") != feature:
-            continue
-        v["next_due_at"] = _now_iso()
-        v["tries"] = max(0, int(v.get("tries") or 1) - 1)
-        changed = True
-    if changed:
-        _unresolved_save(m)
-
-
-# --- watchlist (PlexAPI account only) -----------------------------------------
-def _watchlist_index(acct: MyPlexAccount, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    for kind in ("movie", "show"):
-        try: items = acct.watchlist(libtype=kind) or []
-        except Exception: items = []
-        for it in items:
-            ids = _ids_from_plexobj(it)
-            if not any(ids.get(k) for k in ("imdb","tmdb","tvdb")): continue
-            row = {"type": kind, "title": getattr(it, "title", None), "year": getattr(it, "year", None),
-                   "ids": {k: ids.get(k) for k in ("imdb","tmdb","tvdb") if ids.get(k)}}
-            nr = _norm_row(row)
-            out[canonical_key(nr)] = nr
-
-    if not out: return out
-    try:
-        mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-        healed = mm.reconcile_ids(list(out.values()))
-        fixed: Dict[str, Dict[str, Any]] = {}
-        for r in healed:
-            nr = _norm_row({
-                "type": r.get("type"), "title": r.get("title"), "year": r.get("year"),
-                "ids": {k: (r.get("ids") or {}).get(k) for k in ("imdb","tmdb","tvdb") if (r.get("ids") or {}).get(k)}
-            })
-            fixed[canonical_key(nr)] = nr
-        return fixed
-    except Exception:
-        return out
-
-def _resolve_discover_item(acct: MyPlexAccount, ids: dict, libtype: str) -> Optional[Any]:
-    queries: List[str] = []
-    if ids.get("imdb"): queries.append(ids["imdb"])
-    if ids.get("tmdb"): queries.append(str(ids["tmdb"]))
-    if ids.get("tvdb"): queries.append(str(ids["tvdb"]))
-    if ids.get("title"): queries.append(ids["title"])
-    queries = list(dict.fromkeys(queries))
-    for q in queries:
-        try: hits: Sequence[Any] = acct.searchDiscover(q, libtype=libtype) or []  # type: ignore
-        except Exception: hits = []
-        for md in hits:
-            md_ids = _ids_from_plexobj(md)
-            if ids.get("imdb") and md_ids.get("imdb") == ids.get("imdb"): return md
-            if ids.get("tmdb") and md_ids.get("tmdb") == ids.get("tmdb"): return md
-            if ids.get("tvdb") and md_ids.get("tvdb") == ids.get("tvdb"): return md
-            if ids.get("title") and ids.get("year"):
+            # PMS via explicit baseurl (optional)
+            if self.cfg.baseurl:
                 try:
-                    same_t = str(md.title).strip().lower() == str(ids["title"]).strip().lower()
-                    same_y = int(getattr(md, "year", 0) or 0) == int(ids["year"])
-                    if same_t and same_y: return md
+                    self.server = PlexServer(self.cfg.baseurl, token, timeout=self.cfg.timeout)
+                    try: self.server._session = self.session
+                    except Exception: pass
+                    _log(f"Connected via baseurl to {self.server.friendlyName}")
+                except Exception as e:
+                    _log(f"PMS baseurl connect failed: {e}; continuing account-only")
+                self._post_connect_user_scope(token)
+                return self
+
+            # PMS via account resources (optional)
+            try:
+                res = self._pick_resource(self._account)
+                self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore
+                try: self.server._session = self.session
                 except Exception: pass
-    return None
+                _log(f"Connected via account to {self.server.friendlyName}")
+            except Exception as e:
+                _log(f"No PMS resource bound: {e}; running account-only")
+                self._post_connect_user_scope(token)
+                return self
 
-def _watchlist_add(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]], *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    added = 0; suppressed = 0
-    for i, it in enumerate(items, 1):
-        ids = dict(it.get("ids") or {})
-        if "title" not in ids and it.get("title"): ids["title"] = it["title"]
-        if "year"  not in ids and it.get("year"):  ids["year"]  = it["year"]
-        libtype = "movie" if (it.get("type") or "movie") in ("movie", "movies") else "show"
-        md = _resolve_discover_item(acct, ids, libtype)
-        if not md:
-            _unresolved_upsert("PLEX", "watchlist", it, reason="resolve_failed", last_error=None, cfg_root=cfg_root)
-            suppressed += 1; continue
-        try:
-            cast(Any, md).addToWatchlist(account=acct); added += 1
-            _unresolved_clear(it)
+            self._post_connect_user_scope(token)
+            return self
+
         except Exception as e:
-            _unresolved_upsert("PLEX", "watchlist", it, reason="write_failed", last_error=str(e), cfg_root=cfg_root)
-            suppressed += 1
-        if (i % THROTTLE_EVERY) == 0:
-            try: time.sleep(0.05)
-            except Exception: pass
-    return added, suppressed
+            msg = str(e).lower()
+            if "unauthorized" in msg or "401" in msg:
+                raise PLEXAuthError("Plex authorization failed") from e
+            raise PLEXError(f"Plex connect failed: {e}") from e
 
-def _watchlist_remove(acct: MyPlexAccount, items: Iterable[Mapping[str, Any]], *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    removed = 0; suppressed = 0
-    for i, it in enumerate(items, 1):
-        ids = dict(it.get("ids") or {})
-        if "title" not in ids and it.get("title"): ids["title"] = it["title"]
-        if "year"  not in ids and it.get("year"):  ids["year"]  = it["year"]
-        libtype = "movie" if (it.get("type") or "movie") in ("movie", "movies") else "show"
-        md = _resolve_discover_item(acct, ids, libtype)
-        if not md:
-            _unresolved_upsert("PLEX", "watchlist", it, reason="resolve_failed", last_error=None, cfg_root=cfg_root)
-            suppressed += 1; continue
+    def _pick_resource(self, acc: MyPlexAccount):
+        servers = [r for r in acc.resources() if "server" in (r.provides or "")]
+        if self.cfg.machine_id:
+            for r in servers:
+                if (r.clientIdentifier or "").lower() == self.cfg.machine_id.lower():
+                    return r
+        if self.cfg.server_name:
+            for r in servers:
+                if (r.name or "").lower() == self.cfg.server_name.lower():
+                    return r
+        for r in servers:
+            if getattr(r, "owned", False): return r
+        if servers: return servers[0]
+        raise PLEXNotFound("No Plex Media Server resource found")
+
+    # --- user / server scope & persistence via utils --------------------------
+    def _post_connect_user_scope(self, token: str):
         try:
-            cast(Any, md).removeFromWatchlist(account=acct); removed += 1
-            _unresolved_clear(it)
+            self.user_username, self.user_account_id = resolve_user_scope(
+                self._account, self.server, token, self.cfg.username, self.cfg.account_id
+            )
+            # Only patch history default when account_id is missing in config
+            if self.cfg.account_id is None:
+                patch_history_with_account_id(self.server, self.user_account_id)
+
+            persist_user_scope_if_empty(CONFIG_PATH, self.user_username, self.user_account_id)
+            baseurl = discover_server_url_from_server(self.server) if self.server else None
+            persist_server_url_if_empty(CONFIG_PATH, baseurl)
+            _log(f"user scope → username={self.user_username} account_id={self.user_account_id}")
         except Exception as e:
-            _unresolved_upsert("PLEX", "watchlist", it, reason="write_failed", last_error=str(e), cfg_root=cfg_root)
-            suppressed += 1
-        if (i % THROTTLE_EVERY) == 0:
-            try: time.sleep(0.05)
-            except Exception: pass
-    return removed, suppressed
+            _log(f"user scope init failed: {e}")
 
-# --- ratings ------------------------------------------------------------------
-def _rating_row(obj: Any, kind: str) -> Optional[Dict[str, Any]]:
-    try: ur = getattr(obj, "userRating", None)
-    except Exception: ur = None
-    if ur is None: return None
-    ids = _ids_from_plexobj(obj)
-    if not ids: return None
-    row: Dict[str, Any] = {
-        "type": _singular(kind), "title": getattr(obj, "title", None), "year": getattr(obj, "year", None),
-        "ids": ids, "rating": int(round(float(ur))) if isinstance(ur, (int, float)) else None,
-    }
-    try:
-        ra = getattr(obj, "lastRatedAt", None)
-        iso = _to_utc(ra) if ra else None
-        if iso: row["rated_at"] = iso
-    except Exception:
-        pass
-    return _norm_row(row)
+    # --- shared helpers -------------------------------------------------------
+    def account(self) -> MyPlexAccount:
+        if not self._account:
+            raise PLEXAuthError("MyPlexAccount not available (need account token or login).")
+        return self._account
 
-def _ratings_index_full(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    plex_cfg = dict(cfg_root.get("plex") or {})
-    include, exclude = _section_filters(plex_cfg)
-    idx: Dict[str, Dict[str, Any]] = {}
-    for s in env.servers:
+    def ping(self) -> bool:
         try:
-            sections = [sec for sec in s.library.sections() if getattr(sec, "type", "") in ("movie", "show")]
-            sections = [sec for sec in sections if _match_section(sec, include, exclude)]
-            for section in sections:
-                if section.type == "movie":
-                    try:
-                        for mv in section.all():
-                            row = _rating_row(mv, "movie")
-                            if not row or row.get("rating") is None: continue
-                            key = None
-                            for k in ("imdb","tmdb","tvdb"):
-                                if row["ids"].get(k): key = f"{k}:{row['ids'][k]}".lower(); break
-                            if not key: key = canonical_key(row)
-                            idx[key] = row
-                    except Exception: continue
-                if section.type == "show":
-                    try:
-                        for sh in section.all():
-                            r_show = _rating_row(sh, "show")
-                            if r_show and r_show.get("rating") is not None:
-                                key = None
-                                for k in ("imdb","tmdb","tvdb"):
-                                    if r_show["ids"].get(k): key = f"{k}:{r_show['ids'][k]}".lower(); break
-                                if not key: key = canonical_key(r_show)
-                                idx[key] = r_show
-                            try:
-                                for sn in sh.seasons():
-                                    r_season = _rating_row(sn, "season")
-                                    if not r_season or r_season.get("rating") is None: continue
-                                    key = None
-                                    for k in ("imdb","tmdb","tvdb"):
-                                        if r_season["ids"].get(k): key = f"{k}:{r_season['ids'][k]}".lower(); break
-                                    if not key:
-                                        sid = None
-                                        for k in ("imdb","tmdb","tvdb"):
-                                            if r_show and (r_show.get("ids") or {}).get(k): sid = f"{k}:{r_show['ids'][k]}"; break
-                                        snum = getattr(sn, "index", None)
-                                        key = f"{(sid or canonical_key(r_show or r_season))}#season:{snum}"
-                                    idx[key] = r_season
-                            except Exception: pass
-                            try:
-                                for ep in sh.episodes():
-                                    r_ep = _rating_row(ep, "episode")
-                                    if not r_ep or r_ep.get("rating") is None: continue
-                                    key = None
-                                    for k in ("imdb","tmdb","tvdb"):
-                                        if r_ep["ids"].get(k): key = f"{k}:{r_ep['ids'][k]}".lower(); break
-                                    if not key:
-                                        sid = None
-                                        for k in ("imdb","tmdb","tvdb"):
-                                            if r_show and (r_show.get("ids") or {}).get(k): sid = f"{k}:{r_show['ids'][k]}"; break
-                                        snum = getattr(ep, "seasonNumber", getattr(ep, "seasonNumberLocal", None))
-                                        enum = getattr(ep, "index", None)
-                                        key = f"{(sid or canonical_key(r_show or r_ep))}#s{str(snum).zfill(2)}e{str(enum).zfill(2)}"
-                                    idx[key] = r_ep
-                            except Exception: pass
-                    except Exception: continue
-        except Exception: continue
-    return idx
-
-def _match_section(sec: Any, include: set, exclude: set) -> bool:
-    t = getattr(sec, "title", "") or ""
-    k = getattr(sec, "key", "") or ""
-    u = getattr(sec, "uuid", "") or ""
-    keys = {str(t).strip().lower(), str(k).strip().lower(), str(u).strip().lower()}
-    if include and not (keys & include): return False
-    if exclude and (keys & exclude): return False
-    return True
-
-def _ratings_index(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    ttl_min = int(((cfg_root.get("ratings") or {}).get("cache") or {}).get("ttl_minutes") or 0)
-    ttl_sec = max(0, ttl_min * 60)
-
-    shadow = _ratings_shadow_load()
-    items = dict(shadow.get("items") or {}); ts = int(shadow.get("ts") or 0)
-    now = int(time.time())
-    if ttl_sec > 0 and ts > 0 and (now - ts) < ttl_sec and items:
-        return _normalize_shadow_items(items)
-
-    idx = _ratings_index_full(env, cfg_root)
-    if not idx:
-        return _normalize_shadow_items(items)
-
-    # heal ids; keep rating/rated_at
-    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-    healed = mm.reconcile_ids(list(idx.values()))
-    healed_idx: Dict[str, Dict[str, Any]] = {}
-    for r, orig in zip(healed, idx.values()):
-        node = dict(r)
-        if orig.get("rating") is not None: node["rating"] = orig.get("rating")
-        if orig.get("rated_at"): node["rated_at"] = orig.get("rated_at")
-        nr = _norm_row(node)
-        healed_idx[canonical_key(nr)] = nr
-
-    if healed_idx:
-        _ratings_shadow_save(healed_idx)
-        return _normalize_shadow_items(healed_idx)
-
-    return _normalize_shadow_items(items)
-
-def _ratings_apply(env: PlexEnv, items: Iterable[Mapping[str, Any]], *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    updated = 0; suppressed = 0
-    sh = _ratings_shadow_load()
-    shadow_map: Dict[str, Any] = _normalize_shadow_items(dict(sh.get("items") or {}))
-
-    for i, it in enumerate(items, 1):
-        tr = it.get("rating")
-        if tr is None:
-            continue
-
-        libtype = _libtype_from_item(it)
-        obj = _resolve_on_servers(env, it, libtype)
-        if not obj:
-            _unresolved_upsert("PLEX", "ratings", it, reason="resolve_failed", last_error=None, cfg_root=cfg_root)
-            suppressed += 1
-            continue
-
-        try:
-            obj.rate(float(int(tr))); updated += 1
-            _unresolved_clear(it)
+            _ = self.account().username
+            return True
         except Exception as e:
-            _unresolved_upsert("PLEX", "ratings", it, reason="write_failed", last_error=str(e), cfg_root=cfg_root)
-            suppressed += 1
-            continue
+            raise PLEXError(f"Plex ping failed: {e}") from e
 
-        node = _norm_row({
-            "type": _singular(it.get("type") or "movie"),
-            "title": it.get("title"),
-            "year": it.get("year"),
-            "ids": {k: (it.get("ids") or {}).get(k) for k in ("imdb","tmdb","tvdb") if (it.get("ids") or {}).get(k)},
-        })
+    def libraries(self, types: Iterable[str]=("movie","show")):
+        s = self.server
+        if not s:
+            return
+        wanted = {t.lower() for t in types}
+        for sec in s.library.sections():
+            if (sec.type or "").lower() in wanted:
+                yield sec
 
-        # Build a stable key (prefer external IDs; otherwise fall back to composite key for S/E)
-        key: Optional[str] = None
-        ids = node["ids"]
-        for k in ("imdb", "tmdb", "tvdb"):
-            if ids.get(k):
-                key = f"{k}:{ids[k]}".lower()
-                break
+    def fetch_by_rating_key(self, rating_key: Any):
+        s = self.server
+        if not s:
+            return None
+        try:
+            return s.fetchItem(int(rating_key))
+        except Exception:
+            return None
 
-        if not key and node["type"] in ("season", "episode"):
-            show_id = next((f"{k}:{ids[k]}" for k in ("imdb","tmdb","tvdb") if ids.get(k)), None)
-            if node["type"] == "season":
-                snum = it.get("season") or it.get("season_number") or it.get("index")
-                if snum is not None:
-                    key = f"{(show_id or canonical_key(node))}#season:{snum}"
-            else:  # episode
-                snum = it.get("season") or it.get("season_number")
-                enum = it.get("episode") or it.get("episode_number") or it.get("index")
-                if snum is not None and enum is not None:
-                    key = f"{(show_id or canonical_key(node))}#s{str(int(snum)).zfill(2)}e{str(int(enum)).zfill(2)}"
+    def _retry(self, fn, *a, **kw):
+        # legacy helper (not used by new HTTP path)
+        tries = self.cfg.max_retries
+        for i in range(tries):
+            try:
+                return fn(*a, **kw)
+            except Exception:
+                if i >= tries-1: raise
+                time.sleep(0.5 * (i+1))
 
-        if not key:
-            key = canonical_key(node)
+    @staticmethod
+    def normalize(obj) -> Dict[str, Any]: return plex_normalize(obj)
+    @staticmethod
+    def key_of(obj) -> str: return plex_key_of(obj)
 
-        shadow_map[key] = {
-            "type": node["type"],
-            "title": node.get("title"),
-            "year": node.get("year"),
-            "ids": node["ids"],
-            "rating": int(tr),
-            "rated_at": _now_iso(),
-        }
+# ──────────────────────────────────────────────────────────────────────────────
+# feature registry
 
-        if (i % THROTTLE_EVERY) == 0:
-            try: time.sleep(0.05)
-            except Exception: pass
+_FEATURES = {
+    "watchlist": feat_watchlist,
+    "history":   feat_history,
+    "ratings":   feat_ratings,
+    "playlists": feat_playlists,
+}
 
-    if updated:
-        _ratings_shadow_save(_normalize_shadow_items(shadow_map))
-    return updated, suppressed
-
-# --- history ------------------------------------------------------------------
-def _history_row(obj: Any, kind: str) -> Optional[Dict[str, Any]]:
-    try: vc = getattr(obj, "viewCount", 0) or 0
-    except Exception: vc = 0
-    if vc <= 0: return None
-
-    ids = _ids_from_plexobj(obj)
-    if not ids: return None
-
-    row: Dict[str, Any] = {
-        "type": _singular(kind),
-        "title": getattr(obj, "title", None),
-        "year": getattr(obj, "year", None),
-        "ids": ids,
-        "watched": True,
+def _features_flags() -> Dict[str, bool]:
+    return {
+        "watchlist": "watchlist" in _FEATURES and _FEATURES["watchlist"] is not None,
+        "history":   "history"   in _FEATURES and _FEATURES["history"]   is not None,
+        "ratings":   "ratings"   in _FEATURES and _FEATURES["ratings"]   is not None,
+        "playlists": "playlists" in _FEATURES and _FEATURES["playlists"] is not None,
     }
 
-    # timestamp (unchanged)
-    try:
-        wa = getattr(obj, "lastViewedAt", None)
-        iso = _to_utc(wa) if wa else None
-        if iso: row["watched_at"] = iso
-    except Exception:
-        pass
+# ──────────────────────────────────────────────────────────────────────────────
+# module wrapper
 
-    # EPISODE EXTRAS: season/episode & show ids from grandparent guid
-    if row["type"] == "episode":
-        try:
-            row["season"]  = getattr(obj, "seasonNumber", getattr(obj, "seasonNumberLocal", None))
-            row["episode"] = getattr(obj, "index", None)
-        except Exception:
-            pass
-        # Extract show ids from grandparentGuid if present (cheap and avoids .show() fetch)
-        try:
-            gpg = getattr(obj, "grandparentGuid", None)
-            if isinstance(gpg, str) and gpg:
-                show_ids = {}
-                if "imdb" in gpg:
-                    m = _PAT_IMDB.search(gpg)
-                    if m: show_ids["imdb"] = m.group(1)
-                if "tmdb" in gpg:
-                    m = _PAT_TMDB.search(gpg)
-                    if m: show_ids["tmdb"] = int(m.group(1))
-                if "thetvdb" in gpg:
-                    m = _PAT_TVDB.search(gpg)
-                    if m: show_ids["tvdb"] = int(m.group(1))
-                if gpg and "guid" not in show_ids:
-                    show_ids["guid"] = gpg
-                if show_ids:
-                    row["show_ids"] = show_ids
-        except Exception:
-            pass
+class PLEXModule:
+    """Adapter used by the orchestrator and feature modules."""
+    def __init__(self, cfg: Mapping[str, Any]):
+        self.config = cfg
+        plex_cfg = dict(cfg.get("plex") or {})
+        baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url")
+        self.cfg = PLEXConfig(
+            token=plex_cfg.get("account_token") or plex_cfg.get("token"),
+            baseurl=baseurl,
+            client_id=plex_cfg.get("client_id"),
+            server_name=plex_cfg.get("server_name") or plex_cfg.get("server"),
+            machine_id=plex_cfg.get("machine_id"),
+            username=plex_cfg.get("username"),
+            account_id=(int(plex_cfg["account_id"]) if str(plex_cfg.get("account_id","")).strip().isdigit() else None),
+            password=plex_cfg.get("password"),
+            timeout=float(plex_cfg.get("timeout", cfg.get("timeout", 10.0))),
+            max_retries=int(plex_cfg.get("max_retries", cfg.get("max_retries", 3))),
+            watchlist_allow_pms_fallback=bool(plex_cfg.get("watchlist_allow_pms_fallback", True)),
+        )
+        configure_plex_context(
+            baseurl=self.cfg.baseurl,
+            token=self.cfg.token,
+        )
 
-    return _norm_row(row)
+        # Stable Plex Client Identifier for headers
+        if self.cfg.client_id:
+            cid = str(self.cfg.client_id)
+            os.environ.setdefault("PLEX_CLIENT_IDENTIFIER", cid)
+            os.environ.setdefault("CW_PLEX_CID", cid)
+            try:
+                from .plex import _common as plex_common
+                plex_common.CLIENT_ID = cid  # type: ignore
+            except Exception:
+                pass
 
+        self.client = PLEXClient(self.cfg).connect()
 
-def _history_index_full(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    plex_cfg = dict(cfg_root.get("plex") or {})
-    include, exclude = _section_filters(plex_cfg)
-    idx: Dict[str, Dict[str, Any]] = {}
-    for s in env.servers:
-        try:
-            sections = [sec for sec in s.library.sections() if getattr(sec, "type", "") in ("movie", "show")]
-            sections = [sec for sec in sections if _match_section(sec, include, exclude)]
-            for section in sections:
-                if section.type == "movie":
-                    try:
-                        for mv in section.all():
-                            row = _history_row(mv, "movie")
-                            if not row: continue
-                            key = None
-                            for k in ("imdb","tmdb","tvdb"):
-                                if row["ids"].get(k): key = f"{k}:{row['ids'][k]}".lower(); break
-                            if not key: key = canonical_key(row)
-                            idx[key] = row
-                    except Exception: continue
-                if section.type == "show":
-                    try:
-                        for sh in section.all():
-                            try:
-                                for ep in sh.episodes():
-                                    row = _history_row(ep, "episode")
-                                    if not row: continue
-                                    key = None
-                                    for k in ("imdb","tmdb","tvdb"):
-                                        if row["ids"].get(k): key = f"{k}:{row['ids'][k]}".lower(); break
-                                    if not key: key = canonical_key(row)
-                                    idx[key] = row
-                            except Exception: pass
-                    except Exception: continue
-        except Exception: continue
-    return idx
+        # Progress factory (lightweight, throttled; features call adapter.progress_factory("ratings"/...))
+        self.progress_factory = lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
+            ctx, dst="PLEX", feature=str(feature), total=total, throttle_ms=int(throttle_ms)
+        )
 
-def _history_index(env: PlexEnv, cfg_root: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
-    ttl_min = int(((cfg_root.get("history") or {}).get("cache") or {}).get("ttl_minutes") or 0)
-    ttl_sec = max(0, ttl_min * 60)
-
-    shadow = _history_shadow_load()
-    items = dict(shadow.get("items") or {}); ts = int(shadow.get("ts") or 0)
-    now = int(time.time())
-    if ttl_sec > 0 and ts > 0 and (now - ts) < ttl_sec and items:
-        return _normalize_shadow_items(items)
-
-    idx = _history_index_full(env, cfg_root)
-    if not idx:
-        return _normalize_shadow_items(items)
-
-    # Heal ids (movies as movies; seasons/episodes as shows). Keep watched flags/timestamps.
-    mm = MetadataManager(lambda: cfg_root, lambda _cfg: None)
-    keys = list(idx.keys())
-    rows = []
-    for v in idx.values():
-        ent = "movie" if (str(v.get("type") or "").startswith("movie")) else "show"
-        rows.append({"type": ent, "title": v.get("title"), "year": v.get("year"), "ids": v.get("ids")})
-
-    healed = mm.reconcile_ids(rows)
-
-    healed_idx: Dict[str, Dict[str, Any]] = {}
-    for k, v, h in zip(keys, idx.values(), healed):
-        merged_ids = dict(v.get("ids") or {}); merged_ids.update((h.get("ids") or {}))
-        node = {
-            "type": (v.get("type") or "movie"),
-            "title": v.get("title"),
-            "year": v.get("year"),
-            "ids": {kk: vv for kk, vv in merged_ids.items() if vv not in (None, "", [], {})},
+    # ---- feature toggles (SIMKL-style) ---------------------------------------
+    @staticmethod
+    def supported_features() -> Dict[str, bool]:
+        toggles = {
+            "watchlist": True,
+            "ratings":   True,
+            "history":   True,
+            "playlists": False,
         }
-        if v.get("watched"): node["watched"] = True
-        if v.get("watched_at"): node["watched_at"] = v.get("watched_at")
-        nr = _norm_row(node)
-        healed_idx[canonical_key(nr)] = nr
+        present = _features_flags()
+        return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
-    if healed_idx:
-        _history_shadow_save(healed_idx)
-        return _normalize_shadow_items(healed_idx)
+    def _is_enabled(self, feature: str) -> bool:
+        return bool(self.supported_features().get(feature, False))
 
-    return _normalize_shadow_items(items)
+    def manifest(self) -> Mapping[str, Any]:
+        return get_manifest()
 
+    # shared utilities (exposed to features)
+    def ping(self) -> bool: return self.client.ping()
+    def libraries(self, types: Iterable[str]=("movie","show")): return self.client.libraries(types)
+    def normalize(self, obj) -> Dict[str, Any]: return self.client.normalize(obj)
+    def key_of(self, obj) -> str: return self.client.key_of(obj)
+    def account(self) -> MyPlexAccount: return self.client.account()
 
-def _history_change(env: PlexEnv, items: Iterable[Mapping[str, Any]], *, watched: bool, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    changed = 0; suppressed = 0
+    # health check
+    def health(self) -> Mapping[str, Any]:
+        enabled = self.supported_features()
+        token = self.cfg.token
+        tmo = max(3.0, min(self.cfg.timeout, 10.0))
 
-    sh = _history_shadow_load()
-    shadow_map: Dict[str, Any] = _normalize_shadow_items(dict(sh.get("items") or {}))
-    shadow_touched = False
+        import time as _t
+        started = _t.perf_counter()
 
-    for i, it in enumerate(items, 1):
-        libtype = _libtype_from_item(it)
-        obj = _resolve_on_servers(env, it, libtype)
+        wl_needed = bool(enabled.get("watchlist"))
+        lib_needed = any(enabled.get(k) for k in ("history", "ratings", "playlists"))
 
-        raw_wat = it.get("watched_at")
-        if isinstance(raw_wat, str) and raw_wat.strip():
-            wat_iso = _clamp_ts(raw_wat)
-        elif isinstance(raw_wat, (_dt.datetime, int, float)):
-            wat_iso = _to_utc(raw_wat) or _now_iso()
+        # Discover probe
+        discover_ok = False
+        discover_reason = None
+        retry_after = None
+        disc_code: Optional[int] = None
+        disc_rate: Dict[str, Optional[int]] = {"limit": None, "remaining": None, "reset": None}
+        if wl_needed:
+            if token:
+                try:
+                    url = f"{DISCOVER}/library/sections/watchlist/all"
+                    r = request_with_retries(
+                        self.client.session, "GET", url,
+                        headers=plex_headers(token),
+                        params={"limit": 1},
+                        timeout=tmo,
+                        max_retries=self.cfg.max_retries,
+                    )
+                    disc_code = r.status_code
+                    disc_rate = parse_rate_limit(r.headers)
+                    if r.status_code in (401, 403):
+                        discover_reason = "unauthorized"
+                    elif 200 <= r.status_code < 300:
+                        discover_ok = True
+                    else:
+                        discover_reason = f"http:{r.status_code}"
+                    ra = r.headers.get("Retry-After")
+                    if ra:
+                        try: retry_after = int(ra)
+                        except Exception: pass
+                except Exception as e:
+                    discover_reason = f"exception:{e.__class__.__name__}"
+            else:
+                discover_reason = "no_token"
+
+        # PMS probe
+        pms_ok = False
+        pms_reason = None
+        pms_code: Optional[int] = None
+        if lib_needed:
+            srv = getattr(self.client, "server", None)
+            if srv:
+                try:
+                    rr = request_with_retries(
+                        srv._session if getattr(srv, "_session", None) else self.client.session,
+                        "GET", srv.url("/identity"),
+                        timeout=tmo, max_retries=self.cfg.max_retries,
+                    )
+                    pms_code = rr.status_code
+                    if rr.status_code in (401, 403): pms_reason = "unauthorized"
+                    elif rr.ok: pms_ok = True
+                    else: pms_reason = f"http:{rr.status_code}"
+                except Exception as e:
+                    pms_reason = f"exception:{e.__class__.__name__}"
+            else:
+                pms_reason = "no_pms"
+
+        latency_ms = int((_t.perf_counter() - started) * 1000)
+
+        features = {
+            "watchlist": (discover_ok if wl_needed else False),
+            "history":   (pms_ok if enabled.get("history")   else False),
+            "ratings":   (pms_ok if enabled.get("ratings")   else False),
+            "playlists": (pms_ok if enabled.get("playlists") else False),
+        }
+
+        checks: List[bool] = []
+        if wl_needed: checks.append(discover_ok)
+        if lib_needed: checks.append(pms_ok)
+
+        disc_auth_failed = wl_needed and (disc_code in (401, 403) or discover_reason == "unauthorized")
+        pms_auth_failed  = lib_needed and (pms_code in (401, 403) or pms_reason == "unauthorized")
+
+        if not checks:
+            status = "ok"
+        elif all(checks):
+            status = "ok"
+        elif any(checks):
+            status = "degraded"
         else:
-            wat_iso = _now_iso()
+            status = "auth_failed" if (disc_auth_failed or pms_auth_failed) else "down"
 
-        norm_node = _norm_row({
-            "type": _singular(it.get("type") or "movie"),
-            "title": it.get("title"),
-            "year": it.get("year"),
-            "ids": {k: (it.get("ids") or {}).get(k) for k in ("imdb","tmdb","tvdb") if (it.get("ids") or {}).get(k)},
-            "watched_at": wat_iso if watched else None,
-        })
+        ok = status in ("ok", "degraded")
 
-        if not obj:
-            _unresolved_upsert("PLEX","history",it,reason="resolve_failed",last_error=None,cfg_root=cfg_root,
-                               hint={"type": norm_node["type"], "title": norm_node.get("title"), "year": norm_node.get("year"),
-                                     "ids": norm_node.get("ids"), "watched_at": (wat_iso if watched else None)})
-            suppressed += 1
-            continue
+        details: Dict[str, Any] = {}
+        if wl_needed: details["account"] = bool(token) and discover_ok
+        if lib_needed: details["pms"] = pms_ok
+        disabled_list = [k for k, v in enabled.items() if not v]
+        if disabled_list: details["disabled"] = disabled_list
 
+        reasons: List[str] = []
+        if wl_needed and not discover_ok: reasons.append(f"watchlist:{discover_reason or 'down'}")
+        if lib_needed and not pms_ok:
+            missing = [f for f in ("history","ratings","playlists") if enabled.get(f)]
+            if missing: reasons.append(f"{'+'.join(missing)}:{pms_reason or 'down'}")
+        if reasons: details["reason"] = "; ".join(reasons)
+        if retry_after is not None: details["retry_after_s"] = retry_after
+
+        api = {
+            "discover": {
+                "status": (disc_code if wl_needed else None),
+                "retry_after": (retry_after if wl_needed else None),
+                "rate": (disc_rate if wl_needed else {"limit": None, "remaining": None, "reset": None}),
+            },
+            "pms": {"status": (pms_code if lib_needed else None)},
+        }
+
+        _log(f"health status={status} ok={ok} latency_ms={latency_ms} user={self.client.user_username}@{self.client.user_account_id}")
+        return {"ok": ok, "status": status, "latency_ms": latency_ms, "features": features, "details": details, "api": api}
+
+    # feature dispatch
+    def feature_names(self) -> Tuple[str, ...]:
+        return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
+
+    def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            return {}
+        mod = _FEATURES.get(feature)
+        return mod.build_index(self, **kwargs) if mod else {}
+
+    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+        lst = list(items)
+        if not lst: return {"ok": True, "count": 0}
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"add skipped: feature disabled or missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
         try:
-            obj.markPlayed() if watched else obj.markUnplayed()
-            changed += 1
-            _unresolved_clear(it)
+            cnt, unresolved = mod.add(self, lst)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
         except Exception as e:
-            _unresolved_upsert("PLEX","history",it,reason="write_failed",last_error=str(e),cfg_root=cfg_root,
-                               hint={"type": norm_node["type"], "title": norm_node.get("title"), "year": norm_node.get("year"),
-                                     "ids": norm_node.get("ids"), "watched_at": (wat_iso if watched else None)})
-            suppressed += 1
-            continue
+            return {"ok": False, "error": str(e)}
 
-        if watched:
-            ids = norm_node["ids"]
-            key = next((f"{k}:{ids[k]}".lower() for k in ("imdb","tmdb","tvdb") if ids.get(k)), None)
-            if not key: key = canonical_key(norm_node)
-            shadow_map[key] = {
-                "type": norm_node["type"],
-                "title": norm_node.get("title"),
-                "year": norm_node.get("year"),
-                "ids": norm_node.get("ids"),
-                "watched": True,
-                "watched_at": wat_iso,
-            }
-            shadow_touched = True
-
-        if (i % THROTTLE_EVERY) == 0:
-            try: time.sleep(0.05)
-            except Exception: pass
-
-    if shadow_touched:
-        _history_shadow_save(_normalize_shadow_items(shadow_map))
-
-    return changed, suppressed
-
-
-# --- playlists ----------------------------------------------------------------
-def _playlists_index(env: PlexEnv) -> Dict[str, Dict[str, Any]]:
-    idx: Dict[str, Dict[str, Any]] = {}
-    for s in env.servers:
+    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+        lst = list(items)
+        if not lst: return {"ok": True, "count": 0}
+        if not self._is_enabled(feature) or feature not in _FEATURES:
+            _log(f"remove skipped: feature disabled or missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
         try:
-            for pl in s.playlists():
-                if getattr(pl, "playlistType", "") not in ("video", "movie", "show"): continue
-                key = f"playlist:{pl.ratingKey}".lower()
-                row = {"type": "playlist", "title": getattr(pl, "title", None), "ids": {"plex": pl.ratingKey}}
-                idx[key] = row
-        except Exception: continue
-    return idx
+            cnt, unresolved = mod.remove(self, lst)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
-def _playlist_add_items(env: PlexEnv, playlist_title: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None, *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    if not env.servers: return (0,0)
-    s = env.servers[0]
-    libtype = "movie" if (mtype_hint or "movie") in ("movie","movies") else "show"
-    plex_items: List[Any] = []; suppressed = 0
-    for it in items:
-        obj = _resolve_on_servers(env, it, libtype)
-        if obj: plex_items.append(obj)
-        else:
-            _unresolved_upsert("PLEX","playlists",it,reason="resolve_failed",last_error=None,cfg_root=cfg_root)
-            suppressed += 1
-    if not plex_items: return (0, suppressed)
-    try:
-        for pl in s.playlists():
-            if getattr(pl, "title", "") == playlist_title:
-                pl.addItems(plex_items); return (len(plex_items), suppressed)
-        s.createPlaylist(playlist_title, plex_items); return (len(plex_items), suppressed)
-    except Exception as e:
-        for it in items:
-            _unresolved_upsert("PLEX","playlists",it,reason="write_failed",last_error=str(e),cfg_root=cfg_root)
-        return (0, suppressed + len(plex_items))
+# ──────────────────────────────────────────────────────────────────────────────
+# orchestrator bridge (OPS)
 
-def _playlist_remove_items(env: PlexEnv, playlist_title: str, items: Iterable[Mapping[str, Any]], mtype_hint: Optional[str]=None, *, cfg_root: Mapping[str, Any]) -> Tuple[int,int]:
-    if not env.servers: return (0,0)
-    s = env.servers[0]
-    libtype = "movie" if (mtype_hint or "movie") in ("movie","movies") else "show"
-    plex_items: List[Any] = []; suppressed = 0
-    for it in items:
-        obj = _resolve_on_servers(env, it, libtype)
-        if obj: plex_items.append(obj)
-        else:
-            _unresolved_upsert("PLEX","playlists",it,reason="resolve_failed",last_error=None,cfg_root=cfg_root)
-            suppressed += 1
-    if not plex_items: return (0, suppressed)
-    try:
-        for pl in s.playlists():
-            if getattr(pl, "title", "") == playlist_title:
-                pl.removeItems(plex_items); return (len(plex_items), suppressed)
-    except Exception as e:
-        for it in items:
-            _unresolved_upsert("PLEX","playlists",it,reason="write_failed",last_error=str(e),cfg_root=cfg_root)
-        return (0, suppressed + len(plex_items))
-    return (0, suppressed)
-
-# --- provider protocol ---------------------------------------------------------
-class InventoryOps(Protocol):
-    def name(self) -> str: ...
-    def label(self) -> str: ...
-    def features(self) -> Mapping[str, bool]: ...
-    def capabilities(self) -> Mapping[str, Any]: ...
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]: ...
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]: ...
-
-# --- OPS ----------------------------------------------------------------------
 class _PlexOPS:
     def name(self) -> str: return "PLEX"
     def label(self) -> str: return "Plex"
     def features(self) -> Mapping[str, bool]:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+        return PLEXModule.supported_features()
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
-            "provides_ids": False,
-            "ratings": {"types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
+            "provides_ids": True,
+            "index_semantics": "present",
+            "watchlist": {"writes": "discover_first", "pms_fallback": True},
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True, "unrate": True, "from_date": False
+            },
         }
 
+    def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
+        return PLEXModule(cfg)
+
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
-        pol = _cfg_unresolved(cfg)
-        policy = pol["policy"]
-        if feature == "watchlist":
-            acct = _ensure_account(cfg)
-            live = _watchlist_index(acct, cfg)
-            virt = _unresolved_virtual_for_index("watchlist", policy)
-            merged = dict(virt); merged.update(live)
-            _cursor_save("watchlist.fingerprint", {"count": len(live)})
-            _unresolved_prune_ttl(pol["ttl_days"])
-            return merged
-        env = _env_from_config(cfg)
-        if feature == "ratings":
-            live = _ratings_index(env, cfg)
-            _unresolved_reset_if_library_grew("ratings", len(live))
-            virt = _unresolved_virtual_for_index("ratings", policy)
-            merged = dict(virt); merged.update(live)
-            _unresolved_prune_ttl(pol["ttl_days"])
-            return merged
-        if feature == "history":
-            live = _history_index(env, cfg)
-            _unresolved_reset_if_library_grew("history", len(live))
-            virt = _unresolved_virtual_for_index("history", policy)
-            merged = dict(virt); merged.update(live)
-            _unresolved_prune_ttl(pol["ttl_days"])
-            return merged
-        if feature == "playlists":
-            live = _playlists_index(env)
-            _cursor_save("playlists.fingerprint", {"count": len(live)})
-            _unresolved_prune_ttl(pol["ttl_days"])
-            return live
-        return {}
+        return self._adapter(cfg).build_index(feature)
 
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
-        items_list = list(items)
-        if dry_run: return {"ok": True, "count": len(items_list), "dry_run": True}
-        try:
-            if feature == "watchlist":
-                acct = _ensure_account(cfg)
-                n_ok, n_sup = _watchlist_add(acct, items_list, cfg_root=cfg)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": n_sup}
-            env = _env_from_config(cfg)
-            if feature == "ratings":
-                n_ok, n_sup = _ratings_apply(env, items_list, cfg_root=cfg)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": n_sup}
-            if feature == "history":
-                n_ok, n_sup = _history_change(env, items_list, watched=True, cfg_root=cfg)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": n_sup}
-            if feature == "playlists":
-                env = _env_from_config(cfg)
-                total = 0; suppressed = 0
-                for pl in items_list:
-                    title = pl.get("playlist") or pl.get("title")
-                    if not title: continue
-                    mtyp = pl.get("type") or "movie"
-                    cnt, sup = _playlist_add_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp, cfg_root=cfg)
-                    total += cnt; suppressed += sup
-                return {"ok": True, "count": total, "unresolved_suppressed": suppressed}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-        return {"ok": True, "count": 0}
+        return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
-        items_list = list(items)
-        if dry_run: return {"ok": True, "count": len(items_list), "dry_run": True}
-        try:
-            if feature == "watchlist":
-                acct = _ensure_account(cfg)
-                n_ok, n_sup = _watchlist_remove(acct, items_list, cfg_root=cfg)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": n_sup}
-            env = _env_from_config(cfg)
-            if feature == "ratings":
-                n_ok = 0; suppressed = 0
-                for it in items_list:
-                    libtype = _libtype_from_item(it)
-                    obj = _resolve_on_servers(env, it, libtype)
-                    if not obj:
-                        _unresolved_upsert("PLEX","ratings",it,reason="resolve_failed",last_error=None,cfg_root=cfg)
-                        suppressed += 1; continue
-                    try:
-                        obj.rate(None); n_ok += 1; _unresolved_clear(it)
-                    except Exception as e:
-                        _unresolved_upsert("PLEX","ratings",it,reason="write_failed",last_error=str(e),cfg_root=cfg)
-                        suppressed += 1
-                if n_ok:
-                    sh = _ratings_shadow_load(); items_map = dict(sh.get("items") or {})
-                    for it in items_list:
-                        k = canonical_key(_norm_row(it)); items_map.pop(k, None)
-                    _ratings_shadow_save(items_map)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": suppressed}
-            if feature == "history":
-                n_ok, n_sup = _history_change(env, items_list, watched=False, cfg_root=cfg)
-                if n_ok:
-                    sh = _history_shadow_load(); items_map = dict(sh.get("items") or {})
-                    for it in items_list:
-                        k = canonical_key(_norm_row(it)); items_map.pop(k, None)
-                    _history_shadow_save(items_map)
-                return {"ok": True, "count": n_ok, "unresolved_suppressed": n_sup}
-            if feature == "playlists":
-                env = _env_from_config(cfg)
-                total = 0; suppressed = 0
-                for pl in items_list:
-                    title = pl.get("playlist") or pl.get("title")
-                    if not title: continue
-                    mtyp = pl.get("type") or "movie"
-                    cnt, sup = _playlist_remove_items(env, str(title), pl.get("items") or [], mtype_hint=mtyp, cfg_root=cfg)
-                    total += cnt; suppressed += sup
-                return {"ok": True, "count": total, "unresolved_suppressed": suppressed}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-        return {"ok": True, "count": 0}
+        return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
-# export
-OPS: InventoryOps = _PlexOPS()
+    def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
+        return self._adapter(cfg).health()
 
-# --- manifest -----------------------------------------------------------------
-try:
-    from providers.sync._base import SyncModule, ModuleInfo, ModuleCapabilities  # type: ignore
-except Exception:  # pragma: no cover
-    class SyncModule: ...
-    @dataclass
-    class ModuleCapabilities:
-        supports_dry_run: bool = True
-        supports_cancel: bool = True
-        supports_timeout: bool = True
-        status_stream: bool = True
-        bidirectional: bool = True
-        config_schema: dict | None = None
-    @dataclass
-    class ModuleInfo:
-        name: str
-        version: str
-        description: str
-        vendor: str
-        capabilities: ModuleCapabilities
-
-class PLEXModule(SyncModule):
-    info = ModuleInfo(
-        name="PLEX",
-        version=__VERSION__,
-        description="Plex via PlexAPI only: watchlist, ratings, history, playlists. With unresolved/backoff to keep diffs clean.",
-        vendor="community",
-        capabilities=ModuleCapabilities(
-            supports_dry_run=True,
-            supports_cancel=True,
-            supports_timeout=True,
-            status_stream=True,
-            bidirectional=True,
-            config_schema={
-                "type": "object",
-                "properties": {
-                    "plex": {
-                        "type": "object",
-                        "properties": {
-                            "account_token": {"type": "string", "minLength": 1},
-                            "servers": {
-                                "type": "object",
-                                "properties": {
-                                    "machine_ids": {"type": "array", "items": {"type": "string"}},
-                                    "sections": {
-                                        "type": "object",
-                                        "properties": {
-                                            "include": {"type": "array", "items": {"type": "string"}},
-                                            "exclude": {"type": "array", "items": {"type": "string"}},
-                                        },
-                                        "additionalProperties": False,
-                                    },
-                                },
-                                "additionalProperties": False,
-                            },
-                            "unresolved": {
-                                "type": "object",
-                                "properties": {
-                                    "policy": {"type": "string", "enum": ["backoff","virtual"]},
-                                    "base_hours": {"type": "integer", "minimum": 1},
-                                    "max_days": {"type": "integer", "minimum": 1},
-                                    "max_retries": {"type": "integer", "minimum": 1},
-                                    "ttl_days": {"type": "integer", "minimum": 1},
-                                },
-                                "additionalProperties": False,
-                            },
-                        },
-                        "required": ["account_token"],
-                        "additionalProperties": False,
-                    },
-                    "ratings": {
-                        "type": "object",
-                        "properties": {"cache": {"type": "object", "properties": {"ttl_minutes": {"type": "integer", "minimum": 0}}}},
-                        "additionalProperties": False,
-                    },
-                    "history": {
-                        "type": "object",
-                        "properties": {"cache": {"type": "object", "properties": {"ttl_minutes": {"type": "integer", "minimum": 0}}}},
-                        "additionalProperties": False,
-                    },
-                    "runtime": {"type": "object", "properties": {"debug": {"type": "boolean"}}, "additionalProperties": False},
-                },
-                "required": ["plex"],
-                "additionalProperties": False,
-            },
-        ),
-    )
-
-    @staticmethod
-    def supported_features() -> dict:
-        return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
-
-def get_manifest() -> dict:
-    return {
-        "name": PLEXModule.info.name,
-        "label": "Plex",
-        "features": PLEXModule.supported_features(),
-        "capabilities": {
-            "bidirectional": True,
-            "ratings": {"types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "unrate": True, "from_date": False},
-        },
-        "version": PLEXModule.info.version,
-        "vendor": PLEXModule.info.vendor,
-        "description": PLEXModule.info.description,
-    }
+OPS = _PlexOPS()

@@ -7,7 +7,7 @@ from cw_platform.config_base import load_config
 from urllib.parse import parse_qs
 import urllib.parse, json, threading
 
-# optional plexapi
+#  plexapi
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
@@ -17,6 +17,23 @@ except Exception:
 
 router = APIRouter(tags=["Scrobbler"])
 
+# helper: pull live buffers from crosswatch
+def _env_logs(request: Request | None = None):
+    if request is not None:
+        try:
+            lb = getattr(request.app.state, "LOG_BUFFERS", None)
+            ml = getattr(request.app.state, "MAX_LOG_LINES", None)
+            if isinstance(lb, dict) and isinstance(ml, int):
+                return lb, ml
+        except Exception:
+            pass
+    # fallback: import-time module
+    try:
+        import crosswatch as CW
+        return getattr(CW, "LOG_BUFFERS", {}), getattr(CW, "MAX_LOG_LINES", 2000)
+    except Exception:
+        return {}, 2000
+    
 # ---- Plex identity helpers ----
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -230,6 +247,24 @@ def api_plex_pms() -> JSONResponse:
     cfg = load_config()
     servers = _list_pms_servers(cfg)
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
+
+# ---- Watch logs ----
+@router.get("/debug/watch/logs")
+def debug_watch_logs(
+    request: Request,
+    tail: int = Query(50, ge=1, le=3000),
+    tag: str | None = Query(None, description="Single tag"),
+    tags: str = Query("*", description="CSV or * for all")
+) -> JSONResponse:
+    LOG_BUFFERS, MAX = _env_logs(request)
+    sel = [t.strip().upper() for t in ([tag] if tag else tags.split(",")) if t and t.strip()]
+    if sel == ["*"]:
+        sel = sorted(LOG_BUFFERS.keys())
+    tail = max(1, min(int(tail or 50), int(MAX)))
+    merged: list[str] = []
+    for t in sel:
+        merged.extend(LOG_BUFFERS.get(t, []))
+    return JSONResponse({"tags": sel, "tail": tail, "lines": merged[-tail:]}, headers={"Cache-Control": "no-store"})
 
 # ---- Scrobble watch ----
 @router.get("/debug/watch/status")

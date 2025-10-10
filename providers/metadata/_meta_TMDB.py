@@ -16,6 +16,20 @@ IMG_BASE = "https://image.tmdb.org/t/p"
 class TmdbProvider:
     name = "TMDB"
     UA = "Crosswatch/1.0"
+    
+    # ────────────────────────────────────────────────────────────────────────────
+    # Manifest for /api/metadata/providers (flat, JSON-safe)
+    # ────────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def manifest() -> Dict[str, Any]:
+        return {
+            "id": "tmdb",
+            "name": "TMDB",
+            "enabled": True,   # UI may still gate features by key presence
+            "ready": None,     # UI marks ready when key exists in /api/config
+            "ok": None,
+            "version": "1.0",
+        }
 
     def __init__(self, load_cfg, save_cfg) -> None:
         self.load_cfg = load_cfg
@@ -155,6 +169,10 @@ class TmdbProvider:
         if len(parts) >= 2 and len(parts[1]) == 2:
             return parts[1].upper()
         return None
+
+    @staticmethod
+    def _pick_first(arr):
+        return arr[0] if isinstance(arr, list) and arr else None
 
     def _images(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> Dict[str, list]:
         """Fetch posters/backdrops/logos only if requested."""
@@ -304,7 +322,7 @@ class TmdbProvider:
         locale: Optional[str] = None,
         need: Optional[Dict[str, bool]] = None,
     ) -> dict:
-        """Fetch TMDb metadata for a movie or TV show, with 404 smart-fallback."""
+        """Fetch TMDb metadata; accepts tmdb, imdb, or title/year. Fallbacks are gentle."""
         need = need or {"poster": True, "backdrop": True}
         ent_in = (entity or "").lower().strip()
         if ent_in in {"show", "shows"}:
@@ -312,14 +330,60 @@ class TmdbProvider:
         if ent_in not in {"movie", "tv"}:
             return {}
 
+        # Accept tmdb, imdb, or title/year as input
         tmdb_id = str(ids.get("tmdb") or ids.get("id") or "").strip()
-        if not tmdb_id:
-            return {}
+        imdb_id = (ids.get("imdb") or "").strip()
+        title   = (ids.get("title") or "").strip()
+        year_in = (ids.get("year") or "").strip()
 
         lang = (locale or "en-US")
         base = "https://api.themoviedb.org/3"
 
-        # ---- 1) Details (with 404 swap fallback) ----
+        # Resolve TMDb id if missing
+        if not tmdb_id and imdb_id:
+            try:
+                found = self._get(f"{base}/find/{imdb_id}", {"external_source": "imdb_id"})
+                if ent_in == "movie":
+                    hit = self._pick_first(found.get("movie_results") or [])
+                    tmdb_id = str(hit.get("id")) if hit else ""
+                else:
+                    hit = self._pick_first(found.get("tv_results") or [])
+                    tmdb_id = str(hit.get("id")) if hit else ""
+                if not tmdb_id:
+                    # If entity guess was wrong, pick whichever bucket returned first
+                    m = self._pick_first(found.get("movie_results") or [])
+                    t = self._pick_first(found.get("tv_results") or [])
+                    tmdb_id = str((m or t or {}).get("id") or "") if (m or t) else ""
+                    if m and not t:
+                        ent_in = "movie"
+                    if t and not m:
+                        ent_in = "tv"
+            except Exception as e:
+                self._log_exc("TMDb find by IMDb failed", e)
+
+        if not tmdb_id and title:
+            try:
+                if ent_in == "movie":
+                    q = {"query": title, "language": lang}
+                    if year_in:
+                        q["year"] = year_in
+                    res = self._get(f"{base}/search/movie", q)
+                    hit = self._pick_first(res.get("results") or [])
+                    tmdb_id = str(hit.get("id")) if hit else ""
+                else:
+                    q = {"query": title, "language": lang}
+                    if year_in:
+                        q["first_air_date_year"] = year_in
+                    res = self._get(f"{base}/search/tv", q)
+                    hit = self._pick_first(res.get("results") or [])
+                    tmdb_id = str(hit.get("id")) if hit else ""
+            except Exception as e:
+                self._log_exc("TMDb search failed", e)
+
+        if not tmdb_id:
+            return {}
+
+        # ---- Details (with 404 kind-swap) ----
         det = None
         kind = "movie" if ent_in == "movie" else "tv"
 
@@ -331,7 +395,6 @@ class TmdbProvider:
         except requests.exceptions.RequestException as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             if int(status or 0) == 404:
-                # swap once: movie<->tv
                 alt = "tv" if kind == "movie" else "movie"
                 try:
                     det = _get_details(alt)
@@ -346,9 +409,9 @@ class TmdbProvider:
             self._log_exc("TMDb detail fetch failed", e)
             return {}
 
-        # ---- 1b) Normalize fields by kind ----
+        # ---- Normalize by kind ----
         if kind == "movie":
-            title = det.get("title") or det.get("original_title")
+            title_out = det.get("title") or det.get("original_title")
             year = self._safe_int_year(det.get("release_date"))
             runtime = det.get("runtime")
             runtime_minutes = runtime if isinstance(runtime, int) and runtime > 0 else None
@@ -359,7 +422,7 @@ class TmdbProvider:
             score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
             detail = {"release_date": det.get("release_date")}
         else:
-            title = det.get("name") or det.get("original_name")
+            title_out = det.get("name") or det.get("original_name")
             year = self._safe_int_year(det.get("first_air_date"))
             run_list = det.get("episode_run_time") or []
             ep_runtime = next((x for x in run_list if isinstance(x, int) and x > 0), None)
@@ -375,37 +438,40 @@ class TmdbProvider:
                 "number_of_seasons": det.get("number_of_seasons"),
             }
 
-        # ---- 2) Images ----
+        # ---- Images ----
         images = {}
         try:
             images = self._images(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb images fetch failed", e)
 
-        # ---- 3) Videos ----
+        # ---- Videos ----
         videos = []
         try:
             videos = self._videos(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb videos fetch failed", e)
 
-        # ---- 4) External IDs ----
+        # ---- External IDs ----
         extra_ids = {}
         if need.get("ids"):
             try:
                 if kind == "movie":
                     data = self._get(f"{base}/movie/{tmdb_id}/external_ids")
-                    imdb_id = data.get("imdb_id")
-                    if imdb_id: extra_ids["imdb"] = imdb_id
+                    imdb_out = data.get("imdb_id")
+                    if imdb_out:
+                        extra_ids["imdb"] = imdb_out
                 else:
                     data = self._get(f"{base}/tv/{tmdb_id}/external_ids")
-                    imdb_id = data.get("imdb_id"); tvdb_id = data.get("tvdb_id")
-                    if imdb_id: extra_ids["imdb"] = imdb_id
-                    if tvdb_id: extra_ids["tvdb"] = tvdb_id
+                    imdb_out = data.get("imdb_id"); tvdb_out = data.get("tvdb_id")
+                    if imdb_out:
+                        extra_ids["imdb"] = imdb_out
+                    if tvdb_out:
+                        extra_ids["tvdb"] = tvdb_out
             except Exception as e:
                 self._log_exc("TMDb external IDs fetch failed", e)
 
-        # ---- 5) Certifications / release ----
+        # ---- Certification / release ----
         certification = None; release_iso = None; release_cc = None
         try:
             if kind == "movie" and (need.get("certification") or need.get("release")):
@@ -419,7 +485,7 @@ class TmdbProvider:
         out: Dict[str, Any] = {
             "type": "movie" if kind == "movie" else "tv",
             "ids": {"tmdb": str(tmdb_id), **extra_ids} if extra_ids else {"tmdb": str(tmdb_id)},
-            "title": title,
+            "title": title_out,
             "year": year,
             "runtime_minutes": runtime_minutes,
             "images": images or {},
@@ -435,7 +501,6 @@ class TmdbProvider:
 
         return out
 
-
 # Discovery hook
 def build(load_cfg, save_cfg):
     return TmdbProvider(load_cfg, save_cfg)
@@ -449,13 +514,7 @@ def html() -> str:
     # Minimal TMDb settings UI: API key + two Advanced fields (locale, ttl_hours)
     return r'''<div class="section" id="sec-tmdb">
   <style>
-    #sec-tmdb details.advanced {
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      background: #0b0d12;
-      padding: 8px 10px;
-      margin-top: 4px;
-    }
+    #sec-tmdb details.advanced { border: 1px dashed var(--border); border-radius: 12px; background: #0b0d12; padding: 8px 10px; margin-top: 4px; }
     #sec-tmdb details.advanced summary { cursor: pointer; font-weight: 700; opacity: .9; list-style: none; }
     #sec-tmdb details.advanced .adv-wrap { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   </style>

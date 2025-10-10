@@ -1,9 +1,14 @@
-// connections.pairs.overlay.js
+// connections.pairs.overlay.js — Pairs board UI 
+
 (function () {
+  // ────────────────────────────────────────────────────────────────────────────
   // Render guard
+  // ────────────────────────────────────────────────────────────────────────────
   let _renderBusy = false;
 
+  // ────────────────────────────────────────────────────────────────────────────
   // Helpers
+  // ────────────────────────────────────────────────────────────────────────────
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt" }[key(k)] || "x");
   const truthy = (v) => {
@@ -12,7 +17,9 @@
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
   };
 
-  // Styles
+  // ────────────────────────────────────────────────────────────────────────────
+  // Styles (scoped to #pairs_list)
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureStyles() {
     const css = `
 /* ===== Pairs board (scoped) ===== */
@@ -82,7 +89,9 @@
     s.textContent = css;
   }
 
-  // Host/board
+  // ────────────────────────────────────────────────────────────────────────────
+  // Host/board container
+  // ────────────────────────────────────────────────────────────────────────────
   function ensureHost() {
     const host = document.getElementById("pairs_list");
     if (!host) return null;
@@ -91,7 +100,9 @@
     return { host, board };
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
   // Data loader (robust)
+  // ────────────────────────────────────────────────────────────────────────────
   async function loadPairsIfNeeded() {
     if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return;
     if (typeof window.loadPairs === "function") { try { await window.loadPairs(); if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return; } catch {} }
@@ -101,7 +112,9 @@
     } catch (e) { window.cx = window.cx || {}; if (!Array.isArray(window.cx.pairs)) window.cx.pairs = []; console.warn("[pairs.overlay] fetch failed", e); }
   }
 
-  // Tooltip (passive; 120ms delay; hides on press; never stops events)
+  // ────────────────────────────────────────────────────────────────────────────
+  // Tooltip (passive; 120ms delay)
+  // ────────────────────────────────────────────────────────────────────────────
   function installTooltip(host) {
     let tip = host.querySelector(".cx-tip");
     if (!tip) { tip = document.createElement("div"); tip.className = "cx-tip"; host.appendChild(tip); }
@@ -145,7 +158,9 @@
     window.addEventListener("scroll", hide, { passive:true });
   }
 
-  // Actions
+  // ────────────────────────────────────────────────────────────────────────────
+  // Actions: edit / toggle / delete
+  // ────────────────────────────────────────────────────────────────────────────
   window.cxPairsEditClick = function (btn) {
     try {
       const id = btn.closest(".pair-card")?.dataset?.id; if (!id) return;
@@ -188,7 +203,9 @@
   }
   window.deletePairCard = deletePairCard;
 
+  // ────────────────────────────────────────────────────────────────────────────
   // Render
+  // ────────────────────────────────────────────────────────────────────────────
   function renderPairsOverlay() {
     ensureStyles();
     const containers = ensureHost(); if (!containers) return;
@@ -257,13 +274,18 @@
     refreshBadges(board);
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Post-render: badge positions
+  // ────────────────────────────────────────────────────────────────────────────
   function refreshBadges(board) {
     [...board.querySelectorAll(".pair-card")].forEach((el, i) => {
       const b = el.querySelector(".ord-badge"); if (b) b.textContent = String(i + 1);
     });
   }
 
-  // Button-based reorder only (no drag)
+  // ────────────────────────────────────────────────────────────────────────────
+  // Reorder (buttons only)
+  // ────────────────────────────────────────────────────────────────────────────
   if (typeof window.movePair !== "function") {
     window.movePair = async function (id, dir) {
       try {
@@ -288,7 +310,9 @@
     };
   }
 
-  // Orchestrate
+  // ────────────────────────────────────────────────────────────────────────────
+  // Orchestration
+  // ────────────────────────────────────────────────────────────────────────────
   async function renderOrEnhance() {
     if (_renderBusy) return; _renderBusy = true;
     try { await loadPairsIfNeeded(); renderPairsOverlay(); }

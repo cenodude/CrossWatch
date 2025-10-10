@@ -30,128 +30,216 @@ def CONFIG_BASE() -> Path:
 
     return Path(__file__).resolve().parents[1]
 
-
-# Ready-to-use Path
 CONFIG: Path = CONFIG_BASE()
-CONFIG.mkdir(parents=True, exist_ok=True)  # ensure exists
+CONFIG.mkdir(parents=True, exist_ok=True)
 
 # Default config structure
 DEFAULT_CFG: Dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
-        "server_url": "",          # http(s)://host:32400 (required for watcher)
-        "account_token": "",       # Plex token
-        "client_id": "",           # auto-generated when using PIN login
-        "username": "",
-        "servers": {"machine_ids": []},
+        "server_url": "",                               # http(s)://host:32400 (required for sync & watcher). If empty, we discover & persist.
+        "verify_ssl": False,                            # Verify TLS certificates
+        "account_token": "",                            # Plex token (a.k.a. authentication token).
+        "client_id": "",                                # Set by PIN login; reused for headers.
+        "machine_id": "",                               # PMS machineIdentifier (UUID).
+        "username": "",                                 # Preferred Plex Home user/profile. If empty, we detect & persist.
+        "account_id": "",                               # Server-local accountID (int) for the selected user. If empty, we resolve & persist.
+        "timeout": 10.0,                                # Optional HTTP timeout (seconds).
+        "max_retries": 3,                               # Optional retry budget.
+
+        # per-feature library whitelists (empty = all)
+        "history": { "libraries": [] },
+        "ratings": { "libraries": [] },
+        
+        # Ratings / History
+        "rating_workers": 12,                           # Parallel workers for Plex ratings indexing. 12–16 is ideal on a local NAS.
+        "history_workers": 12,                          # Parallel workers for Plex history indexing. 12–16 is ideal on a local NAS.
+
+        # Watchlist via Discover (with PMS fallback toggle)
+        "watchlist_allow_pms_fallback": False,          # Allow PMS watchlist fallback when needed. Keep False for strict Discover-only behavior.
+        "watchlist_query_limit": 25,                    # Max Discover search results per query (10–25). Lower = faster, 25 = safer.
+        "watchlist_write_delay_ms": 0,                  # Optional pacing between Discover writes; set 50–150 if you hit 429/5xx.
+        "watchlist_guid_priority": [                    # GUID resolution order (first match wins).
+            "tmdb", "imdb", "tvdb",
+            "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
+        ],
     },
+
     "simkl": {
-        "access_token": "",
-        "refresh_token": "",
-        "token_expires_at": 0,
-        "client_id": "",
-        "client_secret": "",
-        "date_from": "",
+        "access_token": "",                             # OAuth2 access token
+        "refresh_token": "",                            # OAuth2 refresh token
+        "token_expires_at": 0,                          # Epoch when access_token expires
+        "client_id": "",                                # From your Simkl app
+        "client_secret": "",                            # From your Simkl app
+        "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
     },
+
     "trakt": {
-        "client_id": "",
-        "client_secret": "",
-        "access_token": "",
-        "refresh_token": "",
-        "scope": "public",
-        "token_type": "Bearer",
-        "expires_at": 0,
+        "client_id": "",                                # From your Trakt app  
+        "client_secret": "",                            # From your Trakt app
+        "access_token": "",                             # OAuth2 access token
+        "refresh_token": "",                            # OAuth2 refresh token
+        "scope": "public",                              # OAuth2 scope (usually "public" or "private")
+        "token_type": "Bearer",                         # OAuth2 token type (usually "Bearer")
+        "expires_at": 0,                                # Epoch when access_token expires
+
+        "timeout": 10,                                  # HTTP timeout (seconds)
+        "max_retries": 5,                               # Retry budget for API calls (429/5xx backoff)
+
+        # Watchlist
+        "watchlist_use_etag": True,                     # Use ETag + local shadow to skip unchanged lists
+        "watchlist_shadow_ttl_hours": 168,              # Refresh ETag baseline weekly even if 304s keep coming
+        "watchlist_batch_size": 100,                    # Chunk size for add/remove to avoid 429/rate spikes
+        "watchlist_log_rate_limits": True,              # Log X-RateLimit-* and Retry-After when present
+        "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
+
+        # Ratings (used by _ratings.py)
+        "ratings_per_page": 100,                        # Items per page when indexing (10–100; clamped to 100)
+        "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
+        "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE
+
+        # History
+        "history_per_page": 100,                        # Max allowed by Trakt; fastest without spamming
+        "history_max_pages": 100000,                    # Safety cap for huge libraries; lower to bound runtime
+        "history_unresolved": False,                    # bool, default false (enable the freeze file)
+
         "_pending_device": {
-            "user_code": "",
-            "device_code": "",
+            "user_code": "",                            # Temporary device code state for PIN login 
+            "device_code": "",                          # Temporary device code state for PIN login
             "verification_url": "https://trakt.tv/activate",
-            "interval": 5,
-            "expires_at": 0,
-            "created_at": 0,
+            "interval": 5,                              # Polling interval (seconds)
+            "expires_at": 0,                            # Epoch when device_code expires
+            "created_at": 0,                            # Epoch when device_code was created
         },
     },
+
     "tmdb": {"api_key": ""},
 
     "jellyfin": {
-        "server": "",
-        "username": "",
-        "access_token": "",
-        "user_id": "",
-        "device_id": "crosswatch",
-        "watchlist": {"mode": "favorites", "playlist_name": "Watchlist"},
+        "server": "",                                   # http(s)://host:port (required)
+        "access_token": "",                             # Jellyfin access token (required)
+        "user_id": "",                                  # Jellyfin userId (required)
+        "device_id": "crosswatch",                      # Client device id
+        "username": "",                                 # Optional (not required for sync)
+        "verify_ssl": False,                            # Verify TLS certificates
+        "timeout": 15.0,                                # HTTP timeout (seconds)
+        "max_retries": 3,                               # Retry budget for API calls
+
+        # Watchlist settings
+        "watchlist": {
+            "mode": "favorites",                        # "favorites" | "playlist" | "collections"
+            "playlist_name": "Watchlist",               # used when mode == "playlist"
+            "watchlist_query_limit": 25,                # batch size
+            "watchlist_write_delay_ms": 0,              # delay between writes
+            "watchlist_guid_priority": [                # id match order
+                "tmdb", "imdb", "tvdb",
+                "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
+            ]
+        },
+
+        # History settings
+        "history": {
+            "history_query_limit": 25,                  # batch size
+            "history_write_delay_ms": 0,                # delay between writes
+            "history_guid_priority": [                  # id match order
+                "tmdb", "imdb", "tvdb",
+                "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
+            ]
+        },
+        
+        #  Ratings settings
+        "ratings": {
+            "ratings_query_limit": 2000,                # ratings query limit, default 2000
+        },
     },
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
-        "enable_add": True,              # write by default
-        "enable_remove": False,          # safer default: don't delete
-        "verify_after_write": False,
-        "dry_run": False,                # set True to preview only
-        "drop_guard": False,
-        "allow_mass_delete": True,
-        "tombstone_ttl_days": 1,
-        "include_observed_deletes": True,
+        # Global write gates (pair/feature settings will override these by design):
+        "enable_add": True,                             # Allow additions by default
+        "enable_remove": False,                         # Safer default: do not remove items unless explicitly enabled
+
+        # Execution behavior:
+        "verify_after_write": True,                     # When supported, re-check destination after writes
+        "dry_run": False,                               # Plan and log only; do not perform writes
+        "drop_guard": False,                            # Guard against sudden inventory shrink (protects from bad/suspect snapshots)
+        "allow_mass_delete": True,                      # If False, block large delete plans (e.g., >~10% of baseline)
+        "tombstone_ttl_days": 1,                        # How long “observed deletes” (tombstones) stay valid
+        "include_observed_deletes": True,               # If False, skip processing “observed deletes” for this run. Delta-trackers (SIMKL) will be turned off to prevent accidental removals
+
+        # Optional high-level two-way defaults (pairs always remain the source of truth for mode):
         "bidirectional": {
             "enabled": False,
-            "mode": "two-way",
-            "source_of_truth": "",
+            "mode": "two-way",                          # Placeholder default; pairs decide final mode per connection
+            "source_of_truth": "",                      # Optional: pick one side as tie-breaker if you enforce strict authority
+        },
+
+        # Blackbox (including flapper protection)
+        "blackbox": {
+            "enabled": True,                            # Turn off to fully disable blackbox logic
+            "promote_after": 1,                         # Promote an item to blackbox after N consecutive unresolved/fail events
+            "unresolved_days": 0,                       # Minimum unresolved age (days) before it counts (0 = immediate)
+            "pair_scoped": True,                        # Track per source-target pair to avoid blocking the same title elsewhere
+            "cooldown_days": 30,                        # Auto-prune/decay blackbox entries after this cooldown period
+            "block_adds": True,                         # When blackboxed, block planned ADDs for that item
+            "block_removes": True,                      # When blackboxed, block planned REMOVEs for that item
         },
     },
 
     # --- Runtime / Diagnostics ----------------------------------------------
     "runtime": {
-        "debug": False,
-        "state_dir": "",
-        "telemetry": {"enabled": True},
+        "debug": False,                                 # Extra verbose logging (debug level)
+        "debug_http": False,                            # Extra verbose HTTP logging (uvicorn access log)
+        "debug_mods": False,                            # Extra verbode MODS logging for Synchronization Providers
+        "state_dir": "",                                # Optional override for state dir (defaults to CONFIG/state)  - this will break container setups!
+        "telemetry": {"enabled": True},                 # Usage stats
 
         # progress + stability knobs
-        "snapshot_ttl_sec": 300,         # reuse snapshots within 5 min
-        "apply_chunk_size": 100,         # progress heartbeat every 100 items
-        "apply_chunk_pause_ms": 50,      # tiny breather between chunks
+        "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
+        "apply_chunk_size": 100,                        # Sweet spot for apply chunking
+        "apply_chunk_pause_ms": 50,                     # Small pause between chunks
 
         # suspect guard (shrinking inventories protection)
-        "suspect_min_prev": 20,
-        "suspect_shrink_ratio": 0.10,
+        "suspect_min_prev": 20,                         # Minimum previous size to enable suspect guard
+        "suspect_shrink_ratio": 0.10,                   # Shrink ratio to trigger suspect guard
     },
 
     # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
-        "locale": "",                    # e.g. "en-US" / "nl-NL"
-        "ttl_hours": 6,                  # coarse cache TTL
+        "locale": "",                                   # e.g. "en-US" / "nl-NL"
+        "ttl_hours": 6,                                 # Coarse cache TTL
     },
 
     # --- Scrobble (Plex watcher / Trakt sink) -------------------------------
     "scrobble": {
-        "enabled": False,
-        # "watch" = Plex Alerts listener (recommended)
-        # "webhook" = accept external POSTs (/webhook/trakt)
-        "mode": "watch",
+        "enabled": False,                               # Master toggle for scrobbling
+        "mode": "watch",                                # "watch" = real-time watcher; "webhook" = sync-time only
 
         # Watcher settings (Plex → events → Trakt)
         "watch": {
-            "autostart": False,              # start watcher on boot if enabled+mode=watch
-            "pause_debounce_seconds": 5,     # ignore micro-pauses just after start
-            "suppress_start_at": 99,         # kill near-end "start" flaps (credits)
+            "autostart": False,                         # Start watcher on boot if enabled+mode=watch
+            "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
+            "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
-                "username_whitelist": [],    # ["name", "id:123", "uuid:abcd…"]
-                "server_uuid": ""            # restrict to a specific PMS
+                "username_whitelist": [],               # ["name", "id:123", "uuid:abcd…"]
+                "server_uuid": ""                       # Restrict to a specific PMS
             }
         },
 
         # Trakt sink rules (progress decisions)
         "trakt": {
-            "stop_pause_threshold": 80,      # <80% STOP → send as PAUSE (your “watched” bar)
-            "force_stop_at": 95,             # ≥95% always STOP (bypass debounces)
-            "regress_tolerance_percent": 5   # small progress regress is tolerated
+            "stop_pause_threshold": 80,                 # <80% STOP → send as PAUSE (your “watched” bar)
+            "force_stop_at": 95,                        # ≥95% always STOP (bypass debounces)
+            "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }
     },
 
     # --- Scheduling ----------------------------------------------------------
     "scheduling": {
-        "enabled": False,
-        "mode": "hourly",
-        "every_n_hours": 2,
-        "daily_time": "03:30",
+        "enabled": False,                               # Master toggle for periodic runs
+        "mode": "hourly",                               # "hourly" or "daily"
+        "every_n_hours": 2,                             # When mode=hourly, run every N hours (1–12)
+        "daily_time": "03:30",                          # When mode=daily, run at this time (HH:MM, 24h)
     },
 
     # --- Pairs (UI-driven) ---------------------------------------------------
@@ -163,7 +251,6 @@ DEFAULT_CFG: Dict[str, Any] = {
 # ------------------------------------------------------------
 def _cfg_file() -> Path:
     return CONFIG / "config.json"
-
 
 def config_path() -> Path:
     """Public accessor kept for compatibility."""

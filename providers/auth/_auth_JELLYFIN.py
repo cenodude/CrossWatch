@@ -172,34 +172,165 @@ __all__ = ["PROVIDER", "JellyfinAuth", "html", "__VERSION__"]
 
 def html() -> str:
     return r'''<div class="section" id="sec-jellyfin">
+  <style>
+    /* TEMP: hide the Jellyfin Detail Settings */
+    #sec-jellyfin details.settings { display: none !important; }
+    #sec-jellyfin .footspace { display: none !important; }
+    /* (------------------------------------------------------------------- */
+    #sec-jellyfin details.settings{border:1px dashed var(--border);border-radius:12px;background:#0b0d12;padding:10px 12px 14px;margin-top:8px}
+    #sec-jellyfin details.settings summary{cursor:pointer;font-weight:700;opacity:.9;list-style:none}
+    #sec-jellyfin details.settings .wrap{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+    #sec-jellyfin .inline{display:flex;gap:8px;align-items:center}
+    #sec-jellyfin .btnrow{display:flex;gap:8px;margin-top:12px}
+    #sec-jellyfin .sub{opacity:.7;font-size:.92em}
+    #sec-jellyfin select[multiple]{min-height:140px}
+  </style>
+
   <div class="head" onclick="toggleSection && toggleSection('sec-jellyfin')">
-    <span class="chev"></span><strong>Jellyfin</strong>
+    <span class="chev">▶</span><strong>Jellyfin</strong>
   </div>
+
   <div class="body">
     <div class="grid2">
       <div>
         <label>Server URL</label>
-        <input id="jfy_server" placeholder="http://host:8096/" onchange="try{saveSetting('jellyfin.server', this.value);}catch(_){;}">
+        <input id="jfy_server" placeholder="http://host:8096/">
       </div>
       <div>
         <label>Username</label>
-        <input id="jfy_user" placeholder="username" onchange="try{saveSetting('jellyfin.username', this.value);}catch(_){;}">
+        <input id="jfy_user" placeholder="username">
       </div>
     </div>
     <div class="grid2" style="margin-top:8px">
       <div>
         <label>Password</label>
-        <input id="jfy_pass" type="password" placeholder="********" onchange="try{saveSetting('jellyfin.password', this.value);}catch(_){;}">
+        <input id="jfy_pass" type="password" placeholder="********">
       </div>
       <div>
         <label>Access Token</label>
         <input id="jfy_tok" readonly placeholder="empty = not set">
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+    <div class="inline" style="margin-top:10px">
       <button class="btn jellyfin" onclick="try{ jfyLogin && jfyLogin(); }catch(_){;}">Sign in</button>
-      <div class="muted">Username/password -> user access token.</div>
+      <div class="muted">Username/password → user access token.</div>
     </div>
     <div class="sep"></div>
+
+    <details class="settings">
+      <summary>Settings</summary>
+      <div class="wrap">
+        <!-- Left column -->
+        <div>
+          <label>Server URL</label>
+          <input id="jfy_server_url" placeholder="http://host:8096/">
+          <div class="sub">Leave blank to discover.</div>
+
+          <label style="margin-top:10px">Username</label>
+          <input id="jfy_username" placeholder="Display name">
+
+          <div class="btnrow">
+            <button class="btn" title="Fetch server/username from Jellyfin" onclick="jfyAuto()">Auto-Fetch</button>
+            <button class="btn" title="Load Jellyfin libraries" onclick="jfyLoadLibraries()">Load libraries</button>
+            <span class="sub" style="align-self:center">Edit values before Save if needed.</span>
+          </div>
+        </div>
+
+        <!-- Right column -->
+        <div>
+          <label>Whitelist libraries – History</label>
+          <select id="jfy_lib_history" multiple></select>
+          <div class="sub">Empty = all libraries.</div>
+
+          <label style="margin-top:10px">Whitelist libraries – Ratings</label>
+          <select id="jfy_lib_ratings" multiple></select>
+          <div class="sub">Empty = all libraries.</div>
+        </div>
+      </div>
+    </details>
   </div>
-</div>'''
+</div>
+
+<script>
+(function(){
+  const Q = s => document.querySelector(s);
+
+  async function hydrate(){
+    try{
+      const r = await fetch('/api/config',{cache:'no-store'});
+      const cfg = r.ok? await r.json() : null;
+      const jf = (cfg&&cfg.jellyfin)||{};
+      const s = jf.server||''; const u = jf.user||jf.username||'';
+      const hasTok = !!(jf.access_token||'').trim();
+      if(Q('#jfy_server'))     Q('#jfy_server').value = s;
+      if(Q('#jfy_user'))       Q('#jfy_user').value   = u;
+      if(Q('#jfy_server_url')) Q('#jfy_server_url').value = s;
+      if(Q('#jfy_username'))   Q('#jfy_username').value   = u;
+      if(Q('#jfy_tok')){ Q('#jfy_tok').value = hasTok?'••••••••':''; Q('#jfy_tok').dataset.masked = hasTok?'1':'0'; }
+    }catch{}
+  }
+  document.readyState==='loading' ? document.addEventListener('DOMContentLoaded',hydrate,{once:true}) : hydrate();
+
+  // ensure Save merges our fields (crosswatch.js picks these up)
+  window.mergeJellyfinIntoCfg = function(cfg){
+    const v = sel => { const el=Q(sel); return el?el.value.trim():''; };
+    const has = Q('#jfy_server_url') || Q('#jfy_username') || Q('#jfy_lib_history') || Q('#jfy_lib_ratings');
+    if(!has) return cfg;
+    const jf = (cfg.jellyfin = cfg.jellyfin || {});
+    const server = v('#jfy_server_url') || v('#jfy_server');
+    const user   = v('#jfy_username')   || v('#jfy_user');
+    jf.server = server;
+    jf.user   = user;
+    jf.username = user || jf.username || '';
+    const valsInt = sel => {
+      const el = Q(sel);
+      return el ? Array.from(el.selectedOptions||[]).map(o=>parseInt(o.value,10)).filter(Number.isFinite) : [];
+    };
+    jf.history = Object.assign({}, jf.history||{}, { libraries: valsInt('#jfy_lib_history') });
+    jf.ratings = Object.assign({}, jf.ratings||{}, { libraries: valsInt('#jfy_lib_ratings') });
+    return cfg;
+  };
+
+  // expose for buttons
+  window.jfyAuto = async function(){
+    try{
+      const r = await fetch('/api/jellyfin/inspect?ts='+Date.now(), {cache:'no-store'});
+      if(!r.ok) throw 0;
+      const d = await r.json();
+      if(d.server_url && Q('#jfy_server_url')) Q('#jfy_server_url').value = d.server_url;
+      if(d.username   && Q('#jfy_username'))   Q('#jfy_username').value   = d.username;
+      if(d.server_url && Q('#jfy_server'))     Q('#jfy_server').value     = d.server_url;
+      if(d.username   && Q('#jfy_user'))       Q('#jfy_user').value       = d.username;
+    }catch{}
+  };
+
+  window.jfyLoadLibraries = async function(){
+    try{
+      const r = await fetch('/api/jellyfin/libraries?ts='+Date.now(), {cache:'no-store'});
+      if(!r.ok) throw 0;
+      const d = await r.json();
+      const libs = Array.isArray(d?.libraries) ? d.libraries : [];
+      const fill = id => {
+        const el = Q(id); if(!el) return;
+        const keep = new Set(Array.from(el.selectedOptions||[]).map(o=>o.value));
+        el.innerHTML='';
+        libs.forEach(it=>{
+          const o = document.createElement('option');
+          o.value = String(it.key);
+          o.textContent = `${it.title} (${it.type||'lib'}) — #${it.key}`;
+          if(keep.has(o.value)) o.selected = true;
+          el.appendChild(o);
+        });
+      };
+      fill('#jfy_lib_history'); fill('#jfy_lib_ratings');
+    }catch{}
+  };
+
+  // hook into global save
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const btn = document.getElementById('save-fab-btn');
+    if(btn) btn.addEventListener('click', ()=>{ try{ window.mergeJellyfinIntoCfg?.(window.__cfg||{}); }catch{} }, true);
+  });
+})();
+</script>
+'''

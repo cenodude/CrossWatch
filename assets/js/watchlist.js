@@ -1,6 +1,4 @@
-// watchlist 
-//* Refactoring project: watchlist.js (v0.1) */
-//*------------------------------------------*/
+// watchlist.js - client-side watchlist management
 
 (function () {
 
@@ -226,6 +224,7 @@
   const snack       = $("wl-snack");
   const metricsEl   = $("wl-metrics");
   const detailEl    = $("wl-detail");
+  const sideEl      = document.querySelector(".wl-side");
   const moreBtn     = $("wl-more");
   const morePanel   = $("wl-more-panel");
   const releasedSel = $("wl-released");
@@ -322,13 +321,15 @@
   const derivedCache = new Map();
   let activeProviders = new Set();
 
+  let TMDB_OK = true; 
+
   /* ========= utils ========= */
   const esc = s => String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   const toLocale = () => navigator.language || "en-US";
   const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   const cmpDir = v => (sortDir === "asc" ? v : -v);
   const normKey = it => it.key || it.guid || it.id || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
-  const artUrl = (it, size) => { const tmdb = it?.tmdb || it?.ids?.tmdb; if (!tmdb) return ""; const typ = (String(it?.type || it?.media_type || "").toLowerCase() === "movie") ? "movie" : "tv"; return `/art/tmdb/${typ}/${encodeURIComponent(String(tmdb))}?size=${encodeURIComponent(size || "w342")}`; };
+  const artUrl=(it,size)=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv")}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?size=${encodeURIComponent(size||"w342")}`;
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };
   const providersOf = it => Array.isArray(it.sources) ? it.sources.map(s => String(s).toUpperCase()) : [];
@@ -358,70 +359,47 @@
 
   /* ========= hydrate rows (list view) ========= */
   const _hydrating = new Set();
-
-  // Never wipe existing text with an empty value
   const setText = (el, t) => {
     if (!el) return;
     const next = (t || "").trim();
-    if (!next) return;                 // <- guard: only set when we have something
+    if (!next) return;
     el.textContent = next;
     el.title = next;
   };
 
-  async function hydrateRow(it, tr) {
-    const k = normKey(it);
-    if (_hydrating.has(k)) return;
-    _hydrating.add(k);
+  async function hydrateRow(it, tr){
+    const k=normKey(it); if(_hydrating.has(k)) return; _hydrating.add(k);
+    try{
+      const canTMDB = (typeof TMDB_OK==="undefined") ? true : !!TMDB_OK;
+      const movie = /^movie$/i.test(it.type||"");
+      const m = canTMDB ? (await getMetaFor(it)) : null;
 
-    try {
-      const m = await getMetaFor(it);
-      if (!m) return;
+      const isoMeta = m ? (movie ? (m.detail?.release_date||m.release?.date||"") : (m.detail?.first_air_date||m.release?.date||"")) : "";
+      const gs = m ? (Array.isArray(m.genres||m.detail?.genres) ? (m.genres||m.detail?.genres) : []) : [];
+      const genresMeta = gs.map(g=>typeof g==="string"?g:(g?.name||g?.title||"")).filter(Boolean).slice(0,3).join(", ");
 
-      const movie = /^movie$/i.test(it.type || "");
+      const prev = derivedCache.get(k)||{};
+      const isoBase = (prev.iso||getReleaseIso(it)||"").trim();
+      const iso = (isoMeta||isoBase).trim();
 
-      // metadata (can be empty)
-      const isoMeta = movie
-        ? (m.detail?.release_date || m.release?.date || "")
-        : (m.detail?.first_air_date || m.release?.date || "");
+      const genresBase = (prev.genresText||extractGenres(it).slice(0,3).join(", ")).trim();
+      const genresText = (genresMeta||genresBase).trim();
 
-      const gs = Array.isArray(m.genres || m.detail?.genres)
-        ? (m.genres || m.detail?.genres)
-        : [];
-      const genresMeta = gs
-        .map(g => typeof g === "string" ? g : (g?.name || g?.title || ""))
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(", ");
+      const relFmtBase = (prev.relFmt||fmtDateSmart(isoBase,toLocale())||"").trim();
+      const relFmt = (fmtDateSmart(iso,toLocale())||relFmtBase).trim();
 
-      // merge with previous/baseline so we never regress to empty
-      const prev = derivedCache.get(k) || {};
-      const isoBase = (prev.iso || getReleaseIso(it) || "").trim();
-      const iso = (isoMeta || isoBase).trim();
-
-      const genresBase = (prev.genresText || extractGenres(it).slice(0,3).join(", ")).trim();
-      const genresText = (genresMeta || genresBase).trim();
-
-      const relFmtBase = (prev.relFmt || fmtDateSmart(isoBase, toLocale()) || "").trim();
-      const relFmt = (fmtDateSmart(iso, toLocale()) || relFmtBase).trim();
-
-      // update cache with merged, non-empty values
-      derivedCache.set(k, { iso, relFmt, genresText });
-
-      // update UI only if row is still mounted
-      if (tr?.isConnected) {
-        setText(tr.querySelector("td.rel"), relFmt);
-        setText(tr.querySelector("td.genre"), genresText);
-      }
-    } finally {
-      _hydrating.delete(k);
-    }
+      derivedCache.set(k,{iso,relFmt,genresText});
+      if(tr?.isConnected){ setText(tr.querySelector("td.rel"),relFmt); setText(tr.querySelector("td.genre"),genresText); }
+    } finally { _hydrating.delete(k); }
   }
 
   /* ========= API ========= */
   const fetchWatchlist = async () => {
     const r = await fetch("/api/watchlist?limit=5000", { cache: "no-store" });
     if (!r.ok) throw new Error("watchlist fetch failed");
-    const j = await r.json(); return Array.isArray(j?.items) ? j.items : [];
+    const j = await r.json();
+    TMDB_OK = !Boolean(j?.missing_tmdb_key);
+    return Array.isArray(j?.items) ? j.items : [];
   };
 
   const fetchConfig = async () => {
@@ -430,6 +408,7 @@
   };
 
   const getMetaFor = async it => {
+    if (!TMDB_OK) return null;
     const k = metaKey(it), hit = metaCache.get(k);
     if (hit) return hit;
     const tmdb = String(it.tmdb || it.ids?.tmdb || "");
@@ -659,7 +638,7 @@
   // render detail panel
   function renderDetail(it, meta) {
     const isMovie = String(it.type || "").toLowerCase() === "movie";
-    const poster = artUrl(it, "w154");
+    const poster = artUrl(it, "w154") || "/assets/img/placeholder_poster.svg";
     const year = it.year || meta?.year ? `<span class="year">${it.year || meta?.year}</span>` : "";
     const runtime = (() => { const m = meta?.runtime_minutes|0; if (!m) return ""; const h = (m/60)|0, mm = m%60; return h ? `${h}h ${mm?mm+'m':''}` : `${mm}m`; })();
     const genresText = (Array.isArray(meta?.genres) ? meta.genres : Array.isArray(it?.genres) ? it.genres : []).slice(0,3).join(", ");
@@ -677,7 +656,7 @@
 
     detailEl.innerHTML = `
       <div class="inner" style="position:relative;z-index:1;max-width:unset;margin:0 auto;padding:10px 14px 12px;display:grid;grid-template-columns:80px 1fr 96px;gap:12px;align-items:start">
-        <div>${poster ? `<img class="poster" src="${poster}" alt="" style="width:76px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.6)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" />` : ""}</div>
+        <div><img class="poster" src="${poster}" alt="" style="width:76px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.6)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" /></div>
         <div>
           <div style="display:flex;align-items:center;gap:10px">
             <div class="title" style="font-weight:800;font-size:18px;flex:1">${esc(it.title || meta?.title || "Unknown")} ${year}</div>
@@ -702,10 +681,11 @@
     }, true);
   }
 
-  /* ========= preview on hover ========= */
-  let activePreviewKey = null;
-  function showPreview(it){ const k = normKey(it); activePreviewKey = k; getMetaFor(it).then(m => { if (activePreviewKey === k) renderDetail(it, m || {}); }); }
-  function hidePreview(it){ const k = normKey(it); if (!selected.has(k) && activePreviewKey === k){ detailEl.classList.remove("show"); activePreviewKey = null; } }
+/* preview & detail */
+let activePreviewKey = null;
+function forceHideDetail(){ if(!detailEl) return; detailEl.classList.remove("show"); activePreviewKey=null; }
+function showPreview(it){ const k=normKey(it); activePreviewKey=k; getMetaFor(it).then(m=>{ if(activePreviewKey===k) renderDetail(it,m||{}); }); }
+function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePreviewKey===k){ detailEl.classList.remove("show"); activePreviewKey=null; } }
 
   /* ========= render ========= */
   // tiny ui toggles
@@ -726,20 +706,34 @@
     selCount.textContent = `${selected.size} selected`;
   }
 
-  function renderPosters() {
+  function renderPosters(){
     postersEl.replaceChildren();
-    const frag = document.createDocumentFragment();
-    filtered.forEach((it, i) => {
-      const key = normKey(it), imgUrl = artUrl(it, "w342"), card = document.createElement("div");
-      card.className = `wl-card ${selected.has(key) ? "selected" : ""}`;
-      const provHtml = providersOf(it).map(p => `<span class="wl-tag">${p}</span>`).join("");
-      const eager = i < 24 ? `loading="eager" fetchpriority="high"` : `loading="lazy"`;
-      card.innerHTML = `<div class="wl-tags">${provHtml}</div>${imgUrl ? `<img ${eager} decoding="async" src="${imgUrl}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" />` : `<div style="height:100%"></div>`}`;
-      card.addEventListener("click", () => { selected.has(key) ? selected.delete(key) : selected.add(key); card.classList.toggle("selected"); updateSelCount(); getMetaFor(it).then(m => renderDetail(it, m || {})); });
-      card.addEventListener("mouseenter", () => showPreview(it));
-      card.addEventListener("mouseleave", () => hidePreview(it));
+    const frag=document.createDocumentFragment();
+    const canTMDB=(typeof TMDB_OK==="undefined")?true:!!TMDB_OK;
+
+    filtered.forEach((it,i)=>{
+      const key=normKey(it);
+      const imgUrl=canTMDB ? artUrl(it,"w342") : "";
+      const src=imgUrl || "/assets/img/placeholder_poster.svg";
+      const card=document.createElement("div");
+      card.className=`wl-card ${selected.has(key)?"selected":""}`;
+
+      const provHtml=providersOf(it).map(p=>`<span class="wl-tag">${p}</span>`).join("");
+      const eager=i<24?`loading="eager" fetchpriority="high"`:`loading="lazy"`;
+      card.innerHTML=`<div class="wl-tags">${provHtml}</div><img ${eager} decoding="async" src="${src}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/>`;
+
+      card.addEventListener("click",()=>{
+        selected.has(key)?selected.delete(key):selected.add(key);
+        card.classList.toggle("selected"); updateSelCount();
+        if(canTMDB) getMetaFor(it).then(m=>renderDetail(it,m||{})); else renderDetail(it,{});
+      },true);
+
+      card.addEventListener("mouseenter",()=>{ if(canTMDB) showPreview(it); },true);
+      card.addEventListener("mouseleave",()=>hidePreview(it),true);
+
       frag.appendChild(card);
     });
+
     postersEl.appendChild(frag);
   }
 
@@ -752,7 +746,7 @@
       const key = normKey(it), tr = document.createElement("tr");
       const t = ((it.type || "").toLowerCase() === "show") ? "tv" : (it.type || "").toLowerCase();
       const typeLabel = t === "movie" ? "Movie" : "Show";
-      const thumb = artUrl(it, "w92");
+      const thumb = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
       const p = providersOf(it), have = { PLEX:p.includes("PLEX"), SIMKL:p.includes("SIMKL"), TRAKT:p.includes("TRAKT"), JELLYFIN:p.includes("JELLYFIN") };
       const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("JELLYFIN",have.JELLYFIN)}</div>`;
       const rel = fmtDateSmart(getReleaseIso(it), toLocale());
@@ -766,7 +760,7 @@
         <td class="genre" title="${esc(d.genresText)}">${esc(d.genresText)}</td>
         <td>${esc(typeLabel)}</td>
         <td>${matrix}</td>
-        <td>${thumb ? `<img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/>` : ""}</td>
+        <td><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
       `;
 
       // if either is missing, hydrate once; this will also update the cache
@@ -838,6 +832,7 @@
   // delete click (progress + optimistic UI)
   const delBtn = document.getElementById("wl-delete");
   delBtn?.addEventListener("click", async () => {
+    forceHideDetail(); 
     if (!selected.size) return snackbar("Nothing selected");
     const provider = (delProv?.value || "ALL");
     const PROV_UP = provider.toUpperCase();
@@ -863,6 +858,7 @@
       if (!s.size){ const idx = items.findIndex(it => normKey(it) === k); if (idx > -1) items.splice(idx,1); }
     }
     selected.clear(); applyFilters(); updateSelCount();
+    forceHideDetail(); 
     hardReloadWatchlist().catch(()=>{});
 
     snackbar(ok>0 ? (PROV_UP==="ALL" ? `Deleted on available providers for ${ok}/${total}` : `Deleted ${ok}/${total} on ${PROV_UP}`) : "Delete completed with no visible changes");
@@ -871,6 +867,10 @@
   /* ========= events & refresh/init ========= */
   const on = (els, evts, fn, cap=true) => evts.forEach(e => els.forEach(el => el?.addEventListener(e, fn, cap)));
   const setPosterMin = px => postersEl.style.setProperty("--wl-min", `${px}px`);
+
+  ["pointerenter","pointerdown","focusin","mouseenter","touchstart"].forEach(ev =>
+    sideEl?.addEventListener(ev, forceHideDetail, true)
+  );
 
   qEl.addEventListener("input", applyFilters, true);
   on([tEl, providerSel], ["change","input"], applyFilters);

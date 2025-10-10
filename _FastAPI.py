@@ -1,10 +1,43 @@
-"""
-_FastAPI.py
-Renders the complete HTML for the web UI served by the backend  (CrossWatch.py)
-"""
+# _FastAPI.py
+from __future__ import annotations
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.responses import Response, HTMLResponse
+from starlette.staticfiles import StaticFiles
 
+def register_assets_and_favicons(app: FastAPI, root: Path):
+    assets_dir = root / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
+<rect width="64" height="64" rx="14" fill="#0b0b0f"/>
+<rect x="10" y="16" width="44" height="28" rx="6" fill="none" stroke="url(#g)" stroke-width="3"/>
+<rect x="24" y="46" width="16" height="3" rx="1.5" fill="url(#g)"/>
+<circle cx="20" cy="30" r="2.5" fill="url(#g)"/>
+<circle cx="32" cy="26" r="2.5" fill="url(#g)"/>
+<circle cx="44" cy="22" r="2.5" fill="url(#g)"/>
+<path d="M20 30 L32 26 L44 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>"""
+
+    @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
+    def favicon_svg():
+        return Response(content=FAVICON_SVG, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/favicon.ico", include_in_schema=False, tags=["ui"])
+    def favicon_ico():
+        return Response(content=FAVICON_SVG, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+def register_ui_root(app: FastAPI):
+    @app.get("/", include_in_schema=False, tags=["ui"])
+    def ui_root():
+        return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
+      
 def get_index_html() -> str:
-    """Return the full, self-contained HTML for the CrossWatch UI."""
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
@@ -20,8 +53,6 @@ def get_index_html() -> str:
   #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
   #save-fab.hidden,#save-frost.hidden{display:none}
   .ops-header{display:flex;align-items:center;gap:12px}
-  
-
   .ops-header-flex { display:flex; align-items:center; gap:.75rem; }
   #btn-status-refresh.sync-ctrl{
     width:32px; height:32px; border-radius:999px;
@@ -32,13 +63,8 @@ def get_index_html() -> str:
   }
   #btn-status-refresh.sync-ctrl:hover{ transform:scale(1.04); opacity:.95; }
   #btn-status-refresh.sync-ctrl.spinning{ animation:spin 1s linear infinite; }
-
-  /* Spin the whole button while loading */
   #btn-status-refresh.spinning { animation: spin 1s linear infinite; }
-
-  /* If your SVG/icon has a class "icon", this spins only the icon */
   #btn-status-refresh.spinning .icon { animation: spin 1s linear infinite; }
-
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head><body>
@@ -61,9 +87,6 @@ def get_index_html() -> str:
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
-
-  <style id="prehide-wl">#tab-watchlist{display:none!important}</style>
-  <script>(()=>{fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).then(c=>{if((c?.tmdb?.api_key||"").trim())document.getElementById("prehide-wl")?.remove()}).catch(()=>{})})();</script>
 </header>
 
 <main id="layout">
@@ -128,7 +151,6 @@ def get_index_html() -> str:
       </div>
     </div>
 
-    <!-- Dynamic provider tiles (populated by insights.js) -->
     <div class="stat-tiles" id="stat-providers"></div>
 
     <div class="stat-block">
@@ -215,10 +237,10 @@ def get_index_html() -> str:
         </div>
 
         <div class="section" id="sec-troubleshoot">
-          <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Troubleshoot</strong></div>
+          <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Maintenance</strong></div>
           <div class="body">
             <div class="sub">Use these actions to reset application state. They are safe but cannot be undone.</div>
-            <div><label>Debug</label><select id="debug"><option value="false">off</option><option value="true">on</option></select></div>
+            <div><label>Debug</label><select id="debug"><option value="off">off</option><option value="on">on</option><option value="mods">on — including MOD debug</option><option value="full">on — full</option></select></div>
             <div class="chiprow"><button class="btn danger" onclick="clearState()">Clear State</button><button class="btn danger" onclick="clearCache()">Clear Cache</button><button class="btn danger" onclick="resetStats()">Reset Statistics</button></div>
             <div id="tb_msg" class="msg ok hidden">Done ✓</div>
           </div>
@@ -229,233 +251,287 @@ def get_index_html() -> str:
     </div>
   </section>
 
-  <div id="about-backdrop" class="modal-backdrop hidden" onclick="closeAbout(event)">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <div class="title-wrap"><div class="app-logo">🎬</div><div><div id="about-title" class="app-name">CrossWatch</div><div class="app-sub"><span id="about-version">Version …</span></div></div></div>
-        <button class="btn-ghost" aria-label="Close" onclick="closeAbout()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="about-grid">
-          <div class="about-item"><div class="k">Repository</div><div class="v"><a id="about-repo" href="https://github.com/cenodude/crosswatch" target="_blank" rel="noopener">GitHub</a></div></div>
-          <div class="about-item"><div class="k">Latest Release</div><div class="v"><a id="about-latest" href="#" target="_blank" rel="noopener">—</a></div></div>
-          <div class="about-item"><div class="k">Update</div><div class="v"><span id="about-update" class="badge upd hidden"></span></div></div>
-        </div>
-        <div class="sep"></div>
-        <div class="sub"><strong>Disclaimer:</strong> This is open-source software provided “as is,” without any warranties or guarantees. Use at your own risk. This project is not affiliated with, sponsored by, or endorsed by Plex, Inc., TRAKT, SIMKL, or The Movie Database (TMDb). All product names, logos, and brands are property of their respective owners.</div>
-      </div>
-      <div class="modal-footer"><button class="btn" onclick="window.open(document.getElementById('about-latest').href,'_blank')">Open Releases</button><button class="btn alt" onclick="closeAbout()">Close</button></div>
-    </div>
-  </div>
 </main>
 
-<script src="/assets/js/client-formatter.js" defer></script>
-<script src="/assets/crosswatch.js" defer></script>
+<script src="/assets/helpers/core.js"></script>
+<script src="/assets/helpers/dom.js"></script>
+<script src="/assets/helpers/events.js"></script>
+<script src="/assets/helpers/api.js"></script>
+<script src="/assets/helpers/legacy-bridge.js"></script>
+<script src="/assets/crosswatch.js"></script>
 <script src="/assets/js/main.js" defer></script>
-<script src="/assets/modals.js" defer></script>
-<script src="/assets/connections.overlay.js" defer></script>
-<script src="/assets/connections.pairs.overlay.js" defer></script>
-<script src="/assets/js/watchlist.js" defer></script>
+<script src="/assets/js/connections.overlay.js" defer></script>
+<script src="/assets/js/connections.pairs.overlay.js" defer></script>
 <script src="/assets/js/scheduler.js" defer></script>
 <script src="/assets/js/schedulerbanner.js" defer></script>
-<script src="/assets/insights.js" defer></script>
-<script src="/assets/settings-insight.js" defer></script>
+<script src="/assets/js/insights.js" defer></script>
+<script src="/assets/js/settings-insight.js" defer></script>
 <script src="/assets/js/scrobbler.js" defer></script>
-<script src="/assets/auth/auth.plex-simkl.js" defer></script>
+
+<script src="/assets/auth/auth.plex.js" defer></script>
+<script src="/assets/auth/auth.simkl.js" defer></script>
 <script src="/assets/auth/auth.trakt.js" defer></script>
 <script src="/assets/auth/auth.jellyfin.js" defer></script>
 
+<script src="/assets/js/client-formatter.js" defer></script>
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css">
+<script type="module" src="/assets/js/modals.js"></script>
+
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 
-<!-- Frosted footer layer + sticky Save button -->
 <div id="save-frost" class="hidden" aria-hidden="true"></div>
 <div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save">
   <button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button>
 </div>
 
 <script>
-(()=>{const CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>';
-let __cfg=null; // cached /api/config
+// Accordion: one open per container (top-level and nested)
+(() => {
+  const isOpen = s => s.classList.contains('open');
+  const open  = s => { s.classList.add('open');  s.querySelector('.head')?.setAttribute('aria-expanded','true');  const c=s.querySelector('.chev'); if(c) c.textContent='▼'; };
+  const close = s => { s.classList.remove('open'); s.querySelector('.head')?.setAttribute('aria-expanded','false'); const c=s.querySelector('.chev'); if(c) c.textContent='▶'; };
+  const siblingsOf = (sec) => { const p = sec?.parentElement; if (!p) return []; return Array.from(p.querySelectorAll(':scope > .section')); };
 
-// --- config helpers ----------------------------------------------------------
+  window.toggleSection = function(id){
+    const sec = document.getElementById(id); if (!sec) return;
+    const was = isOpen(sec);
+    siblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
+    was ? close(sec) : open(sec);
+  };
+
+  function initAccordion(){
+    const containers = new Set();
+    document.querySelectorAll('.section').forEach(s => s.parentElement && containers.add(s.parentElement));
+    containers.forEach(p => {
+      const secs = Array.from(p.querySelectorAll(':scope > .section'));
+      const opened = secs.filter(isOpen);
+      if (opened.length > 1) opened.slice(1).forEach(close);
+      secs.forEach(s => (isOpen(s) ? open(s) : close(s)));
+    });
+  }
+  document.addEventListener('DOMContentLoaded', initAccordion, { once:true });
+})();
+</script>
+
+<script>
+(()=>{const CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>';
+let __cfg=null;
+
 async function getConfig(force=false){
   if(__cfg && !force) return __cfg;
-  try{
-    const r = await fetch('/api/config?ts='+Date.now(), { cache:'no-store' });
-    __cfg = r.ok ? await r.json() : {};
-  }catch{ __cfg={}; }
+  try{ const r=await fetch('/api/config?ts='+Date.now(),{cache:'no-store'}); __cfg=r.ok?await r.json():{}; }
+  catch{ __cfg={}; }
   return __cfg;
 }
-function invalidateConfigCache(){ __cfg = null; }
+function invalidateConfigCache(){ __cfg=null; }
 
 function isProviderConfigured(key,cfg){
   const k=(key||'').toUpperCase(), c=cfg||__cfg||{};
-  // Only show a provider when it has credentials configured
   switch(k){
     case 'PLEX':     return !!(c?.plex?.account_token);
-    case 'TRAKT':    return !!(c?.trakt?.access_token);
+    case 'TRAKT':    return !!(c?.trakt?.access_token || c?.auth?.trakt?.access_token);
     case 'SIMKL':    return !!(c?.simkl?.access_token);
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
     default: return false;
   }
 }
 
-// --- ui helpers --------------------------------------------------------------
+// Connection pill; 'detail' becomes the tooltip
 function makeConn({name,connected,vip,detail}){
   const w=document.createElement('div'); w.className='conn-item';
   const p=document.createElement('div'); p.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;
   p.role='status'; p.ariaLabel=`${name} ${connected?'Connected':'Disconnected'}`;
+  if(detail) p.title=detail;
   if(vip){const s=document.createElement('span'); s.className='conn-slot'; s.innerHTML=CROWN; p.appendChild(s);}
   const t=document.createElement('span'); t.className='conn-text'; t.textContent=`${name} ${connected?'Connected':'Disconnected'}`;
   p.appendChild(t); w.appendChild(p);
-  if(detail){const d=document.createElement('div'); d.className='tip'; d.textContent=detail; w.appendChild(d);}
   return w;
 }
 function titleCase(k){k=String(k||'');return k? (k[0]+k.slice(1).toLowerCase()) : k;}
 
-// Right-anchored manual refresh (robust, stays put)
+// Keep refresh button in a stable spot
 function placeRefreshTopRight(){
-  const card = document.getElementById('ops-card') || document.querySelector('.ops-header');
-  const btn  = document.getElementById('btn-status-refresh');
-  if (!card || !btn) return;
-
-  // Keep the button as a direct child of the card/header (not inside badges)
-  if (btn.parentElement !== card) card.appendChild(btn);
-
-  // Fixed-position styling hook (CSS anchors it top-right)
+  const card=document.getElementById('ops-card')||document.querySelector('.ops-header');
+  const btn=document.getElementById('btn-status-refresh');
+  if(!card||!btn) return;
+  if(btn.parentElement!==card) card.appendChild(btn);
   btn.classList.add('sync-ctrl-fixed');
-
-  // Bind click once
-  btn.onclick = null;
-  btn.removeEventListener('click', fetchAndRender, true);
-  btn.addEventListener('click', fetchAndRender, true);
+  btn.onclick=null;
+  btn.removeEventListener('click',fetchAndRender,true);
+  btn.addEventListener('click',fetchAndRender,true);
 }
-
-// Back-compat shim for older calls
-window.putRefreshBeforeTrakt = placeRefreshTopRight;
-
-// Place on load
-document.addEventListener('DOMContentLoaded', placeRefreshTopRight, { once: true });
-
-// Ensure placement after every status render
+window.putRefreshBeforeTrakt=placeRefreshTopRight;
+document.addEventListener('DOMContentLoaded',placeRefreshTopRight,{once:true});
 (function patchFetchAndRender(){
-  const orig = window.fetchAndRender;
-  if (typeof orig === 'function'){
-    window.fetchAndRender = async function(...args){
-      try { return await orig.apply(this, args); }
-      finally { placeRefreshTopRight(); }
-    };
-  } else {
-    // fetchAndRender defined later → patch when available
-    const t = setInterval(() => {
-      if (typeof window.fetchAndRender === 'function'){
-        clearInterval(t);
-        patchFetchAndRender();
-      }
-    }, 50);
+  const orig=window.fetchAndRender;
+  if(typeof orig==='function'){
+    window.fetchAndRender=async function(...args){ try{ return await orig.apply(this,args);} finally{placeRefreshTopRight();} };
+  }else{
+    const t=setInterval(()=>{ if(typeof window.fetchAndRender==='function'){ clearInterval(t); patchFetchAndRender(); } },50);
   }
 })();
 
-
-
+// Render status; shows reason as tooltip when disconnected
 function render(payload){
   const host=document.getElementById('conn-badges'); if(!host) return;
   host.classList.add('vip-badges');
 
-  // Park refresh button while we rebuild
   const btn=document.getElementById('btn-status-refresh');
   if(btn && host.contains(btn)) host.removeChild(btn);
-
-  // Clear old pills
   host.querySelectorAll('.conn-item').forEach(n=>n.remove());
 
   const P=payload?.providers||{};
   const cfg=__cfg||{};
-  // Filter to configured providers only
   const keys=Object.keys(P).filter(k=>isProviderConfigured(k,cfg)).sort();
 
-  // Hide the whole strip if nothing configured
   const none=keys.length===0;
   host.classList.toggle('hidden',none);
+  if(none){ const hdr=document.querySelector('.ops-header'); if(btn&&hdr) hdr.appendChild(btn); return; }
 
-  if(none){
-    // Put the refresh button back into the header (not inside hidden host)
-    const hdr=document.querySelector('.ops-header'); if(btn && hdr) hdr.appendChild(btn);
-    return;
-  }
-
-  // Build pills
   keys.forEach(K=>{
     const d=P[K]||{}, name=titleCase(K);
+    const connected=!!d.connected;
     let vip=false, detail='';
-    if(K.toUpperCase()==='PLEX'){
-      vip=!!(d.plexpass||d.subscription?.plan);
-      if(vip){const plan=d.subscription?.plan||'Active'; detail=`Plex Pass – ${plan}`;}
-    }else if(K.toUpperCase()==='TRAKT'){
-      vip=!!d.vip; detail=vip?'VIP status – Enabled':'';
+    if(!connected){
+      detail=d.reason || `${name} not connected`;
+    }else{
+      if(K.toUpperCase()==='PLEX'){
+        vip=!!(d.plexpass||d.subscription?.plan);
+        if(vip){ detail=`Plex Pass – ${d.subscription?.plan||'Active'}`; }
+      }else if(K.toUpperCase()==='TRAKT'){
+        vip=!!d.vip; detail=vip?'VIP status – Enabled':'';
+      }
     }
-    host.appendChild(makeConn({name,connected:!!d.connected,vip,detail}));
+    host.appendChild(makeConn({name,connected,vip,detail}));
   });
 
-  // Reinsert the button (before Trakt, if present)
   putRefreshBeforeTrakt();
 }
 
-// --- data flow ---------------------------------------------------------------
+// Abortable fetch with short timeout for snappy UI
 async function fetchAndRender(e){
   e?.preventDefault?.();
-  const btn = e?.currentTarget || document.getElementById('btn-status-refresh');
-  if (!btn) return;
-  if (btn.dataset.busy === '1') return;
+  const btn=e?.currentTarget||document.getElementById('btn-status-refresh'); if(!btn) return;
+  if(btn.dataset.busy==='1') return;
 
-  btn.dataset.busy = '1';
-  btn.classList.add('spinning');
-  btn.setAttribute('aria-busy','true');
-  btn.disabled = true;
-
-  const minSpin = new Promise(r => setTimeout(r, 1000));
+  btn.dataset.busy='1'; btn.classList.add('spinning'); btn.setAttribute('aria-busy','true'); btn.disabled=true;
+  const minSpin=new Promise(r=>setTimeout(r,600));
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),4500);
 
   try{
-    await getConfig(true); // refresh config cache
-    const r = await fetch('/api/status?fresh=1', { cache:'no-store' });
-    const d = r.ok ? await r.json() : null;
-    if (d?.providers) render(d); else render({ providers:{} });
+    await getConfig(true);
+    const r=await fetch('/api/status?fresh=1',{cache:'no-store',signal:ctl.signal});
+    const d=r.ok?await r.json():null;
+    render(d?.providers?d:{providers:{}});
   }catch(err){
-    console.error('Manual refresh failed:', err);
+    console.error('Status refresh failed:',err);
+    render({providers:{}});
   }finally{
+    clearTimeout(t);
     await minSpin;
-    btn.classList.remove('spinning');
-    btn.removeAttribute('aria-busy');
-    btn.disabled = false;
-    delete btn.dataset.busy;
+    btn.classList.remove('spinning'); btn.removeAttribute('aria-busy'); btn.disabled=false; delete btn.dataset.busy;
     placeRefreshTopRight?.();
   }
 }
-window.manualRefreshStatus = fetchAndRender;
+window.manualRefreshStatus=fetchAndRender;
 
 async function init(){
-  if (typeof putRefreshBeforeTrakt === 'function') putRefreshBeforeTrakt();
-  if (typeof getConfig === 'function') await getConfig();
+  if(typeof putRefreshBeforeTrakt==='function') putRefreshBeforeTrakt();
+  if(typeof getConfig==='function') await getConfig();
   fetchAndRender();
 }
-document.readyState === 'loading'
-  ? document.addEventListener('DOMContentLoaded', init, { once:true })
+document.readyState==='loading'
+  ? document.addEventListener('DOMContentLoaded',init,{once:true})
   : init();
 })();
 </script>
 
 <script>
-/* Sticky Save footer + save UX */
-(()=>{const fab=document.getElementById('save-fab'),frost=document.getElementById('save-frost');
-function onSettings(){const s=document.getElementById('page-settings');return s&&!s.classList.contains('hidden')&&document.getElementById('tab-settings')?.classList.contains('active')}
-function update(){const show=onSettings();fab?.classList.toggle('hidden',!show);frost?.classList.toggle('hidden',!show)}
-function bind(){const s=document.getElementById('page-settings');if(!s)return;const mo=new MutationObserver(update);mo.observe(s,{attributes:true,attributeFilter:['class']})}
-document.addEventListener('DOMContentLoaded',()=>{bind();update()},{once:true});
-document.addEventListener('tab-changed',async ev=>{const id=String(ev?.detail?.id||'').toLowerCase();if(id==='main'){window.invalidateConfigCache?.();await window.fetchAndRender?.();}update();});
-addEventListener('hashchange',async()=>{const id=(location.hash||'').slice(1).toLowerCase();if(id==='main'){window.invalidateConfigCache?.();await window.fetchAndRender?.();}update();});
-addEventListener('sched-banner-ready',update);
-const t=setInterval(()=>{bind();update()},1000);addEventListener('beforeunload',()=>clearInterval(t))})();
-(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;async function w(){let btn=(arguments[0] instanceof HTMLElement)?arguments[0]:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;btn&&(btn.disabled=true);try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved ✓';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},2000)}throw e}}w._wrapped=true;window.saveSettings=w};document.readyState==='complete'?install():addEventListener('load',install)})();
+// Sticky Save FAB: show when Settings page is visible
+(() => {
+  const fab   = document.getElementById('save-fab');
+  const frost = document.getElementById('save-frost');
+  const page  = document.getElementById('page-settings');
+  const tab   = document.getElementById('tab-settings');
+
+  function isSettingsVisible(){
+    if (!page) return false;
+    const cs = getComputedStyle(page);
+    return !page.classList.contains('hidden') && cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  function update(){
+    const show = isSettingsVisible();
+    if (fab)   fab.classList.toggle('hidden', !show);
+    if (frost) frost.classList.toggle('hidden', !show);
+  }
+
+  function bindObservers(){
+    if (page){
+      const mo = new MutationObserver(update);
+      mo.observe(page, { attributes: true, attributeFilter: ['class','style'] });
+    }
+    if (tab){
+      const mo2 = new MutationObserver(update);
+      mo2.observe(tab, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => { bindObservers(); update(); }, { once:true });
+  document.addEventListener('tab-changed', update);
+  window.addEventListener('hashchange', update);
+  document.querySelector('.tabs')?.addEventListener('click', update, true);
+})();
+</script>
+
+<script>
+// Save UX wrapper: resilient, updates status, restores button label
+(() => {
+  const install = () => {
+    const orig = window.saveSettings;
+    if (typeof orig !== 'function' || orig._wrapped) return;
+
+    async function wrapped(btnOrEvent){
+      const btn = btnOrEvent instanceof HTMLElement ? btnOrEvent : document.getElementById('save-fab-btn');
+      if (btn && !btn.dataset.defaultHtml) btn.dataset.defaultHtml = btn.innerHTML;
+      if (btn) btn.disabled = true;
+
+      try {
+        const ret = orig.apply(this, arguments);
+        await (ret && typeof ret.then === 'function' ? ret : Promise.resolve());
+        window.invalidateConfigCache?.();
+        window.manualRefreshStatus?.();
+
+        if (btn){
+          btn.innerHTML = 'Settings saved ✓';
+          setTimeout(() => {
+            btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';
+            btn.disabled = false;
+          }, 1600);
+        }
+        return ret;
+      } catch (e) {
+        if (btn){
+          btn.innerHTML = 'Save failed';
+          setTimeout(() => {
+            btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';
+            btn.disabled = false;
+          }, 2000);
+        }
+        throw e;
+      }
+    }
+
+    wrapped._wrapped = true;
+    window.saveSettings = wrapped;
+  };
+
+  if (document.readyState === 'complete') {
+    install();
+  } else {
+    window.addEventListener('load', install, { once:true });
+  }
+})();
 </script>
 
 </body></html>
