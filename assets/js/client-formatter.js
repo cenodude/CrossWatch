@@ -157,7 +157,9 @@
         const i=ev.i|0,n=ev.n|0,A=String(ev.src||"").toUpperCase(),B=String(ev.dst||"").toUpperCase();
         pair={A,B}; resetCounts(A,B);
         const idx=i&&n?` ${i}/${n}`:"";
-        const meta=`feature=<b>${esc(ev.feature||"watchlist")}</b> · mode=${esc(ev.mode||"one-way")}${ev.dry_run?" · dry_run=true":""}`;
+        const fs=Array.isArray(ev.features)?ev.features:(ev.feature?[ev.feature]:[]);
+        const ftxt=fs.length>1?`features=<b>${esc(fs.map(x=>cap(String(x||""))).join(", "))}</b>`:`feature=<b>${esc(cap(String(fs[0]||"")))}</b>`;
+        const meta=`${ftxt} · mode=${esc(ev.mode||"one-way")}${ev.dry_run?" · dry_run=true":""}`;
         return block("pair",`${ICON.pair} Pair${idx}: ${badge(A)} <span class="cf-arrow">${arrowFor(ev.mode)}</span> ${badge(B)}`,meta);
       }
       case "two:start": return block("start",`⇄ Two-way sync`, `feature=${esc(ev.feature)} · removals=${!!ev.removals}`);
@@ -169,7 +171,7 @@
         return null;
 
       case "one:plan": {
-        const adds=ev.adds|0, removes=ev.removes|0, has=adds+removes;
+        const adds=ev.adds|0,removes=ev.removes|0,has=adds+removes;
         const feature=esc(cap(ev.feature));
         const title=`${ICON.plan} Plan for ${feature}`;
         const meta=has?`adding ${adds}, removing ${removes}`:"nothing to do";
@@ -177,7 +179,7 @@
       }
 
       case "apply:unresolved": {
-        const count=ev.count|0, feature=esc(cap(ev.feature));
+        const count=ev.count|0,feature=esc(cap(ev.feature));
         return block("plan",`${ICON.unresolved} ${count} unresolved ${feature} on ${badge(ev.provider)}`,"item could not be matched","cf-muted");
       }
 

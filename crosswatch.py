@@ -29,6 +29,7 @@ import uuid
 import shlex
 import requests
 import uvicorn
+import asyncio
 
 # --- App routers / features
 from _configAPI import router as config_router
@@ -559,22 +560,24 @@ def logs_dump(channel: str = "TRAKT", n: int = 50):
     return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
 
 @app.get("/api/logs/stream", tags=["logging"])
-def api_logs_stream_initial(tag: str = Query("SYNC")):
+async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
     tag = (tag or "SYNC").upper()
 
-    def gen():
+    async def agen():
         buf = LOG_BUFFERS.get(tag, [])
         for line in buf:
             yield f"data: {line}\n\n"
         idx = len(buf)
         while True:
+            if await request.is_disconnected():
+                break
             new_buf = LOG_BUFFERS.get(tag, [])
             while idx < len(new_buf):
                 yield f"data: {new_buf[idx]}\n\n"
                 idx += 1
-            time.sleep(0.25)
+            await asyncio.sleep(0.25)
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
 # --- Sync runner (called by scheduler)
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:

@@ -250,20 +250,10 @@ async function _getPairsFresh() {
 }
 
 async function isWatchlistEnabledInPairs(){
-  const freshWithin = (obj) => obj && (Date.now() - (obj.t || 0) < PAIRS_TTL_MS);
+  const freshWithin = (o) => o && (Date.now() - (o.t || 0) < PAIRS_TTL_MS);
   const anyWL = (arr) => Array.isArray(arr) && arr.some(p => !!(p?.features?.watchlist?.enable));
-
-  // Try using cached data first
   const cached = _loadPairsCache();
-  if (freshWithin(cached)) {
-    const cachedEnabled = anyWL(cached.pairs);
-    if (!cachedEnabled) return false;        // trust "false" immediately
-  // If cache indicates true, confirm with a live request before returning
-    const live = await _getPairsFresh();
-    return anyWL(live);
-  }
-
-  // No fresh cache: fetch live data
+  if (freshWithin(cached)) return anyWL(cached.pairs);
   const live = await _getPairsFresh();
   return anyWL(live);
 }
@@ -271,10 +261,7 @@ async function isWatchlistEnabledInPairs(){
 // Expose for other modules to call after settings or sync
 window.updatePreviewVisibility = updatePreviewVisibility;
 
-// Run once during page load
-document.addEventListener("DOMContentLoaded", () => { updatePreviewVisibility(); });
-
-const AUTO_STATUS = false; // DISABLE by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
+const AUTO_STATUS = false; // DISABLED by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
 let lastStatusMs = 0;
 const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -2234,7 +2221,6 @@ async function saveSettings() {
       if (typeof refreshStatus === "function") await refreshStatus(true);
     } catch {}
 
-    try { if (typeof updatePreviewVisibility === "function") await updatePreviewVisibility(); } catch {}
     try { if (typeof updateTmdbHint === "function") updateTmdbHint(); } catch {}
     try { if (typeof updateSimklState === "function") updateSimklState(); } catch {}
     try { if (typeof updateJellyfinState === "function") updateJellyfinState(); } catch {}
@@ -2718,13 +2704,13 @@ async function updateWatchlistPreview() {
   }
 }
 
-async function hasTmdbKey() {
-  try {
-    const cfg = await fetch("/api/config").then((r) => r.json());
-    return !!(cfg.tmdb?.api_key || "").trim();
-  } catch {
-    return false;
-  }
+async function hasTmdbKey(){
+  try{
+    if(window._cfgCache) return !!(window._cfgCache.tmdb?.api_key||"").trim();
+    const cfg=await fetch("/api/config").then(r=>r.json());
+    window._cfgCache=cfg;
+    return !!(cfg.tmdb?.api_key||"").trim();
+  }catch{ return false; }
 }
 
 function isOnMain(){
@@ -2734,46 +2720,51 @@ function isOnMain(){
   return !!(th && th.classList.contains("active"));
 }
 
+// Update preview visibility based on context
+let __uPVBusy = false;
+window.__wallLoading = window.__wallLoading || false;
+
 async function updatePreviewVisibility() {
-  const card = document.getElementById("placeholder-card");
-  const row  = document.getElementById("poster-row");
-  const msg  = document.getElementById("wall-msg");
-  if (!card) return false;
+  if (__uPVBusy) return false;
+  __uPVBusy = true;
+  try {
+    const card = document.getElementById("placeholder-card");
+    const row  = document.getElementById("poster-row");
+    const msg  = document.getElementById("wall-msg");
+    if (!card) return false;
 
-  const hideAll = () => {
-    card.classList.add("hidden");
-    if (row) { row.innerHTML = ""; row.classList.add("hidden"); }
-    if (msg) msg.textContent = "";
-    window.wallLoaded = false;
-  };
+    const hideAll = () => {
+      if (!card.classList.contains("hidden")) card.classList.add("hidden");
+      if (row) { row.innerHTML = ""; if (!row.classList.contains("hidden")) row.classList.add("hidden"); }
+      if (msg) msg.textContent = "";
+      window.wallLoaded = false;
+    };
 
-  if (!isOnMain?.()) { hideAll(); return false; }
+    if (!isOnMain?.()) { hideAll(); return false; }
 
-  let hasKey = false, wlEnabled = false;
-  try { hasKey = await hasTmdbKey?.(); } catch {}
-  try { wlEnabled = await isWatchlistEnabledInPairs?.(); } catch {}
+    let hasKey = false, wlEnabled = false;
+    try { hasKey = await hasTmdbKey?.(); } catch {}
+    try { wlEnabled = await isWatchlistEnabledInPairs?.(); } catch {}
 
-  if (!hasKey || !wlEnabled) { hideAll(); return false; }
+    if (!hasKey || !wlEnabled) { hideAll(); return false; }
 
-  card.classList.remove("hidden");
+    if (card.classList.contains("hidden")) card.classList.remove("hidden");
 
-  if (!window.wallLoaded) {
-    try { await loadWall?.(); window.wallLoaded = true; } catch {}
+    if (!window.wallLoaded && !window.__wallLoading) {
+      window.__wallLoading = true;
+      try { await loadWall?.(); window.wallLoaded = true; } catch {}
+      finally { window.__wallLoading = false; }
+    }
+    return true;
+  } finally {
+    __uPVBusy = false;
   }
-  return true;
 }
 
 showTab("main");
 
 let _bootPreviewTriggered = false;
-
 window.wallLoaded = false;
-
-document.addEventListener("DOMContentLoaded", async () => {
-  if (_bootPreviewTriggered) return;
-  _bootPreviewTriggered = true;
-  try { await updatePreviewVisibility(); } catch {}
-});
 
 window.addEventListener("storage", (event) => {
   if (event.key === "wl_hidden") {
@@ -3647,7 +3638,5 @@ document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } c
   }
 })();
 
-
 /* Ensure showTab is global at end */
 window.showTab = showTab;
-

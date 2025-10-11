@@ -89,12 +89,22 @@ def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Pat
 def _need_satisfied(meta: dict, need: dict | None) -> bool:
     if not need: return True
     if not isinstance(meta, dict): return False
-    def has_img(k: str) -> bool: return bool(((meta.get("images") or {}).get(k) or []))
-    for k, v in need.items():
-        if not v: continue
+
+    def has_img(k): return bool(((meta.get("images") or {}).get(k) or []))
+    def has_nested(k):
+        det = meta.get("detail") or {}
+        if k == "genres":  return bool(meta.get("genres") or det.get("genres"))
+        if k == "release": return bool(meta.get("release") or det.get("release_date") or det.get("first_air_date"))
+        if k == "title":   return bool(meta.get("title") or det.get("title") or det.get("name"))
+        if k == "year":    return bool(meta.get("year") or det.get("year") or det.get("release_year") or det.get("first_air_year"))
+        return bool(meta.get(k))
+
+    for k, v in (need or {}).items():
+        if not v: 
+            continue
         if k in {"poster","backdrop","logo"}:
             if not has_img(k): return False
-        elif not meta.get(k):
+        elif not has_nested(k):
             return False
     return True
 

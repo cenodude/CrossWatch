@@ -6,9 +6,10 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 from datetime import datetime, timezone, date
 import dataclasses as _dc, importlib, inspect, json, os, pkgutil, re, shlex, threading, time, uuid
+import asyncio
 
 # --- third-party ---
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -293,16 +294,16 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                 pass
         return 0
 
-    # --- IMPORTANT: ignore synthetic aggregate rows and events without a title
     def _is_real_item_event(e: dict) -> bool:
         k = str(e.get("key") or "")
-        if k.startswith("agg:"):         # synthetic “fan out” events
+        if k.startswith("agg:"):
             return False
         t = (e.get("title") or "").strip()
-        # Keep history/rating events even if some providers omit titles, but
-        # for watchlist we require a title to show in spotlight.
-        if (e.get("feature") or e.get("feat")) in ("watchlist", "ratings", "history"):
+        feat = str(e.get("feature") or e.get("feat") or "").lower()
+        if feat == "watchlist":
             return bool(t)
+        if feat in ("ratings", "history"):
+            return True
         return True
 
     rows = [e for e in events if s <= _evt_epoch(e) <= u and _is_real_item_event(e)]
@@ -318,22 +319,35 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         title  = (e.get("title") or e.get("key") or "item")
         slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
 
+        # --- WATCHLIST (+ / − / ~)
         if ("watchlist" in action) or (feat == "watchlist"):
             lane = "watchlist"
             if anyin(action, ("remove", "unwatchlist", "delete", "del", "rm", "clear")):
                 feats[lane]["removed"] += 1
                 feats[lane]["spotlight_remove"].append(title)
+            elif anyin(action, ("update", "rename", "edit", "move", "reorder", "relist")):
+                feats[lane]["updated"] += 1
+                feats[lane]["spotlight_update"].append(title)
             else:
                 feats[lane]["added"] += 1
                 feats[lane]["spotlight_add"].append(title)
             continue
 
+        # --- RATINGS (+ / − / ~)
         if (action in ("rate", "rating", "update_rating", "unrate")) or ("rating" in action) or ("rating" in feat):
             lane = "ratings"
-            feats[lane]["updated"] += 1
-            feats[lane]["spotlight_update"].append(title)
+            if anyin(action, ("unrate", "remove", "clear", "delete", "unset", "erase")):
+                feats[lane]["removed"] += 1
+                feats[lane]["spotlight_remove"].append(title)
+            elif anyin(action, ("rate", "add", "set", "set_rating", "update_rating")):
+                feats[lane]["added"] += 1
+                feats[lane]["spotlight_add"].append(title)
+            else:
+                feats[lane]["updated"] += 1
+                feats[lane]["spotlight_update"].append(title)
             continue
 
+        # --- HISTORY (+ / − / ~)
         is_history_feat = (feat in ("history", "watch", "watched")) or ("history" in action)
         if "watchlist" not in action:
             is_add_like    = anyin(action, ("watch", "scrobble", "checkin", "mark_watched", "history_add", "add_history"))
@@ -353,19 +367,21 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                 feats[lane]["spotlight_update"].append(title)
             continue
 
+        # --- PLAYLISTS (+ / − / ~)
         if ("playlist" in action) or ("playlist" in feat):
             lane = "playlists"
-            if anyin(action, ("remove", "delete", "rm", "del")):
+            if anyin(action, ("remove", "delete", "rm", "del", "clear")):
                 feats[lane]["removed"] += 1
                 feats[lane]["spotlight_remove"].append(title)
-            elif anyin(action, ("update", "rename", "move", "reorder")):
+            elif anyin(action, ("update", "rename", "move", "reorder", "edit")):
                 feats[lane]["updated"] += 1
                 feats[lane]["spotlight_update"].append(title)
             else:
                 feats[lane]["added"] += 1
                 feats[lane]["spotlight_add"].append(title)
+            continue
 
-    # only keep the last 3 spotlight entries per lane
+    # Keep only the last 3 spotlight entries per lane
     for lane in feats.values():
         lane["spotlight_add"]    = (lane["spotlight_add"]    or [])[-3:]
         lane["spotlight_remove"] = (lane["spotlight_remove"] or [])[-3:]
@@ -961,62 +977,48 @@ def api_run_summary_file() -> Response:
     js = json.dumps(_summary_snapshot(), indent=2)
     return Response(content=js, media_type="application/json", headers={"Content-Disposition": 'attachment; filename="last_sync.json"'})
 
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+import asyncio, json, time
+
 @router.get("/run/summary/stream")
-def api_run_summary_stream() -> StreamingResponse:
+async def api_run_summary_stream(request: Request) -> StreamingResponse:
     import html, re
     TAG_RE = re.compile(r"<[^>]+>")
+    def dehtml(s: str) -> str: return html.unescape(TAG_RE.sub("", s or ""))
 
-    def dehtml(s: str) -> str:
-
-        return html.unescape(TAG_RE.sub("", s or ""))
-
-    def gen():
+    async def agen():
         last_key = None
         last_idx = 0
         LOG_BUFFERS = _rt()[0]
 
         while True:
-            time.sleep(0.25)
+            if await request.is_disconnected():
+                break
             try:
                 buf = LOG_BUFFERS.get("SYNC") or []
-                if last_idx > len(buf): 
+                if last_idx > len(buf):
                     last_idx = 0
                 if last_idx < len(buf):
                     for line in buf[last_idx:]:
                         raw = dehtml(line).strip()
-                        if not raw.startswith("{"):
-                            continue
-                        try:
-                            obj = json.loads(raw)
-                        except Exception:
-                            continue
-
-                        evt = (str(obj.get("event") or "log").strip() or "log")
-                        yield f"event: {evt}\n"
-                        yield f"data: {json.dumps(obj, separators=(',',':'))}\n\n"
-
-                        if evt.startswith("apply:"):
-                            done = (obj.get("done")
-                                    or (obj.get("result") or {}).get("count")
-                                    or obj.get("count") or 0)
-                            total = obj.get("total") or obj.get("count") or 0
-                            final = evt.endswith(":done")
-                            payload = {"done": int(done or 0), "total": int(total or 0), "final": bool(final)}
-                            yield "event: progress:apply\n"
-                            yield f"data: {json.dumps(payload, separators=(',',':'))}\n\n"
-
+                        if raw.startswith("{"):
+                            try:
+                                obj = json.loads(raw)
+                            except Exception:
+                                continue
+                            evt = (str(obj.get("event") or "log").strip() or "log")
+                            yield f"event: {evt}\n"
+                            yield f"data: {json.dumps(obj, separators=(',',':'))}\n\n"
                     last_idx = len(buf)
             except Exception:
                 pass
 
             snap = _summary_snapshot()
             key = (
-                snap.get("running"),
-                snap.get("exit_code"),
-                snap.get("plex_post"),
-                snap.get("simkl_post"),
-                snap.get("result"),
-                snap.get("duration_sec"),
+                snap.get("running"), snap.get("exit_code"),
+                snap.get("plex_post"), snap.get("simkl_post"),
+                snap.get("result"), snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),
                 json.dumps(snap.get("features", {}), sort_keys=True),
                 json.dumps(snap.get("enabled", {}), sort_keys=True),
@@ -1025,4 +1027,6 @@ def api_run_summary_stream() -> StreamingResponse:
                 last_key = key
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(agen(), media_type="text/event-stream")

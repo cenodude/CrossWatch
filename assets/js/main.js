@@ -1,4 +1,4 @@
-// UX panel: monotone bar + live SSE
+// Main UI logic
 (()=>{
   // Lanes
   const FEATS=[
@@ -163,7 +163,7 @@
   const asPctFromTimeline=tl=>tl?.done?Anch.done:tl?.post?Anch.preEnd:tl?.pre?Anch.preStart:tl?.start?Anch.start0:0;
   const lerp=(a,b,t)=>a+(b-a)*t;
 
-  // Progress model (apply is ignored until all snapshots are finished → no early jump)
+  // Phase → pct
   const pctFromPhaseAgg=()=>{
     const sTot=PhaseAgg.snap.total|0, sDone=PhaseAgg.snap.done|0;
     const aTot=PhaseAgg.apply.total|0, aDone=PhaseAgg.apply.done|0;
@@ -262,7 +262,7 @@
     let spotAdd=Array.isArray(f.spotlight_add)?f.spotlight_add:[],
         spotRem=Array.isArray(f.spotlight_remove)?f.spotlight_remove:[],
         spotUpd=Array.isArray(f.spotlight_update)?f.spotlight_update:[];
-    if((added||removed||updated)===0 && hydratedLanes[key]) return {...hydratedLanes[key]};
+    if ((added||removed||updated)===0 && hydratedLanes[key]) return { ...hydratedLanes[key] };
     if(!spotAdd.length && !spotRem.length && !spotUpd.length && items.length){
       const s=synthSpots(items,key); spotAdd=s.a; spotRem=s.r; spotUpd=s.u;
     }
@@ -341,7 +341,7 @@
     elLanes.appendChild(wrap);
   }
 
-  // Spotlight (placeholder)
+  // Spotlight summary (not currently used)
   const renderSpotlightSummary=()=>{ elSpot.innerHTML=""; };
 
   // Pairs → lane enablement
@@ -394,14 +394,15 @@
     for(const [k,L] of Object.entries(tallies)){
       if((L.added+L.removed+L.updated)===0 && !L.spotAdd.length && !L.spotRem.length && !L.spotUpd.length) continue;
       const prev=summary.features[k]||{};
-      const merged={
-        added:(prev.added||0)+L.added,
-        removed:(prev.removed||0)+L.removed,
-        updated:(prev.updated||0)+L.updated,
-        spotlight_add:    prev.spotlight_add&&prev.spotlight_add.length?prev.spotlight_add:L.spotAdd,
-        spotlight_remove: prev.spotlight_remove&&prev.spotlight_remove.length?prev.spotlight_remove:L.spotRem,
-        spotlight_update: prev.spotlight_update&&prev.spotlight_update.length?prev.spotUpd:L.spotUpd,
+      const merged = {
+        added:   Math.max(prev.added   || 0, L.added),
+        removed: Math.max(prev.removed || 0, L.removed),
+        updated: Math.max(prev.updated || 0, L.updated),
+        spotlight_add:    prev.spotlight_add?.length    ? prev.spotlight_add    : L.spotAdd,
+        spotlight_remove: prev.spotlight_remove?.length ? prev.spotlight_remove : L.spotRem,
+        spotlight_update: prev.spotlight_update?.length ? prev.spotlight_update : L.spotUpd,
       };
+
       summary.features[k]=merged;
       hydratedLanes[k]={added:merged.added,removed:merged.removed,updated:merged.updated,items:[],spotAdd:merged.spotlight_add||[],spotRem:merged.spotlight_remove||[],spotUpd:merged.spotlight_update||[]};
     }
@@ -410,7 +411,7 @@
     return true;
   }
 
-  // Log hydration (fallback)
+  // Log hydration (last resort)
   function hydrateFromLog(){
     const det=document.getElementById("det-log"); if(!det) return false;
     const txt=det.innerText||det.textContent||""; if(!txt) return false;
@@ -474,9 +475,9 @@
     for(const [feat,lane] of Object.entries(tallies)){
       const prev=summary.features[feat]||{};
       const merged={
-        added:(prev.added||0)+(lane.added||0),
-        removed:(prev.removed||0)+(lane.removed||0),
-        updated:(prev.updated||0)+(lane.updated||0),
+        added: Math.max(prev.added||0, lane.added||0),
+        removed: Math.max(prev.removed||0, lane.removed||0),
+        updated: Math.max(prev.updated||0, lane.updated||0),
         spotlight_add:    (prev.spotlight_add&&prev.spotlight_add.length?prev.spotlight_add:lane.spotAdd).slice(-3),
         spotlight_remove: (prev.spotlight_remove&&prev.spotlight_remove.length?prev.spotlight_remove:lane.spotRem).slice(-3),
         spotlight_update: (prev.spotlight_update&&prev.spotlight_update.length?prev.spotlight_update:lane.spotUpd).slice(-3),
@@ -489,7 +490,7 @@
     return true;
   }
 
-  // Status pull (for UI info only)
+  // Status pull (very light, every 15s)
   const pullStatus=async()=>{ status=await fetchJSON("/api/status",status); try{ window._ui ||= {}; window._ui.status=status; }catch{} };
 
   // Summary → phase totals
@@ -509,7 +510,7 @@
     }
   }
 
-  // Pull summary (stabilized)
+  // Main pull (every 3s)
   let _prevTL={start:false,pre:false,post:false,done:false}, _prevRunning=false;
   async function pullSummary(){
     const s = await fetchJSON("/api/run/summary", summary); if(!s) return;
@@ -606,7 +607,7 @@
   // Render all
   const renderAll=()=>{ renderProgress(); renderLanes(); renderSpotlightSummary(); };
 
-  // Helper used after summary fetch when we might backfill from insights/log
+  // Check if we have any feature data at all
   const hasFeatureData=()=>
     summary?.features && Object.values(summary.features).some(v =>
       (v?.added||v?.removed||v?.updated||0)>0 ||
@@ -638,7 +639,7 @@
     },{capture:true});
   }
 
-  // SSE streams (kept singletons so we can reconnect cleanly)
+  // EventSource streams
   let esSummary=null, esLogs=null;
 
   window.openSummaryStream = function openSummaryStream(){
@@ -690,7 +691,6 @@
       esSummary.addEventListener("progress:snapshot", onSnap);
       esSummary.addEventListener("snapshot:progress", onSnap);
 
-      // Apply progress (we record it immediately; visual uses it only after all snapshots finish)
       esSummary.addEventListener("progress:apply", ev => { try{
         const d = JSON.parse(ev.data || "{}");
         ApplyAgg.prog({ feature:"__global__", done:d.done, total:d.total });
@@ -698,7 +698,6 @@
         renderProgress(); lastEventTs = Date.now();
       }catch{} });
 
-      // Optional per-feature markers if backend emits them on summary stream
       ["apply:add:start","apply:remove:start"].forEach(name=>{
         esSummary.addEventListener(name, ev => { try{
           const d = JSON.parse(ev.data || "{}");

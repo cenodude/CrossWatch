@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import json, time, threading, re, os, tempfile
+import difflib, unicodedata
 
 try:
     from cw_platform.config_base import CONFIG as _CONFIG_DIR  # type: ignore
@@ -347,12 +348,44 @@ class Stats:
         with self.lock:
             ev = self.data.get("events") or []
 
-            # 1) WATCHLIST: keep union + counters + samples (back-compat)
             prev_wl = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
             cur_wl  = self._build_union_map(state, "watchlist")
 
-            import re
-            def _title_key(m): return (m.get("title") or "").strip().casefold()
+            # Normalize titles to reduce noise
+            def _norm_title(s: str) -> str:
+                s = unicodedata.normalize("NFKD", s or "")
+                s = "".join(ch for ch in s if not unicodedata.combining(ch)).casefold()
+                s = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", s)
+                s = s.replace("&", " and ")
+                s = re.sub(r"[^a-z0-9]+", " ", s)
+                s = re.sub(r"\s+", " ", s).strip()
+                toks = s.split()
+                if toks and toks[0] in {"the", "a", "an"}:
+                    s = " ".join(toks[1:])
+                return s
+
+            def _title_key(m):
+                return _norm_title((m.get("title") or "").strip())
+
+            def _similar(a: str, b: str) -> bool:
+                if not a or not b: 
+                    return False
+                if a == b: 
+                    return True
+                ta, tb = set(a.split()), set(b.split())
+                if ta and (len(ta & tb) / len(ta | tb)) >= 0.85:
+                    return True
+                return difflib.SequenceMatcher(None, a, b).ratio() >= 0.92
+
+            def _titles_match_loose(rm: dict, am: dict) -> bool:
+                ra, aa = _title_key(rm), _title_key(am)
+                if not ra or not aa: 
+                    return False
+                ry, ay = self._year_of(rm), self._year_of(am)
+                if isinstance(ry, int) and isinstance(ay, int) and ry != ay:
+                    return False
+                return ra == aa or _similar(ra, aa)
+
             def _provset(m):  return {k for k in ("p","s","t","j") if m.get(k)} or {str(m.get("src") or "")}
             _IDCORE = re.compile(r"^(?P<p>[a-z0-9]+):(?:(?:movie|tv|show):)?(?P<i>[^:]+)$", re.I)
             def _idcore(k):
@@ -364,7 +397,7 @@ class Stats:
                 rm = prev_wl.get(rk) or {}; rt, rp = _title_key(rm), _provset(rm); rp_name, rp_id = _idcore(rk)
                 for ak in list(added_keys):
                     am = cur_wl.get(ak) or {}; at, ap = _title_key(am), _provset(am); ap_name, ap_id = _idcore(ak)
-                    same_title = rt and at and (rt == at); same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
+                    same_title = _titles_match_loose(rm, am); same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
                     if (same_title or same_idcore) and (rp & ap or same_idcore):
                         removed_keys.remove(rk); added_keys.remove(ak)
                         ev.append({"ts": now_epoch, "action": "update", "feature": "watchlist",
@@ -387,7 +420,6 @@ class Stats:
             self.data["last_run"] = {"added": len(added_keys), "removed": len(removed_keys), "ts": now_epoch}
             samples = self.data.get("samples") or []; samples.append({"ts": now_epoch, "count": len(cur_wl)}); self.data["samples"] = samples[-4000:]
 
-            # 2) OTHER FEATURES: compute diffs and emit item-events with titles
             feats = ("history","ratings","playlists")
             cur_by = dict(self.data.get("current_by_feature") or {})
             for feat in feats:
@@ -404,7 +436,7 @@ class Stats:
                     matched = False
                     for ak in list(adds):
                         am = cur_map.get(ak) or {}; at, ap2 = _title_key(am), _provset(am); ap_name, ap_id = _idcore(ak)
-                        same_title = rt and at and (rt == at)
+                        same_title = _titles_match_loose(rm, am)
                         same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
                         if (same_title or same_idcore) and (rp2 & ap2 or same_idcore):
                             rems.remove(rk); adds.remove(ak); matched = True
