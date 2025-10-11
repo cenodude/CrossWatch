@@ -30,7 +30,7 @@
   </a>
 </div>
 <br>
-<p align="center"><B>New version 0.2.0 is expected this week with huge improvements, wait for this version</B></p>
+<p align="center"><B>New version 0.2.0 is released with huge improvements</B></p>
 
 **CrossWatch** is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
@@ -126,19 +126,6 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way) or/and use Scrobble
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
-
----
-
-## 🛠 Troubleshooting
-
-Open **Settings → Troubleshoot** to access three quick-fix actions:
-
-- **Clear cache** — Purges cached data so fresh metadata is fetched next time.  
-  `POST /api/troubleshoot/clear-cache`
-- **Reset stats** — Resets usage/summary counters used for insights.  
-  `POST /api/troubleshoot/reset-stats`
-- **Reset state** — Reinitializes app state (filters, view prefs, local UI). Linked accounts are not touched.  
-  `POST /api/troubleshoot/reset-state`
 
 ---
 # 🎬 Live Scrobbling (Plex → Trakt)
