@@ -24,13 +24,11 @@ ARG APP_GID=1000
 RUN groupadd -g "${APP_GID}" "${APP_USER}" \
  && useradd -m -u "${APP_UID}" -g "${APP_GID}" -s /bin/bash "${APP_USER}"
 
-# --- deps (cache-friendly) ---
+# --- deps
 COPY requirements.txt /app/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip setuptools wheel && \
     pip install -r requirements.txt
-# If you need reload via watchmedo: uncomment next line
-# RUN pip install watchdog
 
 # --- app code ---
 COPY . /app

@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 # Entrypoint for CrossWatch container
-# - Ensures runtime user exists (if running as root)
-# - Prepares writable runtime directory
-# - Starts the FastAPI server or a custom command
 
 set -Eeuo pipefail
 

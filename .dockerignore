@@ -30,15 +30,21 @@ profiles.json
 # --- OS / misc ---
 .DS_Store
 Thumbs.db
+**/@eaDir
+**/@eaDir/**
 
 # --- Build artifacts ---
 dist/
 build/
 *.egg
 *.whl
-
-# --- Licensing/docs (optional, if you want them inside image then remove these) ---
-# LICENSE
-# README.md
-
-# --- DO NOT ignore requirements.txt or source code! ---
+images/
+docs/
+.github/
+.bashrc
+.dockerignore
+.env.bash
+.gitattributes
+Dockerfile
+LICENSE
+README.md
