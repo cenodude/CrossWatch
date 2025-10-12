@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import json, threading, re, requests
 from collections import defaultdict
+
 from cw_platform.config_base import CONFIG as CONFIG_DIR
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
@@ -113,25 +114,41 @@ def _alias_index(items:Dict[str,Any])->Dict[str,str]:
     return idx
 
 # --- Pair awareness ----------------------------------------------------------
+def _pair_map(cfg: Dict[str, Any], state: Dict[str, Any]) -> DefaultDict[Tuple[str, str], List[str]]:
+    mp: DefaultDict[Tuple[str, str], List[str]] = defaultdict(list)
+    pairs = cfg.get("pairs") or []
 
-def _pair_map(cfg:Dict[str,Any], state:Dict[str,Any]) -> DefaultDict[Tuple[str,str], List[str]]:
-    """Build source→targets per feature from config; fallback to PLEX→SIMKL(history)."""
-    mp: DefaultDict[Tuple[str,str], List[str]] = defaultdict(list)
-    pairs = (cfg.get("pairs") or [])
+    def add(src: str, feat: str, dst: str):
+        k = (src, feat)
+        if dst not in mp[k]:
+            mp[k].append(dst)
+
     for pr in pairs:
-        src=str(pr.get("src") or "").upper().strip()
-        dst=str(pr.get("dst") or "").upper().strip()
-        feats=[f.lower() for f in (pr.get("features") or ["history"])]
-        mode=str(pr.get("mode") or "one-way").lower()
-        if not (src and dst): continue
-        for f in feats:
-            if (dst not in mp[(src,f)]): mp[(src,f)].append(dst)
-            if mode in ("two-way","bi","both","mirror"):
-                if (src not in mp[(dst,f)]): mp[(dst,f)].append(src)
-    if not mp:
-        provs=set((state.get("providers") or {}).keys())
-        if "PLEX" in provs and "SIMKL" in provs:
-            mp[("PLEX","history")].append("SIMKL")
+        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
+        if not (src and dst):
+            continue
+
+        if pr.get("enabled") is False:
+            continue
+        mode = str(pr.get("mode") or "one-way").lower()
+
+        feats = pr.get("features")
+        feats_list: List[str] = []
+        if isinstance(feats, (list, tuple)):
+            feats_list = [str(f).lower() for f in feats]
+        elif isinstance(feats, dict):
+            for name in ("history", "watchlist", "ratings"):
+                f = feats.get(name)
+                if isinstance(f, dict) and (f.get("enable") or f.get("enabled")):
+                    feats_list.append(name)
+        else:
+            feats_list = ["history"]
+
+        for f in feats_list:
+            add(src, f, dst)
+            if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
+                add(dst, f, src)
     return mp
 
 def _indices_for(s:Dict[str,Any]) -> Dict[Tuple[str,str], Dict[str,str]]:

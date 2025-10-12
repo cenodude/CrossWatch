@@ -89,10 +89,7 @@ export default {
     const btnRun=Q("#an-run",root), btnToggleIDs=Q("#an-toggle-ids",root), btnClose=Q("#an-close",root);
     const split=Q("#an-split",root);
 
-    // Tighter defaults so “Year” and “Type” sit closer to Title (still resizable).
-    // [Provider, Feature, Title, Year, Type]
     let COLS = (JSON.parse(localStorage.getItem("an.cols")||"null")) || [110, 110, 430, 80, 100];
-
     let ITEMS=[], VIEW=[], SORT_KEY="title", SORT_DIR="asc", SHOW_IDS=false;
     let PROB={all:[],fix:[]};
     let SELECTED=null;
@@ -195,6 +192,33 @@ export default {
       issues.scrollTop = 0;
     }
 
+    // Fetch active pairs and build a map of allowed provider-feature to target providers
+    async function getActivePairMap() {
+      try {
+        const arr = await fjson("/api/pairs", { cache: "no-store" });
+        const map = new Map();
+        const on = (feat) => feat && (typeof feat.enable === "boolean" ? feat.enable : !!feat);
+        const add = (src, feat, dst) => {
+          const k = `${String(src||"").toUpperCase()}::${feat}`;
+          if (!map.has(k)) map.set(k, new Set());
+          map.get(k).add(String(dst||"").toUpperCase());
+        };
+        for (const p of (arr || [])) {
+          if (!p?.enabled) continue;
+          const src = (p.source || "").toUpperCase();
+          const dst = (p.target || "").toUpperCase();
+          const mode = String(p.mode || "one-way").toLowerCase();
+          const F = p.features || {};
+          for (const feat of ["history","watchlist","ratings"]) {
+            if (!on(F[feat])) continue;
+            add(src, feat, dst);
+            if (["two-way","bi","both","mirror"].includes(mode)) add(dst, feat, src);
+          }
+        }
+        return map;
+      } catch { return new Map(); }
+    }
+
     async function load(){
       restoreSplit();
       const s = await fjson("/api/analyzer/state");
@@ -206,15 +230,43 @@ export default {
     }
 
     async function analyze(){
-      const meta = await fjson("/api/analyzer/problems").catch(()=>({problems:[]}));
-      PROB.all = meta.problems || [];
-      PROB.fix = (PROB.all || []).filter(p => p.type === 'missing_peer');
-      issuesCount.textContent = 'Issues: ' + PROB.fix.length;
-      if (!PROB.fix.length){
+      const [pairMap, meta] = await Promise.all([
+        getActivePairMap(),
+        fjson("/api/analyzer/problems").catch(()=>({problems:[]})),
+      ]);
+      const all = meta.problems || [];
+      const seen = new Set();
+      const per = { history:0, watchlist:0, ratings:0 };
+      const keep = [];
+
+      for (const p of all) {
+        if (p.type !== "missing_peer") continue;
+        const key = `${String(p.provider||"").toUpperCase()}::${String(p.feature||"").toLowerCase()}`;
+        const allowed = pairMap.get(key);
+        if (!allowed) continue;
+        const tgts = (p.targets||[]).map(t => String(t||"").toUpperCase());
+        if (!tgts.some(t => allowed.has(t))) continue;
+        const sig = `${p.provider}::${p.feature}::${p.key}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        per[p.feature] = (per[p.feature]||0) + 1;
+        keep.push(p);
+      }
+
+      PROB.all = all;
+      PROB.fix = keep;
+
+      const parts = [`Issues: ${keep.length}`];
+      if (per.history)   parts.push(`H:${per.history}`);
+      if (per.watchlist) parts.push(`W:${per.watchlist}`);
+      if (per.ratings)   parts.push(`R:${per.ratings}`);
+      issuesCount.textContent = parts.join(" • ");
+
+      if (!keep.length){
         issues.innerHTML = `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
         return;
       }
-      const first = PROB.fix[0];
+      const first = keep[0];
       const tag = tagOf(first.provider, first.feature, first.key);
       select(tag);
       SELECTED = tag; draw();

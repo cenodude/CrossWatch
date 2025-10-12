@@ -1513,21 +1513,37 @@ window.Progress = (function () {
 })();
 
 // --- Details Log (live stream) -----------------
-
-// keep a handle to the summary stream so we can close it together with esDet
+if (typeof window.esDet === "undefined") window.esDet = null;
 if (typeof window.esDetSummary === "undefined") window.esDetSummary = null;
+if (typeof window._detStaleIV === "undefined") window._detStaleIV = null;
+if (typeof window._detRetryTO === "undefined") window._detRetryTO = null;
+if (typeof window._detVisibilityHandler === "undefined") window._detVisibilityHandler = null;
+if (typeof window.detStickBottom === "undefined") window.detStickBottom = true;
 
-function openDetailsLog() {
+async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
 
+  try {
+    if (typeof window.appDebug === "undefined") {
+      const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+      window._cfgCache = cfg;
+      window.appDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
+    }
+  } catch (_) {}
+
   el.innerHTML = "";
   el.classList?.add("cf-log");
-  detStickBottom = true;
+  window.detStickBottom = true;
 
-  if (esDet) { try { esDet.close(); } catch (_) {} esDet = null; }
-  if (window.esDetSummary) { try { window.esDetSummary.close(); } catch (_) {} window.esDetSummary = null; }
+  try { window.esDet?.close(); } catch (_) {}
+  try { window.esDetSummary?.close(); } catch (_) {}
+  window.esDet = null;
+  window.esDetSummary = null;
+  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
+  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
+  if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
 
   const updateSlider = () => {
     if (!slider) return;
@@ -1537,7 +1553,7 @@ function openDetailsLog() {
 
   const updateStick = () => {
     const pad = 6;
-    detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
+    window.detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
   };
 
   el.addEventListener("scroll", () => { updateSlider(); updateStick(); }, { passive: true });
@@ -1546,19 +1562,13 @@ function openDetailsLog() {
     slider.addEventListener("input", () => {
       const max = el.scrollHeight - el.clientHeight;
       el.scrollTop = Math.round((slider.value / 100) * max);
-      detStickBottom = slider.value >= 99;
+      window.detStickBottom = slider.value >= 99;
     });
   }
 
   const CF = window.ClientFormatter;
-  if (!CF || !CF.processChunk || !CF.renderInto) {
-    console.warn("ClientFormatter not loaded");
-    return;
-  }
+  const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
 
-  esDet = new EventSource("/api/logs/stream?tag=SYNC");
-
-  // Helper for debug/raw mode
   const appendRaw = (s) => {
     const lines = String(s).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
@@ -1570,73 +1580,100 @@ function openDetailsLog() {
     }
   };
 
-  esDet.onmessage = (ev) => {
-    if (!ev?.data) return;
+  let detBuf = "";
+  let lastMsgAt = Date.now();
+  let retryMs = 1000;
+  const STALE_MS = 20000;
 
-    if (ev.data === "::CLEAR::") {
-      el.textContent = "";
-      detBuf = "";
-      return;
-    }
+  const connect = () => {
+    try { window.esDet?.close(); } catch (_) {}
+    window.esDet = new EventSource("/api/logs/stream?tag=SYNC");
 
-    try { scanForEvents(ev.data); } catch {}
+    window.esDet.onmessage = (ev) => {
+      lastMsgAt = Date.now();
+      if (!ev?.data) return;
 
-    // DEBUG mode: show log stream verbatim, do not involve formatter
-    if (window.appDebug) {
-      appendRaw(ev.data);
-      if (detStickBottom) el.scrollTop = el.scrollHeight;
+      if (ev.data === "::CLEAR::") {
+        el.textContent = "";
+        detBuf = "";
+        updateSlider();
+        return;
+      }
+
+      try { scanForEvents(ev.data); } catch {}
+
+      if (!useFormatter) {
+        appendRaw(ev.data);
+      } else {
+        const { tokens, buf } = CF.processChunk(detBuf, ev.data);
+        detBuf = buf;
+        for (const tok of tokens) CF.renderInto(el, tok, false);
+      }
+
+      if (window.detStickBottom) el.scrollTop = el.scrollHeight;
       updateSlider();
-      return;
-    }
+      retryMs = 1000;
+    };
 
-    // NORMAL mode: pretty-print HTML logs via client-formatter
-    const { tokens, buf } = CF.processChunk(detBuf, ev.data);
-    detBuf = buf;
-    for (const tok of tokens) CF.renderInto(el, tok, false);
+    window.esDet.onerror = () => {
+      try { window.esDet?.close(); } catch (_) {}
+      window.esDet = null;
 
-    if (detStickBottom) el.scrollTop = el.scrollHeight;
-    updateSlider();
+      if (useFormatter && detBuf && detBuf.trim()) {
+        const { tokens } = CF.processChunk("", detBuf);
+        detBuf = "";
+        for (const tok of tokens) CF.renderInto(el, tok, false);
+        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
+        updateSlider();
+      }
+
+      if (!window._detRetryTO) {
+        window._detRetryTO = setTimeout(() => {
+          window._detRetryTO = null;
+          connect();
+        }, retryMs);
+        retryMs = Math.min(retryMs * 2, 15000);
+      }
+    };
   };
 
-  esDet.onerror = () => {
-    try { esDet?.close(); } catch (_) {}
-    esDet = null;
+  connect();
 
-    // Flush any remaining buffer on error in non-debug mode
-    if (!window.appDebug && detBuf && detBuf.trim()) {
-      const { tokens } = CF.processChunk("", detBuf);
-      detBuf = "";
-      for (const tok of tokens) CF.renderInto(el, tok, false);
-      if (detStickBottom) el.scrollTop = el.scrollHeight;
-      updateSlider();
+  window._detStaleIV = setInterval(() => {
+    if (!window.esDet) return;
+    if (document.visibilityState !== "visible") return;
+    if (Date.now() - lastMsgAt > STALE_MS) {
+      try { window.esDet.close(); } catch (_) {}
+      window.esDet = null;
+      connect();
     }
-  };
+  }, STALE_MS);
 
-  // In NON-DEBUG mode, mirror CTX (summary) events into the log output so
-  // they show up alongside the normal sync text.
+  window._detVisibilityHandler = () => {
+    if (document.visibilityState !== "visible") return;
+    if (!window.esDet || (Date.now() - lastMsgAt > STALE_MS)) connect();
+  };
+  document.addEventListener("visibilitychange", window._detVisibilityHandler);
+
   if (!window.appDebug) {
+    try { window.esDetSummary?.close(); } catch (_) {}
     window.esDetSummary = new EventSource("/api/run/summary/stream");
-
     window.esDetSummary.onmessage = (ev) => {
       try {
         if (!ev?.data) return;
         const obj = JSON.parse(ev.data);
-        // keep debug-only summary events hidden
         if (!obj || obj.event === "debug") return;
-
-        // Render this CTX event into the same log area using the formatter.
-        // We treat each event as a stand-alone chunk to avoid interfering with detBuf.
         const line = JSON.stringify(obj) + "\n";
-        const { tokens } = CF.processChunk("", line);
-        for (const tok of tokens) CF.renderInto(el, tok, false);
-
-        if (detStickBottom) el.scrollTop = el.scrollHeight;
+        if (useFormatter) {
+          const { tokens } = CF.processChunk("", line);
+          for (const tok of tokens) CF.renderInto(el, tok, false);
+        } else {
+          appendRaw(line);
+        }
+        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
         updateSlider();
-      } catch (_) {
-        // ignore non-JSON/partial messages
-      }
+      } catch (_) {}
     };
-
     window.esDetSummary.onerror = () => {
       try { window.esDetSummary?.close(); } catch (_) {}
       window.esDetSummary = null;
@@ -1650,96 +1687,23 @@ function openDetailsLog() {
 }
 
 function closeDetailsLog() {
-  try { esDet?.close(); } catch (_) {}
-  esDet = null;
-
+  try { window.esDet?.close(); } catch (_) {}
   try { window.esDetSummary?.close(); } catch (_) {}
+  window.esDet = null;
   window.esDetSummary = null;
-
-  detBuf = "";
+  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
+  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
+  if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
 }
 
 function toggleDetails() {
   const d = document.getElementById("details");
-
   d.classList.toggle("hidden");
-
   if (!d.classList.contains("hidden")) openDetailsLog();
   else closeDetailsLog();
 }
 
 window.addEventListener("beforeunload", closeDetailsLog);
-
-async function copySummary(btn) {
-  if (!window.currentSummary) {
-    try {
-      window.currentSummary = await fetch("/api/run/summary").then((r) =>
-        r.json()
-      );
-    } catch {
-      flashCopy(btn, false, "No summary");
-      return;
-    }
-  }
-
-  const s = window.currentSummary;
-
-  if (!s) {
-    flashCopy(btn, false, "No summary");
-    return;
-  }
-
-  const lines = [];
-  lines.push(`CrossWatch ${s.version || ""}`.trim());
-
-  if (s.started_at) lines.push(`Start:   ${s.started_at}`);
-  if (s.finished_at) lines.push(`Finish:  ${s.finished_at}`);
-  if (s.cmd) lines.push(`Cmd:     ${s.cmd}`);
-  if (s.plex_pre != null && s.simkl_pre != null)
-    lines.push(`Pre:     Plex=${s.plex_pre} vs SIMKL=${s.simkl_pre}`);
-  if (s.plex_post != null && s.simkl_post != null)
-    lines.push(
-      `Post:    Plex=${s.plex_post} vs SIMKL=${s.simkl_post} -> ${
-        s.result || "UNKNOWN"
-      }`
-    );
-
-  if (s.duration_sec != null) lines.push(`Duration: ${s.duration_sec}s`);
-  if (s.exit_code != null) lines.push(`Exit:     ${s.exit_code}`);
-
-  const text = lines.join("\n");
-  let ok = false;
-
-  try {
-    await navigator.clipboard.writeText(text);
-    ok = true;
-  } catch (e) {
-    ok = false;
-  }
-
-  if (!ok) {
-    try {
-      const ta = document.createElement("textarea");
-
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-
-      ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-    } catch (e) {
-      ok = false;
-    }
-  }
-
-  flashCopy(btn, ok);
-}
 
 function downloadSummary() {
   window.open("/api/run/summary/file", "_blank");
@@ -1755,18 +1719,16 @@ function setRefreshBusy(busy) {
 
 //------------------------------------------------------------------
 
-// --- Bootstrap shims: provide lightweight fallbacks so code using modal APIs doesn't throw
+// --- Settings Page -----------------
 window.openAbout = () => window.ModalRegistry.open('about');
 window.cxEnsureCfgModal = window.cxEnsureCfgModal || function(){};
 
-// --- Secret-field helpers: masking, touched flags, and load state
-// Ensure saveSettings updates token fields only if the user actually edited them
+// Set value of input/select by ID (if visible)
 window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
   const el = document.getElementById(id);
   if (!el || el.__wiredTouch) return;
   el.addEventListener("input", () => {
     el.dataset.touched = "1";
-    // typing into a masked field means it's no longer a placeholder
     el.dataset.masked = "0";
   });
   el.__wiredTouch = true;
