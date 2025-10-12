@@ -1,4 +1,4 @@
-// Simple modal registry with a single host
+// modal registry wrapper
 import { ModalHost } from './host.js';
 const reg = new Map(); let host=null;
 

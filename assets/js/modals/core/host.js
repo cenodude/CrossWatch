@@ -1,5 +1,4 @@
-// Modal host: backdrop, ESC, bounded drag, clamp on resize
-// Also hides any external sticky save bars while a modal is open.
+// Modal host
 import { clampRectToViewport, trapFocus } from './state.js';
 
 export class ModalHost {
@@ -9,6 +8,10 @@ export class ModalHost {
     this.api = null;
     this._drag = { active:false };
     this._foreign = null;
+    this._pmove = null;
+    this._pup = null;
+    this._resize = null;
+    this._esc = null;
   }
 
   _ensure(){
@@ -22,6 +25,7 @@ export class ModalHost {
     s.tabIndex = -1;
 
     b.appendChild(s);
+    b.addEventListener('cw-modal-close', () => this.unmount());
     document.body.appendChild(b);
 
     this.backdrop = b;
@@ -30,16 +34,24 @@ export class ModalHost {
 
     // drag via .cx-head
     s.addEventListener('pointerdown', (e) => this._onDown(e), true);
-    window.addEventListener('pointermove', (e) => this._onMove(e), true);
-    window.addEventListener('pointerup', () => this._onUp(), true);
-    window.addEventListener('resize', () => this._clamp(), { passive:true });
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.unmount(); });
+    this._pmove  = (e) => this._onMove(e);
+    this._pup    = () => this._onUp();
+    this._resize = () => this._clamp();
+    window.addEventListener('pointermove', this._pmove, true);
+    window.addEventListener('pointerup', this._pup, true);
+    window.addEventListener('resize', this._resize, { passive:true });
+
+    this._esc = (e) => { if (e.key === 'Escape') this.unmount(); };
+    document.addEventListener('keydown', this._esc);
+
+    // global close helper for modal content
+    window.cxCloseModal = () => this.unmount();
   }
 
   _hideForeign(){
     if (this._foreign) return;
     const kills = [];
-    const ids = ['save-fab','save-frost','savebar']; // common ids in the app
+    const ids = ['save-fab','save-frost','savebar'];
     for (const id of ids){
       const n = document.getElementById(id);
       if (n && n.parentNode){
@@ -66,15 +78,13 @@ export class ModalHost {
   }
 
   async mount(api, props = {}){
-    this._ensure();              // make sure shell exists
+    this._ensure();
     this.api = api;
     this.shell.innerHTML = '';
 
     try {
-      const shell = this.shell;  // snapshot in case 'api.mount' closes things
+      const shell = this.shell;
       await api.mount(shell, props);
-
-      // If modal closed itself during mount, bail out gracefully
       if (!this.shell || !this.shell.isConnected) return;
 
       // center then clamp
@@ -82,7 +92,6 @@ export class ModalHost {
       this.shell.style.top = '50%';
       this.shell.style.transform = 'translate(-50%,-50%)';
 
-      // focus & traps only when shell still alive
       if (typeof trapFocus === 'function') trapFocus(this.shell);
       this.shell.focus?.({ preventScroll: true });
 
@@ -96,6 +105,17 @@ export class ModalHost {
   unmount(){
     try { this.api?.unmount?.(); } catch {}
     this.api = null;
+
+    // remove listeners
+    if (this._pmove)  window.removeEventListener('pointermove', this._pmove, true);
+    if (this._pup)    window.removeEventListener('pointerup', this._pup, true);
+    if (this._resize) window.removeEventListener('resize', this._resize);
+    if (this._esc)    document.removeEventListener('keydown', this._esc);
+    this._pmove = this._pup = this._resize = this._esc = null;
+
+    // cleanup globals
+    if (window.cxCloseModal) delete window.cxCloseModal;
+
     this._restoreForeign();
     this.backdrop?.remove();
     this.backdrop = null;

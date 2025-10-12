@@ -3,6 +3,7 @@ import { ModalRegistry } from './modals/core/registry.js';
 
 ModalRegistry.register('pair-config', () => import('./modals/pair-config/index.js'));
 ModalRegistry.register('about', () => import('./modals/about.js'));
+ModalRegistry.register('analyzer', () => import('./modals/analyzer/index.js'));
 
 // Public API + legacy bridges
 export const openModal = ModalRegistry.open;
@@ -14,6 +15,7 @@ window.closePairModal = () => ModalRegistry.close();
 window.cxCloseModal = () => ModalRegistry.close();
 window.openAbout = (props={}) => ModalRegistry.open('about', props);
 window.closeAbout = () => ModalRegistry.close();
+window.openAnalyzer = (props={}) => ModalRegistry.open('analyzer', props);
 
 // Compatibility shims for older code
 window.cxEnsureCfgModal = async (pairOrId=null)=>{
