@@ -13,6 +13,7 @@ except Exception:
     from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
+PLEX_HISTORY_MAXRESULTS = 20_000
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
@@ -187,11 +188,23 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
 
     rows = []
     try:
+        kwargs = {}
         if acct_id:
-            try: rows = list(srv.history(accountID=int(acct_id)) or [])
-            except Exception: rows = list(srv.history() or [])
-        else:
-            rows = list(srv.history() or [])
+            kwargs["accountID"] = int(acct_id)
+
+        if since is not None:
+            kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
+
+        # Pull full history;
+        kwargs["maxresults"] = PLEX_HISTORY_MAXRESULTS
+
+        rows = list(srv.history(**kwargs) or [])
+
+        # Fallback:
+        if not rows and "accountID" in kwargs:
+            _log("no rows with accountID → retry without account scope")
+            kwargs.pop("accountID", None)
+            rows = list(srv.history(**kwargs) or [])
     except Exception as e:
         _log(f"history fetch failed: {e}")
         return {}
