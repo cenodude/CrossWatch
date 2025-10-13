@@ -744,6 +744,11 @@ async function showTab(n) {
     if (__currentTab === "main") await softRefreshMain();
     else await hardRefreshMain({ layout, statsCard });
     logPanel?.classList.remove("hidden");
+    // Reopen details log stream when returning to Main
+    queueMicrotask(() => {
+      const hasPanel = document.getElementById("det-log");
+      if (hasPanel && !window.esDet) { try { openDetailsLog(); } catch {} }
+    });
     __currentTab = "main";
     return;
   }
@@ -861,12 +866,14 @@ async function runSync(){
 
   try{ window.UX?.updateTimeline({ start:true, pre:false, post:false, done:false }); window.UX?.updateProgress({ pct:0 }); }catch{}
 
-  try{
+  try {
     const detLog = document.getElementById("det-log");
     if (detLog) detLog.textContent = "";
-    if (esDet) { try{ esDet.close(); }catch{} esDet = null; }
-    typeof openDetailsLog === "function" && openDetailsLog();
-  }catch{}
+    try { window.esDet?.close(); } catch {}
+    window.esDet = null;
+  } catch {}
+
+  try { typeof openDetailsLog === "function" && openDetailsLog(); } catch {}
 
   try{
     const resp = await fetch("/api/run", { method:"POST" });
@@ -1537,8 +1544,8 @@ async function openDetailsLog() {
   el.classList?.add("cf-log");
   window.detStickBottom = true;
 
-  try { window.esDet?.close(); } catch (_) {}
-  try { window.esDetSummary?.close(); } catch (_) {}
+  try { window.esDet?.close(); } catch {}
+  try { window.esDetSummary?.close(); } catch {}
   window.esDet = null;
   window.esDetSummary = null;
   if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
@@ -1991,61 +1998,105 @@ async function saveSettings() {
       changed = true;
     }
 
-    // Jellyfin patch 
+    // Jellyfin patch
     try {
-      const uiSrv  = norm(document.getElementById("jfy_server")?.value || "");
-      const uiUser = norm(document.getElementById("jfy_user")?.value   || "");
-
-      const prevSrv  = norm(serverCfg?.jellyfin?.server);
-      const prevUser = norm(serverCfg?.jellyfin?.username);
-
-      if (uiSrv && uiSrv !== prevSrv) {
-        (cfg.jellyfin ||= {}).server = uiSrv; changed = true;
-      }
-      if (uiUser && uiUser !== prevUser) {
-        (cfg.jellyfin ||= {}).username = uiUser; changed = true;
-      }
-
-      // Read <select multiple> values safely (no globals)
-      const toInts = (selector) => {
-        const el = document.querySelector(selector);
-        if (!el) return null;
-        const opts = el.selectedOptions
-          ? Array.from(el.selectedOptions)
-          : Array.from(el.querySelectorAll("option:checked"));
-        return opts
-          .map(o => parseInt(String(o.value || o.dataset.value || o.textContent), 10))
-          .filter(Number.isFinite);
+      const norm = (s) => (s ?? "").trim();
+      const first = (...ids) => {
+        for (const id of ids) {
+          const el = document.getElementById(id);
+          const v = el && String(el.value || "").trim();
+          if (v) return v;
+        }
+        return "";
       };
 
-      const _same = (a, b) => {
-        const A = (a || []).map(Number).sort((x,y)=>x-y);
-        const B = (b || []).map(Number).sort((x,y)=>x-y);
+      // read basics from UI
+      const uiSrv    = first("jfy_server_url","jfy_server");
+      const uiUser   = first("jfy_username","jfy_user");
+      const uiUid    = first("jfy_user_id");
+      const uiVerify = !!(document.getElementById("jfy_verify_ssl")?.checked ||
+                          document.getElementById("jfy_verify_ssl_dup")?.checked);
+
+      const prevSrv    = norm(serverCfg?.jellyfin?.server);
+      const prevUser   = norm(serverCfg?.jellyfin?.username || serverCfg?.jellyfin?.user);
+      const prevUid    = norm(serverCfg?.jellyfin?.user_id);
+      const prevVerify = !!serverCfg?.jellyfin?.verify_ssl;
+
+      if (uiSrv && uiSrv !== prevSrv) { (cfg.jellyfin ||= {}).server = uiSrv; changed = true; }
+      if (uiUser && uiUser !== prevUser) {
+        (cfg.jellyfin ||= {}).username = uiUser;
+        cfg.jellyfin.user = uiUser; // keep both for compatibility
+        changed = true;
+      }
+      if (uiUid && uiUid !== prevUid) { (cfg.jellyfin ||= {}).user_id = uiUid; changed = true; }
+      if (uiVerify !== prevVerify)   { (cfg.jellyfin ||= {}).verify_ssl = uiVerify; changed = true; }
+
+      const readFromMatrix = () => {
+        const rows = document.querySelectorAll("#jfy_lib_matrix .lm-row");
+        if (!rows.length) return null;
+        const H = [], R = [];
+        rows.forEach(r => {
+          const id = String(r.dataset.id || "").trim(); // GUID string
+          if (!id) return;
+          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
+          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
+        });
+        return { H, R };
+      };
+
+      const readFromWhitelist = () => {
+        const rows = document.querySelectorAll("#jfy_lib_whitelist .whrow");
+        if (!rows.length) return null;
+        const H = [], R = [];
+        rows.forEach(r => {
+          const id = String(r.dataset.id || "").trim(); // GUID string
+          if (!id) return;
+          if (r.querySelector(".whtog.hist.on")) H.push(id);
+          if (r.querySelector(".whtog.rate.on")) R.push(id);
+        });
+        return { H, R };
+      };
+
+      const readFromSelects = () => {
+        const toStrs = (selector) => {
+          const el = document.querySelector(selector);
+          if (!el) return null;
+          const opts = el.selectedOptions
+            ? Array.from(el.selectedOptions)
+            : Array.from(el.querySelectorAll("option:checked"));
+          return opts
+            .map(o => String(o.value || o.dataset.value || o.textContent).trim())
+            .filter(Boolean);
+        };
+        return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings") };
+      };
+
+      const src = readFromMatrix() || readFromWhitelist() || readFromSelects();
+
+      const same = (a, b) => {
+        const A = (a || []).map(String).filter(Boolean).sort();
+        const B = (b || []).map(String).filter(Boolean).sort();
         if (A.length !== B.length) return false;
         for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
         return true;
       };
 
-      const hist = toInts('#jfy_lib_history');
-      if (hist !== null) {
-        const prev = (serverCfg?.jellyfin?.history?.libraries || []).map(Number);
-        if (!_same(hist, prev)) {
-          (cfg.jellyfin ||= {}).history = Object.assign({}, cfg.jellyfin.history || {}, { libraries: hist });
+      if (src) {
+        const prevH = (serverCfg?.jellyfin?.history?.libraries || []).map(String);
+        const prevR = (serverCfg?.jellyfin?.ratings?.libraries || []).map(String);
+        if (!same(src.H, prevH)) {
+          (cfg.jellyfin ||= {}).history = Object.assign({}, cfg.jellyfin.history || {}, { libraries: src.H || [] });
           changed = true;
         }
-      }
-
-      const rate = toInts('#jfy_lib_ratings');
-      if (rate !== null) {
-        const prev = (serverCfg?.jellyfin?.ratings?.libraries || []).map(Number);
-        if (!_same(rate, prev)) {
-          (cfg.jellyfin ||= {}).ratings = Object.assign({}, cfg.jellyfin.ratings || {}, { libraries: rate });
+        if (!same(src.R, prevR)) {
+          (cfg.jellyfin ||= {}).ratings = Object.assign({}, cfg.jellyfin.ratings || {}, { libraries: src.R || [] });
           changed = true;
         }
       }
     } catch (e) {
       console.warn("saveSettings: jellyfin merge failed", e);
     }
+
     // Plex root patch + whitelist (driven by matrix state)
     try {
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");

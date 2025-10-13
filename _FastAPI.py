@@ -221,6 +221,7 @@ def get_index_html() -> str:
             <span class="chev">▶</span><strong>Scrobbler</strong>
             <span title="Currently only for Plex with Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
               <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
             </span>
           </div>

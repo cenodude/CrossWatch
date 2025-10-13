@@ -1,4 +1,5 @@
 // assets/js/modals/analyzer/index.js
+// Neon-themed analyzer modal with waiting overlay.
 const fjson = async (u,o)=>{const r=await fetch(u,o); if(!r.ok) throw new Error(r.status); return r.json();};
 const Q=(s,r=document)=>r.querySelector(s); const QA=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const esc=s=> (window.CSS?.escape?CSS.escape(s):String(s).replace(/[^\w-]/g,"\\$&"));
@@ -7,6 +8,7 @@ const chips=(ids)=>Object.entries(ids||{}).map(([k,v])=>`<span class="chip mono"
 const fmtCounts=(c)=>Object.entries(c||{}).map(([p,v])=>`${p}: ${v.total} (H:${v.history}/W:${v.watchlist}/R:${v.ratings||0})`).join(" • ");
 const FIXABLE = new Set(["missing_peer","missing_ids","key_missing_ids","key_ids_mismatch","invalid_id_format"]);
 
+// Inject CSS once
 function css(){
   if (Q("#an-css")) return;
   const el=document.createElement("style"); el.id="an-css"; el.textContent = `
@@ -48,7 +50,22 @@ function css(){
     background:linear-gradient(180deg,#7a6bff,#23a8ff);
     border-radius:10px; border:2px solid #0b0f19; box-shadow:0 0 12px #7a6bff88 inset;
   }
-  `; document.head.appendChild(el);
+
+  /* ── Neon waiting overlay ─────────────────────────────────────────────── */
+  .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
+  .wait-overlay.hidden{opacity:0;pointer-events:none}
+  .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;
+    background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
+  .wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
+  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;
+    background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+    animation:wait-spin 1.1s linear infinite}
+  .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
+  @keyframes wait-spin{to{transform:rotate(360deg)}}
+  `;
+  document.head.appendChild(el);
 }
 
 function gridTemplateFrom(widths){ return widths.map(w=>`${w}px`).join(" "); }
@@ -83,6 +100,34 @@ export default {
       </div>
       <div class="an-footer"><span class="mono" id="an-issues-count">Issues: 0</span>&nbsp;•&nbsp;<span class="stats mono" id="an-stats">—</span></div>
     `;
+
+    // Neon waiting overlay
+    const wait = document.createElement("div");
+    wait.id = "an-wait";
+    wait.className = "wait-overlay hidden";
+    wait.innerHTML = `
+      <div class="wait-card" role="status" aria-live="assertive">
+        <div class="wait-ring"></div>
+        <div class="wait-text" id="an-wait-text">Loading…</div>
+      </div>`;
+    root.appendChild(wait);
+
+    // Small helper to control the overlay
+    let waitSlowTimer = null, waitShownAt = 0;
+    const setWaitText = (t)=> { const el=Q("#an-wait-text",root); if (el) el.textContent = t; };
+    function showWait(text="Loading…"){
+      setWaitText(text); Q("#an-wait",root).classList.remove("hidden"); waitShownAt = performance.now();
+      clearTimeout(waitSlowTimer);
+      // If it drags, reassure the user
+      waitSlowTimer = setTimeout(()=> setWaitText(`${text} (still working…)`), 3000);
+    }
+    function hideWait(){
+      clearTimeout(waitSlowTimer); waitSlowTimer=null;
+      const minVisible = 250; // avoid flicker
+      const elapsed = performance.now() - waitShownAt;
+      const doHide = ()=> Q("#an-wait",root).classList.add("hidden");
+      if (elapsed < minVisible) setTimeout(doHide, minVisible - elapsed); else doHide();
+    }
 
     const wrap=Q("#an-wrap",root), grid=Q("#an-grid",root), issues=Q("#an-issues",root);
     const stats=Q("#an-stats",root), issuesCount=Q("#an-issues-count",root), search=Q("#an-search",root);
@@ -219,17 +264,22 @@ export default {
       } catch { return new Map(); }
     }
 
+    // Load + analyze with neon waiting overlay
     async function load(){
       restoreSplit();
-      const s = await fjson("/api/analyzer/state");
+      showWait("Reading state.json…");        // shows while /api/analyzer/state loads (can be heavy)
+      const s = await fjson("/api/analyzer/state"); // reads state.json server-side
       ITEMS = s.items || []; VIEW = ITEMS.slice();
       stats.textContent = fmtCounts(s.counts) || "—";
       issuesCount.textContent = 'Issues: 0';
       draw();
-      await analyze();
+      setWaitText("Analyzing…");
+      await analyze(true);                    // pass silent=true to avoid flicker
+      hideWait();
     }
 
-    async function analyze(){
+    async function analyze(silent=false){
+      if (!silent) showWait("Analyzing…");
       const [pairMap, meta] = await Promise.all([
         getActivePairMap(),
         fjson("/api/analyzer/problems").catch(()=>({problems:[]})),
@@ -264,12 +314,14 @@ export default {
 
       if (!keep.length){
         issues.innerHTML = `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+        if (!silent) hideWait();
         return;
       }
       const first = keep[0];
       const tag = tagOf(first.provider, first.feature, first.key);
-      select(tag);
+      await select(tag);
       SELECTED = tag; draw();
+      if (!silent) hideWait();
     }
 
     btnRun.addEventListener('click', async (e) => {
@@ -277,7 +329,7 @@ export default {
       if (btnRun.disabled) return;
       const prev = btnRun.textContent;
       btnRun.disabled = true; btnRun.textContent = 'Analyzing…';
-      try { await analyze(); }
+      try { await analyze(false); }
       finally { btnRun.disabled = false; btnRun.textContent = prev; }
     });
 

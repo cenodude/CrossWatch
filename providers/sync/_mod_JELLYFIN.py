@@ -86,10 +86,13 @@ class JFConfig:
     watchlist_query_limit: int = 25
     watchlist_write_delay_ms: int = 0
     watchlist_guid_priority: Optional[List[str]] = None
-    # History (separate knobs)
+    # History
     history_query_limit: int = 25
     history_write_delay_ms: int = 0
     history_guid_priority: Optional[List[str]] = None
+    # Library scoping (None = all)
+    history_libraries: Optional[List[str]] = None
+    ratings_libraries: Optional[List[str]] = None
 
 class JFClient:
     BASE_PATH_PING = "/System/Ping"
@@ -192,6 +195,12 @@ class JELLYFINModule:
         hi_wdel = int(hi.get("history_write_delay_ms", 0) or 0)
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
 
+        # Ratings sub-config
+        ra = dict(jf.get("ratings") or {})
+
+        def _list_str(v):
+            return [str(x).strip() for x in (v or []) if str(x).strip()]
+
         self.cfg = JFConfig(
             server=str(jf.get("server") or "").strip(),
             access_token=str(jf.get("access_token") or "").strip(),
@@ -208,6 +217,8 @@ class JELLYFINModule:
             history_query_limit=hi_qlim,
             history_write_delay_ms=hi_wdel,
             history_guid_priority=list(hi_gprio),
+            history_libraries=_list_str(hi.get("libraries")),
+            ratings_libraries=_list_str(ra.get("libraries")),
         )
         self.client = JFClient(self.cfg)
 

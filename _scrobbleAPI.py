@@ -312,14 +312,17 @@ def debug_watch_stop(request: Request):
     request.app.state.watch = None
     return {"ok": True, "alive": False}
 
-# ---- Trakt webhook ----
-@router.post("/webhook/trakt")
-async def webhook_trakt(request: Request):
+# ---- JellyfinTrakt webhook ----
+@router.post("/webhook/jellyfintrakt")
+async def webhook_jellyfintrakt(request: Request):
     from crosswatch import _UIHostLogger
     try:
-        from providers.scrobble.trakt.webhook import process_webhook
+        from providers.webhooks.jellyfintrakt import process_webhook as jf_process_webhook
     except Exception:
-        from crosswatch import process_webhook  # fallback
+        try:
+            from crosswatch import process_webhook_jellyfin as jf_process_webhook
+        except Exception:
+            from jellyfintrakt import process_webhook as jf_process_webhook
 
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
@@ -328,8 +331,111 @@ async def webhook_trakt(request: Request):
             logger(msg, level=level, module="SCROBBLE")
         except Exception:
             pass
+        try:
+            print(f"[SCROBBLE] {level} {msg}")
+        except Exception:
+            pass
 
+    raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
+    log(f"jf-webhook: received | content-type='{ct}' bytes={len(raw)}", "INFO")
+
+    # Parse body
+    payload = {}
+    try:
+        if "application/x-www-form-urlencoded" in ct:
+            d = parse_qs(raw.decode("utf-8", errors="replace"))
+            blob = d.get("payload") or d.get("data") or d.get("json")
+            payload = json.loads((blob[0] if isinstance(blob, list) else blob) or "{}") if blob else {}
+            log("jf-webhook: parsed urlencoded payload", "DEBUG")
+        else:
+            payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+            log("jf-webhook: parsed json payload", "DEBUG")
+    except Exception as e:
+        snippet = (raw[:200].decode("utf-8", errors="replace") if raw else "<no body>")
+        log(f"jf-webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
+        return JSONResponse({"ok": True}, status_code=200)
+
+    # Friendly summary (works with Jellyfin Webhook plugin)
+    md = (payload.get("Item") or payload.get("item") or payload.get("Metadata") or {}) or {}
+    event = (payload.get("NotificationType") or payload.get("Event") or "").strip() or "?"
+    # user from several possible fields
+    user = (
+        ((payload.get("User") or {}).get("Name"))
+        or payload.get("UserName")
+        or ((payload.get("Server") or {}).get("UserName"))
+        or ""
+    ).strip()
+
+    # pretty title
+    mtype = (md.get("Type") or md.get("type") or "").strip().lower()
+    if mtype == "episode":
+        series = (md.get("SeriesName") or md.get("SeriesTitle") or "").strip()
+        ep_name = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
+        season = md.get("ParentIndexNumber") or md.get("SeasonIndexNumber")
+        number = md.get("IndexNumber")
+        if isinstance(season, int) and isinstance(number, int):
+            title = f"{series} S{season:02}E{number:02}" + (f" — {ep_name}" if ep_name else "")
+        else:
+            title = ep_name or series or "?"
+    elif mtype == "movie":
+        name = (md.get("Name") or md.get("title") or "").strip()
+        year = md.get("ProductionYear") or md.get("year")
+        title = f"{name} ({year})" if (name and year) else (name or "?")
+    else:
+        title = (md.get("Name") or md.get("title") or md.get("SeriesName") or "?")
+
+    log(f"jf-webhook: payload summary event='{event}' user='{user}' media='{title}'", "INFO")
+
+    # Hand off to the scrobbler
+    try:
+        res = jf_process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
+    except Exception as e:
+        log(f"jf-webhook: process_webhook raised: {e}", "ERROR")
+        return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
+
+    # Outcome hints
+    if res.get("error"):
+        log(f"jf-webhook: result error={res['error']}", "WARN")
+    elif res.get("ignored"):
+        log("jf-webhook: ignored by filters/rules", "DEBUG")
+    elif res.get("debounced"):
+        log("jf-webhook: debounced pause", "DEBUG")
+    elif res.get("suppressed"):
+        log("jf-webhook: suppressed late start", "DEBUG")
+    elif res.get("dedup"):
+        log("jf-webhook: duplicate event suppressed", "DEBUG")
+
+    log(f"jf-webhook: done action={res.get('action')} status={res.get('status')}", "INFO")
+    return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
+
+
+# ---- PlexTrakt webhook ----
+@router.post("/webhook/plextrakt")
+async def webhook_trakt(request: Request):
+    from crosswatch import _UIHostLogger
+    try:
+        from providers.scrobble.trakt.webhook import process_webhook
+    except Exception:
+        from crosswatch import process_webhook
+
+    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+
+    def log(msg, level="INFO"):
+        # UI buffer (as before)
+        try:
+            logger(msg, level=level, module="SCROBBLE")
+        except Exception:
+            pass
+        try:
+            print(f"[SCROBBLE] {level} {msg}")
+        except Exception:
+            pass
+
+    raw = await request.body()
+    ct = (request.headers.get("content-type") or "").lower()
+    log(f"webhook: received | content-type='{ct}' bytes={len(raw)}", "INFO")
+
     payload = None
     try:
         if "multipart/form-data" in ct:
@@ -337,46 +443,55 @@ async def webhook_trakt(request: Request):
             part = form.get("payload")
             if part is None:
                 raise ValueError("multipart: no 'payload' part")
-            try:
+
+            if isinstance(part, (bytes, bytearray)):
+                payload = json.loads(part.decode("utf-8", errors="replace"))
+            elif hasattr(part, "read"):
                 data = await part.read()
-            except Exception:
-                try:
-                    data = part.file.read()
-                except Exception:
-                    data = str(part).encode()
-            payload = json.loads(data.decode("utf-8", errors="replace"))
-            log("parsed multipart payload", "DEBUG")
-        else:
-            raw = await request.body()
-            if "application/x-www-form-urlencoded" in ct:
-                d = parse_qs(raw.decode("utf-8", errors="replace"))
-                if "payload" not in d or not d["payload"]:
-                    raise ValueError("urlencoded: no 'payload' key")
-                payload = json.loads(d["payload"][0])
-                log("parsed urlencoded payload", "DEBUG")
+                payload = json.loads(data.decode("utf-8", errors="replace"))
             else:
-                payload = json.loads(raw.decode("utf-8", errors="replace"))
-                log("parsed json payload", "DEBUG")
+                payload = json.loads(str(part))
+            log("webhook: parsed multipart payload", "DEBUG")
+
+        elif "application/x-www-form-urlencoded" in ct:
+            d = parse_qs(raw.decode("utf-8", errors="replace"))
+            if not d.get("payload"):
+                raise ValueError("urlencoded: no 'payload' key")
+            payload = json.loads(d["payload"][0])
+            log("webhook: parsed urlencoded payload", "DEBUG")
+
+        else:
+            payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+            log("webhook: parsed json payload", "DEBUG")
+
     except Exception as e:
-        try:
-            raw = await request.body()
-            snippet = raw[:200].decode("utf-8", errors="replace")
-        except Exception:
-            snippet = "<no body>"
-        log(f"failed to parse webhook payload: {e} | body[:200]={snippet}", "ERROR")
+        snippet = (raw[:200].decode("utf-8", errors="replace") if raw else "<no body>")
+        log(f"webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
     acc = ((payload.get("Account") or {}).get("title") or "").strip()
     srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
     md = payload.get("Metadata") or {}
     title = md.get("title") or md.get("grandparentTitle") or "?"
-    log(f"payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
+    log(f"webhook: payload summary user='{acc}' server='{srv}' media='{title}'", "INFO")
 
     try:
-        res = process_webhook(payload=payload, headers=dict(request.headers), raw=None, logger=logger)
+        res = process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
     except Exception as e:
-        log(f"process_webhook raised: {e}", "ERROR")
+        log(f"webhook: process_webhook raised: {e}", "ERROR")
         return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
 
-    log(f"done action={res.get('action')} status={res.get('status')}", "DEBUG")
+    if res.get("error"):
+        log(f"webhook: result error={res['error']}", "WARN")
+    elif res.get("ignored"):
+        log("webhook: ignored by filters/rules", "DEBUG")
+    elif res.get("debounced"):
+        log("webhook: debounced pause", "DEBUG")
+    elif res.get("suppressed"):
+        log("webhook: suppressed late start", "DEBUG")
+    elif res.get("dedup"):
+        log("webhook: duplicate event suppressed", "DEBUG")
+
+    log(f"webhook: done action={res.get('action')} status={res.get('status')}", "INFO")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
+

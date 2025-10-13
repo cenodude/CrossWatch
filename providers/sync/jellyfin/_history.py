@@ -9,6 +9,7 @@ from ._common import (
     resolve_item_id,
     chunked,
     sleep_ms,
+    jf_scope_history,
 )
 
 try:
@@ -134,7 +135,7 @@ def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
     sid = (str(series_id or "").strip()) or ""
     if not sid: return {}
     try:
-        r = http.get(f"/Items/{sid}", params={"Fields": "ProviderIds,ProductionYear"})
+        r = http.get(f"/Items/{sid}", params={"fields": "ProviderIds,ProductionYear"})
         if getattr(r, "status_code", 0) != 200: return {}
         body = r.json() or {}
         pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
@@ -157,7 +158,6 @@ def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
 # --- low-level Jellyfin writes ------------------------------------------------
 
 def _mark_played(http, uid: str, item_id: str, *, date_played_iso: Optional[str]) -> bool:
-    # Use datePlayed so Jellyfin stores LastPlayedDate (prevents rewrites)
     try:
         params = {"datePlayed": date_played_iso} if date_played_iso else None
         r = http.post(f"/Users/{uid}/PlayedItems/{item_id}", params=params)
@@ -173,9 +173,8 @@ def _unmark_played(http, uid: str, item_id: str) -> bool:
         return False
 
 def _dst_user_state(http, uid: str, iid: str) -> Tuple[bool, int]:
-    # Returns (played, last_played_epoch)
     try:
-        r = http.get(f"/Users/{uid}/Items/{iid}", params={"Fields": "UserData"})
+        r = http.get(f"/Users/{uid}/Items/{iid}", params={"fields": "UserData"})
         if getattr(r, "status_code", 0) != 200: return False, 0
         data = r.json() or {}
         ud = data.get("UserData") or {}
@@ -193,13 +192,6 @@ def _dst_user_state(http, uid: str, iid: str) -> Tuple[bool, int]:
 # --- event index (watched_at) + presence merge --------------------------------
 
 def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
-    """
-    Build an EVENT index:
-      movie  -> {type, ids, title, year, watched_at}
-      episode-> {type, show_ids, season, episode, series_title, watched_at}
-    Filter by `since` (epoch or ISO) and cap by `limit`.
-    Also merges local presence (shadow/blackbox) so the planner immediately sees recent writes.
-    """
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
 
@@ -216,18 +208,22 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     events: List[Tuple[int, Dict[str, Any]]] = []
 
     while True:
-        r = http.get(f"/Users/{uid}/Items", params={
+        params: Dict[str, Any] = {
             "includeItemTypes": "Movie,Episode",
             "recursive": True,
-            "EnableUserData": True,
-            "Fields": "ProviderIds,ProductionYear,UserData,Type,IndexNumber,ParentIndexNumber,SeriesName,SeriesId,Name",
-            "Filters": "IsPlayed",
-            "SortBy": "DateLastPlayed",
-            "SortOrder": "Descending",
-            "StartIndex": start,
-            "Limit": page_size,
-            "EnableTotalRecordCount": True,
-        })
+            "enableUserData": True,
+            "fields": "ProviderIds,ProductionYear,UserData,Type,IndexNumber,ParentIndexNumber,SeriesName,SeriesId,Name,ParentId",
+            "filters": "IsPlayed",
+            "sortBy": "DateLastPlayed",
+            "sortOrder": "Descending",
+            "startIndex": start,
+            "limit": page_size,
+            "enableTotalRecordCount": True,
+            "userId": uid,
+        }
+        params.update(jf_scope_history(adapter.cfg))
+
+        r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         rows = body.get("Items") or []
         if not rows: break
@@ -237,7 +233,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             lp = ud.get("LastPlayedDate") or row.get("DateLastPlayed") or None
             ts = _parse_iso_to_epoch(lp) or 0
             if ts <= since_epoch:
-                rows = []  # sorted desc, safe to stop
+                rows = []
                 break
 
             m = jelly_normalize(row)
@@ -292,7 +288,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             try: prog.tick(done, total=total)
             except Exception: pass
 
-    # Merge presence so planner immediately recognizes recent writes
     shadow = _shadow_load()
     if shadow:
         added = 0
@@ -317,10 +312,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
 # --- writes (event → present in Jellyfin) ------------------------------------
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """
-    Mark items as played in Jellyfin. Minimal movie/episode descriptors expected.
-    Also records presence for skipped items so the planner stops re-adding them.
-    """
     http = adapter.client; uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
@@ -351,17 +342,14 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
             played, dst_ts = _dst_user_state(http, uid, iid)
 
-            # If destination is already as new or newer → skip and mark presence
             if played and dst_ts and src_ts and dst_ts >= src_ts:
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
                 continue
 
-            # If already played but no timestamps to compare → skip and mark presence
             if played and not dst_ts and not src_ts:
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z()}
                 continue
 
-            # Attempt write with datePlayed (gives JF a LastPlayedDate)
             if _mark_played(http, uid, iid, date_played_iso=src_iso):
                 ok += 1
                 shadow[k] = int(shadow.get(k, 0)) + 1
@@ -377,9 +365,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     return ok, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """
-    Unmark items as played. Shadow counters avoid over-unplaying.
-    """
     http = adapter.client; uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)

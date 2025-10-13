@@ -1,7 +1,6 @@
 # /providers/sync/jellyfin/_common.py
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional, Iterable, List, Tuple
-from functools import lru_cache
+from typing import Any, Dict, Mapping, Optional, Iterable, List, Tuple, Union
 import os, re, time, json
 
 try:
@@ -13,6 +12,8 @@ _DEF_TYPES = {"movie", "show", "episode"}
 _IMDB_PAT  = re.compile(r"(?:tt)?(\d{5,9})$")
 _NUM_PAT   = re.compile(r"(\d{1,10})$")
 _BAD_NUM   = re.compile(r"^\d{13,}$")
+
+CfgLike = Union[Mapping[str, Any], object]
 
 # --- logging (quiet by default) ----------------------------------------------
 def _debug_level() -> str:
@@ -33,6 +34,98 @@ def _log_detail(msg: str) -> None:
 # legacy alias
 def _log(msg: str) -> None:
     _log_summary(msg)
+    
+## --- cfg helpers ----Library selection------------------------------------------
+def _as_list_str(v: Any) -> List[str]:
+    if v is None: return []
+    if isinstance(v, (list, tuple, set)): it = v
+    else: it = [v]
+    out: List[str] = []
+    seen = set()
+    for x in it:
+        s = str(x).strip()
+        if s and s not in seen:
+            seen.add(s); out.append(s)
+    return out
+
+def _pluck(cfg: CfgLike, *path: str) -> Any:
+    cur: Any = cfg
+    for key in path:
+        if isinstance(cur, Mapping) and key in cur:
+            cur = cur[key]
+        else:
+            cur = getattr(cur, key, None)
+        if cur is None:
+            return None
+    return cur
+
+def jf_library_scope(cfg: CfgLike, feature: str) -> Dict[str, Any]:
+    """
+    Build Jellyfin item-query scope from config.
+    """
+    jf = _pluck(cfg, "jellyfin") or cfg  # allow passing full cfg or jf-subdict
+    libs = _as_list_str(_pluck(jf, feature, "libraries"))
+    if not libs:
+        # Fallbacks for dataclass-style configs (e.g. cfg.history_libraries / cfg.ratings_libraries)
+        libs_attr = _as_list_str(getattr(cfg, f"{feature}_libraries", None))
+        if libs_attr:
+            libs = libs_attr
+        else:
+            sub = getattr(cfg, feature, None)
+            if sub is not None:
+                libs = _as_list_str(getattr(sub, "libraries", None))
+    if not libs:
+        return {}
+    if len(libs) == 1:
+        return {"parentId": libs[0], "recursive": True}
+    return {"ancestorIds": libs, "recursive": True}
+
+def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> Dict[str, Any]:
+    out = dict(params or {})
+    out.update(jf_library_scope(cfg, feature))
+    return out
+
+def jf_scope_history(cfg: CfgLike) -> Dict[str, Any]:
+    return jf_library_scope(cfg, "history")
+
+def jf_scope_ratings(cfg: CfgLike) -> Dict[str, Any]:
+    return jf_library_scope(cfg, "ratings")
+
+def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
+    """Union of history + ratings libraries. Falls back gracefully."""
+    # Try mapping style: cfg['jellyfin'][feature]['libraries']
+    jf_map = _pluck(cfg, "jellyfin") or cfg
+    libs_h = _as_list_str(_pluck(jf_map, "history", "libraries"))
+    libs_r = _as_list_str(_pluck(jf_map, "ratings", "libraries"))
+    libs: List[str] = []
+    seen = set()
+    for x in (libs_h + libs_r):
+        if x and x not in seen:
+            seen.add(x); libs.append(x)
+    # Try dataclass/object attributes too (e.g., cfg.history_libraries / cfg.ratings_libraries)
+    if not libs and not isinstance(cfg, Mapping):
+        libs_h2 = _as_list_str(getattr(cfg, "history_libraries", None))
+        libs_r2 = _as_list_str(getattr(cfg, "ratings_libraries", None))
+        for x in (libs_h2 + libs_r2):
+            if x and x not in seen:
+                seen.add(x); libs.append(x)
+        # Or nested objects: cfg.history.libraries / cfg.ratings.libraries
+        hist_obj = getattr(cfg, "history", None)
+        rate_obj = getattr(cfg, "ratings", None)
+        if hasattr(hist_obj, "libraries"):
+            for x in _as_list_str(getattr(hist_obj, "libraries", None)):
+                if x and x not in seen:
+                    seen.add(x); libs.append(x)
+        if hasattr(rate_obj, "libraries"):
+            for x in _as_list_str(getattr(rate_obj, "libraries", None)):
+                if x and x not in seen:
+                    seen.add(x); libs.append(x)
+    if not libs:
+        return {}
+    if len(libs) == 1:
+        return {"parentId": libs[0], "recursive": True}
+    return {"ancestorIds": libs, "recursive": True}
+
 
 # --- type & id helpers --------------------------------------------------------
 def _norm_type(t: Any) -> str:
@@ -139,22 +232,23 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> List[st
     return out
 
 # --- provider index -----------------------------------------------------------
-@lru_cache(maxsize=1)
 def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
     http, uid = adapter.client, adapter.cfg.user_id
     out: Dict[str, List[Dict[str, Any]]] = {}
     start, limit, total = 0, 500, None
     while True:
+        params = {
+            "IncludeItemTypes": "Movie,Series",
+            "Recursive": True,
+            "Fields": "ProviderIds,ProductionYear,Type",
+            "StartIndex": start,
+            "Limit": limit,
+            "EnableTotalRecordCount": True,
+        }
+        params.update(jf_scope_any(adapter.cfg))
         r = http.get(
             f"/Users/{uid}/Items",
-            params={
-                "IncludeItemTypes": "Movie,Series",
-                "Recursive": True,
-                "Fields": "ProviderIds,ProductionYear,Type",
-                "StartIndex": start,
-                "Limit": limit,
-                "EnableTotalRecordCount": True,
-            },
+            params=params,
         )
         body = r.json() or {}
         items = body.get("Items") or []
@@ -393,10 +487,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                 return iid
         if title:
             try:
-                r = http.get("/Items", params={
-                    "userId": uid, "recursive": True, "includeItemTypes": "Movie",
-                    "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50,
-                })
+                q = { "userId": uid, "recursive": True, "includeItemTypes": "Movie", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+                q.update(jf_scope_any(adapter.cfg))
+                r = http.get("/Items", params=q)
                 t_l = title.lower()
                 cand: List[Mapping[str, Any]] = []
                 for row in (r.json() or {}).get("Items") or []:
@@ -426,10 +519,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                 return iid
         if title:
             try:
-                r = http.get("/Items", params={
-                    "userId": uid, "recursive": True, "includeItemTypes": "Series",
-                    "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50,
-                })
+                q = { "userId": uid, "recursive": True, "includeItemTypes": "Series", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+                q.update(jf_scope_any(adapter.cfg))
+                r = http.get("/Items", params=q)
                 title_lc = title.lower()
                 cand: List[Mapping[str, Any]] = []
                 for row in (r.json() or {}).get("Items") or []:
@@ -457,10 +549,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
             _log_detail("series hit via provider index")
     if not series_row and series_title:
         try:
-            r = http.get("/Items", params={
-                "userId": uid, "recursive": True, "includeItemTypes": "Series",
-                "SearchTerm": series_title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50,
-            })
+            q = { "userId": uid, "recursive": True, "includeItemTypes": "Series", "SearchTerm": series_title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+            q.update(jf_scope_any(adapter.cfg))
+            r = http.get("/Items", params=q)
             t_l = series_title.lower()
             cands = []
             for row in (r.json() or {}).get("Items") or []:
@@ -489,11 +580,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
 
     if title:
         try:
-            r = http.get("/Items", params={
-                "userId": uid, "recursive": True, "includeItemTypes": "Episode",
-                "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId",
-                "Limit": 50,
-            })
+            q = { "userId": uid, "recursive": True, "includeItemTypes": "Episode", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId", "Limit": 50 }
+            q.update(jf_scope_any(adapter.cfg))
+            r = http.get("/Items", params=q)
             t_l = title.lower()
             for row in (r.json() or {}).get("Items") or []:
                 if (row.get("Type") or "") != "Episode": continue

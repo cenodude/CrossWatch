@@ -84,7 +84,7 @@ def _row_section_id(h) -> Optional[str]:
             except Exception: pass
     sk = getattr(h, "sectionKey", None) or getattr(h, "librarySectionKey", None)
     if sk:
-        m = re.search(r"/library/sections/(\\d+)", str(sk))
+        m = re.search(r"/library/sections/(\d+)", str(sk))
         if m: return m.group(1)
     return None
 

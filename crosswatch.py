@@ -74,17 +74,30 @@ except Exception:
     HAVE_PLEXAPI = False
     
 try:
-    from _wallAPI import _load_wall_snapshot, refresh_wall  # re-export for compat with old imports
+    from _wallAPI import _load_wall_snapshot, refresh_wall
 except Exception:
     pass
 
-from providers.webhooks.trakt import process_webhook
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.plex.watch import WatchService, autostart_from_config
+
+# Plex → Trakt
+try:
+    from providers.webhooks.plextrakt import process_webhook as process_webhook
+except Exception:
+    process_webhook = None
+
+# Jellyfin → Trakt
+try:
+    from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
+except Exception:
+    process_webhook_jellyfin = None 
+
+__all__ = ["process_webhook", "process_webhook_jellyfin"]
 
 from _FastAPI import (
     get_index_html,

@@ -1,150 +1,225 @@
-// assets/auth/auth.jellyfin.js — authoritative Jellyfin settings+auth
-(function (w, d) {
-  if (w._jfAuthPatched) return; w._jfAuthPatched = true;
+// assets/auth/auth.jellyfin.js
+(function () {
+  "use strict";
 
-  const $ = (id) => d.getElementById(id);
-  const q = (sel, root=d) => root.querySelector(sel);
-  const exists = (sel) => !!q(sel);
-  const waitFor = (sel, timeout=2000) => new Promise(res=>{
-    const end = Date.now()+timeout;
-    (function loop(){ if (exists(sel)) return res(q(sel)); if (Date.now()>end) return res(null); requestAnimationFrame(loop); })();
-  });
+  // --- utils
+  const Q = (s, r = document) => r.querySelector(s);
+  const Qa = (s, r = document) => Array.from(r.querySelectorAll(s) || []);
+  const ESC = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const SECTION = "#sec-jellyfin";
+  const LIB_URL = "/api/jellyfin/libraries";
 
-  // keep Jellyfin banner tidy
-  (function patchNotify(){
-    const orig = typeof w.notify === "function" ? w.notify.bind(w) : null;
-    w.notify = function(msg, ...rest){ if (String(msg||"").toLowerCase().includes("jellyfin")) return; return orig ? orig(msg, ...rest) : undefined; };
-  })();
+  let H = new Set(); // history lib ids
+  let R = new Set(); // ratings lib ids
+  let hydrated = false;
 
-  const normalizeServer = (s)=>{ s=(s||'').trim(); if(!s) return ''; if(!/^https?:\/\//i.test(s)) s='http://'+s; return s; };
-  const setErr = (el,on)=>{ try{ if(el) el.classList[on?'add':'remove']('err'); }catch{} };
-  const clearErrAll = ()=>['jfy_server','jfy_user','jfy_pass'].forEach(id=>setErr($(id),false));
-  const maskToken = (has)=>{ try{ if(typeof w.applyServerSecret==='function') return w.applyServerSecret('jfy_tok', !!has); }catch{} const el=$('jfy_tok'); if(el){ el.value=has?'••••••••':''; el.dataset.masked=has?'1':'0'; } };
-  const _fetchConfig = async()=>{ try{ const r=await fetch('/api/config',{cache:'no-store'}); return r.ok?await r.json():null; }catch{ return null; } };
+  // --- tiny helpers
+  const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
+  const maskToken = (has) => { const el = Q("#jfy_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
+  const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
-  function bar(kind, text){
-    const btn = q('button.btn.jellyfin'); if (!btn) return;
-    const anchor = btn.closest('.row,.group,.field,.form-row,.line,.ctrls') || btn.parentElement;
-    const parent = anchor?.parentElement || btn.parentElement; if (!parent) return;
-    let el = $('jfy_msg'); if (!el){ el=d.createElement('div'); el.id='jfy_msg'; el.className='msg hidden'; el.setAttribute('role','status'); el.setAttribute('aria-live','polite'); parent.insertBefore(el, anchor.nextSibling); }
-    el.className = 'msg' + (kind ? ' ' + kind : ' hidden'); el.textContent = text || '';
+  // --- libraries UI
+  function applyFilter() {
+    const qv = (Q("#jfy_lib_filter")?.value || "").toLowerCase().trim();
+    Qa("#jfy_lib_matrix .lm-row").forEach((r) => {
+      const name = (r.querySelector(".lm-name")?.textContent || "").toLowerCase();
+      r.classList.toggle("hide", !!qv && !name.includes(qv));
+    });
   }
 
-  // ---- Auth: sign in → token
-  w.jfyLogin = async function(){
-    const serverEl=$('jfy_server'), userEl=$('jfy_user'), passEl=$('jfy_pass');
-    const btnEl=q('button.btn.jellyfin');
-    const server=normalizeServer(serverEl?.value||''), username=(userEl?.value||'').trim(), password=passEl?.value||'';
-    clearErrAll(); bar(null);
-    const miss=[]; if(!server){setErr(serverEl,true);miss.push('server');} if(!username){setErr(userEl,true);miss.push('username');} if(!password){setErr(passEl,true);miss.push('password');}
-    if(miss.length){ bar('warn', `Please fill ${miss.join(', ')}.`); return; }
-    if (btnEl){ btnEl.disabled=true; btnEl.classList.add('busy'); }
+  function renderLibraries(libs) {
+    const box = Q("#jfy_lib_matrix"); if (!box) return;
+    box.innerHTML = "";
+    const f = document.createDocumentFragment();
+    (Array.isArray(libs) ? libs : []).forEach((it) => {
+      const id = String(it.key);
+      const row = document.createElement("div");
+      row.className = "lm-row"; row.dataset.id = id;
+      row.innerHTML = `
+        <div class="lm-name">${ESC(it.title)}</div>
+        <button class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
+        <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>`;
+      f.appendChild(row);
+    });
+    box.appendChild(f);
+    applyFilter();
+  }
 
-    try{
-      const r = await fetch('/api/jellyfin/login',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({server,username,password}), cache:'no-store' });
-      let j={}; try{ j=await r.json(); }catch{}
-      if (!r.ok || j?.ok===false){
-        const msg=(j && (j.error||j.message))||''; if (r.status===401){ setErr(userEl,true); setErr(passEl,true); } else if (r.status===502||r.status===504){ setErr(serverEl,true); }
-        bar('warn', `Jellyfin login failed — ${r.status===401?'Invalid credentials': msg || `Login failed (${r.status})`}`); throw 0;
-      }
-      try{ if(serverEl) serverEl.value=server; if($('jfy_server_url')) $('jfy_server_url').value=server; }catch{}
-      try{ if(userEl)   userEl.value=username; if($('jfy_username')) $('jfy_username').value=username; }catch{}
-      try{ maskToken(true); if(passEl) passEl.value=''; }catch{}
-      bar('ok', 'Jellyfin connected.');
-      try{ w.updateJellyfinState?.(); }catch{}
-    }finally{ if (btnEl){ btnEl.disabled=false; btnEl.classList.remove('busy'); } }
-  };
+  async function jfyLoadLibraries() {
+    try {
+      const r = await fetch(LIB_URL + "?ts=" + Date.now(), { cache: "no-store" });
+      const d = r.ok ? await r.json().catch(() => ({})) : {};
+      const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
+      renderLibraries(libs);
+    } catch { renderLibraries([]); }
+  }
 
-  // ---- Hydrate from config
-  async function hydrate(){
-    try{
-      const cfg = await _fetchConfig(); if(!cfg) return;
-      await waitFor('#jfy_server');
+  // --- hydrate from /api/config (auto when section becomes visible)
+  async function hydrateFromConfig() {
+    if (hydrated) return;
+    try {
+      const r = await fetch("/api/config", { cache: "no-store" });
+      if (!r.ok) return;
+      const cfg = await r.json();
+      window.__cfg = cfg;
       const jf = cfg.jellyfin || {};
-      const server=String(jf.server||'').trim();
-      const username=String(jf.username||jf.user||'').trim();
-      const hasTok=!!String(jf.access_token||'').trim();
-      if ($('jfy_server'))     $('jfy_server').value     = server;
-      if ($('jfy_user'))       $('jfy_user').value       = username;
-      if ($('jfy_server_url')) $('jfy_server_url').value = server;
-      if ($('jfy_username'))   $('jfy_username').value   = username;
-      maskToken(hasTok);
-      // preselect libs if present
-      const hist = new Set((jf.history?.libraries||[]).map(String));
-      const rate = new Set((jf.ratings?.libraries||[]).map(String));
-      ['jfy_lib_history','jfy_lib_ratings'].forEach(id=>{
-        const el=$(id); if(!el) return;
-        Array.from(el.options||[]).forEach(o=>{
-          if(id==='jfy_lib_history' && hist.has(o.value)) o.selected=true;
-          if(id==='jfy_lib_ratings' && rate.has(o.value)) o.selected=true;
-        });
-      });
-      bar(hasTok ? 'ok' : null, hasTok ? 'Jellyfin connected.' : '');
-    }catch(e){ console.warn('[jellyfin] hydrate failed', e); }
-  }
-  w.hydrateJellyfinFromConfigRaw = hydrate;
 
-  // ---- Load helpers
-  w.jfyAuto = async function(){
-    try{
-      const r = await fetch('/api/jellyfin/inspect?ts='+Date.now(), {cache:'no-store'});
-      if(!r.ok) throw 0;
+      put("#jfy_server", jf.server); put("#jfy_server_url", jf.server);
+      put("#jfy_user", jf.user || jf.username); put("#jfy_username", jf.user || jf.username);
+      put("#jfy_user_id", jf.user_id);
+      const v1 = Q("#jfy_verify_ssl"), v2 = Q("#jfy_verify_ssl_dup");
+      if (v1) v1.checked = !!jf.verify_ssl;
+      if (v2) v2.checked = !!jf.verify_ssl;
+      maskToken(!!(jf.access_token || "").trim());
+
+      H = new Set((jf.history?.libraries || []).map(String));
+      R = new Set((jf.ratings?.libraries || []).map(String));
+
+      hydrated = true;
+      await jfyLoadLibraries();
+    } catch { /* ignore */ }
+  }
+
+  // ensure hydrate when section is present and visible
+  function ensureHydrate() {
+    const sec = Q(SECTION);
+    const body = sec?.querySelector(".body");
+    if (sec && (!body || visible(body))) hydrateFromConfig();
+  }
+
+  // observe section insertion (SPAs/late render)
+  if (!Q(SECTION)) {
+    const mo = new MutationObserver(() => {
+      if (Q(SECTION)) { mo.disconnect(); ensureHydrate(); }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // click on the section header → open → hydrate
+  document.addEventListener("click", (e) => {
+    const head = Q("#sec-jellyfin .head");
+    if (head && head.contains(e.target)) setTimeout(ensureHydrate, 0);
+  }, true);
+
+  // run once on ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => setTimeout(ensureHydrate, 30));
+  } else {
+    setTimeout(ensureHydrate, 30);
+  }
+
+  // --- auto-fill from inspect
+  async function jfyAuto() {
+    try {
+      const r = await fetch("/api/jellyfin/inspect?ts=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) return;
       const d = await r.json();
-      if(d.server_url){ if($('jfy_server_url')) $('jfy_server_url').value=d.server_url; if($('jfy_server')) $('jfy_server').value=d.server_url; }
-      if(d.username){   if($('jfy_username'))   $('jfy_username').value=d.username;   if($('jfy_user'))   $('jfy_user').value=d.username; }
-    }catch{}
-  };
-
-  w.jfyLoadLibraries = async function(){
-    try{
-      const r = await fetch('/api/jellyfin/libraries?ts='+Date.now(), {cache:'no-store'}); if(!r.ok) throw 0;
-      const d = await r.json(); const libs = Array.isArray(d?.libraries) ? d.libraries : [];
-      const fill = (id) => {
-        const el = $(id); if(!el) return;
-        const keep = new Set(Array.from(el.selectedOptions||[]).map(o=>o.value));
-        el.innerHTML='';
-        libs.forEach(it=>{
-          const o = d.createElement('option');
-          o.value = String(it.key); o.textContent = `${it.title} (${it.type||'lib'}) — #${it.key}`;
-          if(keep.has(o.value)) o.selected = true; el.appendChild(o);
-        });
-      };
-      fill('jfy_lib_history'); fill('jfy_lib_ratings');
-    }catch{}
-  };
-
-  // ---- Authoritative merge (Settings wins)
-  function valsInt(sel){
-    const el=q(sel); return el ? Array.from(el.selectedOptions||[]).map(o=>parseInt(o.value,10)).filter(Number.isFinite) : [];
+      if (d.server_url) { put("#jfy_server", d.server_url); put("#jfy_server_url", d.server_url); }
+      if (d.username)   { put("#jfy_user", d.username);     put("#jfy_username", d.username); }
+      if (d.user_id)    { put("#jfy_user_id", d.user_id); }
+    } catch {}
   }
-  function mergeJellyfinIntoCfg(cfg){
-    const first = (...sels) => {
-      for (const s of sels){ const el=q(s); if(!el) continue; const v=(el.value||'').trim(); if(v) return v; }
-      return '';
-    };
+
+  // --- login
+  async function jfyLogin() {
+    const server = (Q("#jfy_server")?.value || "").trim();
+    const username = (Q("#jfy_user")?.value || "").trim();
+    const password = Q("#jfy_pass")?.value || "";
+    const btn = Q("button.btn.jellyfin"), msg = Q("#jfy_msg");
+    if (btn) { btn.disabled = true; btn.classList.add("busy"); }
+    if (msg) { msg.className = "msg hidden"; msg.textContent = ""; }
+    try {
+      const r = await fetch("/api/jellyfin/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ server, username, password }), cache: "no-store"
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) { if (msg) { msg.className = "msg warn"; msg.textContent = "Login failed"; } return; }
+      put("#jfy_server_url", server); put("#jfy_username", username);
+      maskToken(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
+      if (msg) { msg.className = "msg"; msg.textContent = "Jellyfin connected."; }
+      await jfyLoadLibraries();
+    } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
+  }
+
+  // --- merge back to cfg
+  function mergeJellyfinIntoCfg(cfg) {
+    const v = (sel) => (Q(sel)?.value || "").trim();
     const jf = (cfg.jellyfin = cfg.jellyfin || {});
-    const server = first('#jfy_server_url','#jfy_server'); if (server) jf.server = server;
-    const user   = first('#jfy_username','#jfy_user');    if (user) { jf.user = user; jf.username = user; }
-    jf.history = Object.assign({}, jf.history||{}, { libraries: valsInt('#jfy_lib_history') });
-    jf.ratings = Object.assign({}, jf.ratings||{}, { libraries: valsInt('#jfy_lib_ratings') });
+    const server = v("#jfy_server_url") || v("#jfy_server");
+    const user = v("#jfy_username") || v("#jfy_user");
+    if (server) jf.server = server;
+    if (user) { jf.user = user; jf.username = user || jf.username || ""; }
+    const uid = v("#jfy_user_id"); if (uid) jf.user_id = uid;
+    const vs = Q("#jfy_verify_ssl"), vs2 = Q("#jfy_verify_ssl_dup");
+    jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
+    jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
+    jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
     return cfg;
   }
-  mergeJellyfinIntoCfg._tag = 'auth-js-authoritative';
-  w.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;                 // overwrite any inline version
-  w.registerSettingsCollector?.(mergeJellyfinIntoCfg);           // let crosswatch.js collect it
-  d.addEventListener('settings-collect', (e)=>{                  // ensure it runs before others save
-    try{ mergeJellyfinIntoCfg(e?.detail?.cfg || (w.__cfg ||= {})); }catch{}
-  }, true); // capture
 
-  // ---- Lifecycle wires
-  d.addEventListener('DOMContentLoaded', () => {
-    setTimeout(()=>{ try{ hydrate(); }catch{} }, 100);
-    const btn = $('save-fab-btn');
-    if (btn) btn.addEventListener('click', ()=>{ try{ mergeJellyfinIntoCfg(w.__cfg ||= {}); }catch{} }, true);
-  });
-  d.addEventListener('tab-changed', async (ev) => {
-    const onSettings = ev?.detail?.id ? /settings/i.test(ev.detail.id) : !!q('#sec-jellyfin');
-    if (onSettings) { await waitFor('#jfy_server'); try{ hydrate(); }catch{}; }
-  });
+  // --- toggles + master toggles
+  document.addEventListener("click", (ev) => {
+    const t = ev.target; if (!(t instanceof HTMLElement)) return;
 
-})(window, document);
+    if (t.classList.contains("lm-dot")) {
+      const row = t.closest(".lm-row"); if (!row) return;
+      const id = String(row.dataset.id || ""), kind = t.dataset.kind;
+      const on = !t.classList.contains("on");
+      t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+      if (kind === "history") (on ? H.add(id) : H.delete(id)); else (on ? R.add(id) : R.delete(id));
+      return;
+    }
+
+    if (t.id === "jfy_hist_all" && t.classList.contains("lm-dot")) {
+      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+      H = new Set();
+      Qa("#jfy_lib_matrix .lm-dot.hist").forEach((b) => {
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = b.closest(".lm-row"); if (r) H.add(String(r.dataset.id || "")); }
+      });
+      return;
+    }
+
+    if (t.id === "jfy_rate_all" && t.classList.contains("lm-dot")) {
+      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+      R = new Set();
+      Qa("#jfy_lib_matrix .lm-dot.rate").forEach((b) => {
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = b.closest(".lm-row"); if (r) R.add(String(r.dataset.id || "")); }
+      });
+      return;
+    }
+  }, true);
+
+  document.addEventListener("input", (ev) => { if (ev.target?.id === "jfy_lib_filter") applyFilter(); }, true);
+
+  // expose
+  window.jfyAuto = jfyAuto;
+  window.jfyLoadLibraries = jfyLoadLibraries;
+  window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
+  window.jfyLogin = jfyLogin;
+
+  // optional integration
+  window.registerSettingsCollector?.(mergeJellyfinIntoCfg);
+  document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
+})();
+
+// Force Jellyfin settings collapsed by default
+(function(){
+  const SEL = '#sec-jellyfin details.settings';
+  const collapse = (root=document) => root.querySelectorAll(SEL).forEach(d=>{ d.open = false; d.removeAttribute('open'); });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => collapse());
+  } else {
+    collapse();
+  }
+  new MutationObserver(muts=>{
+    for (const m of muts) {
+      for (const n of m.addedNodes || []) {
+        if (n.nodeType === 1) collapse(n);
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();

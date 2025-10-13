@@ -5,8 +5,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple, List
 
 CONFIG_PATH = "/config/config.json"
 
-def _log(msg: str):
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+def _log(msg: str) -> None:
+    if _boolish(os.environ.get("CW_DEBUG"), False) or _boolish(os.environ.get("CW_PLEX_DEBUG"), False):
         print(f"[PLEX:utils] {msg}")
 
 # config io

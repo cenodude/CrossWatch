@@ -9,6 +9,7 @@ except Exception:
     from _id_map import minimal as id_minimal, canonical_key  # type: ignore
 
 from ._common import normalize as jelly_normalize
+from ._common import jf_scope_ratings
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_ratings.unresolved.json"
 
@@ -79,12 +80,10 @@ def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
             r = max(0.0, min(10.0, r))
             payload["Rating"] = round(r, 1)
 
-        # Primary: stable route
         r1 = http.post(f"/UserItems/{item_id}/UserData", params={"userId": uid}, json=payload)
         ok = getattr(r1, "status_code", 0) in (200, 204)
         if ok: return True
 
-        # Fallback: older route style
         r2 = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
         ok2 = getattr(r2, "status_code", 0) in (200, 204)
 
@@ -99,9 +98,8 @@ def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
         if _dbg_on(): _log(f"write exception item={item_id} err={e!r}")
         return False
 
-# -- index (paginate; only real user ratings)
+# -- index (paginate; only real user ratings; scoped to whitelisted libraries)
 def build_index(adapter) -> Dict[str, Dict[str, Any]]:
-    # Deterministic dedupe: pick the same Jellyfin Id for identical canonical keys.
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("ratings") if callable(prog_mk) else None
 
@@ -114,16 +112,22 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     total_seen = 0
 
     while True:
-        r = http.get("/Items", params={
+        params: Dict[str, Any] = {
             "userId": uid,
             "recursive": True,
             "includeItemTypes": "Movie,Series,Episode",
             "enableUserData": True,
-            "fields": "ProviderIds,ProductionYear,UserData,UserRating,Type,IndexNumber,ParentIndexNumber,SeriesName,Name",
+            "fields": "ProviderIds,ProductionYear,UserData,UserRating,Type,IndexNumber,ParentIndexNumber,SeriesName,Name,ParentId",
             "startIndex": start,
             "limit": page,
             "enableTotalRecordCount": True,
-        })
+            "hasUserRating": True,
+            "sortBy": "SortName",
+            "sortOrder": "Ascending",
+        }
+        params.update(jf_scope_ratings(adapter.cfg))
+
+        r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         rows = body.get("Items") or []
         if not rows: break
@@ -152,7 +156,6 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
                     out[k] = m
                 else:
                     jf_prev = str((prev.get("ids") or {}).get("jellyfin") or "")
-                    # Stable winner: choose lexicographically smallest Jellyfin Id
                     if jf_new and jf_prev and jf_new < jf_prev:
                         out[k] = m
             except Exception:

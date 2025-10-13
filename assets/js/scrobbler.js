@@ -1,8 +1,5 @@
-// Scrobbler UI 
-//* Refactoring project: scrobbler.js (v0.2) */
-//*------------------------------------------*/
+// Scrobbler UI
 (function (w, d) {
-  // tiny helpers
   const $=(s,r)=> (r||d).querySelector(s),
         $all=(s,r)=>[...(r||d).querySelectorAll(s)],
         el=(t,a)=>Object.assign(d.createElement(t),a||{}),
@@ -10,35 +7,43 @@
   const j=async(u,o)=>{const r=await fetch(u,{cache:"no-store",...(o||{})});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();};
   const t=async(u,o)=>{const r=await fetch(u,{cache:"no-store",...(o||{})});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.text();};
 
-  // note
   function setNote(id,msg,kind){
     const n=d.getElementById(id); if(!n) return;
     n.textContent=msg||""; n.style.cssText="margin:6px 0 2px;font-size:12px;opacity:.9;color:"+(kind==="err"?"#ff6b6b":"var(--muted,#a7a7a7)");
   }
 
-  // css
   function injectStyles(){
     if(d.getElementById("sc-styles")) return;
     const s=el("style",{id:"sc-styles"});
-    s.textContent=".sc-row{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center}.sc-status-line{display:flex;align-items:center;gap:10px;min-height:32px}.sc-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px}.sc-btnrow{display:flex;gap:8px}.sc-toggle{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}.badge.is-on{background:#0a3;color:#fff}.badge.is-off{background:#333;color:#bbb;border:1px solid #444}.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}#scrob-watcher,#sc-sec-watch,.card,details,.sc-advanced,.sc-filters{overflow:visible}.watcher-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}.chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}.chip .rm{cursor:pointer;opacity:.7}.sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}.sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:end}.field{display:flex;gap:6px;align-items:center;position:relative}.field label{white-space:nowrap;font-size:12px;opacity:.8}.field input{width:100%}details.sc-filters,details.sc-advanced{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset;scroll-margin-top:16px}details.sc-filters>summary,details.sc-advanced>summary{cursor:pointer;list-style:none;padding:14px;border-radius:12px;font-weight:600}details.sc-filters[open]>summary,details.sc-advanced[open]>summary{border-bottom:1px solid rgba(255,255,255,.06)}details.sc-filters .body,details.sc-advanced .body{padding:12px 14px}.field[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:0;transform:translateY(-6px);background:rgba(0,0,0,.9);color:#fff;padding:6px 8px;border-radius:6px;font-size:12px;white-space:normal;max-width:260px;box-shadow:0 2px 8px rgba(0,0,0,.4);z-index:1000}.field[data-tip]:hover::before{content:\"\";position:absolute;bottom:100%;left:12px;border:6px solid transparent;border-top-color:rgba(0,0,0,.9)}";
+    s.textContent=`
+    .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+    .codepair{display:flex;gap:8px;align-items:center}
+    .codepair code{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
+    .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}.badge.is-on{background:#0a3;color:#fff}.badge.is-off{background:#333;color:#bbb;border:1px solid #444}
+    .status-dot{width:10px;height:10px;border-radius:50%}.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}
+    .watcher-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}.chip .rm{cursor:pointer;opacity:.7}
+    .sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:end}
+    .field{display:flex;gap:6px;align-items:center;position:relative}.field label{white-space:nowrap;font-size:12px;opacity:.8}.field input{width:100%}
+    details.sc-filters,details.sc-advanced{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+    details.sc-filters>summary,details.sc-advanced>summary{cursor:pointer;list-style:none;padding:14px;border-radius:12px;font-weight:600}
+    details.sc-filters[open]>summary,details.sc-advanced[open]>summary{border-bottom:1px solid rgba(255,255,255,.06)}
+    details.sc-filters .body,details.sc-advanced .body{padding:12px 14px}`;
     d.head.appendChild(s);
   }
 
-  // defaults/state
   const DEFAULTS={watch:{pause_debounce_seconds:5,suppress_start_at:99},trakt:{stop_pause_threshold:80,force_stop_at:95,regress_tolerance_percent:5}};
   const STATE={mount:null,webhookHost:null,watcherHost:null,cfg:{},users:[],pms:[]};
 
-  // io
   const deepSet=(o,p,v)=>p.split(".").reduce((a,k,i,arr)=>(i===arr.length-1?(a[k]=v):((a[k]&&typeof a[k]==="object")||(a[k]={})),a[k]),o);
   const read=(p,dflt)=>p.split(".").reduce((v,k)=>v&&typeof v==="object"?v[k]:undefined,STATE.cfg) ?? dflt;
   function write(p,v){ deepSet(STATE.cfg,p,v); try{ w._cfgCache ||= {}; deepSet(w._cfgCache,p,v);}catch{} try{syncHiddenServerUrl();}catch{} }
 
-  // num/array
   const asArray=v=>Array.isArray(v)?v.slice():v==null||v===""?[]:[String(v)];
   const clamp100=n=>Math.min(100,Math.max(1,Math.round(Number(n))));
   const norm100=(n,dflt)=>clamp100(Number.isFinite(+n)?+n:dflt);
 
-  // backend
   const API={
     cfgGet:()=>j("/api/config"),
     users:async()=>{const x=await j("/api/plex/users");const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];return Array.isArray(a)?a:[];},
@@ -47,13 +52,11 @@
     watch:{ status:()=>j("/debug/watch/status"), start:()=>t("/debug/watch/start",{method:"POST"}), stop:()=>t("/debug/watch/stop",{method:"POST"}) }
   };
 
-  // chip
   function chip(label,onRemove){
     const c=el("span",{className:"chip"}),t=el("span",{textContent:label}),rm=el("span",{className:"rm",title:"Remove",textContent:"×"});
     on(rm,"click",()=>onRemove&&onRemove(label)); c.append(t,rm); return c;
   }
 
-  // watcher status
   function setWatcherStatus(ui){
     const alive=!!ui?.alive,q=id=>$(id,STATE.mount),dot=q("#sc-status-dot"),txt=q("#sc-status-text"),badge=q("#sc-status-badge"),last=q("#sc-status-last"),up=q("#sc-status-up");
     if(dot){ dot.classList.toggle("on",alive); dot.classList.toggle("off",!alive); }
@@ -63,27 +66,63 @@
     if(up)   up.textContent=ui?.uptime?`Uptime: ${ui.uptime}`:"";
   }
 
-  // mode
   function isValidServerUrl(v){ if(!v) return false; try{const u=new URL(v);return (u.protocol==="http:"||u.protocol==="https:")&&!!u.host;}catch{return false;} }
   function applyModeDisable(){
     const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),webhookOn=!!wh?.checked,watcherOn=!!wa?.checked;
     write("scrobble.enabled",webhookOn||watcherOn); write("scrobble.mode",watcherOn?"watch":"webhook");
-    const webRoot=STATE.webhookHost||$("#sc-sec-webhook",STATE.mount)||STATE.mount,watchRoot=STATE.watcherHost||$("#sc-sec-watch",STATE.mount)||STATE.mount;
+    const webRoot=$("#sc-sec-webhook",STATE.mount)||STATE.mount,watchRoot=$("#sc-sec-watch",STATE.mount)||STATE.mount;
     $all(".input, input, button, select, textarea",webRoot).forEach(n=>{if(n.id!=="sc-enable-webhook") n.disabled=!webhookOn;});
     $all(".input, input, button, select, textarea",watchRoot).forEach(n=>{if(n.id!=="sc-enable-watcher") n.disabled=!watcherOn;});
     const srv=String(read("plex.server_url","")||"");
     if(watcherOn){ isValidServerUrl(srv)?setNote("sc-pms-note",`Using ${srv}`):setNote("sc-pms-note","Plex Server is required (http(s)://…)","err"); } else setNote("sc-pms-note","");
   }
 
-  // ui
   function buildUI(){
     injectStyles();
     if(STATE.webhookHost){
       STATE.webhookHost.innerHTML=`
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-webhook"> Enable</label></div>
-        <div class="muted">Endpoint</div>
-        <div style="display:flex; gap:8px; align-items:center"><code id="sc-webhook-url">/webhook/trakt</code><button id="sc-copy-endpoint" class="btn small">Copy</button></div>
-        <div class="micro-note" style="margin-top:8px">Webhooks can be flaky; <strong>Watcher</strong> is recommended. Only one mode active at a time.</div>`;
+        <div class="row" style="margin-bottom:8px">
+          <label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-webhook"> Enable</label>
+          <div class="codepair"><code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div>
+          <div class="codepair"><code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div>
+        </div>
+        <div id="sc-endpoint-note" class="micro-note"></div>
+        <details id="sc-filters-webhook" class="sc-filters"><summary>Filters (Plex only)</summary>
+          <div class="body">
+            <div class="sc-filter-grid">
+              <div>
+                <div class="muted">Username whitelist</div>
+                <div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div>
+                <div id="sc-users-note-webhook" class="micro-note"></div>
+                <div style="display:flex;gap:8px;margin-top:6px">
+                  <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
+                  <button id="sc-add-user-webhook" class="btn small">Add</button>
+                  <button id="sc-load-users-webhook" class="btn small">Load Plex users</button>
+                </div>
+              </div>
+              <div>
+                <div class="muted">Server UUID</div>
+                <div id="sc-uuid-note-webhook" class="micro-note"></div>
+                <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                  <input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1">
+                  <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="sc-advanced" id="sc-advanced-webhook"><summary>Advanced</summary>
+          <div class="body">
+            <div class="sc-adv-grid">
+              <div class="field" data-tip="Per-session PAUSE debounce; quick double PAUSEs are ignored."><label for="sc-pause-debounce-webhook">Pause debounce</label><input id="sc-pause-debounce-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.pause_debounce_seconds}"></div>
+              <div class="field" data-tip="Suppress end-credits START when progress ≥ threshold."><label for="sc-suppress-start-webhook">Suppress start @</label><input id="sc-suppress-start-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.suppress_start_at}"></div>
+              <div class="field" data-tip="Allow small regressions; avoids rollbacks and decides session vs new progress update."><label for="sc-regress-webhook">Regress tol %</label><input id="sc-regress-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.regress_tolerance_percent}"></div>
+              <div class="field" data-tip="STOP below threshold is sent as PAUSE; also downgrades suspicious 100% jumps (STOP→PAUSE)."><label for="sc-stop-pause-webhook">Stop pause ≥</label><input id="sc-stop-pause-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.stop_pause_threshold}"></div>
+              <div class="field" data-tip="Debounce bypass: a final STOP (≥ threshold) always goes through."><label for="sc-force-stop-webhook">Force stop @</label><input id="sc-force-stop-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.force_stop_at}"></div>
+            </div>
+            <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
+          </div>
+        </details>`;
     }
     if(STATE.watcherHost){
       STATE.watcherHost.innerHTML=`
@@ -97,11 +136,11 @@
           </div>
           <div class="card" id="sc-card-status" style="padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset;">
             <div class="h" style="display:flex;justify-content:space-between;align-items:center"><div>Watcher Status</div><span id="sc-status-badge" class="badge is-off">Stopped</span></div>
-            <div class="sc-row" style="margin-top:10px">
-              <div class="sc-status-line"><span id="sc-status-dot" class="status-dot off"></span><span class="muted">Status:</span><span id="sc-status-text" class="status-text">Unknown</span></div>
-              <div class="sc-actions"><div class="sc-btnrow"><button id="sc-watch-start" class="btn small">Start</button><button id="sc-watch-stop" class="btn small">Stop</button><button id="sc-watch-refresh" class="btn small">Refresh</button></div><label class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label></div>
+            <div class="row" style="margin-top:10px">
+              <div class="codepair"><span id="sc-status-dot" class="status-dot off"></span><span class="muted">Status:</span><span id="sc-status-text" class="status-text">Unknown</span></div>
+              <div style="display:flex;gap:8px;margin-left:auto"><button id="sc-watch-start" class="btn small">Start</button><button id="sc-watch-stop" class="btn small">Stop</button><button id="sc-watch-refresh" class="btn small">Refresh</button></div>
+              <label style="margin-left:auto" class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
             </div>
-            <div id="sc-status-msg" style="margin-top:6px;font-weight:600;font-size:13px"></div>
             <div id="sc-status-last" class="micro-note" style="margin-top:8px"></div>
             <div id="sc-status-up" class="micro-note"></div>
           </div>
@@ -145,7 +184,6 @@
     }
   }
 
-  // hidden input
   function ensureHiddenServerUrlInput(){
     let hidden=d.getElementById("cfg-plex-server-url");
     const form=d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount||d.body);
@@ -154,22 +192,44 @@
   }
   function syncHiddenServerUrl(){ const h=d.getElementById("cfg-plex-server-url"); if(h) h.value=String(read("plex.server_url","")||""); }
 
-  // details state
   function restoreDetailsState(sel,def,key){
     const n=$(sel,STATE.mount); if(!n) return;
     let open=def; try{const v=localStorage.getItem(key); if(v!=null) open=(v==="1");}catch{}
     n.open=!!open;
-    on(n,"toggle",()=>{try{localStorage.setItem(key,n.open?"1":"0");}catch{}; try{n.closest(".card")?.style&&(n.closest(".card").style.overflow="visible");n.closest("#sc-sec-watch")?.style&&(n.closest("#sc-sec-watch").style.overflow="visible");}catch{}});
+    on(n,"toggle",()=>{try{localStorage.setItem(key,n.open?"1":"0");}catch{}});
   }
 
-  // numbers
   const readNum=(sel,dflt)=>{const raw=String($(sel,STATE.mount)?.value??"").trim();return raw===""?clamp100(dflt):norm100(raw,dflt);};
-  function commitAdvancedInputs(){
+
+  // Copy helper (HTTPS + HTTP fallback)
+  async function copyText(s){
+    try{ await navigator.clipboard.writeText(s); return true; }catch{
+      try{
+        const ta=el("textarea",{style:"position:fixed;left:-9999px;top:-9999px"}); ta.value=s; d.body.appendChild(ta); ta.select();
+        const ok=d.execCommand?d.execCommand("copy"):document.execCommand("copy"); d.body.removeChild(ta); return !!ok;
+      }catch{ return false; }
+    }
+  }
+
+  // Watcher advanced
+  function commitAdvancedInputsWatch(){
     write("scrobble.watch.pause_debounce_seconds",readNum("#sc-pause-debounce",DEFAULTS.watch.pause_debounce_seconds));
     write("scrobble.watch.suppress_start_at",readNum("#sc-suppress-start",DEFAULTS.watch.suppress_start_at));
-    write("scrobble.trakt.stop_pause_threshold",readNum("#sc-stop-pause",DEFAULTS.trakt.stop_pause_threshold));
-    write("scrobble.trakt.force_stop_at",readNum("#sc-force-stop",DEFAULTS.trakt.force_stop_at));
-    write("scrobble.trakt.regress_tolerance_percent",readNum("#sc-regress",DEFAULTS.trakt.regress_tolerance_percent));
+  }
+  // Webhook advanced
+  function commitAdvancedInputsWebhook(){
+    write("scrobble.webhook.pause_debounce_seconds",readNum("#sc-pause-debounce-webhook",DEFAULTS.watch.pause_debounce_seconds));
+    write("scrobble.webhook.suppress_start_at",readNum("#sc-suppress-start-webhook",DEFAULTS.watch.suppress_start_at));
+  }
+  // Trakt (shared)
+  function commitAdvancedInputsTrakt(){
+    const keys=[["#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+                ["#sc-force-stop","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at],
+                ["#sc-regress","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent],
+                ["#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+                ["#sc-force-stop-webhook","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at],
+                ["#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent]];
+    for(const [sel,path,dflt] of keys){ const v=readNum(sel,dflt); write(path,v); }
   }
   function bindPercentInput(sel,path,dflt){
     const n=$(sel,STATE.mount); if(!n) return;
@@ -177,34 +237,68 @@
     on(n,"input",()=>set(n.value,false)); on(n,"change",()=>set(n.value,true)); on(n,"blur",()=>set(n.value,true));
   }
 
-  // populate
+  function namesFromChips(hostId){
+    const host=$(hostId,STATE.mount); if(!host) return [];
+    return $all(".chip > span:first-child",host).map(s=>String(s.textContent||"").trim()).filter(Boolean);
+  }
+
   function populate(){
-    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase(),wl=asArray(read("scrobble.watch.filters.username_whitelist",[])),su=read("scrobble.watch.filters.server_uuid",""),autostart=!!read("scrobble.watch.autostart",false),serverUrl=String(read("plex.server_url","")||"");
+    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
     const useWebhook=enabled&&mode==="webhook",useWatch=enabled&&mode==="watch";
-    const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount); if(whEl) whEl.checked=useWebhook; if(waEl) waEl.checked=useWatch;
-    const host=$("#sc-whitelist",STATE.mount); if(host){ host.innerHTML=""; wl.forEach(u=>host.append(chip(u,removeUser))); }
-    const suInp=$("#sc-server-uuid",STATE.mount); if(suInp) suInp.value=su||"";
+
+    const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount);
+    if(whEl) whEl.checked=useWebhook; if(waEl) waEl.checked=useWatch;
+
+    // Watcher filters
+    const wlWatch=asArray(read("scrobble.watch.filters.username_whitelist",[]));
+    const hostW=$("#sc-whitelist",STATE.mount); if(hostW){ hostW.innerHTML=""; wlWatch.forEach(u=>hostW.append(chip(u,removeUserWatch))); }
+    const suWatch=read("scrobble.watch.filters.server_uuid",""),suInpW=$("#sc-server-uuid",STATE.mount); if(suInpW) suInpW.value=suWatch||"";
+
+    // Webhook (Plex-only) filters
+    const wlWeb=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[]));
+    const hostWB=$("#sc-whitelist-webhook",STATE.mount); if(hostWB){ hostWB.innerHTML=""; wlWeb.forEach(u=>hostWB.append(chip(u,removeUserWebhook))); }
+    const suWeb=read("scrobble.webhook.filters_plex.server_uuid",""),suInpWB=$("#sc-server-uuid-webhook",STATE.mount); if(suInpWB) suInpWB.value=suWeb||"";
+
+    // Endpoints
+    const base=location.origin;
+    const plexCode=$("#sc-webhook-url-plex",STATE.mount),jfCode=$("#sc-webhook-url-jf",STATE.mount);
+    if(plexCode) plexCode.textContent=`${base}/webhook/plextrakt`;
+    if(jfCode)   jfCode.textContent=`${base}/webhook/jellyfintrakt`;
+
+    // Misc
+    const autostart=!!read("scrobble.watch.autostart",false),serverUrl=String(read("plex.server_url","")||"");
     const auto=$("#sc-autostart",STATE.mount); if(auto) auto.checked=!!autostart;
     const pmsInp=$("#sc-pms-input",STATE.mount); if(pmsInp) pmsInp.value=serverUrl;
+
     const set=(id,v)=>{const n=$(id,STATE.mount); if(n) n.value=norm100(v,v);};
     set("#sc-pause-debounce",read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
     set("#sc-suppress-start",read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at));
+    set("#sc-pause-debounce-webhook",read("scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
+    set("#sc-suppress-start-webhook",read("scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at));
     set("#sc-stop-pause",read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold));
     set("#sc-force-stop",read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at));
     set("#sc-regress",read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent));
+    set("#sc-stop-pause-webhook",read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold));
+    set("#sc-force-stop-webhook",read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at));
+    set("#sc-regress-webhook",read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent));
+
+    // Default closed
+    restoreDetailsState("#sc-filters",false,"sc-filters-open");
+    restoreDetailsState("#sc-advanced",false,"sc-advanced-open");
+    restoreDetailsState("#sc-filters-webhook",false,"sc-filters-webhook-open");
+    restoreDetailsState("#sc-advanced-webhook",false,"sc-advanced-webhook-open");
+
     syncHiddenServerUrl(); applyModeDisable();
   }
 
-  // watcher controls
   async function refreshWatcher(){ try{ setWatcherStatus(await API.watch.status()||{});}catch{ setWatcherStatus({alive:false}); } }
-  function setStatusMsg(msg,ok=true){ const n=d.getElementById("sc-status-msg"); if(!n) return; n.textContent=msg||""; n.style.color=ok?"var(--fg,#fff)":"#ff6b6b"; }
   async function onWatchStart(){
     const srv=String(read("plex.server_url","")||""); if(!isValidServerUrl(srv)) return setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
     try{ await API.watch.start(); }catch{ setNote("sc-pms-note","Start failed","err"); } refreshWatcher();
   }
   async function onWatchStop(){ try{ await API.watch.stop(); }catch{ setNote("sc-pms-note","Stop failed","err"); } refreshWatcher(); }
 
-  // data helpers
+  // Watcher ops
   async function fetchServerUUID(){
     try{
       const x=await API.serverUUID(),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid",STATE.mount);
@@ -223,33 +317,58 @@
       setNote("sc-pms-note","Fetch failed. Enter a URL manually.","err");
     }
   }
-  function onAddUser(){
+  function onAddUserWatch(){
     const inp=$("#sc-user-input",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
-    const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.watch.filters.username_whitelist",next); $("#sc-whitelist",STATE.mount).append(chip(v,removeUser)); inp.value=""; }
+    const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.watch.filters.username_whitelist",next); $("#sc-whitelist",STATE.mount).append(chip(v,removeUserWatch)); inp.value=""; }
   }
-  function removeUser(u){
+  function removeUserWatch(u){
     const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])),next=cur.filter(x=>String(x)!==String(u));
     write("scrobble.watch.filters.username_whitelist",next);
-    const host=$("#sc-whitelist",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUser)));
+    const host=$("#sc-whitelist",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWatch)));
   }
   async function loadUsers(){
     try{
       const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
-      STATE.users=filtered;
       const names=filtered.map(u=>u?.username||u?.title).filter(Boolean),host=$("#sc-whitelist",STATE.mount); let added=0;
-      for(const n of names){ const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.watch.filters.username_whitelist",[...cur,n]); host.append(chip(n,removeUser)); added++; } }
+      for(const n of names){ const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.watch.filters.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWatch)); added++; } }
       setNote("sc-users-note",added?`Loaded ${added} user(s)`:"No eligible managed/owner users");
     }catch{ setNote("sc-users-note","Load users failed","err"); }
   }
 
-  // wiring
+  // Webhook ops (Plex-only filters)
+  async function fetchServerUUIDWebhook(){
+    try{
+      const x=await API.serverUUID(),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid-webhook",STATE.mount);
+      if(inp&&v){ inp.value=v; write("scrobble.webhook.filters_plex.server_uuid",v); setNote("sc-uuid-note-webhook","Server UUID fetched"); } else setNote("sc-uuid-note-webhook","No server UUID","err");
+    }catch{ setNote("sc-uuid-note-webhook","Fetch failed","err"); }
+  }
+  function onAddUserWebhook(){
+    const inp=$("#sc-user-input-webhook",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
+    const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])); if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.webhook.filters_plex.username_whitelist",next); $("#sc-whitelist-webhook",STATE.mount).append(chip(v,removeUserWebhook)); inp.value=""; }
+  }
+  function removeUserWebhook(u){
+    const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])),next=cur.filter(x=>String(x)!==String(u));
+    write("scrobble.webhook.filters_plex.username_whitelist",next);
+    const host=$("#sc-whitelist-webhook",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWebhook)));
+  }
+  async function loadUsersWebhook(){
+    try{
+      const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
+      const names=filtered.map(u=>u?.username||u?.title).filter(Boolean),host=$("#sc-whitelist-webhook",STATE.mount); let added=0;
+      for(const n of names){ const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.webhook.filters_plex.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWebhook)); added++; } }
+      setNote("sc-users-note-webhook",added?`Loaded ${added} user(s)`:"No eligible managed/owner users");
+    }catch{ setNote("sc-users-note-webhook","Load users failed","err"); }
+  }
+
   function wire(){
     ensureHiddenServerUrlInput();
-    restoreDetailsState("#sc-filters",false,"sc-filters-open");
-    restoreDetailsState("#sc-advanced",false,"sc-advanced-open");
 
-    on($("#sc-copy-endpoint",STATE.mount),"click",()=>navigator.clipboard.writeText(`${location.origin}/webhook/trakt`).then(()=>setNote("sc-users-note","Endpoint copied")).catch(()=>setNote("sc-users-note","Copy failed","err")));
-    on($("#sc-add-user",STATE.mount),"click",onAddUser);
+    // Copy buttons
+    on($("#sc-copy-plex",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/plextrakt`); setNote("sc-endpoint-note",ok?"Plex endpoint copied":"Copy failed",ok?"":"err"); });
+    on($("#sc-copy-jf",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/jellyfintrakt`); setNote("sc-endpoint-note",ok?"Jellyfin endpoint copied":"Copy failed",ok?"":"err"); });
+
+    // Watcher wiring
+    on($("#sc-add-user",STATE.mount),"click",onAddUserWatch);
     on($("#sc-load-users",STATE.mount),"click",loadUsers);
     on($("#sc-watch-start",STATE.mount),"click",onWatchStart);
     on($("#sc-watch-stop",STATE.mount),"click",onWatchStop);
@@ -257,24 +376,36 @@
     on($("#sc-fetch-uuid",STATE.mount),"click",fetchServerUUID);
     on($("#sc-server-uuid",STATE.mount),"input",e=>write("scrobble.watch.filters.server_uuid",String(e.target.value||"").trim()));
 
+    // Webhook wiring
+    on($("#sc-add-user-webhook",STATE.mount),"click",onAddUserWebhook);
+    on($("#sc-load-users-webhook",STATE.mount),"click",loadUsersWebhook);
+    on($("#sc-fetch-uuid-webhook",STATE.mount),"click",fetchServerUUIDWebhook);
+    on($("#sc-server-uuid-webhook",STATE.mount),"input",e=>write("scrobble.webhook.filters_plex.server_uuid",String(e.target.value||"").trim()));
+
+    // Percent binds
     bindPercentInput("#sc-pause-debounce","scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds);
     bindPercentInput("#sc-suppress-start","scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at);
+    bindPercentInput("#sc-pause-debounce-webhook","scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds);
+    bindPercentInput("#sc-suppress-start-webhook","scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at);
     bindPercentInput("#sc-stop-pause","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold);
     bindPercentInput("#sc-force-stop","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at);
     bindPercentInput("#sc-regress","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
+    bindPercentInput("#sc-stop-pause-webhook","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold);
+    bindPercentInput("#sc-force-stop-webhook","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at);
+    bindPercentInput("#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
 
-    on($("#sc-pms-refresh",STATE.mount),"click",loadPmsList);
-    on($("#sc-pms-select",STATE.mount),"change",e=>{const v=String(e.target.value||"").trim(); if(v){ $("#sc-pms-input",STATE.mount).value=v; write("plex.server_url",v); setNote("sc-pms-note",`Using ${v}`);} applyModeDisable();});
-    on($("#sc-pms-input",STATE.mount),"input",e=>{const v=String(e.target.value||"").trim(); write("plex.server_url",v); if(v&&!isValidServerUrl(v)) setNote("sc-pms-note","Invalid URL. Use http(s)://host[:port]","err"); else if(v) setNote("sc-pms-note",`Using ${v}`); else setNote("sc-pms-note","Plex Server is required when Watcher is enabled","err"); applyModeDisable();});
-
+    // Mode + plex url
     const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount);
     const syncExclusive=src=>{const webOn=!!wh?.checked,watOn=!!wa?.checked; if(src==="webhook"&&webOn&&wa) wa.checked=false; if(src==="watch"&&watOn&&wh) wh.checked=false; write("scrobble.enabled",(!!wh?.checked)|| (!!wa?.checked)); write("scrobble.mode",(!!wa?.checked)?"watch":"webhook"); applyModeDisable();};
     if(wh) on(wh,"change",()=>syncExclusive("webhook"));
     if(wa) on(wa,"change",()=>syncExclusive("watch"));
     on($("#sc-autostart",STATE.mount),"change",e=>write("scrobble.watch.autostart",!!e.target.checked));
+
+    on($("#sc-pms-refresh",STATE.mount),"click",loadPmsList);
+    on($("#sc-pms-select",STATE.mount),"change",e=>{const v=String(e.target.value||"").trim(); if(v){ $("#sc-pms-input",STATE.mount).value=v; write("plex.server_url",v); setNote("sc-pms-note",`Using ${v}`);} applyModeDisable();});
+    on($("#sc-pms-input",STATE.mount),"input",e=>{const v=String(e.target.value||"").trim(); write("plex.server_url",v); if(v&&!isValidServerUrl(v)) setNote("sc-pms-note","Invalid URL. Use http(s)://host[:port]","err"); else if(v) setNote("sc-pms-note",`Using ${v}`); else setNote("sc-pms-note","Plex Server is required when Watcher is enabled","err"); applyModeDisable();});
   }
 
-  // public api
   function init(opts={}){
     STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
     STATE.cfg   = opts.cfg || w._cfgCache || {};
@@ -288,18 +419,52 @@
     buildUI(); wire(); populate(); refreshWatcher(); loadPmsList().catch(()=>{});
   }
   function mountLegacy(targetEl,cfg){ init({ mountId: targetEl?.id, cfg: cfg||(w._cfgCache||{}) }); }
+
   function getScrobbleConfig(){
-    commitAdvancedInputs();
-    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase(),wl=asArray(read("scrobble.watch.filters.username_whitelist",[])),su=read("scrobble.watch.filters.server_uuid",""),autostart=!!read("scrobble.watch.autostart",false);
-    return { enabled, mode: mode==="watch"?"watch":"webhook", webhook:{}, watch:{ autostart, pause_debounce_seconds:read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds), suppress_start_at:read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at), filters:{ username_whitelist: wl, server_uuid: su||"" } }, trakt:{ stop_pause_threshold:read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold), force_stop_at:read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at), regress_tolerance_percent:read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent) } };
+    // build from DOM → avoids “only saves when another field changed”
+    commitAdvancedInputsWatch();
+    commitAdvancedInputsWebhook();
+    commitAdvancedInputsTrakt();
+
+    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
+
+    // Webhook filters from DOM (fallback to STATE)
+    const wlWeb = namesFromChips("#sc-whitelist-webhook");
+    const suWeb = String($("#sc-server-uuid-webhook",STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid","")).trim();
+
+    // Watcher filters from DOM (fallback to STATE)
+    const wlWatch = namesFromChips("#sc-whitelist");
+    const suWatch = String($("#sc-server-uuid",STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid","")).trim();
+
+    return {
+      enabled,
+      mode: mode==="watch"?"watch":"webhook",
+      webhook:{
+        pause_debounce_seconds:read("scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
+        suppress_start_at:read("scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at),
+        filters_plex:{ username_whitelist: wlWeb.length?wlWeb:asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])), server_uuid: suWeb||"" },
+        filters_jellyfin: read("scrobble.webhook.filters_jellyfin",{}) || { username_whitelist: [] }
+      },
+      watch:{
+        autostart:!!read("scrobble.watch.autostart",false),
+        pause_debounce_seconds:read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
+        suppress_start_at:read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at),
+        filters:{ username_whitelist: wlWatch.length?wlWatch:asArray(read("scrobble.watch.filters.username_whitelist",[])), server_uuid: suWatch||"" }
+      },
+      trakt:{
+        stop_pause_threshold:read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold),
+        force_stop_at:read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at),
+        regress_tolerance_percent:read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent)
+      }
+    };
   }
+
   const getRootPatch=()=>({ plex:{ server_url:String(read("plex.server_url","")||"") } });
 
   w.ScrobUI={ $, $all, el, on, setNote, injectStyles, DEFAULTS, STATE, read, write, asArray, clamp100, norm100, API };
   w.Scrobbler={ init, mount:mountLegacy, getConfig:getScrobbleConfig, getRootPatch };
   w.getScrobbleConfig=getScrobbleConfig; w.getRootPatch=getRootPatch;
 
-  // auto-mount
   d.addEventListener("DOMContentLoaded", async ()=>{
     const root=d.getElementById("scrobble-mount"); if(!root) return;
     let cfg=null; try{ cfg=await API.cfgGet(); }catch{ cfg=w._cfgCache||{}; }

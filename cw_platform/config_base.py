@@ -63,6 +63,10 @@ DEFAULT_CFG: Dict[str, Any] = {
             "tmdb", "imdb", "tvdb",
             "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
         ],
+
+        # Webhook (optional)
+        "webhook_secret": "",                           # HMAC secret to verify X-Plex-Signature on incoming webhooks (empty = skip verification)
+        "server_uuid": "",                              # Optional fixed PMS UUID to validate incoming webhooks against (fallback when scrobble.webhook.filters_plex.server_uuid is empty)
     },
 
     "simkl": {
@@ -120,7 +124,8 @@ DEFAULT_CFG: Dict[str, Any] = {
         "access_token": "",                             # Jellyfin access token (required)
         "user_id": "",                                  # Jellyfin userId (required)
         "device_id": "crosswatch",                      # Client device id
-        "username": "",                                 # Optional (not required for sync)
+        "username": "",                                 # Optional (login username)
+        "user": "",                                     # Optional (display name; hydrated after auth)
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget for API calls
@@ -144,12 +149,14 @@ DEFAULT_CFG: Dict[str, Any] = {
             "history_guid_priority": [                  # id match order
                 "tmdb", "imdb", "tvdb",
                 "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
-            ]
+            ],
+            "libraries": []                             # whitelist of library GUIDs (from /api/jellyfin/libraries.key); empty = all
         },
-        
-        #  Ratings settings
+
+        # Ratings settings
         "ratings": {
             "ratings_query_limit": 2000,                # ratings query limit, default 2000
+            "libraries": []                             # whitelist of library GUIDs; empty = all
         },
     },
 
@@ -210,10 +217,10 @@ DEFAULT_CFG: Dict[str, Any] = {
         "ttl_hours": 6,                                 # Coarse cache TTL
     },
 
-    # --- Scrobble (Plex watcher / Trakt sink) -------------------------------
+    # --- Scrobble (Plex/Jellyfin → Trakt) -----------------------------------
     "scrobble": {
         "enabled": False,                               # Master toggle for scrobbling
-        "mode": "watch",                                # "watch" = real-time watcher; "webhook" = sync-time only
+        "mode": "watch",                                # "watch" = real-time watcher; "webhook" = incoming webhooks
 
         # Watcher settings (Plex → events → Trakt)
         "watch": {
@@ -223,6 +230,23 @@ DEFAULT_CFG: Dict[str, Any] = {
             "filters": {
                 "username_whitelist": [],               # ["name", "id:123", "uuid:abcd…"]
                 "server_uuid": ""                       # Restrict to a specific PMS
+            }
+        },
+
+        # Webhook settings (Plex/Jellyfin → Trakt via scrobbler)
+        "webhook": {
+            "pause_debounce_seconds": 5,                # Ignore micro-pauses
+            "suppress_start_at": 99,                    # Suppress near-end "start" flaps (credits)
+
+            # Plex-only filters
+            "filters_plex": {
+                "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
+                "server_uuid": ""                       # Restrict to a specific PMS (falls back to plex.server_uuid when empty)
+            },
+
+            # Jellyfin-only filters
+            "filters_jellyfin": {
+                "username_whitelist": []                # Restrict accepted User.Name values (empty = allow all)
             }
         },
 
@@ -246,6 +270,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     "pairs": [],
 }
 
+
 # ------------------------------------------------------------
 # Helpers: paths, IO, merging, normalization
 # ------------------------------------------------------------
@@ -263,9 +288,6 @@ def _read_json(p: Path) -> Dict[str, Any]:
 
 
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
-    """
-    Atomic-ish write: write to a temp file in the same dir, then replace().
-    """
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(f".{int(time.time())}.tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as f:
@@ -275,10 +297,6 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Recursively merge dicts, with `override` taking precedence.
-    Lists and scalars are replaced wholesale.
-    """
     out = copy.deepcopy(base)
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -304,13 +322,6 @@ def _as_list(value: Any) -> List[str]:
 
 
 def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize ratings feature in pairs[n].features.ratings, preserving unknown keys.
-      - enable/add/remove: bools
-      - types: ["all"] or any subset of allowed types; default ["movies","shows"]
-      - mode: one of _ALLOWED_RATING_MODES (default "only_new")
-      - from_date: only kept when mode == "from_date"
-    """
     v = dict(val or {})
 
     # basic toggles
@@ -345,12 +356,6 @@ def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _normalize_features_map(features: dict | None) -> dict:
-    """
-    Normalize the features map for a single pair:
-      - If value is bool: coerce to {enable:add:remove}
-      - If value is dict: ensure enable/add/remove defaults, and preserve unknown keys
-      - Ratings: apply additional normalization for scope/window (types/mode/from_date)
-    """
     f = dict(features or {})
     for name, val in list(f.items()):
         if isinstance(val, bool):
@@ -381,8 +386,7 @@ def _normalize_features_map(features: dict | None) -> dict:
 # ------------------------------------------------------------
 def load_config() -> Dict[str, Any]:
     """
-    Read config.json if present and merge it over DEFAULT_CFG.
-    Also normalizes per-pair features maps.
+    Read config.json 
     """
     p = _cfg_file()
     user_cfg: Dict[str, Any] = {}
@@ -406,9 +410,7 @@ def load_config() -> Dict[str, Any]:
 
 def save_config(cfg: Dict[str, Any]) -> None:
     """
-    Write to config.json atomically.
-    Performs the same feature normalization as load_config (but does not inject
-    defaults beyond the pairs' feature maps).
+    Write to config.json 
     """
     data = dict(cfg or {})
     pairs = data.get("pairs")
