@@ -107,36 +107,19 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 
 ---
 
-## 🧩 Architecture
-
-- **FastAPI** backend (`crosswatch.py`) at port `8787`
-- **Vanilla JS/CSS** UI served from `/assets/`
-- Pluggable **providers**:  
-  - `auth` (Plex, Jellyfin, SIMKL, TRAKT)
-  - `sync` (PLEX ⇄  ⇄ Jellyfin ⇄ SIMKL ⇄ TRAKT)
-  - `metadata` (TMDb enrichment)
-- All state/config stored as JSON in `CONFIG_BASE`
-
----
-
 ## 📋 Usage
 
 1. Open the web UI
-2. Connect at least two Authentication providers, Plex, Jellyfin, SIMKL and/or TRakt under
+2. Connect at least two Authentication providers, Plex, Jellyfin, SIMKL and/or TRAKT
 3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way) or/and use Scrobble
 4. Click **Synchronize** to start, or enable scheduling in **Settings**
 5. Track stats, logs, and history from the UI
 
 ---
-# 🎬 Live Scrobbling (Plex → Trakt)
+# 🎬 Live Scrobbling (Plex/Jellyfin → Trakt)
 
 CrossWatch can **scrobble your real-time Plex playback to Trakt** — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.
-
-### How it works
-- A background **watcher** connects to your Plex Media Server (via WebSocket).
-- Every play/pause/stop is converted into a **ScrobbleEvent**.
-- The event is enriched with TMDb/Tvdb/IMDb IDs and sent to **Trakt’s `/scrobble` API**.
-- Built-in **deduplication, retries, and fallbacks** ensure stable reporting.
+Have Plex Pass? Prefer Webhook. No Plex Pass? Use the Watcher. Jellyfin users: use the Webhook.
 
 ---
 
