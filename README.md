@@ -118,7 +118,7 @@ Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored the
 ---
 # 🎬 Live Scrobbling (Plex/Jellyfin → Trakt)
 
-CrossWatch can **scrobble your real-time Plex playback to Trakt** — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.
+CrossWatch can **scrobble your real-time Plex and Jellyfin playback to Trakt** — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.
 Have Plex Pass? Prefer Webhook. No Plex Pass? Use the Watcher. Jellyfin users: use the Webhook.
 
 ---
