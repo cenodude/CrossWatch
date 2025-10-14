@@ -46,6 +46,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "account_id": "",                               # Server-local accountID (int) for the selected user. If empty, we resolve & persist.
         "timeout": 10.0,                                # Optional HTTP timeout (seconds).
         "max_retries": 3,                               # Optional retry budget.
+        "fallback_GUID": False,                         # Opt-in GUID/Discover fallback for missing library items (history/ratings)
 
         # per-feature library whitelists (empty = all)
         "history": { "libraries": [] },

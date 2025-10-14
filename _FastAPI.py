@@ -260,6 +260,7 @@ def get_index_html() -> str:
 <script src="/assets/helpers/api.js"></script>
 <script src="/assets/helpers/legacy-bridge.js"></script>
 <script src="/assets/crosswatch.js"></script>
+<script src="/assets/js/syncbar.js" defer></script>
 <script src="/assets/js/main.js" defer></script>
 <script src="/assets/js/connections.overlay.js" defer></script>
 <script src="/assets/js/connections.pairs.overlay.js" defer></script>
@@ -275,8 +276,10 @@ def get_index_html() -> str:
 <script src="/assets/auth/auth.jellyfin.js" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
-<link rel="stylesheet" href="/assets/js/modals/core/styles.css">
-<script type="module" src="/assets/js/modals.js"></script>
+
+<script>window.__CW_BUILD__="0.2.5-20251014-02";</script>
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=0.2.5-20251014-02">
+<script type="module" src="/assets/js/modals.js?v=0.2.5-20251014-02"></script>
 
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 

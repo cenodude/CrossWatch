@@ -26,6 +26,18 @@ CLIENT_ID = (
 def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:common] {msg}")
+        
+def _emit(evt: dict) -> None:
+    try:
+        feature = str(evt.get("feature") or "common")
+        head = []
+        if "event"  in evt: head.append(f"event={evt['event']}")
+        if "action" in evt: head.append(f"action={evt['action']}")
+        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature","event","action"}]
+        line = " ".join(head + tail)
+        print(f"[PLEX:{feature}] {line}", flush=True)
+    except Exception:
+        pass
 
 def plex_headers(token: str) -> Dict[str, str]:
     return {
@@ -152,7 +164,11 @@ def hydrate_external_ids(token: Optional[str], rating_key: Optional[str]) -> Dic
         r = requests.get(url, headers=plex_headers(token), timeout=10)
         if r.status_code == 401: raise RuntimeError("Unauthorized (bad Plex token)")
         if not r.ok:
-            _log(f"hydrate {rk} -> {r.status_code}"); _GUID_CACHE[rk] = {}; return {}
+            _log(f"hydrate {rk} -> {r.status_code}")
+            _emit({"feature":"common","event":"hydrate","action":"miss","rk":rk,"status":r.status_code})
+            _GUID_CACHE[rk] = {}; return {}
+        else:
+            _emit({"feature":"common","event":"hydrate","action":"ok","rk":rk})
         ctype = (r.headers.get("content-type") or "").lower()
         ids: Dict[str, str] = {}
         if "application/json" in ctype:
@@ -176,7 +192,6 @@ def hydrate_external_ids(token: Optional[str], rating_key: Optional[str]) -> Dic
         return {}
 
 def normalize(obj) -> Dict[str, Any]:
-    # Add library_id when available; safe for all consumers.
     t = type_of(obj)
     ids = ids_from_obj(obj)
     base: Dict[str, Any] = {
@@ -354,3 +369,150 @@ def section_find_by_guid(sec, candidates: Iterable[str]):
         except Exception:
             continue
     return None
+
+# --- GUID fallback helpers ----------------------------------------------------
+
+def _year_from_any(v: Any) -> Optional[int]:
+    try:
+        if isinstance(v, int): return v
+        s = str(v or "").strip()
+        if not s: return None
+        if s.isdigit() and len(s) in (4, 8):  # "2021" or "20210501"
+            return int(s[:4])
+        return int(s[:4]) if len(s) >= 4 and s[:4].isdigit() else None
+    except Exception:
+        return None
+
+def _row_get(row: Any, *names: str) -> Any:
+    for n in names:
+        if isinstance(row, Mapping) and n in row: return row.get(n)
+        if hasattr(row, n): return getattr(row, n)
+    return None
+
+def ids_from_history_row(row: Any) -> Dict[str, str]:
+    ids: Dict[str, str] = {}
+    rk = _row_get(row, "ratingKey", "key")
+    if rk is not None: ids["plex"] = str(rk)
+    for n in ("guid", "grandparentGuid", "parentGuid"):
+        g = _row_get(row, n)
+        if g: ids.update(ids_from_guid(str(g)))
+    try:
+        gg = _row_get(row, "Guid") or []
+        if isinstance(gg, list):
+            for it in gg:
+                gid = (it.get("id") if isinstance(it, Mapping) else None) or getattr(it, "id", None)
+                if gid: ids.update(ids_from_guid(str(gid)))
+    except Exception:
+        pass
+    return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none","null")}
+
+def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
+    try:
+        return any(str(ids.get(k) or "").strip() for k in ("imdb","tmdb","tvdb"))
+    except Exception:
+        return False
+
+def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> Dict[str, Any]:
+    kind = str((_row_get(row, "type") or "movie")).lower()
+    is_ep = (kind == "episode")
+    title = _row_get(row, "grandparentTitle") if is_ep else _row_get(row, "title")
+    year = _row_get(row, "year") or _row_get(row, "originallyAvailableAt") or _row_get(row, "originally_available_at")
+    base: Dict[str, Any] = {
+        "type": ("episode" if is_ep else "movie"),
+        "title": title,
+        "year": _year_from_any(year),
+        "guid": _row_get(row, "guid") or _row_get(row, "grandparentGuid") or _row_get(row, "parentGuid"),
+        "ids": dict(ids or {}),
+    }
+    if is_ep:
+        base["series_title"] = _row_get(row, "grandparentTitle")
+        base["season"] = _safe_int(_row_get(row, "parentIndex"))
+        base["episode"] = _safe_int(_row_get(row, "index"))
+        gp = _row_get(row, "grandparentGuid")
+        gp_rk = _row_get(row, "grandparentRatingKey")
+        sids: Dict[str, Any] = {}
+        if gp: sids.update({k: v for k, v in ids_from_guid(str(gp)).items() if v})
+        if gp_rk: sids["plex"] = str(gp_rk)
+        if sids: base["show_ids"] = sids
+    return id_minimal(base)
+
+def _discover_search_title(token: str, title: str, kind: str, year: Optional[int], limit: int = 15) -> Optional[Mapping[str, Any]]:
+    try:
+        if not title or not token: return None
+        params = {"query": title, "limit": max(5, int(limit)), "includeMeta": 1}
+        r = requests.get(f"{DISCOVER}/hubs/search", headers=plex_headers(token), params=params, timeout=6)
+        if not r.ok: return None
+        j = r.json() if "json" in (r.headers.get("content-type","").lower()) else {}
+        hubs = (j.get("MediaContainer") or {}).get("Hub") or []
+        rows: List[Mapping[str, Any]] = []
+        for h in hubs:
+            for md in (h.get("Metadata") or []):
+                if isinstance(md, Mapping): rows.append(md)
+        if not rows: return None
+
+        def _score(md: Mapping[str, Any]) -> int:
+            s = 0
+            t = (md.get("type") or "").lower()
+            if kind and t == kind: s += 2
+            mt = (md.get("grandparentTitle") if kind == "episode" else md.get("title")) or ""
+            if str(mt).strip().lower() == str(title).strip().lower(): s += 3
+            y = _year_from_any(md.get("year"))
+            if year and y == year: s += 2
+            return s
+
+        best = None; best_sc = -1
+        for md in rows:
+            sc = _score(md)
+            if sc > best_sc:
+                best, best_sc = md, sc
+        return best
+    except Exception:
+        return None
+    
+#--- GUID fallback ---------EXPERIMENTAL-----------------------------------------
+def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_discover: bool = False) -> Optional[Dict[str, Any]]:
+    ids = ids_from_history_row(row)
+    kind = str((_row_get(row, "type") or "movie")).lower()
+    m = _build_minimal_from_row(row, ids)
+
+    if not _has_ext_ids(m.get("ids", {})):
+        rk = m.get("ids", {}).get("plex")
+        tok = token or _PLEX_CTX["token"]
+        if rk and tok:
+            _emit({"feature":"common","event":"fallback_guid","action":"enrich_by_rk_try","rk":str(rk)})
+            extra = hydrate_external_ids(tok, str(rk))
+            _emit({"feature":"common","event":"fallback_guid","action":("enrich_by_rk_ok" if extra else "enrich_by_rk_miss"),"rk":str(rk)})
+            if extra:
+                m["ids"].update({k: v for k, v in extra.items() if v})
+
+    if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})):
+        tok = token or _PLEX_CTX["token"]
+        gp_rk = _row_get(row, "grandparentRatingKey")
+        if tok and gp_rk:
+            _emit({"feature":"common","event":"fallback_guid","action":"enrich_show_by_rk_try","rk":str(gp_rk)})
+            extra2 = hydrate_external_ids(tok, str(gp_rk))
+            _emit({"feature":"common","event":"fallback_guid","action":("enrich_show_by_rk_ok" if extra2 else "enrich_show_by_rk_miss"),"rk":str(gp_rk)})
+            if extra2:
+                m.setdefault("show_ids", {}).update({k: v for k, v in extra2.items() if v})
+
+    if not _has_ext_ids(m.get("ids", {})) and allow_discover:
+        tok = token or _PLEX_CTX["token"]
+        title = m.get("series_title") if kind == "episode" else m.get("title")
+        year = m.get("year")
+        _emit({"feature":"common","event":"fallback_guid","action":"discover_try","title":str(title or ""), "kind":kind, "year":year})
+        md = _discover_search_title(tok, str(title or ""), kind, year)
+        _emit({"feature":"common","event":"fallback_guid","action":("discover_ok" if md else "discover_miss"), "title":str(title or ""), "kind":kind, "year":year})
+        if md:
+            nd = normalize_discover_row(md, token=tok)
+            if _has_ext_ids(nd.get("ids", {})):
+                m["ids"].update({k: v for k, v in nd["ids"].items() if v})
+            if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
+                m.setdefault("show_ids", {}).update({k: v for k, v in nd["show_ids"].items() if v})
+            if kind == "episode":
+                if m.get("season") is None: m["season"] = nd.get("season")
+                if m.get("episode") is None: m["episode"] = nd.get("episode")
+                if not m.get("series_title"): m["series_title"] = nd.get("series_title") or nd.get("title")
+
+    if not (m.get("title") or m.get("series_title")):
+        return None
+    return m

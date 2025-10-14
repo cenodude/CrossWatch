@@ -268,6 +268,22 @@ def register_insights(app: FastAPI):
             return out
 
         w = _lane_totals(7); m = _lane_totals(30)
+        
+        def _val_at(series, floor_ts: int) -> int:
+            try:
+                arr = sorted(series or [], key=lambda r: int(r.get("ts") or 0))
+                if not arr: return 0
+                val = int(arr[0].get("count") or 0)
+                for r in arr:
+                    t = int(r.get("ts") or 0)
+                    if t <= floor_ts: val = int(r.get("count") or 0)
+                    else: break
+                return val
+            except Exception:
+                return 0
+            
+        week_floor  = now_ts - 7*86400
+        month_floor = now_ts - 30*86400
 
         # sparklines for ratings/history/playlists
         ts_grid = [r["ts"] for r in series_by_feature["watchlist"]]
@@ -300,10 +316,16 @@ def register_insights(app: FastAPI):
             ma, mr, mu = (m.get(feat) or (0,0,0))
             if not (add_last or rem_last):
                 add_last, rem_last = wa, wr
+            s = series_by_feature.get(feat, [])
+            week_cnt  = _val_at(s, week_floor)
+            month_cnt = _val_at(s, month_floor)
+             
             feats_out[feat] = {
                 "now":   _union_now(feat),
                 "week":  wa + wr + wu,
                 "month": ma + mr + mu,
+                "week":  week_cnt,
+                "month": month_cnt,
                 "added": add_last,
                 "removed": rem_last,
                 "updated": wu,

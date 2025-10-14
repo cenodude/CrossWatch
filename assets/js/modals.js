@@ -1,9 +1,13 @@
-// Facade: legacy-safe entrypoint mapping old globals to the new modular host.
+// assets/js/modals.js
 import { ModalRegistry } from './modals/core/registry.js';
 
-ModalRegistry.register('pair-config', () => import('./modals/pair-config/index.js'));
-ModalRegistry.register('about', () => import('./modals/about.js'));
-ModalRegistry.register('analyzer', () => import('./modals/analyzer/index.js'));
+// Cache-buster for dynamic imports
+const ver = (u) => u + (u.includes('?') ? '&' : '?') + 'v=' + (window.__CW_BUILD__ || Date.now());
+
+// Register modals (versioned)
+ModalRegistry.register('pair-config', () => import(ver('./modals/pair-config/index.js')));
+ModalRegistry.register('about',        () => import(ver('./modals/about.js')));
+ModalRegistry.register('analyzer',     () => import(ver('./modals/analyzer/index.js')));
 
 // Public API + legacy bridges
 export const openModal = ModalRegistry.open;
@@ -17,12 +21,11 @@ window.openAbout = (props={}) => ModalRegistry.open('about', props);
 window.closeAbout = () => ModalRegistry.close();
 window.openAnalyzer = (props={}) => ModalRegistry.open('analyzer', props);
 
-// Compatibility shims for older code
-window.cxEnsureCfgModal = async (pairOrId=null)=>{
+window.cxEnsureCfgModal = async (pairOrId=null) => {
   await ModalRegistry.open('pair-config', { pairOrId });
   return document.getElementById('cx-modal')?.closest('.cx-card') || document.querySelector('.cx-modal-shell');
 };
-window.cxOpenModalFor = async (pairOrId=null /* legacy id param is ignored */)=>{
+window.cxOpenModalFor = async (pairOrId=null) => {
   await ModalRegistry.open('pair-config', { pairOrId });
   return true;
 };

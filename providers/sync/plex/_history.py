@@ -6,18 +6,29 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ._utils import resolve_user_scope, patch_history_with_account_id
-from ._common import normalize as plex_normalize
+from ._common import normalize as plex_normalize, minimal_from_history_row
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 except Exception:
     from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
-PLEX_HISTORY_MAXRESULTS = 20_000
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:history] {msg}")
+        
+def _emit(evt: dict) -> None:
+    try:
+        feature = str(evt.get("feature") or "?")
+        head = []
+        if "event"  in evt: head.append(f"event={evt['event']}")
+        if "action" in evt: head.append(f"action={evt['action']}")
+        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
+        line = " ".join(head + tail)
+        print(f"[PLEX:{feature}] {line}", flush=True)
+    except Exception:
+        pass
 
 # ── time helpers ──────────────────────────────────────────────────────────────
 
@@ -178,6 +189,10 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
 
+    plex_cfg = _plex_cfg(adapter)
+    if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
+        _emit({"event":"debug","msg":"fallback_guid.enabled","provider":"PLEX","feature":"history"})
+    
     def _int_or_zero(v):
         try: return int(v or 0)
         except Exception: return 0
@@ -191,16 +206,11 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         kwargs = {}
         if acct_id:
             kwargs["accountID"] = int(acct_id)
-
         if since is not None:
             kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
 
-        # Pull full history;
-        kwargs["maxresults"] = PLEX_HISTORY_MAXRESULTS
-
         rows = list(srv.history(**kwargs) or [])
 
-        # Fallback:
         if not rows and "accountID" in kwargs:
             _log("no rows with accountID → retry without account scope")
             kwargs.pop("accountID", None)
@@ -208,7 +218,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     except Exception as e:
         _log(f"history fetch failed: {e}")
         return {}
-
+    
     def _username_match(h, target_uname: str) -> bool:
         if not target_uname: return True
         try:
@@ -223,6 +233,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         except Exception:
             return False
 
+    raw_by_rk: Dict[str, Any] = {}
     work: List[Tuple[str, int]] = []
     for h in rows:
         if allow:
@@ -248,7 +259,10 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
 
         rk = getattr(h, "ratingKey", None) or getattr(h, "key", None)
         try:
-            if rk is not None: work.append((str(int(rk)), int(ts)))
+            if rk is not None:
+                rk_s = str(int(rk))
+                work.append((rk_s, int(ts)))
+                raw_by_rk[rk_s] = h
         except Exception:
             continue
 
@@ -281,6 +295,16 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
                     if rk and m: _FETCH_CACHE[rk] = m
         except Exception as e:
             _log(f"parallel fetch error: {e}")
+
+    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+    if fallback_guid:
+        misses = [rk for rk in to_fetch if rk not in _FETCH_CACHE]
+        for rk in misses:
+            _emit({"event":"fallback_guid","provider":"PLEX","feature":"history","action":"try","rk":rk})
+            fb = minimal_from_history_row(raw_by_rk.get(rk), allow_discover=True)
+            _emit({"event":"fallback_guid","provider":"PLEX","feature":"history","action":("ok" if fb else "miss"),"rk":rk})
+            if fb:
+                _FETCH_CACHE[rk] = fb
 
     out: Dict[str, Dict[str, Any]] = {}
     done = ignored = 0
@@ -475,3 +499,4 @@ def _unscrobble(srv, rating_key: Any) -> bool:
         return r.ok
     except Exception:
         return False
+

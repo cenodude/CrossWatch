@@ -42,16 +42,22 @@ def clear_cache() -> Dict[str, Any]:
     _cw()[5]("TRBL", "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared cache folder.")
     return {"ok": True, "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}
 
+# Reset statistics, state, reports, insights
+@router.post("/maintenance/reset-stats")
 @router.post("/reset-stats")
 def reset_stats(
     recalc: bool = Body(False),
     purge_file: bool = Body(False),
     purge_state: bool = Body(False),
     purge_reports: bool = Body(False),
+    purge_insights: bool = Body(False),
 ) -> Dict[str, Any]:
     CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
+
+    if not any((recalc, purge_file, purge_state, purge_reports, purge_insights)):
+        purge_file = purge_state = purge_reports = purge_insights = True
+        recalc = False
     try:
-        # in-memory cleanup
         try:
             from _syncAPI import _summary_reset, _PROVIDER_COUNTS_CACHE, _find_state_path
         except Exception:
@@ -67,23 +73,21 @@ def reset_stats(
             _PROVIDER_COUNTS_CACHE["ts"] = 0.0
             _PROVIDER_COUNTS_CACHE["data"] = None
 
-        # stats reset
+        # --- statistics object ---
         STATS.reset()
-
-        # drop statistics.json
         if purge_file:
             try: STATS.path.unlink(missing_ok=True)
             except Exception: pass
             STATS._load(); STATS._save()
 
-        # drop state.json
+        # --- state.json ---
         if purge_state and _find_state_path:
             try:
                 sp = _find_state_path()
                 if sp and sp.exists(): sp.unlink()
             except Exception: pass
 
-        # drop sync-*.json to prevent re-ingest
+        # --- sync-*.json reports ---
         if purge_reports:
             try:
                 try:
@@ -96,12 +100,43 @@ def reset_stats(
                     except Exception: pass
             except Exception: pass
 
-        # optional rebuild from current state
+        # --- insights caches & series (files + in-memory) ---
+        insights_files_dropped = 0
+        if purge_insights:
+            from pathlib import Path
+            roots = [p for p in (CW_STATE_DIR, CACHE_DIR, CONFIG_DIR) if isinstance(p, Path) and p.exists()]
+            patterns = ("insights*.json", ".insights*.json", "insight*.json", "series*.json")
+            for root in roots:
+                for pat in patterns:
+                    for f in root.glob(pat):
+                        try: f.unlink(); insights_files_dropped += 1
+                        except Exception: pass
+
+            try:
+                import _insightAPI as IA  # noqa
+                for name, obj in list(vars(IA).items()):
+                    key = name.lower()
+                    if any(s in key for s in ("insight", "series")) and any(s in key for s in ("cache","memo","state")):
+                        try:
+                            obj.clear() if hasattr(obj, "clear") else None
+                            if isinstance(obj, (list, tuple)): obj[:] = []
+                        except Exception: pass
+                # explicit helpers if you have them
+                for fn_name in ("reset_insights_cache", "clear_cache"):
+                    fn = getattr(IA, fn_name, None)
+                    if callable(fn):
+                        try: fn()
+                        except Exception: pass
+            except Exception:
+                pass
+
+        # ---  rebuild from current state ---
         if recalc:
             try:
                 state = _load_state()
                 if state: STATS.refresh_from_state(state)
-            except Exception: pass
+            except Exception:
+                pass
 
         return {
             "ok": True,
@@ -109,12 +144,13 @@ def reset_stats(
                 "stats_file": bool(purge_file),
                 "state_file": bool(purge_state),
                 "reports": bool(purge_reports),
+                "insights_files": insights_files_dropped,
+                "insights_mem": bool(purge_insights),
             },
             "recalculated": bool(recalc),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
-
 
 @router.post("/reset-state")
 def reset_state(

@@ -277,8 +277,9 @@ function renderFeaturePanel(state){
           <div class="opt-row"><label for="plx-wl-pms">Allow PMS fallback</label><label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback?"checked":""}><span class="slider"></span></label></div>
           <div class="opt-row"><label for="plx-wl-limit">Discover query limit</label><input id="plx-wl-limit" class="input small" type="number" min="5" max="50" step="1" value="${plex.watchlist_query_limit??25}"></div>
           <div class="opt-row"><label for="plx-wl-delay">Write delay (ms)</label><input id="plx-wl-delay" class="input small" type="number" min="0" max="5000" step="10" value="${plex.watchlist_write_delay_ms??0}"></div>
+          <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div>
           <div class="opt-row" style="grid-column:1/-1"><label for="plx-wl-guid">GUID priority</label><input id="plx-wl-guid" class="input" type="text" value="${(plex.watchlist_guid_priority||["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"]).join(", ")}"></div>
-        </div>
+            </div>
       </div></details>
 
       <details class="mods fold" id="prov-jelly">
@@ -368,9 +369,22 @@ function renderFeaturePanel(state){
         </div>
       </div></details>
     `;
-
+      {
+      const grid = left.querySelector('#prov-plex .fold-body .grid2');
+      if (grid && !ID('plx-fallback-guid')) {
+        const row = document.createElement('div');
+        row.className = 'opt-row';
+        row.innerHTML =
+          '<label for="plx-fallback-guid">Fallback GUID</label>' +
+          '<label class="switch"><input id="plx-fallback-guid" type="checkbox" ' +
+          ((cfg.plex || {}).fallback_GUID ? 'checked' : '') +
+          '><span class="slider"></span></label>';
+        const before = ID('plx-wl-guid')?.closest('.opt-row');
+        grid.insertBefore(row, before || null); 
+      }
+    }
     // Add neon warning spanning both columns
-    const main = Q(".cx-main");                       // the 2-col grid wrapper
+    const main = Q(".cx-main");
     let warn = ID("cx-prov-warn");
     if (!warn) {
       warn = document.createElement("div");
@@ -668,7 +682,8 @@ async function saveConfigBits(state){
         watchlist_allow_pms_fallback: !!ID("plx-wl-pms")?.checked,
         watchlist_query_limit: Math.max(1, parseInt(ID("plx-wl-limit").value||"25",10)||25),
         watchlist_write_delay_ms: Math.max(0, parseInt(ID("plx-wl-delay").value||"0",10)||0),
-        watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean)
+        watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean), // ← comma here
+        fallback_GUID: !!ID("plx-fallback-guid")?.checked
       });
     }
 

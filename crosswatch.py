@@ -560,11 +560,17 @@ async def _lifespan(app):
 
 app.router.lifespan_context = _lifespan
     
-# --- Basic middleware: no-store for API endpoints
+# --- Basic middleware: no-store for API endpoints and MODALS
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
-    if request.url.path.startswith("/api/"):
+    path = request.url.path
+
+    if path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    elif path == "/assets/js/modals.js" or path.startswith("/assets/js/modals/"):
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"

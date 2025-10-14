@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ._common import (
     normalize as plex_normalize,
-    candidate_guids_from_ids, section_find_by_guid, meta_guids,
+    candidate_guids_from_ids, section_find_by_guid, meta_guids, minimal_from_history_row,
 )
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
@@ -19,6 +19,18 @@ UNRESOLVED_PATH = "/config/.cw_state/plex_ratings.unresolved.json"
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:ratings] {msg}")
+        
+def _emit(evt: dict) -> None:
+    try:
+        feature = str(evt.get("feature") or "?")
+        head = []
+        if "event"  in evt: head.append(f"event={evt['event']}")
+        if "action" in evt: head.append(f"action={evt['action']}")
+        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
+        line = " ".join(head + tail)
+        print(f"[PLEX:{feature}] {line}", flush=True)
+    except Exception:
+        pass
 
 # ── config / workers ─────────────────────────────────────────────────────────
 
@@ -35,7 +47,6 @@ def _get_rating_workers(adapter) -> int:
     return max(1, min(n, 64))
 
 def _allowed_ratings_sec_ids(adapter) -> Set[str]:
-    """Allowed section ids for ratings; empty set = allow all."""
     try:
         cfg = getattr(adapter, "config", {}) or {}
         plex = cfg.get("plex", {}) if isinstance(cfg, dict) else {}
@@ -43,6 +54,15 @@ def _allowed_ratings_sec_ids(adapter) -> Set[str]:
         return {str(int(x)) for x in arr if str(x).strip()}
     except Exception:
         return set()
+
+def _plex_cfg(adapter) -> Mapping[str, Any]:
+    cfg = getattr(adapter, "config", {}) or {}
+    return cfg.get("plex", {}) if isinstance(cfg, dict) else {}
+
+def _plex_cfg_get(adapter, key: str, default: Any = None) -> Any:
+    c = _plex_cfg(adapter)
+    v = c.get(key, default) if isinstance(c, dict) else default
+    return default if v is None else v
 
 # ── tiny helpers ─────────────────────────────────────────────────────────────
 
@@ -69,7 +89,6 @@ def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00","Z")
 
 def _norm_rating(v: Any) -> Optional[int]:
-    # Accept 0–5* or 1–10; return 1–10; 0/None = no rating
     if v is None: return None
     try: f = float(v)
     except Exception: return None
@@ -82,6 +101,10 @@ def _norm_rating(v: Any) -> Optional[int]:
 def _as_int(v):
     try: return int(v)
     except Exception: return None
+
+def _has_ext_ids(m: Mapping[str, Any]) -> bool:
+    ids = (m.get("ids") if isinstance(m, Mapping) else None) or {}
+    return bool(ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb"))
 
 # ── unresolved store ─────────────────────────────────────────────────────────
 
@@ -140,13 +163,12 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
 
     allow = _allowed_ratings_sec_ids(adapter)
 
-    # 1) GUID-first in allowed sections
     guid_candidates = candidate_guids_from_ids(it)
     sec_types = ("show",) if (is_episode or is_season) else ("movie",)
     guid_set = set(guid_candidates or [])
     for sec in adapter.libraries(types=sec_types) or []:
         sid = str(getattr(sec, "key", "")).strip()
-        if allow and sid not in allow:  # scope to allowed libraries
+        if allow and sid not in allow:
             continue
         obj = section_find_by_guid(sec, guid_candidates)
         if obj:
@@ -160,7 +182,6 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
         except Exception:
             continue
 
-    # 2) Title/year/episode fallback (still scoped)
     if not query_title: return None
     year = it.get("year"); season = it.get("season") or it.get("season_number")
     epno = it.get("episode") or it.get("episode_number")
@@ -250,11 +271,14 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
 
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("ratings") if callable(prog_mk) else None
+    
+    plex_cfg = _plex_cfg(adapter)
+    if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
+        _emit({"event":"debug","msg":"fallback_guid.enabled","provider":"PLEX","feature":"ratings"})
 
     out: Dict[str, Dict[str, Any]] = {}
     added = 0; scanned = 0
 
-    # 1) enumerate ratingKeys (scoped to allowed sections)
     allow = _allowed_ratings_sec_ids(adapter)
     keys: List[Tuple[str, str]] = []
     for sec in adapter.libraries(types=("movie", "show")) or []:
@@ -293,8 +317,11 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
         try: prog.tick(0, total=grand_total, force=True)
         except Exception: pass
 
-    # 2) threaded fetch
     workers = _get_rating_workers(adapter)
+    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+    
+    fb_try = 0
+    fb_ok  = 0
 
     def _tick():
         if prog:
@@ -310,6 +337,26 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
             try: m = fut.result()
             except Exception: m = None
             if m:
+                if fallback_guid and not _has_ext_ids(m):
+                    fb_try += 1
+                    _emit({"event":"fallback_guid","provider":"PLEX","feature":"ratings","action":"enrich_try","rk":rk})
+                    fb = minimal_from_history_row(m, allow_discover=True)
+                    ok = isinstance(fb, Mapping) and ((fb.get("ids") or fb.get("show_ids")))
+                    _emit({"event":"fallback_guid","provider":"PLEX","feature":"ratings","action":("enrich_ok" if ok else "enrich_miss"),"rk":rk})
+                    if ok:
+                        fb_ok += 1
+                        ids0 = (m.get("ids") or {})
+                        ids1 = (fb.get("ids") or {})
+                        if ids1:
+                            ids0.update({k: v for k, v in ids1.items() if v})
+                            m["ids"] = ids0
+                        if "show_ids" in fb:
+                            si0 = (m.get("show_ids") or {})
+                            si1 = (fb.get("show_ids") or {})
+                            if si1:
+                                si0.update({k: v for k, v in si1.items() if v})
+                                m["show_ids"] = si0
+
                 if typ in ("movie", "show", "season", "episode"): m["type"] = typ
                 out[canonical_key(m)] = m; added += 1
             _tick()

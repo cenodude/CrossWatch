@@ -216,15 +216,16 @@
         });
       });
     }
-
+    // Fill in recent sync data
     const emptyMsg = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>';
-    const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); return isNaN(+dt)?"—":dt.toLocaleString(undefined,{hour12:false}); };
+    const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); if(isNaN(+dt)) return "—"; const dd=String(dt.getDate()).padStart(2,"0"), mm=String(dt.getMonth()+1).padStart(2,"0"), yy=String(dt.getFullYear()).slice(-2), hh=String(dt.getHours()).padStart(2,"0"), mi=String(dt.getMinutes()).padStart(2,"0"); return `${dd}-${mm}-${yy} ${hh}:${mi}`; };
     const dur  = v => { if(v==null) return "—"; const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return Number.isFinite(n)? n.toFixed(1)+'s':'—'; };
     const totalsFor = (row, feat) => {
       const f=(row?.features?.[feat])||{};
       const a=+((f.added??f.adds)||0), r=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
       return { a:a|0, r:r|0, u:u|0, sum:(a|0)+(r|0)+(u|0) };
     };
+
     const badgeCls = (row,t) => {
       const exit = (typeof row?.exit_code==="number") ? row.exit_code : null;
       const res  = (row?.result?String(row.result):"");
@@ -233,7 +234,7 @@
       return "warn";
     };
 
-    // Compute latest finished timestamp; allows a zero-delta fallback for the newest run only.
+    // Compute latest finished timestamp
     const all = Array.isArray(hist) ? hist.slice() : [];
     const latestTs = all.reduce((mx,row)=>{
       const t = Date.parse(row?.finished_at || row?.started_at || "");

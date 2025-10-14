@@ -13,8 +13,8 @@
   }
 
   function injectStyles(){
-    if(d.getElementById("sc-styles")) return;
-    const s=el("style",{id:"sc-styles"});
+    if(document.getElementById("sc-styles")) return;
+    const s=document.createElement("style"); s.id="sc-styles";
     s.textContent=`
     .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     .codepair{display:flex;gap:8px;align-items:center}
@@ -22,6 +22,7 @@
     .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}.badge.is-on{background:#0a3;color:#fff}.badge.is-off{background:#333;color:#bbb;border:1px solid #444}
     .status-dot{width:10px;height:10px;border-radius:50%}.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}
     .watcher-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media (max-width:960px){.watcher-row{grid-template-columns:1fr}}
     .chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}.chip .rm{cursor:pointer;opacity:.7}
     .sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:end}
@@ -29,8 +30,24 @@
     details.sc-filters,details.sc-advanced{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
     details.sc-filters>summary,details.sc-advanced>summary{cursor:pointer;list-style:none;padding:14px;border-radius:12px;font-weight:600}
     details.sc-filters[open]>summary,details.sc-advanced[open]>summary{border-bottom:1px solid rgba(255,255,255,.06)}
-    details.sc-filters .body,details.sc-advanced .body{padding:12px 14px}`;
-    d.head.appendChild(s);
+    details.sc-filters .body,details.sc-advanced .body{padding:12px 14px}
+    .sc-ctrls{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .sc-ctrls .left{display:flex;align-items:center;gap:8px}
+    .sc-ctrls .right{display:flex;align-items:center;gap:8px;margin-left:auto}
+    .sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9}
+    /* webhook top */
+    .wh-top{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:12px;margin-bottom:8px}
+    .wh-toggle{display:inline-flex;gap:8px;align-items:center}
+    .wh-endpoints{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+    .codepair.right{justify-content:flex-end}
+    .wh-logo{height:18px;width:auto;opacity:.9}
+    .wh-top{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:12px;margin-bottom:8px;position:relative}
+    .wh-logo{height:var(--wh-logo,28px);width:auto;opacity:.9}
+    .copy-note{position:absolute;right:0;top:0;font-size:12px;opacity:.9;white-space:nowrap}
+    .wh-logo[alt="Plex"]{height:32px;}
+    @media(max-width:960px){.wh-top{grid-template-columns:1fr}.wh-endpoints{align-items:flex-start}}
+    `;
+    document.head.appendChild(s);
   }
 
   const DEFAULTS={watch:{pause_debounce_seconds:5,suppress_start_at:99},trakt:{stop_pause_threshold:80,force_stop_at:95,regress_tolerance_percent:5}};
@@ -81,10 +98,23 @@
     injectStyles();
     if(STATE.webhookHost){
       STATE.webhookHost.innerHTML=`
-        <div class="row" style="margin-bottom:8px">
-          <label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-webhook"> Enable</label>
-          <div class="codepair"><code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div>
-          <div class="codepair"><code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div>
+        <div class="wh-top" style="--wh-logo:28px">
+          <div class="wh-left">
+            <label class="wh-toggle"><input type="checkbox" id="sc-enable-webhook"><span>Enable</span></label>
+          </div>
+
+          <div class="wh-endpoints">
+            <div class="codepair right">
+              <img class="wh-logo" src="/assets/img/PLEX-log.svg" alt="Plex">
+              <code id="sc-webhook-url-plex"></code>
+              <button id="sc-copy-plex" class="btn small">Copy</button>
+            </div>
+            <div class="codepair right">
+              <img class="wh-logo" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin">
+              <code id="sc-webhook-url-jf"></code>
+              <button id="sc-copy-jf" class="btn small">Copy</button>
+            </div>
+          </div>
         </div>
         <div id="sc-endpoint-note" class="micro-note"></div>
         <details id="sc-filters-webhook" class="sc-filters"><summary>Filters (Plex only)</summary>
@@ -114,37 +144,95 @@
         <details class="sc-advanced" id="sc-advanced-webhook"><summary>Advanced</summary>
           <div class="body">
             <div class="sc-adv-grid">
-              <div class="field" data-tip="Per-session PAUSE debounce; quick double PAUSEs are ignored."><label for="sc-pause-debounce-webhook">Pause debounce</label><input id="sc-pause-debounce-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.pause_debounce_seconds}"></div>
-              <div class="field" data-tip="Suppress end-credits START when progress ≥ threshold."><label for="sc-suppress-start-webhook">Suppress start @</label><input id="sc-suppress-start-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.suppress_start_at}"></div>
-              <div class="field" data-tip="Allow small regressions; avoids rollbacks and decides session vs new progress update."><label for="sc-regress-webhook">Regress tol %</label><input id="sc-regress-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.regress_tolerance_percent}"></div>
-              <div class="field" data-tip="STOP below threshold is sent as PAUSE; also downgrades suspicious 100% jumps (STOP→PAUSE)."><label for="sc-stop-pause-webhook">Stop pause ≥</label><input id="sc-stop-pause-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.stop_pause_threshold}"></div>
-              <div class="field" data-tip="Debounce bypass: a final STOP (≥ threshold) always goes through."><label for="sc-force-stop-webhook">Force stop @</label><input id="sc-force-stop-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.force_stop_at}"></div>
+              <div class="field"><label for="sc-pause-debounce-webhook">Pause debounce</label><input id="sc-pause-debounce-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="\${DEFAULTS.watch.pause_debounce_seconds}"></div>
+              <div class="field"><label for="sc-suppress-start-webhook">Suppress start @</label><input id="sc-suppress-start-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="\${DEFAULTS.watch.suppress_start_at}"></div>
+              <div class="field"><label for="sc-regress-webhook">Regress tol %</label><input id="sc-regress-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="\${DEFAULTS.trakt.regress_tolerance_percent}"></div>
+              <div class="field"><label for="sc-stop-pause-webhook">Stop pause ≥</label><input id="sc-stop-pause-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="\${DEFAULTS.trakt.stop_pause_threshold}"></div>
+              <div class="field"><label for="sc-force-stop-webhook">Force stop @</label><input id="sc-force-stop-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="\${DEFAULTS.trakt.force_stop_at}"></div>
             </div>
             <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
           </div>
-        </details>`;
+        </details>
+      `;
     }
     if(STATE.watcherHost){
       STATE.watcherHost.innerHTML=`
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-watcher"> Enable</label></div>
-        <div class="watcher-row">
-          <div class="card" id="sc-card-server" style="padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset;">
-            <div class="h" style="display:flex;justify-content:space-between;align-items:center"><div>Plex Server <span class="pill req">required</span></div><button id="sc-pms-refresh" class="btn small">Fetch</button></div>
-            <div id="sc-pms-note" class="micro-note" style="margin-top:6px"></div>
-            <div style="margin-top:8px"><div class="muted">Discovered servers</div><select id="sc-pms-select" class="input" style="width:100%;margin-top:6px"><option value="">— select a server —</option></select></div>
-            <div style="margin-top:12px"><div class="muted">Manual URL (http(s)://host[:port])</div><input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" /></div>
-          </div>
-          <div class="card" id="sc-card-status" style="padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset;">
-            <div class="h" style="display:flex;justify-content:space-between;align-items:center"><div>Watcher Status</div><span id="sc-status-badge" class="badge is-off">Stopped</span></div>
-            <div class="row" style="margin-top:10px">
-              <div class="codepair"><span id="sc-status-dot" class="status-dot off"></span><span class="muted">Status:</span><span id="sc-status-text" class="status-text">Unknown</span></div>
-              <div style="display:flex;gap:8px;margin-left:auto"><button id="sc-watch-start" class="btn small">Start</button><button id="sc-watch-stop" class="btn small">Stop</button><button id="sc-watch-refresh" class="btn small">Refresh</button></div>
-              <label style="margin-left:auto" class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
+        <style>
+          .cc-wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+          .cc-card{padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+          .cc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+          /* STATUS CARD (stacked) */
+          .cc-body{display:grid;gap:14px}
+          .cc-gauge{width:100%;min-height:68px;display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+          .cc-state{display:flex;flex-direction:column;line-height:1.15}
+          .cc-state .lbl{font-size:12px;opacity:.75}
+          .cc-state .val{font-size:22px;font-weight:800;letter-spacing:.2px}
+          .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85}
+          .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+          .cc-auto{display:flex;justify-content:center;margin-top:2px}
+          .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor}
+          .status-dot.on{background:#22c55e;color:#22c55e}
+          .status-dot.off{background:#ef4444;color:#ef4444}
+          @media (max-width:900px){.cc-wrap{grid-template-columns:1fr}}
+        </style>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-watcher"> Enable</label>
+        </div>
+
+        <div class="cc-wrap">
+          <div class="cc-card" id="sc-card-server">
+            <div class="cc-head">
+              <div>Plex Server <span class="pill req">required</span></div>
+              <button id="sc-pms-refresh" class="btn small">Fetch</button>
             </div>
-            <div id="sc-status-last" class="micro-note" style="margin-top:8px"></div>
-            <div id="sc-status-up" class="micro-note"></div>
+            <div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div>
+            <div style="margin-top:10px">
+              <div class="muted">Discovered servers</div>
+              <select id="sc-pms-select" class="input" style="width:100%;margin-top:6px"><option value="">— select a server —</option></select>
+            </div>
+            <div style="margin-top:12px">
+              <div class="muted">Manual URL (http(s)://host[:port])</div>
+              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" />
+            </div>
+          </div>
+
+          <div class="cc-card" id="sc-card-status">
+            <div class="cc-head">
+              <div>Watcher Status</div>
+              <span id="sc-status-badge" class="badge is-off">Stopped</span>
+            </div>
+
+            <div class="cc-body">
+              <!-- wide status block -->
+              <div class="cc-gauge">
+                <span id="sc-status-dot" class="status-dot off"></span>
+                <div class="cc-state">
+                  <span class="lbl">Status</span>
+                  <span id="sc-status-text" class="val">Inactive</span>
+                </div>
+              </div>
+
+              <div class="cc-meta">
+                <span id="sc-status-last" class="micro-note"></span>
+                <span id="sc-status-up" class="micro-note"></span>
+              </div>
+
+              <!-- buttons under the block -->
+              <div class="cc-actions">
+                <button id="sc-watch-start" class="btn small">Start</button>
+                <button id="sc-watch-stop" class="btn small">Stop</button>
+                <button id="sc-watch-refresh" class="btn small">Refresh</button>
+              </div>
+
+              <!-- centered autostart at the bottom -->
+              <div class="cc-auto">
+                <label class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
+              </div>
+            </div>
           </div>
         </div>
+
         <details id="sc-filters" class="sc-filters"><summary>Filters (optional)</summary>
           <div class="body">
             <div class="sc-filter-grid">
@@ -169,6 +257,7 @@
             </div>
           </div>
         </details>
+
         <details class="sc-advanced" id="sc-advanced"><summary>Advanced</summary>
           <div class="body">
             <div class="sc-adv-grid">
@@ -182,8 +271,9 @@
           </div>
         </details>`;
     }
-  }
 
+
+  }
   function ensureHiddenServerUrlInput(){
     let hidden=d.getElementById("cfg-plex-server-url");
     const form=d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount||d.body);
