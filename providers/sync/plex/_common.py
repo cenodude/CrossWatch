@@ -91,6 +91,67 @@ def show_ids_hint(obj) -> Dict[str, str]:
     if gp_rk: out["plex"] = str(gp_rk)
     return {k: v for k, v in out.items() if v}
 
+# --- fallback GUID memo/neg-cache --------------------------------------------
+_FBGUID_MEMO = {}  # key -> dict (success) of "__NOHIT__"
+_FBGUID_NOHIT = "__NOHIT__"
+_FBGUID_CACHE_PATH = "/config/.cw_state/plex_fallback_memo.json"
+
+def _fb_key_from_row(row) -> str:
+    def g(obj, *names):
+        for n in names:
+            v = getattr(obj, n, None)
+            if v: return str(v).strip().lower()
+        return ""
+    t  = g(row, "type")
+    g0 = g(row, "guid")
+    gp = g(row, "parentGuid")
+    gg = g(row, "grandparentGuid")
+    if not t  and isinstance(row, dict):  t  = str(row.get("type","")).lower()
+    if not g0 and isinstance(row, dict): g0 = str(row.get("guid","")).lower()
+    if not gp and isinstance(row, dict): gp = str(row.get("parentGuid","")).lower()
+    if not gg and isinstance(row, dict): gg = str(row.get("grandparentGuid","")).lower()
+
+    title = ""
+    if isinstance(row, dict):
+        title = str(row.get("grandparentTitle") or row.get("title") or "").strip().lower()
+        year  = row.get("year")
+    else:
+        title = (getattr(row, "grandparentTitle", None) or getattr(row, "title", None) or "")
+        title = str(title).strip().lower()
+        year  = getattr(row, "year", None)
+
+    try:
+        yv = _year_from_any(year)
+        ys = str(yv or "")
+    except Exception:
+        ys = ""
+    return "|".join([t, g0, gp, gg, title, ys])
+
+def _fb_cache_load() -> dict:
+    if _FBGUID_MEMO: return _FBGUID_MEMO
+    try:
+        import json, os
+        if os.path.exists(_FBGUID_CACHE_PATH):
+            with open(_FBGUID_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+                if isinstance(data, dict):
+                    _FBGUID_MEMO.update(data)
+    except Exception:
+        pass
+    return _FBGUID_MEMO
+
+def _fb_cache_save() -> None:
+    try:
+        import json, os
+        os.makedirs(os.path.dirname(_FBGUID_CACHE_PATH), exist_ok=True)
+        tmp = _FBGUID_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_FBGUID_MEMO, f, ensure_ascii=False, indent=0, separators=(",",":"))
+        os.replace(tmp, _FBGUID_CACHE_PATH)
+    except Exception:
+        pass
+
+# -- PMS show GUID fetch -------------------------------------------------------
 _SHOW_PMS_GUID_CACHE: Dict[str, Dict[str, str]] = {}
 
 def _hydrate_show_ids_from_pms(obj) -> Dict[str, str]:
@@ -281,7 +342,9 @@ def normalize_discover_row(row: Mapping[str, Any], *, token: Optional[str] = Non
             base.setdefault("show_ids", {}); base["show_ids"]["plex"] = str(gp_rk)
         if token and not any(base.get("show_ids", {}).get(k) for k in ("imdb","tmdb","tvdb")):
             extra2 = hydrate_external_ids(token, str(gp_rk) if gp_rk else None)
-            if extra2: base["show_ids"].update(extra2)
+            if extra2:
+                base.setdefault("show_ids", {})
+                base["show_ids"].update(extra2)
 
     if t == "season":
         base["season"] = _safe_int(row.get("index"))
@@ -471,6 +534,15 @@ def _discover_search_title(token: str, title: str, kind: str, year: Optional[int
     
 #--- GUID fallback ---------EXPERIMENTAL-----------------------------------------
 def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_discover: bool = False) -> Optional[Dict[str, Any]]:
+    # memo/neg-cache
+    key = _fb_key_from_row(row)
+    memo = _fb_cache_load()
+    hit = memo.get(key, None)
+    if hit == _FBGUID_NOHIT:
+        return None
+    if isinstance(hit, dict) and hit:
+        return dict(hit)
+
     ids = ids_from_history_row(row)
     kind = str((_row_get(row, "type") or "movie")).lower()
     m = _build_minimal_from_row(row, ids)
@@ -514,5 +586,15 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
                 if not m.get("series_title"): m["series_title"] = nd.get("series_title") or nd.get("title")
 
     if not (m.get("title") or m.get("series_title")):
+        _FBGUID_MEMO[key] = _FBGUID_NOHIT
+        _fb_cache_save()
         return None
+
+    if not _has_ext_ids(m.get("ids", {})) and not _has_ext_ids(m.get("show_ids", {})):
+        _FBGUID_MEMO[key] = _FBGUID_NOHIT
+        _fb_cache_save()
+        return None
+
+    _FBGUID_MEMO[key] = dict(m)
+    _fb_cache_save()
     return m

@@ -189,9 +189,10 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
 
-    plex_cfg = _plex_cfg(adapter)
-    if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
+    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+    if fallback_guid:
         _emit({"event":"debug","msg":"fallback_guid.enabled","provider":"PLEX","feature":"history"})
+
     
     def _int_or_zero(v):
         try: return int(v or 0)
@@ -234,6 +235,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
             return False
 
     raw_by_rk: Dict[str, Any] = {}
+    orphans: List[Tuple[Any, int]] = []
     work: List[Tuple[str, int]] = []
     for h in rows:
         if allow:
@@ -256,17 +258,24 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
             _as_epoch(getattr(h, "lastViewedAt", None))
         )
         if not ts or (since is not None and ts < int(since)): continue
-
+        
         rk = getattr(h, "ratingKey", None) or getattr(h, "key", None)
+        if rk is None:
+            if fallback_guid:
+                try: orphans.append((h, int(ts)))
+                except Exception: pass
+            continue
         try:
-            if rk is not None:
-                rk_s = str(int(rk))
-                work.append((rk_s, int(ts)))
-                raw_by_rk[rk_s] = h
+            rk_s = str(int(rk))
+            work.append((rk_s, int(ts)))
+            raw_by_rk[rk_s] = h
         except Exception:
+            if fallback_guid:
+                try: orphans.append((h, int(ts)))
+                except Exception: pass
             continue
 
-    if not work:
+    if not work and not (fallback_guid and orphans):
         if prog:
             try: prog.done(ok=True, total=0)
             except Exception: pass
@@ -275,7 +284,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
 
     work.sort(key=lambda x: x[1], reverse=True)
     if isinstance(limit, int) and limit > 0: work = work[: int(limit)]
-    total = len(work)
+    total = len(work) + (len(orphans) if fallback_guid else 0)
 
     if prog:
         try: prog.tick(0, total=total, force=True)
@@ -296,7 +305,6 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         except Exception as e:
             _log(f"parallel fetch error: {e}")
 
-    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
     if fallback_guid:
         misses = [rk for rk in to_fetch if rk not in _FETCH_CACHE]
         for rk in misses:
@@ -305,7 +313,14 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
             _emit({"event":"fallback_guid","provider":"PLEX","feature":"history","action":("ok" if fb else "miss"),"rk":rk})
             if fb:
                 _FETCH_CACHE[rk] = fb
-
+                
+    extras: List[Tuple[Dict[str, Any], int]] = []
+    if fallback_guid and orphans:
+        for row_obj, ts in orphans:
+            fb = minimal_from_history_row(row_obj, allow_discover=True)
+            if fb:
+                extras.append((fb, ts))
+                
     out: Dict[str, Dict[str, Any]] = {}
     done = ignored = 0
     for rk_s, ts in work:
@@ -335,6 +350,38 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         if prog:
             try: prog.tick(done, total=total)
             except Exception: pass
+            
+    if extras:
+        for m, ts in extras:
+            if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
+                _log(f"index truncated at {limit} (including extras)")
+                break
+
+            if not _keep_in_snapshot(adapter, m):
+                done += 1
+                if prog:
+                    try: prog.tick(done, total=total)
+                    except Exception: pass
+                continue
+
+            if allow:
+                lid = m.get("library_id")
+                if lid is not None and str(lid) not in allow:
+                    done += 1
+                    if prog:
+                        try: prog.tick(done, total=total)
+                        except Exception: pass
+                    continue
+
+            row = dict(m)
+            row["watched"] = True
+            row["watched_at"] = _iso(ts)
+            out[f"{canonical_key(row)}@{ts}"] = row
+
+            done += 1
+            if prog:
+                try: prog.tick(done, total=total)
+                except Exception: pass
 
     if prog:
         try: prog.done(ok=True, total=total)
