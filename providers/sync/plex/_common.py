@@ -501,29 +501,66 @@ def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _discover_search_title(token: str, title: str, kind: str, year: Optional[int], limit: int = 15) -> Optional[Mapping[str, Any]]:
     try:
-        if not title or not token: return None
-        params = {"query": title, "limit": max(5, int(limit)), "includeMeta": 1}
-        r = requests.get(f"{DISCOVER}/hubs/search", headers=plex_headers(token), params=params, timeout=6)
-        if not r.ok: return None
-        j = r.json() if "json" in (r.headers.get("content-type","").lower()) else {}
-        hubs = (j.get("MediaContainer") or {}).get("Hub") or []
+        if not title or not token:
+            return None
+
+        # v2 (2025): /library/search
+        st = "movies" if kind == "movie" else ("tv" if kind in ("show", "episode") else "movies,tv")
+        params_v2 = {
+            "query": title,
+            "limit": max(5, int(limit)),
+            "searchTypes": st,
+            "searchProviders": "discover",
+            "includeMetadata": 1,
+        }
+        hdrs = dict(plex_headers(token))
+        hdrs["Accept"] = "application/json"  # be explicit
+
+        r = requests.get(f"{DISCOVER}/library/search", headers=hdrs, params=params_v2, timeout=6)
+
         rows: List[Mapping[str, Any]] = []
-        for h in hubs:
-            for md in (h.get("Metadata") or []):
-                if isinstance(md, Mapping): rows.append(md)
-        if not rows: return None
+        if r.ok and "json" in (r.headers.get("content-type", "").lower()):
+            j = r.json()
+            sr = (j.get("MediaContainer") or {}).get("SearchResults") or []
+            # Extract "external" bucket → SearchResult[] → Metadata
+            ext = next((b.get("SearchResult") for b in sr if str(b.get("id")) == "external"), []) or []
+            for item in ext:
+                md = item.get("Metadata")
+                if isinstance(md, Mapping):
+                    rows.append(md)
+
+        elif r.status_code == 404:
+            # v1 legacy: /hubs/search
+            _emit({"feature": "common", "event": "fallback_guid", "action": "discover_404_v2"})
+            params_v1 = {"query": title, "limit": max(5, int(limit)), "includeMeta": 1}
+            r2 = requests.get(f"{DISCOVER}/hubs/search", headers=plex_headers(token), params=params_v1, timeout=6)
+            if not r2.ok:
+                return None
+            j = r2.json() if "json" in (r2.headers.get("content-type", "").lower()) else {}
+            for h in (j.get("MediaContainer") or {}).get("Hub") or []:
+                for md in (h.get("Metadata") or []):
+                    if isinstance(md, Mapping):
+                        rows.append(md)
+        else:
+            return None
+
+        if not rows:
+            return None
 
         def _score(md: Mapping[str, Any]) -> int:
             s = 0
             t = (md.get("type") or "").lower()
-            if kind and t == kind: s += 2
+            if kind and t == kind:
+                s += 2
             mt = (md.get("grandparentTitle") if kind == "episode" else md.get("title")) or ""
-            if str(mt).strip().lower() == str(title).strip().lower(): s += 3
+            if str(mt).strip().lower() == str(title).strip().lower():
+                s += 3
             y = _year_from_any(md.get("year"))
-            if year and y == year: s += 2
+            if year and y == year:
+                s += 2
             return s
 
-        best = None; best_sc = -1
+        best, best_sc = None, -1
         for md in rows:
             sc = _score(md)
             if sc > best_sc:
