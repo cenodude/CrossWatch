@@ -101,17 +101,22 @@ def _fb_key_from_row(row) -> str:
         for n in names:
             v = getattr(obj, n, None)
             if v: return str(v).strip().lower()
+        if isinstance(obj, dict):
+            for n in names:
+                v = obj.get(n)
+                if v: return str(v).strip().lower()
         return ""
+
     t  = g(row, "type")
     g0 = g(row, "guid")
     gp = g(row, "parentGuid")
     gg = g(row, "grandparentGuid")
+    gprk = g(row, "grandparentRatingKey")
     if not t  and isinstance(row, dict):  t  = str(row.get("type","")).lower()
     if not g0 and isinstance(row, dict): g0 = str(row.get("guid","")).lower()
     if not gp and isinstance(row, dict): gp = str(row.get("parentGuid","")).lower()
     if not gg and isinstance(row, dict): gg = str(row.get("grandparentGuid","")).lower()
 
-    title = ""
     if isinstance(row, dict):
         title = str(row.get("grandparentTitle") or row.get("title") or "").strip().lower()
         year  = row.get("year")
@@ -125,7 +130,18 @@ def _fb_key_from_row(row) -> str:
         ys = str(yv or "")
     except Exception:
         ys = ""
-    return "|".join([t, g0, gp, gg, title, ys])
+
+    if t == "episode":
+        s = g(row, "parentIndex")
+        e = g(row, "index")
+        show_id = gprk or gg or gp or g0 or ""
+        parts = ["k2", "ep", show_id, f"s{s}" if s else "", f"e{e}" if e else ""]
+        if not show_id:
+            parts += [title, ys]
+        return "|".join([p for p in parts if p])
+
+    parts = ["k2", (t or "item"), g0, title, ys]
+    return "|".join([p for p in parts if p])
 
 def _fb_cache_load() -> dict:
     if _FBGUID_MEMO: return _FBGUID_MEMO
