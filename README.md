@@ -1,8 +1,5 @@
 # CrossWatch
 
-
-</div>
-
 <!-- Logo centered -->
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
@@ -30,12 +27,15 @@
      target="_blank" rel="noopener noreferrer"
      style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
     ⬇️ Download (Latest)
-  </a><br>
+  </a>
+  <br>
   <a href="https://github.com/cenodude/CrossWatch/wiki"
      target="_blank" rel="noopener noreferrer"
      style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
     📘 Read the CrossWatch Wiki
   </a>
+</div>
+
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
 <p align="center"><b>New version 0.2.x is released with huge improvements — <i>Multi-arch images (AMD64 + ARM64)</i></b></p>
