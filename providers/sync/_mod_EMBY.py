@@ -50,8 +50,8 @@ def get_manifest() -> Mapping[str, Any]:
         "bidirectional": True,
         "features": {
             "watchlist": True,
-            "history":   True,
-            "ratings":   True,
+            "history":   False,
+            "ratings":   False,
             "playlists": False,  # enable later when feature module is finalized
         },
         "requires": ["requests"],
@@ -253,7 +253,7 @@ class EMBYModule:
 
     @staticmethod
     def supported_features() -> Dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False}
+        toggles = {"watchlist": True, "history": False, "ratings": False, "playlists": False}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
