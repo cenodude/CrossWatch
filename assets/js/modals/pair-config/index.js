@@ -7,6 +7,9 @@ const QA=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const G=typeof window!=="undefined"?window:globalThis;
 const jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
 
+const isEmby = v => same(v, "emby");
+function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
+
 // Provider helpers
 const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLowerCase();
 const isSimkl=(v)=>same(v,"simkl");
@@ -97,6 +100,7 @@ function defaultState(){
       playlists:{enable:false,add:true,remove:false}
     },
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
+    emby:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     globals:{
       dry_run:false,verify_after_write:false,drop_guard:false,allow_mass_delete:true,
       tombstone_ttl_days:30,include_observed_deletes:true,
@@ -115,7 +119,8 @@ async function loadProviders(state){
     {name:"PLEX",label:"Plex",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"}
+    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
+    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
   ]
 }
 async function loadConfigBits(state){
@@ -134,9 +139,13 @@ async function loadConfigBits(state){
     )
   };
   const jf=cfg?.jellyfin?.watchlist||{};
+  const em = cfg?.emby?.watchlist || {};
   const mode=(jf.mode==="playlist"||jf.mode==="favorites"||jf.mode==="collection"||jf.mode==="collections")?jf.mode:"favorites";
+  const modeEM = (em.mode==="playlist"||em.mode==="favorites"||em.mode==="collection"||em.mode==="collections") ? em.mode : "favorites";
   state.jellyfin.watchlist.mode=(mode==="collections")?"collection":mode;
   state.jellyfin.watchlist.playlist_name=jf.playlist_name||"Watchlist";
+  state.emby.watchlist.mode = (modeEM==="collections") ? "collection" : modeEM; 
+  state.emby.watchlist.playlist_name = em.playlist_name || "Watchlist";  
 }
 async function loadPairById(id){
   if(!id)return null;const arr=await getJSON("/api/pairs?cb="+Date.now());if(Array.isArray(arr))return arr.find(p=>String(p.id)===String(id))||null;return null
@@ -250,7 +259,11 @@ function bindFoldToggles(root){
 
 function applySubDisable(feature){
   const map={
-    watchlist:["#cx-wl-add","#cx-wl-remove","#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name"],
+    watchlist: [
+      "#cx-wl-add","#cx-wl-remove",
+      "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
+      "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name"
+    ],
     ratings:["#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date"],
     history:["#cx-hs-add"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
@@ -423,15 +436,26 @@ function renderFeaturePanel(state){
     return;
   }
 
-  if(state.feature==="watchlist"){
-    const wl=getOpts(state,"watchlist");
-    left.innerHTML=`<div class="panel-title">Watchlist — basics</div>
-      <div class="opt-row"><label for="cx-wl-enable">Enable</label><label class="switch"><input id="cx-wl-enable" type="checkbox" ${wl.enable?"checked":""}><span class="slider"></span></label></div>
-      <div class="grid2"><div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div></div>`;
-    if(hasJelly(state)){
-      const jfw=state.jellyfin?.watchlist||{mode:"favorites",playlist_name:"Watchlist"};
-      right.innerHTML=`<div class="panel-title">Advanced</div>
+  if (state.feature === "watchlist") {
+    const wl = getOpts(state, "watchlist");
+
+    left.innerHTML = `
+      <div class="panel-title">Watchlist — basics</div>
+      <div class="opt-row">
+        <label for="cx-wl-enable">Enable</label>
+        <label class="switch"><input id="cx-wl-enable" type="checkbox" ${wl.enable?"checked":""}><span class="slider"></span></label>
+      </div>
+      <div class="grid2">
+        <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
+      </div>
+    `;
+
+    const parts = [`<div class="panel-title">Advanced</div>`];
+
+    if (hasJelly(state)) {
+      const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+      parts.push(`
         <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
         <details id="cx-jf-wl" open>
           <summary class="muted" style="margin-bottom:10px;">Favorites / Playlist / Collections</summary>
@@ -440,18 +464,45 @@ function renderFeaturePanel(state){
               <label>Mode</label>
               <div class="seg">
                 <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">Favorites</label>
-                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl" value="playlist" ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
-                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection"||jfw.mode==="collections")?"checked":""}/><label for="cx-jf-wl-mode-col">Collections</label>
+                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
+                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection")?"checked":""}/><label for="cx-jf-wl-mode-col">Collections</label>
               </div>
             </div>
             <div class="opt-row" style="grid-column:1/-1"><label for="cx-jf-wl-pl-name">Name</label>
-              <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist"></div>
-              </div>
-          <div class="hint" style="text-align:center;">Jellyfin doesn’t support a Watchlist. Simulate one with <b>Favorites</b>, <b>Playlist</b>, or <b>Collections</b>. Tip: prefer <b>Favorites</b> or <b>Collections</b></div>
-        </details>`;
-    }else{
-      right.innerHTML=`<div class="panel-title">Advanced</div><div class="muted">More controls coming later.</div>`;
+              <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+            </div>
+          </div>
+          <div class="hint" style="text-align:center;">Jellyfin does not have a native Watchlist; use <b>Favorites</b>, <b>Playlist</b>, or <b>Collections</b>.</div>
+        </details>
+      `);
     }
+
+    if (hasEmby(state)) {
+      const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Emby specifics</div>
+        <details id="cx-em-wl" open>
+          <summary class="muted" style="margin-bottom:10px;">Favorites / Playlist / Collections</summary>
+          <div class="grid2 compact">
+            <div class="opt-row" style="grid-column:1/-1">
+              <label>Mode</label>
+              <div class="seg">
+                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">Favorites</label>
+                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">Playlist</label>
+                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-col" value="collection" ${(emw.mode==="collection")?"checked":""}/><label for="cx-em-wl-mode-col">Collections</label>
+              </div>
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="cx-em-wl-pl-name">Name</label>
+              <input id="cx-em-wl-pl-name" class="input" type="text" value="${emw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+            </div>
+          </div>
+          <div class="hint" style="text-align:center;">Emby does not have a native Watchlist; use <b>Favorites</b>, <b>Playlist</b>, or <b>Collections</b>. Prefer <b>Favorites</b> or <b>Collections</b>, since <b>Playlist</b> can only hold movies and episodes (no shows).</div>
+        </details>
+      `);
+    }
+
+    right.innerHTML = parts.join("");
     applySubDisable("watchlist");
     return;
   }
@@ -643,6 +694,16 @@ function bindChangeHandlers(state,root){
       jf.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
     }
 
+    if(id==="cx-em-wl-mode-fav"||id==="cx-em-wl-mode-pl"||id==="cx-em-wl-mode-col"||id==="cx-em-wl-pl-name"||id==="cx-wl-q"||id==="cx-wl-delay"||id==="cx-wl-guid"){
+      const em = state.emby || (state.emby = {});
+      const mode = ID("cx-em-wl-mode-pl")?.checked ? "playlist" : ID("cx-em-wl-mode-col")?.checked ? "collection" : "favorites";
+      const name = (ID("cx-em-wl-pl-name")?.value||"").trim()||"Watchlist";
+      const q = parseInt(ID("cx-wl-q")?.value||"25",10)||25;
+      const d = parseInt(ID("cx-wl-delay")?.value||"0",10)||0;
+      const gp = (ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      em.watchlist = { mode, playlist_name:name, watchlist_query_limit:q, watchlist_write_delay_ms:d, watchlist_guid_priority:gp.length?gp:undefined };
+    }
+
     if(id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two") updateFlow(state,true);
     updateFlowClasses(state);renderWarnings(state);
   });
@@ -734,6 +795,21 @@ async function saveConfigBits(state){
       if(Number.isFinite(d)) jf.watchlist.watchlist_write_delay_ms=d;
       if(gp.length) jf.watchlist.watchlist_guid_priority=gp;
       cfg.jellyfin=jf;
+    }
+
+    const hasEM = String(state.src||"").toUpperCase()==="EMBY" || String(state.dst||"").toUpperCase()==="EMBY";
+    if(hasEM){
+      const em = Object.assign({}, cfg.emby || {});
+      const mode = ID("cx-em-wl-mode-pl")?.checked ? "playlist" : ID("cx-em-wl-mode-col")?.checked ? "collection" : ID("cx-em-wl-mode-fav")?.checked ? "favorites" : (state.emby?.watchlist?.mode || "favorites");
+      const name = (ID("cx-em-wl-pl-name")?.value || state.emby?.watchlist?.playlist_name || "Watchlist").trim() || "Watchlist";
+      const q = parseInt(ID("cx-wl-q")?.value||"25",10)||undefined;
+      const d = parseInt(ID("cx-wl-delay")?.value||"0",10)||undefined;
+      const gp = (ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      em.watchlist = Object.assign({}, em.watchlist||{}, { mode, playlist_name:name });
+      if(Number.isFinite(q)) em.watchlist.watchlist_query_limit = q;
+      if(Number.isFinite(d)) em.watchlist.watchlist_write_delay_ms = d;
+      if(gp.length) em.watchlist.watchlist_guid_priority = gp;
+      cfg.emby = em;
     }
 
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});

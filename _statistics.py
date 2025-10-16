@@ -196,6 +196,7 @@ class Stats:
         simkl    = self._provider_feature_items(state, "SIMKL", feature)
         trakt    = self._provider_feature_items(state, "TRAKT", feature)
         jellyfin = self._provider_feature_items(state, "JELLYFIN", feature)
+        emby     = self._provider_feature_items(state, "EMBY", feature)
         buckets: Dict[str, Dict[str, Any]] = {}
         alias2bucket: Dict[str, str] = {}
 
@@ -212,7 +213,7 @@ class Stats:
             pk = primary_key(d)
             if pk in buckets: pk = f"{pk}#{len(buckets)}"
             buckets[pk] = {"src":"", "title":self._title_of(d), "type":(d.get("type") or "").lower(),
-                           "p":False,"s":False,"t":False,"j":False}
+                           "p":False,"s":False,"t":False,"j":False,"e":False}
             for a in self._aliases(d): alias2bucket[a] = pk
             return pk
 
@@ -226,28 +227,49 @@ class Stats:
         for _, raw in plex.items():     ingest(raw, "p")
         for _, raw in trakt.items():    ingest(raw, "t")
         for _, raw in jellyfin.items(): ingest(raw, "j")
+        for _, raw in emby.items():     ingest(raw, "e")
 
         for b in buckets.values():
-            p,s,t,j = bool(b.get("p")), bool(b.get("s")), bool(b.get("t")), bool(b.get("j"))
-            b["src"] = "both" if (p and s and not t and not j) else ("plex" if p else ("simkl" if s else ("jellyfin" if j else ("trakt" if t else ""))))
+            p,s,t,j,e = bool(b.get("p")), bool(b.get("s")), bool(b.get("t")), bool(b.get("j")), bool(b.get("e"))
+            b["src"] = (
+                "both" if (p and s and not t and not j and not e)
+                else ("plex" if p else ("simkl" if s else ("jellyfin" if j else ("emby" if e else ("trakt" if t else "")))))
+            )
         return buckets
 
     def _counts_by_source(self, cur: Dict[str, Any]) -> Dict[str, int]:
-        plex_only = simkl_only = trakt_only = jellyfin_only = both_ps = 0
-        plex_total = simkl_total = trakt_total = jellyfin_total = 0
+        plex_only = simkl_only = trakt_only = jellyfin_only = emby_only = both_ps = 0
+        plex_total = simkl_total = trakt_total = jellyfin_total = emby_total = 0
         for v in (cur or {}).values():
-            p,s,t,j = bool((v or {}).get("p")), bool((v or {}).get("s")), bool((v or {}).get("t")), bool((v or {}).get("j"))
-            plex_total += 1 if p else 0; simkl_total += 1 if s else 0
-            trakt_total += 1 if t else 0; jellyfin_total += 1 if j else 0
-            if p and s and not t and not j: both_ps += 1
-            elif p and not s and not t and not j: plex_only += 1
-            elif s and not p and not t and not j: simkl_only += 1
-            elif t and not p and not s and not j: trakt_only += 1
-            elif j and not p and not s and not t: jellyfin_only += 1
-        return {"plex":plex_only,"simkl":simkl_only,"both":both_ps,
-                "plex_total":plex_total,"simkl_total":simkl_total,
-                "trakt_total":trakt_total,"jellyfin_total":jellyfin_total,
-                "trakt":trakt_only,"jellyfin":jellyfin_only}
+            p = bool((v or {}).get("p"))
+            s = bool((v or {}).get("s"))
+            t = bool((v or {}).get("t"))
+            j = bool((v or {}).get("j"))
+            e = bool((v or {}).get("e"))
+            plex_total     += 1 if p else 0
+            simkl_total    += 1 if s else 0
+            trakt_total    += 1 if t else 0
+            jellyfin_total += 1 if j else 0
+            emby_total     += 1 if e else 0
+            if p and s and not t and not j and not e: both_ps += 1
+            elif p and not s and not t and not j and not e: plex_only += 1
+            elif s and not p and not t and not j and not e: simkl_only += 1
+            elif t and not p and not s and not j and not e: trakt_only += 1
+            elif j and not p and not s and not t and not e: jellyfin_only += 1
+            elif e and not p and not s and not t and not j: emby_only += 1
+        return {
+            "plex": plex_only,
+            "simkl": simkl_only,
+            "both": both_ps,
+            "plex_total": plex_total,
+            "simkl_total": simkl_total,
+            "trakt_total": trakt_total,
+            "jellyfin_total": jellyfin_total,
+            "emby_total": emby_total,
+            "trakt": trakt_only,
+            "jellyfin": jellyfin_only,
+            "emby": emby_only,
+        }
 
     def _totals_from_events(self) -> Dict[str, int]:
         ev = list(self.data.get("events") or [])
@@ -321,7 +343,6 @@ class Stats:
                     if a or r or u:
                         self.record_feature_totals(name, added=a, removed=r, updated=u, src="REPORT", run_id=run_id, expand_events=True)
                         any_rec = True
-                    # Try to promote spotlights to real item-events if present
                     ev = self.data.get("events") or []
                     for kind, act in (("spotlight_add","add"),("spotlight_remove","remove"),("spotlight_update","update")):
                         for it in (lane.get(kind) or [])[:12]:
@@ -351,7 +372,6 @@ class Stats:
             prev_wl = {k: dict(v) for k, v in (self.data.get("current") or {}).items()}
             cur_wl  = self._build_union_map(state, "watchlist")
 
-            # Normalize titles to reduce noise
             def _norm_title(s: str) -> str:
                 s = unicodedata.normalize("NFKD", s or "")
                 s = "".join(ch for ch in s if not unicodedata.combining(ch)).casefold()
@@ -386,7 +406,9 @@ class Stats:
                     return False
                 return ra == aa or _similar(ra, aa)
 
-            def _provset(m):  return {k for k in ("p","s","t","j") if m.get(k)} or {str(m.get("src") or "")}
+            def _provset(m):
+                return {k for k in ("p","s","t","j","e") if m.get(k)} or {str(m.get("src") or "")}
+
             _IDCORE = re.compile(r"^(?P<p>[a-z0-9]+):(?:(?:movie|tv|show):)?(?P<i>[^:]+)$", re.I)
             def _idcore(k):
                 m = _IDCORE.match(str(k) or ""); return (m.group("p"), m.group("i")) if m else (None, None)
@@ -430,7 +452,6 @@ class Stats:
                 ap, rp = set(cur_map), set(prev_map)
                 adds, rems = sorted(ap - rp), sorted(rp - ap)
 
-                # detect updates (rename/alias)
                 for rk in list(rems):
                     rm = prev_map.get(rk) or {}; rt, rp2 = _title_key(rm), _provset(rm); rp_name, rp_id = _idcore(rk)
                     matched = False

@@ -1,6 +1,4 @@
 // assets/js/modals/about.js
-// Compact glassy About modal with update banner + Buy Me A Coffee
-
 const get = async (url) => { try { const r = await fetch(url,{cache:"no-store"}); return r.ok ? r.json() : null; } catch { return null; } };
 
 function isNewer(a,b){ if(!a||!b) return false; const clean=s=>String(s).replace(/^v/i,"").split("-")[0];
@@ -135,7 +133,16 @@ async function renderHostedAbout(hostEl){
         </div>
         ${foldCard("fold-auth","Authentication Providers", rowsFromGroup(mods.groups?.AUTH))}
         ${foldCard("fold-sync","Synchronization Providers", rowsFromGroup(mods.groups?.SYNC))}
-        <div class="card"><div class="note"><b>Disclaimer.</b> Community project, not affiliated with Trakt, Plex, Jellyfin, or Simkl. Use at your own risk.</div></div>
+        <div class="card">
+  <div class="note">
+    <b>Disclaimer.</b> This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Trakt, Plex, Emby, Jellyfin, or Simkl. Use at your own risk.
+    <ul style="margin:.5em 0 0 1.25em;">
+      <li>All product names, logos, and brands are property of their respective owners and used for identification only.</li>
+      <li>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</li>
+      <li>Provided “as is,” without warranties or guarantees.</li>
+    </ul>
+  </div>
+</div>
       </div>
     </div>
 

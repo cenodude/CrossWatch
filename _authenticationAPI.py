@@ -1,4 +1,4 @@
-# _authenticationAPI.py - authentication routes for FastAPI app
+# _authenticationAPI.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -20,6 +20,12 @@ from providers.sync.jellyfin._utils import (
     inspect_and_persist as jf_inspect_and_persist,
     fetch_libraries_from_cfg as jf_fetch_libraries_from_cfg,
     ensure_whitelist_defaults as jf_ensure_whitelist_defaults,
+)
+
+from providers.sync.emby._utils import (
+    inspect_and_persist as emby_inspect_and_persist,
+    fetch_libraries_from_cfg as emby_fetch_libraries_from_cfg,
+    ensure_whitelist_defaults as emby_ensure_whitelist_defaults,
 )
 
 __all__ = ["register_auth"]
@@ -307,6 +313,73 @@ def register_auth(app, *, log_fn=None, probe_cache: Optional[dict] = None) -> No
 
         users = sorted(best.values(), key=lambda x: (rank.get(x["type"],9), x["username"].lower()))
         return {"users": users, "count": len(users)}
+
+
+    # Emby
+    @app.post("/api/emby/login", tags=["auth"])
+    def api_emby_login(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+
+        cfg = load_config()
+        em = cfg.setdefault("emby", {})
+        for k in ("server", "username", "password"):
+            v = (payload.get(k) or "").strip()
+            if v: em[k] = v
+            
+        if "verify_ssl" in payload:
+            em["verify_ssl"] = bool(payload.get("verify_ssl"))
+    
+        if not all(em.get(k) for k in ("server", "username", "password")):
+            return JSONResponse({"ok": False, "error": "Missing: server/username/password"}, 400)
+
+        def _code(msg: str) -> int:
+            m = (msg or "").lower()
+            if any(x in m for x in ("401", "403", "invalid credential", "unauthor")): return 401
+            if "timeout" in m: return 504
+            if any(x in m for x in ("dns", "ssl", "connection", "refused", "unreachable", "getaddrinfo", "name or service")): return 502
+            return 502
+
+        try:
+            mod = importlib.import_module("providers.auth._auth_EMBY")
+            prov = getattr(mod, "PROVIDER", None)
+            if not prov: return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+
+            res = prov.start(cfg, redirect_uri="")
+            save_config(cfg)
+
+            if res.get("ok"):
+                return JSONResponse({
+                    "ok": True,
+                    "user_id": res.get("user_id"),
+                    "username": em.get("user") or em.get("username"),
+                    "server": em.get("server"),
+                }, 200)
+
+            msg = res.get("error") or "Login failed"
+            return JSONResponse({"ok": False, "error": msg}, _code(msg))
+        except Exception as e:
+            msg = str(e) or "Login failed"
+            return JSONResponse({"ok": False, "error": msg}, _code(msg))
+
+    @app.get("/api/emby/status", tags=["auth"])
+    def api_emby_status() -> Dict[str, Any]:
+        cfg = load_config(); em = (cfg.get("emby") or {})
+        return {
+            "connected": bool(em.get("access_token") and em.get("server")),
+            "user": em.get("user") or em.get("username") or None
+        }
+
+    # Emby Settings API
+    @app.get("/api/emby/inspect", tags=["emby"])
+    def emby_inspect():
+        emby_ensure_whitelist_defaults()
+        return emby_inspect_and_persist()
+
+    @app.get("/api/emby/libraries", tags=["emby"])
+    def emby_libraries():
+        emby_ensure_whitelist_defaults()
+        return {"libraries": emby_fetch_libraries_from_cfg()}
 
     #Jellyfin Settings API
     @app.get("/api/jellyfin/inspect", tags=["jellyfin"])

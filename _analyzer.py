@@ -75,8 +75,15 @@ def _rekey(items: Dict[str, Any], old_key:str, item:Dict[str,Any]) -> str:
             break
     return old_key
 
-_ID_RX={"imdb":re.compile(r"^tt\d{5,}$"),"tmdb":re.compile(r"^\d+$"),"tvdb":re.compile(r"^\d+$"),"plex":re.compile(r"^\d+$"),"trakt":re.compile(r"^\d+$"),"simkl":re.compile(r"^\d+$")}
-
+_ID_RX = {
+    "imdb": re.compile(r"^tt\d{5,}$"),
+    "tmdb": re.compile(r"^\d+$"),
+    "tvdb": re.compile(r"^\d+$"),
+    "plex": re.compile(r"^\d+$"),
+    "trakt": re.compile(r"^\d+$"),
+    "simkl": re.compile(r"^\d+$"),
+    "emby": re.compile(r"^[A-Za-z0-9-]{4,}$"),
+}
 def _read_cw_state() -> Dict[str, Any]:
     out={}
     if not (CWS_DIR.exists() and CWS_DIR.is_dir()): return out
@@ -91,19 +98,23 @@ def _class_key(it:Dict[str,Any])->Tuple[str,str,int|None]:
             it.get("year"))
 
 def _alias_keys(obj:Dict[str,Any])->List[str]:
-    t=(obj.get("type") or "").lower(); ids=dict(obj.get("ids") or {}); out=[]; seen=set()
+    t=(obj.get("type") or "").lower()
+    ids=dict(obj.get("ids") or {})
+    out=[]; seen=set()
     if obj.get("_key"): out.append(obj["_key"])
-    for ns in ("imdb","tmdb","tvdb","trakt","simkl","plex","guid"):
+    for ns in ("imdb","tmdb","tvdb","trakt","simkl","plex","emby","guid"):
         v=ids.get(ns)
         if v:
             vs=str(v); out.append(f"{ns}:{vs}")
-            if t in ("movie","show","season","episode"): out.append(f"{t}:{ns}:{vs}")
+            if t in ("movie","show","season","episode"):
+                out.append(f"{t}:{ns}:{vs}")
     title=(obj.get("title") or "").strip().lower()
     year=obj.get("year")
     if title and year: out.append(f"t:{title}|y:{year}|ty:{t}")
-    res=[]; 
+    res=[]
     for k in out:
-        if k not in seen: seen.add(k); res.append(k)
+        if k not in seen:
+            seen.add(k); res.append(k)
     return res
 
 def _alias_index(items:Dict[str,Any])->Dict[str,str]:
@@ -287,7 +298,8 @@ def _anchor(key:str):
     m=re.search(r"#s(\d+)[eE](\d+)",key)
     return (int(m.group(1)),int(m.group(2))) if m else None
 
-def _sig(ids:Dict[str,Any])->str: return "|".join([str(ids.get(x,"")) for x in ("imdb","tmdb","tvdb","trakt","plex")])
+def _sig(ids:Dict[str,Any])->str:
+    return "|".join([str(ids.get(x,"")) for x in ("imdb","tmdb","tvdb","trakt","plex","emby")])
 
 def _suggest(s: Dict[str, Any], prov:str, feat:str, key:str) -> Dict[str,Any]:
     b,it=_find_item(s,prov,feat,key)

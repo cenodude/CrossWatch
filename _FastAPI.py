@@ -181,7 +181,8 @@ def get_index_html() -> str:
           <div class="head" onclick="toggleSection('sec-auth')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Authentication Providers</strong>
             <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:22px;width:auto;opacity:.9">
+              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:22px;width:auto;opacity:.9">
               <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
@@ -221,6 +222,7 @@ def get_index_html() -> str:
             <span class="chev">▶</span><strong>Scrobbler</strong>
             <span title="Currently only for Plex with Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
               <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
             </span>
@@ -274,6 +276,7 @@ def get_index_html() -> str:
 <script src="/assets/auth/auth.simkl.js" defer></script>
 <script src="/assets/auth/auth.trakt.js" defer></script>
 <script src="/assets/auth/auth.jellyfin.js" defer></script>
+<script src="/assets/auth/auth.emby.js" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
 
@@ -336,6 +339,7 @@ function isProviderConfigured(key,cfg){
     case 'TRAKT':    return !!(c?.trakt?.access_token || c?.auth?.trakt?.access_token);
     case 'SIMKL':    return !!(c?.simkl?.access_token);
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
+    case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
     default: return false;
   }
 }
@@ -404,6 +408,9 @@ function render(payload){
         if(vip){ detail=`Plex Pass – ${d.subscription?.plan||'Active'}`; }
       }else if(K.toUpperCase()==='TRAKT'){
         vip=!!d.vip; detail=vip?'VIP status – Enabled':'';
+      }else if(K.toUpperCase()==='EMBY'){
+        vip=!!d.premiere;
+        if(vip){ detail='Premiere — Active'; }
       }
     }
     host.appendChild(makeConn({name,connected,vip,detail}));

@@ -1,4 +1,4 @@
-# providers/sync/jellyfin/_utils.py
+# providers/sync/emby/_utils.py
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urljoin
@@ -16,11 +16,11 @@ def _clean(url: str) -> str:
     if not u.endswith("/"): u += "/"
     return u
 
-def _mb_auth(token: str|None, device_id: str) -> str:
+def _mb_auth(token: str | None, device_id: str) -> str:
     base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0"'
     return f'{base}, Token="{token}"' if token else base
 
-def _headers(token: str|None, device_id: str) -> Dict[str, str]:
+def _headers(token: str | None, device_id: str) -> Dict[str, str]:
     auth = _mb_auth(token, device_id)
     h = {
         "Accept": "application/json",
@@ -28,7 +28,8 @@ def _headers(token: str|None, device_id: str) -> Dict[str, str]:
         "Authorization": auth,
         "X-Emby-Authorization": auth,
     }
-    if token: h["X-MediaBrowser-Token"] = token
+    if token:
+        h["X-Emby-Token"] = token  # Emby token header
     return h
 
 def ensure_whitelist_defaults() -> None:
@@ -44,20 +45,25 @@ def ensure_whitelist_defaults() -> None:
     if changed:
         save_config(cfg)
 
-def _cfg_triplet() -> Tuple[str, str|None, str]:
+
+def _cfg_triplet() -> Tuple[str, str | None, str]:
     cfg = load_config()
-    jf = cfg.get("jellyfin") or {}
-    server = _clean(jf.get("server", ""))
-    token  = (jf.get("access_token") or "").strip() or None
-    devid  = (jf.get("device_id") or "crosswatch").strip() or "crosswatch"
+    em = cfg.get("emby") or {}
+    server = _clean(em.get("server", ""))
+    token  = (em.get("access_token") or "").strip() or None
+    devid  = (em.get("device_id") or "crosswatch").strip() or "crosswatch"
     return server, token, devid
 
 def inspect_and_persist() -> Dict[str, Any]:
     cfg = load_config()
-    jf  = cfg.setdefault("jellyfin", {})
+    em  = cfg.setdefault("emby", {})
     server, token, devid = _cfg_triplet()
 
-    out = {"server_url": server or jf.get("server","") or "", "username": jf.get("user") or jf.get("username") or "", "user_id": jf.get("user_id") or ""}
+    out = {
+        "server_url": server or em.get("server", "") or "",
+        "username": em.get("user") or em.get("username") or "",
+        "user_id": em.get("user_id") or "",
+    }
 
     changed = False
     if server and token:
@@ -67,17 +73,21 @@ def inspect_and_persist() -> Dict[str, Any]:
                 me = r.json() or {}
                 name = (me.get("Name") or out["username"] or "").strip()
                 uid  = (me.get("Id")   or out["user_id"]  or "").strip()
-                if name and jf.get("user") != name: jf["user"] = name; changed=True
-                if uid  and jf.get("user_id") != uid: jf["user_id"] = uid; changed=True
-                out["username"] = jf.get("user") or name
-                out["user_id"]  = jf.get("user_id") or uid
+                if name and em.get("user") != name:
+                    em["user"] = name; changed = True
+                if uid and em.get("user_id") != uid:
+                    em["user_id"] = uid; changed = True
+                out["username"] = em.get("user") or name
+                out["user_id"]  = em.get("user_id") or uid
         except Exception:
             pass
 
-    norm = _clean(jf.get("server","") or server)
-    if norm and jf.get("server") != norm: jf["server"] = norm; changed=True
-    if changed: save_config(cfg)
-    out["server_url"] = jf.get("server") or out["server_url"]
+    norm = _clean(em.get("server", "") or server)
+    if norm and em.get("server") != norm:
+        em["server"] = norm; changed = True
+    if changed:
+        save_config(cfg)
+    out["server_url"] = em.get("server") or out["server_url"]
     return out
 
 def fetch_libraries_from_cfg() -> List[Dict[str, Any]]:
@@ -85,20 +95,20 @@ def fetch_libraries_from_cfg() -> List[Dict[str, Any]]:
     if not (server and token): return []
 
     # Prefer user-specific views when we have user_id
-    cfg = load_config(); jf = cfg.get("jellyfin") or {}
-    uid = (jf.get("user_id") or "").strip()
+    cfg = load_config(); em = cfg.get("emby") or {}
+    uid = (em.get("user_id") or "").strip()
     url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")
     try:
         r = requests.get(url, headers=_headers(token, devid), timeout=10)
         if not r.ok: return []
         j = r.json() or {}
         items = j.get("Items") or j.get("ItemsList") or j.get("Items") or []
-        libs = []
+        libs: List[Dict[str, Any]] = []
         for it in items:
             lid   = str(it.get("Id") or it.get("Key") or it.get("Id"))
             title = (it.get("Name") or it.get("Title") or "Library").strip()
             ctyp  = (it.get("CollectionType") or it.get("Type") or "").lower()
-            typ   = "movie" if "movie" in ctyp else ("show" if "series" in ctyp or "tv" in ctyp else (ctyp or "lib"))
+            typ   = "movie" if "movie" in ctyp else ("show" if ("series" in ctyp or "tv" in ctyp) else (ctyp or "lib"))
             if lid and title:
                 libs.append({"key": lid, "title": title, "type": typ})
         libs.sort(key=lambda x: x["title"].lower())

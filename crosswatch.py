@@ -83,7 +83,16 @@ from pydantic import BaseModel
 
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
-from providers.scrobble.plex.watch import WatchService, autostart_from_config
+from providers.scrobble.plex.watch import WatchService as PlexWatchService
+try:
+    from providers.scrobble.emby.watch import autostart_from_config as emby_autostart
+except Exception:
+    emby_autostart = None
+# Always keep Plex as fallback
+try:
+    from providers.scrobble.plex.watch import autostart_from_config as plex_autostart
+except Exception:
+    plex_autostart = None
 
 # Plex → Trakt
 try:
@@ -222,6 +231,46 @@ def _apply_debug_env_from_config() -> None:
         
 _apply_debug_env_from_config()
 
+
+# --- Autostart watch service (reads config, returns instance or None)
+def autostart_from_config():
+    cfg = load_config()
+    sc = (cfg.get("scrobble") or {})
+    if not (sc.get("enabled") and (sc.get("mode") or "").lower() == "watch"):
+        return None
+
+    provider = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
+    filters = ((sc.get("watch") or {}).get("filters") or {}) if isinstance(sc.get("watch"), dict) else {}
+    sinks = [TraktSink()]
+
+    if provider == "emby":
+        if emby_autostart:
+            return emby_autostart()
+        try:
+            from providers.scrobble.emby.watch import make_default_watch as _mk
+            w = _mk(sinks=sinks)
+            if hasattr(w, "set_filters") and isinstance(filters, dict):
+                w.set_filters(filters)
+            if hasattr(w, "start_async"): w.start_async()
+            else: threading.Thread(target=w.start, daemon=True).start()
+            return w
+        except Exception:
+            return None
+
+    # Plex (default)
+    if plex_autostart:
+        return plex_autostart()
+    try:
+        from providers.scrobble.plex.watch import make_default_watch as _mk
+        w = _mk(sinks=sinks)
+        if hasattr(w, "set_filters") and isinstance(filters, dict):
+            w.set_filters(filters)
+        if hasattr(w, "start_async"): w.start_async()
+        else: threading.Thread(target=w.start, daemon=True).start()
+        return w
+    except Exception:
+        return None
+
 # --- Next scheduled run helper (reads config, returns epoch)
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
@@ -328,7 +377,10 @@ def get_primary_ip() -> str:
 
 # --- Log buffers + ANSI helpers (for UI streaming)
 MAX_LOG_LINES = 3000
-LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], "PLEX": [], "SIMKL": [], "TRBL": [], "TRAKT": []}
+LOG_BUFFERS: Dict[str, List[str]] = {
+    "SYNC": [], "PLEX": [], "JELLYFIN": [], "EMBY": [],
+    "SIMKL": [], "TRBL": [], "TRAKT": []
+}
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_STRIP = re.compile(r"\x1b\[[0-9;]*m")
@@ -493,9 +545,12 @@ async def _lifespan(app):
             sc = (cfg.get("scrobble") or {})
             if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
                 from providers.scrobble.trakt.sink import TraktSink
-                from providers.scrobble.plex.watch import make_default_watch
+                prov = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
+                if prov == "emby":
+                    from providers.scrobble.emby.watch import make_default_watch as make_default_watch
+                else:
+                    from providers.scrobble.plex.watch import make_default_watch as make_default_watch
                 w2 = make_default_watch(sinks=[TraktSink()])
-
                 try:
                     filters = ((sc.get("watch") or {}).get("filters") or {})
                     if hasattr(w2, "set_filters") and isinstance(filters, dict):
@@ -590,13 +645,18 @@ async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
         for line in buf:
             yield f"data: {line}\n\n"
         idx = len(buf)
+        last = time.time()
         while True:
             if await request.is_disconnected():
                 break
             new_buf = LOG_BUFFERS.get(tag, [])
             while idx < len(new_buf):
                 yield f"data: {new_buf[idx]}\n\n"
+                last = time.time()
                 idx += 1
+            if time.time() - last > 15:
+                yield "event: ping\ndata: 1\n\n"
+                last = time.time()
             await asyncio.sleep(0.25)
 
     return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})

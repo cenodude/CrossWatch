@@ -434,6 +434,7 @@ class _TraktOPS:
     def label(self) -> str: return "Trakt"
     def features(self) -> Mapping[str, bool]:
         return TRAKTModule.supported_features()
+        
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
@@ -445,6 +446,23 @@ class _TraktOPS:
             },
         }
 
+    def is_configured(self, cfg: Mapping[str, Any]) -> bool:
+        """No I/O; Trakt is configured iff we have an access_token."""
+        c  = cfg or {}
+        tr = c.get("trakt") or {}
+        au = (c.get("auth") or {}).get("trakt") or {}
+
+        token = (
+            tr.get("access_token")
+            or tr.get("token")
+            or (tr.get("oauth") or {}).get("access_token")
+            or au.get("access_token")
+            or au.get("token")
+            or (au.get("oauth") or {}).get("access_token")
+            or ""
+        )
+        return bool(str(token).strip())
+    
     def _adapter(self, cfg: Mapping[str, Any]) -> TRAKTModule:
         return TRAKTModule(cfg)
 

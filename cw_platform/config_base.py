@@ -64,10 +64,6 @@ DEFAULT_CFG: Dict[str, Any] = {
             "tmdb", "imdb", "tvdb",
             "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
         ],
-
-        # Webhook (optional)
-        "webhook_secret": "",                           # HMAC secret to verify X-Plex-Signature on incoming webhooks (empty = skip verification)
-        "server_uuid": "",                              # Optional fixed PMS UUID to validate incoming webhooks against (fallback when scrobble.webhook.filters_plex.server_uuid is empty)
     },
 
     "simkl": {
@@ -160,6 +156,48 @@ DEFAULT_CFG: Dict[str, Any] = {
             "libraries": []                             # whitelist of library GUIDs; empty = all
         },
     },
+    
+    "emby": {
+        "server": "",                                   # http(s)://host:port (required)
+        "access_token": "",                             # Emby access token (required)
+        "user_id": "",                                  # Emby userId (required)
+        "device_id": "crosswatch",                      # Client device id
+        "username": "",                                 # Optional (login username)
+        "user": "",                                     # Optional (display name; hydrated after auth)
+        "verify_ssl": False,                            # Verify TLS certificates
+        "timeout": 15.0,                                # HTTP timeout (seconds)
+        "max_retries": 3,                               # Retry budget for API calls
+
+        # Watchlist settings
+        "watchlist": {
+            "mode": "favorites",                        # "favorites" | "playlist" | "collections"
+            "playlist_name": "Watchlist",               # used when mode == "playlist"
+            "watchlist_query_limit": 25,                # batch size
+            "watchlist_write_delay_ms": 0,              # delay between writes
+            "watchlist_guid_priority": [                # id match order
+                "tmdb", "imdb", "tvdb",
+                "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
+            ]
+        },
+
+        # History settings
+        "history": {
+            "history_query_limit": 25,                  # batch size
+            "history_write_delay_ms": 0,                # delay between writes
+            "history_guid_priority": [                  # id match order
+                "tmdb", "imdb", "tvdb",
+                "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
+            ],
+            "libraries": []                             # whitelist of library GUIDs (from /api/emby/libraries.key); empty = all
+        },
+
+        # Ratings settings
+        "ratings": {
+            "ratings_query_limit": 2000,                # ratings query limit, default 2000
+            "libraries": []                             # whitelist of library GUIDs; empty = all
+        },
+    },
+
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
@@ -226,11 +264,12 @@ DEFAULT_CFG: Dict[str, Any] = {
         # Watcher settings (Plex → events → Trakt)
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
+            "provider": "plex",                         # Active watcher either "plex" or "emby" (default: "plex")
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
                 "username_whitelist": [],               # ["name", "id:123", "uuid:abcd…"]
-                "server_uuid": ""                       # Restrict to a specific PMS
+                "server_uuid": ""                       # Restrict to a specific server
             }
         },
 
@@ -242,12 +281,7 @@ DEFAULT_CFG: Dict[str, Any] = {
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
-                "server_uuid": ""                       # Restrict to a specific PMS (falls back to plex.server_uuid when empty)
-            },
-
-            # Jellyfin-only filters
-            "filters_jellyfin": {
-                "username_whitelist": []                # Restrict accepted User.Name values (empty = allow all)
+                "server_uuid": ""                       # Restrict to a specific server
             }
         },
 
@@ -290,11 +324,15 @@ def _read_json(p: Path) -> Dict[str, Any]:
 
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(f".{int(time.time())}.tmp")
+    import os, time, secrets, threading
+    suffix = f".{time.time_ns()}.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
+    tmp = p.with_suffix(suffix)
+
     with tmp.open("w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
     tmp.replace(p)
+
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

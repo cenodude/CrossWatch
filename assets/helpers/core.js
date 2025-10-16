@@ -106,6 +106,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
   if (has(cfg?.trakt?.access_token || cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
   if (has(cfg?.jellyfin?.access_token || cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
+  if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
 
   return S;
 }
@@ -123,6 +124,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
   if (alt.includes("JELLYFIN")) return "JELLYFIN";
+  if (alt.includes("EMBY")) return "EMBY";
 
   // Fallback: inspect common title/name containers, then full text
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
@@ -131,6 +133,7 @@ function resolveProviderKeyFromNode(node) {
   if (/\bSIMKL\b/.test(txt)) return "SIMKL";
   if (/\bTRAKT\b/.test(txt)) return "TRAKT";
   if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
+  if (/\bEMBY\b/.test(txt)) return "EMBY";
 
   return ""; // unknown
 }
@@ -160,7 +163,7 @@ function applySyncVisibility() {
   });
 
   // Rebuild provider pair selectors using only allowed providers
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin" };
+  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin", EMBY: "Emby" };
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -175,7 +178,7 @@ function applySyncVisibility() {
       sel.appendChild(o0);
     }
 
-    ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"].forEach((k) => {
+    ["PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"].forEach((k) => {
       if (!allowed.has(k)) return;
       const o = document.createElement("option");
       o.value = k; o.textContent = LABEL[k] || k;
@@ -298,6 +301,7 @@ function normalizeProviders(input) {
     SIMKL:   normOne(pick(p, "SIMKL")   ?? p.simkl_connected),
     TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
     JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
+    EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
   };
 }
 
@@ -338,7 +342,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     if (res.ok) pairs = await res.json();
   } catch (_) {}
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false };
+  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false, EMBY: false };
   for (const p of pairs || []) {
     if (p && p.enabled !== false) {
       const s = String(p.source || "").toUpperCase();
@@ -358,7 +362,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
 
 // Hide/show badges by provider
 function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin" };
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby" };
   for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
     if (el) el.classList.toggle("hidden", !active?.[prov]);
@@ -467,11 +471,13 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   const simkl   = pickCase(p, "SIMKL");
   const trakt   = pickCase(p, "TRAKT");
   const jelly   = pickCase(p, "JELLYFIN");
+  const emby    = pickCase(p, "EMBY");
 
   setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
   setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
   setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
   setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
+  setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
 }
 
 function fetchWithTimeout(url, opts = {}, ms = 15000) {
@@ -503,6 +509,7 @@ async function refreshStatus(force = false) {
       SIMKL:    norm(pick(pRaw, "SIMKL"),    (r.simkl_connected   ?? r.simkl)),
       TRAKT:    norm(pick(pRaw, "TRAKT"),    (r.trakt_connected   ?? r.trakt)),
       JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
+      EMBY:     norm(pick(pRaw, "EMBY"),     (r.emby_connected    ?? r.emby)),
     };
 
     renderConnectorStatus(providers, { stale: false });
@@ -515,6 +522,7 @@ async function refreshStatus(force = false) {
       simkl_connected:    !!(providers.SIMKL?.connected    ?? providers.SIMKL?.ok),
       trakt_connected:    !!(providers.TRAKT?.connected    ?? providers.TRAKT?.ok),
       jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
+      emby_connected:     !!(providers.EMBY?.connected     ?? providers.EMBY?.ok),
     };
 
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
@@ -567,6 +575,7 @@ async function manualRefreshStatus() {
         SIMKL:    { connected: !!s.simkl_connected },
         TRAKT:    { connected: !!s.trakt_connected },
         JELLYFIN: { connected: !!s.jellyfin_connected },
+        EMBY:     { connected: !!s.emby_connected },
       }, { stale: true });
     }
 
@@ -699,6 +708,7 @@ async function hardRefreshMain({ layout, statsCard }) {
 
   // Use the stream managed by main.js
   if (!window.esSum) window.openSummaryStream?.();
+  if (!window.esLogs) window.openLogStream?.();
 
   window.wallLoaded = false;
   try { await updatePreviewVisibility(); } catch {}
@@ -2491,6 +2501,7 @@ function cxBrandLogo(providerName) {
     TRAKT: "/assets/img/TRAKT.svg",
     TMDB:  "/assets/img/TMDB.svg",
     JELLYFIN: "/assets/img/JELLYFIN.svg",
+    EMBY: "/assets/img/EMBY.svg",
   };
   const src = ICONS[key];
   return src
@@ -2961,6 +2972,7 @@ async function loadProviders() {
       if (/\bSIMKL\b/.test(s)) return "SIMKL";
       if (/\bTRAKT\b/.test(s)) return "TRAKT";
       if (/\bJELLYFIN\b/.test(s)) return "JELLYFIN";
+      if (/\bEMBY\b/.test(s)) return "EMBY";
       return s;
     };
 

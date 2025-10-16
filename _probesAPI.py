@@ -1,5 +1,6 @@
+# _probesAPI.py
 from __future__ import annotations
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Tuple
 import os, json, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -12,18 +13,20 @@ try:
 except Exception:
     HAVE_PLEXAPI = False
 
-# Tunables
-HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))  # faster fail when down
+# ── Tunables
+HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
 STATUS_TTL   = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL    = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
 
 STATUS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
-PROBE_CACHE: Dict[str, Tuple[float, bool]] = {k: (0.0, False) for k in ("plex","simkl","trakt","jellyfin")}
-PROBE_DETAIL_CACHE: Dict[str, Tuple[float, bool, str]] = {k: (0.0, False, "") for k in ("plex","simkl","trakt","jellyfin")}
-_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {"plex": (0.0, {}), "trakt": (0.0, {})}
+PROBE_CACHE: Dict[str, Tuple[float, bool]] = {k: (0.0, False) for k in ("plex","simkl","trakt","jellyfin","emby")}
+PROBE_DETAIL_CACHE: Dict[str, Tuple[float, bool, str]] = {k: (0.0, False, "") for k in ("plex","simkl","trakt","jellyfin","emby")}
+_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {
+    "plex": (0.0, {}), "trakt": (0.0, {}), "emby": (0.0, {})
+}
 
-# HTTP
+# ── HTTP helpers
 def _http_get(url: str, headers: Dict[str, str], timeout: int = HTTP_TIMEOUT) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -40,7 +43,6 @@ def _json_loads(b: bytes) -> dict:
     except Exception:
         return {}
 
-# Reason strings
 def _reason_http(code: int, provider: str) -> str:
     if code == 0:   return f"{provider}: network error/timeout"
     if code == 401: return f"{provider}: unauthorized (token expired/revoked)"
@@ -49,7 +51,7 @@ def _reason_http(code: int, provider: str) -> str:
     if 500 <= code < 600: return f"{provider}: service error ({code})"
     return f"{provider}: http {code}"
 
-# Basic probes (bool) kept for compatibility
+# ── Basic probes (boolean)
 def probe_plex(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec: return ok
@@ -98,11 +100,18 @@ def probe_jellyfin(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ok = bool((jf.get("server") or "").strip() and (jf.get("access_token") or jf.get("token") or "").strip())
     PROBE_CACHE["jellyfin"] = (now, ok); return ok
 
-# Detailed probes (bool, reason)
+def probe_emby(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
+    ts, ok = PROBE_CACHE["emby"]; now = time.time()
+    if now - ts < max_age_sec: return ok
+    em = (cfg.get("emby") or cfg.get("EMBY") or {})
+    ok = bool((em.get("server") or "").strip() and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip())
+    PROBE_CACHE["emby"] = (now, ok); return ok
+
+# ── Detailed probes (boolean + reason)
 def _probe_plex_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec: return ok, rsn
-    token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
+    token = ((cfg.get("plex") or {}).get("account_token") or "").trim() if hasattr(str, "trim") else ((cfg.get("plex") or {}).get("account_token") or "").strip()
     if not token:
         rsn = "Plex: missing account_token"; PROBE_DETAIL_CACHE["plex"] = (now, False, rsn); return False, rsn
     headers = {
@@ -153,7 +162,27 @@ def _probe_jellyfin_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) ->
         rsn = "Jellyfin: missing access token"; PROBE_DETAIL_CACHE["jellyfin"] = (now, False, rsn); return False, rsn
     PROBE_DETAIL_CACHE["jellyfin"] = (now, True, ""); return True, ""
 
-# Badges
+def _probe_emby_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
+    ts, ok, rsn = PROBE_DETAIL_CACHE["emby"]; now = time.time()
+    if now - ts < max_age_sec: return ok, rsn
+    em = (cfg.get("emby") or cfg.get("EMBY") or {})
+    server = (em.get("server") or "").strip()
+    token  = (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
+    if not server:
+        rsn = "Emby: missing server URL"; PROBE_DETAIL_CACHE["emby"] = (now, False, rsn); return False, rsn
+    if not token:
+        rsn = "Emby: missing access token"; PROBE_DETAIL_CACHE["emby"] = (now, False, rsn); return False, rsn
+
+    base = server.rstrip("/")
+    url  = f"{base}/System/Info"
+    headers = {"X-Emby-Token": token, "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    code, _ = _http_get(url, headers=headers)
+    ok = (code == 200)
+    rsn = "" if ok else _reason_http(code, "Emby")
+    PROBE_DETAIL_CACHE["emby"] = (now, ok, rsn)
+    return ok, rsn
+
+# ── User/VIP badges
 def plex_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
     ts, info = _USERINFO_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec and isinstance(info, dict): return info
@@ -200,13 +229,51 @@ def trakt_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     if code == 200:
         j = _json_loads(body); u = j.get("user") or {}
         vip = bool(u.get("vip") or u.get("vip_og") or u.get("vip_ep"))
-        vip_type = "vip"; 
+        vip_type = "vip"
         if u.get("vip_og"): vip_type = "vip_og"
         if u.get("vip_ep"): vip_type = "vip_ep"
         out = {"vip": vip, "vip_type": vip_type}
     _USERINFO_CACHE["trakt"] = (now, out); return out
 
-# Helpers
+def emby_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
+    ts, info = _USERINFO_CACHE["emby"]; now = time.time()
+    if now - ts < max_age_sec and isinstance(info, dict): return info
+
+    em = (cfg.get("emby") or cfg.get("EMBY") or {})
+    server = (em.get("server") or "").strip()
+    token  = (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
+    if not server or not token:
+        _USERINFO_CACHE["emby"] = (now, {}); return {}
+
+    base = server.rstrip("/")
+    url  = f"{base}/System/Info"
+    headers = {"X-Emby-Token": token, "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    code, body = _http_get(url, headers=headers)
+
+    out: Dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        candidates = [
+            "HasEmbyPremiere", "HasPremium", "HasSupporterMembership",
+            "HasSupporterKey", "HasValidSupporterKey", "IsMBSupporter",
+            "IsPremiere", "Premiere", "SupportsPremium"
+        ]
+        def _truthy(v):
+            if isinstance(v, bool): return v
+            if isinstance(v, (int, float)): return v != 0
+            if isinstance(v, str): return v.strip().lower() not in ("", "0", "false", "no", "none", "null")
+            return False
+        prem = any(_truthy(j.get(k)) for k in candidates)
+        # Also consider presence of any non-empty *Supporter* key in payload
+        if not prem:
+            for k, v in j.items():
+                if isinstance(k, str) and "supporter" in k.lower() and _truthy(v):
+                    prem = True; break
+        out = {"premiere": bool(prem)}
+    _USERINFO_CACHE["emby"] = (now, out)
+    return out
+
+# ── Helpers
 def _prov_configured(cfg: dict, name: str) -> bool:
     n = (name or "").strip().lower()
     if n == "plex":     return bool((cfg.get("plex") or {}).get("account_token"))
@@ -215,12 +282,15 @@ def _prov_configured(cfg: dict, name: str) -> bool:
     if n == "jellyfin":
         jf = cfg.get("jellyfin") or {}
         return bool((jf.get("server") or "").strip() and (jf.get("access_token") or jf.get("token") or "").strip())
+    if n == "emby":
+        em = cfg.get("emby") or {}
+        return bool((em.get("server") or "").strip() and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip())
     return False
 
 def _pair_ready(cfg: dict, pair: dict) -> bool:
     if not isinstance(pair, dict): return False
     if pair.get("enabled", True) is False: return False
-    def _name(x): 
+    def _name(x):
         if isinstance(x, str): return x
         if isinstance(x, dict): return x.get("provider") or x.get("name") or x.get("id") or x.get("type") or ""
         return ""
@@ -241,15 +311,16 @@ def _safe_userinfo(fn, cfg, max_age_sec=0) -> dict:
         print(f"[status] userinfo {getattr(fn, '__name__', 'fn')} failed: {e}")
         return {}
 
-def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool]:
-    # Back-compat: booleans only
-    plex_ok, _  = _safe_probe_detail(_probe_plex_detail,  cfg, max_age_sec=PROBE_TTL)
-    simkl_ok, _ = _safe_probe_detail(_probe_simkl_detail, cfg, max_age_sec=PROBE_TTL)
-    trakt_ok, _ = _safe_probe_detail(_probe_trakt_detail, cfg, max_age_sec=PROBE_TTL)
+def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool, bool, bool]:
+    plex_ok,  _ = _safe_probe_detail(_probe_plex_detail,   cfg, max_age_sec=PROBE_TTL)
+    simkl_ok, _ = _safe_probe_detail(_probe_simkl_detail,  cfg, max_age_sec=PROBE_TTL)
+    trakt_ok, _ = _safe_probe_detail(_probe_trakt_detail,  cfg, max_age_sec=PROBE_TTL)
+    jelly_ok, _ = _safe_probe_detail(_probe_jellyfin_detail,cfg, max_age_sec=PROBE_TTL)
+    emby_ok,  _ = _safe_probe_detail(_probe_emby_detail,    cfg, max_age_sec=PROBE_TTL)
     debug = bool(cfg.get("runtime", {}).get("debug"))
-    return plex_ok, simkl_ok, trakt_ok, debug
+    return plex_ok, simkl_ok, trakt_ok, jelly_ok, emby_ok, debug
 
-# FastAPI
+# ── FastAPI
 def register_probes(app: FastAPI, load_config_fn):
     @app.get("/api/status", tags=["Probes"])
     def api_status(fresh: int = Query(0)):
@@ -265,13 +336,13 @@ def register_probes(app: FastAPI, load_config_fn):
 
         probe_age = 0 if fresh else PROBE_TTL
 
-        # Run probes in parallel for snappy UI
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             futs = {
                 ex.submit(_safe_probe_detail, _probe_plex_detail,  cfg, probe_age):   "PLEX",
                 ex.submit(_safe_probe_detail, _probe_simkl_detail, cfg, probe_age):   "SIMKL",
                 ex.submit(_safe_probe_detail, _probe_trakt_detail, cfg, probe_age):   "TRAKT",
                 ex.submit(_safe_probe_detail, _probe_jellyfin_detail, cfg, probe_age):"JELLYFIN",
+                ex.submit(_safe_probe_detail, _probe_emby_detail,   cfg, probe_age):  "EMBY",
             }
             results: Dict[str, Tuple[bool, str]] = {}
             for f in as_completed(futs):
@@ -285,16 +356,19 @@ def register_probes(app: FastAPI, load_config_fn):
         simkl_ok, simkl_reason   = results["SIMKL"]
         trakt_ok, trakt_reason   = results["TRAKT"]
         jelly_ok, jelly_reason   = results["JELLYFIN"]
+        emby_ok,  emby_reason    = results["EMBY"]
 
         debug = bool(cfg.get("runtime", {}).get("debug"))
         info_plex  = _safe_userinfo(plex_user_info,  cfg, max_age_sec=USERINFO_TTL) if plex_ok  else {}
         info_trakt = _safe_userinfo(trakt_user_info, cfg, max_age_sec=USERINFO_TTL) if trakt_ok else {}
+        info_emby  = _safe_userinfo(emby_user_info,  cfg, max_age_sec=USERINFO_TTL) if emby_ok  else {}
 
         data = {
             "plex_connected":     plex_ok,
             "simkl_connected":    simkl_ok,
             "trakt_connected":    trakt_ok,
             "jellyfin_connected": jelly_ok,
+            "emby_connected":     emby_ok,
             "debug":              debug,
             "can_run":            bool(any_pair_ready),
             "ts":                 int(now),
@@ -302,14 +376,18 @@ def register_probes(app: FastAPI, load_config_fn):
                 "PLEX": {
                     "connected": plex_ok,
                     **({} if plex_ok else {"reason": plex_reason}),
-                    **({} if not info_plex else {"plexpass": bool(info_plex.get("plexpass")),
-                                                 "subscription": info_plex.get("subscription") or {}})
+                    **({} if not info_plex else {
+                        "plexpass": bool(info_plex.get("plexpass")),
+                        "subscription": info_plex.get("subscription") or {}
+                    })
                 },
-                "SIMKL": {"connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason})},
-                "TRAKT": {"connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
-                          **({} if not info_trakt else {"vip": bool(info_trakt.get("vip")),
-                                                        "vip_type": info_trakt.get("vip_type")})},
+                "SIMKL":    {"connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason})},
+                "TRAKT":    {"connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
+                             **({} if not info_trakt else {"vip": bool(info_trakt.get("vip")),
+                                                           "vip_type": info_trakt.get("vip_type")})},
                 "JELLYFIN": {"connected": jelly_ok, **({} if jelly_ok else {"reason": jelly_reason})},
+                "EMBY":     {"connected": emby_ok,  **({} if emby_ok  else {"reason": emby_reason}),
+                             **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))})},
             },
         }
         STATUS_CACHE["ts"] = now

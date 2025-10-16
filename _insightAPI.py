@@ -152,6 +152,7 @@ def register_insights(app: FastAPI):
                         "simkl_post":    d.get("simkl_post"),
                         "trakt_post":    d.get("trakt_post"),
                         "jellyfin_post": d.get("jellyfin_post"),
+                        "emby_post":     d.get("emby_post"),
                     })
                 except Exception as e:
                     _append_log("INSIGHTS", f"[!] report parse failed {p.name}: {e}")
@@ -217,7 +218,7 @@ def register_insights(app: FastAPI):
 
         prov_block: dict = (state or {}).get("providers") or {}
         providers_set: set[str] = set(k.strip().lower() for k in prov_block.keys() if isinstance(k,str))
-        if not providers_set: providers_set = {"plex","simkl","trakt","jellyfin"}
+        if not providers_set: providers_set = {"plex","simkl","trakt","jellyfin","emby"} 
 
         active: dict[str, bool] = {k: False for k in providers_set}
         try:

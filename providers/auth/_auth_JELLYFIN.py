@@ -15,7 +15,7 @@ except Exception:
 from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.3.0"
+__VERSION__ = "1.0.1"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
 

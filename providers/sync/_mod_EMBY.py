@@ -1,34 +1,33 @@
-# /providers/sync/_mod_JELLYFIN.py
-# Jellyfin adapter: manifest + client + feature registry + OPS wrapper.
+# /providers/sync/_mod_EMBY.py
+# Emby adapter: manifest + client + feature registry + OPS wrapper.
 
 from __future__ import annotations
-__VERSION__ = "0.2.0"
-__all__ = ["get_manifest", "JELLYFINModule", "OPS"]
+__VERSION__ = "0.1.0"
+__all__ = ["get_manifest", "EMBYModule", "OPS"]
 
 import os, time, json, requests
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List, Callable
 
-# Debug gate
-_DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
+_DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
 
 def _log(msg: str):
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
-        print(f"[JELLYFIN] {msg}")
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
+        print(f"[EMBY] {msg}")
 
-# Strict relative imports: keep packages import-safe
-from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of
-from .jellyfin import _watchlist as feat_watchlist
-from .jellyfin import _history   as feat_history
-from .jellyfin import _ratings   as feat_ratings
-from .jellyfin import _playlists as feat_playlists
+# Strict relative imports
+from .emby._common import normalize as emby_normalize, key_of as emby_key_of
+from .emby import _watchlist as feat_watchlist
+from .emby import _history   as feat_history
+from .emby import _ratings   as feat_ratings
+from .emby import _playlists as feat_playlists
 
 # Instrumentation (session + progress)
 from ._mod_common import (
     build_session,
     request_with_retries,
-    parse_rate_limit,   # kept for parity
-    label_jellyfin,
+    parse_rate_limit,   # parity
+    label_emby, 
     make_snapshot_progress,
 )
 
@@ -44,8 +43,8 @@ except Exception:
 
 def get_manifest() -> Mapping[str, Any]:
     return {
-        "name": "JELLYFIN",
-        "label": "Jellyfin",
+        "name": "EMBY",
+        "label": "Emby",
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
@@ -53,7 +52,7 @@ def get_manifest() -> Mapping[str, Any]:
             "watchlist": True,
             "history":   True,
             "ratings":   True,
-            "playlists": False,
+            "playlists": False,  # enable later when feature module is finalized
         },
         "requires": ["requests"],
         "capabilities": {
@@ -72,7 +71,7 @@ def get_manifest() -> Mapping[str, Any]:
 # config + client
 
 @dataclass
-class JFConfig:
+class EMBYConfig:
     server: str
     access_token: str
     user_id: str
@@ -81,7 +80,7 @@ class JFConfig:
     timeout: float = 15.0
     max_retries: int = 3
     # Watchlist
-    watchlist_mode: str = "favorites"            # or "playlist"
+    watchlist_mode: str = "favorites"            # or "playlist" | "collections"
     watchlist_playlist_name: str = "Watchlist"
     watchlist_query_limit: int = 25
     watchlist_write_delay_ms: int = 0
@@ -90,21 +89,24 @@ class JFConfig:
     history_query_limit: int = 25
     history_write_delay_ms: int = 0
     history_guid_priority: Optional[List[str]] = None
+    history_force_overwrite: bool = False
+    history_backdate: bool = False
+    history_backdate_tolerance_s: int = 300
     # Library scoping (None = all)
     history_libraries: Optional[List[str]] = None
     ratings_libraries: Optional[List[str]] = None
 
-class JFClient:
+class EMBYClient:
     BASE_PATH_PING = "/System/Ping"
     BASE_PATH_INFO = "/System/Info"
     BASE_PATH_USER = "/Users/{user_id}"
 
-    def __init__(self, cfg: JFConfig):
+    def __init__(self, cfg: EMBYConfig):
         if not cfg.server or not cfg.access_token or not cfg.user_id:
-            raise RuntimeError("Jellyfin config requires server, access_token, user_id")
+            raise RuntimeError("Emby config requires server, access_token, user_id")
         self.cfg = cfg
         self.base = cfg.server.rstrip("/")
-        self.session = build_session("JELLYFIN", ctx, feature_label=label_jellyfin)
+        self.session = build_session("EMBY", ctx, feature_label=label_emby)
         self.session.verify = bool(cfg.verify_ssl)
         auth_val = (f'MediaBrowser Client="CrossWatch", Device="CrossWatch", '
                     f'DeviceId="{cfg.device_id}", Version="{__VERSION__}", Token="{cfg.access_token}"')
@@ -119,7 +121,6 @@ class JFClient:
     def _url(self, path: str) -> str:
         return self.base + (path if path.startswith("/") else ("/" + path))
 
-    # Central request path (retries centralized)
     def _request(self, method: str, path: str, *, params: Optional[dict] = None, json: Any = None) -> requests.Response:
         return request_with_retries(
             self.session, method, self._url(path),
@@ -127,7 +128,6 @@ class JFClient:
             timeout=self.cfg.timeout, max_retries=self.cfg.max_retries,
         )
 
-    # Thin wrappers for features
     def get(self, path: str, *, params: Optional[dict] = None) -> requests.Response:
         return self._request("GET", path, params=params)
 
@@ -137,7 +137,6 @@ class JFClient:
     def delete(self, path: str, *, params: Optional[dict] = None) -> requests.Response:
         return self._request("DELETE", path, params=params)
 
-    # Health primitives
     def ping(self) -> requests.Response: return self.get(self.BASE_PATH_PING)
     def system_info(self) -> requests.Response: return self.get(self.BASE_PATH_INFO)
     def user_probe(self) -> requests.Response:
@@ -148,7 +147,7 @@ class JFClient:
 # ──────────────────────────────────────────────────────────────────────────────
 # module wrapper
 
-_HEALTH_SHADOW = "/config/.cw_state/jellyfin.health.shadow.json"
+_HEALTH_SHADOW = "/config/.cw_state/emby.health.shadow.json"
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
     try:
@@ -168,19 +167,16 @@ def _present_flags() -> Dict[str, bool]:
         "playlists": bool(feat_playlists),
     }
 
-class JELLYFINModule:
+class EMBYModule:
     """Adapter used by the orchestrator and feature modules."""
     def __init__(self, cfg: Mapping[str, Any]):
-        # Pull provider cfg
-        jf = dict((cfg or {}).get("jellyfin") or {})
-        # Legacy nesting support
-        auth = dict((cfg or {}).get("auth") or {}).get("jellyfin") or {}
-        jf.setdefault("server", auth.get("server"))
-        jf.setdefault("access_token", auth.get("access_token"))
-        jf.setdefault("user_id", auth.get("user_id"))
+        em = dict((cfg or {}).get("emby") or {})
+        auth = dict((cfg or {}).get("auth") or {}).get("emby") or {}
+        em.setdefault("server", auth.get("server"))
+        em.setdefault("access_token", auth.get("access_token"))
+        em.setdefault("user_id", auth.get("user_id"))
 
-        # Watchlist sub-config
-        wl = dict(jf.get("watchlist") or {})
+        wl = dict(em.get("watchlist") or {})
         wl_mode = str(wl.get("mode") or "favorites").strip().lower()
         wl_pname = (wl.get("playlist_name") or "Watchlist").strip() or "Watchlist"
         wl_qlim = int(wl.get("watchlist_query_limit", 25) or 25)
@@ -189,26 +185,38 @@ class JELLYFINModule:
             "tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"
         ]
 
-        # History sub-config (separate knobs; default guid order from watchlist)
-        hi = dict(jf.get("history") or {})
+        hi = dict(em.get("history") or {})
         hi_qlim = int(hi.get("history_query_limit", 25) or 25)
         hi_wdel = int(hi.get("history_write_delay_ms", 0) or 0)
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
 
-        # Ratings sub-config
-        ra = dict(jf.get("ratings") or {})
+        ra = dict(em.get("ratings") or {})
 
         def _list_str(v):
             return [str(x).strip() for x in (v or []) if str(x).strip()]
+            
+        # ---- read overwrite/backdate flags (support both emby{} and emby.history{})
+        def _b(v): 
+            if isinstance(v, bool): return v
+            if isinstance(v, (int, float)): return v != 0
+            if isinstance(v, str): return v.strip().lower() in ("1","true","yes","y","on")
+            return False
+        def _i(v, d): 
+            try: return int(v)
+            except Exception: return int(d)
 
-        self.cfg = JFConfig(
-            server=str(jf.get("server") or "").strip(),
-            access_token=str(jf.get("access_token") or "").strip(),
-            user_id=str(jf.get("user_id") or "").strip(),
-            device_id=str(jf.get("device_id") or "crosswatch"),
-            verify_ssl=bool(jf.get("verify_ssl", True)),
-            timeout=float((cfg or {}).get("timeout", jf.get("timeout", 15.0))),
-            max_retries=int((cfg or {}).get("max_retries", jf.get("max_retries", 3))),
+        force_overwrite = _b(em.get("history_force_overwrite", False) or hi.get("force_overwrite", False))
+        backdate        = _b(em.get("history_backdate", False)          or hi.get("backdate", False))
+        bd_tolerance    = _i(hi.get("backdate_tolerance_s", em.get("history_backdate_tolerance_s", 300)), 300)
+
+        self.cfg = EMBYConfig(
+            server=str(em.get("server") or "").strip(),
+            access_token=str(em.get("access_token") or "").strip(),
+            user_id=str(em.get("user_id") or "").strip(),
+            device_id=str(em.get("device_id") or "crosswatch"),
+            verify_ssl=bool(em.get("verify_ssl", True)),
+            timeout=float((cfg or {}).get("timeout", em.get("timeout", 15.0))),
+            max_retries=int((cfg or {}).get("max_retries", em.get("max_retries", 3))),
             watchlist_mode=wl_mode,
             watchlist_playlist_name=wl_pname,
             watchlist_query_limit=wl_qlim,
@@ -219,12 +227,14 @@ class JELLYFINModule:
             history_guid_priority=list(hi_gprio),
             history_libraries=_list_str(hi.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
+            history_force_overwrite=force_overwrite,
+            history_backdate=backdate,
+            history_backdate_tolerance_s=bd_tolerance,
         )
-        self.client = JFClient(self.cfg)
+        self.client = EMBYClient(self.cfg)
 
-        # Progress helper used by features
         def _mk_prog(feature: str):
-            try: return make_snapshot_progress(ctx, dst="JELLYFIN", feature=feature)
+            try: return make_snapshot_progress(ctx, dst="EMBY", feature=feature)
             except Exception:
                 class _Noop:
                     def tick(self, *a, **k): pass
@@ -234,14 +244,13 @@ class JELLYFINModule:
 
     # Shared utils (exposed to features)
     @staticmethod
-    def normalize(obj) -> Dict[str, Any]: return jelly_normalize(obj)
+    def normalize(obj) -> Dict[str, Any]: return emby_normalize(obj)
     @staticmethod
-    def key_of(obj) -> str:    return jelly_key_of(obj)
+    def key_of(obj) -> str:    return emby_key_of(obj)
 
     def manifest(self) -> Mapping[str, Any]:
         return get_manifest()
 
-    # Feature toggles (masked by presence)
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False}
@@ -409,11 +418,11 @@ class JELLYFINModule:
 # ──────────────────────────────────────────────────────────────────────────────
 # OPS bridge (orchestrator contract)
 
-class _JellyfinOPS:
-    def name(self) -> str: return "JELLYFIN"
-    def label(self) -> str: return "Jellyfin"
+class _EmbyOPS:
+    def name(self) -> str: return "EMBY"
+    def label(self) -> str: return "Emby"
     def features(self) -> Mapping[str, bool]:
-        return JELLYFINModule.supported_features()
+        return EMBYModule.supported_features()
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
@@ -424,22 +433,18 @@ class _JellyfinOPS:
                 "upsert": True, "unrate": True, "from_date": False
             },
         }
-        
+
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        """Lightweight config gate: no network, no side effects."""
-        c  = cfg or {}
-        jf = c.get("jellyfin") or {}
-        au = (c.get("auth") or {}).get("jellyfin") or {}
-
-        server  = (jf.get("server")       or au.get("server")       or "").strip()
-        token   = (jf.get("access_token") or au.get("access_token") or "").strip()
-        user_id = (jf.get("user_id")      or au.get("user_id")      or "").strip()
-
-        # Mirror the client ctor requirements: need all three
+        c = cfg or {}
+        em = c.get("emby") or {}
+        au = (c.get("auth") or {}).get("emby") or {}
+        server  = (em.get("server")       or au.get("server")       or "").strip()
+        token   = (em.get("access_token") or au.get("access_token") or "").strip()
+        user_id = (em.get("user_id")      or au.get("user_id")      or "").strip()
         return bool(server and token and user_id)
-
-    def _adapter(self, cfg: Mapping[str, Any]) -> JELLYFINModule:
-        return JELLYFINModule(cfg)
+        
+    def _adapter(self, cfg: Mapping[str, Any]) -> EMBYModule:
+        return EMBYModule(cfg)
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
@@ -453,4 +458,4 @@ class _JellyfinOPS:
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
 
-OPS = _JellyfinOPS()
+OPS = _EmbyOPS()

@@ -34,6 +34,17 @@ def _env_logs(request: Request | None = None):
     except Exception:
         return {}, 2000
     
+# --- helpers -------------------------------------------------------------------
+def _watch_kind(w) -> str | None:
+    try:
+        name = getattr(getattr(w, "__class__", None), "__name__", "") or ""
+        n = name.lower()
+        if "emby" in n: return "emby"
+        if "plex" in n: return "plex"
+    except Exception:
+        pass
+    return None
+    
 # ---- Plex identity helpers ----
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -274,32 +285,73 @@ def debug_watch_status(request: Request):
         "has_watch": bool(w),
         "alive": bool(getattr(w, "is_alive", lambda: False)()),
         "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
+        "provider": _watch_kind(w),
     }
 
-def _ensure_watch_started(request: Request):
+def _ensure_watch_started(request: Request, provider: str | None = None):
     w = getattr(request.app.state, "watch", None)
     if w and getattr(w, "is_alive", lambda: False)():
-        return w
-    try:
-        from crosswatch import autostart_from_config  # honors scrobble.enabled/mode/watch.autostart
-        w = autostart_from_config()
-    except Exception:
-        w = None
+        if provider:
+            want = provider.lower().strip()
+            cur = _watch_kind(w)
+            if want != cur:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                request.app.state.watch = None
+            else:
+                return w
+        else:
+            return w
+
+    cfg = load_config()
+    prov = (provider
+            or (((cfg.get("scrobble") or {}).get("watch") or {}).get("provider"))
+            or "plex").lower().strip()
+
+    w = None
+    if not provider:
+        try:
+            from crosswatch import autostart_from_config
+            w = autostart_from_config()
+        except Exception:
+            w = None
+
     if not w:
         from providers.scrobble.trakt.sink import TraktSink
-        from providers.scrobble.plex.watch import make_default_watch
-        w = make_default_watch(sinks=[TraktSink()])
+        sinks = [TraktSink()]
+        make_watch = None
+
+        if prov == "emby":
+            try:
+                from providers.scrobble.emby.watch import make_default_watch as _mk
+                make_watch = _mk
+            except Exception:
+                make_watch = None
+
+        if make_watch is None:
+            from providers.scrobble.plex.watch import make_default_watch as _mk
+            make_watch = _mk
+            prov = "plex"
+
+        w = make_watch(sinks=sinks)
         if hasattr(w, "start_async"):
             w.start_async()
         else:
             threading.Thread(target=w.start, daemon=True).start()
+
     request.app.state.watch = w
     return w
 
 @router.post("/debug/watch/start")
-def debug_watch_start(request: Request):
-    w = _ensure_watch_started(request)
-    return {"ok": True, "alive": bool(getattr(w, "is_alive", lambda: False)())}
+def debug_watch_start(request: Request, provider: str | None = Query(None)):
+    w = _ensure_watch_started(request, provider)
+    return {
+        "ok": True,
+        "alive": bool(getattr(w, "is_alive", lambda: False)()),
+        "provider": _watch_kind(w),
+    }
 
 @router.post("/debug/watch/stop")
 def debug_watch_stop(request: Request):
@@ -312,7 +364,7 @@ def debug_watch_stop(request: Request):
     request.app.state.watch = None
     return {"ok": True, "alive": False}
 
-# ---- JellyfinTrakt webhook ----
+# ---- JellyfinTrakt webhook and Emby----
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request):
     from crosswatch import _UIHostLogger
@@ -409,6 +461,10 @@ async def webhook_jellyfintrakt(request: Request):
     log(f"jf-webhook: done action={res.get('action')} status={res.get('status')}", "INFO")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
+@router.post("/webhook/embytrakt")
+async def webhook_embytrakt(request: Request):
+    # Reuse the Jellyfin handler (same payload shape)
+    return await webhook_jellyfintrakt(request)
 
 # ---- PlexTrakt webhook ----
 @router.post("/webhook/plextrakt")

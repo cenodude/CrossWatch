@@ -70,11 +70,11 @@ function css(){
 
 function gridTemplateFrom(widths){ return widths.map(w=>`${w}px`).join(" "); }
 function fixHint(provider, feature){
-  const where = (p)=> p==="PLEX" ? "Plex" : (p==="JELLYFIN" ? "Jellyfin" : "your media server");
+  const where = (p)=> p==="PLEX" ? "Plex" : (p==="JELLYFIN" ? "Jellyfin" : (p==="EMBY" ? "Emby" : "your media server"));
   if (provider==="SIMKL" || provider==="TRAKT"){
-    return `Don’t edit on ${provider}. Fix the match in ${where("PLEX")} (use “Match” / correct IDs), then run a sync.`;
+    return `Don’t edit on ${provider}. Fix the match in Plex/Emby/Jellyfin (use “Match” / correct IDs), then run a sync.`;
   }
-  return `Open ${where(provider)} → item → “Match” (or edit metadata) → ensure IMDb/TMDB/TVDB IDs and year/title are correct. Then sync to SIMKL.`;
+  return `Open ${where(provider)} → item → “Match” (or edit metadata) → ensure IMDb/TMDB/TVDB IDs and year/title are correct. Then run a sync.`;
 }
 
 export default {
@@ -232,7 +232,7 @@ export default {
         <div class="h">${it.title||"Untitled"} ${it.year?`(${it.year})`:""} • <span class="mono">${provider}/${feature}</span></div>
         <div>${fixHint(provider, feature)}</div>
       </div>`;
-      const lines = sugs.slice(0,5).map(s=>suggestionCard(it,s)).join("") || `<div class="issue"><div class="h">No suggestions</div><div class="mono">Match it manually in Plex/Jellyfin and sync.</div></div>`;
+      const lines = sugs.slice(0,5).map(s=>suggestionCard(it,s)).join("") || `<div class="issue"><div class="h">No suggestions</div><div class="mono">Match it manually in Plex/Emby/Jellyfin and sync.</div></div>`;
       issues.innerHTML = guidance + lines;
       issues.scrollTop = 0;
     }

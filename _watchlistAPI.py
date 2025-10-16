@@ -113,7 +113,7 @@ def api_watchlist(
 @router.delete("/{key}")
 def api_watchlist_delete(
     key: str = FPath(...),
-    provider: Optional[str] = Query("ALL", description="PLEX|TRAKT|SIMKL|JELLYFIN|ALL"),
+    provider: Optional[str] = Query("ALL", description="PLEX|TRAKT|SIMKL|JELLYFIN|EMBY|ALL"),
 ) -> JSONResponse:
     from cw_platform.config_base import load_config
     from _syncAPI import _load_state
@@ -145,7 +145,7 @@ def _wl_norm_key(x: Any) -> str:
 def _wl_active_providers(cfg) -> list[str]:
     # Only configured providers by id
     from _watchlist import detect_available_watchlist_providers
-    VALID = {"PLEX", "SIMKL", "TRAKT", "JELLYFIN"}
+    VALID = {"PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"}
     try:
         manifest = detect_available_watchlist_providers(cfg) or []
     except Exception:
@@ -185,7 +185,7 @@ def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str,
 
         if not isinstance(keys_raw, list) or not keys_raw:
             return {"ok": False, "error": "keys must be a non-empty array"}
-        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}:
+        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"}:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
         keys = [k for k in (_wl_norm_key(k) for k in keys_raw) if k]
@@ -196,7 +196,7 @@ def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         active = _wl_active_providers(cfg)
 
         if provider == "ALL":
-            targets = [p for p in ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if p in active]
+            targets = [p for p in ["PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"] if p in active]
             if not targets:
                 return {"ok": False, "error": "no connected providers"}
         else:
@@ -262,7 +262,7 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
 
         if not isinstance(keys_raw, list) or not keys_raw:
             return {"ok": False, "error": "keys must be a non-empty array"}
-        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN"}:
+        if provider not in {"ALL", "PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"}:
             return {"ok": False, "error": f"unknown provider '{provider}'"}
 
         keys = [k for k in (_wl_norm_key(k) for k in keys_raw) if k]
@@ -273,7 +273,7 @@ def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         active = _wl_active_providers(cfg)
 
         if provider == "ALL":
-            targets = [p for p in ["PLEX", "SIMKL", "TRAKT", "JELLYFIN"] if p in active]
+            targets = [p for p in ["PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"] if p in active]
             if not targets:
                 return {"ok": False, "error": "no connected providers"}
         else:

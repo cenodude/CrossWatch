@@ -54,7 +54,7 @@ def register_wall(app: FastAPI):
         items = build_watchlist(st, tmdb_ok=bool(api_key))
 
         # Active providers from configured pairs
-        active = {"plex": False, "simkl": False, "trakt": False, "jellyfin": False}
+        active = {"plex": False, "simkl": False, "trakt": False, "jellyfin": False, "emby": False}
         try:
             pairs = (cfg.get("pairs") or cfg.get("connections") or []) or []
             for p in pairs:

@@ -540,6 +540,7 @@ class _PlexOPS:
     def label(self) -> str: return "Plex"
     def features(self) -> Mapping[str, bool]:
         return PLEXModule.supported_features()
+        
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
@@ -551,6 +552,25 @@ class _PlexOPS:
                 "upsert": True, "unrate": True, "from_date": False
             },
         }
+        
+    def is_configured(self, cfg: Mapping[str, Any]) -> bool:
+        """No I/O: consider Plex configured with either account token OR PMS url+token."""
+        c  = cfg or {}
+        pl = c.get("plex") or {}
+        au = (c.get("auth") or {}).get("plex") or {}
+
+        # Preferred: Plex account token (lets us discover PMS)
+        account_token = (pl.get("account_token") or au.get("account_token") or "").strip()
+
+        # Fallback: direct PMS credentials
+        pms          = pl.get("pms") or {}
+        pms_url      = (pms.get("url") or "").strip()
+        pms_token    = (pms.get("token") or "").strip()
+        # Some configs use x_plex_token naming—be tolerant:
+        if not pms_token:
+            pms_token = (pms.get("x_plex_token") or "").strip()
+
+        return bool(account_token or (pms_url and pms_token))
 
     def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
         return PLEXModule(cfg)

@@ -14,7 +14,7 @@ STATUS_TTL = 3600
 PROBE_TTL  = 30
 
 # env-driven defaults
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.2.5")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.2.6")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 GITHUB_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 

@@ -1,4 +1,4 @@
-# providers/webhooks/jellyfintrakt.py
+# providers/webhooks/jellyfintrakt.py - will also handle Emby
 from __future__ import annotations
 import json, time, requests
 from typing import Any, Dict, Mapping, Optional, Callable
@@ -182,7 +182,7 @@ def _build_bodies(media_type: str, md: Dict[str, Any], ids_pref: Dict[str, Any],
     show_title = (_grab(md, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or _grab(root, ["SeriesName", "SeriesTitle"])) or None
     show_year = md.get("ProductionYear") or root.get("Year") or md.get("year")
     out: list[Dict[str, Any]] = []
-    epi_ids = _ids_from_providerids(md, root)  # best effort: some servers put episode ids here too
+    epi_ids = _ids_from_providerids(md, root)
     if epi_ids and any(k in epi_ids for k in ("imdb", "tmdb", "tvdb")):
         out.append({"progress": p, "episode": {"ids": epi_ids}})
     ser_ids = _ids_from_providerids({"ProviderIds": md.get("SeriesProviderIds") or {}}, root) or _ids_from_providerids(md, root)

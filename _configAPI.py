@@ -68,6 +68,8 @@ def api_config_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         ("trakt", "client_secret"), ("trakt", "access_token"), ("trakt", "refresh_token"),
         ("tmdb", "api_key"),
         ("jellyfin", "access_token"),
+        ("emby", "api_key"),
+        ("emby", "access_token"),
     ]
 
     for path in SECRET_PATHS:
@@ -116,7 +118,7 @@ def api_config_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     # bust probe caches (best-effort)
     try:
         if isinstance(PROBES_CACHE, dict):
-            PROBES_CACHE.update({k: (0.0, False) for k in ("plex","simkl","trakt","jellyfin")})
+            PROBES_CACHE.update({k: (0.0, False) for k in ("plex","simkl","trakt","jellyfin","emby")})
         if isinstance(PROBES_STATUS_CACHE, dict):
             PROBES_STATUS_CACHE["ts"] = 0.0; PROBES_STATUS_CACHE["data"] = None
     except Exception:

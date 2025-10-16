@@ -46,14 +46,16 @@ code {
 /* Brand RGB channel tokens (for translucent borders/shadows) */
 :root {
   --plex-rgb: 229,160,13;
-  --simkl-rgb: 0,194,255
+  --simkl-rgb: 0,194,255;
+  --emby-rgb: 76, 175, 80;
 }
 /* Brand solid colors (hex) and accents */
 :root {
   --plex: #e5a00d;
   --simkl: #00b7eb;
+  --emby: #4CAF50;
   --tmdb: #01d277;
-  --trakt: #ed1c24
+  --trakt: #ed1c24;
 }
 /* Switch palette (initial variant) */
 :root {
@@ -450,7 +452,7 @@ header {
 .edge.hide {
   opacity: 0
 }
-/* brand vars (ensure these exist somewhere global) */
+/* brand vars */
 :root{
   --jellyfin: #AA5CC3;
   --jellyfin-rgb: 170, 92, 195;
@@ -459,6 +461,7 @@ header {
 .prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
 .prov-card.brand-simkl  { --brand-color: var(--simkl);  --brand-rgb: var(--simkl-rgb); }
 .prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
+.prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
 .prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
 
 /* shared styling */
@@ -512,6 +515,11 @@ header {
   color: var(--jellyfin);
   background: rgba(var(--jellyfin-rgb), .12);
   border-color: rgba(var(--jellyfin-rgb), .35);
+}
+.brand-ico.emby{
+  color: var(--emby);
+  background: rgba(var(--emby-rgb), .12);
+  border-color: rgba(var(--emby-rgb), .35);
 }
 
 /* layout */
@@ -1593,6 +1601,10 @@ select {
   border-left: 3px solid var(--jellyfin);
   padding-left: 10px;
 }
+#sec-emby > .head {
+  border-left: 3px solid var(--emby);
+  padding-left: 10px
+}
 .prov-card[data-prov="Plex"] .prov-head::after {
   content: " ";
   position: absolute;
@@ -1609,7 +1621,6 @@ select {
   background-size: contain !important;
   border-radius: 8px;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
-  outline: 2px solid magenta !important
 }
 .prov-card[data-prov="SIMKL"] .prov-head::after {
   content: " ";
@@ -1627,7 +1638,6 @@ select {
   background-size: contain !important;
   border-radius: 8px;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
-  outline: 2px solid magenta !important
 }
 .prov-card[data-prov="Simkl"] .prov-head::after {
   content: " ";
@@ -1645,7 +1655,22 @@ select {
   background-size: contain !important;
   border-radius: 8px;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
-  outline: 2px solid magenta !important
+}
+
+.prov-card[data-prov="Emby"] .prov-head::after,
+.prov-card[data-prov="EMBY"] .prov-head::after{
+  content: " ";
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 28px; height: 28px;
+  display: block; z-index: 50;
+  background-color: rgba(0,0,0,.55) !important;
+  background-image: url("/assets/img/EMBY.svg?v=1") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  border-radius: 8px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
 }
 #providers_list .prov-brand {
   outline: none !important;
@@ -1990,6 +2015,18 @@ select {
 .tile.simkl .n {
   color: var(--fg, #fff);
   text-shadow: none
+}
+.tile.emby{
+  background: transparent;
+  border: 1px solid rgba(var(--emby-rgb), .35);
+  box-shadow: 0 0 6px rgba(var(--emby-rgb), .18);
+}
+.tile.emby .k,
+.tile.emby .n{ color: var(--fg, #fff); text-shadow: none; }
+#tile-emby{
+  margin-top: 90px;
+  position: relative;
+  z-index: 1;
 }
 
 /* ==================================================================
@@ -2360,6 +2397,9 @@ select {
 }
 .cw-badge--simkl::before {
   box-shadow: inset 0 0 0 1px rgba(70, 195, 255, .45)
+}
+.cw-badge--emby::before{
+  box-shadow: inset 0 0 0 1px rgba(var(--emby-rgb), .45);
 }
 .auth-card {
   border: 1px solid var(--line, #2a2a2a);

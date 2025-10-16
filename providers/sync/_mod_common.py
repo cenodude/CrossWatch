@@ -16,6 +16,7 @@ __all__ = [
     "label_trakt",
     "label_plex",
     "label_jellyfin",
+    "label_emby",
 ]
 
 from typing import Any, Callable, Mapping, Optional, Tuple
@@ -131,6 +132,49 @@ def default_feature_label(provider: str, method: str, url: str, kw: Mapping[str,
     segs = [s for s in (p.path or "/").split("/") if s]
     head = "/".join(segs[:3]) or "unknown"
     return head.lower()
+
+def label_emby(method: str, url: str, kw: Mapping[str, Any]) -> str:
+    p = urlparse(url)
+    segs = [s for s in (p.path or "/").split("/") if s]
+    m = method.upper()
+
+    # System
+    if segs[:2] == ["System", "Ping"]:
+        return "system:ping"
+    if segs[:2] == ["System", "Info"]:
+        return "system:info"
+
+    # Users-scoped
+    if len(segs) >= 2 and segs[0] == "Users":
+        # /Users/{UserId}/Views
+        if len(segs) >= 3 and segs[2] == "Views":
+            return "library:views"
+        # /Users/{UserId}/Items
+        if len(segs) >= 3 and segs[2] == "Items":
+            # /Users/{UserId}/Items/{ItemId}/UserData
+            if len(segs) >= 5 and segs[4] == "UserData":
+                return "userdata"
+            return "library:items"
+        # Favorites and Played
+        if "FavoriteItems" in segs:
+            return "ratings:favorite"
+        if "PlayedItems" in segs:
+            return "history:add" if m == "POST" else ("history:remove" if m == "DELETE" else "history")
+
+    # Playlists
+    if segs[:1] == ["Playlists"]:
+        if m == "GET": return "playlists:index"
+        if m == "POST": return "playlists:write"
+        if m == "DELETE": return "playlists:delete"
+        return "playlists"
+
+    # Collections (BoxSets)
+    if segs[:1] == ["Collections"]:
+        if m == "POST": return "collections:write"
+        if m == "DELETE": return "collections:delete"
+        return "collections"
+
+    return default_feature_label("EMBY", method, url, kw)
 
 def label_simkl(method: str, url: str, kw: Mapping[str, Any]) -> str:
     p = urlparse(url)

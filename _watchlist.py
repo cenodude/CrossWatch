@@ -1,10 +1,12 @@
 # _watchlist.py
-# CrossWatch: unified watchlist for Plex, Trakt, Simkl, Jellyfin v0.2.0
+# CrossWatch: unified watchlist for Plex, Trakt, Simkl, Jellyfin, Emby v0.2.1
 from __future__ import annotations
 
 # --- stdlib ---
 from typing import Any, Dict, Set, List
 from pathlib import Path
+from datetime import datetime
+from urllib.parse import urlencode
 import json
 import requests
 
@@ -94,7 +96,7 @@ def _del_key_from_provider_items(state: Dict[str, Any], provider: str, key: str)
     return changed
 
 def _find_item_in_state(state: Dict[str, Any], key: str) -> Dict[str, Any]:
-    for prov in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN"):
+    for prov in ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"):
         it = _get_provider_items(state, prov).get(key)
         if it:
             return dict(it)
@@ -110,7 +112,7 @@ def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
-        if k in {"imdb","tmdb","tvdb","trakt","slug","jellyfin"} and v:
+        if k in {"imdb","tmdb","tvdb","trakt","slug","jellyfin","emby"} and v:
             ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
@@ -118,7 +120,7 @@ def _ids_from_key_or_item(key: str, item: Dict[str, Any]) -> Dict[str, Any]:
     if imdb and imdb.isdigit():
         ids["imdb"] = f"tt{imdb}"
     out: Dict[str, str] = {}
-    for k in ("simkl","imdb","tmdb","tvdb","trakt","slug","jellyfin"):
+    for k in ("simkl","imdb","tmdb","tvdb","trakt","slug","jellyfin","emby"):
         v = ids.get(k)
         if v is None: 
             continue
@@ -209,20 +211,21 @@ def _extract_plex_identifiers(item: dict) -> tuple[str|None,str|None]:
     return (str(guid) if guid else None, str(rating) if rating else None)
 
 # ---------------------------------------------------------------------
-# Jellyfin helpers
+# Jellyfin / Emby helpers (MediaBrowser API)
 # ---------------------------------------------------------------------
 def _jf_base(cfg: dict[str,Any]) -> str:
     base = (cfg.get("server") or "").strip()
     if not base:
-        raise RuntimeError("Jellyfin: missing 'server' in config")
+        raise RuntimeError("Jellyfin/Emby: missing 'server' in config")
     return base if base.endswith("/") else base+"/"
 
 def _jf_headers(cfg: dict[str,Any]) -> dict[str,str]:
-    token = (cfg.get("access_token") or cfg.get("api_key") or "").strip()
+    token = (cfg.get("access_token") or cfg.get("api_key") or cfg.get("token") or "").strip()
     dev = (cfg.get("device_id") or "CrossWatch").strip() or "CrossWatch"
     h = {
         "Accept":"application/json",
         "Content-Type":"application/json",
+        # Jellyfin accepts the Emby-style auth header too
         "X-Emby-Authorization":f'MediaBrowser Client="CrossWatch", Device="WebUI", DeviceId="{dev}", Version="1.0.0"',
     }
     if token: h["X-Emby-Token"] = token
@@ -231,15 +234,19 @@ def _jf_headers(cfg: dict[str,Any]) -> dict[str,str]:
 def _jf_require_user(cfg: dict[str,Any]) -> str:
     uid = (cfg.get("user_id") or "").strip()
     if not uid:
-        raise RuntimeError("Jellyfin: missing 'user_id' in config")
+        raise RuntimeError("Jellyfin/Emby: missing 'user_id' in config")
     return uid
 
 def _extract_jf_id(item: dict, key: str) -> str | None:
+    # Accept both Jellyfin and Emby stored IDs
     ids = (item or {}).get("ids") or {}
-    cand = ids.get("jellyfin") or item.get("jellyfinId") or item.get("jf_id") or item.get("Id") or item.get("id")
+    cand = (ids.get("jellyfin") or ids.get("emby") or
+            item.get("jellyfinId") or item.get("embyId") or
+            item.get("jf_id") or item.get("Id") or item.get("id"))
     if cand: return str(cand)
     pref, _, val = (key or "").partition(":")
-    return val.strip() if pref.lower().strip()=="jellyfin" and val.strip() else None
+    p = pref.lower().strip()
+    return val.strip() if p in {"jellyfin","emby"} and val.strip() else None
 
 def _jf_get(base: str, path: str, headers: dict[str,str], params: dict[str,Any]|None=None) -> dict[str,Any]:
     url = base + path.lstrip("/")
@@ -247,7 +254,7 @@ def _jf_get(base: str, path: str, headers: dict[str,str], params: dict[str,Any]|
         url += ("&" if "?" in url else "?") + urlencode({k:v for k,v in params.items() if v is not None})
     r = requests.get(url, headers=headers, timeout=45)
     if not r.ok:
-        raise RuntimeError(f"Jellyfin GET {path} -> {r.status_code}: {getattr(r,'text','')}")
+        raise RuntimeError(f"Jellyfin/Emby GET {path} -> {r.status_code}: {getattr(r,'text','')}")
     try: j = r.json()
     except Exception: j = {}
     return j if isinstance(j,dict) else {}
@@ -259,7 +266,7 @@ def _jf_delete(base: str, path: str, headers: dict[str,str], params: dict[str,An
     r = requests.delete(url, headers=headers, timeout=45)
     st = int(getattr(r,"status_code",0) or 0)
     if st not in (200,202,204,404) and not r.ok:
-        raise RuntimeError(f"Jellyfin DELETE {path} -> {st}: {getattr(r,'text','')}")
+        raise RuntimeError(f"Jellyfin/Emby DELETE {path} -> {st}: {getattr(r,'text','')}")
 
 def _jf_provider_tokens(ids: dict[str,Any]) -> list[str]:
     out = []
@@ -371,15 +378,15 @@ def _get_items(state: dict[str,Any], prov: str) -> dict[str,Any]:
     return _get_provider_items(state, prov)
 
 def build_watchlist(state: dict[str,Any], tmdb_ok: bool) -> list[dict[str,Any]]:
-    plex, simkl, trakt, jelly = (_get_items(state,p) for p in ("PLEX","SIMKL","TRAKT","JELLYFIN"))
+    plex, simkl, trakt, jelly, emby = (_get_items(state,p) for p in ("PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"))
     hidden, out = _load_hide_set(), []
-    for key in set(plex)|set(simkl)|set(trakt)|set(jelly):
+    for key in set(plex)|set(simkl)|set(trakt)|set(jelly)|set(emby):
         if key in hidden: 
             continue
-        p,s,t,j = plex.get(key) or {}, simkl.get(key) or {}, trakt.get(key) or {}, jelly.get(key) or {}
-        candidates = [("plex",p),("simkl",s),("trakt",t),("jellyfin",j)]
+        p,s,t,j,e = plex.get(key) or {}, simkl.get(key) or {}, trakt.get(key) or {}, jelly.get(key) or {}, emby.get(key) or {}
+        candidates = [("plex",p),("simkl",s),("trakt",t),("jellyfin",j),("emby",e)]
         cand_map   = dict(candidates)
-        info = max(candidates, key=lambda kv:_rich_ids_score(kv[1]))[1] or (p or s or t or j)
+        info = max(candidates, key=lambda kv:_rich_ids_score(kv[1]))[1] or (p or s or t or j or e)
         if not info:
             continue
 
@@ -406,7 +413,9 @@ def build_watchlist(state: dict[str,Any], tmdb_ok: bool) -> list[dict[str,Any]]:
         else:
             added_src, added_epoch = (sources[0], 0) if sources else ("", 0)
 
-        status = {"plex":"plex_only","simkl":"simkl_only","trakt":"trakt_only","jellyfin":"jellyfin_only"}[sources[0]] if len(sources)==1 else "both"
+        status = {
+            "plex":"plex_only","simkl":"simkl_only","trakt":"trakt_only","jellyfin":"jellyfin_only","emby":"emby_only"
+        }[sources[0]] if len(sources)==1 else "both"
 
         out.append({
             "key": key,
@@ -478,7 +487,7 @@ def _delete_on_plex_single(key: str, state: dict[str,Any], cfg: dict[str,Any]) -
     account = MyPlexAccount(token=token)
 
     item = (_get_items(state,"PLEX").get(key) or _get_items(state,"SIMKL").get(key)
-            or _get_items(state,"TRAKT").get(key) or _get_items(state,"JELLYFIN").get(key) or {})
+            or _get_items(state,"TRAKT").get(key) or _get_items(state,"JELLYFIN").get(key) or _get_items(state,"EMBY").get(key) or {})
 
     guid, rk = _extract_plex_identifiers(item)
     variants = _guid_variants_from_key_or_item(key, item)
@@ -623,6 +632,13 @@ def _delete_on_jellyfin_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) 
         raise RuntimeError(f"Jellyfin: unknown mode '{mode}'")
 
 # ---------------------------------------------------------------------
+# EMBY (batch) — API is compatible with Jellyfin’s MediaBrowser endpoints
+# ---------------------------------------------------------------------
+def _delete_on_emby_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) -> None:
+    # Reuse the MediaBrowser helpers; headers + routes are the same.
+    _delete_on_jellyfin_batch(items, cfg)
+
+# ---------------------------------------------------------------------
 # Public facade
 # ---------------------------------------------------------------------
 def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg: dict[str,Any]) -> dict[str,Any]:
@@ -648,6 +664,8 @@ def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg
             _delete_on_plex_single(k, state, cfg)
     elif prov == "JELLYFIN":
         _delete_on_jellyfin_batch(_build_items("JELLYFIN"), cfg.get("jellyfin", {}) or {})
+    elif prov == "EMBY":
+        _delete_on_emby_batch(_build_items("EMBY"), cfg.get("emby", {}) or {})
     else:
         raise RuntimeError(f"unknown provider: {prov}")
 
@@ -666,7 +684,7 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
         try: log and log(level,msg)
         except: pass
 
-    def _present(): return any(_get_provider_items(state,p).get(key) for p in ("PLEX","SIMKL","TRAKT","JELLYFIN"))
+    def _present(): return any(_get_provider_items(state,p).get(key) for p in ("PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"))
 
     def _delete_and_drop(p, fn):
         it=_find_item_in_state(state,key) or {}
@@ -679,12 +697,16 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
         elif prov=="SIMKL": _delete_and_drop("SIMKL",_delete_on_simkl_batch)
         elif prov=="TRAKT": _delete_and_drop("TRAKT",_delete_on_trakt_batch)
         elif prov=="JELLYFIN": _delete_and_drop("JELLYFIN",_delete_on_jellyfin_batch)
+        elif prov=="EMBY": _delete_and_drop("EMBY",_delete_on_emby_batch)
         elif prov=="ALL":
             details={}
-            for p,fn in {"PLEX":lambda *_:_delete_on_plex_single(key,state,cfg),
-                         "SIMKL":lambda *_:_delete_and_drop("SIMKL",_delete_on_simkl_batch),
-                         "TRAKT":lambda *_:_delete_and_drop("TRAKT",_delete_on_trakt_batch),
-                         "JELLYFIN":lambda *_:_delete_and_drop("JELLYFIN",_delete_on_jellyfin_batch)}.items():
+            for p,fn in {
+                "PLEX":lambda *_:_delete_on_plex_single(key,state,cfg),
+                "SIMKL":lambda *_:_delete_and_drop("SIMKL",_delete_on_simkl_batch),
+                "TRAKT":lambda *_:_delete_and_drop("TRAKT",_delete_on_trakt_batch),
+                "JELLYFIN":lambda *_:_delete_and_drop("JELLYFIN",_delete_on_jellyfin_batch),
+                "EMBY":lambda *_:_delete_and_drop("EMBY",_delete_on_emby_batch),
+            }.items():
                 try: fn(); details[p]={"ok":True}
                 except Exception as e: _log("TRBL",f"[WATCHLIST] {p} delete failed: {e}"); details[p]={"ok":False,"error":str(e)}
             if not _present(): hide=_load_hide_set(); hide.add(key); _save_hide_set(hide)
@@ -702,7 +724,6 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
 # Provider detection
 # ---------------------------------------------------------------------
 def detect_available_watchlist_providers(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Compact + fast provider manifest."""
     def _configured(pid: str) -> bool:
         p=pid.upper()
         if p=="PLEX":     return bool((cfg.get("plex") or {}).get("account_token"))
@@ -713,9 +734,12 @@ def detect_available_watchlist_providers(cfg: Dict[str, Any]) -> List[Dict[str, 
         if p=="JELLYFIN":
             jf=(cfg.get("jellyfin") or {})
             return bool((jf.get("server") or "").strip() and (jf.get("access_token") or jf.get("api_key") or jf.get("token") or "").strip() and jf.get("user_id"))
+        if p=="EMBY":
+            eb=(cfg.get("emby") or {})
+            return bool((eb.get("server") or "").strip() and (eb.get("access_token") or eb.get("api_key") or eb.get("token") or "").strip() and eb.get("user_id"))
         return False
 
-    defs=[("PLEX","Plex"),("SIMKL","SIMKL"),("TRAKT","Trakt"),("JELLYFIN","Jellyfin")]
+    defs=[("PLEX","Plex"),("SIMKL","SIMKL"),("TRAKT","Trakt"),("JELLYFIN","Jellyfin"),("EMBY","Emby")]
     counts={k:0 for k,_ in defs}
 
     try:

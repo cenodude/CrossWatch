@@ -373,6 +373,23 @@ class _SIMKLOPS:
             "index_semantics": "delta",
             "observed_deletes": False,
         }
+        
+    def is_configured(self, cfg: Mapping[str, Any]) -> bool:
+        """No I/O; SIMKL is configured iff we have an access_token."""
+        c  = cfg or {}
+        sm = c.get("simkl") or {}
+        au = (c.get("auth") or {}).get("simkl") or {}
+
+        token = (
+            sm.get("access_token")
+            or sm.get("token")
+            or (sm.get("oauth") or {}).get("access_token")
+            or au.get("access_token")
+            or au.get("token")
+            or (au.get("oauth") or {}).get("access_token")
+            or ""
+        )
+        return bool(str(token).strip())
 
     def _adapter(self, cfg: Mapping[str, Any]) -> SIMKLModule:
         return SIMKLModule(cfg)

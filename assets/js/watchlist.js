@@ -152,7 +152,7 @@
             <select id="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option></select>
 
             <label>Provider</label>
-            <select id="wl-provider" class="wl-input"><option value="">All</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option></select>
+            <select id="wl-provider" class="wl-input"><option value="">All</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option><option value="EMBY">EMBY</option></select>
 
             <label id="wl-size-label">Size</label>
             <input id="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0">
@@ -181,7 +181,7 @@
             <label>Delete</label>
             <div class="wl-actions" style="display:flex;gap:10px">
               <select id="wl-delete-provider" class="wl-input" style="flex:1">
-                <option value="ALL">ALL (default)</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option>
+                <option value="ALL">ALL (default)</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option><option value="EMBY">EMBY</option>
               </select>
               <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
             </div>
@@ -468,7 +468,7 @@
   };
 
   /* ========= providers & metrics ========= */
-  const SRC_LOGOS = { PLEX:"/assets/img/PLEX.svg", SIMKL:"/assets/img/SIMKL.svg", TRAKT:"/assets/img/TRAKT.svg", JELLYFIN:"/assets/img/JELLYFIN.svg" };
+  const SRC_LOGOS = { PLEX:"/assets/img/PLEX.svg", SIMKL:"/assets/img/SIMKL.svg", TRAKT:"/assets/img/TRAKT.svg", JELLYFIN:"/assets/img/JELLYFIN.svg", EMBY:"/assets/img/EMBY.svg" };
   const providerChip = (name, ok) => {
     const src = SRC_LOGOS[name], icon = ok ? "check_circle" : "cancel", cls = ok ? "ok" : "miss";
     return `<span class="wl-mat ${cls}" title="${name}${ok ? " present" : " missing"}">${src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`}<span class="material-symbol">${icon}</span></span>`;
@@ -478,8 +478,8 @@
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
 
   function updateMetrics() {
-    const ICON = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added" };
-    const ORDER = ["PLEX","SIMKL","TRAKT","JELLYFIN"];
+    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add" };
+    const ORDER = ["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"];
     const counts = ORDER.reduce((acc, p) => (acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0), acc), {});
     metricsEl.innerHTML = ORDER.filter(p => activeProviders.has(p)).map(p =>
       `<div class="metric" data-w="${p}"><span class="material-symbol">${ICON[p]}</span><div><div class="m-val">${counts[p]}</div><div class="m-lbl">${p}</div></div></div>`
@@ -747,8 +747,8 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
       const t = ((it.type || "").toLowerCase() === "show") ? "tv" : (it.type || "").toLowerCase();
       const typeLabel = t === "movie" ? "Movie" : "Show";
       const thumb = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
-      const p = providersOf(it), have = { PLEX:p.includes("PLEX"), SIMKL:p.includes("SIMKL"), TRAKT:p.includes("TRAKT"), JELLYFIN:p.includes("JELLYFIN") };
-      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("JELLYFIN",have.JELLYFIN)}</div>`;
+      const p = providersOf(it), have = { PLEX:p.includes("PLEX"), SIMKL:p.includes("SIMKL"), TRAKT:p.includes("TRAKT"), JELLYFIN:p.includes("JELLYFIN"), EMBY:p.includes("EMBY") };
+      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}</div>`;
       const rel = fmtDateSmart(getReleaseIso(it), toLocale());
       const genresList = extractGenres(it).slice(0,3).join(", ");
       const d = getDerived(it);
@@ -797,7 +797,7 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
   function rebuildDeleteProviderOptions(){
     const byKey = mapProvidersByKey(items), union = new Set(), prev = delProv.value;
     for (const k of selected) byKey.get(k)?.forEach?.(p => union.add(p));
-    delProv.innerHTML = `<option value="ALL">ALL (default)</option>${["PLEX","SIMKL","TRAKT","JELLYFIN"].filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
+    delProv.innerHTML = `<option value="ALL">ALL (default)</option>${["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"].filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
   }
 
@@ -932,6 +932,8 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     if (cfg?.simkl?.access_token) active.add("SIMKL");
     if (cfg?.trakt?.access_token) active.add("TRAKT");
     if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
+    if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY"); 
+    
     activeProviders = active;
     providerActive = (p, have) => (activeProviders.has(p) ? providerChip(p, have) : "");
 

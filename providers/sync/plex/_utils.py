@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, re, json, xml.etree.ElementTree as ET, requests
+import os, re, json, time, xml.etree.ElementTree as ET, requests
 from requests.exceptions import SSLError, ConnectionError
 from typing import Any, Dict, Mapping, Optional, Tuple, List
 
@@ -9,11 +9,33 @@ def _log(msg: str) -> None:
     if _boolish(os.environ.get("CW_DEBUG"), False) or _boolish(os.environ.get("CW_PLEX_DEBUG"), False):
         print(f"[PLEX:utils] {msg}")
 
-# config io
+_LIB_TTL_S   = int(os.environ.get("CW_PLEX_LIB_TTL_S",   "600"))
+_ACCT_TTL_S  = int(os.environ.get("CW_PLEX_ACCT_TTL_S",  "900"))
+_MIN_HTTP_S  = float(os.environ.get("CW_PLEX_MIN_HTTP_INTERVAL_S", "5"))
+
+_CACHE = {
+    "libs": {"key": None, "ts": 0.0, "data": []},
+    "owner": {"key": None, "ts": 0.0, "data": (None, None)},
+    "aid_by_user": {},
+}
+_LAST_HTTP: Dict[str, float] = {}
+
+def _cache_hit(ts: float, ttl: int) -> bool:
+    return (time.time() - float(ts or 0.0)) < max(1, int(ttl))
+
+def _throttle(path: str) -> bool:
+    now = time.time()
+    last = float(_LAST_HTTP.get(path) or 0.0)
+    if (now - last) < max(0.0, _MIN_HTTP_S):
+        return True
+    _LAST_HTTP[path] = now
+    return False
+
 def _read_json(p: str) -> Dict[str, Any]:
     try:
         with open(p, "r", encoding="utf-8") as f: return json.load(f) or {}
     except Exception: return {}
+
 def _write_json_atomic(p: str, data: Mapping[str, Any]) -> None:
     try:
         os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
@@ -21,19 +43,23 @@ def _write_json_atomic(p: str, data: Mapping[str, Any]) -> None:
         with open(t, "w", encoding="utf-8") as w: json.dump(data, w, ensure_ascii=False, indent=2)
         os.replace(t, p)
     except Exception as e: _log(f"config write failed: {e}")
+
 def _is_empty(v: Any) -> bool: return v is None or (isinstance(v, str) and v.strip() == "")
+
 def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]: return _read_json(path)
+
 def save_config(cfg: Mapping[str, Any], path: str = CONFIG_PATH) -> None: _write_json_atomic(path, dict(cfg))
+
 def _plex(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "plex" not in cfg or not isinstance(cfg["plex"], dict): cfg["plex"] = {}
     return cfg["plex"]
 
-# dict ordering
 def _insert_key_first_inplace(d: Dict[str, Any], k: str, v: Any) -> bool:
     if k in d:
         if d[k] != v: d[k] = v; return True
         return False
     nd = {k: v}; nd.update(d); d.clear(); d.update(nd); return True
+
 def _insert_key_after_inplace(d: Dict[str, Any], after: str, k: str, v: Any) -> bool:
     if k in d:
         if d[k] != v: d[k] = v; return True
@@ -45,7 +71,6 @@ def _insert_key_after_inplace(d: Dict[str, Any], after: str, k: str, v: Any) -> 
     if not ins: nd[k] = v
     d.clear(); d.update(nd); return True
 
-# headers + verify
 def _plex_headers(token: str) -> Dict[str, str]:
     cid = os.environ.get("CW_PLEX_CID") or os.environ.get("PLEX_CLIENT_IDENTIFIER") or "CrossWatch"
     return {"X-Plex-Product":"CrossWatch","X-Plex-Platform":"Web","X-Plex-Version":"1.0","X-Plex-Client-Identifier":cid,"X-Plex-Token":token or "","Accept":"application/xml, application/json;q=0.9,*/*;q=0.5","User-Agent":"CrossWatch/1.0"}
@@ -105,7 +130,6 @@ def _try_get(s: requests.Session, base: str, path: str, timeout: float) -> Optio
         _log(f"request error: {e}")
     return None
 
-# discovery
 def discover_server_url_from_server(srv) -> Optional[str]:
     try:
         base = getattr(srv, "_baseurl", None) or getattr(srv, "baseurl", None)
@@ -136,13 +160,12 @@ def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> Optiona
     except Exception: pass
     return None
 
-# accounts → ensure PMS-local ID (1..n), never plex.tv id
 def _pms_id_from_attr_map(m: Mapping[str, Any]) -> Optional[int]:
     try: return int(m.get("id") or m.get("ID"))
     except Exception: return None
 
 def _looks_cloudish(v: Optional[int]) -> bool:
-    try: return int(v or -1) >= 100000  # plex.tv ids are large; PMS locals are tiny
+    try: return int(v or -1) >= 100000
     except Exception: return True
 
 def _parse_accounts_all(xml_text: str) -> List[Tuple[int, str]]:
@@ -172,25 +195,41 @@ def _parse_accounts_xml_for_username(xml_text: str, username: str) -> Optional[i
     return None
 
 def fetch_accounts_owner(base_url: str, token: str, verify: bool, timeout: float = 10.0) -> Tuple[Optional[str], Optional[int]]:
+    key = (base_url.rstrip("/"), token or "", bool(verify))
+    ent = _CACHE["owner"]
+    if ent["key"] == key and _cache_hit(ent["ts"], _ACCT_TTL_S):
+        return ent["data"]
+    if _throttle("/accounts"):
+        return ent["data"]
+    out: Tuple[Optional[str], Optional[int]] = (None, None)
     try:
         s = _build_session(token, verify)
         r = _try_get(s, base_url, "/accounts", timeout)
         if r and r.ok and (r.text or "").lstrip().startswith("<"):
-            return _pick_owner_id(_parse_accounts_all(r.text))
+            out = _pick_owner_id(_parse_accounts_all(r.text))
     except Exception as e: _log(f"owner fetch failed: {e}")
-    return (None, None)
+    _CACHE["owner"] = {"key": key, "ts": time.time(), "data": out}
+    return out
 
 def fetch_account_id_for_username(base_url: str, token: str, username: str, verify: bool, timeout: float = 10.0) -> Optional[int]:
+    uname = (username or "").strip()
+    if not uname: return None
+    key = (base_url.rstrip("/"), token or "", uname.lower(), bool(verify))
+    ent = _CACHE["aid_by_user"].get(key)
+    if ent and _cache_hit(ent.get("ts", 0.0), _ACCT_TTL_S):
+        return ent.get("aid")
+    if _throttle("/accounts"):
+        return ent.get("aid") if ent else None
+    aid: Optional[int] = None
     try:
         s = _build_session(token, verify)
         r = _try_get(s, base_url, "/accounts", timeout)
         if r and r.ok and (r.text or "").lstrip().startswith("<"):
-            aid = _parse_accounts_xml_for_username(r.text, username)
-            return aid if aid is not None else None
+            aid = _parse_accounts_xml_for_username(r.text, uname)
     except Exception as e: _log(f"account-id fetch failed: {e}")
-    return None
+    _CACHE["aid_by_user"][key] = {"ts": time.time(), "aid": aid}
+    return aid
 
-# inspect & persist
 def inspect_and_persist(cfg_path: str = CONFIG_PATH) -> Dict[str, Any]:
     cfg = load_config(cfg_path); plex = _plex(cfg)
     token = (plex.get("account_token") or "").strip()
@@ -240,8 +279,13 @@ def inspect_and_persist(cfg_path: str = CONFIG_PATH) -> Dict[str, Any]:
     save_config(cfg, cfg_path)
     return {"server_url": base, "username": username, "account_id": account_id}
 
-# libraries
 def fetch_libraries(base_url: str, token: str, verify: bool, timeout: float = 10.0) -> List[Dict[str, Any]]:
+    key = (base_url.rstrip("/"), token or "", bool(verify))
+    ent = _CACHE["libs"]
+    if ent["key"] == key and _cache_hit(ent["ts"], _LIB_TTL_S):
+        return list(ent["data"])
+    if _throttle("/library/sections"):
+        return list(ent["data"])
     libs: List[Dict[str, Any]] = []
     try:
         s = _build_session(token, verify)
@@ -249,9 +293,11 @@ def fetch_libraries(base_url: str, token: str, verify: bool, timeout: float = 10
         if r and r.ok and (r.text or "").lstrip().startswith("<"):
             root = ET.fromstring(r.text)
             for d in root.findall(".//Directory"):
-                key = d.attrib.get("key"); title = d.attrib.get("title"); typ = d.attrib.get("type")
-                if key and title: libs.append({"key": str(key), "title": title, "type": (typ or "lib")})
+                keyv = d.attrib.get("key"); title = d.attrib.get("title"); typ = d.attrib.get("type")
+                if keyv and title:
+                    libs.append({"key": str(keyv), "title": title, "type": (typ or "lib")})
     except Exception as e: _log(f"sections fetch failed: {e}")
+    _CACHE["libs"] = {"key": key, "ts": time.time(), "data": list(libs)}
     return libs
 
 def fetch_libraries_from_cfg(cfg_path: str = CONFIG_PATH) -> List[Dict[str, Any]]:
@@ -270,7 +316,6 @@ def fetch_libraries_from_cfg(cfg_path: str = CONFIG_PATH) -> List[Dict[str, Any]
         libs = fetch_libraries(base, token, verify=False)
     return libs
 
-# plexapi helpers (prefer local ids)
 def resolve_owner_account_id(srv, token: str) -> Optional[int]:
     try:
         accts = (srv.systemAccounts() or [])
@@ -333,13 +378,35 @@ def persist_user_scope_if_empty(path: str, username: Optional[str], account_id: 
     if ch: save_config(cfg, path); _log(f"user scope username={plex.get('username')} account_id={plex.get('account_id')}")
 
 def ensure_whitelist_defaults(cfg_path: str = CONFIG_PATH) -> bool:
-    cfg = load_config(cfg_path); plex = _plex(cfg); ch = False
-    if "history" not in plex or not isinstance(plex["history"], dict): plex["history"] = {}; ch = True
-    if "ratings" not in plex or not isinstance(plex["ratings"], dict): plex["ratings"] = {}; ch = True
-    if "libraries" not in plex["history"] or not isinstance(plex["history"].get("libraries"), list): plex["history"]["libraries"] = []; ch = True
-    if "libraries" not in plex["ratings"] or not isinstance(plex["ratings"].get("libraries"), list): plex["ratings"]["libraries"] = []; ch = True
-    if ch: save_config(cfg, cfg_path); _log("whitelist defaults ensured")
-    return ch
+    cfg = load_config(cfg_path)
+    plex = cfg.setdefault("plex", {})
+    changed = False
+
+    if not isinstance(plex.get("history"), dict):
+        plex["history"] = {}
+        changed = True
+    if not isinstance(plex.get("ratings"), dict):
+        plex["ratings"] = {}
+        changed = True
+
+    if not isinstance(plex["history"].get("libraries"), list):
+        plex["history"]["libraries"] = []
+        changed = True
+    if not isinstance(plex["ratings"].get("libraries"), list):
+        plex["ratings"]["libraries"] = []
+        changed = True
+
+    for sec in ("history", "ratings"):
+        libs = plex[sec]["libraries"]
+        norm = sorted({str(x).strip() for x in libs if str(x).strip()})
+        if libs != norm:
+            plex[sec]["libraries"] = norm
+            changed = True
+
+    if changed:
+        save_config(cfg, cfg_path)
+        _log("whitelist defaults ensured")
+    return changed
 
 def patch_history_with_account_id(data: Any, account_id: Optional[int]) -> Any:
     if not account_id: return data

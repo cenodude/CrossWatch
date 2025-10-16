@@ -1,12 +1,17 @@
 from __future__ import annotations
 from typing import Any, Dict, Mapping, Tuple
+
 import time, datetime as _dt
+
 from ..id_map import canonical_key
 from ._types import InventoryOps
+from ..modules_registry import load_sync_ops
+
 def allowed_providers_for_feature(config: Mapping[str, Any], feature: str) -> set[str]:
     allowed: set[str] = set()
     try: pairs = list((config.get("pairs") or []) or [])
     except Exception: pairs = []
+    
     def _feat_enabled(fmap: dict, name: str) -> bool:
         v = (fmap or {}).get(name)
         if isinstance(v, bool): return bool(v)
@@ -23,16 +28,17 @@ def allowed_providers_for_feature(config: Mapping[str, Any], feature: str) -> se
             if t: allowed.add(t)
         except Exception: continue
     return allowed
+    
 def provider_configured(config: Mapping[str, Any], name: str) -> bool:
-    nm = (name or "").strip().lower(); c = config or {}
-    if nm == "plex":     return bool((c.get("plex") or {}).get("account_token"))
-    if nm == "trakt":    return bool((c.get("trakt") or {}).get("access_token"))
-    if nm == "simkl":    return bool((c.get("simkl") or {}).get("access_token"))
-    if nm == "jellyfin":
-        jf = c.get("jellyfin") or {}
-        has_base = bool((jf.get("server") or "").strip() and (jf.get("access_token") or "").strip())
-        return has_base and bool((jf.get("user_id") or "").strip()) if "user_id" in jf else has_base
-    return False
+    nm = (name or "").upper()
+    ops = load_sync_ops(nm)
+    if ops and hasattr(ops, "is_configured"):
+        try:
+            return bool(ops.is_configured(config))
+        except Exception:
+            return False
+    return False  # explicit fallback; no heuristics/fallbacks per provider
+    
 def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str) -> str | None:
     acts_fn = getattr(ops, "activities", None)
     if not callable(acts_fn): return None
@@ -44,11 +50,13 @@ def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str
         return acts.get("updated_at")
     except Exception:
         return None
+        
 def prev_checkpoint(state: Mapping[str, Any], prov: str, feature: str) -> str | None:
     try:
         return (((state.get("providers") or {}).get(prov, {}) or {}).get(feature, {}) or {}).get("checkpoint")
     except Exception:
         return None
+        
 def _parse_ts(v) -> int | None:
     if v in (None, "", 0): return None
     try:
@@ -56,6 +64,7 @@ def _parse_ts(v) -> int | None:
         return int(_dt.datetime.fromisoformat(str(v).replace("Z","+00:00").replace(" ", "T")).timestamp())
     except Exception:
         return None
+        
 def build_snapshots_for_feature(*, feature: str, config: Mapping[str, Any], providers: Mapping[str, InventoryOps], snap_cache: Dict[Tuple[str,str], Tuple[float, Dict[str, Dict[str, Any]]]], snap_ttl_sec: int, dbg, emit_info) -> Dict[str, Dict[str, Any]]:
     snaps: Dict[str, Dict[str, Any]] = {}
     now = time.time(); allowed = allowed_providers_for_feature(config, feature)
@@ -83,6 +92,7 @@ def build_snapshots_for_feature(*, feature: str, config: Mapping[str, Any], prov
             else: snap_cache[memo_key] = (now, canon)
         dbg("snapshot", provider=name, feature=feature, count=len(canon))
     return snaps
+    
 def coerce_suspect_snapshot(*, provider: str, ops: InventoryOps, prev_idx: Mapping[str, Any], cur_idx: Mapping[str, Any], feature: str, suspect_min_prev: int, suspect_shrink_ratio: float, suspect_debug: bool, emit, emit_info, prev_cp: str | None, now_cp: str | None) -> tuple[Dict[str, Any], bool, str]:
     try:
         sem = (ops.capabilities() or {}).get("index_semantics", "present")
