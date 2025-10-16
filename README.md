@@ -1,3 +1,19 @@
+# CrossWatch
+
+<!-- Download + Wiki buttons -->
+<div align="center" style="margin: 6px 0 18px;">
+  <a href="https://github.com/cenodude/CrossWatch/releases/latest"
+     target="_blank" rel="noopener noreferrer"
+     style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
+    ⬇️ Download (Latest)
+  </a>
+  <a href="https://github.com/cenodude/CrossWatch/wiki"
+     target="_blank" rel="noopener noreferrer"
+     style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
+    📘 Read the CrossWatch Wiki
+  </a>
+</div>
+
 <!-- Logo centered -->
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
@@ -21,21 +37,11 @@
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
+<p align="center"><b>New version 0.2.x is released with huge improvements — <i>Multi-arch images (AMD64 + ARM64)</i></b></p>
 
-<div align="center">
-  <a href="https://github.com/cenodude/CrossWatch/wiki"
-     target="_blank" rel="noopener noreferrer"
-     style="display:inline-block;margin-top:6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
-    📘 Read the CrossWatch Wiki
-  </a>
-</div>
-<br>
-<p align="center"><B>New version 0.2.x is released with huge improvements - **Multi-arch images (AMD64 + ARM64)**</B></p>
-
-**CrossWatch** is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync.  It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.  It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
+**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby**, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
 CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
-
 
 ---
 
@@ -47,7 +53,7 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
       <td valign="top">
         <ul style="margin:0;padding-left:1.1em">
           <li>Sync watchlists (one-/two-way)</li>
-          <li>Live scrobbling (Plex → Trakt)</li>
+          <li>Live scrobbling (Plex/Jellyfin/Emby → Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
           <li>Sync playlists (one-/two-way — disabled)</li>
@@ -66,6 +72,7 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
           <li><strong>Media servers:</strong>
             <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
             &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
+            &nbsp;<img alt="Emby" src="https://img.shields.io/badge/Emby-52B54B?logo=emby&logoColor=white&labelColor=1f2328" />
           </li>
         </ul>
       </td>
@@ -73,6 +80,18 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
   </table>
 </div>
 
+---
+
+## ⬇️ Download
+
+- **Docker (recommended):**
+  ```bash
+  docker pull ghcr.io/cenodude/crosswatch:latest
+  ```
+- **Prebuilt releases:**  
+  Get the latest builds and assets here → **[Releases ▸](https://github.com/cenodude/CrossWatch/releases/latest)**
+
+<sub>Tip: use <code>:latest</code> for stable, or a specific tag like <code>:v0.2.x</code>.</sub>
 
 ---
 
@@ -102,27 +121,28 @@ services:
 > The container exposes the web UI at:  
 > 👉 http://localhost:8787
 
-By default `CONFIG_BASE` will be `/config` inside the container.  
-Your `config.json`, `state.json`, `statistics.json`, etc. will all be stored there.
+By default <code>CONFIG_BASE</code> will be <code>/config</code> inside the container.  
+Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</code>, etc. will all be stored there.
 
 ---
 
 ## 📋 Usage
 
-1. Open the web UI
-2. Connect at least two Authentication providers, Plex, Jellyfin, SIMKL and/or TRAKT
-3. Create one or more **Sync Pairs** (e.g. Plex → SIMKL or two-way) or/and use Scrobble
-4. Click **Synchronize** to start, or enable scheduling in **Settings**
+1. Open the web UI  
+2. Connect at least two authentication providers — Plex, Jellyfin, <b>Emby</b>, SIMKL and/or TRAKT  
+3. Create one or more <b>Sync Pairs</b> (e.g. Plex → SIMKL or two-way) and/or enable Scrobble  
+4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
 
 ---
-# 🎬 Live Scrobbling (Plex/Jellyfin → Trakt)
 
-CrossWatch can **scrobble your real-time Plex and Jellyfin playback to Trakt** — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.
-Have Plex Pass? Prefer Webhook. No Plex Pass? Use the Watcher. Jellyfin users: use the Webhook.
+## 🎬 Live Scrobbling (Plex/Jellyfin/Emby → Trakt)
+
+CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b> — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
+Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
 
 ---
 
 ## ⚖️ License
 
-MIT © [cenodude](https://github.com/cenodude)
+MIT © <a href="https://github.com/cenodude">cenodude</a>
