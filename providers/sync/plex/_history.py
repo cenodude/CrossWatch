@@ -6,7 +6,15 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ._utils import resolve_user_scope, patch_history_with_account_id
-from ._common import normalize as plex_normalize, minimal_from_history_row
+
+from ._common import (
+    normalize as plex_normalize,
+    minimal_from_history_row,
+    candidate_guids_from_ids,
+    section_find_by_guid,
+    server_find_rating_key_by_guid,
+)
+
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 except Exception:
@@ -467,21 +475,44 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
 # ── resolution + write helpers ────────────────────────────────────────────────
 
+def _find_rk_by_guid_http(srv, guid_list: Iterable[str], allow: Set[str]) -> Optional[str]:
+    for g in guid_list or []:
+        try:
+            r = srv._session.get(srv.url("/library/all"), params={"guid": g, "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 50}, timeout=8)
+            if not r.ok:
+                continue
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(r.text or "")
+            for md in root.findall(".//Video"):
+                rk = md.attrib.get("ratingKey")
+                sid = md.attrib.get("librarySectionID") or md.attrib.get("sectionID")
+                if rk and (not allow or str(sid) in allow):
+                    return str(rk)
+        except Exception:
+            continue
+    return None
+
 def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
     ids = ids_from(it)
-    rk = ids.get("plex")
-    if rk: return str(rk)
-
     srv = getattr(adapter.client, "server", None)
-    if not srv: return None
+    if not srv:
+        return None
+
+    rk = ids.get("plex") or None
+    if rk:
+        try:
+            if srv.fetchItem(int(rk)):
+                return str(rk)
+        except Exception:
+            pass
 
     kind = (it.get("type") or "movie").lower()
     is_episode = (kind == "episode")
-
     title = (it.get("title") or "").strip()
     series_title = (it.get("series_title") or "").strip()
     query_title = series_title if (is_episode and series_title) else title
-    if not query_title: return None
+    if not query_title:
+        return None
 
     year = it.get("year")
     season = it.get("season") or it.get("season_number")
@@ -491,17 +522,40 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
     allow = _allowed_history_sec_ids(adapter)
 
     hits: List[Any] = []
-    for sec in adapter.libraries(types=sec_types) or []:
-        sid = str(getattr(sec, "key", "")).strip()
-        if allow and sid not in allow:
-            continue
+    guids = candidate_guids_from_ids(it)
+    if guids:
+        for sec in adapter.libraries(types=sec_types) or []:
+            sid = str(getattr(sec, "key", "")).strip()
+            if allow and sid not in allow:
+                continue
+            obj = section_find_by_guid(sec, guids)
+            if obj:
+                hits.append(obj)
+
+    if not hits:
+        for sec in adapter.libraries(types=sec_types) or []:
+            sid = str(getattr(sec, "key", "")).strip()
+            if allow and sid not in allow:
+                continue
+            try:
+                hs = sec.search(title=query_title) or []
+                if len(hs) == 1:
+                    hits.extend(hs); break
+                hits.extend(hs)
+            except Exception:
+                continue
+
+    if not hits:
         try:
-            hs = sec.search(title=query_title) or []
-            if len(hs) == 1:
-                hits.extend(hs); break
-            hits.extend(hs)
+            med = "episode" if is_episode else "movie"
+            hs = srv.search(query_title, mediatype=med) or []
+            for o in hs:
+                sid = str(getattr(o, "librarySectionID", "") or getattr(o, "sectionID", "") or "")
+                if allow and sid and sid not in allow:
+                    continue
+                hits.append(o)
         except Exception:
-            continue
+            pass
 
     def _score(obj) -> int:
         sc = 0
@@ -520,23 +574,44 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
             pass
         return sc
 
-    best, best_score = None, -1
-    for h in hits:
-        sc = _score(h)
-        if sc > best_score:
-            best, best_score = h, sc
+    if not hits:
+        return None
 
-    rk = getattr(best, "ratingKey", None) if best else None
+    best = max(hits, key=_score)
+    rk = getattr(best, "ratingKey", None)
     return str(rk) if rk else None
+
 
 def _scrobble_with_date(srv, rating_key: Any, epoch: int) -> bool:
     try:
+        try:
+            obj = srv.fetchItem(int(rating_key))
+            if obj:
+                try:
+                    obj.markWatched()
+                    return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         url = srv.url("/:/scrobble")
+        token = getattr(srv, "token", None) or getattr(srv, "_token", None)
         params = {"key": int(rating_key), "identifier": "com.plexapp.plugins.library", "viewedAt": int(epoch)}
-        r = srv._session.get(url, params=params, timeout=10)
+        if token:
+            params["X-Plex-Token"] = token
+        r = srv._session.get(url, params=params, headers=getattr(srv._session, "headers", None), timeout=10)
+        if r.status_code == 401 and token:
+            params2 = {"ratingKey": int(rating_key), "identifier": "com.plexapp.plugins.library", "viewedAt": int(epoch), "X-Plex-Token": token}
+            r = srv._session.get(url, params=params2, headers=getattr(srv._session, "headers", None), timeout=10)
+        if not r.ok:
+            print(f"[PLEX:history] scrobble {rating_key} -> {r.status_code}")
         return r.ok
-    except Exception:
+    except Exception as e:
+        print(f"[PLEX:history] scrobble exception key={rating_key}: {e}")
         return False
+
+
 
 def _unscrobble(srv, rating_key: Any) -> bool:
     try:

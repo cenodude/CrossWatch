@@ -1,7 +1,7 @@
 # /providers/sync/plex/_common.py
 from __future__ import annotations
 import os, uuid, requests, xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Mapping, Optional, Iterable
+from typing import Any, Dict, List, Mapping, Optional, Iterable, Set
 
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
@@ -90,6 +90,28 @@ def show_ids_hint(obj) -> Dict[str, str]:
     gp_rk = getattr(obj, "grandparentRatingKey", None)
     if gp_rk: out["plex"] = str(gp_rk)
     return {k: v for k, v in out.items() if v}
+
+# ---------added 16102025 -----server-side GUID search ------------------------------
+def server_find_rating_key_by_guid(srv, guids: Iterable[str]) -> Optional[str]:
+    base = _as_base_url(srv)
+    tok = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    ses = getattr(srv, "_session", None)
+    if not (base and ses): return None
+    hdrs = dict(getattr(ses, "headers", {}) or {})
+    hdrs.update(plex_headers(tok))
+    hdrs["Accept"] = "application/json"
+    for g in [x for x in (guids or []) if x]:
+        try:
+            r = ses.get(f"{base}/library/all", params={"guid": g}, headers=hdrs, timeout=8)
+            if not r.ok: continue
+            j = r.json() if r.headers.get("Content-Type","").startswith("application/json") else {}
+            md = (j.get("MediaContainer", {}) or {}).get("Metadata") or []
+            if md and isinstance(md, list):
+                rk = md[0].get("ratingKey") or md[0].get("ratingkey")
+                if rk: return str(rk)
+        except Exception:
+            pass
+    return None
 
 # --- fallback GUID memo/neg-cache --------------------------------------------
 _FBGUID_MEMO = {}  # key -> dict (success) of "__NOHIT__"
@@ -207,6 +229,7 @@ def _hydrate_show_ids_from_pms(obj) -> Dict[str, str]:
         return {}
 
 _GUID_CACHE: Dict[str, Dict[str, str]] = {}
+_HYDRATE_404: Set[str] = set()
 
 def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
     root = ET.fromstring(xml_text)
@@ -236,6 +259,7 @@ def hydrate_external_ids(token: Optional[str], rating_key: Optional[str]) -> Dic
     if not token or not rating_key: return {}
     rk = str(rating_key)
     if rk in _GUID_CACHE: return _GUID_CACHE[rk]
+    if rk in _HYDRATE_404: return {}
     url = f"{METADATA}/library/metadata/{rk}"
     try:
         r = requests.get(url, headers=plex_headers(token), timeout=10)
@@ -243,6 +267,7 @@ def hydrate_external_ids(token: Optional[str], rating_key: Optional[str]) -> Dic
         if not r.ok:
             _log(f"hydrate {rk} -> {r.status_code}")
             _emit({"feature":"common","event":"hydrate","action":"miss","rk":rk,"status":r.status_code})
+            if r.status_code == 404: _HYDRATE_404.add(rk)
             _GUID_CACHE[rk] = {}; return {}
         else:
             _emit({"feature":"common","event":"hydrate","action":"ok","rk":rk})
@@ -265,6 +290,7 @@ def hydrate_external_ids(token: Optional[str], rating_key: Optional[str]) -> Dic
         return ids
     except Exception as e:
         _log(f"hydrate error rk={rk}: {e}")
+        _HYDRATE_404.add(rk)
         _GUID_CACHE[rk] = {}
         return {}
 
