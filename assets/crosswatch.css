@@ -3738,9 +3738,9 @@ select {
 #tile-plex,
 #tile-simkl,
 #tile-trakt {
-  margin-top: 90px;   /* increase until it feels right (20, 30, 40, etc.) */
+  margin-top: 90px;
   position: relative;
-  z-index: 1;         /* keep them above the neon bg */
+  z-index: 1;
 }
 
 /* Details: hide */
@@ -3979,7 +3979,6 @@ select {
   opacity:.85;
 }
 
-/* (Optional) make + and - numeric pills hint their meaning */
 .history-badges .badge:nth-child(1){ /* +added */
   color:#c8ffe6;
   border-color: rgba(46,204,113,.35);

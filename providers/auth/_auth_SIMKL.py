@@ -60,7 +60,6 @@ class SimklAuth(AuthProvider):
         if isinstance(exp_in, (int, float)) and exp_in > 0:
             s["token_expires_at"] = int(time.time()) + int(exp_in)
         else:
-            # fallbacks if API returns absolute
             if "token_expires_at" in j:
                 try:
                     s["token_expires_at"] = int(j["token_expires_at"])
@@ -145,6 +144,12 @@ PROVIDER = SimklAuth()
 
 def html() -> str:
     return r'''<div class="section" id="sec-simkl">
+  <style>
+    #sec-simkl .inline{display:flex;gap:8px;align-items:center}
+    #sec-simkl .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
+    #sec-simkl .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
+    #sec-simkl .inline .msg.hidden{display:none}
+  </style>
   <div class="head" onclick="toggleSection('sec-simkl')">
     <span class="chev"></span><strong>SIMKL</strong>
   </div>
@@ -167,14 +172,11 @@ def html() -> str:
       <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
     </div>
 
-    <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-
-      <button id="btn-connect-simkl" class="btn" onclick="startSimkl()" >
-        Connect SIMKL
-      </button>
-
+    <div class="inline" style="margin-top:8px">
+      <button id="btn-connect-simkl" class="btn" onclick="startSimkl()">Connect SIMKL</button>
       <span id="simkl-countdown" style="min-width:60px;"></span>
       <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
+      <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
     </div>
 
     <div class="grid2" style="margin-top:8px">
@@ -184,7 +186,6 @@ def html() -> str:
       </div>
     </div>
 
-    <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
     <div class="sep"></div>
   </div>
 </div>

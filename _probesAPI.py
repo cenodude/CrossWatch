@@ -1,32 +1,35 @@
 # _probesAPI.py
 from __future__ import annotations
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Callable
 import os, json, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
+# Optional Plex user info via plexapi
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
 except Exception:
     HAVE_PLEXAPI = False
 
-# ── Tunables
+# ---- Tunables (env) ----
 HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
 STATUS_TTL   = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL    = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
 
-STATUS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
-PROBE_CACHE: Dict[str, Tuple[float, bool]] = {k: (0.0, False) for k in ("plex","simkl","trakt","jellyfin","emby")}
-PROBE_DETAIL_CACHE: Dict[str, Tuple[float, bool, str]] = {k: (0.0, False, "") for k in ("plex","simkl","trakt","jellyfin","emby")}
-_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {
-    "plex": (0.0, {}), "trakt": (0.0, {}), "emby": (0.0, {})
-}
+# Providers we know
+PROVIDERS = ("plex", "simkl", "trakt", "jellyfin", "emby")
 
-# ── HTTP helpers
+# ---- Caches ----
+STATUS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+PROBE_CACHE: Dict[str, Tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS}
+PROBE_DETAIL_CACHE: Dict[str, Tuple[float, bool, str]] = {k: (0.0, False, "") for k in PROVIDERS}
+_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {k: (0.0, {}) for k in ("plex", "trakt", "emby")}
+
+# ---- HTTP helpers ----
 def _http_get(url: str, headers: Dict[str, str], timeout: int = HTTP_TIMEOUT) -> Tuple[int, bytes]:
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -51,18 +54,18 @@ def _reason_http(code: int, provider: str) -> str:
     if 500 <= code < 600: return f"{provider}: service error ({code})"
     return f"{provider}: http {code}"
 
-# ── Basic probes (boolean)
+UA = {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+
+# ---- Simple boolean probes (compat) ----
 def probe_plex(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec: return ok
     token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
     if not token:
         PROBE_CACHE["plex"] = (now, False); return False
-    headers = {
-        "X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
-        "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
-        "Accept": "application/xml", "User-Agent": "CrossWatch/1.0",
-    }
+    headers = {"X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
+               "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
+               "Accept": "application/xml", "User-Agent": "CrossWatch/1.0"}
     code, _ = _http_get("https://plex.tv/users/account", headers=headers)
     ok = (code == 200); PROBE_CACHE["plex"] = (now, ok); return ok
 
@@ -74,8 +77,7 @@ def probe_simkl(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     tok = (sk.get("access_token") or sk.get("token") or "").strip()
     if not cid or not tok:
         PROBE_CACHE["simkl"] = (now, False); return False
-    headers = {"Authorization": f"Bearer {tok}", "simkl-api-key": cid,
-               "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    headers = {**UA, "Authorization": f"Bearer {tok}", "simkl-api-key": cid}
     code, _ = _http_get("https://api.simkl.com/users/settings", headers=headers)
     ok = (code == 200); PROBE_CACHE["simkl"] = (now, ok); return ok
 
@@ -88,8 +90,7 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
     if not cid or not tok:
         PROBE_CACHE["trakt"] = (now, False); return False
-    headers = {"Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2",
-               "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
     code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     ok = (code == 200); PROBE_CACHE["trakt"] = (now, ok); return ok
 
@@ -107,18 +108,16 @@ def probe_emby(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ok = bool((em.get("server") or "").strip() and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip())
     PROBE_CACHE["emby"] = (now, ok); return ok
 
-# ── Detailed probes (boolean + reason)
+# ---- Detailed probes (bool + reason) ----
 def _probe_plex_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec: return ok, rsn
-    token = ((cfg.get("plex") or {}).get("account_token") or "").trim() if hasattr(str, "trim") else ((cfg.get("plex") or {}).get("account_token") or "").strip()
+    token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
     if not token:
         rsn = "Plex: missing account_token"; PROBE_DETAIL_CACHE["plex"] = (now, False, rsn); return False, rsn
-    headers = {
-        "X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
-        "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
-        "Accept": "application/xml", "User-Agent": "CrossWatch/1.0",
-    }
+    headers = {"X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
+               "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
+               "Accept": "application/xml", "User-Agent": "CrossWatch/1.0"}
     code, _ = _http_get("https://plex.tv/users/account", headers=headers)
     ok = (code == 200); rsn = "" if ok else _reason_http(code, "Plex")
     PROBE_DETAIL_CACHE["plex"] = (now, ok, rsn); return ok, rsn
@@ -131,8 +130,7 @@ def _probe_simkl_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tu
     tok = (sk.get("access_token") or sk.get("token") or "").strip()
     if not cid or not tok:
         rsn = "SIMKL: missing token/client id"; PROBE_DETAIL_CACHE["simkl"] = (now, False, rsn); return False, rsn
-    headers = {"Authorization": f"Bearer {tok}", "simkl-api-key": cid,
-               "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    headers = {**UA, "Authorization": f"Bearer {tok}", "simkl-api-key": cid}
     code, _ = _http_get("https://api.simkl.com/users/settings", headers=headers)
     ok = (code == 200); rsn = "" if ok else _reason_http(code, "SIMKL")
     PROBE_DETAIL_CACHE["simkl"] = (now, ok, rsn); return ok, rsn
@@ -146,8 +144,7 @@ def _probe_trakt_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tu
     tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
     if not cid or not tok:
         rsn = "Trakt: missing token/client id"; PROBE_DETAIL_CACHE["trakt"] = (now, False, rsn); return False, rsn
-    headers = {"Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2",
-               "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
     code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     ok = (code == 200); rsn = "" if ok else _reason_http(code, "Trakt")
     PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn); return ok, rsn
@@ -172,23 +169,18 @@ def _probe_emby_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tup
         rsn = "Emby: missing server URL"; PROBE_DETAIL_CACHE["emby"] = (now, False, rsn); return False, rsn
     if not token:
         rsn = "Emby: missing access token"; PROBE_DETAIL_CACHE["emby"] = (now, False, rsn); return False, rsn
-
-    base = server.rstrip("/")
-    url  = f"{base}/System/Info"
-    headers = {"X-Emby-Token": token, "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    url  = f"{server.rstrip('/')}/System/Info"
+    headers = {**UA, "X-Emby-Token": token}
     code, _ = _http_get(url, headers=headers)
-    ok = (code == 200)
-    rsn = "" if ok else _reason_http(code, "Emby")
-    PROBE_DETAIL_CACHE["emby"] = (now, ok, rsn)
-    return ok, rsn
+    ok = (code == 200); rsn = "" if ok else _reason_http(code, "Emby")
+    PROBE_DETAIL_CACHE["emby"] = (now, ok, rsn); return ok, rsn
 
-# ── User/VIP badges
+# ---- User/VIP badges ----
 def plex_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
     ts, info = _USERINFO_CACHE["plex"]; now = time.time()
     if now - ts < max_age_sec and isinstance(info, dict): return info
     token = ((cfg.get("plex") or {}).get("account_token") or "").strip()
-    if not token:
-        _USERINFO_CACHE["plex"] = (now, {}); return {}
+    if not token: _USERINFO_CACHE["plex"] = (now, {}); return {}
     plexpass = plan = status = None
     if HAVE_PLEXAPI:
         try:
@@ -199,9 +191,8 @@ def plex_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         except Exception:
             pass
     if plexpass is None:
-        headers = {"X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
-                   "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
-                   "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+        headers = {**UA, "X-Plex-Token": token, "X-Plex-Client-Identifier": "crosswatch",
+                   "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0"}
         code, body = _http_get("https://plex.tv/api/v2/user", headers=headers)
         if code == 200:
             j = _json_loads(body); sub = (j.get("subscription") or {})
@@ -220,60 +211,46 @@ def trakt_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
     cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
     tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
-    if not cid or not tok:
-        _USERINFO_CACHE["trakt"] = (now, {}); return {}
-    headers = {"Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2",
-               "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    if not cid or not tok: _USERINFO_CACHE["trakt"] = (now, {}); return {}
+    headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
     code, body = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     out = {}
     if code == 200:
         j = _json_loads(body); u = j.get("user") or {}
         vip = bool(u.get("vip") or u.get("vip_og") or u.get("vip_ep"))
-        vip_type = "vip"
-        if u.get("vip_og"): vip_type = "vip_og"
-        if u.get("vip_ep"): vip_type = "vip_ep"
+        vip_type = "vip_og" if u.get("vip_og") else ("vip_ep" if u.get("vip_ep") else ("vip" if vip else ""))
         out = {"vip": vip, "vip_type": vip_type}
     _USERINFO_CACHE["trakt"] = (now, out); return out
 
 def emby_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
     ts, info = _USERINFO_CACHE["emby"]; now = time.time()
     if now - ts < max_age_sec and isinstance(info, dict): return info
-
     em = (cfg.get("emby") or cfg.get("EMBY") or {})
     server = (em.get("server") or "").strip()
     token  = (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
-    if not server or not token:
-        _USERINFO_CACHE["emby"] = (now, {}); return {}
-
-    base = server.rstrip("/")
-    url  = f"{base}/System/Info"
-    headers = {"X-Emby-Token": token, "Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+    if not server or not token: _USERINFO_CACHE["emby"] = (now, {}); return {}
+    url  = f"{server.rstrip('/')}/System/Info"
+    headers = {**UA, "X-Emby-Token": token}
     code, body = _http_get(url, headers=headers)
-
     out: Dict[str, Any] = {}
     if code == 200:
         j = _json_loads(body) or {}
-        candidates = [
-            "HasEmbyPremiere", "HasPremium", "HasSupporterMembership",
-            "HasSupporterKey", "HasValidSupporterKey", "IsMBSupporter",
-            "IsPremiere", "Premiere", "SupportsPremium"
-        ]
+        cand = ["HasEmbyPremiere","HasPremium","HasSupporterMembership","HasSupporterKey",
+                "HasValidSupporterKey","IsMBSupporter","IsPremiere","Premiere","SupportsPremium"]
         def _truthy(v):
             if isinstance(v, bool): return v
             if isinstance(v, (int, float)): return v != 0
             if isinstance(v, str): return v.strip().lower() not in ("", "0", "false", "no", "none", "null")
             return False
-        prem = any(_truthy(j.get(k)) for k in candidates)
-        # Also consider presence of any non-empty *Supporter* key in payload
+        prem = any(_truthy(j.get(k)) for k in cand)
         if not prem:
             for k, v in j.items():
                 if isinstance(k, str) and "supporter" in k.lower() and _truthy(v):
                     prem = True; break
         out = {"premiere": bool(prem)}
-    _USERINFO_CACHE["emby"] = (now, out)
-    return out
+    _USERINFO_CACHE["emby"] = (now, out); return out
 
-# ── Helpers
+# ---- Config helpers ----
 def _prov_configured(cfg: dict, name: str) -> bool:
     n = (name or "").strip().lower()
     if n == "plex":     return bool((cfg.get("plex") or {}).get("account_token"))
@@ -298,29 +275,43 @@ def _pair_ready(cfg: dict, pair: dict) -> bool:
     b = _name(pair.get("target") or pair.get("b") or pair.get("dst") or pair.get("to"))
     return bool(_prov_configured(cfg, a) and _prov_configured(cfg, b))
 
-def _safe_probe_detail(fn, cfg, max_age_sec=0) -> Tuple[bool, str]:
+def _safe_probe_detail(fn: Callable, cfg, max_age_sec=0) -> Tuple[bool, str]:
     try:
         return fn(cfg, max_age_sec=max_age_sec)
     except Exception as e:
         return False, f"probe failed: {e}"
 
-def _safe_userinfo(fn, cfg, max_age_sec=0) -> dict:
+def _safe_userinfo(fn: Callable, cfg, max_age_sec=0) -> dict:
     try:
         return fn(cfg, max_age_sec=max_age_sec) or {}
-    except Exception as e:
-        print(f"[status] userinfo {getattr(fn, '__name__', 'fn')} failed: {e}")
+    except Exception:
         return {}
 
+# Back-compat helper (tuple ordering kept)
 def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool, bool, bool]:
     plex_ok,  _ = _safe_probe_detail(_probe_plex_detail,   cfg, max_age_sec=PROBE_TTL)
     simkl_ok, _ = _safe_probe_detail(_probe_simkl_detail,  cfg, max_age_sec=PROBE_TTL)
     trakt_ok, _ = _safe_probe_detail(_probe_trakt_detail,  cfg, max_age_sec=PROBE_TTL)
     jelly_ok, _ = _safe_probe_detail(_probe_jellyfin_detail,cfg, max_age_sec=PROBE_TTL)
     emby_ok,  _ = _safe_probe_detail(_probe_emby_detail,    cfg, max_age_sec=PROBE_TTL)
-    debug = bool(cfg.get("runtime", {}).get("debug"))
+    debug = bool((cfg.get("runtime") or {}).get("debug"))
     return plex_ok, simkl_ok, trakt_ok, jelly_ok, emby_ok, debug
 
-# ── FastAPI
+# ---- Registry to reduce branching ----
+DETAIL_PROBES: Dict[str, Callable[..., Tuple[bool, str]]] = {
+    "PLEX": _probe_plex_detail,
+    "SIMKL": _probe_simkl_detail,
+    "TRAKT": _probe_trakt_detail,
+    "JELLYFIN": _probe_jellyfin_detail,
+    "EMBY": _probe_emby_detail,
+}
+USERINFO_FNS: Dict[str, Callable[..., dict]] = {
+    "PLEX": plex_user_info,
+    "TRAKT": trakt_user_info,
+    "EMBY": emby_user_info,
+}
+
+# ---- FastAPI ----
 def register_probes(app: FastAPI, load_config_fn):
     @app.get("/api/status", tags=["Probes"])
     def api_status(fresh: int = Query(0)):
@@ -334,16 +325,10 @@ def register_probes(app: FastAPI, load_config_fn):
         pairs = cfg.get("pairs") or []
         any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
 
+        # Probe all providers in parallel
         probe_age = 0 if fresh else PROBE_TTL
-
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            futs = {
-                ex.submit(_safe_probe_detail, _probe_plex_detail,  cfg, probe_age):   "PLEX",
-                ex.submit(_safe_probe_detail, _probe_simkl_detail, cfg, probe_age):   "SIMKL",
-                ex.submit(_safe_probe_detail, _probe_trakt_detail, cfg, probe_age):   "TRAKT",
-                ex.submit(_safe_probe_detail, _probe_jellyfin_detail, cfg, probe_age):"JELLYFIN",
-                ex.submit(_safe_probe_detail, _probe_emby_detail,   cfg, probe_age):  "EMBY",
-            }
+        with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
+            futs = {ex.submit(_safe_probe_detail, fn, cfg, probe_age): name for name, fn in DETAIL_PROBES.items()}
             results: Dict[str, Tuple[bool, str]] = {}
             for f in as_completed(futs):
                 name = futs[f]
@@ -352,13 +337,16 @@ def register_probes(app: FastAPI, load_config_fn):
                 except Exception as e:
                     results[name] = (False, f"probe failed: {e}")
 
-        plex_ok, plex_reason     = results["PLEX"]
-        simkl_ok, simkl_reason   = results["SIMKL"]
-        trakt_ok, trakt_reason   = results["TRAKT"]
-        jelly_ok, jelly_reason   = results["JELLYFIN"]
-        emby_ok,  emby_reason    = results["EMBY"]
+        # Unpack with defaults to avoid KeyErrors
+        plex_ok, plex_reason       = results.get("PLEX", (False, ""))
+        simkl_ok, simkl_reason     = results.get("SIMKL", (False, ""))
+        trakt_ok, trakt_reason     = results.get("TRAKT", (False, ""))
+        jelly_ok, jelly_reason     = results.get("JELLYFIN", (False, ""))
+        emby_ok, emby_reason       = results.get("EMBY", (False, ""))
 
-        debug = bool(cfg.get("runtime", {}).get("debug"))
+        debug = bool((cfg.get("runtime") or {}).get("debug"))
+
+        # User info only when connected
         info_plex  = _safe_userinfo(plex_user_info,  cfg, max_age_sec=USERINFO_TTL) if plex_ok  else {}
         info_trakt = _safe_userinfo(trakt_user_info, cfg, max_age_sec=USERINFO_TTL) if trakt_ok else {}
         info_emby  = _safe_userinfo(emby_user_info,  cfg, max_age_sec=USERINFO_TTL) if emby_ok  else {}
@@ -390,6 +378,7 @@ def register_probes(app: FastAPI, load_config_fn):
                              **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))})},
             },
         }
+
         STATUS_CACHE["ts"] = now
         STATUS_CACHE["data"] = data
         return JSONResponse(data, headers={"Cache-Control": "no-store"})
@@ -406,6 +395,7 @@ def register_probes(app: FastAPI, load_config_fn):
             _USERINFO_CACHE[k] = (0.0, {})
         return {"ok": True}
 
+    # expose caches for diagnostics
     app.state.PROBE_CACHE = PROBE_CACHE
     app.state.PROBE_DETAIL_CACHE = PROBE_DETAIL_CACHE
     app.state.USERINFO_CACHE = _USERINFO_CACHE

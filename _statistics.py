@@ -1,11 +1,9 @@
-from __future__ import annotations
 # _statistics.py
-
+from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
-import json, time, threading, re, os, tempfile
-import difflib, unicodedata
+import json, time, threading, re, os, tempfile, difflib, unicodedata
 
 try:
     from cw_platform.config_base import CONFIG as _CONFIG_DIR  # type: ignore
@@ -16,9 +14,9 @@ except Exception:
 STATS_PATH = CONFIG / "statistics.json"
 REPORT_DIR = Path("/config/sync_reports")
 
-_GUID_TMDB_RE = re.compile(r"tmdb://(?:movie|tv)/(\d+)", re.IGNORECASE)
-_GUID_IMDB_RE = re.compile(r"(tt\d{5,})", re.IGNORECASE)
-_GUID_TVDB_RE = re.compile(r"tvdb://(\d+)", re.IGNORECASE)
+_GUID_TMDB_RE = re.compile(r"tmdb://(?:movie|tv)/(\d+)", re.I)
+_GUID_IMDB_RE = re.compile(r"(tt\d{5,})", re.I)
+_GUID_TVDB_RE = re.compile(r"tvdb://(\d+)", re.I)
 
 def _canon_feature(name: Any) -> str:
     s = (str(name or "")).strip().lower()
@@ -40,13 +38,13 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
     except Exception: pass
     tmp_name = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=str(p.parent),
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(p.parent),
                                          prefix=p.name+".", suffix=".tmp", delete=False) as tmp:
-            json.dump(data, tmp, indent=2, ensure_ascii=False); tmp_name = tmp.name
+            json.dump(data, tmp, ensure_ascii=False, indent=2); tmp_name = tmp.name
         os.replace(tmp_name, p)
     except Exception:
         try:
-            with p.open("w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+            with p.open("w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception: pass
     finally:
         if tmp_name:
@@ -61,12 +59,13 @@ class Stats:
         self.data: Dict[str, Any] = {}
         self._load()
 
+    # ---------- load/save ----------
     def _load(self) -> None:
         d = _read_json(self.path)
         d.setdefault("events", [])
         d.setdefault("samples", [])
-        d.setdefault("current", {})                 # watchlist union
-        d.setdefault("current_by_feature", {})      # per-feature unions (history/ratings/etc)
+        d.setdefault("current", {})                 # union for watchlist
+        d.setdefault("current_by_feature", {})      # unions per feature
         d.setdefault("counters", {"added": 0, "removed": 0})
         d.setdefault("last_run", {"added": 0, "removed": 0, "ts": 0})
         d.setdefault("http", {"events": [], "counters": {}, "last": {}})
@@ -81,16 +80,10 @@ class Stats:
         except Exception:
             pass
 
+    # ---------- small helpers ----------
     @staticmethod
     def _title_of(d: Dict[str, Any]) -> str:
         return (d.get("title") or d.get("name") or d.get("original_title") or d.get("original_name") or "").strip()
-
-    @staticmethod
-    def _provider_feature_items(state: Dict[str, Any], prov: str, feature: str) -> Dict[str, Any]:
-        if not isinstance(state, dict): return {}
-        P = (state.get("providers") or {}).get(prov.upper(), {}) or {}
-        base = (((P.get(feature) or {}).get("baseline") or {}).get("items") or {})
-        return base if isinstance(base, dict) else {}
 
     @staticmethod
     def _year_of(d: Dict[str, Any]) -> Optional[int]:
@@ -111,12 +104,24 @@ class Stats:
         return f"title:{t.lower()}:{y}" if y else f"title:{t.lower()}"
 
     @staticmethod
+    def _provider_feature_items(state: Dict[str, Any], prov: str, feature: str) -> Dict[str, Any]:
+        if not isinstance(state, dict): return {}
+        P = (state.get("providers") or {}).get(prov.upper(), {}) or {}
+        base = (((P.get(feature) or {}).get("baseline") or {}).get("items") or {})
+        return base if isinstance(base, dict) else {}
+
+    @staticmethod
+    def _providers_in_state(state: Dict[str, Any]) -> List[str]:
+        P = (state or {}).get("providers") or {}
+        return sorted([k.upper() for k in P.keys()]) if isinstance(P, dict) else []
+
+    @staticmethod
     def _extract_ids(d: Dict[str, Any]) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         ids = d.get("ids") or d.get("external_ids") or {}
         if isinstance(ids, dict):
             for k in ("imdb","tmdb","tvdb","simkl","slug"):
-                v = ids.get(k)
+                v = ids.get(k); 
                 if v and k not in out: out[k] = v
         for k in ("imdb","imdb_id","tt"):
             v = d.get(k)
@@ -191,20 +196,16 @@ class Stats:
         if fb: out.append(fb)
         return out
 
+    # ---------- unions (dynamic providers) ----------
     def _build_union_map(self, state: Dict[str, Any], feature: str = "watchlist") -> Dict[str, Dict[str, Any]]:
-        plex     = self._provider_feature_items(state, "PLEX", feature)
-        simkl    = self._provider_feature_items(state, "SIMKL", feature)
-        trakt    = self._provider_feature_items(state, "TRAKT", feature)
-        jellyfin = self._provider_feature_items(state, "JELLYFIN", feature)
-        emby     = self._provider_feature_items(state, "EMBY", feature)
+        providers = self._providers_in_state(state)
         buckets: Dict[str, Dict[str, Any]] = {}
         alias2bucket: Dict[str, str] = {}
 
         def primary_key(d: Dict[str, Any]) -> str:
             typ = (d.get("type") or "").lower()
             typ = "tv" if typ in ("show","tv") else "movie"
-            ids = self._extract_ids(d)
-            ck = self._canon_from_ids(ids, typ)
+            ck = self._canon_from_ids(self._extract_ids(d), typ)
             return ck or (self._fallback_key(d) or f"fallback:{len(buckets)}")
 
         def ensure_bucket(d: Dict[str, Any]) -> str:
@@ -212,64 +213,57 @@ class Stats:
                 if a in alias2bucket: return alias2bucket[a]
             pk = primary_key(d)
             if pk in buckets: pk = f"{pk}#{len(buckets)}"
-            buckets[pk] = {"src":"", "title":self._title_of(d), "type":(d.get("type") or "").lower(),
-                           "p":False,"s":False,"t":False,"j":False,"e":False}
+            buckets[pk] = {"src": "", "title": self._title_of(d), "type": (d.get("type") or "").lower(), "providers": set()}
             for a in self._aliases(d): alias2bucket[a] = pk
             return pk
 
-        def ingest(d: Dict[str, Any], flag: str):
+        def ingest(d: Dict[str, Any], pid: str):
             bk = ensure_bucket(d)
-            if not buckets[bk].get("title"): buckets[bk]["title"] = self._title_of(d)
-            if not buckets[bk].get("type"):  buckets[bk]["type"]  = (d.get("type") or "").lower()
-            buckets[bk][flag] = True
+            b = buckets[bk]
+            if not b.get("title"): b["title"] = self._title_of(d)
+            if not b.get("type"):  b["type"]  = (d.get("type") or "").lower()
+            (b["providers"]).add(pid.lower())
 
-        for _, raw in simkl.items():    ingest(raw, "s")
-        for _, raw in plex.items():     ingest(raw, "p")
-        for _, raw in trakt.items():    ingest(raw, "t")
-        for _, raw in jellyfin.items(): ingest(raw, "j")
-        for _, raw in emby.items():     ingest(raw, "e")
+        for pid in providers:
+            items = self._provider_feature_items(state, pid, feature)
+            for _, raw in (items or {}).items():
+                ingest(raw, pid)
 
         for b in buckets.values():
-            p,s,t,j,e = bool(b.get("p")), bool(b.get("s")), bool(b.get("t")), bool(b.get("j")), bool(b.get("e"))
-            b["src"] = (
-                "both" if (p and s and not t and not j and not e)
-                else ("plex" if p else ("simkl" if s else ("jellyfin" if j else ("emby" if e else ("trakt" if t else "")))))
-            )
+            provs = set(b.get("providers") or [])
+            b["src"] = "both" if len(provs) >= 2 else (next(iter(provs)).lower() if provs else "")
+            b["providers"] = sorted(provs)
+
         return buckets
 
     def _counts_by_source(self, cur: Dict[str, Any]) -> Dict[str, int]:
-        plex_only = simkl_only = trakt_only = jellyfin_only = emby_only = both_ps = 0
-        plex_total = simkl_total = trakt_total = jellyfin_total = emby_total = 0
+        out: Dict[str, int] = {}
+        seen_provs: set[str] = set()
         for v in (cur or {}).values():
-            p = bool((v or {}).get("p"))
-            s = bool((v or {}).get("s"))
-            t = bool((v or {}).get("t"))
-            j = bool((v or {}).get("j"))
-            e = bool((v or {}).get("e"))
-            plex_total     += 1 if p else 0
-            simkl_total    += 1 if s else 0
-            trakt_total    += 1 if t else 0
-            jellyfin_total += 1 if j else 0
-            emby_total     += 1 if e else 0
-            if p and s and not t and not j and not e: both_ps += 1
-            elif p and not s and not t and not j and not e: plex_only += 1
-            elif s and not p and not t and not j and not e: simkl_only += 1
-            elif t and not p and not s and not j and not e: trakt_only += 1
-            elif j and not p and not s and not t and not e: jellyfin_only += 1
-            elif e and not p and not s and not t and not j: emby_only += 1
-        return {
-            "plex": plex_only,
-            "simkl": simkl_only,
-            "both": both_ps,
-            "plex_total": plex_total,
-            "simkl_total": simkl_total,
-            "trakt_total": trakt_total,
-            "jellyfin_total": jellyfin_total,
-            "emby_total": emby_total,
-            "trakt": trakt_only,
-            "jellyfin": jellyfin_only,
-            "emby": emby_only,
-        }
+            provs = set(str(p).lower() for p in (v or {}).get("providers", []))
+            if not provs:
+                src = str((v or {}).get("src") or "").lower()
+                if src and src != "both": provs = {src}
+            seen_provs |= provs
+        for p in seen_provs:
+            out[p] = 0
+            out[f"{p}_total"] = 0
+        out["both"] = 0
+
+        for v in (cur or {}).values():
+            provs = set(str(p).lower() for p in (v or {}).get("providers", []))
+            if not provs:
+                src = str((v or {}).get("src") or "").lower()
+                if src and src != "both": provs = {src}
+            if not provs: continue
+            if len(provs) == 1:
+                p = next(iter(provs))
+                out[p] = out.get(p, 0) + 1
+            else:
+                out["both"] += 1
+            for p in provs:
+                out[f"{p}_total"] = out.get(f"{p}_total", 0) + 1
+        return out
 
     def _totals_from_events(self) -> Dict[str, int]:
         ev = list(self.data.get("events") or [])
@@ -299,6 +293,7 @@ class Stats:
         try: return int(best.get("count") or 0)
         except Exception: return 0
 
+    # ---------- public: feature aggregates ----------
     def record_feature_totals(self, feature: str, *, added: int = 0, removed: int = 0,
                               updated: int = 0, src: str = "", run_id: str | None = None,
                               expand_events: bool = True) -> None:
@@ -321,6 +316,7 @@ class Stats:
                 self.data["events"] = ev[-5000:]
             self._save()
 
+    # ---------- report ingestion (best-effort) ----------
     def _ingest_latest_report_features_once(self) -> None:
         try:
             if not (REPORT_DIR.exists() and REPORT_DIR.is_dir()): return
@@ -363,6 +359,7 @@ class Stats:
         except Exception:
             pass
 
+    # ---------- core: refresh from state ----------
     def refresh_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         self._ingest_latest_report_features_once()
         now_epoch = int(time.time())
@@ -384,47 +381,49 @@ class Stats:
                     s = " ".join(toks[1:])
                 return s
 
-            def _title_key(m):
+            def _title_key(m: Dict[str, Any]) -> str:
                 return _norm_title((m.get("title") or "").strip())
 
             def _similar(a: str, b: str) -> bool:
-                if not a or not b: 
-                    return False
-                if a == b: 
-                    return True
+                if not a or not b: return False
+                if a == b: return True
                 ta, tb = set(a.split()), set(b.split())
-                if ta and (len(ta & tb) / len(ta | tb)) >= 0.85:
-                    return True
+                if ta and (len(ta & tb) / len(ta | tb)) >= 0.85: return True
                 return difflib.SequenceMatcher(None, a, b).ratio() >= 0.92
 
             def _titles_match_loose(rm: dict, am: dict) -> bool:
                 ra, aa = _title_key(rm), _title_key(am)
-                if not ra or not aa: 
-                    return False
+                if not ra or not aa: return False
                 ry, ay = self._year_of(rm), self._year_of(am)
-                if isinstance(ry, int) and isinstance(ay, int) and ry != ay:
-                    return False
+                if isinstance(ry, int) and isinstance(ay, int) and ry != ay: return False
                 return ra == aa or _similar(ra, aa)
 
-            def _provset(m):
-                return {k for k in ("p","s","t","j","e") if m.get(k)} or {str(m.get("src") or "")}
+            def _provset(m: Dict[str, Any]) -> set[str]:
+                provs = {str(p).lower() for p in (m.get("providers") or [])}
+                if not provs:
+                    s = str(m.get("src") or "").lower()
+                    if s and s != "both": provs = {s}
+                return provs
 
             _IDCORE = re.compile(r"^(?P<p>[a-z0-9]+):(?:(?:movie|tv|show):)?(?P<i>[^:]+)$", re.I)
-            def _idcore(k):
+            def _idcore(k: str) -> Tuple[Optional[str], Optional[str]]:
                 m = _IDCORE.match(str(k) or ""); return (m.group("p"), m.group("i")) if m else (None, None)
 
             pk, ck = set(prev_wl), set(cur_wl)
             added_keys, removed_keys = sorted(ck - pk), sorted(pk - ck)
+
             for rk in list(removed_keys):
                 rm = prev_wl.get(rk) or {}; rt, rp = _title_key(rm), _provset(rm); rp_name, rp_id = _idcore(rk)
                 for ak in list(added_keys):
                     am = cur_wl.get(ak) or {}; at, ap = _title_key(am), _provset(am); ap_name, ap_id = _idcore(ak)
-                    same_title = _titles_match_loose(rm, am); same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
+                    same_title = _titles_match_loose(rm, am)
+                    same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
                     if (same_title or same_idcore) and (rp & ap or same_idcore):
                         removed_keys.remove(rk); added_keys.remove(ak)
                         ev.append({"ts": now_epoch, "action": "update", "feature": "watchlist",
                                    "key": ak, "source": am.get("src",""), "title": am.get("title",""), "type": am.get("type","")})
                         break
+
             for k in added_keys:
                 m = cur_wl.get(k) or {}
                 ev.append({"ts": now_epoch, "action": "add", "feature": "watchlist",
@@ -442,6 +441,7 @@ class Stats:
             self.data["last_run"] = {"added": len(added_keys), "removed": len(removed_keys), "ts": now_epoch}
             samples = self.data.get("samples") or []; samples.append({"ts": now_epoch, "count": len(cur_wl)}); self.data["samples"] = samples[-4000:]
 
+            # feature lanes (history/ratings/playlists)
             feats = ("history","ratings","playlists")
             cur_by = dict(self.data.get("current_by_feature") or {})
             for feat in feats:
@@ -453,18 +453,16 @@ class Stats:
                 adds, rems = sorted(ap - rp), sorted(rp - ap)
 
                 for rk in list(rems):
-                    rm = prev_map.get(rk) or {}; rt, rp2 = _title_key(rm), _provset(rm); rp_name, rp_id = _idcore(rk)
-                    matched = False
+                    rm = prev_map.get(rk) or {}; rp = _provset(rm); rp_name, rp_id = _idcore(rk)
                     for ak in list(adds):
-                        am = cur_map.get(ak) or {}; at, ap2 = _title_key(am), _provset(am); ap_name, ap_id = _idcore(ak)
+                        am = cur_map.get(ak) or {}; ap = _provset(am); ap_name, ap_id = _idcore(ak)
                         same_title = _titles_match_loose(rm, am)
                         same_idcore = (rp_name == ap_name and rp_id and ap_id and rp_id == ap_id)
-                        if (same_title or same_idcore) and (rp2 & ap2 or same_idcore):
-                            rems.remove(rk); adds.remove(ak); matched = True
+                        if (same_title or same_idcore) and (rp & ap or same_idcore):
+                            rems.remove(rk); adds.remove(ak)
                             ev.append({"ts": now_epoch, "action": "update", "feature": feat,
                                        "key": ak, "source": am.get("src",""), "title": am.get("title",""), "type": am.get("type","")})
                             break
-                    if matched: continue
 
                 for k in adds:
                     m = cur_map.get(k) or {}
@@ -481,6 +479,7 @@ class Stats:
             self._save()
             return {"now": len(cur_wl), "week": self._count_at(now_epoch - 7*86400), "month": self._count_at(now_epoch - 30*86400)}
 
+    # ---------- public: quick writes ----------
     def record_event(self, *, action: str, key: str, source: str = "", title: str = "",
                      typ: str = "", feature: Optional[str] = None) -> None:
         now_epoch = int(time.time())
@@ -511,6 +510,7 @@ class Stats:
                          "feature_totals": [], "ingested_runs": []}
             self._save()
 
+    # ---------- public: snapshot ----------
     def overview(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self._ingest_latest_report_features_once()
         now_epoch = int(time.time()); week_floor = now_epoch - 7*86400; month_floor = now_epoch - 30*86400
@@ -531,6 +531,7 @@ class Stats:
                 },
             }
 
+    # ---------- public: HTTP metrics ----------
     def record_http(self, *, provider: str, endpoint: Optional[str] = None, method: Optional[str] = None,
                     status: int = 0, ok: bool = False, bytes_in: int = 0, bytes_out: int = 0,
                     ms: int = 0, rate_remaining: Optional[int] = None, rate_reset_iso: Optional[str] = None, **kw) -> None:

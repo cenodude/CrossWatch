@@ -92,16 +92,21 @@ class _TraktProvider:
             "notes": "Open Trakt, enter the code, then return here. Client ID/Secret are required.",
         }
 
-    # HTML for settings
-    
     def html(self, cfg: Optional[Dict[str, Any]] = None) -> str:
         return r'''<div class="section" id="sec-trakt">
+    <style>
+      #sec-trakt .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      #sec-trakt .inline{display:flex;gap:8px;align-items:center}
+      #sec-trakt .muted{opacity:.7;font-size:.92em}
+      #sec-trakt .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
+      #sec-trakt .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
+      #sec-trakt .inline .msg.hidden{display:none}
+    </style>
     <div class="head" onclick="toggleSection('sec-trakt')">
         <span class="chev"></span><strong>Trakt</strong>
     </div>
     <div class="body">
 
-        <!-- App keys -->
         <div class="grid2">
         <div>
             <label>Client ID</label>
@@ -117,7 +122,6 @@ class _TraktProvider:
         </div>
         </div>
 
-        <!-- Hint block (only shown when missing ID/Secret) -->
         <div id="trakt_hint" class="msg warn hidden" style="margin-top:6px">
         You need a Trakt API application. Create one at
         <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>.
@@ -144,21 +148,37 @@ class _TraktProvider:
         </div>
         </div>
 
-        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-        <button class="btn" onclick="requestTraktPin()">Get Code</button>
-        <div style="align-self:center;color:var(--muted)">
-            Opens <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and shows your code
-        </div>
+        <div class="inline" style="margin-top:8px">
+          <button class="btn" onclick="requestTraktPin()">Get Code</button>
+          <div class="muted">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
+          <div id="trakt_msg" class="msg ok hidden" aria-live="polite" style="display:none"></div>
         </div>
 
-        <div id="trakt_msg" class="msg ok hidden">Code generated — finish linking on Trakt</div>
+        <script>
+          // Minimal show/hide tied to PIN/token presence
+          (function(){
+            const msg=document.getElementById('trakt_msg');
+            const pin=document.getElementById('trakt_pin');
+            const tok=document.getElementById('trakt_token');
+            function show(text){ if(!msg) return; msg.textContent=text||''; msg.classList.remove('hidden'); msg.style.display=''; }
+            function hide(){ if(!msg) return; msg.classList.add('hidden'); msg.style.display='none'; }
+            window.traktMsg={show,hide}; // optional external use
+            function tick(){
+              const hasPin=!!(pin&&pin.value&&pin.value.trim().length);
+              const hasTok=!!(tok&&tok.value&&tok.value.trim().length);
+              if(hasPin && !hasTok){ show('Code generated — finish linking on Trakt'); }
+              else { hide(); }
+            }
+            tick();
+            setInterval(tick, 600);
+          })();
+        </script>
+
         <div class="sep"></div>
     </div>
     </div>
     '''
 
-
-    # ---------- Flow ----------
     def start(self, cfg: Optional[Dict[str, Any]] = None, *, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)
@@ -221,7 +241,6 @@ class _TraktProvider:
         out = dict(pend)
         out["ok"] = True
         return out
-
 
     def finish(self, cfg: Optional[Dict[str, Any]] = None, *, device_code: Optional[str] = None) -> Dict[str, Any]:
         cfg = cfg or _load_config()

@@ -1,16 +1,16 @@
 # _FastAPI.py
 from __future__ import annotations
+
 from pathlib import Path
+
 from fastapi import FastAPI
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 
-def register_assets_and_favicons(app: FastAPI, root: Path):
-    assets_dir = root / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+__all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
-    FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+# ── Static favicon (shared by /favicon.svg and /favicon.ico)
+FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
 <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
 <rect width="64" height="64" rx="14" fill="#0b0b0f"/>
@@ -22,27 +22,44 @@ def register_assets_and_favicons(app: FastAPI, root: Path):
 <path d="M20 30 L32 26 L44 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>"""
 
+
+def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
+    """Mount /assets and expose favicons."""
+    assets_dir = root / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    def _svg_resp() -> Response:
+        return Response(
+            content=FAVICON_SVG,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
-    def favicon_svg():
-        return Response(content=FAVICON_SVG, media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
+    def favicon_svg() -> Response:  # noqa: D401
+        return _svg_resp()
 
     @app.get("/favicon.ico", include_in_schema=False, tags=["ui"])
-    def favicon_ico():
-        return Response(content=FAVICON_SVG, media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
+    def favicon_ico() -> Response:  # serve SVG for legacy path
+        return _svg_resp()
 
-def register_ui_root(app: FastAPI):
+
+def register_ui_root(app: FastAPI) -> None:
+    """Serve the single-page UI at /."""
     @app.get("/", include_in_schema=False, tags=["ui"])
-    def ui_root():
+    def ui_root() -> HTMLResponse:
         return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
-      
+
+
 def get_index_html() -> str:
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="alternate icon" href="/favicon.ico">
+
 <link rel="stylesheet" href="/assets/crosswatch.css">
+
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
 <style>
   .material-symbol{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:1em;line-height:1;display:inline-block;vertical-align:middle;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
@@ -181,11 +198,11 @@ def get_index_html() -> str:
           <div class="head" onclick="toggleSection('sec-auth')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Authentication Providers</strong>
             <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:22px;width:auto;opacity:.9">
-              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:22px;width:auto;opacity:.9">
+              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
             </span>
           </div>
           <div class="body"><div id="auth-providers"></div></div>
@@ -220,11 +237,11 @@ def get_index_html() -> str:
         <div class="section" id="sec-scrobbler">
           <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Scrobbler</strong>
-            <span title="Currently only for Plex with Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <span title="Plex/Jellyfin/Emby to Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
               <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
             </span>
           </div>
           <div class="body" id="scrobble-mount">
