@@ -26,7 +26,7 @@
   <a href="https://github.com/cenodude/CrossWatch/releases/latest"
      target="_blank" rel="noopener noreferrer"
      style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
-    ⬇️ Download (Latest)
+    ⬇️ Release notes (Latest)
   </a>
   <br>
   <a href="https://github.com/cenodude/CrossWatch/wiki"
