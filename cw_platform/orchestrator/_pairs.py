@@ -116,29 +116,24 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
         return out
     return ["watchlist", "ratings", "history", "playlists"]
 
-
 def run_pairs(ctx) -> Dict[str, Any]:
     cfg = ctx.config or {}
     sync_cfg = (cfg.get("sync") or {})
     emit_info = ctx.emit_info
     emit_dbg = ctx.dbg
 
-    # --- wrap emit with API metrics aggregation (human + compact) ------------
     metrics = ApiMetrics(ctx.emit)
-    ctx.emit = metrics.emit  # from now on, all emits get counted
+    ctx.emit = metrics.emit
     emit = ctx.emit
 
-    # Tombstone housekeeping at start (the helper logs details itself).
     try:
         ttl_days = int(sync_cfg.get("tombstone_ttl_days", 30))
         ctx.tomb_prune(max(1, ttl_days) * 24 * 3600)
     except Exception:
         pass
 
-    # One-shot health pass (+ inject ctx into provider modules so they can log/use it)
     health_map = _collect_health_for_run(ctx)
 
-    # Kickoff marker for the run
     emit(
         "run:start",
         dry_run=bool(ctx.dry_run or sync_cfg.get("dry_run", False)),
@@ -147,12 +142,13 @@ def run_pairs(ctx) -> Dict[str, Any]:
 
     added_total = 0
     removed_total = 0
-    unresolved_total = 0  # << accumulate unresolved from driver results
+    unresolved_total = 0
+    skipped_total = 0
+    errors_total = 0
 
     pairs = [p for p in (cfg.get("pairs") or []) if p.get("enabled", True)]
     provs = ctx.providers or {}
 
-    # Track which features actually ran this cycle (for end-of-run cleanups).
     features_ran: Set[str] = set()
 
     for i, pair in enumerate(pairs, 1):
@@ -161,13 +157,11 @@ def run_pairs(ctx) -> Dict[str, Any]:
         feat_map = dict(pair.get("features") or {})
         mode = str(pair.get("mode") or "one-way").lower().strip()
 
-        # Detect whether we’ll fall back to defaults (for clearer logs).
         selector_raw = str(pair.get("feature") or "").strip().lower()
         used_defaults = (not selector_raw or selector_raw == "multi") and not feat_map
 
         features = _feature_list_for_pair(pair)
         if used_defaults:
-            # Friendly, explicit notice so users aren’t surprised by watchlist/others running.
             emit_info(f"No per-feature map set for {src}→{dst}; running defaults: {features}")
 
         emit("run:pair", i=i, n=len(pairs), src=src, dst=dst, mode=mode, features=features)
@@ -178,11 +172,9 @@ def run_pairs(ctx) -> Dict[str, Any]:
             emit_info(f"[!] Missing provider ops for {src}→{dst}")
             continue
 
-        # Ensure both providers still see ctx even if not part of health loop.
         inject_ctx_into_provider(sops, ctx)
         inject_ctx_into_provider(dops, ctx)
 
-        # Auth guard at pair level (saves noisy inner checks).
         ss = health_status(health_map.get(src) or {})
         sd = health_status(health_map.get(dst) or {})
         if ss == "auth_failed" or sd == "auth_failed":
@@ -191,11 +183,9 @@ def run_pairs(ctx) -> Dict[str, Any]:
 
         for feature in features:
             fcfg = feat_map.get(feature) or {}
-            # Local enable knob still respected when features were auto-expanded.
             if isinstance(fcfg, dict) and not bool(fcfg.get("enable", True)):
                 continue
 
-            # Capability + per-feature health gate (fast no-op when not supported).
             if (not supports_feature(sops, feature)) or (not supports_feature(dops, feature)) \
                or (not health_feature_ok(health_map.get(src), feature)) \
                or (not health_feature_ok(health_map.get(dst), feature)):
@@ -209,7 +199,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
                 )
                 continue
 
-            # If we made it here, we are actually running this feature.
             features_ran.add(feature)
 
             if mode == "two-way":
@@ -221,18 +210,27 @@ def run_pairs(ctx) -> Dict[str, Any]:
                     + int(res.get("unresolved_to_A", 0))
                     + int(res.get("unresolved_to_B", 0))
                 )
+                skipped_total += (
+                    int(res.get("skipped", 0))
+                    + int(res.get("skipped_to_A", 0))
+                    + int(res.get("skipped_to_B", 0))
+                )
+                errors_total += (
+                    int(res.get("errors", 0))
+                    + int(res.get("errors_to_A", 0))
+                    + int(res.get("errors_to_B", 0))
+                )
             else:
                 res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
                 added_total   += int(res.get("added", 0))
                 removed_total += int(res.get("removed", 0))
                 unresolved_total += int(res.get("unresolved", 0))
+                skipped_total    += int(res.get("skipped", 0))
+                errors_total     += int(res.get("errors", 0))
 
-    # --- end-of-run, before final marker -------------------------------------
-
-    # Gate watchlist-only cleanups behind "did watchlist run at all?"
     if "watchlist" in features_ran:
         try:
-            from ._tombstones import cascade_removals  # late import; light touch
+            from ._tombstones import cascade_removals
             cascade_removals(ctx.state_store, emit_dbg, feature="watchlist", removed_keys=[])
         except Exception:
             pass
@@ -244,15 +242,12 @@ def run_pairs(ctx) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Feed summary + rate warnings to the UI/stats.
     try:
-        # Keep existing signature; unresolved will be carried in the overview payload below.
         ctx.stats.record_summary(added=added_total, removed=removed_total)
         ctx.emit_rate_warnings()
     except Exception:
         pass
 
-    # HTTP overview (if the stats backend can produce it).
     try:
         overview = ctx.stats.http_overview()
         if overview:
@@ -260,7 +255,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Persist a small "last run" record and update the wall overview.
     try:
         import time as _t
 
@@ -269,16 +263,21 @@ def run_pairs(ctx) -> Dict[str, Any]:
             {
                 "started_at": now,
                 "finished_at": now,
-                "result": {"added": added_total, "removed": removed_total, "unresolved": unresolved_total},
+                "result": {
+                    "added": added_total,
+                    "removed": removed_total,
+                    "skipped": skipped_total,
+                    "unresolved": unresolved_total,
+                    "errors": errors_total,
+                },
             }
         )
 
-        # Pull current overview from stats; keep it light.
         try:
             wall = ctx.stats.overview() or {}
         except Exception:
             wall = {}
-        wall["now"] = int(wall.get("now") or 0)  # keep shape stable
+        wall["now"] = int(wall.get("now") or 0)
         wall["unresolved"] = int(unresolved_total)
 
         st = ctx.state_store.load_state() or {}
@@ -296,7 +295,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Emit + persist API totals from the aggregator and reset metrics state.
     try:
         totals = metrics.totals()
         emit("api:totals", totals=totals)
@@ -304,13 +302,11 @@ def run_pairs(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Blackbox maintenance window (cooldown-based prune), best-effort.
     try:
         _bb_prune_once(cfg)
     except Exception:
         pass
 
-    # Restore original emit so callers don’t inherit our wrapper.
     try:
         ctx.emit = metrics._emit_original
     except Exception:
@@ -320,7 +316,9 @@ def run_pairs(ctx) -> Dict[str, Any]:
         "run:done",
         added=added_total,
         removed=removed_total,
-        unresolved=unresolved_total,  # << new field
+        skipped=skipped_total,
+        unresolved=unresolved_total,
+        errors=errors_total,
         pairs=len(pairs),
         mode="v3",
     )
@@ -328,6 +326,8 @@ def run_pairs(ctx) -> Dict[str, Any]:
         "ok": True,
         "added": added_total,
         "removed": removed_total,
+        "skipped": skipped_total,
         "unresolved": unresolved_total,
+        "errors": errors_total,
         "pairs": len(pairs),
     }

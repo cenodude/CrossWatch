@@ -465,10 +465,11 @@ def run_one_way_feature(
     # Final result
     return {
         "ok": True,
-        "added": added_effective,
-        "removed": removed_count,
-        "unresolved": int(unresolved_new_total),
-        "errors": int(res_add.get("errors", 0)) + int(res_remove.get("errors", 0)),
+        "added": int(added_effective),
+        "removed": int(removed_count),
+        "skipped": int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
+        "unresolved": int((res_add or {}).get("unresolved", 0)) + int((res_remove or {}).get("unresolved", 0)),
+        "errors": int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
         "res_add": res_add,
         "res_remove": res_remove,
     }

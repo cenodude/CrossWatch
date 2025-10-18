@@ -118,22 +118,25 @@
       row.classList.add("cf-prog-done");
       if(txt) txt.textContent=total>0?`${total}/${total} · 100%`:"100%";
 
-      // render compact stats as pills on their own line
-      const action=(String(ev.event||"").includes(":remove:")?"remove":"add");
-      const attempted = Number(ev.attempted ?? ev.result?.attempted ?? 0);
-      const confirmed = Number(ev.confirmed ?? ev.result?.confirmed ?? ev.result?.count ?? 0);
-      const skipped   = Number(ev.skipped   ?? ev.result?.skipped   ?? 0);
-      const unresolved= Number(ev.unresolved?? ev.result?.unresolved?? 0);
-      const errors    = Number(ev.errors    ?? ev.result?.errors    ?? 0);
-      if(statsEl){
-        const word = action==="remove"?"removed":"added";
+      // render compact stats as pills on their own line (apply rows only)
+      const isApply = /^apply:/.test(String(ev.event||"")) || String(key||"").startsWith("apply|");
+      if (isApply && statsEl) {
+        const action     = (String(ev.event||"").includes(":remove:") ? "remove" : "add");
+        const attempted  = Number(ev.attempted  ?? ev.result?.attempted  ?? 0);
+        const confirmed  = Number(ev.confirmed  ?? ev.result?.confirmed  ?? ev.result?.count ?? 0);
+        const skipped    = Number(ev.skipped    ?? ev.result?.skipped    ?? 0);
+        const unresolved = Number(ev.unresolved ?? ev.result?.unresolved ?? 0);
+        const errors     = Number(ev.errors     ?? ev.result?.errors     ?? 0);
+
+        const word = action === "remove" ? "removed" : "added";
         const pills = [
-          {cls:"",          txt:`<b>${attempted}</b> attempted`},
-          {cls:"stat-ok",   txt:`<b>${confirmed}</b> ${word}`},
-          {cls:"stat-muted",txt:`<b>${skipped}</b> skipped`},
-          {cls:"stat-warn", txt:`<b>${unresolved}</b> unresolved`},
-          {cls:"stat-err",  txt:`<b>${errors}</b> errors`}
-        ].map(p=>`<span class="cf-stat ${p.cls}">${p.txt}</span>`).join(" ");
+          { cls: "",          txt: `<b>${attempted}</b> attempted` },
+          { cls: "stat-ok",   txt: `<b>${confirmed}</b> ${word}` },
+          skipped    > 0 && { cls: "stat-muted", txt: `<b>${skipped}</b> skipped` },
+          unresolved > 0 && { cls: "stat-warn",  txt: `<b>${unresolved}</b> unresolved` },
+          errors     > 0 && { cls: "stat-err",   txt: `<b>${errors}</b> errors` }
+        ].filter(Boolean).map(p => `<span class="cf-stat ${p.cls}">${p.txt}</span>`).join(" ");
+
         statsEl.innerHTML = pills;
       }
 
