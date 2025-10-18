@@ -250,12 +250,29 @@ def run_one_way_feature(
         ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
     )
 
+    # skip items already marked unresolved for this destination/feature
+    try:
+        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+    except Exception:
+        unresolved_known = set()
+
+    if unresolved_known and adds:
+        _before = len(adds)
+        try:
+            adds = [it for it in adds if _ck(it) not in unresolved_known]
+        except Exception:
+            # if canonical keying fails, keep items
+            pass
+        _blocked = _before - len(adds)
+        if _blocked:
+            emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
+
     # Load blackbox keys for dst+feature
     emit("one:plan", src=src, dst=dst, feature=feature,
-         adds=len(adds), removes=len(removes),
-         src_count=len(src_idx), dst_count=len(dst_full))
+        adds=len(adds), removes=len(removes),
+        src_count=len(src_idx), dst_count=len(dst_full))
 
-    # Blackbox + Phantom Guard setup
+    # Blackbox + Phantom Guard setup 
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
     ttl_days = int(bb.get("cooldown_days") or 0) or None
@@ -264,7 +281,7 @@ def run_one_way_feature(
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
-    # Precompute attempted canonical keys
+    # Precompute attempted canonical keys 
     attempted_keys = {_ck(it) for it in adds}
     key2item = {_ck(it): _minimal(it) for it in adds}
 
@@ -315,6 +332,17 @@ def run_one_way_feature(
                     pass
 
             prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
+
+            # Fallback: provider gave us no identifiable unresolved entries, but confirmed nothing.
+            if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds:
+                try:
+                    record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
+                    new_unresolved = set(attempted_keys)
+                    unresolved_new_total += len(new_unresolved)
+                    # Recompute confirmed_keys to reflect the synthesized unresolved set
+                    confirmed_keys = [k for k in attempted_keys if k not in new_unresolved]
+                except Exception:
+                    pass
 
             strict_pessimist = (not verify_after_write) and bool(new_unresolved)
             if strict_pessimist:

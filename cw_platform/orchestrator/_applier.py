@@ -25,14 +25,27 @@ def _normalize(res: Dict[str, Any] | None, items: List[Dict[str, Any]], tag: str
             confirmed = int(res.get("count") or res.get("added") or res.get("removed") or 0)
         else:
             confirmed = 0
+
     unresolved_list = res.get("unresolved") or []
     if isinstance(unresolved_list, list) and unresolved_list:
         emit("apply:unresolved", provider=dst, feature=feature, count=len(unresolved_list))
-        try: record_unresolved(dst, feature, unresolved_list, hint=f"{tag}:provider_unresolved")
-        except Exception: pass
+        # If provider didn't include usable IDs, fall back to the items we attempted.
+        def _has_ids(x):
+            ids = (x or {}).get("ids") or {}
+            return any(ids.get(k) for k in ("imdb","tmdb","tvdb","slug"))
+        try:
+            if any(isinstance(x, dict) for x in unresolved_list) and any(_has_ids(x) for x in unresolved_list if isinstance(x, dict)):
+                record_unresolved(dst, feature, unresolved_list, hint=f"{tag}:provider_unresolved")
+            else:
+                if int(confirmed or 0) == 0 and items:
+                    record_unresolved(dst, feature, items, hint=f"{tag}:fallback_unresolved")
+        except Exception:
+            pass
+
     unresolved = len(unresolved_list) if isinstance(unresolved_list, list) else int(unresolved_list or 0)
     errors = int(res.get("errors") or 0)
     skipped = max(0, attempted - int(confirmed) - unresolved - errors)
+
     out = {
         "ok": ok,
         "attempted": attempted,
