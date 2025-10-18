@@ -541,7 +541,15 @@ def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> Dict[str, Any]:
         if sids: base["show_ids"] = sids
     return id_minimal(base)
 
-def _discover_search_title(token: str, title: str, kind: str, year: Optional[int], limit: int = 15) -> Optional[Mapping[str, Any]]:
+def _discover_search_title(
+    token: str,
+    title: str,
+    kind: str,
+    year: Optional[int],
+    limit: int = 15,
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
+) -> Optional[Mapping[str, Any]]:
     try:
         if not title or not token:
             return None
@@ -600,6 +608,14 @@ def _discover_search_title(token: str, title: str, kind: str, year: Optional[int
             y = _year_from_any(md.get("year"))
             if year and y == year:
                 s += 2
+            # Prefer exact S/E for episodes
+            if kind == "episode":
+                si = md.get("parentIndex")
+                ei = md.get("index")
+                if season is not None and si == season:
+                    s += 2
+                if episode is not None and ei == episode:
+                    s += 2
             return s
 
         best, best_sc = None, -1
@@ -607,10 +623,14 @@ def _discover_search_title(token: str, title: str, kind: str, year: Optional[int
             sc = _score(md)
             if sc > best_sc:
                 best, best_sc = md, sc
-        return best
+
+        # Conservative threshold to avoid mislinks
+        threshold = 6 if (kind == "episode" and (season is not None or episode is not None)) else 5
+        return best if (best and best_sc >= threshold) else None
     except Exception:
         return None
-    
+
+
 #--- GUID fallback ---------EXPERIMENTAL-----------------------------------------
 def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_discover: bool = False) -> Optional[Dict[str, Any]]:
     # memo/neg-cache
@@ -650,19 +670,43 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
         tok = token or _PLEX_CTX["token"]
         title = m.get("series_title") if kind == "episode" else m.get("title")
         year = m.get("year")
+
         _emit({"feature":"common","event":"fallback_guid","action":"discover_try","title":str(title or ""), "kind":kind, "year":year})
-        md = _discover_search_title(tok, str(title or ""), kind, year)
+        md = _discover_search_title(
+            tok,
+            str(title or ""),
+            kind,
+            year,
+            season=m.get("season"),
+            episode=m.get("episode"),
+        )
         _emit({"feature":"common","event":"fallback_guid","action":("discover_ok" if md else "discover_miss"), "title":str(title or ""), "kind":kind, "year":year})
+
         if md:
             nd = normalize_discover_row(md, token=tok)
-            if _has_ext_ids(nd.get("ids", {})):
-                m["ids"].update({k: v for k, v in nd["ids"].items() if v})
-            if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
-                m.setdefault("show_ids", {}).update({k: v for k, v in nd["show_ids"].items() if v})
+
+            # Accept only with safe overlap (if we already have IDs), or when discovery provides real ext IDs.
+            def _pairs(d: Optional[Mapping[str, Any]]) -> set:
+                return {(k, v) for (k, v) in (d or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+
+            cur_ids, new_ids = _pairs(m.get("ids")), _pairs(nd.get("ids"))
+            overlap_ok = (not cur_ids or not new_ids or bool(cur_ids & new_ids))
+
             if kind == "episode":
-                if m.get("season") is None: m["season"] = nd.get("season")
-                if m.get("episode") is None: m["episode"] = nd.get("episode")
-                if not m.get("series_title"): m["series_title"] = nd.get("series_title") or nd.get("title")
+                cur_sid, new_sid = _pairs(m.get("show_ids")), _pairs(nd.get("show_ids"))
+                if cur_sid and new_sid and not (cur_sid & new_sid):
+                    overlap_ok = False
+
+            has_ext = _has_ext_ids(nd.get("ids", {})) or (kind == "episode" and _has_ext_ids(nd.get("show_ids", {})))
+            if overlap_ok and has_ext:
+                if _has_ext_ids(nd.get("ids", {})):
+                    m["ids"].update({k: v for k, v in nd["ids"].items() if v})
+                if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
+                    m.setdefault("show_ids", {}).update({k: v for k, v in nd["show_ids"].items() if v})
+                if kind == "episode":
+                    if m.get("season") is None: m["season"] = nd.get("season")
+                    if m.get("episode") is None: m["episode"] = nd.get("episode")
+                    if not m.get("series_title"): m["series_title"] = nd.get("series_title") or nd.get("title")
 
     if not (m.get("title") or m.get("series_title")):
         _FBGUID_MEMO[key] = _FBGUID_NOHIT
@@ -677,3 +721,4 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
     _FBGUID_MEMO[key] = dict(m)
     _fb_cache_save()
     return m
+
