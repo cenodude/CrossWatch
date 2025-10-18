@@ -7,7 +7,7 @@ try:
 except Exception:
     def _rate_filter(x, _): return x  # safe fallback
 
-# Core deps from your orchestrator
+# Core imports
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
     build_snapshots_for_feature,
@@ -20,7 +20,7 @@ from ._tombstones import keys_for_feature, cascade_removals
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._phantoms import PhantomGuard
 
-# Small helpers we already split out
+# Utility imports
 from ._pairs_blocklist import apply_blocklist
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_massdelete
 from ._pairs_utils import (
@@ -32,7 +32,7 @@ from ._pairs_utils import (
     apply_verify_after_write_supported as _apply_verify_after_write_supported,
 )
 
-# Blackbox (flapper suppression) — fallback stubs accept **kwargs for safety.
+# Blackbox imports
 try:  # pragma: no cover
     from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
 except Exception:  # pragma: no cover
@@ -43,6 +43,8 @@ except Exception:  # pragma: no cover
     def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
         return {"ok": True, "count": 0}
 
+def _confirmed(res: dict) -> int:
+    return int((res or {}).get("confirmed", (res or {}).get("count", 0)) or 0)
 
 def _two_way_sync(
     ctx,
@@ -79,7 +81,7 @@ def _two_way_sync(
     allow_adds = flags["allow_adds"]
     allow_removals = flags["allow_removals"]
 
-    # Global toggles
+    # Capability: verify_after_write
     include_observed_cfg = bool(sync_cfg.get("include_observed_deletes", True))
     include_observed = include_observed_cfg if include_observed_override is None else bool(include_observed_override)
     drop_guard = bool(sync_cfg.get("drop_guard", False))
@@ -87,7 +89,7 @@ def _two_way_sync(
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
 
-    # Health snapshots
+    # Capability: verify_after_write support
     Ha = health_map.get(a) or {}
     Hb = health_map.get(b) or {}
     sa = _health_status(Ha)
@@ -104,7 +106,7 @@ def _two_way_sync(
     if a_down or b_down:
         include_observed = False  # safer if either side down
 
-    # Capability gate: if either provider says "no observed deletes", force it off.
+    # Capability: observed deletions
     def _cap_obsdel(ops) -> Optional[bool]:
         try:
             v = (ops.capabilities() or {}).get("observed_deletes")
@@ -120,7 +122,7 @@ def _two_way_sync(
     except Exception:
         pass
 
-    # Capability + feature health
+    # Early exit: unsupported feature or unhealthy provider
     if (not _supports_feature(aops, feature)) or (not _supports_feature(bops, feature)) \
        or (not _health_feature_ok(Ha, feature)) or (not _health_feature_ok(Hb, feature)):
         emit("feature:unsupported", a=a, b=b, feature=feature,
@@ -128,7 +130,7 @@ def _two_way_sync(
              b_supported=_supports_feature(bops, feature) and _health_feature_ok(Hb, feature))
         return {"ok": True, "adds_to_A": 0, "adds_to_B": 0, "rem_from_A": 0, "rem_from_B": 0}
 
-    # Rate-based pacing hint
+    # Pause helper
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
         rem = _rate_remaining(health_map.get(pname))
@@ -139,7 +141,7 @@ def _two_way_sync(
 
     emit("two:start", a=a, b=b, feature=feature, removals=allow_removals)
 
-    # Build present snapshots
+    #--- Build snapshots + deltas -------------------------------------------
     snaps = build_snapshots_for_feature(
         feature=feature, config=cfg, providers=provs,
         snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
@@ -158,7 +160,7 @@ def _two_way_sync(
     now_cp_A = module_checkpoint(aops, cfg, feature)
     now_cp_B = module_checkpoint(bops, cfg, feature)
 
-    # Drop-guard (protect against drastic shrink snapshots)
+    #-- Drop guards if configured ---------------------------------------
     if drop_guard:
         A_eff_guard, A_suspect, A_reason = coerce_suspect_snapshot(
             provider=a, ops=aops, prev_idx=prevA, cur_idx=A_cur, feature=feature,
@@ -181,7 +183,7 @@ def _two_way_sync(
         A_eff_guard, A_suspect = dict(A_cur), False
         B_eff_guard, B_suspect = dict(B_cur), False
 
-    # Present vs delta semantics
+    #--------- Prepare effective baselines -----------------------------------
     try:
         a_sem = str((aops.capabilities() or {}).get("index_semantics", "present")).lower()
     except Exception:
@@ -210,7 +212,7 @@ def _two_way_sync(
         if not B_suspect: obsB = {k for k in prevB.keys() if k not in (B_cur or {})}
         newly = (obsA | obsB) - tomb
 
-        # Write canonical + alias tokens
+        #--- Record new tombstones (pair-scoped + alias-aware) ----------------
         if newly:
             t = ctx.state_store.load_tomb() or {}
             ks = t.setdefault("keys", {})
@@ -243,7 +245,7 @@ def _two_way_sync(
     elif not include_observed:
         emit("debug", msg="observed.deletions.disabled", feature=feature, pair=pair_key)
 
-    # Remove observed keys from effective present views (avoid re-adding them)
+    # Prune effective baselines by tombstones + observed deletions
     for k in list(obsA): A_eff.pop(k, None)
     for k in list(obsB): B_eff.pop(k, None)
 
@@ -271,14 +273,14 @@ def _two_way_sync(
     A_alias = _alias_index(A_eff)
     B_alias = _alias_index(B_eff)
 
-    # ---------- Plan adds/removes
+    #--- Plan additions and removals ----------------------------------------
     add_to_A: List[Dict[str, Any]] = []
     add_to_B: List[Dict[str, Any]] = []
     rem_from_A: List[Dict[str, Any]] = []
     rem_from_B: List[Dict[str, Any]] = []
 
     if feature == "ratings":
-        # Ratings: compute ADDs via rating-aware diff; DO NOT compute removals here.
+        # Ratings-style features: plan via diff_ratings + tomb/observed rules.
         A_f = _rate_filter(A_eff, fcfg)
         B_f = _rate_filter(B_eff, fcfg)
 
@@ -299,7 +301,7 @@ def _two_way_sync(
                 if not _present(A_f, A_alias, v) and (ck in tomb or ck in obsA):
                     rem_from_B.append(_minimal(v))
     else:
-        # Presence-style features: plan by presence with tomb/observed rules.
+        # Non-ratings features: plan via simple presence + tomb/observed rules.
         for _k, v in A_eff.items():
             if _present(B_eff, B_alias, v): continue
             if allow_removals and (_ck(v) in tomb or _ck(v) in obsB): rem_from_A.append(_minimal(v))
@@ -309,20 +311,20 @@ def _two_way_sync(
             if allow_removals and (_ck(v) in tomb or _ck(v) in obsA): rem_from_B.append(_minimal(v))
             else: add_to_A.append(_minimal(v))
 
-    # Honor global gates
+    # Finalize plans based on allow_adds / allow_removals flags
     if not allow_adds: add_to_A.clear(); add_to_B.clear()
     if not allow_removals: rem_from_A.clear(); rem_from_B.clear()
 
-    # Bootstrap never deletes
+    # Bootstrap mode: disable all removals
     if bootstrap and allow_removals:
         rem_from_A.clear(); rem_from_B.clear()
         dbg("bootstrap.no-delete", a=a, b=b)
 
-    # Block additions by (tombstones ∪ unresolved ∪ blackbox), pair-scoped
+    #--- Apply blocklist filtering -----------------------------------------
     add_to_A = apply_blocklist(ctx.state_store, add_to_A, dst=a, feature=feature, pair_key=pair_key, emit=emit)
     add_to_B = apply_blocklist(ctx.state_store, add_to_B, dst=b, feature=feature, pair_key=pair_key, emit=emit)
 
-    # Phantom filter (post-blocklist, pre-write), gated by blackbox
+    #-- Phantom guard filtering -------------------------------------------
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
     bb_ttl_days = int(bb.get("cooldown_days") or 0) or None
@@ -335,7 +337,7 @@ def _two_way_sync(
     if use_phantoms and add_to_B:
         add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
 
-    # Mass-delete guard
+    #-- Mass-delete protection ---------------------------------------------
     rem_from_A = _maybe_block_massdelete(
         rem_from_A, baseline_size=len(A_eff),
         allow_mass_delete=allow_mass_delete,
@@ -353,15 +355,13 @@ def _two_way_sync(
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
 
-    # --- Apply removals -----------------------------------------------------
+    #--- Apply removals (with tombstone + alias-aware logic) ----------------
     resA_rem = {"ok": True, "count": 0}
     resB_rem = {"ok": True, "count": 0}
-
-    # Precompute attempted canonical keys (used to prune baselines up to provider-confirmed count)
     remA_keys = [_ck(_minimal(it)) for it in (rem_from_A or []) if _ck(_minimal(it))]
     remB_keys = [_ck(_minimal(it)) for it in (rem_from_B or []) if _ck(_minimal(it))]
 
-    # Alias-aware tombstone helper (prevents reprocessing + enables observed-delete logic)
+    # Tombstone marker
     def _mark_tombs(items: List[Dict[str, Any]]) -> None:
         try:
             now_ts = int(_t.time())
@@ -402,7 +402,7 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(a),
             )
-            prov_count_A = int((resA_rem or {}).get("count") or 0)
+            prov_count_A = _confirmed(resA_rem)
 
             # Prune from in-memory baseline up to what the provider confirmed
             if prov_count_A and not dry_run_flag:
@@ -416,7 +416,13 @@ def _two_way_sync(
                 _mark_tombs(rem_from_A)
 
             emit("two:apply:remove:A:done", dst=a, feature=feature,
-                 count=int(resA_rem.get("count") or 0), result=resA_rem)
+                 count=_confirmed(resA_rem),
+                 attempted=int(resA_rem.get("attempted", 0)),
+                 removed=_confirmed(resA_rem),
+                 skipped=int(resA_rem.get("skipped", 0)),
+                 unresolved=int(resA_rem.get("unresolved", 0)),
+                 errors=int(resA_rem.get("errors", 0)),
+                 result=resA_rem)
 
     if rem_from_B:
         if b_down:
@@ -429,7 +435,7 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(b),
             )
-            prov_count_B = int((resB_rem or {}).get("count") or 0)
+            prov_count_B = _confirmed(resB_rem)
 
             # Prune from in-memory baseline up to what the provider confirmed
             if prov_count_B and not dry_run_flag:
@@ -443,15 +449,21 @@ def _two_way_sync(
                 _mark_tombs(rem_from_B)
 
             emit("two:apply:remove:B:done", dst=b, feature=feature,
-                 count=int(resB_rem.get("count") or 0), result=resB_rem)
+                 count=_confirmed(resB_rem),
+                 attempted=int(resB_rem.get("attempted", 0)),
+                 removed=_confirmed(resB_rem),
+                 skipped=int(resB_rem.get("skipped", 0)),
+                 unresolved=int(resB_rem.get("unresolved", 0)),
+                 errors=int(resB_rem.get("errors", 0)),
+                 result=resB_rem)
 
-    # --- Apply additions (with unresolved/blackbox correction) --------------
+    #--- Apply additions (with blackbox + phantom guard logic) --------------
     resA_add = {"ok": True, "count": 0}
     resB_add = {"ok": True, "count": 0}
     eff_add_A = 0
     eff_add_B = 0
-    unresolved_new_A_total = 0  # reported upwards
-    unresolved_new_B_total = 0  # reported upwards
+    unresolved_new_A_total = 0
+    unresolved_new_B_total = 0
 
     if add_to_A:
         if a_down:
@@ -475,7 +487,7 @@ def _two_way_sync(
             unresolved_new_A_total += len(new_unresolved_A)
 
             confirmed_A = [k for k in keys_A if k not in new_unresolved_A]
-            prov_count_A = int((resA_add or {}).get("count") or 0)
+            prov_count_A = _confirmed(resA_add)
 
             if verify_after_write and _apply_verify_after_write_supported(aops):
                 try:
@@ -512,7 +524,13 @@ def _two_way_sync(
                     if v: A_eff[k] = v
 
             emit("two:apply:add:A:done", dst=a, feature=feature,
-                 count=int(resA_add.get("count") or 0), result=resA_add)
+                 count=_confirmed(resA_add),
+                 attempted=int(resA_add.get("attempted", 0)),
+                 added=_confirmed(resA_add),
+                 skipped=int(resA_add.get("skipped", 0)),
+                 unresolved=int(resA_add.get("unresolved", 0)),
+                 errors=int(resA_add.get("errors", 0)),
+                 result=resA_add)
 
     if add_to_B:
         if b_down:
@@ -536,7 +554,7 @@ def _two_way_sync(
             unresolved_new_B_total += len(new_unresolved_B)
 
             confirmed_B = [k for k in keys_B if k not in new_unresolved_B]
-            prov_count_B = int((resB_add or {}).get("count") or 0)
+            prov_count_B = _confirmed(resB_add)
 
             if verify_after_write and _apply_verify_after_write_supported(bops):
                 try:
@@ -573,9 +591,15 @@ def _two_way_sync(
                     if v: B_eff[k] = v
 
             emit("two:apply:add:B:done", dst=b, feature=feature,
-                 count=int(resB_add.get("count") or 0), result=resB_add)
+                 count=_confirmed(resB_add),
+                 attempted=int(resB_add.get("attempted", 0)),
+                 added=_confirmed(resB_add),
+                 skipped=int(resB_add.get("skipped", 0)),
+                 unresolved=int(resB_add.get("unresolved", 0)),
+                 errors=int(resB_add.get("errors", 0)),
+                 result=resB_add)
 
-    # Cascade removals across features (best-effort)
+    #--- Cascade removals in state store -----------------------------------
     try:
         rem_keys = (rem_from_A or []) + (rem_from_B or [])
         cascade_removals(
@@ -585,7 +609,7 @@ def _two_way_sync(
     except Exception:
         pass
 
-    # Persist baselines + checkpoints
+    #--- Save new baselines + checkpoints ---------------------------------
     try:
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
@@ -614,17 +638,16 @@ def _two_way_sync(
 
     emit("two:done", a=a, b=b, feature=feature,
          adds_to_A=eff_add_A, adds_to_B=eff_add_B,
-         rem_from_A=int(resA_rem.get("count", 0)),
-         rem_from_B=int(resB_rem.get("count", 0)))
+         rem_from_A=_confirmed(resA_rem),
+         rem_from_B=_confirmed(resB_rem))
 
     return {
         "ok": True, "feature": feature, "a": a, "b": b,
         "adds_to_A": eff_add_A, "adds_to_B": eff_add_B,
-        "rem_from_A": int(resA_rem.get("count", 0)),
-        "rem_from_B": int(resB_rem.get("count", 0)),
+        "rem_from_A": _confirmed(resA_rem),
+        "rem_from_B": _confirmed(resB_rem),
         "resA_add": resA_add, "resB_add": resB_add,
         "resA_remove": resA_rem, "resB_remove": resB_rem,
-        # Report unresolved upwards for aggregation in _pairs.py
         "unresolved_to_A": int(unresolved_new_A_total),
         "unresolved_to_B": int(unresolved_new_B_total),
     }

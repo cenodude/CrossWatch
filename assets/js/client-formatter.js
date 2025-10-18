@@ -31,8 +31,7 @@
       .cf-generic{background:#1b1b1b;color:#eaeaea}
       .cf-event.progress{border-color:#0ea5e9}
       .cf-prog-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-      .cf-prog-meta{opacity:.85;font-size:12px}
-      /* Right-anchored bar; text stays centered inside the bar */
+      .cf-prog-meta{opacity:.85;font-size:12px;margin-left:8px}
       .cf-prog-bar{position:relative;height:10px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-left:auto;flex:0 0 38%;min-width:220px}
       .cf-prog-fill{position:absolute;inset:0 100% 0 0;background:linear-gradient(90deg,#0ea5e9,#0369a1);transition:inset .25s ease;box-shadow:0 0 8px rgba(14,165,233,.22) inset}
       .cf-prog-text{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:11px;opacity:.95;color:#e8f6ff;text-shadow:0 1px 2px rgba(0,0,0,.35)}
@@ -48,6 +47,14 @@
       @keyframes cfPop{from{transform:scale(.98)}to{transform:scale(1)}}
       @keyframes cfSlide{from{transform:translateX(-6px);opacity:.0}to{transform:none;opacity:1}}
       @keyframes cfPulse{0%{box-shadow:0 0 0 0 rgba(14,165,233,.35)}100%{box-shadow:0 0 0 10px rgba(14,165,233,0)}}
+
+      .cf-prog-stats{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;justify-content:flex-end}
+      .cf-stat{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;font-size:11px;line-height:1.2;border:1px solid rgba(255,255,255,.15);opacity:.95}
+      .cf-stat b{font-weight:700}
+      .cf-stat.stat-ok{color:#25a05f;border-color:rgba(37,160,95,.35);background:rgba(37,160,95,.08)}
+      .cf-stat.stat-warn{color:#f59e0b;border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.08)}
+      .cf-stat.stat-err{color:#ef5350;border-color:rgba(239,83,80,.35);background:rgba(239,83,80,.08)}
+      .cf-stat.stat-muted{opacity:.8}
     </style>`);
   }
 
@@ -66,8 +73,8 @@
   let squelchPlain=0;
 
   // Progress bookkeeping
-  const progMap=Object.create(null);           // key -> DOM node
-  const progPendingTick=Object.create(null);   // key -> true if should auto-finish on next line
+  const progMap=Object.create(null);
+  const progPendingTick=Object.create(null);
   const progKey=(ev)=>{const dst=String(ev.dst||ev.provider||"DST").toUpperCase();const feat=String(ev.feature||"watchlist").toLowerCase();if(ev.event==="snapshot:progress")return `snap|${dst}|${feat}`;if(/^apply:/.test(ev.event||"")){const action=(ev.event.split(":")[1]||"add").toLowerCase();return `apply|${dst}|${feat}|${action}`}return null};
   const slug=(s)=>String(s).replace(/[^a-z0-9|_-]/gi,"_");
 
@@ -81,7 +88,8 @@
     const wrap=d.createElement("div");
     wrap.className="cf-event progress cf-fade-in";
     wrap.setAttribute("data-cf-prog",slug(key));
-    wrap.innerHTML=`<div class="cf-prog-head"><span class="cf-ico"></span>${titleIcon} ${verb} <span class="cf-prog-badge">${dstBadge}</span><span class="cf-prog-sub">· ${esc(cap(feat))}</span><div class="cf-prog-bar"><div class="cf-prog-fill"></div><div class="cf-prog-text">0%</div></div></div>`;
+    // CHANGED: moved stats container below the head (bar)
+    wrap.innerHTML=`<div class="cf-prog-head"><span class="cf-ico"></span>${titleIcon} ${verb} <span class="cf-prog-badge">${dstBadge}</span><span class="cf-prog-sub">· ${esc(cap(feat))}</span><div class="cf-prog-bar"><div class="cf-prog-fill"></div><div class="cf-prog-text">0%</div></div></div><div class="cf-prog-stats"></div>`;
     root.appendChild(wrap); progMap[key]=wrap; return wrap;
   }
 
@@ -90,33 +98,49 @@
     const key=progKey(ev); if(!key) return;
     const row=ensureProgressRow(root,key,ev);
     const fill=row.querySelector(".cf-prog-fill"), txt=row.querySelector(".cf-prog-text");
+    const statsEl=row.querySelector(".cf-prog-stats");
 
     let done=Number(ev.done||0);
     let total=Number(ev.total||0)||Number(ev.count||0)||Number(row.getAttribute("data-total")||0);
     if(!total&&"count"in ev&&Number(ev.count)>0) total=Number(ev.count);
     if(total>0) row.setAttribute("data-total",String(total));
 
-    // Off-by-one fix: if we reached total-1, treat as complete (missing final tick)
     if(total>0 && done>=total-1 && (ev.event==="snapshot:progress" || /^apply:.*:progress$/.test(String(ev.event)))){
       done=total; opts.final=true;
     }
 
-    // Compute percent
     const pct=total>0?Math.max(0,Math.min(100,Math.round((done/total)*100))):0;
 
-    // Apply visuals
     if(fill) fill.style.insetInlineEnd=`${100-pct}%`;
     if(txt) txt.textContent=total>0?`${Math.min(done,total)}/${total} · ${pct}%`:`${done}`;
 
-    // Finish now if told so
     if((total>0&&done>=total)||opts.final===true){
       row.classList.add("cf-prog-done");
       if(txt) txt.textContent=total>0?`${total}/${total} · 100%`:"100%";
-      progPendingTick[key]=false; // no auto-finish needed anymore
+
+      // render compact stats as pills on their own line
+      const action=(String(ev.event||"").includes(":remove:")?"remove":"add");
+      const attempted = Number(ev.attempted ?? ev.result?.attempted ?? 0);
+      const confirmed = Number(ev.confirmed ?? ev.result?.confirmed ?? ev.result?.count ?? 0);
+      const skipped   = Number(ev.skipped   ?? ev.result?.skipped   ?? 0);
+      const unresolved= Number(ev.unresolved?? ev.result?.unresolved?? 0);
+      const errors    = Number(ev.errors    ?? ev.result?.errors    ?? 0);
+      if(statsEl){
+        const word = action==="remove"?"removed":"added";
+        const pills = [
+          {cls:"",          txt:`<b>${attempted}</b> attempted`},
+          {cls:"stat-ok",   txt:`<b>${confirmed}</b> ${word}`},
+          {cls:"stat-muted",txt:`<b>${skipped}</b> skipped`},
+          {cls:"stat-warn", txt:`<b>${unresolved}</b> unresolved`},
+          {cls:"stat-err",  txt:`<b>${errors}</b> errors`}
+        ].map(p=>`<span class="cf-stat ${p.cls}">${p.txt}</span>`).join(" ");
+        statsEl.innerHTML = pills;
+      }
+
+      progPendingTick[key]=false;
       return;
     }
 
-    // Not finished? arm "finish-on-next-line" (spec requires this)
     progPendingTick[key]=true;
   }
 
@@ -132,7 +156,6 @@
         row.classList.add("cf-prog-done");
         if(txt) txt.textContent=`${total}/${total} · 100%`;
       }else{
-        // No total known; still fulfill the contract
         if(fill) fill.style.insetInlineEnd=`0%`;
         row.classList.add("cf-prog-done");
         if(txt) txt.textContent=`100%`;
@@ -205,8 +228,13 @@
         return [row("remove",counts.remove[A]|0,counts.remove[B]|0),row("add",counts.add[A]|0,counts.add[B]|0)].join("");
       }
 
-      case "run:done":
-        return block("complete",`${ICON.complete} Sync complete`, `+${ev.added|0} / -${ev.removed|0} · pairs=${ev.pairs|0}`);
+      case "run:done": {
+        const parts = [`+${ev.added|0} / -${ev.removed|0}`, `pairs=${ev.pairs|0}`];
+        if ("skipped" in ev) parts.push(`skipped=${ev.skipped|0}`);
+        if ("unresolved" in ev) parts.push(`unresolved=${ev.unresolved|0}`);
+        if ("errors" in ev) parts.push(`errors=${ev.errors|0}`);
+        return block("complete",`${ICON.complete} Sync complete`, parts.join(" · "));
+      }
 
       case "debug": return null;
       default: return null;
@@ -242,8 +270,15 @@
       if(/^•\s*feature=/i.test(t)) return null;
       if(/^\[SYNC]\s*exit code:/i.test(t)) return null;
     }
-    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)/i);
-    if(mDone) return block("complete",`${ICON.complete} Sync complete`, `+${Number(mDone[1]||0)} / -${Number(mDone[2]||0)}`);
+    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)(?:,\s*Total skipped:\s*(\d+))?(?:,\s*Total unresolved:\s*(\d+))?(?:,\s*Total errors:\s*(\d+))?/i);
+    if(mDone){
+      const added=Number(mDone[1]||0), removed=Number(mDone[2]||0), skipped=Number(mDone[3]||0), unresolved=Number(mDone[4]||0), errors=Number(mDone[5]||0);
+      const parts=[`+${added} / -${removed}`];
+      if(mDone[3]) parts.push(`skipped=${skipped}`);
+      if(mDone[4]) parts.push(`unresolved=${unresolved}`);
+      if(mDone[5]) parts.push(`errors=${errors}`);
+      return block("complete",`${ICON.complete} Sync complete`, parts.join(" · "));
+    }
     const mSched1=t.match(/^\s*(?:\[?INFO]?)\s*\[?SCHED]?\s*scheduler\s+(started|stopped|refreshed)\s*\((enabled|disabled)\)/i);
     if(mSched1) return block(mSched1[2].toLowerCase()==="enabled"?"start":"remove",`⏱️ Scheduler`,`${mSched1[1].toLowerCase()} · ${mSched1[2].toLowerCase()}`);
     const mSched2=t.match(/^\s*(?:\[?INFO]?)\s*scheduler:\s*started\s*(?:&|&amp;)\s*refreshed\s*$/i);
@@ -306,12 +341,10 @@
     if(!el||!line) return;
     isDebug=!!(isDebug??(typeof window!=="undefined"&&window.appDebug));
 
-    // Finish any armed bars before handling this new line
     finishArmedBars(el);
 
     const trimmed=String(line).trim();
 
-    // JSON path
     if(trimmed.startsWith("{")){
       try{
         const ev=JSON.parse(trimmed);
@@ -328,7 +361,6 @@
             return;
           }
 
-          // Progress stream
           if(ev.event==="snapshot:progress"){ updateProgressRow(el,ev,{final:ev.final===true}); trimRows(el); return; }
           if(/^apply:/.test(ev.event)){
             if(/:start$/.test(ev.event)){ updateProgressRow(el,{...ev,done:0,total:ev.count||ev.total||0}); trimRows(el); return; }
@@ -343,17 +375,13 @@
       }catch{/* ignore bad json */}
     }
 
-    // Debug raw
     if(isDebug){const div=d.createElement("div"); div.className="cf-line"; div.textContent=String(line); el.appendChild(div); trimRows(el); return;}
 
-    // Friendly format
     const fancy=formatFriendlyLog(line);
     if(fancy!=null){el.insertAdjacentHTML("beforeend",fancy); trimRows(el); return;}
 
-    // Drop stray JSON
     if(String(line).trim().startsWith("{")) return;
 
-    // Plain text handling
     const t=String(line).trim(); if(!t) return;
     if(squelchPlain>0&&isContinuationLine(t)){squelchPlain--; return;}
     if(squelchPlain>0&&!isContinuationLine(t)) squelchPlain=0;
@@ -365,6 +393,5 @@
     trimRows(el);
   }
 
-  // Export
   w.ClientFormatter={formatFriendlyLog,filterPlainLine,splitHost,processChunk,renderInto};
 })(window,document);

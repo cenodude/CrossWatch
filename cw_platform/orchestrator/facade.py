@@ -16,13 +16,15 @@ from ._applier import apply_add as _apply_add, apply_remove as _apply_remove
 
 __all__ = ["Orchestrator"]
 
+#--- Config base import (for state store) -------------------------------------
 try:
-    from .. import config_base  # user's helper
+    from .. import config_base
 except Exception:
-    class config_base:  # fallback
+    class config_base:
         @staticmethod
         def CONFIG_BASE() -> str: return "./"
 
+#--- Orchestrator class (legacy-friendly) --------------------------------------
 @dataclass
 class Orchestrator:
     config: Mapping[str, Any]
@@ -37,6 +39,7 @@ class Orchestrator:
     # Back-compat alias
     files: StateStore | None = field(init=False, default=None)
 
+    # Internal fields
     def __post_init__(self):
         self.cfg = dict(self.config or {})
         rt = dict(self.cfg.get("runtime") or {})
@@ -69,6 +72,7 @@ class Orchestrator:
         self.apply_chunk_pause_ms = int(rt.get("apply_chunk_pause_ms") or 0)
         self.emitter.info("[i] Orchestrator v3 ready (full compat shims)")
 
+    # Context property
     @property
     def context(self):
         from types import SimpleNamespace
@@ -94,7 +98,7 @@ class Orchestrator:
             apply_chunk_pause_ms=self.apply_chunk_pause_ms,
         )
 
-    # === Public run API (legacy-friendly) ===
+    #--- Main run method ----------------------------------------------------------
     def run(self, *, dry_run: bool=False, only_feature: Optional[str]=None, write_state_json: bool=True, state_path: Optional[str]=None, progress: Optional[object]=None, **kwargs) -> Dict[str, Any]:
         if progress is not None:
             if callable(progress):
@@ -116,7 +120,7 @@ class Orchestrator:
 
         summary = _run_pairs(self.context)
 
-        # Persist only enabled features (no surprise snapshots for disabled ones)
+        # Persist feature baselines (used by insights for titles)
         try:
             enabled_feats = self._enabled_features()
             if enabled_feats:
@@ -124,7 +128,7 @@ class Orchestrator:
         except Exception:
             pass
 
-        # Keep watchlist wall + cleanup + telemetry
+        # Persist watchlist wall
         try: self._persist_state_wall(feature='watchlist')
         except Exception: pass
         try:
@@ -136,6 +140,15 @@ class Orchestrator:
                 http24 = self.stats.http_overview(hours=24)
                 self.emit('http:overview', window_hours=24, data=http24)
         except Exception: pass
+
+        # Persist HTTP overview
+        try:
+            if hasattr(self.stats, "overview"):
+                st = self.state_store.load_state()
+                ov = self.stats.overview(st)
+                self.emit("stats:overview", overview=ov)
+        except Exception:
+            pass
         return summary
 
     def run_pairs(self, *args, **kwargs) -> Dict[str, Any]:
@@ -151,7 +164,7 @@ class Orchestrator:
         finally:
             self.cfg = saved
 
-    # === Legacy shims expected by insights/older callsites ===
+    #--- Snapshot / provider helpers ----------------------------------------------
     def build_snapshots(self, feature: str) -> Dict[str, Dict[str, Any]]:
         return _build_snaps(feature=feature, config=self.cfg, providers=self.providers, snap_cache=self.snap_cache, snap_ttl_sec=self.snap_ttl_sec, dbg=self.dbg, emit_info=self.emit_info)
     def allowed_providers_for_feature(self, feature: str) -> set[str]:
@@ -178,7 +191,7 @@ class Orchestrator:
         if not ops: return {"ok": False, "count": 0, "error": f"unknown provider {dst_name}"}
         return _apply_remove(dst_ops=ops, cfg=self.cfg, dst_name=dst_name, feature=feature, items=items, dry_run=self.dry_run if dry_run is None else bool(dry_run), emit=self.emit, dbg=self.dbg, chunk_size=self.apply_chunk_size, chunk_pause_ms=self.apply_chunk_pause_ms)
 
-    # --- Which features are enabled in pairs (respects only_feature) ---
+    #--- Persist enabled features helper -----------------------------------------
     def _enabled_features(self) -> List[str]:
         feats: set[str] = set()
         pairs = list((self.cfg.get("pairs") or []))
@@ -199,7 +212,7 @@ class Orchestrator:
             feats.add("watchlist")
         return sorted(feats)
 
-    # --- Persist per-feature baselines (used by insights for titles) ---
+    #--- Persist provider feature baselines --------------------------------------
     def _persist_feature_baselines(self, *, features: Sequence[str] = ("watchlist",)) -> dict:
         import time as _t
         try:
@@ -209,7 +222,11 @@ class Orchestrator:
         state = self.state_store.load_state() or {}
         providers = dict(state.get("providers") or {})
         for feat in (features or ()):
+            if str(feat).lower() == "watchlist":
+                continue
             try:
+                try: self.snap_cache.clear()
+                except Exception: pass
                 snaps = self.build_snapshots(feat)
             except Exception:
                 snaps = {}
@@ -223,7 +240,7 @@ class Orchestrator:
         self.dbg("state.persisted", providers=len(providers), wall=len((state.get("wall") or [])))
         return state
 
-    # --- Flatten provider baselines to wall (watchlist) + timestamp ---
+    #--- Persist watchlist wall ---------------------------------------------------
     def _persist_state_wall(self, *, feature: str = "watchlist") -> dict:
         state = self.state_store.load_state() or {}
         providers = dict(state.get("providers") or {})
@@ -258,7 +275,7 @@ class Orchestrator:
         self.dbg("state.persisted", providers=len(providers), wall=len(uniq))
         return state
 
-    # === Telemetry / maintenance ===
+    #--- Telemetry helpers ---------------------------------------------------------
     def emit_rate_warnings(self):
         return maybe_emit_rate_warnings(self.stats, self.emitter.emit, self.warn_thresholds)
     def prune_tombstones(self, older_than_secs: int) -> int:

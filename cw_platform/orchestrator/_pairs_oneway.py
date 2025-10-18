@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional
 
-# Core orchestrator pieces
+# Core imports
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
     build_snapshots_for_feature,
@@ -15,7 +15,7 @@ from ._unresolved import load_unresolved_keys, record_unresolved
 from ._planner import diff, diff_ratings
 from ._phantoms import PhantomGuard
 
-# Extracted helpers (compact + reusable)
+# Utility imports
 from ._pairs_utils import (
     supports_feature as _supports_feature,
     resolve_flags as _resolve_flags,
@@ -25,9 +25,9 @@ from ._pairs_utils import (
     apply_verify_after_write_supported as _apply_verify_after_write_supported,
 )
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
-from ._pairs_blocklist import apply_blocklist  # union: (global+pair) tombstones ∪ unresolved ∪ blackbox
+from ._pairs_blocklist import apply_blocklist
 
-# Blackbox (flapper suppression). Fallback stubs accept **kwargs to stay safe.
+# Blackbox imports (tolerant)
 try:  # pragma: no cover
     from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
 except Exception:  # pragma: no cover
@@ -38,10 +38,8 @@ except Exception:  # pragma: no cover
     def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
         return {"ok": True, "count": 0}
 
-
-# Compact, tolerant ratings filter
+# Feature-specific filters
 def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[str, Any]:
-    # normalize type synonyms
     alias = {"movies":"movie","movie":"movie","shows":"show","show":"show",
              "episodes":"episode","episode":"episode","ep":"episode","eps":"episode"}
     types_raw = [str(t).strip().lower() for t in (fcfg.get("types") or []) if isinstance(t, (str, bytes))]
@@ -63,7 +61,7 @@ def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[
 
     return {k: v for k, v in idx.items() if _keep(v)}
 
-
+#--- Core one-way sync driver ----------------------------------------------
 def run_one_way_feature(
     ctx,
     src: str,
@@ -98,7 +96,7 @@ def run_one_way_feature(
     allow_adds = flags["allow_adds"]
     allow_removes = flags["allow_removals"]
 
-    # Health guards
+    # Health status checks
     Hs = health_map.get(src) or {}
     Hd = health_map.get(dst) or {}
     ss = _health_status(Hs)
@@ -110,7 +108,7 @@ def run_one_way_feature(
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": False, "added": 0, "removed": 0, "unresolved": 0}
 
-    # Capability + per-feature health guard
+    # Feature support & health gating
     if (not _supports_feature(src_ops, feature)) or (not _supports_feature(dst_ops, feature)) \
        or (not _health_feature_ok(Hs, feature)) or (not _health_feature_ok(Hd, feature)):
         emit("feature:unsupported", src=src, dst=dst, feature=feature,
@@ -119,18 +117,18 @@ def run_one_way_feature(
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": True, "added": 0, "removed": 0, "unresolved": 0}
 
-    # If source is down, skip planning completely (avoids delete storms)
+    # Early exit if source is down (nothing to add)
     if src_down:
         emit("writes:skipped", src=src, dst=dst, feature=feature, reason="source_down")
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": True, "added": 0, "removed": 0, "unresolved": 0}
 
-    # Observed-deletes toggle (config default → clamped by health & capabilities)
+    # Observed-deletes handling
     include_observed = bool(sync_cfg.get("include_observed_deletes", True))
     if src_down or dst_down:
         include_observed = False  # safer if either side is down
 
-    # If either provider declares observed_deletes=False, force it off
+    # Capability check helper
     def _cap_obsdel(ops) -> Optional[bool]:
         try:
             v = (ops.capabilities() or {}).get("observed_deletes")
@@ -148,7 +146,7 @@ def run_one_way_feature(
     except Exception:
         pass
 
-    # Rate-based pause hint for apply_* calls
+    # Normalization helper for applier results
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
         rem = _rate_remaining(health_map.get(pname))
@@ -157,7 +155,7 @@ def run_one_way_feature(
             return base + 1000
         return base
 
-    # Snapshots (fresh)
+    # Normalization helper for applier results
     snaps = build_snapshots_for_feature(
         feature=feature,
         config=cfg,
@@ -170,13 +168,13 @@ def run_one_way_feature(
     src_cur = snaps.get(src) or {}
     dst_cur = snaps.get(dst) or {}
 
-    # Previous baselines (legacy layout)
+    # Compute diffs
     prev_state = ctx.state_store.load_state() or {}
     prev_provs = (prev_state.get("providers") or {})
     prev_src = dict((((prev_provs.get(src, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
     prev_dst = dict((((prev_provs.get(dst, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
 
-    # Suspect guards (protect against drastic shrink snapshots)
+    # Suspect snapshot detection + coercion
     drop_guard = bool(sync_cfg.get("drop_guard", False))
     suspect_min_prev = int((cfg.get("runtime") or {}).get("suspect_min_prev", 20))
     suspect_ratio = float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10))
@@ -238,7 +236,7 @@ def run_one_way_feature(
     if not allow_removes:
         removes = []
 
-    # Mass-delete guard (on removals)
+    # Apply observed-deletes filtering
     removes = _maybe_block_mass_delete(
         removes, baseline_size=len(dst_full),
         allow_mass_delete=bool(sync_cfg.get("allow_mass_delete", True)),
@@ -246,18 +244,18 @@ def run_one_way_feature(
         emit=emit, dbg=dbg, dst_name=dst, feature=feature,
     )
 
-    # Apply union blocklist first
+    # Apply blackbox filtering (pre-write)
     pair_key = "-".join(sorted([src, dst]))
     adds = apply_blocklist(
         ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
     )
 
-    # Telemetry summary (post-blocklist)
+    # Load blackbox keys for dst+feature
     emit("one:plan", src=src, dst=dst, feature=feature,
          adds=len(adds), removes=len(removes),
          src_count=len(src_idx), dst_count=len(dst_full))
 
-    # Phantom filter (post-blocklist, pre-write) — toggled by blackbox
+    # Blackbox + Phantom Guard setup
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
     ttl_days = int(bb.get("cooldown_days") or 0) or None
@@ -266,13 +264,14 @@ def run_one_way_feature(
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
-    # Write bookkeeping (now-final adds)
+    # Precompute attempted canonical keys
     attempted_keys = {_ck(it) for it in adds}
     key2item = {_ck(it): _minimal(it) for it in adds}
 
-    # Apply additions with unresolved-correction (+ optional verify)
+    # Apply additions
     added_effective = 0
-    unresolved_new_total = 0  # report new unresolved upwards
+    res_add: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+    unresolved_new_total = 0
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
 
@@ -296,6 +295,13 @@ def run_one_way_feature(
                 chunk_pause_ms=_pause_for(dst),
             )
             unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            res_add = {
+                "attempted": int((add_res or {}).get("attempted", 0)),
+                "confirmed": int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0),
+                "skipped": int((add_res or {}).get("skipped", 0)),
+                "unresolved": int((add_res or {}).get("unresolved", 0)),
+                "errors": int((add_res or {}).get("errors", 0)),
+            }
             new_unresolved = unresolved_after - unresolved_before
             unresolved_new_total += len(new_unresolved)
 
@@ -308,21 +314,19 @@ def run_one_way_feature(
                 except Exception:
                     pass
 
-            prov_count = int((add_res or {}).get("count") or 0)
+            prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
 
-            # Strict pessimistic policy: if any new unresolved appeared and we didn't verify, count 0 adds.
             strict_pessimist = (not verify_after_write) and bool(new_unresolved)
             if strict_pessimist:
                 added_effective = 0
             else:
-                added_effective = len(confirmed_keys) if verify_after_write else min(prov_count, len(confirmed_keys))
+                added_effective = len(confirmed_keys) if verify_after_write else min(prov_confirmed, len(confirmed_keys))
 
-            if added_effective != prov_count:
+            if added_effective != prov_confirmed:
                 dbg("apply:add:corrected", dst=dst, feature=feature,
-                    provider_count=prov_count, effective=added_effective,
+                    provider_count=prov_confirmed, effective=added_effective,
                     newly_unresolved=len(new_unresolved))
 
-            # Blackbox + persist unresolved for failed attempts (pass pair+cfg)
             failed_keys = [k for k in attempted_keys if k not in confirmed_keys]
             try:
                 if failed_keys:
@@ -333,14 +337,11 @@ def run_one_way_feature(
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
                 if confirmed_keys:
                     record_success(dst, feature, confirmed_keys, pair=pair_key, cfg=cfg)
-
-                # Record only when phantom guard is active and we actually counted them
                 if use_phantoms and guard and added_effective and confirmed_keys:
                     guard.record_success(confirmed_keys)
             except Exception:
                 pass
 
-            # Only update baseline when we truly consider them added.
             if added_effective and not dry_run_flag:
                 for k in confirmed_keys[:added_effective]:
                     v = key2item.get(k)
@@ -350,8 +351,8 @@ def run_one_way_feature(
     # Apply removals
     removed_count = 0
     rem_keys_attempted: List[str] = []
+    res_remove: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
     if removes:
-        # canonical keys for everything we intend to remove
         try:
             rem_keys_attempted = [
                 _ck(_minimal(it)) for it in removes if _ck(_minimal(it))
@@ -375,9 +376,15 @@ def run_one_way_feature(
                 chunk_size=ctx.apply_chunk_size,
                 chunk_pause_ms=_pause_for(dst),
             )
-            removed_count = int((rem_res or {}).get("count") or 0)
+            removed_count = int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0)
+            res_remove = {
+                "attempted": int((rem_res or {}).get("attempted", 0)),
+                "confirmed": int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0),
+                "skipped": int((rem_res or {}).get("skipped", 0)),
+                "unresolved": int((rem_res or {}).get("unresolved", 0)),
+                "errors": int((rem_res or {}).get("errors", 0)),
+            }
 
-            # Mark BOTH global and pair-scoped tombstones for removed keys + ALL ALIASES.
             if removed_count and not dry_run_flag:
                 try:
                     import time as _t
@@ -388,11 +395,9 @@ def run_one_way_feature(
                     removed_tokens = set()
                     for it in (removes or []):
                         try:
-                            # canonical
                             ck = _ck(_minimal(it))
                             if ck:
                                 removed_tokens.add(ck)
-                            # aliases
                             ids = (it.get("ids") or {})
                             for idk, idv in (ids or {}).items():
                                 if idv is None or str(idv) == "":
@@ -402,9 +407,7 @@ def run_one_way_feature(
                             continue
 
                     for tok in removed_tokens:
-                        # Global feature tombstone (feature|alias_or_ck)
                         ks.setdefault(f"{feature}|{tok}", now)
-                        # Pair-scoped tombstone (feature:SRC-DST|alias_or_ck)
                         ks.setdefault(f"{feature}:{pair_key}|{tok}", now)
 
                     ctx.state_store.save_tomb(t)
@@ -412,13 +415,12 @@ def run_one_way_feature(
                          added=len(removed_tokens), scope="global+pair")
                 except Exception:
                     pass
-            # This prevents the same “removed:N” from being planned on every run when removal succeeded.
             if not dry_run_flag and removed_count:
                 for k in rem_keys_attempted:
                     if k in dst_full:
                         dst_full.pop(k, None)
 
-    # Persist baselines & checkpoints (legacy layout kept intact)
+    #--- Commit new baselines + checkpoints ---------------------------------
     try:
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
@@ -448,7 +450,7 @@ def run_one_way_feature(
     except Exception:
         pass
 
-    # Per-feature cascade (when we actually removed something)
+    #-- Cascade removals in state store -----------------------------------
     try:
         if removes:
             cascade_removals(
@@ -459,5 +461,14 @@ def run_one_way_feature(
         pass
 
     emit("feature:done", src=src, dst=dst, feature=feature)
-    # Report unresolved so _pairs.py can aggregate into run:done and stats:overview.
-    return {"ok": True, "added": added_effective, "removed": removed_count, "unresolved": int(unresolved_new_total)}
+    
+    # Final result
+    return {
+        "ok": True,
+        "added": added_effective,
+        "removed": removed_count,
+        "unresolved": int(unresolved_new_total),
+        "errors": int(res_add.get("errors", 0)) + int(res_remove.get("errors", 0)),
+        "res_add": res_add,
+        "res_remove": res_remove,
+    }

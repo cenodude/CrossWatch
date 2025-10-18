@@ -195,10 +195,36 @@ def _persist_state_via_orc(orc, *, feature: str = "watchlist") -> dict:
     return state
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
-    rt=_rt(); LOG_BUFFERS, RUNNING_PROCS, STATE_PATH, _append_log = rt[0], rt[1], rt[3], rt[8]
+    rt=_rt(); LOG_BUFFERS, RUNNING_PROCS, STATE_PATH, _append_log, strip_ansi = rt[0], rt[1], rt[3], rt[8], rt[7]
     overrides = overrides or {}; _summary_reset()
     LOG_BUFFERS["SYNC"] = []; _sync_progress_ui("::CLEAR::")
     _sync_progress_ui(f"SYNC start: orchestrator pairs run_id={run_id}")
+
+    def _totals_from_log(buf: list[str]) -> dict:
+        t = {"attempted": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+        for line in buf or []:
+            s = strip_ansi(line).strip()
+            if not s.startswith("{"):
+                continue
+            try:
+                o = json.loads(s)
+            except Exception:
+                continue
+            ev = str(o.get("event") or "")
+            if ev == "apply:add:done":
+                t["attempted"]  += int(o.get("attempted", 0))
+                t["skipped"]    += int(o.get("skipped", 0))
+                t["unresolved"] += int(o.get("unresolved", 0))
+                t["errors"]     += int(o.get("errors", 0))
+                t["added"]      += int(o.get("added", o.get("count", 0)) or 0)
+            elif ev == "apply:remove:done":
+                t["attempted"]  += int(o.get("attempted", 0))
+                t["skipped"]    += int(o.get("skipped", 0))
+                t["unresolved"] += int(o.get("unresolved", 0))
+                t["errors"]     += int(o.get("errors", 0))
+                t["removed"]    += int(o.get("removed", o.get("count", 0)) or 0)
+        return t
+
     try:
         orch_mod = importlib.import_module("cw_platform.orchestrator")
         try: orch_mod = importlib.reload(orch_mod)
@@ -215,13 +241,13 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             state_path=STATE_PATH,
             use_snapshot=True
         )
-        added = int(result.get("added", 0)); removed = int(result.get("removed", 0))
+        added_res = int(result.get("added", 0)); removed_res = int(result.get("removed", 0))
         try:
             state = _load_state()
             if state:
                 _STATS = _rt()[5]
                 _STATS.refresh_from_state(state)
-                _STATS.record_summary(added, removed)
+                _STATS.record_summary(added_res, removed_res)
                 try:
                     counts = _counts_from_state(state)
                     if counts is None:
@@ -236,13 +262,21 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 _append_log("SYNC", "[!] No state found after sync; stats not updated.")
         except Exception as e:
             _append_log("SYNC", f"[!] Stats update failed: {e}")
-        _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}")
+
+        totals = _totals_from_log(list(LOG_BUFFERS.get("SYNC") or []))
+        added      = int(result.get("added", totals.get("added", 0)))
+        removed    = int(result.get("removed", totals.get("removed", 0)))
+        skipped    = int(result.get("skipped", totals.get("skipped", 0)))
+        unresolved = int(result.get("unresolved", totals.get("unresolved", 0)))
+        errors     = int(result.get("errors", totals.get("errors", 0)))
+
+        _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}, "
+                          f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}")
         _sync_progress_ui("[SYNC] exit code: 0")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")
         _sync_progress_ui("[SYNC] exit code: 1")
     finally:
-        # Best-effort cache warm on exit (defensive)
         try:
             load_config, _ = _env(); cfg2 = load_config()
             state2 = _load_state()
@@ -315,38 +349,72 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     rows.sort(key=_evt_epoch)
     anyin = lambda s, toks: any(t in s for t in toks)
 
+    # --- De-dupe bookkeeping (per lane + kind) ----------------------------
+    seen = {
+        "watchlist": {"add": set(), "remove": set(), "update": set()},
+        "ratings":   {"add": set(), "remove": set(), "update": set()},
+        "history":   {"add": set(), "remove": set(), "update": set()},
+        "playlists": {"add": set(), "remove": set(), "update": set()},
+    }
+    def _sig_for_event(e: dict) -> str:
+        k = str(e.get("key") or "").strip().lower()
+        if k:
+            return k
+        ids = (e.get("ids") or {}) or {}
+        for idk in ("tmdb", "imdb", "tvdb", "slug"):
+            v = ids.get(idk)
+            if v:
+                return f"{idk}:{str(v).lower()}"
+        t = (e.get("title") or "").strip().lower()
+        y = str(e.get("year") or e.get("release_year") or "")
+        typ = (e.get("type") or "").strip().lower()
+        return f"{typ}|title:{t}|year:{y}"
+
     for e in rows:
         action = str(e.get("action") or e.get("op") or e.get("change") or "").lower().replace(":", "_").replace("-", "_")
         feat   = str(e.get("feature") or e.get("feat") or "").lower().replace(":", "_").replace("-", "_")
         title  = (e.get("title") or e.get("key") or "item")
         slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
+        sig    = _sig_for_event(e)
 
         # --- WATCHLIST (+ / − / ~)
         if ("watchlist" in action) or (feat == "watchlist"):
             lane = "watchlist"
             if anyin(action, ("remove", "unwatchlist", "delete", "del", "rm", "clear")):
-                feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(title)
+                if sig not in seen[lane]["remove"]:
+                    seen[lane]["remove"].add(sig)
+                    feats[lane]["removed"] += 1
+                    feats[lane]["spotlight_remove"].append(title)
             elif anyin(action, ("update", "rename", "edit", "move", "reorder", "relist")):
-                feats[lane]["updated"] += 1
-                feats[lane]["spotlight_update"].append(title)
+                if sig not in seen[lane]["update"]:
+                    seen[lane]["update"].add(sig)
+                    feats[lane]["updated"] += 1
+                    feats[lane]["spotlight_update"].append(title)
             else:
-                feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(title)
+                if sig not in seen[lane]["add"]:
+                    seen[lane]["add"].add(sig)
+                    feats[lane]["added"] += 1
+                    feats[lane]["spotlight_add"].append(title)
             continue
 
         # --- RATINGS (+ / − / ~)
         if (action in ("rate", "rating", "update_rating", "unrate")) or ("rating" in action) or ("rating" in feat):
             lane = "ratings"
             if anyin(action, ("unrate", "remove", "clear", "delete", "unset", "erase")):
-                feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(title)
+                if sig not in seen[lane]["remove"]:
+                    seen[lane]["remove"].add(sig)
+                    feats[lane]["removed"] += 1
+                    feats[lane]["spotlight_remove"].append(title)
             elif anyin(action, ("rate", "add", "set", "set_rating", "update_rating")):
-                feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(title)
+                if sig not in seen[lane]["add"]:
+                    seen[lane]["add"].add(sig)
+                    feats[lane]["added"] += 1
+                    feats[lane]["spotlight_add"].append(title)
             else:
-                feats[lane]["updated"] += 1
-                feats[lane]["spotlight_update"].append(title)
+                if sig not in seen[lane]["update"]:
+                    seen[lane]["update"].add(sig)
+                    feats[lane]["updated"] += 1
+                    feats[lane]["spotlight_update"].append(title)
             continue
 
         # --- HISTORY (+ / − / ~)
@@ -359,28 +427,40 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         if is_history_feat or is_add_like or is_remove_like:
             lane = "history"
             if is_remove_like:
-                feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(title)
+                if sig not in seen[lane]["remove"]:
+                    seen[lane]["remove"].add(sig)
+                    feats[lane]["removed"] += 1
+                    feats[lane]["spotlight_remove"].append(title)
             elif is_add_like:
-                feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(title)
+                if sig not in seen[lane]["add"]:
+                    seen[lane]["add"].add(sig)
+                    feats[lane]["added"] += 1
+                    feats[lane]["spotlight_add"].append(title)
             else:
-                feats[lane]["updated"] += 1
-                feats[lane]["spotlight_update"].append(title)
+                if sig not in seen[lane]["update"]:
+                    seen[lane]["update"].add(sig)
+                    feats[lane]["updated"] += 1
+                    feats[lane]["spotlight_update"].append(title)
             continue
 
         # --- PLAYLISTS (+ / − / ~)
         if ("playlist" in action) or ("playlist" in feat):
             lane = "playlists"
             if anyin(action, ("remove", "delete", "rm", "del", "clear")):
-                feats[lane]["removed"] += 1
-                feats[lane]["spotlight_remove"].append(title)
+                if sig not in seen[lane]["remove"]:
+                    seen[lane]["remove"].add(sig)
+                    feats[lane]["removed"] += 1
+                    feats[lane]["spotlight_remove"].append(title)
             elif anyin(action, ("update", "rename", "move", "reorder", "edit")):
-                feats[lane]["updated"] += 1
-                feats[lane]["spotlight_update"].append(title)
+                if sig not in seen[lane]["update"]:
+                    seen[lane]["update"].add(sig)
+                    feats[lane]["updated"] += 1
+                    feats[lane]["spotlight_update"].append(title)
             else:
-                feats[lane]["added"] += 1
-                feats[lane]["spotlight_add"].append(title)
+                if sig not in seen[lane]["add"]:
+                    seen[lane]["add"].add(sig)
+                    feats[lane]["added"] += 1
+                    feats[lane]["spotlight_add"].append(title)
             continue
 
     # Keep only the last 3 spotlight entries per lane
