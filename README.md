@@ -38,7 +38,7 @@
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
-<p align="center"><b>New version 0.2.8 is released with limited Emby Support and better Orchestration handeling</b></p>
+<p align="center"><b>New version 0.2.9 is released with Emby Support (watchlist, history, webhooks, watcher) </b></p>
 
 **CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby**, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
