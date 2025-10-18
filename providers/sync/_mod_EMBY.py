@@ -2,7 +2,7 @@
 # Emby adapter: manifest + client + feature registry + OPS wrapper.
 
 from __future__ import annotations
-__VERSION__ = "0.1.0"
+__VERSION__ = "0.2.0"
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
 import os, time, json, requests
@@ -50,7 +50,7 @@ def get_manifest() -> Mapping[str, Any]:
         "bidirectional": True,
         "features": {
             "watchlist": True,
-            "history":   False,
+            "history":   True,
             "ratings":   False,
             "playlists": False,  # enable later when feature module is finalized
         },
@@ -253,7 +253,7 @@ class EMBYModule:
 
     @staticmethod
     def supported_features() -> Dict[str, bool]:
-        toggles = {"watchlist": True, "history": False, "ratings": False, "playlists": False}
+        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": False}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 

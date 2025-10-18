@@ -6,11 +6,24 @@
   // ────────────────────────────────────────────────────────────────────────────
   const FEATS = ["watchlist","ratings","history","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
+  const clampFeature = (name) => FEATS.includes(String(name)) ? name : "watchlist";
+  let _feature = clampFeature(localStorage.getItem("insights.feature"));
+
+  const titleOf = x =>
+    (x?.display_title
+    || x?.title
+    || x?.series_title
+    || x?.name
+    || ((x?.type==="episode" && x?.series_title && Number.isInteger(x?.season) && Number.isInteger(x?.episode))
+          ? `${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}`
+          : x?.key)
+    || "item");
+
+  const subtitleOf = x => (x?.display_subtitle || "");
+
   const $  = (s,r)=> (r||d).querySelector(s);
   const $$ = (s,r)=> Array.from((r||d).querySelectorAll(s));
   const txt= (el,v)=> el && (el.textContent = v==null ? "—" : String(v));
-  const clampFeature = n => FEATS.includes(n) ? n : "watchlist";
-  let _feature = clampFeature(localStorage.getItem("insights.feature") || "watchlist");
 
   const fetchJSON=async(url,fallback=null)=>{
     try{
@@ -394,18 +407,28 @@
   // ────────────────────────────────────────────────────────────────────────────
   w.Insights = Object.assign(w.Insights||{}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart,
+    titleOf, subtitleOf,
     switchFeature, get feature(){ return _feature; }
   });
-  w.renderSparkline = renderSparkline; w.refreshInsights = refreshInsights; w.refreshStats = refreshStats;
-  w.scheduleInsights = function scheduleInsights(max){ let tries=0, limit=max||20; (function tick(){ if ($("#sync-history")||$("#stat-now")||$("#sparkline")){ refreshInsights(); return; } if (++tries<limit) setTimeout(tick,250); })(); };
-  w.fetchJSON = fetchJSON; w.animateNumber = w.animateNumber || animateNumber;
+  w.renderSparkline  = renderSparkline;
+  w.refreshInsights  = refreshInsights;
+  w.refreshStats     = refreshStats;
+  w.scheduleInsights = function scheduleInsights(max){
+    let tries=0, limit=max||20;
+    (function tick(){
+      if ($("#sync-history")||$("#stat-now")||$("#sparkline")){ refreshInsights(); return; }
+      if (++tries<limit) setTimeout(tick,250);
+    })();
+  };
+  w.fetchJSON      = fetchJSON;
+  w.animateNumber  = w.animateNumber || animateNumber;
+  w.titleOf        = titleOf;
+  w.subtitleOf     = subtitleOf;
 
   d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
   d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
 
-  // IIFE closer
 })(window, document);
-
 
 /* ---- History tabs layout -------------------------------------------------- */
 // Small CSS shim for the history tabs layout.
@@ -496,7 +519,6 @@ const s=document.createElement("style");s.id=id;s.textContent=`
   color:rgba(255,255,255,.75); font-weight:700; letter-spacing:.2px;
 }
 
-}
 @media(max-width:560px){#stats-card #stat-providers{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 @media(max-width:380px){#stats-card #stat-providers{grid-template-columns:repeat(1,minmax(0,1fr))!important}}
 `;document.head.appendChild(s)})();

@@ -71,6 +71,42 @@ def register_insights(app: FastAPI):
         _append_log         = getattr(CW, "_append_log", lambda *a, **k: None)
         _compute_lanes_impl = getattr(CW, "_compute_lanes_from_stats", None)
 
+        # === Patch: friendly titles for insights events ===
+        def _format_event_title(e: Dict[str, Any]) -> Dict[str, Any]:
+            out = dict(e)
+            t = str(e.get("type") or "").lower()
+
+            if t == "movie":
+                title = (e.get("title") or e.get("name") or "").strip()
+                year = e.get("year")
+                if title:
+                    out["display_title"] = f"{title} ({year})" if year else title
+                else:
+                    out["display_title"] = "Movie"
+
+            elif t == "episode":
+                series_title = (e.get("series_title") or e.get("show_title") or "").strip()
+                season = e.get("season")
+                episode = e.get("episode")
+                ep_title = (e.get("title") or e.get("episode_title") or "").strip()
+
+                if series_title and isinstance(season, int) and isinstance(episode, int):
+                    out["display_title"] = f"{series_title} S{int(season):02d}E{int(episode):02d}"
+                elif series_title:
+                    out["display_title"] = series_title
+                else:
+                    out["display_title"] = "Episode"
+
+                if ep_title and ep_title.lower() != series_title.lower():
+                    out["display_subtitle"] = ep_title
+
+            else:
+                title = (e.get("title") or e.get("name") or "").strip()
+                out["display_title"] = title or "Item"
+
+            return out
+        # === End patch ===
+
         # Feature keys are dynamic; ensure stable order with watchlist first
         base_feats = ("watchlist", "ratings", "history", "playlists")
         def _features_from(obj) -> List[str]:
@@ -127,6 +163,9 @@ def register_insights(app: FastAPI):
                     data = STATS.data or {}
                 samples = list((data or {}).get("samples") or [])
                 events  = [e for e in list((data or {}).get("events") or []) if not str(e.get("key", "")).startswith("agg:")]
+                # === Patch: decorate events with friendly display labels ===
+                events = [_format_event_title(e) for e in events]
+                # === End patch ===
                 http_block = dict((data or {}).get("http") or {})
                 generated_at = (data or {}).get("generated_at")
                 samples.sort(key=lambda r: int(r.get("ts") or 0))

@@ -71,7 +71,7 @@
   const fetchFirstJSON = async (urls, fallback=null) => { for(const u of urls){ const j=await fetchJSON(u,null); if(j) return j; } return fallback; };
 
   // Lanes helpers
-  const titleOf=x=>typeof x==="string"?x:(x?.title||x?.name||x?.key||"item");
+  const titleOf=x=>typeof x==="string"?x:(x?.title||x?.series_title||x?.name||((x?.type==="episode"&&x?.series_title&&Number.isInteger(x?.season)&&Number.isInteger(x?.episode))?`${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}`:x?.key)||"item");
   const synthSpots=(items,key)=>{ const a=[],r=[],u=[]; for(const it of items||[]){ const t=titleOf(it); const act=(it?.action||it?.op||it?.change||"").toLowerCase(); let tag="upd";
     if(key==="history"&&(it?.watched||it?.watched_at||act.includes("watch")||act.includes("scrobble"))) tag="add";
     else if(key==="ratings"&&(act.includes("rate")||("rating"in(it||{})))) tag="add";
