@@ -320,6 +320,26 @@ def _two_way_sync(
         rem_from_A.clear(); rem_from_B.clear()
         dbg("bootstrap.no-delete", a=a, b=b)
 
+    # --- Unresolved guard (drop items already marked unresolved for the target)
+    try:
+        unresolved_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+        unresolved_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+
+        preA, preB = len(add_to_A), len(add_to_B)
+        add_to_A = [it for it in add_to_A if _ck(it) not in unresolved_A]
+        add_to_B = [it for it in add_to_B if _ck(it) not in unresolved_B]
+
+        blkA = preA - len(add_to_A)
+        blkB = preB - len(add_to_B)
+        if blkA:
+            emit("debug", msg="blocked.counts", feature=feature, dst=a,
+                 pair=f"{a}-{b}", blocked_unresolved=blkA, blocked_total=blkA)
+        if blkB:
+            emit("debug", msg="blocked.counts", feature=feature, dst=b,
+                 pair=f"{a}-{b}", blocked_unresolved=blkB, blocked_total=blkB)
+    except Exception:
+        pass
+
     #--- Apply blocklist filtering -----------------------------------------
     add_to_A = apply_blocklist(ctx.state_store, add_to_A, dst=a, feature=feature, pair_key=pair_key, emit=emit)
     add_to_B = apply_blocklist(ctx.state_store, add_to_B, dst=b, feature=feature, pair_key=pair_key, emit=emit)
@@ -641,6 +661,13 @@ def _two_way_sync(
          rem_from_A=_confirmed(resA_rem),
          rem_from_B=_confirmed(resB_rem))
 
+    # NEW: roll-ups for orchestrator aggregation
+    skipped_total = int(resA_add.get("skipped", 0)) + int(resB_add.get("skipped", 0)) + \
+                    int(resA_rem.get("skipped", 0)) + int(resB_rem.get("skipped", 0))
+    errors_total  = int(resA_add.get("errors", 0))  + int(resB_add.get("errors", 0))  + \
+                    int(resA_rem.get("errors", 0))  + int(resB_rem.get("errors", 0))
+    unresolved_total = int(unresolved_new_A_total) + int(unresolved_new_B_total)
+
     return {
         "ok": True, "feature": feature, "a": a, "b": b,
         "adds_to_A": eff_add_A, "adds_to_B": eff_add_B,
@@ -650,6 +677,10 @@ def _two_way_sync(
         "resA_remove": resA_rem, "resB_remove": resB_rem,
         "unresolved_to_A": int(unresolved_new_A_total),
         "unresolved_to_B": int(unresolved_new_B_total),
+        # NEW: totals so Orchestrator.run_pairs can add them into run:done
+        "unresolved": unresolved_total,
+        "skipped": skipped_total,
+        "errors": errors_total,
     }
 
 def run_two_way_feature(
