@@ -6,11 +6,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Callable
 
 from ._common import (
     build_headers,
-    key_of,                # canonical key (no timestamp)
-    ids_for_trakt,         # minimal → {"trakt"|"imdb"|"tmdb"|"tvdb": id}
-    pick_trakt_kind,       # "movies" | "episodes" (never bare "shows" for history)
+    key_of,
+    ids_for_trakt,
+    pick_trakt_kind,
 )
-from .._mod_common import request_with_retries  # emits {"event":"api:hit", ...}
+from .._mod_common import request_with_retries
 
 try:
     from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -25,8 +25,6 @@ URL_REMOVE   = f"{BASE}/sync/history/remove"
 
 UNRESOLVED_PATH = "/config/.cw_state/trakt_history.unresolved.json"
 
-# ── tiny log/helpers ──────────────────────────────────────────────────────────
-
 def _log(msg: str):
     if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
         print(f"[TRAKT:history] {msg}")
@@ -35,7 +33,6 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 def _iso8601(v: Any) -> Optional[str]:
-    # Normalize watched_at to ISO 8601 Z. Accept epoch sec/ms or ISO-like.
     if v is None: return None
     s = str(v).strip()
     if not s: return None
@@ -56,8 +53,6 @@ def _as_epoch(iso: str) -> Optional[int]:
         return int(datetime.fromisoformat(s).timestamp())
     except Exception:
         return None
-
-# ── cfg helpers (support adapter.cfg attr or adapter.config dict) ─────────────
 
 def _cfg(adapter):
     return getattr(adapter, "cfg", None) or getattr(adapter, "config", {})
@@ -83,14 +78,14 @@ def _cfg_num(adapter, key: str, default: Any, cast=int):
         return cast(default)
 
 def _freeze_enabled(adapter) -> bool:
-    # Gate all freeze/unfreeze on config: trakt.history_unresolved
     v = _cfg_get(adapter, "history_unresolved", False)
     try:
         return bool(v)
     except Exception:
         return False
 
-# ── unresolved (freeze) ───────────────────────────────────────────────────────
+def _history_number_fallback_enabled(adapter) -> bool:
+    return bool(_cfg_get(adapter, "history_number_fallback", False))
 
 def _load_unresolved() -> Dict[str, Any]:
     try: return json.loads(Path(UNRESOLVED_PATH).read_text("utf-8"))
@@ -128,8 +123,6 @@ def _is_frozen(adapter, item: Mapping[str, Any]) -> bool:
     if not _freeze_enabled(adapter): return False
     return key_of(id_minimal(item)) in _load_unresolved()
 
-# ── pagination preflight (totals for progress bar) ────────────────────────────
-
 def _hdr_int(headers: Mapping[str, Any], name: str) -> Optional[int]:
     try:
         for k, v in (headers or {}).items():
@@ -140,7 +133,6 @@ def _hdr_int(headers: Mapping[str, Any], name: str) -> Optional[int]:
     return None
 
 def _preflight_total(sess, headers, url: str, *, per_page: int, timeout: float, max_retries: int, max_pages: Optional[int]) -> Optional[int]:
-    # Read pagination headers to announce a fixed total (supports your sync bar).
     try:
         r = request_with_retries(
             sess, "GET", url, headers=headers,
@@ -163,14 +155,11 @@ def _preflight_total(sess, headers, url: str, *, per_page: int, timeout: float, 
     except Exception:
         return None
 
-# ── history fetch (movies + episodes) ─────────────────────────────────────────
-
 def _fetch_history(
     sess, headers, url: str, *,
     per_page: int, max_pages: int, timeout: float, max_retries: int,
     bump: Optional[Callable[[int], None]] = None,
 ) -> List[Dict[str, Any]]:
-    # Fetch pages; tick progress per page via 'bump(count)' if provided.
     out: List[Dict[str, Any]] = []
     page = 1
     total_pages: Optional[int] = None
@@ -232,14 +221,7 @@ def _fetch_history(
 
     return out
 
-# ── index (event-based) with progress-helper ──────────────────────────────────
-
 def build_index(adapter, *, per_page: int = 100, max_pages: int = 100000) -> Dict[str, Dict[str, Any]]:
-    """
-    Present state as {event_key: minimal}.
-    event_key = canonical_key(minimal) + "@" + epoch(watched_at).
-    Emits progress with a fixed total (movies+episodes), based on pagination headers.
-    """
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
 
@@ -255,7 +237,7 @@ def build_index(adapter, *, per_page: int = 100, max_pages: int = 100000) -> Dic
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
 
     cfg_per_page = int(_cfg_num(adapter, "history_per_page", per_page, int))
-    cfg_per_page = max(1, min(100, cfg_per_page))  # Trakt cap = 100
+    cfg_per_page = max(1, min(100, cfg_per_page))
     cfg_max_pages = int(_cfg_num(adapter, "history_max_pages", max_pages, int))
     if cfg_max_pages <= 0: cfg_max_pages = max_pages
 
@@ -319,12 +301,117 @@ def build_index(adapter, *, per_page: int = 100, max_pages: int = 100000) -> Dic
     _log(f"index size: {len(idx)} (movies={len(movies)}, episodes={len(episodes)}; per_page={cfg_per_page}, max_pages={cfg_max_pages})")
     return idx
 
-# ── batching helpers  ──────────────────────────────────
+# ── resolvers ─────────────────────────────────────────────────────────────────
+
+_SHOW_PATH_CACHE: Dict[str, str] = {}
+_SEASON_EP_CACHE: Dict[str, Dict[int, Dict[str, str]]] = {}
+_EP_RESOLVE_CACHE: Dict[str, Dict[str, str]] = {}
+
+def _stable_show_key(ids: Mapping[str, Any]) -> str:
+    return json.dumps({k: ids.get(k) for k in ("slug","trakt","imdb","tvdb","tmdb") if ids.get(k)}, sort_keys=True)
+
+def _pick_show_path_id(ids: Mapping[str, Any]) -> Optional[str]:
+    slug = ids.get("slug")
+    if slug: return str(slug)
+    trakt_id = ids.get("trakt")
+    if trakt_id: return str(trakt_id)
+    return None
+
+def _trakt_headers_for(adapter) -> Dict[str, str]:
+    return build_headers({
+        "trakt": {
+            "client_id": _cfg_get(adapter, "client_id"),
+            "access_token": _cfg_get(adapter, "access_token"),
+        }
+    })
+
+def _resolve_show_path_id(adapter, show_ids: Mapping[str, Any], *, timeout: float, retries: int) -> Optional[str]:
+    skey = _stable_show_key(show_ids or {})
+    if skey in _SHOW_PATH_CACHE:
+        return _SHOW_PATH_CACHE[skey]
+
+    path_id = _pick_show_path_id(show_ids or {})
+    if path_id:
+        _SHOW_PATH_CACHE[skey] = path_id
+        return path_id
+
+    sess = adapter.client.session
+    headers = _trakt_headers_for(adapter)
+
+    for k in ("imdb", "tvdb", "tmdb"):
+        v = (show_ids or {}).get(k)
+        if not v: continue
+        url = f"{BASE}/search/{k}/{v}"
+        r = request_with_retries(sess, "GET", url, headers=headers, params={"type": "show"}, timeout=timeout, max_retries=retries)
+        if r.status_code == 200:
+            arr = r.json() or []
+            for hit in arr:
+                show = hit.get("show") or {}
+                ids  = show.get("ids") or {}
+                pid = _pick_show_path_id(ids)
+                if pid:
+                    _SHOW_PATH_CACHE[skey] = pid
+                    return pid
+    return None
+
+def _resolve_episode_ids_via_trakt(adapter, show_ids: Mapping[str, Any], season: Any, number: Any, *, timeout: float, retries: int) -> Dict[str, str]:
+    try:
+        s = int(season); e = int(number)
+    except Exception:
+        return {}
+
+    path_id = _resolve_show_path_id(adapter, show_ids, timeout=timeout, retries=retries)
+    if not path_id:
+        return {}
+
+    season_key = f"{path_id}|S{s}"
+    if season_key not in _SEASON_EP_CACHE:
+        sess = adapter.client.session
+        headers = _trakt_headers_for(adapter)
+        url = f"{BASE}/shows/{path_id}/seasons/{s}"
+        r = request_with_retries(sess, "GET", url, headers=headers, timeout=timeout, max_retries=retries)
+        epmap: Dict[int, Dict[str, str]] = {}
+        if r.status_code == 200:
+            rows = r.json() or []
+            for row in rows:
+                num = row.get("number")
+                ids = {ik: str(iv) for ik, iv in (row.get("ids") or {}).items() if ik in ("imdb","tvdb","trakt","tmdb") and iv}
+                if isinstance(num, int) and ids:
+                    epmap[num] = ids
+        _SEASON_EP_CACHE[season_key] = epmap
+
+    ids = _SEASON_EP_CACHE.get(season_key, {}).get(e)
+    if ids: return ids
+
+    cache_key = json.dumps({"p": path_id, "s": s, "e": e}, sort_keys=True)
+    if cache_key in _EP_RESOLVE_CACHE:
+        return dict(_EP_RESOLVE_CACHE[cache_key])
+
+    sess = adapter.client.session
+    headers = _trakt_headers_for(adapter)
+    url = f"{BASE}/shows/{path_id}/seasons/{s}/episodes/{e}"
+    r = request_with_retries(sess, "GET", url, headers=headers, timeout=timeout, max_retries=retries)
+    if r.status_code == 200:
+        d = r.json() or {}
+        ids = {ik: str(iv) for ik, iv in (d.get("ids") or {}).items() if ik in ("imdb","tvdb","trakt","tmdb") and iv}
+        if ids:
+            _EP_RESOLVE_CACHE[cache_key] = ids
+            return ids
+    return {}
+
+# ── batching helpers  ─────────────────────────────────────────────────────────
+
+def _extract_show_ids_for_episode(it: Mapping[str, Any]) -> Dict[str, Any]:
+    # Prefer explicit show_ids; otherwise treat item['ids'] (series ids) as show_ids.
+    show_ids = dict(it.get("show_ids") or {})
+    if not show_ids and (it.get("season") is not None and it.get("episode") is not None):
+        show_ids = dict(it.get("ids") or {})
+    return {k: show_ids[k] for k in ("trakt","slug","imdb","tmdb","tvdb") if show_ids.get(k)}
 
 def _batch_add(adapter, items: Iterable[Mapping[str, Any]]):
     movies: List[Dict[str, Any]] = []
     episodes_flat: List[Dict[str, Any]] = []
-    shows_map: Dict[str, Dict[str, Any]] = {}  # key by stable show-ids JSON
+    shows_map: Dict[str, Dict[str, Any]] = {}
 
     unresolved: List[Dict[str, Any]] = []
     accepted_keys: List[str] = []
@@ -357,7 +444,12 @@ def _batch_add(adapter, items: Iterable[Mapping[str, Any]]):
             accepted_minimals.append(m_min); accepted_keys.append(key_of(m_min))
             continue
 
-        # episodes 
+        # episodes
+        season = it.get("season") or it.get("season_number")
+        number = it.get("episode") or it.get("episode_number")
+        show_ids = _extract_show_ids_for_episode(it)
+
+        # 1) Try genuine episode-level ids (ids_for_trakt returns {} in the SIMKL case)
         ids = ids_for_trakt(it)
         if ids:
             episodes_flat.append({"ids": ids, "watched_at": when})
@@ -365,22 +457,31 @@ def _batch_add(adapter, items: Iterable[Mapping[str, Any]]):
             accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
             continue
 
-        # optional nested shows if scope present (no resolver, no extra GETs)
-        show_ids = dict(it.get("show_ids") or {})
-        season = it.get("season") or it.get("season_number")
-        number = it.get("episode") or it.get("episode_number")
+        # 2) Resolve using show ids + S/E
         if show_ids and season is not None and number is not None:
-            skey = _show_key(show_ids)
-            show_entry = shows_map.setdefault(skey, {"ids": {k: show_ids[k] for k in ("trakt","slug","imdb","tmdb","tvdb") if show_ids.get(k)}, "seasons": {}})
-            seasons = show_entry["seasons"]  # type: ignore[assignment]
-            season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
-            season_entry["episodes"].append({"number": int(number), "watched_at": when})
-            e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
-            accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
-        else:
-            unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
-            _freeze_item_if_enabled(adapter, it, action="add", reasons=["episode-scope-missing"])
+            if _history_number_fallback_enabled(adapter):
+                skey = _show_key(show_ids)
+                show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
+                seasons = show_entry["seasons"]  # type: ignore[assignment]
+                season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
+                season_entry["episodes"].append({"number": int(number), "watched_at": when})
+                e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
+                accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
+            else:
+                timeout = float(_cfg_num(adapter, "timeout", 10, float))
+                retries = int(_cfg_num(adapter, "max_retries", 3, int))
+                rids = _resolve_episode_ids_via_trakt(adapter, show_ids, season, number, timeout=timeout, retries=retries)
+                if rids:
+                    episodes_flat.append({"ids": rids, "watched_at": when})
+                    e_min = id_minimal({"type": "episode", "ids": rids})
+                    accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
+                else:
+                    unresolved.append({"item": id_minimal(it), "hint": "episode ids missing; resolver failed"})
+                    _freeze_item_if_enabled(adapter, it, action="add", reasons=["episode-ids-missing"])
             continue
+
+        unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
+        _freeze_item_if_enabled(adapter, it, action="add", reasons=["episode-scope-missing"])
 
     body: Dict[str, Any] = {}
     if movies: body["movies"] = movies
@@ -393,9 +494,6 @@ def _batch_add(adapter, items: Iterable[Mapping[str, Any]]):
     return body, unresolved, accepted_keys, accepted_minimals
 
 def _batch_remove(adapter, items: Iterable[Mapping[str, Any]]):
-    """
-    Remove specific events (require watched_at). Same structure as add.
-    """
     movies: List[Dict[str, Any]] = []
     episodes_flat: List[Dict[str, Any]] = []
     shows_map: Dict[str, Dict[str, Any]] = {}
@@ -431,6 +529,10 @@ def _batch_remove(adapter, items: Iterable[Mapping[str, Any]]):
             accepted_minimals.append(m_min); accepted_keys.append(key_of(m_min))
             continue
 
+        season = it.get("season") or it.get("season_number")
+        number = it.get("episode") or it.get("episode_number")
+        show_ids = _extract_show_ids_for_episode(it)
+
         ids = ids_for_trakt(it)
         if ids:
             episodes_flat.append({"ids": ids, "watched_at": when})
@@ -438,21 +540,30 @@ def _batch_remove(adapter, items: Iterable[Mapping[str, Any]]):
             accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
             continue
 
-        show_ids = dict(it.get("show_ids") or {})
-        season = it.get("season") or it.get("season_number")
-        number = it.get("episode") or it.get("episode_number")
         if show_ids and season is not None and number is not None:
-            skey = _show_key(show_ids)
-            show_entry = shows_map.setdefault(skey, {"ids": {k: show_ids[k] for k in ("trakt","slug","imdb","tmdb","tvdb") if show_ids.get(k)}, "seasons": {}})
-            seasons = show_entry["seasons"]  # type: ignore[assignment]
-            season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
-            season_entry["episodes"].append({"number": int(number), "watched_at": when})
-            e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
-            accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
-        else:
-            unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
-            _freeze_item_if_enabled(adapter, it, action="remove", reasons=["episode-scope-missing"])
+            if _history_number_fallback_enabled(adapter):
+                skey = _show_key(show_ids)
+                show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
+                seasons = show_entry["seasons"]  # type: ignore[assignment]
+                season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
+                season_entry["episodes"].append({"number": int(number), "watched_at": when})
+                e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
+                accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
+            else:
+                timeout = float(_cfg_num(adapter, "timeout", 10, float))
+                retries = int(_cfg_num(adapter, "max_retries", 3, int))
+                rids = _resolve_episode_ids_via_trakt(adapter, show_ids, season, number, timeout=timeout, retries=retries)
+                if rids:
+                    episodes_flat.append({"ids": rids, "watched_at": when})
+                    e_min = id_minimal({"type": "episode", "ids": rids})
+                    accepted_minimals.append(e_min); accepted_keys.append(key_of(e_min))
+                else:
+                    unresolved.append({"item": id_minimal(it), "hint": "episode ids missing; resolver failed"})
+                    _freeze_item_if_enabled(adapter, it, action="remove", reasons=["episode-ids-missing"])
             continue
+
+        unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
+        _freeze_item_if_enabled(adapter, it, action="remove", reasons=["episode-scope-missing"])
 
     body: Dict[str, Any] = {}
     if movies: body["movies"] = movies
@@ -464,10 +575,7 @@ def _batch_remove(adapter, items: Iterable[Mapping[str, Any]]):
         ]
     return body, unresolved, accepted_keys, accepted_minimals
 
-# ── public API (writes) ───────────────────────────────────────────────────────
-
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    # Add history events. Multiple plays = multiple entries (distinct watched_at).
     sess = adapter.client.session
     headers = build_headers({
         "trakt": {
@@ -506,7 +614,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     return ok, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    # Remove specific history events (require watched_at).
     sess = adapter.client.session
     headers = build_headers({
         "trakt": {

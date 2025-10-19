@@ -25,12 +25,12 @@ UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:history] {msg}")
-        
+
 def _emit(evt: dict) -> None:
     try:
         feature = str(evt.get("feature") or "?")
         head = []
-        if "event"  in evt: head.append(f"event={evt['event']}")
+        if "event" in evt: head.append(f"event={evt['event']}")
         if "action" in evt: head.append(f"action={evt['action']}")
         tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
         line = " ".join(head + tail)
@@ -38,7 +38,7 @@ def _emit(evt: dict) -> None:
     except Exception:
         pass
 
-# ── time helpers ──────────────────────────────────────────────────────────────
+# -- time helpers --------------------------------------------------------------
 
 def _as_epoch(v: Any) -> Optional[int]:
     if v is None: return None
@@ -63,7 +63,7 @@ def _as_epoch(v: Any) -> Optional[int]:
 def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
-# ── config helpers ────────────────────────────────────────────────────────────
+# -- config helpers ------------------------------------------------------------
 
 def _plex_cfg(adapter) -> Mapping[str, Any]:
     cfg = getattr(adapter, "config", {}) or {}
@@ -87,7 +87,6 @@ def _get_workers(adapter, cfg_key: str, env_key: str, default: int) -> int:
     return max(1, min(n, 64))
 
 def _allowed_history_sec_ids(adapter) -> Set[str]:
-    """Allowed section ids; empty set = allow all."""
     try:
         cfg = getattr(adapter, "config", {}) or {}
         plex = cfg.get("plex", {}) if isinstance(cfg, dict) else {}
@@ -97,18 +96,20 @@ def _allowed_history_sec_ids(adapter) -> Set[str]:
         return set()
 
 def _row_section_id(h) -> Optional[str]:
-    for a in ("librarySectionID","sectionID","librarySectionId","sectionId"):
+    for a in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
         v = getattr(h, a, None)
         if v is not None:
-            try: return str(int(v))
-            except Exception: pass
+            try:
+                return str(int(v))
+            except Exception:
+                pass
     sk = getattr(h, "sectionKey", None) or getattr(h, "librarySectionKey", None)
     if sk:
         m = re.search(r"/library/sections/(\d+)", str(sk))
         if m: return m.group(1)
     return None
 
-# ── unresolved store ──────────────────────────────────────────────────────────
+# -- unresolved store ----------------------------------------------------------
 
 def _load_unresolved() -> Dict[str, Any]:
     try:
@@ -154,11 +155,15 @@ def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
 def _is_frozen(it: Mapping[str, Any]) -> bool:
     return _event_key(it) in _load_unresolved()
 
-# ── snapshot filters (provider-level) ─────────────────────────────────────────
+# -- snapshot filters ----------------------------------------------------------
 
 def _has_external_ids(minimal: Mapping[str, Any]) -> bool:
     ids = minimal.get("ids") or {}
-    return bool(ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb") or ids.get("trakt"))
+    sids = minimal.get("show_ids") or {}
+    return bool(
+        ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb") or ids.get("trakt")
+        or sids.get("imdb") or sids.get("tmdb") or sids.get("tvdb") or sids.get("trakt")
+    )
 
 def _guid_from_minimal(minimal: Mapping[str, Any]) -> str:
     ids = minimal.get("ids") or {}
@@ -175,7 +180,7 @@ def _keep_in_snapshot(adapter, minimal: Mapping[str, Any]) -> bool:
         if guid and any(guid.startswith(p.lower()) for p in prefixes): return False
     return True
 
-# ── index (present-state) ─────────────────────────────────────────────────────
+# -- index (present-state) -----------------------------------------------------
 
 _FETCH_CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -199,9 +204,8 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
 
     fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
     if fallback_guid:
-        _emit({"event":"debug","msg":"fallback_guid.enabled","provider":"PLEX","feature":"history"})
+        _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "history"})
 
-    
     def _int_or_zero(v):
         try: return int(v or 0)
         except Exception: return 0
@@ -227,7 +231,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     except Exception as e:
         _log(f"history fetch failed: {e}")
         return {}
-    
+
     def _username_match(h, target_uname: str) -> bool:
         if not target_uname: return True
         try:
@@ -266,7 +270,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
             _as_epoch(getattr(h, "lastViewedAt", None))
         )
         if not ts or (since is not None and ts < int(since)): continue
-        
+
         rk = getattr(h, "ratingKey", None) or getattr(h, "key", None)
         if rk is None:
             if fallback_guid:
@@ -316,19 +320,19 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     if fallback_guid:
         misses = [rk for rk in to_fetch if rk not in _FETCH_CACHE]
         for rk in misses:
-            _emit({"event":"fallback_guid","provider":"PLEX","feature":"history","action":"try","rk":rk})
+            _emit({"event": "fallback_guid", "provider": "PLEX", "feature": "history", "action": "try", "rk": rk})
             fb = minimal_from_history_row(raw_by_rk.get(rk), allow_discover=True)
-            _emit({"event":"fallback_guid","provider":"PLEX","feature":"history","action":("ok" if fb else "miss"),"rk":rk})
+            _emit({"event": "fallback_guid", "provider": "PLEX", "feature": "history", "action": ("ok" if fb else "miss"), "rk": rk})
             if fb:
                 _FETCH_CACHE[rk] = fb
-                
+
     extras: List[Tuple[Dict[str, Any], int]] = []
     if fallback_guid and orphans:
         for row_obj, ts in orphans:
             fb = minimal_from_history_row(row_obj, allow_discover=True)
             if fb:
                 extras.append((fb, ts))
-                
+
     out: Dict[str, Dict[str, Any]] = {}
     done = ignored = 0
     for rk_s, ts in work:
@@ -358,7 +362,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         if prog:
             try: prog.tick(done, total=total)
             except Exception: pass
-            
+
     if extras:
         for m, ts in extras:
             if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
@@ -399,7 +403,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
          f"workers={workers}, unique={len(unique_rks)}, user={uname or acct_id})")
     return out
 
-# ── add/remove (guarded) ──────────────────────────────────────────────────────
+# -- add/remove (guarded) ------------------------------------------------------
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
@@ -473,12 +477,16 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-# ── resolution + write helpers ────────────────────────────────────────────────
+# -- resolution + write helpers ------------------------------------------------
 
 def _find_rk_by_guid_http(srv, guid_list: Iterable[str], allow: Set[str]) -> Optional[str]:
     for g in guid_list or []:
         try:
-            r = srv._session.get(srv.url("/library/all"), params={"guid": g, "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 50}, timeout=8)
+            r = srv._session.get(
+                srv.url("/library/all"),
+                params={"guid": g, "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 50},
+                timeout=8,
+            )
             if not r.ok:
                 continue
             import xml.etree.ElementTree as ET
@@ -532,6 +540,29 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
             if obj:
                 hits.append(obj)
 
+    # Fast path: server-wide GUID lookup (XML), then JSON helper. Title search is a last resort.
+    if not hits and guids:
+        rk_fast = _find_rk_by_guid_http(srv, guids, allow)
+        if rk_fast:
+            try:
+                obj = srv.fetchItem(int(rk_fast))
+                if obj:
+                    hits.append(obj)
+            except Exception:
+                pass
+
+    if not hits and guids:
+        rk_any = server_find_rating_key_by_guid(srv, guids)
+        if rk_any:
+            try:
+                obj = srv.fetchItem(int(rk_any))
+                if obj:
+                    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
+                    if not allow or not sid or sid in allow:
+                        hits.append(obj)
+            except Exception:
+                pass
+
     if not hits:
         for sec in adapter.libraries(types=sec_types) or []:
             sid = str(getattr(sec, "key", "")).strip()
@@ -581,7 +612,6 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
     rk = getattr(best, "ratingKey", None)
     return str(rk) if rk else None
 
-
 def _scrobble_with_date(srv, rating_key: Any, epoch: int) -> bool:
     try:
         try:
@@ -611,8 +641,6 @@ def _scrobble_with_date(srv, rating_key: Any, epoch: int) -> bool:
         print(f"[PLEX:history] scrobble exception key={rating_key}: {e}")
         return False
 
-
-
 def _unscrobble(srv, rating_key: Any) -> bool:
     try:
         url = srv.url("/:/unscrobble")
@@ -621,4 +649,3 @@ def _unscrobble(srv, rating_key: Any) -> bool:
         return r.ok
     except Exception:
         return False
-

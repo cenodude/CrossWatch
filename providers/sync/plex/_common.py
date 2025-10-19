@@ -1,6 +1,7 @@
 # /providers/sync/plex/_common.py
 from __future__ import annotations
-import os, uuid, requests, xml.etree.ElementTree as ET
+import os, uuid, time, requests, xml.etree.ElementTree as ET
+import re, unicodedata
 from typing import Any, Dict, List, Mapping, Optional, Iterable, Set
 
 try:
@@ -91,7 +92,7 @@ def show_ids_hint(obj) -> Dict[str, str]:
     if gp_rk: out["plex"] = str(gp_rk)
     return {k: v for k, v in out.items() if v}
 
-# ---------added 16102025 -----server-side GUID search ------------------------------
+# --------- server-side GUID search ------------------------------
 def server_find_rating_key_by_guid(srv, guids: Iterable[str]) -> Optional[str]:
     base = _as_base_url(srv)
     tok = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
@@ -114,7 +115,7 @@ def server_find_rating_key_by_guid(srv, guids: Iterable[str]) -> Optional[str]:
     return None
 
 # --- fallback GUID memo/neg-cache --------------------------------------------
-_FBGUID_MEMO = {}  # key -> dict (success) of "__NOHIT__"
+_FBGUID_MEMO = {}  # key -> dict (success) or "__NOHIT__"
 _FBGUID_NOHIT = "__NOHIT__"
 _FBGUID_CACHE_PATH = "/config/.cw_state/plex_fallback_memo.json"
 
@@ -357,7 +358,7 @@ def rating_key_from_discover_row(row: Mapping[str, Any]) -> Optional[str]:
     return str(rk) if rk is not None else None
 
 def normalize_discover_row(row: Mapping[str, Any], *, token: Optional[str] = None) -> Dict[str, Any]:
-    # Mirror normalize(); also pass library_id when available.
+    # Mirrors normalize(); also passes library_id when available.
     if token is None: token = _PLEX_CTX["token"]
     t = (row.get("type") or "movie").lower()
     ids = ids_from_discover_row(row)
@@ -476,6 +477,31 @@ def section_find_by_guid(sec, candidates: Iterable[str]):
     return None
 
 # --- GUID fallback helpers ----------------------------------------------------
+def _iso8601_any(v: Any) -> Optional[str]:
+    try:
+        if v is None: return None
+        s = str(v).strip()
+        if not s: return None
+        if s.isdigit():
+            ts = int(s)
+            if len(s) >= 13:
+                ts //= 1000
+            return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(ts))
+        if "T" in s:
+            return s if s.endswith("Z") else (s + "Z")
+        return None
+    except Exception:
+        return None
+
+def _watched_at_from_row(row: Any) -> Optional[str]:
+    v = _row_get(
+        row,
+        "viewedAt", "viewed_at",
+        "lastViewedAt", "last_viewed_at",
+        "watchedAt", "watched_at",
+        "originallyWatchedAt", "originally_watched_at",
+    )
+    return _iso8601_any(v)
 
 def _year_from_any(v: Any) -> Optional[int]:
     try:
@@ -520,8 +546,18 @@ def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
 def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> Dict[str, Any]:
     kind = str((_row_get(row, "type") or "movie")).lower()
     is_ep = (kind == "episode")
-    title = _row_get(row, "grandparentTitle") if is_ep else _row_get(row, "title")
-    year = _row_get(row, "year") or _row_get(row, "originallyAvailableAt") or _row_get(row, "originally_available_at")
+
+    title = (
+        _row_get(row, "grandparentTitle") if is_ep else
+        _row_get(row, "title") or _row_get(row, "originalTitle")
+    )
+    year = (
+        _row_get(row, "year")
+        or _row_get(row, "originallyAvailableAt")
+        or _row_get(row, "originally_available_at")
+        or _row_get(row, "grandparentYear")
+    )
+
     base: Dict[str, Any] = {
         "type": ("episode" if is_ep else "movie"),
         "title": title,
@@ -529,17 +565,51 @@ def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> Dict[str, Any]:
         "guid": _row_get(row, "guid") or _row_get(row, "grandparentGuid") or _row_get(row, "parentGuid"),
         "ids": dict(ids or {}),
     }
+
+    wa = _watched_at_from_row(row)
+    if wa:
+        base["watched_at"] = wa
+
     if is_ep:
-        base["series_title"] = _row_get(row, "grandparentTitle")
-        base["season"] = _safe_int(_row_get(row, "parentIndex"))
+        base["series_title"] = (
+            _row_get(row, "grandparentTitle")
+            or _row_get(row, "title")
+            or _row_get(row, "parentTitle")
+        )
+        base["season"] = _safe_int(
+            _row_get(row, "parentIndex") or _row_get(row, "seasonNumber")
+        )
         base["episode"] = _safe_int(_row_get(row, "index"))
+
         gp = _row_get(row, "grandparentGuid")
         gp_rk = _row_get(row, "grandparentRatingKey")
         sids: Dict[str, Any] = {}
-        if gp: sids.update({k: v for k, v in ids_from_guid(str(gp)).items() if v})
-        if gp_rk: sids["plex"] = str(gp_rk)
-        if sids: base["show_ids"] = sids
-    return id_minimal(base)
+        if gp:
+            sids.update({k: v for k, v in ids_from_guid(str(gp)).items() if v})
+        if gp_rk:
+            sids["plex"] = str(gp_rk)
+        if not sids and base.get("season") is not None and base.get("episode") is not None:
+            ext = {k: v for k, v in (base.get("ids") or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+            if ext:
+                sids.update(ext)
+        if sids:
+            base["show_ids"] = sids
+
+    res = id_minimal(base)
+
+    if "show_ids" in base:
+        res["show_ids"] = base["show_ids"]
+    if "watched_at" in base:
+        res["watched_at"] = base["watched_at"]
+    if is_ep:
+        if base.get("season") is not None:
+            res["season"] = base["season"]
+        if base.get("episode") is not None:
+            res["episode"] = base["episode"]
+        if base.get("series_title"):
+            res["series_title"] = base["series_title"]
+
+    return res
 
 def _discover_search_title(
     token: str,
@@ -554,86 +624,233 @@ def _discover_search_title(
         if not title or not token:
             return None
 
-        # v2 (2025): /library/search
-        st = "movies" if kind == "movie" else ("tv" if kind in ("show", "episode") else "movies,tv")
-        params_v2 = {
-            "query": title,
-            "limit": max(5, int(limit)),
-            "searchTypes": st,
-            "searchProviders": "discover",
-            "includeMetadata": 1,
-        }
-        hdrs = dict(plex_headers(token))
-        hdrs["Accept"] = "application/json"  # be explicit
+        NUM_TO_WORD = {"1":"one","2":"two","3":"three","4":"four","5":"five","6":"six","7":"seven","8":"eight","9":"nine"}
+        WORD_TO_NUM = {v:k for k,v in NUM_TO_WORD.items()}
 
-        r = requests.get(f"{DISCOVER}/library/search", headers=hdrs, params=params_v2, timeout=6)
+        def _strip_accents(s: str) -> str:
+            return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
-        rows: List[Mapping[str, Any]] = []
-        if r.ok and "json" in (r.headers.get("content-type", "").lower()):
-            j = r.json()
-            sr = (j.get("MediaContainer") or {}).get("SearchResults") or []
-            # Extract "external" bucket → SearchResult[] → Metadata
-            ext = next((b.get("SearchResult") for b in sr if str(b.get("id")) == "external"), []) or []
-            for item in ext:
-                md = item.get("Metadata")
-                if isinstance(md, Mapping):
-                    rows.append(md)
+        def _remove_parens(s: str) -> str:
+            return re.sub(r"\([^)]*\)", " ", s)
 
-        elif r.status_code == 404:
-            # v1 legacy: /hubs/search
-            _emit({"feature": "common", "event": "fallback_guid", "action": "discover_404_v2"})
-            params_v1 = {"query": title, "limit": max(5, int(limit)), "includeMeta": 1}
-            r2 = requests.get(f"{DISCOVER}/hubs/search", headers=plex_headers(token), params=params_v1, timeout=6)
-            if not r2.ok:
-                return None
-            j = r2.json() if "json" in (r2.headers.get("content-type", "").lower()) else {}
-            for h in (j.get("MediaContainer") or {}).get("Hub") or []:
-                for md in (h.get("Metadata") or []):
+        def _fold(s: str) -> str:
+            s = _remove_parens(s)
+            s = _strip_accents(s)
+            s = re.sub(r"[^\w\s&]", " ", s)
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
+        def _to_words_1_9(s: str) -> str:
+            return re.sub(r"\b([1-9])\b", lambda m: NUM_TO_WORD.get(m.group(1), m.group(1)), s, flags=re.IGNORECASE)
+
+        def _to_digits_1_9(s: str) -> str:
+            return re.sub(r"\b(one|two|three|four|five|six|seven|eight|nine)\b",
+                          lambda m: WORD_TO_NUM.get(m.group(0).lower(), m.group(0)),
+                          s, flags=re.IGNORECASE)
+
+        def _and_amp_variants(s: str) -> list[str]:
+            vs = [s]
+            s1 = re.sub(r"\s*&\s*", " and ", s)
+            if s1 != s: vs.append(re.sub(r"\s+", " ", s1).strip())
+            s2 = re.sub(r"\band\b", "&", s, flags=re.IGNORECASE)
+            if s2 != s: vs.append(re.sub(r"\s+", " ", s2).strip())
+            return vs
+
+        def _digit_word_variants(s: str) -> list[str]:
+            vs = [s]
+            sw = _to_words_1_9(s)
+            if sw != s: vs.append(sw)
+            sd = _to_digits_1_9(s)
+            if sd != s: vs.append(sd)
+            return list(dict.fromkeys(vs))
+
+        def _variants(s: str) -> list[str]:
+            base = (s or "").strip()
+            pool = [base]
+            no_parens = _remove_parens(base)
+            if no_parens and no_parens != base:
+                pool.append(re.sub(r"\s+", " ", no_parens).strip())
+            pool = sum([_and_amp_variants(x) for x in pool], [])
+            pool = sum([_digit_word_variants(x) for x in pool], [])
+            folded = [_fold(x) for x in pool]
+            pool += folded
+            cut = []
+            for x in pool:
+                p = re.split(r"[:\-–(]", x, 1)[0].strip()
+                if p and p not in pool:
+                    cut.append(p)
+            pool += cut
+
+            if year:
+                for x in list(pool):
+                    if len(x) < 64:
+                        pool.append(f"{x} {year}")
+            out = []
+            seen = set()
+            for x in pool:
+                y = re.sub(r"\s+", " ", x).strip()
+                if y and y not in seen:
+                    seen.add(y); out.append(y)
+            return out
+
+        def _collect_rows(j: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+            rows: list[Mapping[str, Any]] = []
+            mc = (j.get("MediaContainer") or {})
+            for bucket in (mc.get("SearchResults") or []):
+                for item in (bucket.get("SearchResult") or []):
+                    md = item.get("Metadata")
                     if isinstance(md, Mapping):
                         rows.append(md)
-        else:
-            return None
+                    elif isinstance(md, list):
+                        rows.extend([x for x in md if isinstance(x, Mapping)])
+            for hub in (mc.get("Hub") or []):
+                for md in (hub.get("Metadata") or []):
+                    if isinstance(md, Mapping):
+                        rows.append(md)
+            mds = mc.get("Metadata")
+            if isinstance(mds, list):
+                rows.extend([x for x in mds if isinstance(x, Mapping)])
+            elif isinstance(mds, Mapping):
+                rows.append(mds)
+            return rows
 
-        if not rows:
-            return None
+        def _hdrs() -> Dict[str, str]:
+            # Prefer EN for stable IDs/names
+            lang = os.environ.get("CW_PLEX_LANG") or "en-US,en;q=0.9"
+            h = dict(plex_headers(token))
+            h["Accept"] = "application/json"
+            h["Accept-Language"] = lang
+            h.setdefault("X-Plex-Product", "Plex Web")
+            h.setdefault("X-Plex-Platform", "Web")
+            return h
+
+        def _search_v2_all(q: str, types: list[str]) -> list[Mapping[str, Any]]:
+            rows: list[Mapping[str, Any]] = []
+            base_params = {
+                "query": q,
+                "limit": max(50, int(limit)),
+                "searchProviders": "discover",
+                "includeMetadata": 1,
+                "includeExternalMedia": 1,
+            }
+            combos = [t for t in types if t] + [""]
+            for st in combos:
+                params = dict(base_params)
+                if st:
+                    params["searchTypes"] = st
+                try:
+                    r = requests.get(f"{DISCOVER}/library/search", headers=_hdrs(), params=params, timeout=7)
+                    if r.ok and "json" in (r.headers.get("content-type","").lower()):
+                        rows2 = _collect_rows(r.json())
+                        if rows2:
+                            rows.extend(rows2)
+                except Exception:
+                    continue
+            return rows
+
+        def _search_v1(q: str) -> list[Mapping[str, Any]]:
+            try:
+                params = {"query": q, "limit": max(50, int(limit)), "includeMeta": 1}
+                r = requests.get(f"{DISCOVER}/hubs/search", headers=_hdrs(), params=params, timeout=7)
+                if r.ok and "json" in (r.headers.get("content-type", "").lower()):
+                    return _collect_rows(r.json())
+            except Exception:
+                pass
+            return []
+
+        def _search_metadata_provider(q: str) -> list[Mapping[str, Any]]:
+            try:
+                r = requests.get(f"{METADATA}/library/search", headers=_hdrs(), params={"query": q, "limit": max(50, int(limit))}, timeout=7)
+                if r.ok and "json" in (r.headers.get("content-type","").lower()):
+                    return _collect_rows(r.json())
+            except Exception:
+                pass
+            return []
+
+        def _search_all(q: str) -> list[Mapping[str, Any]]:
+            if kind == "movie":
+                types = ["movies", "movie"]
+                rows = _search_v2_all(q, types)
+                if rows: return rows
+                rows = _search_v1(q)
+                if rows: return rows
+                return _search_metadata_provider(q)
+            else:
+                types = ["episodes", "episode", "shows", "show", "series", "tv"]
+                rows = _search_v2_all(q, types)
+                if rows: return rows
+                rows = _search_v1(q)
+                if rows: return rows
+                return _search_metadata_provider(q)
+
+        def _titles_key(a: str) -> str:
+            s = _remove_parens(a)
+            s = _fold(s)
+            s = re.sub(r"\s*&\s*", " and ", s, flags=re.IGNORECASE)
+            s = _to_words_1_9(s)
+            s = re.sub(r"\W+", " ", s).strip().lower()
+            return re.sub(r"\s+", " ", s)
+
+        def _titles_equal(a: str, b: str) -> bool:
+            return _titles_key(a) == _titles_key(b)
 
         def _score(md: Mapping[str, Any]) -> int:
             s = 0
             t = (md.get("type") or "").lower()
-            if kind and t == kind:
-                s += 2
-            mt = (md.get("grandparentTitle") if kind == "episode" else md.get("title")) or ""
-            if str(mt).strip().lower() == str(title).strip().lower():
-                s += 3
-            y = _year_from_any(md.get("year"))
-            if year and y == year:
-                s += 2
-            # Prefer exact S/E for episodes
             if kind == "episode":
-                si = md.get("parentIndex")
-                ei = md.get("index")
-                if season is not None and si == season:
-                    s += 2
-                if episode is not None and ei == episode:
-                    s += 2
+                if t == "episode": s += 8
+                elif t in ("show","series"): s += 6
+            else:
+                if t == "movie": s += 8
+
+            mt = (md.get("grandparentTitle") if t == "episode" else (md.get("title") or "")) or ""
+            if _titles_equal(mt, title): s += 8
+            y = _year_from_any(md.get("year"))
+            if kind == "movie":
+                if year and y and abs(y - year) <= 1: s += 2
+            elif kind == "episode" and t == "episode":
+                if year and y and abs(y - year) <= 1: s += 2
+
+            if kind == "episode" and t == "episode":
+                si = md.get("parentIndex"); ei = md.get("index")
+                if season is not None and si == season: s += 2
+                if episode is not None and ei == episode: s += 2
             return s
 
-        best, best_sc = None, -1
-        for md in rows:
-            sc = _score(md)
-            if sc > best_sc:
-                best, best_sc = md, sc
+        best, best_sc, best_t = None, -1, None
+        tried = set()
+        for q in _variants(title):
+            if q in tried: continue
+            tried.add(q)
+            rows = _search_all(q)
+            for md in rows:
+                sc = _score(md)
+                if sc > best_sc:
+                    best, best_sc, best_t = md, sc, (md.get("type") or "").lower()
+            if best_sc >= (12 if kind == "movie" else 12):
+                break
 
-        # Conservative threshold to avoid mislinks
-        threshold = 6 if (kind == "episode" and (season is not None or episode is not None)) else 5
-        return best if (best and best_sc >= threshold) else None
+        if not best:
+            return None
+
+        mt = (best.get("grandparentTitle") if best_t == "episode" else (best.get("title") or "")) or ""
+        if not _titles_equal(mt, title):
+            return None
+
+        if year is not None:
+            yb = _year_from_any(best.get("year"))
+            if kind == "movie":
+                if yb is not None and abs(yb - year) > 1: return None
+            elif kind == "episode" and best_t == "episode":
+                if yb is not None and abs(yb - year) > 1: return None
+
+        return best
+
     except Exception:
         return None
 
-
-#--- GUID fallback ---------EXPERIMENTAL-----------------------------------------
+#--- GUID fallback (SIMKL-friendly) --------------------------------------------
 def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_discover: bool = False) -> Optional[Dict[str, Any]]:
-    # memo/neg-cache
     key = _fb_key_from_row(row)
     memo = _fb_cache_load()
     hit = memo.get(key, None)
@@ -685,7 +902,6 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
         if md:
             nd = normalize_discover_row(md, token=tok)
 
-            # Accept only with safe overlap (if we already have IDs), or when discovery provides real ext IDs.
             def _pairs(d: Optional[Mapping[str, Any]]) -> set:
                 return {(k, v) for (k, v) in (d or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
 
@@ -707,6 +923,8 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
                     if m.get("season") is None: m["season"] = nd.get("season")
                     if m.get("episode") is None: m["episode"] = nd.get("episode")
                     if not m.get("series_title"): m["series_title"] = nd.get("series_title") or nd.get("title")
+                if not m.get("title") and nd.get("title"):
+                    m["title"] = nd["title"]
 
     if not (m.get("title") or m.get("series_title")):
         _FBGUID_MEMO[key] = _FBGUID_NOHIT
@@ -721,4 +939,3 @@ def minimal_from_history_row(row: Any, *, token: Optional[str] = None, allow_dis
     _FBGUID_MEMO[key] = dict(m)
     _fb_cache_save()
     return m
-
