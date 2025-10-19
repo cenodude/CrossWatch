@@ -21,12 +21,18 @@
   </a>
 </p>
 
-<!-- Download + Wiki buttons -->
-<div align="center" style="margin: 6px 0 18px;">
+<!-- Download + Wiki + Best Practices buttons -->
+<div align="center" style="margin:6px 0 18px;">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest"
      target="_blank" rel="noopener noreferrer"
      style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
     ⬇️ Release notes (Latest)
+  </a>
+  <br>
+  <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"
+     target="_blank" rel="noopener noreferrer"
+     style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#d93c4a;color:#fff;text-decoration:none;font-weight:700;">
+    ⚠️ Must-read: Best Practices
   </a>
   <br>
   <a href="https://github.com/cenodude/CrossWatch/wiki"
@@ -34,6 +40,9 @@
      style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
     📘 Read the CrossWatch Wiki
   </a>
+  <div style="margin-top:8px;font-size:12px;color:#57606a;">
+    At minimum, read the <strong>Best Practices</strong> page before enabling two-way sync or server→server writes.
+  </div>
 </div>
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
