@@ -37,9 +37,6 @@
       src="https://img.shields.io/badge/Best%20Practices-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/wiki">
-    <img
-      alt="CrossWatch Wiki"
-      src="https://img.shields.io/badge/Wiki-CrossWatch%20Docs-1f2328?style=for-the-badge&logo=readme">
   </a>
 </p>
 
