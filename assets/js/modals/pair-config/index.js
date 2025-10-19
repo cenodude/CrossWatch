@@ -14,8 +14,10 @@ function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLowerCase();
 const isSimkl=(v)=>same(v,"simkl");
 const isJelly=(v)=>same(v,"jellyfin");
+const isTrakt=(v)=>same(v,"trakt");
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
+function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function iconPath(n){const key=String(n||"").trim().toUpperCase();return `/assets/img/${key}.svg`}
 function logoHTML(n,l){const src=iconPath(n),alt=(l||n||"Provider")+" logo";return `<span class="prov-wrap"><img class="prov-logo" src="${src}" alt="${alt}" width="36" height="36" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block'"/><span class="prov-fallback" style="display:none">${l||n||"—"}</span></span>`}
 
@@ -242,7 +244,7 @@ function bindFoldToggles(root){
     const det=sum.closest("details"); if(!det)return;
     e.preventDefault(); e.stopPropagation();
     det.open=!det.open;
-    det.classList.toggle("open", det.open);   // ← sync class
+    det.classList.toggle("open", det.open);
   });
   root.addEventListener("keydown",(e)=>{
     const sum=e.target.closest?.("summary.fold-head, .fold > summary");
@@ -251,7 +253,7 @@ function bindFoldToggles(root){
       const det=sum.closest("details"); if(!det)return;
       e.preventDefault(); e.stopPropagation();
       det.open=!det.open;
-      det.classList.toggle("open", det.open); // ← sync class
+      det.classList.toggle("open", det.open);
     }
   });
 
@@ -265,7 +267,7 @@ function applySubDisable(feature){
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name"
     ],
     ratings:["#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date"],
-    history:["#cx-hs-add"],
+    history:["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
@@ -396,7 +398,6 @@ function renderFeaturePanel(state){
         grid.insertBefore(row, before || null); 
       }
     }
-    // Add neon warning spanning both columns
     const main = Q(".cx-main");
     let warn = ID("cx-prov-warn");
     if (!warn) {
@@ -556,7 +557,16 @@ function renderFeaturePanel(state){
         </div>
       </div>
       <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
-    right.innerHTML=`<div class="panel-title">Advanced</div><div class="muted">More controls coming later.</div>`;
+    const trCfg = (state.cfgRaw?.trakt)||{};
+    right.innerHTML=`<div class="panel-title">Advanced</div>${
+      hasTrakt(state)
+      ? `<div class="panel-title small" style="margin-top:6px">Trakt</div>
+         <div class="grid2 compact">
+           <div class="opt-row"><label for="cx-tr-hs-numfb">Number Fallback</label><label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback? "checked": ""}><span class="slider"></span></label></div>
+           <div class="opt-row"><label for="cx-tr-hs-col">Add collections to Trakt</label><label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection? "checked": ""}><span class="slider"></span></label></div>
+         </div>`
+      : `<div class="muted">More controls coming later.</div>`
+    }`;
     applySubDisable("history");
     return;
   }
@@ -599,11 +609,9 @@ function refreshTabs(state){
     tabs.appendChild(b);
   });
 
-  // initial render + warnings
   renderFeaturePanel(state);
   renderWarnings(state);
 
-  // second pass
   queueMicrotask(()=>{
     renderFeaturePanel(state);
     renderWarnings(state);
@@ -735,7 +743,6 @@ async function saveConfigBits(state){
       cfg.sync = Object.assign({}, cfg.sync || {}, s, { blackbox: Object.assign({}, cfg.sync?.blackbox||{}, bb) });
     }
 
-    // Providers panel → persist
     if(ID("plx-rating-workers")){
       cfg.plex = Object.assign({}, cfg.plex||{}, {
         rating_workers: Math.max(1, parseInt(ID("plx-rating-workers").value||"12",10)||12),
@@ -743,7 +750,7 @@ async function saveConfigBits(state){
         watchlist_allow_pms_fallback: !!ID("plx-wl-pms")?.checked,
         watchlist_query_limit: Math.max(1, parseInt(ID("plx-wl-limit").value||"25",10)||25),
         watchlist_write_delay_ms: Math.max(0, parseInt(ID("plx-wl-delay").value||"0",10)||0),
-        watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean), // ← comma here
+        watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean),
         fallback_GUID: !!ID("plx-fallback-guid")?.checked
       });
     }
@@ -812,6 +819,16 @@ async function saveConfigBits(state){
       cfg.emby = em;
     }
 
+    const hasTR = String(state.src||"").toUpperCase()==="TRAKT" || String(state.dst||"").toUpperCase()==="TRAKT";
+    if(hasTR){
+      const tr=Object.assign({},cfg.trakt||{});
+      const numfb=ID("cx-tr-hs-numfb");
+      const col=ID("cx-tr-hs-col");
+      if(numfb) tr.history_number_fallback = !!numfb.checked; 
+      if(col)   tr.history_collection       = !!col.checked;
+      cfg.trakt=tr;
+    }
+
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
     if(!res.ok)throw new Error("POST /api/config "+res.status);
   }catch(e){console.warn("[cx] saving config bits failed",e)}
@@ -842,7 +859,6 @@ export default{
     state.feature="globals";
     wrap.__state=state;
 
-    // hydrate
     let pair=null;
     if(props?.pairOrId && typeof props.pairOrId==="object") pair=props.pairOrId;
     else if(props?.pairOrId) pair=await loadPairById(String(props.pairOrId));

@@ -101,8 +101,10 @@ DEFAULT_CFG: Dict[str, Any] = {
 
         # History
         "history_per_page": 100,                        # Max allowed by Trakt; fastest without spamming
-        "history_max_pages": 100000,                    # Safety cap for huge libraries; lower to bound runtime
+        "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
         "history_unresolved": False,                    # bool, default false (enable the freeze file)
+        "history_number_fallback": False,               # episode number fallback (no S/E-based resolution when episode IDs are missing)
+        "history_collection": False,                    # mirroring history adds into your Trakt Collection
 
         "_pending_device": {
             "user_code": "",                            # Temporary device code state for PIN login 

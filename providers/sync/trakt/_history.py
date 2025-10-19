@@ -22,6 +22,7 @@ URL_HIST_MOV = f"{BASE}/sync/history/movies"
 URL_HIST_EPI = f"{BASE}/sync/history/episodes"
 URL_ADD      = f"{BASE}/sync/history"
 URL_REMOVE   = f"{BASE}/sync/history/remove"
+URL_COLL_ADD = f"{BASE}/sync/collection"  # ← add to collection when enabled
 
 UNRESOLVED_PATH = "/config/.cw_state/trakt_history.unresolved.json"
 
@@ -86,6 +87,10 @@ def _freeze_enabled(adapter) -> bool:
 
 def _history_number_fallback_enabled(adapter) -> bool:
     return bool(_cfg_get(adapter, "history_number_fallback", False))
+
+def _history_collection_enabled(adapter) -> bool:
+    # When true, mirror successful history adds into Trakt Collection.
+    return bool(_cfg_get(adapter, "history_collection", False))
 
 def _load_unresolved() -> Dict[str, Any]:
     try: return json.loads(Path(UNRESOLVED_PATH).read_text("utf-8"))
@@ -575,6 +580,70 @@ def _batch_remove(adapter, items: Iterable[Mapping[str, Any]]):
         ]
     return body, unresolved, accepted_keys, accepted_minimals
 
+def _history_body_to_collection(body: Mapping[str, Any]) -> Dict[str, Any]:
+    """
+    Convert a history POST body into a minimal /sync/collection body.
+    - Use watched_at as collected_at.
+    - Deduplicate by ids.
+    """
+    out: Dict[str, Any] = {}
+
+    # Movies
+    seen_movies: set[str] = set()
+    for m in (body.get("movies") or []):
+        ids = (m or {}).get("ids") or {}
+        if not ids: continue
+        k = json.dumps(ids, sort_keys=True)
+        if k in seen_movies: continue
+        seen_movies.add(k)
+        (out.setdefault("movies", [])).append({
+            "ids": ids,
+            "collected_at": (m.get("watched_at") or _now_iso()),
+        })
+
+    # Episodes (flat)
+    seen_eps: set[str] = set()
+    for e in (body.get("episodes") or []):
+        ids = (e or {}).get("ids") or {}
+        if not ids: continue
+        k = json.dumps(ids, sort_keys=True)
+        if k in seen_eps: continue
+        seen_eps.add(k)
+        (out.setdefault("episodes", [])).append({
+            "ids": ids,
+            "collected_at": (e.get("watched_at") or _now_iso()),
+        })
+
+    # Shows (number-fallback path) → seasons/episodes with collected_at
+    shows = (body.get("shows") or [])
+    if shows:
+        coll_shows: List[Dict[str, Any]] = []
+        for sh in shows:
+            ids = (sh or {}).get("ids") or {}
+            seasons_in = (sh or {}).get("seasons") or []
+            if not ids or not seasons_in: continue
+            seasons_out: List[Dict[str, Any]] = []
+            for s in seasons_in:
+                num = s.get("number")
+                eps = s.get("episodes") or []
+                if num is None or not eps: continue
+                eps_out = []
+                for ep in eps:
+                    n = ep.get("number")
+                    if n is None: continue
+                    eps_out.append({
+                        "number": int(n),
+                        "collected_at": (ep.get("watched_at") or _now_iso()),
+                    })
+                if eps_out:
+                    seasons_out.append({"number": int(num), "episodes": eps_out})
+            if seasons_out:
+                coll_shows.append({"ids": ids, "seasons": seasons_out})
+        if coll_shows:
+            out["shows"] = coll_shows
+
+    return out
+
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     sess = adapter.client.session
     headers = build_headers({
@@ -605,6 +674,19 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                 _freeze_item_if_enabled(adapter, m, action="add", reasons=["not-found"])
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
+            # Mirror to Collection if enabled
+            if _history_collection_enabled(adapter):
+                coll_body = _history_body_to_collection(body)
+                if coll_body:
+                    try:
+                        rc = request_with_retries(
+                            sess, "POST", URL_COLL_ADD, headers=headers,
+                            json=coll_body, timeout=timeout, max_retries=retries
+                        )
+                        if rc.status_code not in (200, 201):
+                            _log(f"COLLECTION add failed {rc.status_code}: {(rc.text or '')[:200]}")
+                    except Exception as e:
+                        _log(f"COLLECTION add exception: {e}")
         elif not unresolved:
             _log("ADD returned 200 but nothing added/existing")
     else:

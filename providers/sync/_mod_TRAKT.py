@@ -103,6 +103,8 @@ class TRAKTConfig:
     access_token: str
     timeout: float = 15.0
     max_retries: int = 3
+    history_number_fallback: bool = False
+    history_collection: bool = False
 
 class TRAKTClient:
     BASE = "https://api.trakt.tv"
@@ -209,6 +211,8 @@ class TRAKTModule:
             access_token=str(t.get("access_token") or "").strip(),
             timeout=float((t.get("timeout") or cfg.get("timeout") or 15.0)),
             max_retries=int((t.get("max_retries") or cfg.get("max_retries") or 3)),
+            history_number_fallback=bool(t.get("history_number_fallback")),
+            history_collection=bool(t.get("history_collection")),
         )
         if not self.cfg.client_id or not self.cfg.access_token:
             raise TRAKTAuthError("Missing Trakt client_id/access_token")
