@@ -21,24 +21,31 @@
   </a>
 </p>
 
-<!-- Download + Wiki buttons -->
-<div align="center" style="margin: 6px 0 18px;">
-  <a href="https://github.com/cenodude/CrossWatch/releases/latest"
-     target="_blank" rel="noopener noreferrer"
-     style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
-    ⬇️ Release notes (Latest)
-  </a>
-  <br>
-  <a href="https://github.com/cenodude/CrossWatch/wiki"
-     target="_blank" rel="noopener noreferrer"
-     style="display:inline-block;margin:4px 6px;padding:8px 14px;border-radius:6px;background:#1f2328;color:#fff;text-decoration:none;font-weight:600;">
-    📘 Read the CrossWatch Wiki
-  </a>
-</div>
-
+<!-- Caption directly under screenshots -->
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
-<p align="center"><b>New version 0.2.9 is released with Emby Support (watchlist, history, webhooks, watcher) </b></p>
+<!-- Download + Wiki + Best Practices (badge-style, GitHub-friendly) -->
+<p align="center">
+  <a href="https://github.com/cenodude/CrossWatch/releases/latest">
+    <img
+      alt="Latest Release"
+      src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&sort=semver&logo=github&label=Latest%20Release&style=for-the-badge">
+  </a>
+  <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices">
+    <img
+      alt="Must-read: Best Practices"
+      src="https://img.shields.io/badge/Best%20Practices-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
+  </a>
+  <a href="https://github.com/cenodude/CrossWatch/wiki">
+  </a>
+</p>
+
+<!-- Nudge -->
+<p align="center">
+  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
+</p>
+
+
 
 **CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby**, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
 
