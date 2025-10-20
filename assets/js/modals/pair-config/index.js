@@ -264,10 +264,11 @@ function applySubDisable(feature){
     watchlist: [
       "#cx-wl-add","#cx-wl-remove",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
-      "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name"
+      "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
+      "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
     ratings:["#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date"],
-    history:["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col"],
+    history: ["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col","#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
@@ -503,6 +504,34 @@ function renderFeaturePanel(state){
       `);
     }
 
+    if (hasTrakt(state)) {
+      const tr = (state.cfgRaw?.trakt) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Trakt</div>
+        <details id="cx-tr-wl" open>
+          <summary class="muted" style="margin-bottom:10px;">Trakt watchlist controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row"><label for="tr-wl-etag">Use ETag</label>
+              <label class="switch"><input id="tr-wl-etag" type="checkbox" ${tr.watchlist_use_etag!==false?"checked":""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row"><label for="tr-wl-batch">Batch size</label>
+              <input id="tr-wl-batch" class="input small" type="number" min="10" max="500" value="${tr.watchlist_batch_size ?? 100}">
+            </div>
+            <div class="opt-row"><label for="tr-wl-log">Log rate limits</label>
+              <label class="switch"><input id="tr-wl-log" type="checkbox" ${tr.watchlist_log_rate_limits?"checked":""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row"><label for="tr-wl-freeze">Freeze details</label>
+              <label class="switch"><input id="tr-wl-freeze" type="checkbox" ${tr.watchlist_freeze_details!==false?"checked":""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="tr-wl-ttl">Shadow TTL (hours)</label>
+              <input id="tr-wl-ttl" class="input small" type="number" min="1" max="9999" value="${tr.watchlist_shadow_ttl_hours ?? 168}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
     right.innerHTML = parts.join("");
     applySubDisable("watchlist");
     return;
@@ -564,7 +593,8 @@ function renderFeaturePanel(state){
          <div class="grid2 compact">
            <div class="opt-row"><label for="cx-tr-hs-numfb">Number Fallback</label><label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback? "checked": ""}><span class="slider"></span></label></div>
            <div class="opt-row"><label for="cx-tr-hs-col">Add collections to Trakt</label><label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection? "checked": ""}><span class="slider"></span></label></div>
-         </div>`
+           <div class="opt-row"><label for="cx-tr-hs-unres">Unresolved Freeze</label><label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved? "checked": ""}><span class="slider"></span></label></div>
+           </div>`
       : `<div class="muted">More controls coming later.</div>`
     }`;
     applySubDisable("history");
@@ -824,8 +854,10 @@ async function saveConfigBits(state){
       const tr=Object.assign({},cfg.trakt||{});
       const numfb=ID("cx-tr-hs-numfb");
       const col=ID("cx-tr-hs-col");
+      const unres=ID("cx-tr-hs-unres");
       if(numfb) tr.history_number_fallback = !!numfb.checked; 
       if(col)   tr.history_collection       = !!col.checked;
+      if(unres) tr.history_unresolved       = !!unres.checked;
       cfg.trakt=tr;
     }
 
