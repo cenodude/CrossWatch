@@ -265,15 +265,20 @@ function applySubDisable(feature){
       "#cx-wl-add","#cx-wl-remove",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
+      "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
-    ratings:["#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date"],
+    ratings: [
+      "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
+      "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
+    ],
     history: ["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col","#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
 }
+
 
 function renderFeaturePanel(state){
   if(state.feature!=="providers"){ ID("cx-prov-warn")?.remove(); }
@@ -283,109 +288,52 @@ function renderFeaturePanel(state){
     const cfg=state.cfgRaw||{};
     const plex=cfg.plex||{};
     const jf=cfg.jellyfin||{};
-    const tr=cfg.trakt||{};
-    const sim=cfg.simkl||{};
+    const em=cfg.emby||{};
+
+    const leftWrap = Q(".cx-main .left");
+    const rightWrap = Q(".cx-main .right");
+    if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
+    if (rightWrap) rightWrap.style.display = "none";
+
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media Servers</div>
       <details class="mods fold" id="prov-plex"><summary class="fold-head"><span>Plex</span><span class="chev">expand_more</span></summary><div class="fold-body">
         <div class="grid2 compact" style="padding:8px 0 2px">
           <div class="opt-row"><label for="plx-rating-workers">Rating workers</label><input id="plx-rating-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.rating_workers??12}"></div>
           <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
+          <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
+          <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
           <div class="opt-row"><label for="plx-wl-pms">Allow PMS fallback</label><label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback?"checked":""}><span class="slider"></span></label></div>
           <div class="opt-row"><label for="plx-wl-limit">Discover query limit</label><input id="plx-wl-limit" class="input small" type="number" min="5" max="50" step="1" value="${plex.watchlist_query_limit??25}"></div>
           <div class="opt-row"><label for="plx-wl-delay">Write delay (ms)</label><input id="plx-wl-delay" class="input small" type="number" min="0" max="5000" step="10" value="${plex.watchlist_write_delay_ms??0}"></div>
           <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div>
           <div class="opt-row" style="grid-column:1/-1"><label for="plx-wl-guid">GUID priority</label><input id="plx-wl-guid" class="input" type="text" value="${(plex.watchlist_guid_priority||["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"]).join(", ")}"></div>
-            </div>
+        </div>
       </div></details>
 
       <details class="mods fold" id="prov-jelly">
         <summary class="fold-head"><span>Jellyfin</span><span class="chev">expand_more</span></summary>
         <div class="fold-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
-            <div class="opt-row">
-              <label for="jf-ssl">Verify SSL</label>
-              <label class="switch"><input id="jf-ssl" type="checkbox" ${jf.verify_ssl?"checked":""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row"></div>
-
-            <!-- Watchlist -->
-            <div class="prov-box" style="grid-column:1/-1">
-              <div class="panel-title small">Watchlist</div>
-              <div class="grid2 compact">
-                <div class="opt-row">
-                  <label for="jf-wl-limit">Query limit</label>
-                  <input id="jf-wl-limit" class="input small" type="number" min="5" max="1000" value="${jf.watchlist?.watchlist_query_limit??25}">
-                </div>
-                <div class="opt-row">
-                  <label for="jf-wl-delay">Write delay (ms)</label>
-                  <input id="jf-wl-delay" class="input small" type="number" min="0" max="5000" value="${jf.watchlist?.watchlist_write_delay_ms??0}">
-                </div>
-              </div>
-            </div>
-
-            <!-- History -->
-            <div class="prov-box" style="grid-column:1/-1">
-              <div class="panel-title small">History</div>
-              <div class="grid2 compact">
-                <div class="opt-row">
-                  <label for="jf-hs-limit">Query limit</label>
-                  <input id="jf-hs-limit" class="input small" type="number" min="5" max="1000" value="${jf.history?.history_query_limit??25}">
-                </div>
-                <div class="opt-row">
-                  <label for="jf-hs-delay">Write delay (ms)</label>
-                  <input id="jf-hs-delay" class="input small" type="number" min="0" max="5000" value="${jf.history?.history_write_delay_ms??0}">
-                </div>
-              </div>
-            </div>
-
-            <!-- Ratings -->
-            <div class="prov-box" style="grid-column:1/-1">
-              <div class="panel-title small">Ratings</div>
-              <div class="grid2 compact">
-                <div class="opt-row">
-                  <label for="jf-rt-limit">Ratings query limit</label>
-                  <input id="jf-rt-limit" class="input small" type="number" min="100" max="10000" value="${jf.ratings?.ratings_query_limit??2000}">
-                </div>
-              </div>
-            </div>
-
+            <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
+            <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
           </div>
         </div>
       </details>
 
-
+      <details class="mods fold" id="prov-emby">
+        <summary class="fold-head"><span>Emby</span><span class="chev">expand_more</span></summary>
+        <div class="fold-body">
+          <div class="grid2 compact" style="padding:8px 0 2px">
+            <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
+            <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
+          </div>
+        </div>
+      </details>
     `;
-    right.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">flag_circle</span>Trackers</div>
-      <details class="mods fold" id="prov-simkl"><summary class="fold-head"><span>Simkl</span><span class="chev">expand_more</span></summary><div class="fold-body">
-        <div class="muted" style="padding:10px 12px">No additional settings.</div>
-      </div></details>
 
-      <details class="mods fold" id="prov-trakt"><summary class="fold-head"><span>Trakt</span><span class="chev">expand_more</span></summary><div class="fold-body">
-        <div class="panel-title small" style="margin:6px 0 4px">Watchlist</div>
-        <div class="grid2 compact">
-          <div class="opt-row"><label for="tr-wl-etag">Use ETag</label><label class="switch"><input id="tr-wl-etag" type="checkbox" ${tr.watchlist_use_etag!==false?"checked":""}><span class="slider"></span></label></div>
-          <div class="opt-row"><label for="tr-wl-batch">Batch size</label><input id="tr-wl-batch" class="input small" type="number" min="10" max="500" value="${tr.watchlist_batch_size??100}"></div>
-          <div class="opt-row"><label for="tr-wl-log">Log rate limits</label><label class="switch"><input id="tr-wl-log" type="checkbox" ${tr.watchlist_log_rate_limits?"checked":""}><span class="slider"></span></label></div>
-          <div class="opt-row"><label for="tr-wl-freeze">Freeze details</label><label class="switch"><input id="tr-wl-freeze" type="checkbox" ${tr.watchlist_freeze_details!==false?"checked":""}><span class="slider"></span></label></div>
-          <div class="opt-row" style="grid-column:1/-1"><label for="tr-wl-ttl">Shadow TTL (hours)</label><input id="tr-wl-ttl" class="input small" type="number" min="1" max="9999" value="${tr.watchlist_shadow_ttl_hours??168}"></div>
-        </div>
+    right.innerHTML = "";
 
-        <div class="panel-title small" style="margin:8px 0 4px">Ratings</div>
-        <div class="grid2 compact">
-          <div class="opt-row"><label for="tr-rt-page">Per page</label><input id="tr-rt-page" class="input small" type="number" min="10" max="100" value="${tr.ratings_per_page??100}"></div>
-          <div class="opt-row"><label for="tr-rt-pages">Max pages</label><input id="tr-rt-pages" class="input small" type="number" min="1" max="100000" value="${tr.ratings_max_pages??50}"></div>
-          <div class="opt-row"><label for="tr-rt-chunk">Chunk size</label><input id="tr-rt-chunk" class="input small" type="number" min="10" max="100" value="${tr.ratings_chunk_size??100}"></div>
-        </div>
-
-        <div class="panel-title small" style="margin:8px 0 4px">History</div>
-        <div class="grid2 compact">
-          <div class="opt-row"><label for="tr-hs-page">Per page</label><input id="tr-hs-page" class="input small" type="number" min="10" max="100" value="${tr.history_per_page??100}"></div>
-          <div class="opt-row"><label for="tr-hs-pages">Max pages</label><input id="tr-hs-pages" class="input small" type="number" min="1" max="100000" value="${tr.history_max_pages??100000}"></div>
-          <div class="opt-row" style="grid-column:1/-1"><label for="tr-hs-unres">Unresolved freeze</label><label class="switch"><input id="tr-hs-unres" type="checkbox" ${tr.history_unresolved?"checked":""}><span class="slider"></span></label></div>
-        </div>
-      </div></details>
-    `;
-      {
+    {
       const grid = left.querySelector('#prov-plex .fold-body .grid2');
       if (grid && !ID('plx-fallback-guid')) {
         const row = document.createElement('div');
@@ -412,7 +360,6 @@ function renderFeaturePanel(state){
       Advanced provider settings — do not change unless you know what you're doing!
     `;
     QA(".fold").forEach(f=>{f.classList.remove("open")});
-  
     return;
   }
 
@@ -440,6 +387,7 @@ function renderFeaturePanel(state){
 
   if (state.feature === "watchlist") {
     const wl = getOpts(state, "watchlist");
+    const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
 
     left.innerHTML = `
       <div class="panel-title">Watchlist — basics</div>
@@ -451,6 +399,23 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
       </div>
+      ${hasEmby(state)?`
+        <div class="panel-title small" style="margin-top:6px">Emby specifics</div>
+        <div class="grid2 compact">
+          <div class="opt-row" style="grid-column:1/-1">
+            <label>Mode</label>
+            <div class="seg">
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">Favorites</label>
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">Playlist</label>
+              <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-col" value="collection" ${(emw.mode==="collection")?"checked":""}/><label for="cx-em-wl-mode-col">Collections</label>
+            </div>
+          </div>
+          <div class="opt-row" style="grid-column:1/-1">
+            <label for="cx-em-wl-pl-name">Name</label>
+            <input id="cx-em-wl-pl-name" class="input" type="text" value="${emw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+          </div>
+        </div>
+      `:""}
     `;
 
     const parts = [`<div class="panel-title">Advanced</div>`];
@@ -480,26 +445,26 @@ function renderFeaturePanel(state){
     }
 
     if (hasEmby(state)) {
-      const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+      const emAdv = (state.cfgRaw?.emby?.watchlist) || {};
+      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
       parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Emby specifics</div>
+        <div class="panel-title small" style="margin-top:6px">Emby</div>
         <details id="cx-em-wl" open>
-          <summary class="muted" style="margin-bottom:10px;">Favorites / Playlist / Collections</summary>
+          <summary class="muted" style="margin-bottom:10px;">Emby watchlist controls</summary>
           <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label>Mode</label>
-              <div class="seg">
-                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">Favorites</label>
-                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">Playlist</label>
-                <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-col" value="collection" ${(emw.mode==="collection")?"checked":""}/><label for="cx-em-wl-mode-col">Collections</label>
-              </div>
+            <div class="opt-row">
+              <label for="cx-wl-q">Query limit</label>
+              <input id="cx-wl-q" class="input small" type="number" min="5" max="1000" value="${emAdv.watchlist_query_limit ?? 25}">
+            </div>
+            <div class="opt-row">
+              <label for="cx-wl-delay">Write delay (ms)</label>
+              <input id="cx-wl-delay" class="input small" type="number" min="0" max="5000" value="${emAdv.watchlist_write_delay_ms ?? 0}">
             </div>
             <div class="opt-row" style="grid-column:1/-1">
-              <label for="cx-em-wl-pl-name">Name</label>
-              <input id="cx-em-wl-pl-name" class="input" type="text" value="${emw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+              <label for="cx-wl-guid">GUID priority</label>
+              <input id="cx-wl-guid" class="input" type="text" value="${(emAdv.watchlist_guid_priority || defPri).join(", ")}">
             </div>
           </div>
-          <div class="hint" style="text-align:center;">Emby does not have a native Watchlist; use <b>Favorites</b>, <b>Playlist</b>, or <b>Collections</b>. Prefer <b>Favorites</b> or <b>Collections</b>, since <b>Playlist</b> can only hold movies and episodes (no shows).</div>
         </details>
       `);
     }
@@ -508,7 +473,7 @@ function renderFeaturePanel(state){
       const tr = (state.cfgRaw?.trakt) || {};
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Trakt</div>
-        <details id="cx-tr-wl" open>
+        <details id="cx-tr-wl">
           <summary class="muted" style="margin-bottom:10px;">Trakt watchlist controls</summary>
           <div class="grid2 compact">
             <div class="opt-row"><label for="tr-wl-etag">Use ETag</label>
@@ -539,6 +504,8 @@ function renderFeaturePanel(state){
 
   if(state.feature==="ratings"){
     const rt=getOpts(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
+
+    // LEFT
     left.innerHTML=`<div class="panel-title">Ratings — basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
@@ -550,8 +517,9 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
       </div>`;
-    const simkl=hasSimkl(state);
-    right.innerHTML=`<div class="panel-title">Advanced</div>
+
+    // RIGHT
+    const parts = [`<div class="panel-title">Advanced</div>
       <details id="cx-rt-adv" open>
         <summary class="muted" style="margin-bottom:10px;"></summary>
         <div class="panel-title small">History window</div>
@@ -565,38 +533,117 @@ function renderFeaturePanel(state){
           <div class="opt-row"><label for="cx-rt-from-date">From date</label><input id="cx-rt-from-date" class="input small" type="date" value="${rt.from_date||""}" ${rt.mode==="from_date"?"":"disabled"}></div>
         </div>
         <div class="hint">All is everything or “From a date”.</div>
-      </details>
-      ${simkl?`<div class="simkl-alert" role="note" aria-live="polite"><div class="title"><span class="ic">⚠</span> Simkl heads-up for Ratings</div><div class="body"><ul class="bul"><li><b>Movies:</b> Rating auto-marks as <i>Completed</i> on Simkl.</li><li>Can appear under <i>Recently watched</i> and <i>My List</i>.</li></ul><div class="mini">Tip: Prefer small windows when backfilling.</div></div></div>`:""}`;
+      </details>`];
+
+    if (hasTrakt(state)) {
+      const tr = (state.cfgRaw?.trakt) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Trakt</div>
+        <details id="cx-tr-rt">
+          <summary class="muted" style="margin-bottom:10px;">Trakt ratings controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="tr-rt-perpage">Items per page</label>
+              <input id="tr-rt-perpage" class="input small" type="number" min="1" max="500" value="${tr.ratings_per_page ?? 100}">
+            </div>
+            <div class="opt-row">
+              <label for="tr-rt-maxpages">Max pages</label>
+              <input id="tr-rt-maxpages" class="input small" type="number" min="1" max="1000" value="${tr.ratings_max_pages ?? 50}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="tr-rt-chunk">Write chunk size</label>
+              <input id="tr-rt-chunk" class="input small" type="number" min="1" max="1000" value="${tr.ratings_chunk_size ?? 100}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasSimkl(state)) {
+      parts.push(`<div class="simkl-alert" role="note" aria-live="polite"><div class="title"><span class="ic">⚠</span> Simkl heads-up for Ratings</div><div class="body"><ul class="bul"><li><b>Movies:</b> Rating auto-marks as <i>Completed</i> on Simkl.</li><li>Can appear under <i>Recently watched</i> and <i>My List</i>.</li></ul><div class="mini">Tip: Prefer small windows when backfilling.</div></div></div>`);
+    }
+
+    right.innerHTML = parts.join("");
     try{updateRtSummary()}catch{}
     applySubDisable("ratings");
     return;
   }
 
-  if(state.feature==="history"){
-    const hs=getOpts(state,"history");
-    left.innerHTML=`<div class="panel-title">History — basics</div>
-      <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable?"checked":""}><span class="slider"></span></label></div>
+  if (state.feature === "history") {
+    const hs = getOpts(state, "history");
+    const trCfg = (state.cfgRaw?.trakt) || {};
+    const emCfg = (state.cfgRaw?.emby?.history) || {};
+    const trColRow = hasTrakt(state)
+      ? `<div class="opt-row">
+          <label for="cx-tr-hs-col">Add collections to Trakt</label>
+          <label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}><span class="slider"></span></label>
+        </div>`
+      : "";
+
+    left.innerHTML = `<div class="panel-title">History — basics</div>
+      <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
       <div class="grid2">
-        <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label class="muted">Remove (disabled)</label>
           <label class="switch" style="opacity:.5;pointer-events:none">
             <input id="cx-hs-remove" type="checkbox" disabled>
             <span class="slider"></span>
           </label>
         </div>
+        ${trColRow}
       </div>
       <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
-    const trCfg = (state.cfgRaw?.trakt)||{};
-    right.innerHTML=`<div class="panel-title">Advanced</div>${
-      hasTrakt(state)
-      ? `<div class="panel-title small" style="margin-top:6px">Trakt</div>
-         <div class="grid2 compact">
-           <div class="opt-row"><label for="cx-tr-hs-numfb">Number Fallback</label><label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback? "checked": ""}><span class="slider"></span></label></div>
-           <div class="opt-row"><label for="cx-tr-hs-col">Add collections to Trakt</label><label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection? "checked": ""}><span class="slider"></span></label></div>
-           <div class="opt-row"><label for="cx-tr-hs-unres">Unresolved Freeze</label><label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved? "checked": ""}><span class="slider"></span></label></div>
-           </div>`
-      : `<div class="muted">More controls coming later.</div>`
-    }`;
+
+    const parts = [`<div class="panel-title">Advanced</div>`];
+
+    if (hasTrakt(state)) {
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Trakt</div>
+        <details id="cx-tr-hs">
+          <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="cx-tr-hs-numfb">Number Fallback</label>
+              <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row">
+              <label for="cx-tr-hs-unres">Unresolved Freeze</label>
+              <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasEmby(state)) {
+      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Emby</div>
+        <details id="cx-em-hs">
+          <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="cx-em-hs-limit">Query limit</label>
+              <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
+            </div>
+            <div class="opt-row">
+              <label for="cx-em-hs-delay">Write delay (ms)</label>
+              <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="cx-em-hs-guid">GUID priority</label>
+              <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (parts.length === 1) {
+      parts.push(`<div class="muted">More controls coming later.</div>`);
+    }
+    right.innerHTML = parts.join("");
+
     applySubDisable("history");
     return;
   }
@@ -777,12 +824,28 @@ async function saveConfigBits(state){
       cfg.plex = Object.assign({}, cfg.plex||{}, {
         rating_workers: Math.max(1, parseInt(ID("plx-rating-workers").value||"12",10)||12),
         history_workers: Math.max(1, parseInt(ID("plx-history-workers").value||"12",10)||12),
+        timeout: Math.max(1, parseInt(ID("plx-timeout")?.value||"10",10)||10),
+        max_retries: Math.max(0, parseInt(ID("plx-retries")?.value||"3",10)||3),
         watchlist_allow_pms_fallback: !!ID("plx-wl-pms")?.checked,
         watchlist_query_limit: Math.max(1, parseInt(ID("plx-wl-limit").value||"25",10)||25),
         watchlist_write_delay_ms: Math.max(0, parseInt(ID("plx-wl-delay").value||"0",10)||0),
         watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean),
         fallback_GUID: !!ID("plx-fallback-guid")?.checked
       });
+    }
+
+    if(ID("jf-timeout")){
+      const jf=Object.assign({},cfg.jellyfin||{});
+      jf.timeout = Math.max(1, parseInt(ID("jf-timeout").value||"15",10)||15);
+      jf.max_retries = Math.max(0, parseInt(ID("jf-retries").value||"3",10)||3);
+      cfg.jellyfin=jf;
+    }
+
+    if(ID("em-timeout")){
+      const em=Object.assign({},cfg.emby||{});
+      em.timeout = Math.max(1, parseInt(ID("em-timeout").value||"15",10)||15);
+      em.max_retries = Math.max(0, parseInt(ID("em-retries").value||"3",10)||3);
+      cfg.emby=em;
     }
 
     if(ID("jf-ssl")){
@@ -809,13 +872,7 @@ async function saveConfigBits(state){
         watchlist_shadow_ttl_hours: Math.max(1, parseInt(ID("tr-wl-ttl")?.value||"168",10)||168),
         watchlist_batch_size: Math.max(1, parseInt(ID("tr-wl-batch")?.value||"100",10)||100),
         watchlist_log_rate_limits: !!ID("tr-wl-log")?.checked,
-        watchlist_freeze_details: !!ID("tr-wl-freeze")?.checked,
-        ratings_per_page: Math.max(10, parseInt(ID("tr-rt-page")?.value||"100",10)||100),
-        ratings_max_pages: Math.max(1, parseInt(ID("tr-rt-pages")?.value||"50",10)||50),
-        ratings_chunk_size: Math.max(10, parseInt(ID("tr-rt-chunk")?.value||"100",10)||100),
-        history_per_page: Math.max(10, parseInt(ID("tr-hs-page")?.value||"100",10)||100),
-        history_max_pages: Math.max(1, parseInt(ID("tr-hs-pages")?.value||"100000",10)||100000),
-        history_unresolved: !!ID("tr-hs-unres")?.checked
+        watchlist_freeze_details: !!ID("tr-wl-freeze")?.checked
       });
     }
 
@@ -846,6 +903,15 @@ async function saveConfigBits(state){
       if(Number.isFinite(q)) em.watchlist.watchlist_query_limit = q;
       if(Number.isFinite(d)) em.watchlist.watchlist_write_delay_ms = d;
       if(gp.length) em.watchlist.watchlist_guid_priority = gp;
+
+      const hq = parseInt(ID("cx-em-hs-limit")?.value||"",10);
+      const hd = parseInt(ID("cx-em-hs-delay")?.value||"",10);
+      const hg = (ID("cx-em-hs-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      em.history = Object.assign({}, em.history || {});
+      if (Number.isFinite(hq)) em.history.history_query_limit = Math.max(1, hq);
+      if (Number.isFinite(hd)) em.history.history_write_delay_ms = Math.max(0, hd);
+      if (hg.length) em.history.history_guid_priority = hg;
+
       cfg.emby = em;
     }
 
@@ -858,6 +924,18 @@ async function saveConfigBits(state){
       if(numfb) tr.history_number_fallback = !!numfb.checked; 
       if(col)   tr.history_collection       = !!col.checked;
       if(unres) tr.history_unresolved       = !!unres.checked;
+
+      const n = x => parseInt((ID(x)?.value||"").trim(), 10);
+      const clamp = (v,min,max)=>Math.min(max,Math.max(min,Number.isFinite(v)?v:min));
+
+      const perEl   = ID("tr-rt-perpage") || ID("tr-rt-page");
+      const pagesEl = ID("tr-rt-maxpages")|| ID("tr-rt-pages");
+      const chunkEl = ID("tr-rt-chunk");
+
+      if (perEl)   tr.ratings_per_page   = clamp(n(perEl.id), 10, 500);
+      if (pagesEl) tr.ratings_max_pages  = clamp(n(pagesEl.id), 1, 1000);
+      if (chunkEl) tr.ratings_chunk_size = clamp(n(chunkEl.id), 10, 1000);
+
       cfg.trakt=tr;
     }
 
