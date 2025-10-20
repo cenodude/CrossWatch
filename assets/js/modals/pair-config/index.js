@@ -626,13 +626,95 @@ function renderFeaturePanel(state){
     return;
   }
 
-  const pl=getOpts(state,"playlists");
-  left.innerHTML=`<div class="panel-title">Playlists</div>
-    <div class="grid2"><div class="opt-row"><label for="cx-pl-enable">Enable</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
-    <div class="opt-row"><label for="cx-pl-add">Add</label><label class="switch"><input id="cx-pl-add" type="checkbox" ${pl.add?"checked":""}><span class="slider"></span></label></div>
-    <div class="opt-row"><label for="cx-pl-remove">Remove</label><label class="switch"><input id="cx-pl-remove" type="checkbox" ${pl.remove?"checked":""}><span class="slider"></span></label></div></div>`;
-  right.innerHTML=`<div class="panel-title">Advanced</div><div class="muted">Experimental.</div>`;
-  applySubDisable("playlists");
+    if (state.feature === "history") {
+      const hs = getOpts(state, "history");
+      const trCfg = (state.cfgRaw?.trakt) || {};
+      const emCfg = (state.cfgRaw?.emby?.history) || {};
+      const trColRow = hasTrakt(state)
+        ? `<div class="opt-row">
+            <label for="cx-tr-hs-col">Add collections to Trakt</label>
+            <label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}><span class="slider"></span></label>
+          </div>`
+        : "";
+
+      left.innerHTML = `<div class="panel-title">History — basics</div>
+        <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
+        <div class="grid2">
+          <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
+          <div class="opt-row"><label class="muted">Remove (disabled)</label>
+            <label class="switch" style="opacity:.5;pointer-events:none">
+              <input id="cx-hs-remove" type="checkbox" disabled>
+              <span class="slider"></span>
+            </label>
+          </div>
+          ${trColRow}
+        </div>
+        <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
+
+      const parts = [`<div class="panel-title">Advanced</div>`];
+
+      if (hasTrakt(state)) {
+        parts.push(`
+          <div class="panel-title small" style="margin-top:6px">Trakt</div>
+          <details id="cx-tr-hs">
+            <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
+            <div class="grid2 compact">
+              <div class="opt-row">
+                <label for="cx-tr-hs-numfb">Number Fallback</label>
+                <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
+              </div>
+              <div class="opt-row">
+                <label for="cx-tr-hs-unres">Unresolved Freeze</label>
+                <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
+              </div>
+            </div>
+          </details>
+        `);
+      }
+
+      if (hasEmby(state)) {
+        const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
+        parts.push(`
+          <div class="panel-title small" style="margin-top:6px">Emby</div>
+          <details id="cx-em-hs">
+            <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
+            <div class="grid2 compact">
+              <div class="opt-row">
+                <label for="cx-em-hs-limit">Query limit</label>
+                <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
+              </div>
+              <div class="opt-row">
+                <label for="cx-em-hs-delay">Write delay (ms)</label>
+                <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
+              </div>
+              <div class="opt-row" style="grid-column:1/-1">
+                <label for="cx-em-hs-guid">GUID priority</label>
+                <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
+              </div>
+            </div>
+          </details>
+        `);
+      }
+
+      if (parts.length === 1) {
+        parts.push(`<div class="muted">More controls coming later.</div>`);
+      }
+
+      right.innerHTML = parts.join("");
+      applySubDisable("history");
+      return;
+    }
+
+  if (state.feature === "playlists") {
+    const pl=getOpts(state,"playlists");
+    left.innerHTML=`<div class="panel-title">Playlists</div>
+      <div class="grid2"><div class="opt-row"><label for="cx-pl-enable">Enable</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="cx-pl-add">Add</label><label class="switch"><input id="cx-pl-add" type="checkbox" ${pl.add?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="cx-pl-remove">Remove</label><label class="switch"><input id="cx-pl-remove" type="checkbox" ${pl.remove?"checked":""}><span class="slider"></span></label></div></div>`;
+    right.innerHTML=`<div class="panel-title">Advanced</div><div class="muted">Experimental.</div>`;
+    applySubDisable("playlists");
+    return;
+  }
 }
 
 // Tabs
