@@ -115,6 +115,35 @@ function defaultState(){
 
 // Data
 async function getJSON(url){try{const r=await fetch(url,{cache:"no-store"});return r.ok?await r.json():null}catch{return null}}
+
+async function loadPairById(id){
+  try{
+    if(!id) return null;
+
+    if(typeof window!=="undefined" && typeof window.loadPairById==="function"){
+      try{
+        const p=await Promise.resolve(window.loadPairById(id));
+        if(p) return p;
+      }catch{}
+    }
+
+    if(typeof window!=="undefined" && window.cx && Array.isArray(window.cx.pairs)){
+      const p=window.cx.pairs.find(x=>String(x?.id||"")===String(id));
+      if(p) return p;
+    }
+
+    const direct=await getJSON(`/api/pairs/${encodeURIComponent(id)}?cb=${Date.now()}`);
+    if(direct && typeof direct==="object" && (direct.id||direct.source||direct.target)) return direct;
+
+    const list=await getJSON(`/api/pairs?cb=${Date.now()}`);
+    if(Array.isArray(list)){
+      const p=list.find(x=>String(x?.id||"")===String(id));
+      if(p) return p;
+    }
+  }catch{}
+  return null;
+}
+
 async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
   state.providers=Array.isArray(list)?list:[
@@ -125,8 +154,9 @@ async function loadProviders(state){
     {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
   ]
 }
+
 async function loadConfigBits(state){
-  const cfg=(await getJSON("/api/config?cb="+Date.now()))||{},s=cfg?.sync||{};
+  const cfg=(await getJSON("/api/config?cb="+Date.now()))||{}, s=cfg?.sync||{};
   state.cfgRaw=cfg||{};
   state.globals={
     dry_run:!!s.dry_run,
@@ -138,19 +168,24 @@ async function loadConfigBits(state){
     blackbox:Object.assign(
       {enabled:true,promote_after:1,unresolved_days:0,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true},
       s.blackbox||{}
+    ),
+    runtime:Object.assign(
+      {suspect_min_prev:20,suspect_shrink_ratio:0.1},
+      s.runtime||{}
     )
   };
-  const jf=cfg?.jellyfin?.watchlist||{};
+
+  const jf = cfg?.jellyfin?.watchlist || {};
   const em = cfg?.emby?.watchlist || {};
-  const mode=(jf.mode==="playlist"||jf.mode==="favorites"||jf.mode==="collection"||jf.mode==="collections")?jf.mode:"favorites";
+
+  const modeJF = (jf.mode==="playlist"||jf.mode==="favorites"||jf.mode==="collection"||jf.mode==="collections") ? jf.mode : "favorites";
   const modeEM = (em.mode==="playlist"||em.mode==="favorites"||em.mode==="collection"||em.mode==="collections") ? em.mode : "favorites";
-  state.jellyfin.watchlist.mode=(mode==="collections")?"collection":mode;
-  state.jellyfin.watchlist.playlist_name=jf.playlist_name||"Watchlist";
-  state.emby.watchlist.mode = (modeEM==="collections") ? "collection" : modeEM; 
-  state.emby.watchlist.playlist_name = em.playlist_name || "Watchlist";  
-}
-async function loadPairById(id){
-  if(!id)return null;const arr=await getJSON("/api/pairs?cb="+Date.now());if(Array.isArray(arr))return arr.find(p=>String(p.id)===String(id))||null;return null
+
+  state.jellyfin.watchlist.mode = (modeJF==="collections") ? "collection" : modeJF;
+  state.jellyfin.watchlist.playlist_name = jf.playlist_name || "Watchlist";
+
+  state.emby.watchlist.mode = (modeEM==="collections") ? "collection" : modeEM;
+  state.emby.watchlist.playlist_name = em.playlist_name || "Watchlist";
 }
 
 // UI utils
@@ -279,10 +314,14 @@ function applySubDisable(feature){
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
 }
 
-
 function renderFeaturePanel(state){
   if(state.feature!=="providers"){ ID("cx-prov-warn")?.remove(); }
   const left=ID("cx-feat-panel"),right=ID("cx-adv-panel");if(!left||!right)return;
+
+  const leftWrap = Q(".cx-main .left");
+  const rightWrap = Q(".cx-main .right");
+  if (leftWrap) leftWrap.style.gridColumn = "";
+  if (rightWrap) rightWrap.style.display = "";
 
   if(state.feature==="providers"){
     const cfg=state.cfgRaw||{};
@@ -290,8 +329,6 @@ function renderFeaturePanel(state){
     const jf=cfg.jellyfin||{};
     const em=cfg.emby||{};
 
-    const leftWrap = Q(".cx-main .left");
-    const rightWrap = Q(".cx-main .right");
     if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
     if (rightWrap) rightWrap.style.display = "none";
 
@@ -364,12 +401,34 @@ function renderFeaturePanel(state){
   }
 
   if(state.feature==="globals"){
-    const g=state.globals||{},bb=g.blackbox||{};
+    const g=state.globals||{},bb=g.blackbox||{},rt=g.runtime||{suspect_min_prev:20,suspect_shrink_ratio:0.1};
+    const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
+    const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
+
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals</div>
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div><div class="muted">Simulate changes only; no writes.</div>
       <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div><div class="muted">Re-check a small sample after writes.</div>
-      <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div><div class="muted">Protect against empty source snapshots.</div>
-      <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div><div class="muted">Permit bulk removals when required.</div>`;
+      <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
+      <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:.5;pointer-events:none;"}">
+        <div class="panel-title small">Suspect guard (shrinking inventories)</div>
+        <div class="grid2 compact">
+          <div class="opt-row">
+            <label for="gl-sus-min">Min</label>
+            <div style="position:relative;width:100%">
+              <input id="gl-sus-min" type="range" min="0" max="200" step="1" value="${minPrevVal}" style="width:100%">
+              <span id="gl-sus-min-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:.8;">${minPrevVal}</span>
+            </div>
+          </div>
+          <div class="opt-row">
+            <label for="gl-sus-pct-range">Shrink(%)</label>
+            <div style="position:relative;width:100%">
+              <input id="gl-sus-pct-range" type="range" min="1" max="50" step="1" value="${pct}" style="width:100%">
+              <span id="gl-sus-pct-val" style="position:absolute;right:6px;top:-6px;font-size:12px;opacity:.8;">${pct}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>`;
     right.innerHTML=`<div class="panel-title">Advanced</div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div><div class="muted"></div>
@@ -505,7 +564,6 @@ function renderFeaturePanel(state){
   if(state.feature==="ratings"){
     const rt=getOpts(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
 
-    // LEFT
     left.innerHTML=`<div class="panel-title">Ratings — basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
@@ -518,7 +576,6 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
       </div>`;
 
-    // RIGHT
     const parts = [`<div class="panel-title">Advanced</div>
       <details id="cx-rt-adv" open>
         <summary class="muted" style="margin-bottom:10px;"></summary>
@@ -566,85 +623,6 @@ function renderFeaturePanel(state){
     right.innerHTML = parts.join("");
     try{updateRtSummary()}catch{}
     applySubDisable("ratings");
-    return;
-  }
-
-  if (state.feature === "history") {
-    const hs = getOpts(state, "history");
-    const trCfg = (state.cfgRaw?.trakt) || {};
-    const emCfg = (state.cfgRaw?.emby?.history) || {};
-    const trColRow = hasTrakt(state)
-      ? `<div class="opt-row">
-          <label for="cx-tr-hs-col">Add collections to Trakt</label>
-          <label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}><span class="slider"></span></label>
-        </div>`
-      : "";
-
-    left.innerHTML = `<div class="panel-title">History — basics</div>
-      <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
-      <div class="grid2">
-        <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label class="muted">Remove (disabled)</label>
-          <label class="switch" style="opacity:.5;pointer-events:none">
-            <input id="cx-hs-remove" type="checkbox" disabled>
-            <span class="slider"></span>
-          </label>
-        </div>
-        ${trColRow}
-      </div>
-      <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
-
-    const parts = [`<div class="panel-title">Advanced</div>`];
-
-    if (hasTrakt(state)) {
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Trakt</div>
-        <details id="cx-tr-hs">
-          <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="cx-tr-hs-numfb">Number Fallback</label>
-              <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row">
-              <label for="cx-tr-hs-unres">Unresolved Freeze</label>
-              <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasEmby(state)) {
-      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Emby</div>
-        <details id="cx-em-hs">
-          <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="cx-em-hs-limit">Query limit</label>
-              <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
-            </div>
-            <div class="opt-row">
-              <label for="cx-em-hs-delay">Write delay (ms)</label>
-              <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="cx-em-hs-guid">GUID priority</label>
-              <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (parts.length === 1) {
-      parts.push(`<div class="muted">More controls coming later.</div>`);
-    }
-    right.innerHTML = parts.join("");
-
-    applySubDisable("history");
     return;
   }
 
@@ -697,6 +675,38 @@ function refreshTabs(state){
 }
 
 function bindChangeHandlers(state,root){
+  root.addEventListener("input",(e)=>{
+    const id=e.target.id;
+    if(id==="gl-sus-pct-range"||id==="gl-sus-pct"||id==="gl-sus-min"){
+      let pct=parseInt((id==="gl-sus-min"? (Q("#gl-sus-pct")?.value||Q("#gl-sus-pct-range")?.value) : e.target.value)||"10",10);
+      if(!Number.isFinite(pct)) pct=10;
+      pct=Math.min(50,Math.max(1,pct));
+      const r=Q("#gl-sus-pct-range"), n=Q("#gl-sus-pct");
+      if(id==="gl-sus-pct-range"&&n) n.value=String(pct);
+      if(id==="gl-sus-pct"&&r) r.value=String(pct);
+
+      const minPrev=Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||20);
+      const dropOn=!!Q("#gl-drop")?.checked;
+      const bb=state.globals?.blackbox||{};
+
+      const vp=ID("gl-sus-pct-val"); if(vp) vp.textContent=String(pct);
+      const vm=ID("gl-sus-min-val"); if(vm) vm.textContent=String(minPrev);
+
+      state.globals=Object.assign({},state.globals,{
+        dry_run:!!Q("#gl-dry")?.checked,
+        verify_after_write:!!Q("#gl-verify")?.checked,
+        drop_guard:dropOn,
+        allow_mass_delete:!!Q("#gl-mass")?.checked,
+        tombstone_ttl_days:parseInt(Q("#gl-ttl")?.value||"0",10)||0,
+        include_observed_deletes:!!Q("#gl-observed")?.checked,
+        runtime:{suspect_min_prev:minPrev,suspect_shrink_ratio:pct/100},
+        blackbox:bb
+      });
+      const adv=ID("gl-drop-adv");
+      if(adv){adv.style.opacity=dropOn?"":"0.5";adv.style.pointerEvents=dropOn?"auto":"none"}
+    }
+  });
+
   root.addEventListener("change",(e)=>{
     const id=e.target.id,map={"cx-wl-enable":"cx-wl-remove","cx-rt-enable":"cx-rt-remove","cx-pl-enable":"cx-pl-remove"};
     if(map[id]){const rm=ID(map[id]);if(rm){rm.disabled=!e.target.checked;if(!e.target.checked)rm.checked=false}}
@@ -758,13 +768,28 @@ function bindChangeHandlers(state,root){
       };
       bb.block_adds = bb.enabled;
       bb.block_removes = bb.enabled;
+
+      let pct=parseInt(Q("#gl-sus-pct")?.value||Q("#gl-sus-pct-range")?.value||"10",10);
+      if(!Number.isFinite(pct)) pct=10;
+      pct=Math.min(50,Math.max(1,pct));
+      const rangeEl=Q("#gl-sus-pct-range");
+      const numEl=Q("#gl-sus-pct");
+      if(rangeEl) rangeEl.value=String(pct);
+      if(numEl) numEl.value=String(pct);
+
+      const minPrev=Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||20);
+      const dropOn=!!Q("#gl-drop")?.checked;
+      const adv=ID("gl-drop-adv");
+      if(adv){adv.style.opacity=dropOn?"":"0.5";adv.style.pointerEvents=dropOn?"auto":"none"}
+
       state.globals={
         dry_run:!!Q("#gl-dry")?.checked,
         verify_after_write:!!Q("#gl-verify")?.checked,
-        drop_guard:!!Q("#gl-drop")?.checked,
+        drop_guard:dropOn,
         allow_mass_delete:!!Q("#gl-mass")?.checked,
         tombstone_ttl_days:parseInt(Q("#gl-ttl")?.value||"0",10)||0,
         include_observed_deletes:!!Q("#gl-observed")?.checked,
+        runtime:{suspect_min_prev:minPrev,suspect_shrink_ratio:pct/100},
         blackbox:bb
       };
     }
@@ -780,13 +805,13 @@ function bindChangeHandlers(state,root){
     }
 
     if(id==="cx-em-wl-mode-fav"||id==="cx-em-wl-mode-pl"||id==="cx-em-wl-mode-col"||id==="cx-em-wl-pl-name"||id==="cx-wl-q"||id==="cx-wl-delay"||id==="cx-wl-guid"){
-      const em = state.emby || (state.emby = {});
-      const mode = ID("cx-em-wl-mode-pl")?.checked ? "playlist" : ID("cx-em-wl-mode-col")?.checked ? "collection" : "favorites";
-      const name = (ID("cx-em-wl-pl-name")?.value||"").trim()||"Watchlist";
-      const q = parseInt(ID("cx-wl-q")?.value||"25",10)||25;
-      const d = parseInt(ID("cx-wl-delay")?.value||"0",10)||0;
-      const gp = (ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
-      em.watchlist = { mode, playlist_name:name, watchlist_query_limit:q, watchlist_write_delay_ms:d, watchlist_guid_priority:gp.length?gp:undefined };
+      const em=state.emby||(state.emby={});
+      const mode=ID("cx-em-wl-mode-pl")?.checked?"playlist":ID("cx-em-wl-mode-col")?.checked?"collection":"favorites";
+      const name=(ID("cx-em-wl-pl-name")?.value||"").trim()||"Watchlist";
+      const q=parseInt(ID("cx-wl-q")?.value||"25",10)||25;
+      const d=parseInt(ID("cx-wl-delay")?.value||"0",10)||0;
+      const gp=(ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
+      em.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
     }
 
     if(id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two") updateFlow(state,true);
@@ -817,7 +842,22 @@ async function saveConfigBits(state){
         cooldown_days:Math.min(365,Math.max(0,parseInt(ID("gl-bb-cooldown")?.value||"0",10)||0))
       };
       bb.block_adds = bb.enabled; bb.block_removes = bb.enabled;
-      cfg.sync = Object.assign({}, cfg.sync || {}, s, { blackbox: Object.assign({}, cfg.sync?.blackbox||{}, bb) });
+
+      let pct = parseInt(ID("gl-sus-pct")?.value||ID("gl-sus-pct-range")?.value||"10",10);
+      if(!Number.isFinite(pct)) pct=10;
+      pct=Math.min(50,Math.max(1,pct));
+      const runtime={
+        suspect_min_prev: Math.max(0, parseInt(ID("gl-sus-min")?.value||"20",10)||20),
+        suspect_shrink_ratio: pct/100
+      };
+
+      cfg.sync = Object.assign(
+        {},
+        cfg.sync || {},
+        s,
+        { runtime: Object.assign({}, cfg.sync?.runtime||{}, runtime) },
+        { blackbox: Object.assign({}, cfg.sync?.blackbox||{}, bb) }
+      );
     }
 
     if(ID("plx-rating-workers")){
