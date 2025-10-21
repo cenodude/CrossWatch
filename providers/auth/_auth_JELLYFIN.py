@@ -233,6 +233,8 @@ def html() -> str:
     #sec-jellyfin .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
     #sec-jellyfin .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
     #sec-jellyfin .inline .msg.hidden{display:none}
+    #sec-jellyfin .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
+    #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
   </style>
 
   <div class="head" onclick="toggleSection && toggleSection('sec-jellyfin')">
@@ -265,7 +267,7 @@ def html() -> str:
     </div>
     <div class="inline" style="margin-top:10px">
       <button class="btn jellyfin" onclick="try{ jfyLogin && jfyLogin(); }catch(_){;}">Sign in</button>
-      <div class="muted">Username/password → user access token.</div>
+      <button class="btn danger" onclick="try{ jfyDeleteToken && jfyDeleteToken(); }catch(_){;}">Delete</button>
       <div id="jfy_msg" class="msg hidden" role="status" aria-live="polite"></div>
     </div>
     <details class="settings">

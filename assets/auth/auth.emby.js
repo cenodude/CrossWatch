@@ -143,6 +143,34 @@
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
 
+  // --- delete token
+  async function embyDeleteToken() {
+    const delBtn = Q('#sec-emby .btn.danger');
+    const msg = Q('#emby_msg');
+    if (delBtn) { delBtn.disabled = true; delBtn.classList.add('busy'); }
+    if (msg) { msg.className = 'msg hidden'; msg.textContent = ''; }
+    try {
+      const r = await fetch('/api/emby/token/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store'
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.ok !== false)) {
+        maskToken(false);
+        if (Q('#emby_pass')) Q('#emby_pass').value = '';
+        if (msg) { msg.className = 'msg'; msg.textContent = 'Access token removed.'; }
+      } else {
+        if (msg) { msg.className = 'msg warn'; msg.textContent = 'Could not remove token.'; }
+      }
+    } catch (_) {
+      if (msg) { msg.className = 'msg warn'; msg.textContent = 'Error removing token.'; }
+    } finally {
+      if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('busy'); }
+    }
+  }
+
   // --- merge back to cfg
   function mergeEmbyIntoCfg(cfg) {
     const v = (sel) => (Q(sel)?.value || "").trim();
@@ -200,6 +228,7 @@
   window.embyLoadLibraries = embyLoadLibraries;
   window.mergeEmbyIntoCfg = mergeEmbyIntoCfg;
   window.embyLogin = embyLogin;
+  window.embyDeleteToken = embyDeleteToken;
 
   // optional integration
   window.registerSettingsCollector?.(mergeEmbyIntoCfg);

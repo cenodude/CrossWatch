@@ -149,6 +149,8 @@ def html() -> str:
     #sec-simkl .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
     #sec-simkl .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
     #sec-simkl .inline .msg.hidden{display:none}
+    #sec-simkl .btn.danger{background:#a8182e;border-color:rgba(255,107,107,.4)}
+    #sec-simkl .btn.danger:hover{filter:brightness(1.08)}
   </style>
   <div class="head" onclick="toggleSection('sec-simkl')">
     <span class="chev"></span><strong>SIMKL</strong>
@@ -174,6 +176,7 @@ def html() -> str:
 
     <div class="inline" style="margin-top:8px">
       <button id="btn-connect-simkl" class="btn" onclick="startSimkl()">Connect SIMKL</button>
+      <button class="btn danger" onclick="try{ simklDeleteToken && simklDeleteToken(); }catch(_){;}">Delete</button>
       <span id="simkl-countdown" style="min-width:60px;"></span>
       <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
       <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>

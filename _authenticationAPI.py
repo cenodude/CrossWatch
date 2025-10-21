@@ -148,6 +148,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def plex_inspect():
         ensure_whitelist_defaults()
         return inspect_and_persist()
+    
+    @app.post("/api/plex/token/delete", tags=["auth"])
+    def api_plex_token_delete() -> Dict[str, Any]:
+        cfg = load_config(); p = cfg.setdefault("plex", {})
+        p["account_token"] = ""
+        save_config(cfg)
+        return {"ok": True}
 
     @app.get("/api/plex/libraries", tags=["plex"])
     def plex_libraries():
@@ -273,6 +280,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception as e:
             msg = str(e) or "Login failed"
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
+        
+    @app.post("/api/jellyfin/token/delete", tags=["auth"])
+    def api_jellyfin_token_delete() -> Dict[str, Any]:
+        cfg = load_config(); jf = cfg.setdefault("jellyfin", {})
+        jf["access_token"] = ""
+        save_config(cfg)
+        return {"ok": True}
 
     @app.get("/api/jellyfin/status", tags=["auth"])
     def api_jellyfin_status() -> Dict[str, Any]:
@@ -322,6 +336,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         cfg = load_config(); em = (cfg.get("emby") or {})
         return {"connected": bool(em.get("access_token") and em.get("server")),
                 "user": em.get("user") or em.get("username") or None}
+        
+    @app.post("/api/emby/token/delete", tags=["auth"])
+    def api_emby_token_delete() -> Dict[str, Any]:
+        cfg = load_config(); em = cfg.setdefault("emby", {})
+        em["access_token"] = ""
+        save_config(cfg)
+        return {"ok": True}
 
     @app.get("/api/emby/inspect", tags=["emby"])
     def emby_inspect():
@@ -413,6 +434,17 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception as e:
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR: {e}")
             return {"ok": False, "error": str(e)}
+        
+    @app.post("/api/trakt/token/delete", tags=["auth"])
+    def api_trakt_token_delete() -> Dict[str, Any]:
+        cfg = load_config(); tr = cfg.setdefault("trakt", {})
+        tr["access_token"] = ""
+        tr["refresh_token"] = ""
+        tr["expires_at"] = 0
+        tr["scope"] = ""
+        tr["token_type"] = ""
+        save_config(cfg)
+        return {"ok": True}
 
     # ---------- SIMKL ----------
     SIMKL_STATE: Dict[str, Any] = {}
@@ -468,6 +500,16 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception as e:
             _safe_log(log_fn, "SIMKL", f"[SIMKL] ERROR: {e}")
             return PlainTextResponse(f"Error: {e}", 500)
+        
+    @app.post("/api/simkl/token/delete", tags=["auth"])
+    def api_simkl_token_delete() -> Dict[str, Any]:
+        cfg = load_config(); s = cfg.setdefault("simkl", {})
+        s["access_token"] = ""
+        s["refresh_token"] = ""
+        s["token_expires_at"] = 0
+        s["scopes"] = ""
+        save_config(cfg)
+        return {"ok": True}
 
     def simkl_build_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
         prov = _import_provider("providers.auth._auth_SIMKL")
@@ -504,3 +546,4 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return out
 
     return None
+

@@ -101,6 +101,8 @@ class _TraktProvider:
       #sec-trakt .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
       #sec-trakt .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
       #sec-trakt .inline .msg.hidden{display:none}
+      #sec-trakt .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
+      #sec-trakt .btn.danger:hover{ filter:brightness(1.08) }
     </style>
     <div class="head" onclick="toggleSection('sec-trakt')">
         <span class="chev"></span><strong>Trakt</strong>
@@ -149,7 +151,8 @@ class _TraktProvider:
         </div>
 
         <div class="inline" style="margin-top:8px">
-          <button class="btn" onclick="requestTraktPin()">Get Code</button>
+          <button class="btn" onclick="requestTraktPin()">Connect TRAKT</button>
+          <button class="btn danger" onclick="try{ traktDeleteToken && traktDeleteToken(); }catch(_){;}">Delete</button>
           <div class="muted">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
           <div id="trakt_msg" class="msg ok hidden" aria-live="polite" style="display:none"></div>
         </div>

@@ -142,6 +142,35 @@
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
 
+  // --- delete token
+  async function jfyDeleteToken() {
+    const delBtn = document.querySelector('#sec-jellyfin .btn.danger');
+    const msg = document.querySelector('#jfy_msg');
+    if (delBtn) { delBtn.disabled = true; delBtn.classList.add('busy'); }
+    if (msg) { msg.className = 'msg hidden'; msg.textContent = ''; }
+    try {
+      const r = await fetch('/api/jellyfin/token/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store'
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.ok !== false)) {
+        // unmask + clear password field
+        const tok = document.querySelector('#jfy_tok'); if (tok) { tok.value = ''; tok.dataset.masked = '0'; }
+        const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
+        if (msg) { msg.className = 'msg'; msg.textContent = 'Access token removed.'; }
+      } else {
+        if (msg) { msg.className = 'msg warn'; msg.textContent = 'Could not remove token.'; }
+      }
+    } catch {
+      if (msg) { msg.className = 'msg warn'; msg.textContent = 'Error removing token.'; }
+    } finally {
+      if (delBtn) { delBtn.disabled = false; delBtn.classList.remove('busy'); }
+    }
+  }
+
   // --- merge back to cfg
   function mergeJellyfinIntoCfg(cfg) {
     const v = (sel) => (Q(sel)?.value || "").trim();
@@ -199,6 +228,7 @@
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
   window.jfyLogin = jfyLogin;
+  window.jfyDeleteToken = jfyDeleteToken;
 
   // optional integration
   window.registerSettingsCollector?.(mergeJellyfinIntoCfg);

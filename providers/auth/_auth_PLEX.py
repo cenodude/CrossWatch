@@ -123,6 +123,8 @@ def html() -> str:
     #sec-plex .btnrow{display:flex;gap:8px;margin-top:12px;margin-bottom:24px}
     #sec-plex .footspace{grid-column:1 / -1;height:48px}
     #sec-plex .sub{opacity:.7;font-size:.92em}
+    #sec-plex .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
+    #sec-plex .btn.danger:hover{ filter:brightness(1.08) }
 
     /* summary CTA */
     #sec-plex details.settings summary{
@@ -251,12 +253,12 @@ def html() -> str:
     </div>
 
     <div class="inline pinrow">
-      <button class="btn" onclick="requestPlexPin()">Get New PIN</button>
+      <button class="btn" onclick="requestPlexPin()">Connect PLEX</button>
+      <button class="btn danger" onclick="try{ plexDeleteToken && plexDeleteToken(); }catch(_){;}">Delete</button>
       <div class="hint">Opens plex.tv/link to complete sign-in.</div>
       <div id="plex_msg" class="msg ok hidden">PIN</div>
     </div>
-    
-    
+
     <details class="settings">
       <summary><span class="plex-ico">⚙︎</span><span class="title">Settings</span><span class="hint">Server · User · Whitelist</span></summary>
       <div class="wrap">

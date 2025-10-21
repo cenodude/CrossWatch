@@ -268,9 +268,10 @@
       <div class="si-empty">
         <div class="hero-ic">${I("link", 42)}</div>
         <div class="hero-text">
-          <div class="h1">No synchronization pairs configured</div>
-          <p class="p">Authentication looks good. Next step: create at least one pair under <b>Synchronization providers</b>.</p>
-          <div class="tip">💡 Tip: pick a source and a target (e.g., <b>Plex → Trakt</b> or <b>Plex → SIMKL</b>), then save.</div>
+          <div class="h1">No synchronization pairs/Scrobbler configured</div>
+          <p class="p">Authentication looks good. Next step: create at least one pair under <b>Synchronization providers</b><br>
+          — <i>or/and</i> enable the <b>Scrobbler</b> (Webhook or Watcher) if you only want live progress tracking.</p>
+          <div class="tip">💡 Tip: pick a source and a target (e.g., <b>Plex → Trakt</b>), or/and toggle Webhook/Watcher under <b>Scrobbler</b>.</div>
         </div>
       </div>
     `;
@@ -280,7 +281,9 @@
     const body=$("#cw-si-body"); if(!body) return;
 
     if (!data.auth.configured) return renderWizard();
-    if (data.auth.configured && data.pairs.count === 0) return renderPairsWizard();
+
+    const scrobReady = !!(data?.scrob?.enabled);
+    if (data.auth.configured && data.pairs.count === 0 && !scrobReady) return renderPairsWizard();
 
     body.innerHTML="";
     body.appendChild(row("lock","Authentication Providers",

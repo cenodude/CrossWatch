@@ -59,6 +59,32 @@
     plexPoll = setTimeout(poll, 1000);
   }
 
+  // --- delete Plex account token
+  async function plexDeleteToken() {
+    const btn = document.querySelector('#sec-plex .btn.danger');
+    try { if (btn) { btn.disabled = true; btn.classList.add('busy'); } } catch {}
+    try {
+      const r = await fetch('/api/plex/token/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store'
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.ok !== false)) {
+        const el = document.getElementById('plex_token'); if (el) el.value = '';
+        try { setPlexSuccess(false); } catch {}
+        (window.notify || ((m)=>console.log('[notify]', m)))('Plex account token removed.');
+      } else {
+        (window.notify || ((m)=>console.log('[notify]', m)))('Could not remove Plex token.');
+      }
+    } catch {
+      (window.notify || ((m)=>console.log('[notify]', m)))('Error removing Plex token.');
+    } finally {
+      try { if (btn) { btn.disabled = false; btn.classList.remove('busy'); } } catch {}
+    }
+  }
+
   // ---------- local state (UI only)
   function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), libs: [] }); }
 
@@ -573,10 +599,11 @@
 
   // ---------- exports
   Object.assign(w, {
-    setPlexSuccess, requestPlexPin, startPlexTokenPoll,
+    setPlexSuccess, requestPlexPin, startPlexTokenPoll, plexDeleteToken,
     mergePlexIntoCfg, plexAuto, plexLoadLibraries,
     hydratePlexFromConfigRaw, mountPlexLibraryMatrix,
     openPlexUserPicker, closePlexUserPicker, mountPlexUserPicker,
     refreshPlexLibraries,
   });
+
 })(window, document);

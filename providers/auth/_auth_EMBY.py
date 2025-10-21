@@ -190,6 +190,8 @@ def html() -> str:
     #sec-emby .inp-row .grow{flex:1 1 auto}
     #sec-emby .verify{display:flex;gap:8px;align-items:center;white-space:nowrap}
     #sec-emby details.settings{margin-top:8px}
+    #sec-emby .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
+    #sec-emby .btn.danger:hover{ filter:brightness(1.08) }
     #sec-emby details.settings summary{
       position:relative;display:flex;align-items:center;gap:10px;
       padding:10px 12px;margin:-2px;border-radius:12px;cursor:pointer;list-style:none;
@@ -268,7 +270,7 @@ def html() -> str:
     </div>
     <div class="inline" style="margin-top:10px">
       <button class="btn emby" onclick="try{ embyLogin && embyLogin(); }catch(_){;}">Sign in</button>
-      <div class="muted">Username/password → user access token.</div>
+      <button class="btn danger" onclick="try{ embyDeleteToken && embyDeleteToken(); }catch(_){;}">Delete</button>
       <div id="emby_msg" class="msg hidden" role="status" aria-live="polite"></div>
     </div>
     <details class="settings">

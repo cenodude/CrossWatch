@@ -29,6 +29,35 @@
 
   async function copyRedirect() { try { await navigator.clipboard.writeText(computeRedirect()); notify("Redirect URI copied ✓"); } catch {} }
 
+  // delete SIMKL access token
+  async function simklDeleteToken() {
+    const btn = q('#sec-simkl .btn.danger');
+    const msg = $('simkl_msg');
+    if (btn) { btn.disabled = true; btn.classList.add('busy'); }
+    if (msg) { msg.classList.remove('hidden'); msg.classList.remove('warn'); msg.textContent = ''; }
+    try {
+      const r = await fetch('/api/simkl/token/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store'
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && (j.ok !== false)) {
+        try { const el = $('simkl_access_token'); if (el) el.value = ''; } catch {}
+        try { setSimklSuccess(false); } catch {}
+        if (msg) { msg.textContent = 'Access token removed.'; }
+        notify('SIMKL access token removed.');
+      } else {
+        if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
+      }
+    } catch {
+      if (msg) { msg.classList.add('warn'); msg.textContent = 'Error removing token.'; }
+    } finally {
+      if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+    }
+  }
+
   // ---------- OAuth start + poll for token
   let simklPoll = null;
   async function startSimkl() {
@@ -68,6 +97,6 @@
   // ---------- exports
   Object.assign(w, {
     setSimklSuccess, updateSimklButtonState, updateSimklHint,
-    startSimkl, copyRedirect
+    startSimkl, copyRedirect, simklDeleteToken
   });
 })(window, document);

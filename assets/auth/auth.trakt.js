@@ -305,6 +305,33 @@
     }
   }
 
+  // Delete Trakt access token via backend endpoint
+  async function traktDeleteToken() {
+    var btn = document.querySelector('#sec-trakt .btn.danger');
+    var msg = document.getElementById('trakt_msg');
+    if (btn) { btn.disabled = true; btn.classList.add('busy'); }
+    if (msg) { msg.classList.remove('hidden'); msg.classList.remove('warn'); msg.textContent=''; }
+    try {
+      var r = await fetch('/api/trakt/token/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store'
+      });
+      var j = await r.json().catch(()=>({}));
+      if (r.ok && (j.ok !== false)) {
+        _setVal('trakt_token',''); _setVal('trakt_pin',''); setTraktSuccess(false);
+        if (msg) msg.textContent = 'Access token removed.';
+      } else {
+        if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
+      }
+    } catch (_) {
+      if (msg) { msg.classList.add('warn'); msg.textContent = 'Error removing token.'; }
+    } finally {
+      if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+    }
+  }
+
   // --- Wire up + lifecycle --------------------------------------------------
   document.addEventListener("DOMContentLoaded", function () {
     try {
@@ -340,12 +367,13 @@
   try {
     window.updateTraktHint              = updateTraktHint;
     window.flushTraktCreds              = flushTraktCreds;
-    window.hydrateAuthFromConfig        = hydrateAuthFromConfig;     // Trakt-only
+    window.hydrateAuthFromConfig        = hydrateAuthFromConfig;
     window.hydratePlexFromConfigRaw     = hydratePlexFromConfigRaw;
     window.hydrateSimklFromConfigRaw    = hydrateSimklFromConfigRaw;
-    window.hydrateSecretsRaw            = hydrateAllSecretsRaw;      // all of the above
+    window.hydrateSecretsRaw            = hydrateAllSecretsRaw;
     window.requestTraktPin              = requestTraktPin;
     window.startTraktTokenPoll          = startTraktTokenPoll;       // legacy/fallback
-    window.startTraktDevicePoll         = startTraktDevicePoll;      // new primary poller
+    window.startTraktDevicePoll         = startTraktDevicePoll;
+    window.traktDeleteToken             = traktDeleteToken;
   } catch (_) {}
 })();
