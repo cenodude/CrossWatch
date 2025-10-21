@@ -44,6 +44,7 @@ from _authenticationAPI import register_auth
 from _wallAPI import register_wall
 from _versionAPI import router as version_router
 from _analyzer import router as analyzer_router
+from _export import router as export_router
 
 from _syncAPI import (
     router as sync_router,
@@ -355,6 +356,7 @@ app.include_router(scrobble_router)
 app.include_router(sync_router)
 app.include_router(version_router)
 app.include_router(analyzer_router)
+app.include_router(export_router)
 
 # --- Static/UI
 register_assets_and_favicons(app, ROOT)

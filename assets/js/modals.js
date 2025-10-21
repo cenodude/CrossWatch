@@ -8,6 +8,7 @@ const ver = (u) => u + (u.includes('?') ? '&' : '?') + 'v=' + (window.__CW_BUILD
 ModalRegistry.register('pair-config', () => import(ver('./modals/pair-config/index.js')));
 ModalRegistry.register('about',        () => import(ver('./modals/about.js')));
 ModalRegistry.register('analyzer',     () => import(ver('./modals/analyzer/index.js')));
+ModalRegistry.register('exporter',     () => import(ver('./modals/exporter/index.js')));
 
 // Public API + legacy bridges
 export const openModal = ModalRegistry.open;
@@ -20,6 +21,7 @@ window.cxCloseModal = () => ModalRegistry.close();
 window.openAbout = (props={}) => ModalRegistry.open('about', props);
 window.closeAbout = () => ModalRegistry.close();
 window.openAnalyzer = (props={}) => ModalRegistry.open('analyzer', props);
+window.openExporter = (props={}) => ModalRegistry.open('exporter', props);
 
 window.cxEnsureCfgModal = async (pairOrId=null) => {
   await ModalRegistry.open('pair-config', { pairOrId });

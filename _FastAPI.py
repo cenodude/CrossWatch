@@ -130,6 +130,7 @@ def get_index_html() -> str:
         <button id="run" class="btn acc" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
         <button class="btn" onclick="toggleDetails()">View details</button>
         <button class="btn" onclick="openAnalyzer()">Analyzer</button>
+        <button class="btn" onclick="openExporter()">Exporter</button>
         <button class="btn" onclick="downloadSummary()">Download report</button>
       </div>
     </div>
