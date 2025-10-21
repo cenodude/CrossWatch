@@ -1,4 +1,5 @@
 // assets/js/modals/exporter/index.js
+
 const fjson = async (u, o) => {
   const r = await fetch(u, o);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -33,33 +34,28 @@ function injectCSS() {
   .btn.primary{background:rgba(122,107,255,.14);box-shadow:0 0 10px #7a6bff44 inset}
   .btn:disabled{opacity:.6;cursor:not-allowed}
   .ex-grid{overflow:auto}
-  table{width:100%;border-collapse:separate;border-spacing:0}
-  th,td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:top;white-space:nowrap}
+  table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+  th,td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   th{position:relative;text-align:left;opacity:.85;user-select:none}
-  th .resizer{position:absolute;right:0;top:0;width:8px;height:100%;cursor:col-resize;opacity:.0}
-  th:hover .resizer{opacity:1;background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.35) 50%,transparent 100%)}
-  td{white-space:nowrap}
-  .td-wrap{white-space:normal}
+  th .resizer{position:absolute;right:-2px;top:0;width:6px;height:100%;cursor:col-resize}
+  th:hover .resizer{background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.35) 50%,transparent 100%)}
+  .td-wrap{white-space:normal;overflow:visible;text-overflow:clip}
   .ids span{margin-right:8px}
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
   .hint{opacity:.75;font-size:12px}
-  /* small row checkbox */
   .glow-check{appearance:none;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.28);background:#0b0f19;box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);display:inline-block}
   .glow-check:checked{background:#7a6bff;box-shadow:0 0 8px #7a6bffbb, inset 0 0 0 2px rgba(0,0,0,.25)}
-  /* neon toggle */
   .neon-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
   .neon-switch input{display:none}
   .neon-pill{width:44px;height:24px;border-radius:999px;background:#0b0f19;border:1px solid rgba(122,107,255,.4);position:relative;box-shadow:0 0 12px #7a6bff33 inset}
   .neon-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#7a6bff;box-shadow:0 0 12px #7a6bffaa;transition:transform .18s ease}
   .neon-switch input:checked + .neon-pill .neon-knob{transform:translateX(20px)}
   .neon-label{font-size:12px;opacity:.9}
-  /* wait overlay */
   .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
   .wait-overlay.hidden{opacity:0;pointer-events:none}
   .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
   .wait-ring{width:56px;height:56px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
-  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);
-    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
+  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
   .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
   `;
@@ -67,6 +63,8 @@ function injectCSS() {
 }
 
 function closeModal() {
+  // Prefer host hook; fallback to bubbling event
+  if (window.cxCloseModal) { window.cxCloseModal(); return; }
   document.querySelector(".cx-modal-shell")?.dispatchEvent(new CustomEvent("cw-modal-close", { bubbles: true }));
 }
 
@@ -84,47 +82,125 @@ async function downloadFile(u) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-/* --- column resizing --- */
-function enableColumnResize(table, lsKey = "cw.exporter.cols") {
-  const saved = LS.get(lsKey, {});
-  const ths = $$("thead th", table);
-  ths.forEach((th, idx) => {
-    const key = th.getAttribute("data-col") || `c${idx}`;
-    if (saved[key]) th.style.width = saved[key] + "px";
-    const g = document.createElement("div");
-    g.className = "resizer";
-    th.appendChild(g);
-    let startX = 0, startW = 0;
-    const onDown = (e) => {
-      startX = e.clientX;
-      startW = th.getBoundingClientRect().width;
+/* column resizing via <colgroup> + dblclick autofit (safe if colgroup is empty) */
+function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
+  try {
+    if (!table || !table.isConnected) return;
+    let colgroup = table.querySelector("colgroup");
+    const ths = $$("thead th", table);
+    if (!ths.length) return;
+
+    // Ensure a colgroup exists and has the same number of <col> as headers
+    if (!colgroup) {
+      colgroup = document.createElement("colgroup");
+      table.insertBefore(colgroup, table.firstChild);
+    }
+    while (colgroup.children.length < ths.length) {
+      colgroup.appendChild(document.createElement("col"));
+    }
+    while (colgroup.children.length > ths.length) {
+      colgroup.removeChild(colgroup.lastElementChild);
+    }
+
+    const cols = Array.from(colgroup.children);
+    const saved = LS.get(lsKey, {});
+
+    ths.forEach((th, i) => {
+      const key = th.getAttribute("data-col") || `c${i}`;
+      const col = cols[i];
+      if (!col) return; // hard guard
+      const initW = saved[key] || Math.max(90, Math.round(th.getBoundingClientRect().width));
+      col.style.width = initW + "px";
+      th.style.width  = initW + "px";
+    });
+
+    // Measure text with canvas
+    const _canvas = document.createElement("canvas");
+    const ctx = _canvas.getContext("2d");
+    function textWidth(text, ref) {
+      const cs = getComputedStyle(ref);
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`.replace(/\s{2,}/g, " ");
+      return Math.ceil(ctx.measureText(text || "").width);
+    }
+    function autoFit(colIndex) {
+      const th = ths[colIndex]; const col = cols[colIndex];
+      if (!th || !col) return;
+      const tds = $$(`tbody tr td:nth-child(${colIndex + 1})`, table);
+      const pad = 24;
+      let maxW = textWidth(th.innerText.trim(), th) + pad;
+      for (let i = 0; i < Math.min(250, tds.length); i++) {
+        const td = tds[i];
+        const txt = td.innerText?.trim?.() || td.textContent || "";
+        const w = textWidth(txt, td) + pad;
+        if (w > maxW) maxW = w;
+      }
+      const w = Math.max(90, Math.min(1000, maxW));
+      col.style.width = w + "px";
+      th.style.width  = w + "px";
+      const key = th.getAttribute("data-col") || `c${colIndex}`;
+      saved[key] = Math.round(w);
+      LS.set(lsKey, saved);
+    }
+
+    // Drag handlers
+    let drag = null;
+    function onDown(e, idx) {
+      const col = cols[idx]; const th = ths[idx];
+      if (!col || !th) return;
+      drag = {
+        idx,
+        startX: e.clientX,
+        startW: parseInt(col.style.width || th.offsetWidth, 10) || 120
+      };
+      document.body.style.userSelect = "none";
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
-      e.preventDefault();
-    };
-    const onMove = (e) => {
-      const w = Math.max(80, startW + (e.clientX - startX));
-      th.style.width = w + "px";
-    };
-    const onUp = () => {
+      e.preventDefault(); e.stopPropagation();
+    }
+    function onMove(e) {
+      if (!drag) return;
+      const col = cols[drag.idx]; const th = ths[drag.idx];
+      if (!col || !th) return;
+      const w = Math.max(80, drag.startW + (e.clientX - drag.startX));
+      col.style.width = w + "px";
+      th.style.width  = w + "px";
+    }
+    function onUp() {
+      if (!drag) return;
+      const i = drag.idx; const col = cols[i]; const th = ths[i];
+      if (col && th) {
+        const key = th.getAttribute("data-col") || `c${i}`;
+        const w = parseInt(col.style.width, 10) || th.offsetWidth;
+        saved[key] = Math.round(w);
+        LS.set(lsKey, saved);
+      }
+      drag = null;
+      document.body.style.userSelect = "";
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      const rect = th.getBoundingClientRect();
-      saved[key] = Math.round(rect.width);
-      LS.set(lsKey, saved);
-    };
-    g.addEventListener("mousedown", onDown);
-  });
+    }
+
+    // Attach handles
+    ths.forEach((th, i) => {
+      let handle = th.querySelector(".resizer");
+      if (!handle) {
+        handle = document.createElement("div");
+        handle.className = "resizer";
+        th.appendChild(handle);
+      }
+      handle.onmousedown = (e) => onDown(e, i);
+      handle.ondblclick  = (e) => { e.stopPropagation(); autoFit(i); };
+    });
+  } catch (err) {
+    console.warn("Column resize init failed:", err);
+  }
 }
 
-/* --- selected counter text --- */
-function selectedSummary(state) {
-  const { mode, selected, filteredTotal } = state;
-  if (mode === "all") return `Selected: ${filteredTotal} of ${filteredTotal}`;
-  return `Selected: ${selected.size} of ${filteredTotal}`;
+/* selected counter */
+function selectedSummary({ mode, selected, filteredTotal }) {
+  return mode === "all" ? `Selected: ${filteredTotal} of ${filteredTotal}` : `Selected: ${selected.size} of ${filteredTotal}`;
 }
 
-/* --- main modal --- */
 export default {
   async mount(root) {
     injectCSS();
@@ -178,9 +254,10 @@ export default {
 
         <div class="ex-grid">
           <table id="ex-table">
+            <colgroup></colgroup>
             <thead>
               <tr>
-                <th data-col="sel" style="width:26px"></th>
+                <th data-col="sel"   style="width:26px"></th>
                 <th data-col="title">Title</th>
                 <th data-col="year">Year</th>
                 <th data-col="type">Type</th>
@@ -196,7 +273,7 @@ export default {
       </div>
     `;
 
-    // Wait overlay
+    // wait overlay
     const wait = document.createElement("div");
     wait.className = "wait-overlay hidden";
     wait.innerHTML = `
@@ -220,7 +297,7 @@ export default {
       if (elapsed < min) setTimeout(doHide, min - elapsed); else doHide();
     };
 
-    // Refs
+    // refs
     const badge   = $("#ex-badge", root);
     const countEl = $("#ex-count", root);
     const provSel = $("#ex-prov", root);
@@ -234,25 +311,21 @@ export default {
     const tbody   = $("#ex-tbody", root);
     const table   = $("#ex-table", root);
 
-    // State
+    // state
     let OPTS = null;
     let filteredTotal = 0;
-    const selected = new Set();     // keys for manual mode
-    let mode = "all";               // "all" or "manual"
-    let lastQuery = "";             // for display
+    const selected = new Set();
+    let mode = "all";
+    let lastQuery = "";
 
-    // Persist user choices
+    // prefs
     const PREFS_KEY = "cw.exporter.prefs";
     const prefs = LS.get(PREFS_KEY, {});
     const savePrefs = () => LS.set(PREFS_KEY, {
-      provider: provSel.value,
-      feature:  featSel.value,
-      format:   fmtSel.value,
-      q:        qInput.value,
-      all:      allChk.checked
+      provider: provSel.value, feature: featSel.value, format: fmtSel.value,
+      q: qInput.value, all: allChk.checked
     });
 
-    // Badge text "PLEX: Wn/Hn/Rn • ..."
     const fmtBadge = (optCounts) => {
       if (!optCounts) return "—";
       const seg = (p) => {
@@ -262,7 +335,6 @@ export default {
       return Object.keys(optCounts).map(seg).join(" • ");
     };
 
-    // Fill formats based on feature
     function syncFormats() {
       const f = featSel.value;
       const list = (OPTS.formats && OPTS.formats[f]) || [];
@@ -271,10 +343,8 @@ export default {
       if (prefs.format && list.includes(prefs.format)) fmtSel.value = prefs.format;
     }
 
-    // Render rows
     function rowHTML(it) {
-      const idsHTML = Object.entries(it.ids || {})
-        .map(([k, v]) => `<span class="mono">${k}:${v}</span>`).join(" ");
+      const idsHTML = Object.entries(it.ids || {}).map(([k,v]) => `<span class="mono">${k}:${v}</span>`).join(" ");
       const extra = (it.rating || "") || (it.watched_at || "");
       const isChecked = (mode === "all") ? true : selected.has(it.key);
       return `<tr data-key="${it.key}">
@@ -287,13 +357,20 @@ export default {
       </tr>`;
     }
 
-    // Refresh counts line
     function refreshCounts() {
-      countEl.textContent = selectedSummary({ mode, selected, filteredTotal });
+      countEl.textContent = mode === "all"
+        ? `Selected: ${filteredTotal} of ${filteredTotal}`
+        : `Selected: ${selected.size} of ${filteredTotal}`;
     }
 
-    // (Re)load sample
     async function renderPreview({ auto = false } = {}) {
+      if (!OPTS?.providers?.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="hint">No state loaded. Nothing to show.</td></tr>`;
+        filteredTotal = 0; selected.clear(); refreshCounts();
+        btnExp.disabled = true;
+        return;
+      }
+
       tbody.innerHTML = `<tr><td colspan="6" class="hint">Loading…</td></tr>`;
       showWait(auto ? "Refreshing…" : "Generating preview…");
       try {
@@ -308,12 +385,10 @@ export default {
         const rows = (data.items || []).map(rowHTML);
         tbody.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="6" class="hint">No items.</td></tr>`;
 
-        // Row interactions
         $$(".row-check", tbody).forEach(cb => {
-          cb.addEventListener("change", (e) => {
+          cb.addEventListener("change", () => {
             const tr = cb.closest("tr"); const key = tr?.getAttribute("data-key");
             if (!key) return;
-            // If user toggles while in "all", switch to manual
             if (mode === "all") { mode = "manual"; allChk.checked = false; }
             if (cb.checked) selected.add(key); else selected.delete(key);
             refreshCounts();
@@ -329,15 +404,17 @@ export default {
           });
         });
 
+        btnExp.disabled = filteredTotal === 0 && selected.size === 0;
         refreshCounts();
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="hint">Error: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="hint">No data.</td></tr>`;
+        filteredTotal = 0; selected.clear(); refreshCounts();
+        btnExp.disabled = true;
       } finally {
         hideWait();
       }
     }
 
-    // Export with filters/selection
     async function doExport() {
       btnExp.disabled = true;
       const label = btnExp.textContent;
@@ -356,55 +433,70 @@ export default {
       }
     }
 
-    // Init options
+    // init
     showWait("Loading options…");
     try {
-      OPTS = await fjson("/api/export/options");
-      badge.textContent = fmtBadge(OPTS.counts);
+      try {
+        OPTS = await fjson("/api/export/options");
+      } catch {
+        OPTS = {
+          providers: [],
+          counts: {},
+          formats: {
+            watchlist: ["letterboxd","imdb","justwatch","yamtrack","tmdb"],
+            history:   ["letterboxd","justwatch","yamtrack"],
+            ratings:   ["letterboxd","yamtrack","tmdb"],
+          },
+          labels: {
+            letterboxd: "Letterboxd",
+            imdb: "IMDb (list)",
+            justwatch: "JustWatch",
+            yamtrack: "Yamtrack",
+            tmdb: "TMDB (Auto: IMDb/Trakt/SIMKL)",
+          }
+        };
+      }
 
-      // Providers
-      provSel.innerHTML = (OPTS.providers || []).map(p => `<option value="${p}">${p}</option>`).join("");
+      badge.textContent = OPTS.providers?.length ? fmtBadge(OPTS.counts) : "No state.json detected";
 
-      // Restore prefs
+      if (OPTS.providers?.length) {
+        provSel.innerHTML = OPTS.providers.map(p => `<option value="${p}">${p}</option>`).join("");
+      } else {
+        provSel.innerHTML = `<option value="" disabled>(no providers)</option>`;
+        provSel.disabled = true; featSel.disabled = false; fmtSel.disabled = false;
+      }
+
       if (OPTS.providers?.includes(prefs.provider)) provSel.value = prefs.provider;
       if (["watchlist","history","ratings"].includes(prefs.feature)) featSel.value = prefs.feature;
       qInput.value = prefs.q || "";
       allChk.checked = prefs.all !== false;
 
       syncFormats();
-      enableColumnResize(table);
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="6" class="hint">Error loading options: ${e}</td></tr>`;
+      enableColumnResize($("#ex-table", root));
     } finally {
       hideWait();
     }
 
-    // Events
-    const debounced = (fn, ms=250) => {
-      let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); };
-    };
-
+    // events
+    const debounced = (fn, ms=250) => { let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
     const autoRefresh = debounced(() => renderPreview({ auto:true }), 200);
 
-    provSel.addEventListener("change", () => { selected.clear(); mode = "all"; allChk.checked = true; savePrefs(); autoRefresh(); });
-    featSel.addEventListener("change", () => { selected.clear(); mode = "all"; allChk.checked = true; syncFormats(); savePrefs(); autoRefresh(); });
+    provSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; savePrefs(); autoRefresh(); });
+    featSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; syncFormats(); savePrefs(); autoRefresh(); });
     fmtSel .addEventListener("change", savePrefs);
-
     qInput.addEventListener("input", () => { savePrefs(); autoRefresh(); });
 
-    // Select-all toggle auto refresh + enable manual tweaking
     allChk.addEventListener("change", () => {
       mode = allChk.checked ? "all" : "manual";
       if (mode === "all") selected.clear();
       savePrefs();
-      autoRefresh(); // reflect counts immediately
+      autoRefresh();
     });
 
     btnPrev.addEventListener("click", () => renderPreview({ auto:false }));
     btnExp .addEventListener("click", doExport);
     btnClose.addEventListener("click", closeModal);
 
-    // First render
     await renderPreview({ auto:false });
   },
   unmount() {}

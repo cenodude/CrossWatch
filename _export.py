@@ -14,7 +14,7 @@ STATE_PATH = Path(os.environ.get("CW_STATE_PATH", str((CONFIG_DIR / "state.json"
 # IO
 def _load_state() -> Dict[str, Any]:
     if not STATE_PATH.exists():
-        raise HTTPException(404, f"state.json not found at {STATE_PATH}")
+        return {"providers": {}}
     return json.loads(STATE_PATH.read_text(encoding="utf-8"))
 
 def _providers_in_state(s: Dict[str, Any]) -> List[str]:
@@ -39,13 +39,15 @@ def _norm_ids(ids: Dict[str, Any]) -> Dict[str, str]:
     v = ids.get("imdb")
     if v:
         m = re.search(r"(\d+)", str(v))
-        if m: out["imdb"] = f"tt{m.group(1)}"
+        if m:
+            out["imdb"] = f"tt{m.group(1)}"
     for ns in ("tmdb", "tvdb", "trakt", "simkl"):
         v = ids.get(ns)
-        if v is None: 
+        if v is None:
             continue
         m = re.search(r"(\d+)", str(v))
-        if m: out[ns] = m.group(1)
+        if m:
+            out[ns] = m.group(1)
     if ids.get("slug"):
         out["slug"] = str(ids["slug"])
     return out
@@ -59,9 +61,11 @@ def _row_base(it: Dict[str, Any]) -> Tuple[str, str, str, str, Dict[str, str]]:
     return t, title, year, watched, ids
 
 def _match_query(key: str, it: Dict[str, Any], q: str) -> bool:
-    if not q: return True
+    if not q:
+        return True
     q = q.strip().lower()
-    if not q: return True
+    if not q:
+        return True
     t, title, year, _wd, ids = _row_base(it)
     hay = " ".join(filter(None, [
         key.lower(),
@@ -84,7 +88,8 @@ def _filter_keys(s: Dict[str, Any], provider: str, feature: str, q: str) -> List
 def _csv_response(filename: str, header: Optional[List[str]], rows: Iterable[List[str]]) -> Response:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    if header: w.writerow(header)
+    if header:
+        w.writerow(header)
     for r in rows:
         w.writerow([str(x) if x is not None else "" for x in r])
     data = buf.getvalue().encode("utf-8")
@@ -98,8 +103,10 @@ def _csv_response(filename: str, header: Optional[List[str]], rows: Iterable[Lis
 def _rating_1_10(val: Any) -> str:
     try:
         f = float(val)
-        if f <= 0: return ""
-        if f > 10: f = 10
+        if f <= 0:
+            return ""
+        if f > 10:
+            f = 10
         return str(int(f) if f.is_integer() else f)
     except Exception:
         return ""
@@ -144,9 +151,11 @@ def _build_imdb(provider: str, feature: str, s: Dict[str, Any], keys: List[str])
     header = ["const"]
     rows = []
     for k, it in _iter_items(s, provider, "watchlist"):
-        if keys and k not in keys: continue
+        if keys and k not in keys:
+            continue
         _t, _title, _year, _wd, ids = _row_base(it)
-        if ids.get("imdb"): rows.append([ids["imdb"]])
+        if ids.get("imdb"):
+            rows.append([ids["imdb"]])
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"imdb_watchlist_{provider.lower()}_{ts}.csv", header, rows)
 
@@ -154,7 +163,8 @@ def _build_justwatch(provider: str, feature: str, s: Dict[str, Any], keys: List[
     header = ["tmdbID", "imdbID", "Title", "Year", "Type"]
     rows: List[List[str]] = []
     for k, it in _iter_items(s, provider, feature):
-        if keys and k not in keys: continue
+        if keys and k not in keys:
+            continue
         t, title, year, _wd, ids = _row_base(it)
         rows.append([ids.get("tmdb", ""), ids.get("imdb", ""), title, year, t])
     ts = time.strftime("%Y%m%d")
@@ -164,14 +174,15 @@ def _build_yamtrack(provider: str, feature: str, s: Dict[str, Any], keys: List[s
     header = ["imdbID", "tmdbID", "Title", "Year", "Rating", "WatchedDate", "Feature", "Provider"]
     rows: List[List[str]] = []
     for k, it in _iter_items(s, provider, feature):
-        if keys and k not in keys: continue
+        if keys and k not in keys:
+            continue
         t, title, year, watched, ids = _row_base(it)
         rating = it.get("rating") or it.get("user_rating") or ""
         rows.append([ids.get("imdb", ""), ids.get("tmdb", ""), title, year, rating, watched, feature, provider])
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"yamtrack_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
-# TMDB: auto-format based on provider (IMDb v3 default; TRAKT → Trakt v2; SIMKL → Simkl v1)
+# TMDB auto-dialect
 def _tmdb_build_imdb_v3(provider: str, feature: str, s: Dict[str, Any], keys: List[str]) -> Response:
     ts = time.strftime("%Y%m%d")
     if feature == "watchlist":
@@ -183,10 +194,12 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: Dict[str, Any], keys: Li
         rows: List[List[str]] = []
         pos = 0
         for k, it in _iter_items(s, provider, "watchlist"):
-            if keys and k not in keys: continue
+            if keys and k not in keys:
+                continue
             t, title, year, _wd, ids = _row_base(it)
             imdb = ids.get("imdb")
-            if not imdb: continue
+            if not imdb:
+                continue
             pos += 1
             url = f"https://www.imdb.com/title/{imdb}/"
             rows.append([pos, imdb, "", "", "", title, url, _title_type_for_imdb(t),
@@ -199,10 +212,12 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: Dict[str, Any], keys: Li
         ]
         rows: List[List[str]] = []
         for k, it in _iter_items(s, provider, "ratings"):
-            if keys and k not in keys: continue
+            if keys and k not in keys:
+                continue
             t, title, year, watched, ids = _row_base(it)
             imdb = ids.get("imdb")
-            if not imdb: continue
+            if not imdb:
+                continue
             rating = _rating_1_10(it.get("rating") or it.get("user_rating") or "")
             url = f"https://www.imdb.com/title/{imdb}/"
             date_rated = (it.get("rated_at") or watched or "") or ""
@@ -212,7 +227,6 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: Dict[str, Any], keys: Li
     raise HTTPException(400, "TMDB supports watchlist and ratings only")
 
 def _tmdb_build_trakt_v2(provider: str, feature: str, s: Dict[str, Any], keys: List[str]) -> Response:
-    # Header matches Trakt v2 CSV
     header = [
         "rated_at","type","title","year","trakt_rating","trakt_id","imdb_id","tmdb_id","tvdb_id",
         "season","episode","show_title","show_year","show_trakt_id","show_imdb_id","show_tmdb_id","show_tvdb_id",
@@ -222,7 +236,8 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: Dict[str, Any], keys: L
     rows: List[List[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
     for k, it in _iter_items(s, provider, src):
-        if keys and k not in keys: continue
+        if keys and k not in keys:
+            continue
         t, title, year, watched, ids = _row_base(it)
         rating = _rating_1_10(it.get("rating") or it.get("user_rating") or "")
         rows.append([
@@ -237,13 +252,13 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: Dict[str, Any], keys: L
     return _csv_response(f"tmdb_traktv2_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 def _tmdb_build_simkl_v1(provider: str, feature: str, s: Dict[str, Any], keys: List[str]) -> Response:
-    # Header matches SIMKL v1 CSV
     header = ["SIMKL_ID","Title","Type","Year","Watchlist","LastEpWatched","WatchedDate","Rating","Memo","TVDB","TMDB","IMDB"]
     ts = time.strftime("%Y%m%d")
     rows: List[List[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
     for k, it in _iter_items(s, provider, src):
-        if keys and k not in keys: continue
+        if keys and k not in keys:
+            continue
         t, title, year, watched, ids = _row_base(it)
         rating = _rating_1_10(it.get("rating") or it.get("user_rating") or "")
         rows.append([
@@ -252,10 +267,10 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: Dict[str, Any], keys: L
             (t or "movie").capitalize(),
             year,
             "1" if src == "watchlist" else "",
-            "",  # LastEpWatched
+            "",
             watched if src == "ratings" else "",
             rating if src == "ratings" else "",
-            "",  # Memo
+            "",
             ids.get("tvdb",""),
             ids.get("tmdb",""),
             ids.get("imdb",""),
@@ -263,7 +278,6 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: Dict[str, Any], keys: L
     return _csv_response(f"tmdb_simklv1_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 def _build_tmdb(provider: str, feature: str, s: Dict[str, Any], keys: List[str]) -> Response:
-    # Auto-pick the CSV dialect TMDB accepts based on source provider
     p = provider.upper().strip()
     if p == "TRAKT":
         return _tmdb_build_trakt_v2(provider, feature, s, keys)
@@ -276,7 +290,7 @@ _BUILDERS = {
     "imdb": _build_imdb,
     "justwatch": _build_justwatch,
     "yamtrack": _build_yamtrack,
-    "tmdb": _build_tmdb,  # auto: IMDb v3 / Trakt v2 / SIMKL v1
+    "tmdb": _build_tmdb,
 }
 
 # API
@@ -302,16 +316,17 @@ def api_export_options():
 
 @router.get("/export/sample", response_class=JSONResponse)
 def api_export_sample(
-    provider: str = Query(..., description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
 ):
     s = _load_state()
-    provider = provider.upper().strip()
-    if provider not in _providers_in_state(s):
-        raise HTTPException(404, f"Provider not present: {provider}")
-    keys = _filter_keys(s, provider, feature, q)
+    provider = (provider or "").upper().strip()
+    if provider and provider in _providers_in_state(s):
+        keys = _filter_keys(s, provider, feature, q)
+    else:
+        keys = []
     items = []
     for i, k in enumerate(keys):
         it = _items_bucket(s, provider, feature).get(k, {})
@@ -320,32 +335,33 @@ def api_export_sample(
             "key": k, "type": t, "title": title, "year": year,
             "watched_at": watched, "ids": ids, "rating": it.get("rating") or it.get("user_rating")
         })
-        if i + 1 >= limit: break
+        if i + 1 >= limit:
+            break
     return {"items": items, "total": len(keys)}
 
 @router.get("/export/file")
 def api_export_file(
-    provider: str = Query(..., description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
 ):
     s = _load_state()
-    provider = provider.upper().strip()
+    provider = (provider or "").upper().strip()
     feature = feature.lower().strip()
     fmt = format.lower().strip()
-    if provider not in _providers_in_state(s):
-        raise HTTPException(404, f"Provider not present: {provider}")
     if fmt not in _BUILDERS:
         raise HTTPException(400, "Unknown format")
     if feature not in ("watchlist","ratings","history"):
         raise HTTPException(400, "Unsupported feature")
     if fmt == "tmdb" and feature == "history":
         raise HTTPException(400, "TMDB supports watchlist and ratings only")
+
     keys: List[str]
     if ids.strip():
         keys = [k.strip() for k in ids.split(",") if k.strip()]
     else:
-        keys = _filter_keys(s, provider, feature, q)
-    return _BUILDERS[fmt](provider, feature, s, keys)
+        keys = _filter_keys(s, provider, feature, q) if provider in _providers_in_state(s) else []
+
+    return _BUILDERS[fmt](provider or "TRAKT", feature, s, keys)

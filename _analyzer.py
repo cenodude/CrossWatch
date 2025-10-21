@@ -543,7 +543,13 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
 # ── API
 @router.get("/analyzer/state", response_class=JSONResponse)
 def api_state():
-    s = _load_state()
+    try:
+        s = _load_state()
+    except HTTPException as e:
+        if e.status_code == 404:
+            s = {}
+        else:
+            raise
     return {"counts": _counts(s), "items": _collect_items(s)}
 
 @router.get("/analyzer/problems", response_class=JSONResponse)

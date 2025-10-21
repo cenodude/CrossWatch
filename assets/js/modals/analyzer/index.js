@@ -267,15 +267,24 @@ export default {
     // Load + analyze with neon waiting overlay
     async function load(){
       restoreSplit();
-      showWait("Reading state.json…");        // shows while /api/analyzer/state loads (can be heavy)
-      const s = await fjson("/api/analyzer/state"); // reads state.json server-side
+      showWait("Reading state.json…");
+      let s;
+      try {
+        s = await fjson("/api/analyzer/state");
+      } catch (err) {
+        s = { counts: {}, items: [] };
+        issues.innerHTML = `
+          <div class="issue">
+            <div class="h">No state.json yet</div>
+            <div>Run a sync to generate a baseline, then reopen Analyzer.</div>
+          </div>`;
+      }
       ITEMS = s.items || []; VIEW = ITEMS.slice();
       stats.textContent = fmtCounts(s.counts) || "—";
-      issuesCount.textContent = 'Issues: 0';
+      issuesCount.textContent = "Issues: 0";
       draw();
       setWaitText("Analyzing…");
-      await analyze(true);                    // pass silent=true to avoid flicker
-      hideWait();
+      try { await analyze(true); } finally { hideWait(); }
     }
 
     async function analyze(silent=false){

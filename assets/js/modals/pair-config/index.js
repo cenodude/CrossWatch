@@ -982,33 +982,43 @@ async function saveConfigBits(state){
       );
     }
 
-    if(ID("plx-rating-workers")){
-      cfg.plex = Object.assign({}, cfg.plex||{}, {
-        rating_workers: Math.max(1, parseInt(ID("plx-rating-workers").value||"12",10)||12),
-        history_workers: Math.max(1, parseInt(ID("plx-history-workers").value||"12",10)||12),
-        timeout: Math.max(1, parseInt(ID("plx-timeout")?.value||"10",10)||10),
-        max_retries: Math.max(0, parseInt(ID("plx-retries")?.value||"3",10)||3),
-        watchlist_allow_pms_fallback: !!ID("plx-wl-pms")?.checked,
-        watchlist_query_limit: Math.max(1, parseInt(ID("plx-wl-limit").value||"25",10)||25),
-        watchlist_write_delay_ms: Math.max(0, parseInt(ID("plx-wl-delay").value||"0",10)||0),
-        watchlist_guid_priority: (ID("plx-wl-guid").value||"").split(",").map(s=>s.trim()).filter(Boolean),
-        fallback_GUID: !!ID("plx-fallback-guid")?.checked
-      });
-    }
-
-    if (ID("plx-wl-limit") || ID("plx-wl-pms") || ID("plx-wl-delay") || ID("plx-wl-guid") || ID("plx-wl-title") || ID("plx-wl-meta")) {
+    // --- Plex — persist from any tab if inputs exist ---
+    {
       const plex = Object.assign({}, cfg.plex || {});
-      const wlLimit = Math.max(1, parseInt(ID("plx-wl-limit")?.value || "25", 10) || 25);
-      const wlDelay = Math.max(0, parseInt(ID("plx-wl-delay")?.value || "0", 10) || 0);
-      const wlPri   = (ID("plx-wl-guid")?.value || "").split(",").map(s=>s.trim()).filter(Boolean);
-      plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms")?.checked;
-      plex.watchlist_query_limit        = wlLimit;
-      plex.watchlist_write_delay_ms     = wlDelay;
-      plex.watchlist_guid_priority      = wlPri;
-      plex.watchlist_title_query        = !!ID("plx-wl-title")?.checked;
-      plex.watchlist_use_metadata_match = !!ID("plx-wl-meta")?.checked;
+      const n = (id) => parseInt((ID(id)?.value || "").trim(), 10);
+      const num = (id, min, def) => {
+        const v = n(id);
+        return Number.isFinite(v) ? Math.max(min, v) : def;
+      };
+
+      // Core provider settings
+      if (ID("plx-rating-workers"))  plex.rating_workers  = num("plx-rating-workers", 1, plex.rating_workers ?? 12);
+      if (ID("plx-history-workers")) plex.history_workers = num("plx-history-workers", 1, plex.history_workers ?? 12);
+      if (ID("plx-timeout"))         plex.timeout         = num("plx-timeout", 1, plex.timeout ?? 10);
+      if (ID("plx-retries")) {
+        const rv = n("plx-retries");
+        plex.max_retries = Number.isFinite(rv) ? Math.max(0, rv) : (plex.max_retries ?? 3);
+      }
+      if (ID("plx-fallback-guid"))   plex.fallback_GUID   = !!ID("plx-fallback-guid").checked;
+
+      // Watchlist (Advanced → Plex)
+      if (ID("plx-wl-pms"))          plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms").checked;
+      if (ID("plx-wl-limit"))        plex.watchlist_query_limit        = num("plx-wl-limit", 1, plex.watchlist_query_limit ?? 25);
+      if (ID("plx-wl-delay")) {
+        const dv = n("plx-wl-delay");
+        plex.watchlist_write_delay_ms = Number.isFinite(dv) ? Math.max(0, dv) : (plex.watchlist_write_delay_ms ?? 0);
+      }
+      if (ID("plx-wl-guid")) {
+        plex.watchlist_guid_priority = (ID("plx-wl-guid").value || "")
+          .split(",").map(s=>s.trim()).filter(Boolean);
+      }
+      if (ID("plx-wl-title"))        plex.watchlist_title_query        = !!ID("plx-wl-title").checked;
+      if (ID("plx-wl-meta"))         plex.watchlist_use_metadata_match = !!ID("plx-wl-meta").checked;
+
       cfg.plex = plex;
     }
+    // --- end Plex ---
+
     if(ID("jf-timeout")){
       const jf=Object.assign({},cfg.jellyfin||{});
       jf.timeout = Math.max(1, parseInt(ID("jf-timeout").value||"15",10)||15);
