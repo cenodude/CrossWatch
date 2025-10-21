@@ -63,7 +63,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "watchlist_title_query": True,                  # Use title/slug tokens for Discover candidate fetching (Discover is text-only).
         "watchlist_use_metadata_match": True,           # Try METADATA /library/metadata/matches with imdb-/tmdb-/tvdb- first; fallback to Discover.
         "watchlist_guid_priority": [                    # GUID resolution order (first match wins).
-            "imdb", "tmdb", "tvdb",
+            "tmdb", "imdb", "tvdb",
             "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
         ],
     },

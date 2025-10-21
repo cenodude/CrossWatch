@@ -15,6 +15,8 @@ const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLo
 const isSimkl=(v)=>same(v,"simkl");
 const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
+const isPlex = (v) => same(v, "plex");
+function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
@@ -298,6 +300,7 @@ function applySubDisable(feature){
   const map={
     watchlist: [
       "#cx-wl-add","#cx-wl-remove",
+      "#plx-wl-pms","#plx-wl-limit","#plx-wl-delay","#plx-wl-title","#plx-wl-meta","#plx-wl-guid",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
       "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
@@ -339,11 +342,7 @@ function renderFeaturePanel(state){
           <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
           <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
           <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
-          <div class="opt-row"><label for="plx-wl-pms">Allow PMS fallback</label><label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback?"checked":""}><span class="slider"></span></label></div>
-          <div class="opt-row"><label for="plx-wl-limit">Discover query limit</label><input id="plx-wl-limit" class="input small" type="number" min="5" max="50" step="1" value="${plex.watchlist_query_limit??25}"></div>
-          <div class="opt-row"><label for="plx-wl-delay">Write delay (ms)</label><input id="plx-wl-delay" class="input small" type="number" min="0" max="5000" step="10" value="${plex.watchlist_write_delay_ms??0}"></div>
           <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div>
-          <div class="opt-row" style="grid-column:1/-1"><label for="plx-wl-guid">GUID priority</label><input id="plx-wl-guid" class="input" type="text" value="${(plex.watchlist_guid_priority||["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"]).join(", ")}"></div>
         </div>
       </div></details>
 
@@ -478,7 +477,8 @@ function renderFeaturePanel(state){
     `;
 
     const parts = [`<div class="panel-title">Advanced</div>`];
-
+    
+    // Jellyfin
     if (hasJelly(state)) {
       const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
       parts.push(`
@@ -503,6 +503,45 @@ function renderFeaturePanel(state){
       `);
     }
 
+    // Plex
+    if (hasPlex(state)) {
+      const plex = (state.cfgRaw?.plex) || {};
+      const defPri = ["imdb","tmdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Plex</div>
+        <details id="cx-plx-wl">
+          <summary class="muted" style="margin-bottom:10px;">Plex watchlist controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="plx-wl-pms">Allow PMS fallback</label>
+              <label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row">
+              <label for="plx-wl-limit">Query limit</label>
+              <input id="plx-wl-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(plex.watchlist_query_limit)?plex.watchlist_query_limit:25}">
+            </div>
+            <div class="opt-row">
+              <label for="plx-wl-delay">Write delay (ms)</label>
+              <input id="plx-wl-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(plex.watchlist_write_delay_ms)?plex.watchlist_write_delay_ms:0}">
+            </div>
+            <div class="opt-row">
+              <label for="plx-wl-title">Title text search</label>
+              <label class="switch"><input id="plx-wl-title" type="checkbox" ${plex.watchlist_title_query !== false ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row">
+              <label for="plx-wl-meta">Use METADATA.matches</label>
+              <label class="switch"><input id="plx-wl-meta" type="checkbox" ${plex.watchlist_use_metadata_match !== false ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="plx-wl-guid">GUID priority</label>
+              <input id="plx-wl-guid" class="input" type="text" value="${(Array.isArray(plex.watchlist_guid_priority)&&plex.watchlist_guid_priority.length?plex.watchlist_guid_priority:defPri).join(", ")}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    // Emby
     if (hasEmby(state)) {
       const emAdv = (state.cfgRaw?.emby?.watchlist) || {};
       const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
@@ -528,6 +567,7 @@ function renderFeaturePanel(state){
       `);
     }
 
+    // Trakt
     if (hasTrakt(state)) {
       const tr = (state.cfgRaw?.trakt) || {};
       parts.push(`
@@ -956,6 +996,19 @@ async function saveConfigBits(state){
       });
     }
 
+    if (ID("plx-wl-limit") || ID("plx-wl-pms") || ID("plx-wl-delay") || ID("plx-wl-guid") || ID("plx-wl-title") || ID("plx-wl-meta")) {
+      const plex = Object.assign({}, cfg.plex || {});
+      const wlLimit = Math.max(1, parseInt(ID("plx-wl-limit")?.value || "25", 10) || 25);
+      const wlDelay = Math.max(0, parseInt(ID("plx-wl-delay")?.value || "0", 10) || 0);
+      const wlPri   = (ID("plx-wl-guid")?.value || "").split(",").map(s=>s.trim()).filter(Boolean);
+      plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms")?.checked;
+      plex.watchlist_query_limit        = wlLimit;
+      plex.watchlist_write_delay_ms     = wlDelay;
+      plex.watchlist_guid_priority      = wlPri;
+      plex.watchlist_title_query        = !!ID("plx-wl-title")?.checked;
+      plex.watchlist_use_metadata_match = !!ID("plx-wl-meta")?.checked;
+      cfg.plex = plex;
+    }
     if(ID("jf-timeout")){
       const jf=Object.assign({},cfg.jellyfin||{});
       jf.timeout = Math.max(1, parseInt(ID("jf-timeout").value||"15",10)||15);
