@@ -1,7 +1,7 @@
 # _logging.py
 # A simple structured logger with colored console output and optional JSON file output.
 from __future__ import annotations
-import sys, datetime, json, threading
+import sys, datetime, json, threading, time
 from typing import Any, Optional, TextIO, Mapping, Dict
 
 RESET = "\033[0m"
@@ -12,7 +12,23 @@ YELLOW = "\033[33m"
 BLUE = "\033[94m"
 
 LEVELS = {"silent": 60, "error": 40, "warn": 30, "info": 20, "debug": 10}
-LEVEL_TAG = {"debug": "[debug]", "info": "[i]", "warn": "[!]", "error": "[!]", "success": "[✓]"}
+
+# ── runtime debug gate (reads config.json, cached briefly) ────────────────
+_CFG_CACHE: Dict[str, Any] | None = None
+_CFG_TS: float = 0.0
+
+def _debug_enabled() -> bool:
+    global _CFG_CACHE, _CFG_TS
+    now = time.time()
+    if _CFG_CACHE is None or (now - _CFG_TS) > 5.0:
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                _CFG_CACHE = json.load(f)
+        except Exception:
+            _CFG_CACHE = {}
+        _CFG_TS = now
+    rt = (_CFG_CACHE.get("runtime") or {})
+    return bool(rt.get("debug") or rt.get("debug_mods"))
 
 class Logger:
     def __init__(
@@ -34,11 +50,14 @@ class Logger:
         self.use_color = use_color
         self.show_time = show_time
         self.time_fmt = time_fmt
+        # colors applied to the level label (optional)
         self.tag_color_map = tag_color_map or {
-            "[i]": BLUE,
-            "[debug]": YELLOW,
-            "[✓]": GREEN,
-            "[!]": RED,
+            "DEBUG": YELLOW,
+            "INFO": BLUE,
+            "WARN": YELLOW,
+            "ERROR": RED,
+            "SUCCESS": GREEN,
+            "WebHook": GREEN,
         }
         self._context: Dict[str, Any] = dict(_context or {})
         if _name:
@@ -48,32 +67,25 @@ class Logger:
 
     # Configuration
     def set_level(self, level: str) -> None:
-        """Set the log level (silent|error|warn|info|debug)."""
         self.level_no = LEVELS.get(level, self.level_no)
 
     def enable_color(self, on: bool = True) -> None:
-        """Toggle ANSI colors for tag and timestamp rendering."""
         self.use_color = on
 
     def enable_time(self, on: bool = True) -> None:
-        """Toggle timestamp prefixes in human-readable output."""
         self.show_time = on
 
     def enable_json(self, file_path: str) -> None:
-        """Enable newline-delimited JSON logging to the given file path."""
         self._json_stream = open(file_path, "a", encoding="utf-8")
 
     # Context
     def set_context(self, **ctx: Any) -> None:
-        """Merge fields into the logger's structured context."""
         self._context.update(ctx)
 
     def get_context(self) -> Dict[str, Any]:
-        """Return a copy of the current structured context."""
         return dict(self._context)
 
     def bind(self, **ctx: Any) -> "Logger":
-        """Create a child logger with additional context fields merged in."""
         new_ctx = dict(self._context); new_ctx.update(ctx)
         return Logger(
             stream=self.stream,
@@ -89,40 +101,45 @@ class Logger:
         )
 
     def child(self, name: str) -> "Logger":
-        """Create a namespaced child logger (adds module=name to context)."""
         return self.bind(module=name)
 
     # Formatting
     @property
     def level_name(self) -> str:
-        """Return the canonical name of the current log level."""
         for k, v in LEVELS.items():
             if v == self.level_no:
                 return k
         return "info"
 
-    def _fmt_text(self, level: str, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> str:
-        """Compose a human-readable line with optional color and timestamp."""
-        tag = LEVEL_TAG.get(level, "[i]")
-        msg = " ".join(str(p) for p in (tag, *parts))
+    def _fmt_text(self, display_level: str, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> str:
+        # Compose "[MODULE] Level message"
+        mod = (self._context.get("module") or "").strip()
+        lvl = display_level  # preserve original case (e.g., "WebHook")
+        msg = " ".join(str(p) for p in parts)
+
         if self.use_color:
-            for t, col in self.tag_color_map.items():
-                msg = msg.replace(t, f"{col}{t}{RESET}")
+            col = self.tag_color_map.get(lvl) or self.tag_color_map.get(lvl.upper())
+        else:
+            col = None
+
+        lvl_disp = f"{col}{lvl}{RESET}" if (col and self.use_color) else lvl
+        head = f"[{mod}]" if mod else ""
+        line = f"{head} {lvl_disp} {msg}".strip()
+
         if self.show_time:
             ts = datetime.datetime.now().strftime(self.time_fmt)
             prefix = f"{DIM}[{ts}]{RESET}" if self.use_color else f"[{ts}]"
-            return f"{prefix} {msg}"
-        return msg
+            return f"{prefix} {line}"
+        return line
 
-    def _write_sinks(self, level: str, message_text: str, *, msg: str, extra: Optional[Mapping[str, Any]]) -> None:
-        """Write the formatted line to stdout and, if enabled, JSON to file."""
+    def _write_sinks(self, display_level: str, message_text: str, *, msg: str, extra: Optional[Mapping[str, Any]]) -> None:
         with self._lock:
             self.stream.write(message_text + "\n")
             self.stream.flush()
             if self._json_stream:
                 payload = {
                     "ts": datetime.datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
-                    "level": level,
+                    "level": display_level,  # keep the original label
                     "msg": msg,
                     "ctx": self._context or {},
                 }
@@ -131,41 +148,36 @@ class Logger:
                 self._json_stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 self._json_stream.flush()
 
+    # Core emission with separate severity vs. display label
+    def _emit(self, severity: str, display_level: str, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
+        sev_no = LEVELS.get(severity, LEVELS["info"])
+        if severity == "debug":
+            if not _debug_enabled():
+                return
+        else:
+            if self.level_no > sev_no:
+                return
+        s = self._fmt_text(display_level, *parts, extra=extra)
+        self._write_sinks(display_level, s, msg=" ".join(str(p) for p in parts), extra=extra)
+
     # Public API
     def debug(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Log a debug-level message."""
-        if self.level_no <= LEVELS["debug"]:
-            s = self._fmt_text("debug", *parts, extra=extra)
-            self._write_sinks("debug", s, msg=" ".join(str(p) for p in parts), extra=extra)
+        self._emit("debug", "DEBUG", *parts, extra=extra)
 
     def info(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Log an info-level message."""
-        if self.level_no <= LEVELS["info"]:
-            s = self._fmt_text("info", *parts, extra=extra)
-            self._write_sinks("info", s, msg=" ".join(str(p) for p in parts), extra=extra)
+        self._emit("info", "INFO", *parts, extra=extra)
 
     def warn(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Log a warning-level message."""
-        if self.level_no <= LEVELS["warn"]:
-            s = self._fmt_text("warn", *parts, extra=extra)
-            self._write_sinks("warn", s, msg=" ".join(str(p) for p in parts), extra=extra)
+        self._emit("warn", "WARN", *parts, extra=extra)
 
-    # Alias for libraries that call .warning
     def warning(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Alias for warn()."""
         self.warn(*parts, extra=extra)
 
     def error(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Log an error-level message."""
-        if self.level_no <= LEVELS["error"]:
-            s = self._fmt_text("error", *parts, extra=extra)
-            self._write_sinks("error", s, msg=" ".join(str(p) for p in parts), extra=extra)
+        self._emit("error", "ERROR", *parts, extra=extra)
 
     def success(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
-        """Log a success message (styled like info)."""
-        if self.level_no <= LEVELS["info"]:
-            s = self._fmt_text("success", *parts, extra=extra)
-            self._write_sinks("info", s, msg=" ".join(str(p) for p in parts), extra=extra)
+        self._emit("info", "SUCCESS", *parts, extra=extra)
 
     # Callable adapter: logger("text", level="INFO", extra={...})
     def __call__(
@@ -176,14 +188,24 @@ class Logger:
         module: Optional[str] = None,
         extra: Optional[Mapping[str, Any]] = None,
     ) -> None:
-
         if module:
             self = self.bind(module=module)
-        lvl = (level or "INFO").lower()
-        if   lvl == "debug":   self.debug(message, extra=extra)
-        elif lvl in ("warn", "warning"): self.warn(message, extra=extra)
-        elif lvl == "error":   self.error(message, extra=extra)
-        else:                  self.info(message, extra=extra)
+        lvl_in = level or "INFO"
+        lvl_lc = lvl_in.lower()
+
+        if lvl_lc == "debug":
+            self.debug(message, extra=extra)
+        elif lvl_lc in ("warn", "warning"):
+            self.warn(message, extra=extra)
+        elif lvl_lc == "error":
+            self.error(message, extra=extra)
+        elif lvl_lc == "success":
+            self.success(message, extra=extra)
+        elif lvl_lc in ("info",):
+            self.info(message, extra=extra)
+        else:
+            # Custom label (e.g., "WebHook"): treat as info severity but preserve label text
+            self._emit("info", lvl_in, message, extra=extra)
 
 # default instance
 log = Logger()

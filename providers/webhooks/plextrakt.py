@@ -18,14 +18,6 @@ _DEF_WEBHOOK = {
 }
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
 
-def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
-    try:
-        if logger:
-            logger(msg, level=level, module="SCROBBLE"); return
-    except Exception:
-        pass
-    print(f"[SCROBBLE] {level} {msg}")
-
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
@@ -41,6 +33,25 @@ def _save_config(cfg: Dict[str, Any]) -> None:
     except Exception:
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+
+def _is_debug() -> bool:
+    try:
+        rt = (_load_config().get("runtime") or {})
+        return bool(rt.get("debug") or rt.get("debug_mods"))
+    except Exception:
+        return False
+
+def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
+    try:
+        if level == "DEBUG" and not _is_debug():
+            return
+        if logger:
+            logger(msg, level=level, module="SCROBBLE"); return
+    except Exception:
+        pass
+    if level == "DEBUG" and not _is_debug():
+        return
+    print(f"[SCROBBLE] {level} {msg}")
 
 def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     changed = False
@@ -309,8 +320,22 @@ def process_webhook(
     srv_uuid_evt = ((payload.get("Server") or {}).get("uuid") or "").strip()
     event = (payload.get("event") or "").lower()
     md = payload.get("Metadata") or {}
-    media_name_dbg = md.get("title") or md.get("grandparentTitle") or "?"
     media_type = (md.get("type") or "").lower()
+    media_name_dbg = md.get("title") or md.get("grandparentTitle") or "?"
+    if media_type == "episode":
+        try:
+            _show = (md.get("grandparentTitle") or "").strip()
+            _ep = (md.get("title") or "").strip()
+            _s = md.get("parentIndex")
+            _e = md.get("index")
+            if isinstance(_s, int) and isinstance(_e, int) and _show:
+                media_name_dbg = f"{_show} S{_s:02}E{_e:02}" + (f" — {_ep}" if _ep else "")
+            elif _show and _ep:
+                media_name_dbg = f"{_show} — {_ep}"
+            else:
+                media_name_dbg = _show or _ep or media_name_dbg
+        except Exception:
+            pass
 
     _emit(logger, f"incoming '{event}' user='{acc_title}' server='{srv_uuid_evt}' media='{media_name_dbg}'", "DEBUG")
 
@@ -342,7 +367,7 @@ def process_webhook(
     last_prog = float(st.get("prog", 0.0))
     tol_pts = max(0.0, regress_tol)
     prog = prog_raw
-    if prog + tol_pts < last_prog:
+    if prog + tol_pts < last_prog and prog > max(1.0, tol_pts):
         _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog:.2f}% (tol={tol_pts}%)", "DEBUG")
         prog = last_prog
     if event == "media.pause" and prog >= 99.9 and last_prog > 0.0:
@@ -364,8 +389,8 @@ def process_webhook(
             _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
             intended = "/scrobble/pause"; prog = last_prog
 
-    if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
-    if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
+    if intended == "/scrobble/start" and prog < 2.0: prog = 2.0
+    if intended == "/scrobble/pause" and prog < 1.0: prog = 1.0
 
     if event == "media.stop" and st.get("last_event") == "media.stop" and abs((st.get("prog", 0.0)) - prog) <= 1.0:
         _emit(logger, "suppress duplicate stop", "DEBUG")
@@ -403,10 +428,17 @@ def process_webhook(
                 "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
                 "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
+            try:
+                action_name = intended.rsplit("/", 1)[-1]
+                # SINGLE user-facing line per success; no extra "done action=..." line.
+                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
+            except Exception:
+                pass
             return {"ok": True, "status": 200, "action": intended, "trakt": rj}
         last_resp = (r.status_code, rj)
         if r.status_code != 404: break
 
+    # Episode fallback via GUID search
     if media_type == "episode" and (not last_resp or last_resp[0] == 404):
         epi_hint = {**_episode_ids_from_md(md), **ids_all}
         found = _guid_search_episode(epi_hint, cfg, logger=logger)
@@ -435,11 +467,28 @@ def process_webhook(
                         st = {**st, "wl_removed": True}
                     except Exception:
                         pass
-                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {})}
+                _SCROBBLE_STATE[sess] = {
+                    "ts": now,
+                    "last_event": event,
+                    "last_pause_ts": st.get("last_pause_ts", 0),
+                    "prog": prog,
+                    **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+                }
+                try:
+                    action_name = intended.rsplit("/", 1)[-1]
+                    _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
+                except Exception:
+                    pass
                 return {"ok": True, "status": 200, "action": intended, "trakt": rj}
             last_resp = (r.status_code, rj)
 
     code, rj = last_resp if last_resp else (500, {"error": "unknown"})
     _emit(logger, f"{intended} {code} {(str(rj)[:180])}", "ERROR")
-    _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {})}
+    _SCROBBLE_STATE[sess] = {
+        "ts": now,
+        "last_event": event,
+        "last_pause_ts": st.get("last_pause_ts", 0),
+        "prog": prog,
+        **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+    }
     return {"ok": False, "status": code, "trakt": rj}

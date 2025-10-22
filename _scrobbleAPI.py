@@ -33,7 +33,15 @@ def _env_logs(request: Request | None = None):
         return getattr(CW, "LOG_BUFFERS", {}), getattr(CW, "MAX_LOG_LINES", 2000)
     except Exception:
         return {}, 2000
-    
+
+def _debug_on() -> bool:
+    try:
+        cfg = load_config()
+        rt = (cfg.get("runtime") or {})
+        return bool(rt.get("debug") or rt.get("debug_mods"))
+    except Exception:
+        return False
+
 # --- helpers -------------------------------------------------------------------
 def _watch_kind(w) -> str | None:
     try:
@@ -44,7 +52,7 @@ def _watch_kind(w) -> str | None:
     except Exception:
         pass
     return None
-    
+
 # ---- Plex identity helpers ----
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -268,7 +276,7 @@ def debug_watch_logs(
     tags: str = Query("*", description="CSV or * for all")
 ) -> JSONResponse:
     LOG_BUFFERS, MAX = _env_logs(request)
-    sel = [t.strip().upper() for t in ([tag] if tag else tags.split(",")) if t and t.strip()]
+    sel = [t.strip().upper() for t in ( [tag] if tag else tags.split(",") ) if t and t.strip()]
     if sel == ["*"]:
         sel = sorted(LOG_BUFFERS.keys())
     tail = max(1, min(int(tail or 50), int(MAX)))
@@ -380,17 +388,21 @@ async def webhook_jellyfintrakt(request: Request):
 
     def log(msg, level="INFO"):
         try:
+            if level.upper() == "DEBUG" and not _debug_on():
+                return
             logger(msg, level=level, module="SCROBBLE")
         except Exception:
             pass
         try:
+            if level.upper() == "DEBUG" and not _debug_on():
+                return
             print(f"[SCROBBLE] {level} {msg}")
         except Exception:
             pass
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
-    log(f"jf-webhook: received | content-type='{ct}' bytes={len(raw)}", "INFO")
+    log(f"jf-webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
 
     # Parse body
     payload = {}
@@ -437,7 +449,7 @@ async def webhook_jellyfintrakt(request: Request):
     else:
         title = (md.get("Name") or md.get("title") or md.get("SeriesName") or "?")
 
-    log(f"jf-webhook: payload summary event='{event}' user='{user}' media='{title}'", "INFO")
+    log(f"jf-webhook: payload summary event='{event}' user='{user}' media='{title}'", "DEBUG")
 
     # Hand off to the scrobbler
     try:
@@ -458,7 +470,7 @@ async def webhook_jellyfintrakt(request: Request):
     elif res.get("dedup"):
         log("jf-webhook: duplicate event suppressed", "DEBUG")
 
-    log(f"jf-webhook: done action={res.get('action')} status={res.get('status')}", "INFO")
+    log(f"jf-webhook: done action={res.get('action')} status={res.get('status')}", "DEBUG")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
 @router.post("/webhook/embytrakt")
@@ -478,19 +490,22 @@ async def webhook_trakt(request: Request):
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
     def log(msg, level="INFO"):
-        # UI buffer (as before)
         try:
+            if level.upper() == "DEBUG" and not _debug_on():
+                return
             logger(msg, level=level, module="SCROBBLE")
         except Exception:
             pass
         try:
+            if level.upper() == "DEBUG" and not _debug_on():
+                return
             print(f"[SCROBBLE] {level} {msg}")
         except Exception:
             pass
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
-    log(f"webhook: received | content-type='{ct}' bytes={len(raw)}", "INFO")
+    log(f"webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
 
     payload = None
     try:
@@ -529,7 +544,7 @@ async def webhook_trakt(request: Request):
     srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
     md = payload.get("Metadata") or {}
     title = md.get("title") or md.get("grandparentTitle") or "?"
-    log(f"webhook: payload summary user='{acc}' server='{srv}' media='{title}'", "INFO")
+    log(f"webhook: payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
 
     try:
         res = process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
@@ -548,6 +563,5 @@ async def webhook_trakt(request: Request):
     elif res.get("dedup"):
         log("webhook: duplicate event suppressed", "DEBUG")
 
-    log(f"webhook: done action={res.get('action')} status={res.get('status')}", "INFO")
+    log(f"webhook: done action={res.get('action')} status={res.get('status')}", "DEBUG")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
-

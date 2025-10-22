@@ -13,16 +13,6 @@ _DEF_WEBHOOK = {
 }
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
 
-# ── logging ──────────────────────────────────────────────────────────────────
-def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
-    try:
-        if logger:
-            logger(msg, level=level, module="SCROBBLE"); return
-    except Exception:
-        pass
-    print(f"[SCROBBLE] {level} {msg}")
-
-# ── config i/o ───────────────────────────────────────────────────────────────
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
@@ -39,6 +29,25 @@ def _save_config(cfg: Dict[str, Any]) -> None:
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
 
+def _is_debug() -> bool:
+    try:
+        rt = (_load_config().get("runtime") or {})
+        return bool(rt.get("debug") or rt.get("debug_mods"))
+    except Exception:
+        return False
+
+def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
+    try:
+        if level == "DEBUG" and not _is_debug():
+            return
+        if logger:
+            logger(msg, level=level, module="SCROBBLE"); return
+    except Exception:
+        pass
+    if level == "DEBUG" and not _is_debug():
+        return
+    print(f"[SCROBBLE] {level} {msg}")
+
 def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     changed = False
     sc = cfg.setdefault("scrobble", {})
@@ -50,14 +59,13 @@ def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
         wh["suppress_start_at"] = _DEF_WEBHOOK["suppress_start_at"]; changed = True
     if "filters_jellyfin" not in wh:
         wh["filters_jellyfin"] = {"username_whitelist": []}; changed = True
-    if "filters" in wh:  # hard cut-over: no legacy key
+    if "filters" in wh:
         del wh["filters"]; changed = True
     for k, dv in _DEF_TRAKT.items():
         if k not in trk: trk[k] = dv; changed = True
     if changed: _save_config(cfg)
     return cfg
 
-# ── Trakt HTTP ───────────────────────────────────────────────────────────────
 def _tokens(cfg: Dict[str, Any]) -> Dict[str, str]:
     tr = cfg.get("trakt") or {}
     au = ((cfg.get("auth") or {}).get("trakt") or {})
@@ -98,7 +106,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
-# ── helpers for Jellyfin payloads ────────────────────────────────────────────
 def _grab(d: Mapping[str, Any], keys: list[str]) -> Any:
     for k in keys:
         if k in d and d[k] not in (None, ""):
@@ -107,16 +114,13 @@ def _grab(d: Mapping[str, Any], keys: list[str]) -> Any:
 
 def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
     ids: Dict[str, Any] = {}
-    # nested ProviderIds
     pids = (md.get("ProviderIds") or {}) if isinstance(md, dict) else {}
-    # also accept flat "Provider_tmdb" style
     flat = {
         "tmdb": root.get("Provider_tmdb"),
         "imdb": root.get("Provider_imdb"),
         "tvdb": root.get("Provider_tvdb"),
     }
-    # normalize
-    def norm_imdb(v): 
+    def norm_imdb(v):
         s = str(v).strip()
         return s if s.startswith("tt") else (f"tt{s}" if s else "")
     def maybe_int(v):
@@ -126,7 +130,7 @@ def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dic
     imdb = pids.get("Imdb") or pids.get("imdb") or flat["imdb"]
     tvdb = pids.get("Tvdb") or pids.get("tvdb") or flat["tvdb"]
     if tmdb: ids["tmdb"] = maybe_int(tmdb)
-    if imdb: 
+    if imdb:
         imdb = norm_imdb(imdb)
         if imdb: ids["imdb"] = imdb
     if tvdb: ids["tvdb"] = maybe_int(tvdb)
@@ -140,7 +144,6 @@ def _episode_numbers(md: Mapping[str, Any], root: Mapping[str, Any]) -> tuple[An
     return season, number
 
 def _progress(payload: Mapping[str, Any], md: Mapping[str, Any]) -> float:
-    # prefer explicit percentage if present (rare)
     if isinstance(payload.get("Progress"), (int, float)):
         return round(max(0.0, min(100.0, float(payload["Progress"]))), 2)
     pos = payload.get("PlaybackPositionTicks") or payload.get("PositionTicks") or payload.get("PositionMs") or 0
@@ -148,7 +151,6 @@ def _progress(payload: Mapping[str, Any], md: Mapping[str, Any]) -> float:
     def to_ms(v: Any) -> float:
         try: v = float(v)
         except Exception: return 0.0
-        # Jellyfin ticks → 100ns. PositionMs/DurationMs already ms.
         return v / 10_000 if v > 10_000_000 else v
     pos_ms, dur_ms = to_ms(pos), to_ms(dur)
     if dur_ms <= 0: return 0.0
@@ -195,7 +197,6 @@ def _body_ids_desc(b: Dict[str, Any]) -> str:
     ids = ((b.get("movie") or {}).get("ids")) or ((b.get("show") or {}).get("ids")) or ((b.get("episode") or {}).get("ids"))
     return _ids_desc(ids if ids else "title/year")
 
-# ── main ─────────────────────────────────────────────────────────────────────
 def process_webhook(
     payload: Dict[str, Any],
     headers: Mapping[str, str],
@@ -224,17 +225,14 @@ def process_webhook(
 
     tset = (sc.get("trakt") or {})
     stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
-    force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
+    force_stop_at = float(tset.get("force_stop_at", stop_pause_threshold))
     regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
 
-    # tolerant extraction (flat or nested)
     md = (payload.get("Item") or payload.get("item") or {})
-    # copy useful top-level fields into md if missing
     md.setdefault("Type", _grab(payload, ["ItemType", "type"]) or md.get("Type"))
     md.setdefault("Name", _grab(payload, ["Name", "ItemName", "title"]) or md.get("Name"))
     md.setdefault("SeriesName", _grab(payload, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or md.get("SeriesName"))
     md.setdefault("RunTimeTicks", payload.get("RunTimeTicks") or md.get("RunTimeTicks"))
-    # merge ProviderIds from flat keys
     pids = dict(md.get("ProviderIds") or {})
     for k_src, k_norm in [("Provider_tmdb", "Tmdb"), ("Provider_imdb", "Imdb"), ("Provider_tvdb", "Tvdb")]:
         if payload.get(k_src) and not pids.get(k_norm):
@@ -245,7 +243,22 @@ def process_webhook(
     media_type = "movie" if media_type_raw == "movie" else ("episode" if media_type_raw == "episode" else "")
     event = _grab(payload, ["NotificationType", "Event", "event"]) or ""
     acc_title = (_grab(payload, ["NotificationUsername", "Username", "UserName"]) or "").strip()
+
+    # Friendly name with show + SxxEyy for episodes
     media_name_dbg = md.get("Name") or md.get("SeriesName") or "?"
+    if media_type == "episode":
+        try:
+            show = (md.get("SeriesName") or _grab(payload, ["SeriesName", "SeriesTitle"]) or "").strip()
+            ep = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
+            season, number = _episode_numbers(md, payload)
+            if isinstance(season, int) and isinstance(number, int) and show:
+                media_name_dbg = f"{show} S{season:02}E{number:02}" + (f" — {ep}" if ep else "")
+            elif show and ep:
+                media_name_dbg = f"{show} — {ep}"
+            else:
+                media_name_dbg = show or ep or media_name_dbg
+        except Exception:
+            pass
 
     _emit(logger, f"incoming '{event}' user='{acc_title}' media='{media_name_dbg}'", "DEBUG")
 
@@ -273,8 +286,11 @@ def process_webhook(
 
     last_prog = float(st.get("prog", 0.0))
     prog = prog_raw
-    if prog + max(0.0, regress_tol) < last_prog:
-        _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog:.2f}%", "DEBUG"); prog = last_prog
+    tol_pts = max(0.0, regress_tol)
+    if prog + tol_pts < last_prog and prog > max(1.0, tol_pts):
+        _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog:.2f}% (tol={tol_pts}%)", "DEBUG")
+        prog = last_prog
+
     if ev_lc in ("playbackpause", "playbackpaused") and prog >= 99.9 and last_prog > 0.0:
         np = max(last_prog, 95.0); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {np:.2f}%", "DEBUG"); prog = np
 
@@ -296,8 +312,8 @@ def process_webhook(
             _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}%", "DEBUG")
             intended = "/scrobble/pause"; prog = last_prog
 
-    if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
-    if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
+    if intended == "/scrobble/start" and prog < 2.0: prog = 2.0
+    if intended == "/scrobble/pause" and prog < 1.0: prog = 1.0
 
     if ev_lc in ("playbackstop", "playbackstopped") and st.get("last_event") in ("playbackstop", "playbackstopped") and abs((st.get("prog", 0.0)) - prog) <= 1.0:
         _emit(logger, "suppress duplicate stop", "DEBUG")
@@ -318,6 +334,11 @@ def process_webhook(
                 "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
                 "prog": prog,
             }
+            try:
+                action_name = intended.rsplit("/", 1)[-1]
+                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
+            except Exception:
+                pass
             return {"ok": True, "status": 200, "action": intended, "trakt": rj}
         last_resp = (r.status_code, rj)
         if r.status_code != 404:
