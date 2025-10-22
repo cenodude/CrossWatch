@@ -1,5 +1,4 @@
 // assets/js/modals/exporter/index.js
-
 const fjson = async (u, o) => {
   const r = await fetch(u, o);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -14,56 +13,61 @@ const LS = {
 };
 
 function injectCSS() {
-  if (document.getElementById("ex-css")) return;
+  if (document.getElementById("cw-exporter-css")) return;
   const el = document.createElement("style");
-  el.id = "ex-css";
+  el.id = "cw-exporter-css";
   el.textContent = `
-  .modal-root{position:relative;display:flex;flex-direction:column;height:100%}
-  .cx-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
-  .cx-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
-  .cx-title{font-weight:800}
-  .badge{opacity:.85;font-size:12px}
-  .close-btn{border:1px solid rgba(255,255,255,.2);background:#171b2a;color:#fff;border-radius:10px;padding:6px 10px}
-  .ex-body{flex:1;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
-  .row{display:flex;flex-wrap:wrap;gap:12px;padding:10px;border-bottom:1px solid rgba(255,255,255,.06);align-items:flex-end}
-  .row .field{display:flex;flex-direction:column;gap:6px;min-width:160px}
-  .input{background:#0b0f19;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:8px 10px;height:36px}
-  .search{min-width:260px;flex:1}
-  .row-right{margin-left:auto;display:flex;gap:8px;align-items:center}
-  .btn{border:1px solid rgba(255,255,255,.16);background:#111524;color:#dfe7ff;border-radius:12px;padding:8px 12px;cursor:pointer}
-  .btn.primary{background:rgba(122,107,255,.14);box-shadow:0 0 10px #7a6bff44 inset}
-  .btn:disabled{opacity:.6;cursor:not-allowed}
-  .ex-grid{overflow:auto}
-  table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
-  th,td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  th{position:relative;text-align:left;opacity:.85;user-select:none}
-  th .resizer{position:absolute;right:-2px;top:0;width:6px;height:100%;cursor:col-resize}
-  th:hover .resizer{background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.35) 50%,transparent 100%)}
-  .td-wrap{white-space:normal;overflow:visible;text-overflow:clip}
-  .ids span{margin-right:8px}
-  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-  .hint{opacity:.75;font-size:12px}
-  .glow-check{appearance:none;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.28);background:#0b0f19;box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);display:inline-block}
-  .glow-check:checked{background:#7a6bff;box-shadow:0 0 8px #7a6bffbb, inset 0 0 0 2px rgba(0,0,0,.25)}
-  .neon-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
-  .neon-switch input{display:none}
-  .neon-pill{width:44px;height:24px;border-radius:999px;background:#0b0f19;border:1px solid rgba(122,107,255,.4);position:relative;box-shadow:0 0 12px #7a6bff33 inset}
-  .neon-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#7a6bff;box-shadow:0 0 12px #7a6bffaa;transition:transform .18s ease}
-  .neon-switch input:checked + .neon-pill .neon-knob{transform:translateX(20px)}
-  .neon-label{font-size:12px;opacity:.9}
-  .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
-  .wait-overlay.hidden{opacity:0;pointer-events:none}
-  .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
-  .wait-ring{width:56px;height:56px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
-  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
-  .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
+  .cw-exporter{position:relative;display:flex;flex-direction:column;height:100%}
+
+  .cw-exporter .cx-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
+  .cw-exporter .cx-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+  .cw-exporter .cx-title{font-weight:800}
+  .cw-exporter .badge{opacity:.85;font-size:12px}
+  .cw-exporter .close-btn{border:1px solid rgba(255,255,255,.2);background:#171b2a;color:#fff;border-radius:10px;padding:6px 10px}
+
+  .cw-exporter .ex-body{flex:1;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+  .cw-exporter .row{display:flex;flex-wrap:wrap;gap:12px;padding:10px;border-bottom:1px solid rgba(255,255,255,.06);align-items:flex-end}
+  .cw-exporter .row .field{display:flex;flex-direction:column;gap:6px;min-width:160px}
+  .cw-exporter .input{background:#0b0f19;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:8px 10px;height:36px}
+  .cw-exporter .search{min-width:260px;flex:1}
+  .cw-exporter .row-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .cw-exporter .btn{border:1px solid rgba(255,255,255,.16);background:#111524;color:#dfe7ff;border-radius:12px;padding:8px 12px;cursor:pointer}
+  .cw-exporter .btn.primary{background:rgba(122,107,255,.14);box-shadow:0 0 10px #7a6bff44 inset}
+  .cw-exporter .btn:disabled{opacity:.6;cursor:not-allowed}
+
+  .cw-exporter .ex-grid{overflow:auto}
+  .cw-exporter table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+  .cw-exporter th,.cw-exporter td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cw-exporter th{position:relative;text-align:left;opacity:.85;user-select:none}
+  .cw-exporter th .resizer{position:absolute;right:-2px;top:0;width:6px;height:100%;cursor:col-resize}
+  .cw-exporter th:hover .resizer{background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.35) 50%,transparent 100%)}
+  .cw-exporter .td-wrap{white-space:normal;overflow:visible;text-overflow:clip}
+  .cw-exporter .ids span{margin-right:8px}
+  .cw-exporter .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+  .cw-exporter .hint{opacity:.75;font-size:12px}
+
+  .cw-exporter .glow-check{appearance:none;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.28);background:#0b0f19;box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);display:inline-block}
+  .cw-exporter .glow-check:checked{background:#7a6bff;box-shadow:0 0 8px #7a6bffbb, inset 0 0 0 2px rgba(0,0,0,.25)}
+
+  .cw-exporter .neon-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .cw-exporter .neon-switch input{display:none}
+  .cw-exporter .neon-pill{width:44px;height:24px;border-radius:999px;background:#0b0f19;border:1px solid rgba(122,107,255,.4);position:relative;box-shadow:0 0 12px #7a6bff33 inset}
+  .cw-exporter .neon-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#7a6bff;box-shadow:0 0 12px #7a6bffaa;transition:transform .18s ease}
+  .cw-exporter .neon-switch input:checked + .neon-pill .neon-knob{transform:translateX(20px)}
+  .cw-exporter .neon-label{font-size:12px;opacity:.9}
+
+  .cw-exporter .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
+  .cw-exporter .wait-overlay.hidden{opacity:0;pointer-events:none}
+  .cw-exporter .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
+  .cw-exporter .wait-ring{width:56px;height:56px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
+  .cw-exporter .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
+  .cw-exporter .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
   `;
   document.head.appendChild(el);
 }
 
 function closeModal() {
-  // Prefer host hook; fallback to bubbling event
   if (window.cxCloseModal) { window.cxCloseModal(); return; }
   document.querySelector(".cx-modal-shell")?.dispatchEvent(new CustomEvent("cw-modal-close", { bubbles: true }));
 }
@@ -81,8 +85,7 @@ async function downloadFile(u) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
-
-/* column resizing via <colgroup> + dblclick autofit (safe if colgroup is empty) */
+/* column resize */
 function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
   try {
     if (!table || !table.isConnected) return;
@@ -90,31 +93,24 @@ function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
     const ths = $$("thead th", table);
     if (!ths.length) return;
 
-    // Ensure a colgroup exists and has the same number of <col> as headers
     if (!colgroup) {
       colgroup = document.createElement("colgroup");
       table.insertBefore(colgroup, table.firstChild);
     }
-    while (colgroup.children.length < ths.length) {
-      colgroup.appendChild(document.createElement("col"));
-    }
-    while (colgroup.children.length > ths.length) {
-      colgroup.removeChild(colgroup.lastElementChild);
-    }
+    while (colgroup.children.length < ths.length) colgroup.appendChild(document.createElement("col"));
+    while (colgroup.children.length > ths.length) colgroup.removeChild(colgroup.lastElementChild);
 
     const cols = Array.from(colgroup.children);
     const saved = LS.get(lsKey, {});
 
     ths.forEach((th, i) => {
       const key = th.getAttribute("data-col") || `c${i}`;
-      const col = cols[i];
-      if (!col) return; // hard guard
+      const col = cols[i]; if (!col) return;
       const initW = saved[key] || Math.max(90, Math.round(th.getBoundingClientRect().width));
       col.style.width = initW + "px";
       th.style.width  = initW + "px";
     });
 
-    // Measure text with canvas
     const _canvas = document.createElement("canvas");
     const ctx = _canvas.getContext("2d");
     function textWidth(text, ref) {
@@ -122,14 +118,14 @@ function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
       ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`.replace(/\s{2,}/g, " ");
       return Math.ceil(ctx.measureText(text || "").width);
     }
-    function autoFit(colIndex) {
-      const th = ths[colIndex]; const col = cols[colIndex];
+    function autoFit(i) {
+      const th = ths[i]; const col = cols[i];
       if (!th || !col) return;
-      const tds = $$(`tbody tr td:nth-child(${colIndex + 1})`, table);
+      const tds = $$(`tbody tr td:nth-child(${i + 1})`, table);
       const pad = 24;
       let maxW = textWidth(th.innerText.trim(), th) + pad;
-      for (let i = 0; i < Math.min(250, tds.length); i++) {
-        const td = tds[i];
+      for (let j = 0; j < Math.min(250, tds.length); j++) {
+        const td = tds[j];
         const txt = td.innerText?.trim?.() || td.textContent || "";
         const w = textWidth(txt, td) + pad;
         if (w > maxW) maxW = w;
@@ -137,21 +133,16 @@ function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
       const w = Math.max(90, Math.min(1000, maxW));
       col.style.width = w + "px";
       th.style.width  = w + "px";
-      const key = th.getAttribute("data-col") || `c${colIndex}`;
+      const key = th.getAttribute("data-col") || `c${i}`;
       saved[key] = Math.round(w);
       LS.set(lsKey, saved);
     }
 
-    // Drag handlers
     let drag = null;
     function onDown(e, idx) {
       const col = cols[idx]; const th = ths[idx];
       if (!col || !th) return;
-      drag = {
-        idx,
-        startX: e.clientX,
-        startW: parseInt(col.style.width || th.offsetWidth, 10) || 120
-      };
+      drag = { idx, startX: e.clientX, startW: parseInt(col.style.width || th.offsetWidth, 10) || 120 };
       document.body.style.userSelect = "none";
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
@@ -180,14 +171,9 @@ function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
       document.removeEventListener("mouseup", onUp);
     }
 
-    // Attach handles
     ths.forEach((th, i) => {
       let handle = th.querySelector(".resizer");
-      if (!handle) {
-        handle = document.createElement("div");
-        handle.className = "resizer";
-        th.appendChild(handle);
-      }
+      if (!handle) { handle = document.createElement("div"); handle.className = "resizer"; th.appendChild(handle); }
       handle.onmousedown = (e) => onDown(e, i);
       handle.ondblclick  = (e) => { e.stopPropagation(); autoFit(i); };
     });
@@ -204,8 +190,12 @@ function selectedSummary({ mode, selected, filteredTotal }) {
 export default {
   async mount(root) {
     injectCSS();
-    root.classList.add("modal-root");
-    root.innerHTML = `
+
+    const shell = document.createElement("div");
+    shell.className = "cw-exporter";
+    root.appendChild(shell);
+
+    shell.innerHTML = `
       <div class="cx-head">
         <div class="cx-left">
           <div class="cx-title">Exporter</div>
@@ -281,8 +271,8 @@ export default {
         <div class="wait-ring"></div>
         <div class="wait-text" id="ex-wait-text">Loading…</div>
       </div>`;
-    root.appendChild(wait);
-    const setWait = (t) => { $("#ex-wait-text", root).textContent = t; };
+    shell.appendChild(wait);
+    const setWait = (t) => { $("#ex-wait-text", shell).textContent = t; };
     let waitTimer = null, shownAt = 0;
     const showWait = (t = "Loading…") => {
       setWait(t); wait.classList.remove("hidden");
@@ -298,18 +288,18 @@ export default {
     };
 
     // refs
-    const badge   = $("#ex-badge", root);
-    const countEl = $("#ex-count", root);
-    const provSel = $("#ex-prov", root);
-    const featSel = $("#ex-feat", root);
-    const fmtSel  = $("#ex-fmt", root);
-    const qInput  = $("#ex-q", root);
-    const allChk  = $("#ex-all", root);
-    const btnPrev = $("#ex-preview", root);
-    const btnExp  = $("#ex-export", root);
-    const btnClose= $("#ex-close", root);
-    const tbody   = $("#ex-tbody", root);
-    const table   = $("#ex-table", root);
+    const badge   = $("#ex-badge", shell);
+    const countEl = $("#ex-count", shell);
+    const provSel = $("#ex-prov", shell);
+    const featSel = $("#ex-feat", shell);
+    const fmtSel  = $("#ex-fmt", shell);
+    const qInput  = $("#ex-q", shell);
+    const allChk  = $("#ex-all", shell);
+    const btnPrev = $("#ex-preview", shell);
+    const btnExp  = $("#ex-export", shell);
+    const btnClose= $("#ex-close", shell);
+    const tbody   = $("#ex-tbody", shell);
+    const table   = $("#ex-table", shell);
 
     // state
     let OPTS = null;
@@ -337,8 +327,8 @@ export default {
 
     function syncFormats() {
       const f = featSel.value;
-      const list = (OPTS.formats && OPTS.formats[f]) || [];
-      const labels = OPTS.labels || {};
+      const list = (OPTS?.formats && OPTS.formats[f]) || [];
+      const labels = OPTS?.labels || {};
       fmtSel.innerHTML = list.map(x => `<option value="${x}">${labels[x] || x.toUpperCase()}</option>`).join("");
       if (prefs.format && list.includes(prefs.format)) fmtSel.value = prefs.format;
     }
@@ -472,7 +462,7 @@ export default {
       allChk.checked = prefs.all !== false;
 
       syncFormats();
-      enableColumnResize($("#ex-table", root));
+      enableColumnResize(table);
     } finally {
       hideWait();
     }
@@ -499,5 +489,6 @@ export default {
 
     await renderPreview({ auto:false });
   },
-  unmount() {}
+  unmount() {
+  }
 };
