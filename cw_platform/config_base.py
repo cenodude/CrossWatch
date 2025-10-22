@@ -260,12 +260,14 @@ DEFAULT_CFG: Dict[str, Any] = {
         "ttl_hours": 6,                                 # Coarse cache TTL
     },
 
-    # --- Scrobble (Plex/Jellyfin → Trakt) -----------------------------------
+    # --- Scrobble ------------------------------------------------------------
     "scrobble": {
-        "enabled": False,                               # Master toggle for scrobbling
-        "mode": "watch",                                # "watch" = real-time watcher; "webhook" = incoming webhooks
+        "enabled": False,                               # Master toggle
+        "mode": "watch",                                # "watch" | "webhook"
+        "delete_plex": False,                           # Auto-remove movies from Plex Watchlist
+        "delete_plex_types": ["movie"],                 # ["movie"] 
 
-        # Watcher settings (Plex → events → Trakt)
+        # Watcher settings
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
             "provider": "plex",                         # Active watcher either "plex" or "emby" (default: "plex")
@@ -277,7 +279,7 @@ DEFAULT_CFG: Dict[str, Any] = {
             }
         },
 
-        # Webhook settings (Plex/Jellyfin → Trakt via scrobbler)
+        # Webhook settings
         "webhook": {
             "pause_debounce_seconds": 5,                # Ignore micro-pauses
             "suppress_start_at": 99,                    # Suppress near-end "start" flaps (credits)

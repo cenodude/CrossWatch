@@ -2,16 +2,15 @@
 from __future__ import annotations
 import base64, hashlib, hmac, json, re, time, requests
 from typing import Any, Dict, Mapping, Optional, Callable, Iterable
+from providers.scrobble._auto_remove_plex import auto_remove_if_config_allows
 
 TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: Dict[str, Dict[str, Any]] = {}
 
-# GUID patterns
 _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
 _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)", re.I)
 
-# Defaults
 _DEF_WEBHOOK = {
     "pause_debounce_seconds": 5,
     "suppress_start_at": 99,
@@ -19,7 +18,6 @@ _DEF_WEBHOOK = {
 }
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
 
-# logging
 def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
     try:
         if logger:
@@ -28,7 +26,6 @@ def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
         pass
     print(f"[SCROBBLE] {level} {msg}")
 
-# config i/o
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
@@ -64,7 +61,6 @@ def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if changed: _save_config(cfg)
     return cfg
 
-# Trakt HTTP
 def _tokens(cfg: Dict[str, Any]) -> Dict[str, str]:
     tr = cfg.get("trakt") or {}
     au = ((cfg.get("auth") or {}).get("trakt") or {})
@@ -105,7 +101,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
-# id utils
 def _ids_from_candidates(candidates: Iterable[Any]) -> Dict[str, Any]:
     for c in candidates:
         if not c: continue
@@ -188,7 +183,6 @@ def _describe_ids(ids: Dict[str, Any] | str) -> str:
         return "none"
     return str(ids)
 
-# progress + event map
 def _progress(payload: Dict[str, Any]) -> float:
     md = payload.get("Metadata") or {}
     vo = payload.get("viewOffset") or md.get("viewOffset") or 0
@@ -204,7 +198,6 @@ def _map_event(event: str) -> Optional[str]:
     if e in ("media.stop", "media.scrobble"): return "/scrobble/stop"
     return None
 
-# signature (Plex)
 def _verify_signature(raw: Optional[bytes], headers: Mapping[str, str], secret: str) -> bool:
     if not secret: return True
     if not raw: return False
@@ -214,7 +207,6 @@ def _verify_signature(raw: Optional[bytes], headers: Mapping[str, str], secret: 
     expected = base64.b64encode(digest).decode("ascii")
     return hmac.compare_digest(sig.strip(), expected.strip())
 
-# search helpers
 def _lookup_trakt_ids(media_type: str, md: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
     try:
         title = (md.get("title") if media_type == "movie" else md.get("grandparentTitle")) or ""
@@ -256,7 +248,6 @@ def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=N
                 return out
     return None
 
-# payload builders
 def _build_bodies(media_type: str, md: Dict[str, Any], ids: Dict[str, Any], ids_all: Dict[str, Any], prog: float) -> list[Dict[str, Any]]:
     p = float(round(prog, 2))
     bodies: list[Dict[str, Any]] = []
@@ -280,7 +271,6 @@ def _body_ids_desc(b: Dict[str, Any]) -> str:
     ids = ((b.get("movie") or {}).get("ids")) or ((b.get("show") or {}).get("ids")) or ((b.get("episode") or {}).get("ids"))
     return _describe_ids(ids if ids else "title/year")
 
-# main
 def process_webhook(
     payload: Dict[str, Any],
     headers: Mapping[str, str],
@@ -312,7 +302,7 @@ def process_webhook(
 
     tset = (sc.get("trakt") or {})
     stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
-    force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
+    force_stop_at = float(tset.get("force_stop_at", stop_pause_threshold))
     regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
 
     acc_title = ((payload.get("Account") or {}).get("title") or "").strip()
@@ -391,10 +381,27 @@ def process_webhook(
         except Exception: rj = {"raw": (r.text or "")[:200]}
         _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
         if r.status_code < 400:
+            if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
+                try:
+                    evt = {
+                        "media_type": media_type,
+                        "title": (md.get("title") if media_type=="movie" else md.get("grandparentTitle")),
+                        "year": (md.get("year") if media_type=="movie" else (md.get("grandparentYear") or md.get("year"))),
+                        "ids": (ids_all or ids or {}),
+                        "progress": prog,
+                        "account": acc_title,
+                        "server_uuid": srv_uuid_evt,
+                        "session_key": sess,
+                        "raw": payload,
+                    }
+                    auto_remove_if_config_allows(evt, cfg)
+                    st = {**st, "wl_removed": True}
+                except Exception:
+                    pass
             _SCROBBLE_STATE[sess] = {
                 "ts": now, "last_event": event,
                 "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
-                "prog": prog,
+                "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
             return {"ok": True, "status": 200, "action": intended, "trakt": rj}
         last_resp = (r.status_code, rj)
@@ -411,11 +418,28 @@ def process_webhook(
             except Exception: rj = {"raw": (r.text or "")[:200]}
             _emit(logger, f"trakt {intended} (guid search) -> {r.status_code}", "DEBUG")
             if r.status_code < 400:
-                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog}
+                if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
+                    try:
+                        evt = {
+                            "media_type": media_type,
+                            "title": (md.get("title") if media_type=="movie" else md.get("grandparentTitle")),
+                            "year": (md.get("year") if media_type=="movie" else (md.get("grandparentYear") or md.get("year"))),
+                            "ids": (ids_all or found or {}),
+                            "progress": prog,
+                            "account": acc_title,
+                            "server_uuid": srv_uuid_evt,
+                            "session_key": sess,
+                            "raw": payload,
+                        }
+                        auto_remove_if_config_allows(evt, cfg)
+                        st = {**st, "wl_removed": True}
+                    except Exception:
+                        pass
+                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {})}
                 return {"ok": True, "status": 200, "action": intended, "trakt": rj}
             last_resp = (r.status_code, rj)
 
     code, rj = last_resp if last_resp else (500, {"error": "unknown"})
     _emit(logger, f"{intended} {code} {(str(rj)[:180])}", "ERROR")
-    _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog}
+    _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog, **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {})}
     return {"ok": False, "status": code, "trakt": rj}

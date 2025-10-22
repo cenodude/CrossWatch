@@ -1,5 +1,4 @@
 # providers/scrobble/scrobble.py
-# Refactoring project: scrobble.py (v1.0)
 from __future__ import annotations
 
 import os, json, re, time

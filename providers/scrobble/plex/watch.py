@@ -1,5 +1,4 @@
-# providers/scrobble/watch.py
-# Refactoring project: watch.py (1.0)
+# providers/scrobble/plex/watch.py
 from __future__ import annotations
 
 import json, os, time, threading
@@ -18,8 +17,8 @@ from providers.scrobble.scrobble import (
     Dispatcher, ScrobbleSink, ScrobbleEvent,
     from_plex_pssn, from_plex_flat_playing,
 )
+from providers.scrobble._auto_remove_plex import auto_remove_if_config_allows
 
-# --- config / utils ------------------------------------------------------------
 def _cfg() -> dict[str, Any]:
     p = Path("/config/config.json")
     try: return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
@@ -39,7 +38,6 @@ def _safe_int(x: Any) -> int | None:
     try: return int(x)
     except Exception: return None
 
-# --- service -------------------------------------------------------------------
 class WatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, dispatcher: Dispatcher | None = None) -> None:
         self._dispatch = dispatcher or Dispatcher(list(sinks or []), _cfg)
@@ -52,9 +50,9 @@ class WatchService:
         self._allowed_sessions: set[str] = set()
         self._last_seen: dict[str, float] = {}
         self._last_emit: dict[str, tuple[str, int]] = {}
+        self._wl_removed: set[str] = set()
         self._attempt = 0
 
-    # logging
     def _log(self, msg: str, level: str = "INFO") -> None:
         if BASE_LOG:
             try: BASE_LOG(str(msg), level=level.upper(), module="WATCH"); return
@@ -68,7 +66,6 @@ class WatchService:
         try: return len(getattr(self._dispatch, "_sinks", []) or [])
         except Exception: return 0
 
-    # filtering helpers
     def _find_psn(self, o: Any):
         if isinstance(o, dict):
             for k, v in o.items():
@@ -101,11 +98,9 @@ class WatchService:
         def norm(s: str) -> str: return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
         wl_list = wl if isinstance(wl, list) else [wl]
 
-        # username match
         if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
             return _allow()
 
-        # id/uuid match from raw PSN
         n = (self._find_psn(ev.raw or {}) or [None])[0] or {}
         acc_id, acc_uuid = str(n.get("accountID") or ""), str(n.get("accountUUID") or "").lower()
         for e in wl_list:
@@ -114,7 +109,6 @@ class WatchService:
             if s.startswith("uuid:") and acc_uuid and s.split(":",1)[1].strip()==acc_uuid: return _allow()
         return False
 
-    # enrichment
     def _find_rating_key(self, raw: dict[str, Any]) -> int | None:
         if not isinstance(raw, dict): return None
         psn = raw.get("PlaySessionStateNotification")
@@ -147,7 +141,7 @@ class WatchService:
         try:
             el = self._plex.query("/status/sessions")
             if not hasattr(el, "iter"): return None
-            for v in el.iter("Video"):  # type: ignore[attr-defined]
+            for v in el.iter("Video"):
                 if v.get("sessionKey") == str(session_key):
                     u = v.find("User"); return (u.get("title") if u is not None else None)
         except Exception:
@@ -194,7 +188,6 @@ class WatchService:
         except Exception:
             return ev
 
-    # probe
     def _probe_session_progress(self, ev: ScrobbleEvent) -> int | None:
         try:
             if not self._plex: return None
@@ -220,7 +213,44 @@ class WatchService:
         if not d or vo is None: return None
         return int(round(100 * max(0, min(vo, d)) / float(d)))
 
-    # alert handling
+    def _maybe_remove_from_plex_watchlist(self, cfg: dict[str, Any], ev: ScrobbleEvent) -> None:
+        try:
+            sc = cfg.get("scrobble") or {}
+            if not sc.get("delete_plex", False): return
+            types = sc.get("delete_plex_types") or ["movie"]
+            if str(ev.media_type or "").lower() not in {str(t).lower() for t in types}: return
+            tok = ((cfg.get("plex") or {}).get("account_token") or "").strip()
+            if not tok: return
+            title = ev.title
+            year = ev.year
+            ids_all = dict(ev.ids or {})
+            try:
+                from providers.sync.plex import _watchlistAPI as WLAPI
+                func = getattr(WLAPI, "remove_from_watchlist", None) or getattr(WLAPI, "remove", None) or getattr(WLAPI, "delete", None)
+                if func:
+                    try: func(cfg=cfg, ids=ids_all, media_type=ev.media_type, title=title, year=year)
+                    except TypeError:
+                        try: func(cfg, ids_all, ev.media_type, title, year)
+                        except Exception: func(cfg, ids_all, ev.media_type)
+                    self._dbg(f"plex watchlist auto-remove via api: {title or '?'}")
+                    return
+            except Exception:
+                pass
+            try:
+                from providers.sync.plex import _watchlist as WL
+                func = getattr(WL, "remove_from_watchlist", None) or getattr(WL, "remove", None) or getattr(WL, "delete", None)
+                if func:
+                    try: func(cfg=cfg, ids=ids_all, media_type=ev.media_type, title=title, year=year)
+                    except TypeError:
+                        try: func(cfg, ids_all, ev.media_type, title, year)
+                        except Exception: func(cfg, ids_all, ev.media_type)
+                    self._dbg(f"plex watchlist auto-remove: {title or '?'}")
+                    return
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _handle_alert(self, alert: dict[str, Any]) -> None:
         try:
             t = (alert.get("type") or "").lower()
@@ -250,7 +280,6 @@ class WatchService:
             if not self._passes_filters(ev):
                 self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}"); return
 
-            # probe correction (debug only)
             want = ev.progress; best = want
             for _ in range(3):
                 real = self._probe_session_progress(ev)
@@ -261,21 +290,21 @@ class WatchService:
                 self._dbg(f"probe correction: {want}% → {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
 
-            # floor tiny start to 1%
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
 
-            # debounce stop (allow only if force_stop_at or idle > 2s)
             if ev.session_key and ev.action == "stop":
                 skd, now = str(ev.session_key), time.time()
-                force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95)))
+                force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get(
+                    "force_stop_at",
+                    ((_cfg().get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 95)
+                )))
                 elapsed = now - self._last_seen.get(skd, 0.0)
                 if ev.progress < force_at and elapsed < 2.0:
                     self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={force_at} dt={elapsed:.2f}s"); return
 
             if ev.session_key: self._last_seen[str(ev.session_key)] = time.time()
 
-            # suppress duplicate stop
             sk = str(ev.session_key) if ev.session_key else None
             if sk:
                 last = self._last_emit.get(sk)
@@ -286,10 +315,20 @@ class WatchService:
             self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
             self._dispatch.dispatch(ev)
 
+            if ev.action == "stop":
+                force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get(
+                    "force_stop_at",
+                    ((_cfg().get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 95)
+                )))
+                if ev.progress >= force_at:
+                    dedupe_key = f"{ev.account}|{ev.media_type}|{(ev.ids or {}).get('plex') or ev.title or ''}"
+                    if dedupe_key not in self._wl_removed:
+                        if auto_remove_if_config_allows(ev, cfg):
+                            self._wl_removed.add(dedupe_key)
+
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")
 
-    # lifecycle
     def start(self) -> None:
         self._stop.clear()
         self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}")
@@ -332,7 +371,6 @@ class WatchService:
 def make_default_watch(sinks: Iterable[ScrobbleSink]) -> WatchService:
     return WatchService(sinks=sinks)
 
-# --- autostart -----------------------------------------------------------------
 _AUTO_WATCH: WatchService | None = None
 
 def autostart_from_config() -> WatchService | None:
@@ -347,7 +385,7 @@ def autostart_from_config() -> WatchService | None:
         from providers.scrobble.trakt.sink import TraktSink
         sinks: list[ScrobbleSink] = [TraktSink()]
     except Exception:
-        return None  # no sink available
+        return None
 
     _AUTO_WATCH = WatchService(sinks=sinks); _AUTO_WATCH.start_async()
     return _AUTO_WATCH

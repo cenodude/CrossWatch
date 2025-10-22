@@ -110,6 +110,8 @@
     const loadPlexBtn=$("#sc-load-users",STATE.mount); if(loadPlexBtn) loadPlexBtn.style.display = prov==="plex" ? "" : "none";
     const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = prov!=="plex";
 
+    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = prov==="plex" ? "" : "none";
+
     if(watcherOn){
       if(prov==="plex"){
         isValidServerUrl(srv)?setNote("sc-pms-note",`Using ${srv}`):setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
@@ -167,6 +169,9 @@
                   <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
                 </div>
               </div>
+            </div>
+            <div style="margin-top:8px">
+              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"> Auto-remove from Plex Watchlist</label>
             </div>
           </div>
         </details>
@@ -284,6 +289,9 @@
                 </div>
               </div>
             </div>
+            <div id="sc-delete-plex-watch-wrap" style="margin-top:8px">
+              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"> Auto-remove from Plex Watchlist</label>
+            </div>
           </div>
         </details>
 
@@ -366,7 +374,6 @@
     const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount),pvSel=$("#sc-provider",STATE.mount);
     if(whEl) whEl.checked=useWebhook; if(waEl) waEl.checked=useWatch; if(pvSel) pvSel.value=prov;
 
-    // Watcher filters
     let wlWatch=asArray(read("scrobble.watch.filters.username_whitelist",[]));
     if(prov==="emby" && wlWatch.length===0){
       const embyUser = String(read("emby.username", read("emby.user",""))||"").trim();
@@ -375,12 +382,10 @@
     const hostW=$("#sc-whitelist",STATE.mount); if(hostW){ hostW.innerHTML=""; wlWatch.forEach(u=>hostW.append(chip(u,removeUserWatch))); }
     const suWatch=read("scrobble.watch.filters.server_uuid",""),suInpW=$("#sc-server-uuid",STATE.mount); if(suInpW) suInpW.value=suWatch||"";
 
-    // Webhook (Plex-only) filters
     const wlWeb=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[]));
     const hostWB=$("#sc-whitelist-webhook",STATE.mount); if(hostWB){ hostWB.innerHTML=""; wlWeb.forEach(u=>hostWB.append(chip(u,removeUserWebhook))); }
     const suWeb=read("scrobble.webhook.filters_plex.server_uuid",""),suInpWB=$("#sc-server-uuid-webhook",STATE.mount); if(suInpWB) suInpWB.value=suWeb||"";
 
-    // Endpoints
     const base=location.origin;
     const plexCode=$("#sc-webhook-url-plex",STATE.mount),
           jfCode  =$("#sc-webhook-url-jf",STATE.mount),
@@ -389,7 +394,6 @@
     if(jfCode)   jfCode.textContent=`${base}/webhook/jellyfintrakt`;
     if(embyCode) embyCode.textContent=`${base}/webhook/embytrakt`;
 
-    // Autostart + server fields
     const autostart=!!read("scrobble.watch.autostart",false);
     const auto=$("#sc-autostart",STATE.mount); if(auto) auto.checked=!!autostart;
 
@@ -398,7 +402,6 @@
     const embyUrl=String(read("emby.server","")||"");
     if(pmsInp) pmsInp.value = prov==="plex" ? plexUrl : embyUrl;
 
-    // Advanced
     const set=(id,v)=>{const n=$(id,STATE.mount); if(n) n.value=norm100(v,v);};
     set("#sc-pause-debounce",read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
     set("#sc-suppress-start",read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at));
@@ -410,6 +413,11 @@
     set("#sc-stop-pause-webhook",read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold));
     set("#sc-force-stop-webhook",read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at));
     set("#sc-regress-webhook",read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent));
+
+    const delEnabled=!!read("scrobble.delete_plex",false);
+    const delWh=$("#sc-delete-plex-webhook",STATE.mount); if(delWh) delWh.checked=delEnabled;
+    const delW=$("#sc-delete-plex-watch",STATE.mount); if(delW) delW.checked=delEnabled;
+    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = prov==="plex" ? "" : "none";
 
     restoreDetailsState("#sc-filters",false,"sc-filters-open");
     restoreDetailsState("#sc-advanced",false,"sc-advanced-open");
@@ -538,6 +546,17 @@
       else{ write("emby.server",v); setNote("sc-pms-note", v?`Using ${v}`:""); }
       applyModeDisable();
     });
+
+    on($("#sc-delete-plex-webhook",STATE.mount),"change",e=>{
+      const v=!!e.target.checked;
+      write("scrobble.delete_plex",v);
+      const other=$("#sc-delete-plex-watch",STATE.mount); if(other) other.checked=v;
+    });
+    on($("#sc-delete-plex-watch",STATE.mount),"change",e=>{
+      const v=!!e.target.checked;
+      write("scrobble.delete_plex",v);
+      const other=$("#sc-delete-plex-webhook",STATE.mount); if(other) other.checked=v;
+    });
   }
 
   function init(opts={}){
@@ -571,6 +590,8 @@
     return {
       enabled,
       mode: mode==="watch"?"watch":"webhook",
+      delete_plex: !!read("scrobble.delete_plex", false),
+      delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
       webhook:{
         pause_debounce_seconds:read("scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
         suppress_start_at:read("scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at),
