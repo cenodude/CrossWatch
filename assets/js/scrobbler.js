@@ -34,7 +34,7 @@
     .sc-ctrls{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
     .sc-ctrls .left{display:flex;align-items:center;gap:8px}
     .sc-ctrls .right{display:flex;align-items:center;gap:8px;margin-left:auto}
-    .sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9}
+    .sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9;white-space:nowrap}
     .wh-top{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:12px;margin-bottom:8px;position:relative}
     .wh-toggle{display:inline-flex;gap:8px;align-items:center}
     .wh-endpoints{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
@@ -171,7 +171,10 @@
               </div>
             </div>
             <div style="margin-top:8px">
-              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"> Auto-remove from Plex Watchlist</label>
+              <label class="sc-toggle">
+                <input type="checkbox" id="sc-delete-plex-webhook">
+                <span class="one-line">Auto-remove from Plex Watchlist</span>
+              </label>
             </div>
           </div>
         </details>
@@ -290,7 +293,10 @@
               </div>
             </div>
             <div id="sc-delete-plex-watch-wrap" style="margin-top:8px">
-              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"> Auto-remove from Plex Watchlist</label>
+              <label class="sc-toggle">
+                <input type="checkbox" id="sc-delete-plex-watch">
+                <span class="one-line">Auto-remove from Plex Watchlist</span>
+              </label>
             </div>
           </div>
         </details>

@@ -11,7 +11,7 @@ _DEF_WEBHOOK = {
     "suppress_start_at": 99,
     "filters_jellyfin": {"username_whitelist": []},
 }
-_DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
+_DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 80, "regress_tolerance_percent": 5}
 
 def _load_config() -> Dict[str, Any]:
     try:
@@ -89,6 +89,12 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
         h["Authorization"] = f"Bearer {t['access_token']}"
     return h
 
+def _delete_trakt_checkin(cfg: Dict[str, Any]) -> None:
+    try:
+        requests.delete(f"{TRAKT_API}/checkin", headers=_headers(cfg), timeout=10)
+    except Exception:
+        pass
+
 def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
@@ -104,6 +110,12 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         except Exception: ra = 1
         time.sleep(min(max(ra, 1), 3))
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+    if r.status_code == 409 and path.startswith("/scrobble/"):
+        try: rj = r.json()
+        except Exception: rj = {}
+        if isinstance(rj, dict) and ("expires_at" in rj or "watched_at" in rj):
+            _delete_trakt_checkin(cfg)
+            r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
 def _grab(d: Mapping[str, Any], keys: list[str]) -> Any:
@@ -225,7 +237,7 @@ def process_webhook(
 
     tset = (sc.get("trakt") or {})
     stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
-    force_stop_at = float(tset.get("force_stop_at", stop_pause_threshold))
+    force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
     regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
 
     md = (payload.get("Item") or payload.get("item") or {})
@@ -244,7 +256,6 @@ def process_webhook(
     event = _grab(payload, ["NotificationType", "Event", "event"]) or ""
     acc_title = (_grab(payload, ["NotificationUsername", "Username", "UserName"]) or "").strip()
 
-    # Friendly name with show + SxxEyy for episodes
     media_name_dbg = md.get("Name") or md.get("SeriesName") or "?"
     if media_type == "episode":
         try:
@@ -284,15 +295,31 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st, "ts": now, "last_event": ev_lc}
         return {"ok": True, "debounced": True}
 
+    is_fresh_start = ev_lc in ("playbackstart", "playbackstarted", "playbackresume", "unpause", "play") and prog_raw < 1.0
+    if is_fresh_start and (st.get("last_event") in ("playbackstop", "playbackstopped", "scrobble") or (now - float(st.get("ts", 0))) > 1800):
+        st = {}
+        _SCROBBLE_STATE[sess] = {}
+
     last_prog = float(st.get("prog", 0.0))
     prog = prog_raw
     tol_pts = max(0.0, regress_tol)
-    if prog + tol_pts < last_prog and prog > max(1.0, tol_pts):
+    if (not is_fresh_start) and (prog + tol_pts < last_prog):
         _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog:.2f}% (tol={tol_pts}%)", "DEBUG")
         prog = last_prog
 
     if ev_lc in ("playbackpause", "playbackpaused") and prog >= 99.9 and last_prog > 0.0:
         np = max(last_prog, 95.0); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {np:.2f}%", "DEBUG"); prog = np
+
+    if ev_lc in ("playbackstop", "playbackstopped") and last_prog >= force_stop_at and prog < last_prog:
+        _emit(logger, f"promote STOP: using last progress {last_prog:.1f}% (current {prog:.1f}%)", "DEBUG")
+        prog = last_prog
+
+    if ev_lc in ("playbackstop", "playbackstopped") and prog < force_stop_at:
+        dt = now - float(st.get("ts", 0))
+        if dt < 2.0:
+            _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog}
+            return {"ok": True, "suppressed": True}
 
     path = _map_event(event)
     if not path:
@@ -312,8 +339,8 @@ def process_webhook(
             _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}%", "DEBUG")
             intended = "/scrobble/pause"; prog = last_prog
 
-    if intended == "/scrobble/start" and prog < 2.0: prog = 2.0
-    if intended == "/scrobble/pause" and prog < 1.0: prog = 1.0
+    if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
+    if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
 
     if ev_lc in ("playbackstop", "playbackstopped") and st.get("last_event") in ("playbackstop", "playbackstopped") and abs((st.get("prog", 0.0)) - prog) <= 1.0:
         _emit(logger, "suppress duplicate stop", "DEBUG")

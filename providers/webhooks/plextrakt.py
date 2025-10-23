@@ -367,11 +367,24 @@ def process_webhook(
     last_prog = float(st.get("prog", 0.0))
     tol_pts = max(0.0, regress_tol)
     prog = prog_raw
-    if prog + tol_pts < last_prog and prog > max(1.0, tol_pts):
+
+    if prog + tol_pts < last_prog:
         _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog:.2f}% (tol={tol_pts}%)", "DEBUG")
         prog = last_prog
+
     if event == "media.pause" and prog >= 99.9 and last_prog > 0.0:
         newp = max(last_prog, 95.0); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {newp:.2f}%", "DEBUG"); prog = newp
+
+    if event == "media.stop" and last_prog >= force_stop_at and prog < last_prog:
+        _emit(logger, f"promote STOP: using last progress {last_prog:.1f}% (current {prog:.1f}%)", "DEBUG")
+        prog = last_prog
+
+    if event == "media.stop" and prog < force_stop_at:
+        dt = now - float(st.get("ts", 0))
+        if dt < 2.0:
+            _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "prog": prog}
+            return {"ok": True, "suppressed": True}
 
     path = _map_event(event)
     if not path:
@@ -382,6 +395,13 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "prog": prog}; return {"ok": True, "suppressed": True}
 
     intended = path
+
+    # Promote late pauses to stop so Trakt marks watched and removal can trigger
+    if event == "media.pause" and (prog >= force_stop_at or last_prog >= force_stop_at):
+        _emit(logger, f"promote PAUSE→STOP at {max(prog, last_prog):.1f}%", "DEBUG")
+        intended = "/scrobble/stop"
+        prog = max(prog, last_prog, 95.0)
+
     if path == "/scrobble/stop":
         if prog < stop_pause_threshold: intended = "/scrobble/pause"
         elif prog < force_stop_at: intended = "/scrobble/pause"
@@ -430,7 +450,6 @@ def process_webhook(
             }
             try:
                 action_name = intended.rsplit("/", 1)[-1]
-                # SINGLE user-facing line per success; no extra "done action=..." line.
                 _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
             except Exception:
                 pass
@@ -438,7 +457,6 @@ def process_webhook(
         last_resp = (r.status_code, rj)
         if r.status_code != 404: break
 
-    # Episode fallback via GUID search
     if media_type == "episode" and (not last_resp or last_resp[0] == 404):
         epi_hint = {**_episode_ids_from_md(md), **ids_all}
         found = _guid_search_episode(epi_hint, cfg, logger=logger)

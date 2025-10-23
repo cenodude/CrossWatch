@@ -293,8 +293,8 @@ DEFAULT_CFG: Dict[str, Any] = {
 
         # Trakt sink rules (progress decisions)
         "trakt": {
-            "stop_pause_threshold": 80,                 # <80% STOP → send as PAUSE (your “watched” bar)
-            "force_stop_at": 95,                        # ≥95% always STOP (bypass debounces)
+            "stop_pause_threshold": 85,                 # <85% STOP → send as PAUSE (your “watched” bar)
+            "force_stop_at": 85,                        # ≥85% always STOP (bypass debounces)
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }
     },

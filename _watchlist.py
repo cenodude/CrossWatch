@@ -411,6 +411,22 @@ def build_watchlist(state: dict[str,Any], tmdb_ok: bool) -> list[dict[str,Any]]:
 
 
 # --- Provider deletes ---
+def _del_key_from_provider_items(state: Dict[str, Any], provider: str, key: str) -> bool:
+    prov = (provider or "").upper().strip()
+    P = (state.get("providers") or {})
+    changed = False
+    if prov in P:
+        p = P[prov] or {}
+        wl = (((p.get("watchlist") or {}).get("baseline") or {}).get("items"))
+        if isinstance(wl, dict) and key in wl:
+            wl.pop(key, None)
+            changed = True
+        legacy = p.get("items")
+        if isinstance(legacy, dict) and key in legacy:
+            legacy.pop(key, None)
+            changed = True
+    return changed
+
 def _delete_on_plex_single(key: str, state: dict[str,Any], cfg: dict[str,Any]) -> None:
     if not _HAVE_PLEXAPI: raise RuntimeError("plexapi is not available")
 
