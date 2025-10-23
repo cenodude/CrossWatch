@@ -59,10 +59,11 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
       <td valign="top">
         <ul style="margin:0;padding-left:1.1em">
           <li>Sync watchlists (one-/two-way)</li>
-          <li>Live scrobbling (Plex/Jellyfin/Emby → Trakt)</li>
+          <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
           <li>Sync playlists (one-/two-way — disabled)</li>
+          <li>Auto-remove from Plex watchlist after finish</li>
         </ul>
       </td>
       <td valign="top">
