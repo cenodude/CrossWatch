@@ -1,5 +1,4 @@
 # providers/scrobble/trakt/sink.py
-# Refactoring project: sink.py (v1.0)
 from __future__ import annotations
 
 import time, json, requests
@@ -17,11 +16,20 @@ except Exception:
 
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 
-# --- config / http -------------------------------------------------------------
 def _cfg() -> dict[str, Any]:
-    p = Path("/config/config.json")
-    try: return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-    except Exception: return {}
+    try:
+        from crosswatch import load_config
+        return load_config()
+    except Exception:
+        pass
+    for path in ("config.json", "/config/config.json"):
+        p = Path(path)
+        try:
+            if p.exists():
+                return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
 
 def _save_cfg(cfg: dict[str, Any]) -> None:
     try:
@@ -32,7 +40,7 @@ def _save_cfg(cfg: dict[str, Any]) -> None:
     try:
         Path("/config/config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
-        pass  # best-effort
+        pass
 
 def _is_debug() -> bool:
     try: return bool((( _cfg().get("runtime") or {}).get("debug")))
@@ -54,9 +62,9 @@ def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
 
 def _get(path: str, cfg: dict[str, Any]):  return requests.get(f"{TRAKT_API}{path}", headers=_hdr(cfg), timeout=10)
 def _post(path: str, body: dict[str, Any], cfg: dict[str, Any]): return requests.post(f"{TRAKT_API}{path}", headers=_hdr(cfg), json=body, timeout=10)
+def _del(path: str, cfg: dict[str, Any]):  return requests.delete(f"{TRAKT_API}{path}", headers=_hdr(cfg), timeout=10)
 
 def _tok_refresh(cfg: dict[str, Any]) -> bool:
-    """Refresh access token; persist if possible."""
     global _TOKEN_OVERRIDE
     t = (cfg.get("trakt") or {})
     client_id  = t.get("client_id") or t.get("api_key")
@@ -79,7 +87,6 @@ def _tok_refresh(cfg: dict[str, Any]) -> bool:
         _log("Token refresh: missing access_token", "ERROR"); return False
     _TOKEN_OVERRIDE = acc
     new_rt = data.get("refresh_token") or rtok
-    # persist best-effort
     try:
         new_cfg = dict(cfg); t2 = dict(new_cfg.get("trakt") or {})
         t2["access_token"], t2["refresh_token"] = acc, new_rt
@@ -89,7 +96,6 @@ def _tok_refresh(cfg: dict[str, Any]) -> bool:
         _log("Trakt token refreshed (runtime only)")
     return True
 
-# --- id utils ------------------------------------------------------------------
 def _ids(ev: ScrobbleEvent) -> dict[str, Any]:
     ids = ev.ids or {}; return {k: ids[k] for k in ("imdb","tmdb","tvdb","trakt") if ids.get(k)}
 
@@ -104,15 +110,15 @@ def _clamp(p: Any) -> int:
     except Exception: p = 0
     return max(0, min(100, p))
 
-def _stop_pause_threshold(cfg: dict[str, Any]) -> int:  # default 80
+def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80))
     except Exception: return 80
 
-def _force_stop_at(cfg: dict[str, Any]) -> int:  # default 95
+def _force_stop_at(cfg: dict[str, Any]) -> int:
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95))
     except Exception: return 95
 
-def _regress_tol(cfg: dict[str, Any]) -> int:  # default 5
+def _regress_tol(cfg: dict[str, Any]) -> int:
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("regress_tolerance_percent", 5))
     except Exception: return 5
 
@@ -135,7 +141,6 @@ def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | Non
             if out: return out
     return None
 
-# --- logging helpers -----------------------------------------------------------
 def _log(msg: str, level: str = "INFO") -> None:
     if BASE_LOG:
         try:
@@ -149,7 +154,60 @@ def _log(msg: str, level: str = "INFO") -> None:
 def _dbg(msg: str) -> None:
     if _is_debug(): print(f"DEBUG [TRAKT] {msg}")
 
-# --- sink ----------------------------------------------------------------------
+try:
+    from _auto_remove_plex import remove_by_ids as _rm_plex_by_ids
+except Exception:
+    _rm_plex_by_ids = None
+try:
+    import _watchlist as _wl_mod
+except Exception:
+    _wl_mod = None
+try:
+    import _watchlistAPI as _wl_api
+except Exception:
+    _wl_api = None
+
+def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
+    s = (cfg.get("scrobble") or {})
+    if not s.get("delete_plex"): return False
+    types = s.get("delete_plex_types") or []
+    if isinstance(types, list): return (media_type in types) or (media_type.rstrip("s")+"s" in types)
+    if isinstance(types, str):  return media_type in types
+    return False
+
+def _maybe_auto_remove(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
+    if not _cfg_delete_enabled(cfg, ev.media_type): return
+    ids = _ids(ev)
+    if not ids: return
+    try:
+        if _rm_plex_by_ids:
+            _log(f"Auto-remove (Plex) via _auto_remove_plex ids={ids}")
+            _rm_plex_by_ids(ids, types=[ev.media_type])
+            return
+    except Exception as e:
+        _log(f"Auto-remove _auto_remove_plex failed: {e}", "WARN")
+    try:
+        if _wl_mod and hasattr(_wl_mod, "remove_from_plex_watchlist_by_ids"):
+            _log(f"Auto-remove (Plex) via _watchlist ids={ids}")
+            _wl_mod.remove_from_plex_watchlist_by_ids(ids)
+            return
+    except Exception as e:
+        _log(f"Auto-remove _watchlist failed: {e}", "WARN")
+    try:
+        if _wl_api and hasattr(_wl_api, "remove_from_plex_by_ids"):
+            _log(f"Auto-remove (Plex) via _watchlistAPI ids={ids}")
+            _wl_api.remove_from_plex_by_ids(ids)
+            return
+    except Exception as e:
+        _log(f"Auto-remove _watchlistAPI failed: {e}", "WARN")
+
+def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
+    try:
+        r = _del("/checkin", cfg)
+        return r.status_code in (204, 200)
+    except Exception:
+        return False
+
 class TraktSink(ScrobbleSink):
     def __init__(self, logger=None):
         self._logr = logger if logger else (BASE_LOG.child("TRAKT") if (BASE_LOG and hasattr(BASE_LOG,"child")) else None)
@@ -158,9 +216,9 @@ class TraktSink(ScrobbleSink):
                 self._logr.set_level("DEBUG" if _is_debug() else "INFO")
         except Exception:
             pass
-        self._last_sent: dict[str, float] = {}   # debounce: "session:action" -> ts
-        self._p_sess:   dict[tuple[str, str], int] = {}  # (session, media) -> %
-        self._p_glob:   dict[str, int] = {}               # media -> %
+        self._last_sent: dict[str, float] = {}
+        self._p_sess:   dict[tuple[str, str], int] = {}
+        self._p_glob:   dict[str, int] = {}
 
     def _mkey(self, ev: ScrobbleEvent) -> str:
         ids = ev.ids or {}; parts=[]
@@ -196,8 +254,8 @@ class TraktSink(ScrobbleSink):
         return bodies or [{"progress": p, "episode": {"ids": ids}}]
 
     def _send_http(self, path: str, body: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-        backoff, tried_refresh = 1.0, False
-        for _ in range(5):
+        backoff, tried_refresh, tried_checkin_clear = 1.0, False, False
+        for _ in range(6):
             try: r = _post(path, body, cfg)
             except Exception:
                 time.sleep(backoff); backoff=min(8.0, backoff*2); continue
@@ -206,6 +264,15 @@ class TraktSink(ScrobbleSink):
                 _log("401 Unauthorized → refreshing token", "WARN")
                 if _tok_refresh(cfg): tried_refresh=True; continue
                 return {"ok":False,"status":401,"resp":"Unauthorized and token refresh failed"}
+            if s == 409:
+                txt = (r.text or "")
+                if not tried_checkin_clear and ("expires_at" in txt or "watched_at" in txt):
+                    _log("409 Conflict (active check-in) — clearing /checkin and retrying", "WARN")
+                    tried_checkin_clear = True
+                    if _clear_active_checkin(cfg):
+                        time.sleep(0.35)
+                        continue
+                return {"ok":False,"status":409,"resp":txt[:400]}
             if s == 429:
                 try: wait = float(r.headers.get("Retry-After") or backoff)
                 except Exception: wait = backoff
@@ -228,23 +295,22 @@ class TraktSink(ScrobbleSink):
         p_sess = self._p_sess.get((sk,mk), -1)
         p_glob = self._p_glob.get(mk, -1)
 
-        # Effective progress (backtrack-safe)
         if ev.action == "start":
             if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
-                _log("Restart detected: honoring 0% and clearing memory")
-                p_send = 0; self._p_glob[mk]=0; self._p_sess[(sk,mk)]=0
+                _log("Restart detected: align start floor to 2% (no 0%)")
+                p_send = 2
+                self._p_glob[mk] = max(2, p_glob if p_glob >= 0 else 2)
+                self._p_sess[(sk,mk)] = 2
             else:
-                if p_now == 0 and p_glob > 0: p_send = p_glob
+                if p_now == 0 and p_glob > 0: p_send = max(2, p_glob)
                 elif p_glob >= 0 and (p_glob - p_now) > 0 and (p_glob - p_now) <= tol and p_now > 2: p_send = p_glob
-                else: p_send = p_now
+                else: p_send = max(2, p_now)
         else:
             p_base = p_now
-            # clamp only for PAUSE; never clamp STOP
             if ev.action == "pause" and p_base >= 98 and p_sess >= 0 and p_sess < 95:
                 _dbg(f"Clamp suspicious pause 100% → {p_sess}%"); p_base = p_sess
             p_send = p_base if (p_sess < 0 or p_base >= p_sess or (p_sess - p_base) >= tol) else p_sess
 
-        # Decide final action (demote suspicious STOP jump; then threshold)
         thr = _stop_pause_threshold(cfg)
         last_sess = p_sess
         action = ev.action
@@ -255,34 +321,45 @@ class TraktSink(ScrobbleSink):
             elif p_send < thr:
                 action = "pause"
 
-        # Update memory after any clamp/demotion
         if p_send != p_sess: self._p_sess[(sk,mk)] = p_send
         if p_send > (p_glob if p_glob >= 0 else -1): self._p_glob[mk] = p_send
 
-        # Debounce (bypass only for final STOP at high progress)
         if not (action == "stop" and p_send >= _force_stop_at(cfg)) and self._debounced(ev.session_key, action): return
 
         path = { "start":"/scrobble/start", "pause":"/scrobble/pause", "stop":"/scrobble/stop" }[action]
         last_err = None
 
-        # Try preferred -> fallbacks; add app meta; verbose body only in DEBUG
         for body in self._bodies(ev, p_send):
             body = {**body, **_app_meta(cfg)}
             _dbg(f"→ {path} body={body}")
             res = self._send_http(path, body, cfg)
-            if res.get("ok"): _log(f"{path} {res['status']}"); return
+            if res.get("ok"):
+                _log(f"{path} {res['status']}")
+                if action == "stop" and p_send >= _force_stop_at(cfg):
+                    _maybe_auto_remove(ev, cfg)
+                return
             last_err = res
-            if res.get("status") == 404: _log("404 with current representation → trying alternate", "WARN"); continue
+            if res.get("status") == 404:
+                _log("404 with current representation → trying alternate", "WARN"); continue
             break
 
-        # Last resort: GUID search for episodes
         if last_err and last_err.get("status") == 404 and ev.media_type == "episode":
             epi_ids = _guid_search(ev, cfg)
             if epi_ids:
                 body = {"progress": p_send, "episode": {"ids": epi_ids}, **_app_meta(cfg)}
                 _dbg(f"Resolved via search; retry ids={epi_ids}")
                 res = self._send_http(path, body, cfg)
-                if res.get("ok"): _log(f"{path} {res['status']}"); return
+                if res.get("ok"):
+                    _log(f"{path} {res['status']}")
+                    if action == "stop" and p_send >= _force_stop_at(cfg):
+                        _maybe_auto_remove(ev, cfg)
+                    return
                 last_err = res
+
+        if last_err and last_err.get("status") == 409 and action == "stop" and ("watched_at" in str(last_err.get("resp"))):
+            _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
+            if p_send >= _force_stop_at(cfg):
+                _maybe_auto_remove(ev, cfg)
+            return
 
         if last_err: _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")
