@@ -68,8 +68,8 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
       </td>
       <td valign="top">
         <ul style="margin:0;padding-left:1.1em">
-          <li>Simple web UI — JSON state</li>
-          <li>TMDb metadata & posters</li>
+          <li>Analyzer - finds broken or missing matches/IDs</li>
+          <li>Exporter - CSV files for popular service</li>
           <li>Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
