@@ -2,7 +2,6 @@
 from __future__ import annotations
 import base64, hashlib, hmac, json, re, time, requests
 from typing import Any, Dict, Mapping, Optional, Callable, Iterable
-from providers.scrobble._auto_remove_plex import auto_remove_if_config_allows
 
 TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: Dict[str, Dict[str, Any]] = {}
@@ -17,6 +16,30 @@ _DEF_WEBHOOK = {
     "filters_plex": {"username_whitelist": [], "server_uuid": ""},
 }
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
+
+# --- cross-provider auto-remove hooks ---
+try:
+    from _auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+except Exception:
+    _rm_across = None
+try:
+    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # fallback
+except Exception:
+    _rm_across_api = None
+
+def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
+    if not isinstance(ids, dict) or not ids: return
+    try:
+        if callable(_rm_across):
+            _rm_across(ids, media_type); return
+    except Exception:
+        pass
+    try:
+        if callable(_rm_across_api):
+            _rm_across_api(ids, media_type); return
+    except Exception:
+        pass
+
 
 def _load_config() -> Dict[str, Any]:
     try:
@@ -396,7 +419,6 @@ def process_webhook(
 
     intended = path
 
-    # Promote late pauses to stop so Trakt marks watched and removal can trigger
     if event == "media.pause" and (prog >= force_stop_at or last_prog >= force_stop_at):
         _emit(logger, f"promote PAUSE→STOP at {max(prog, last_prog):.1f}%", "DEBUG")
         intended = "/scrobble/stop"
@@ -428,18 +450,8 @@ def process_webhook(
         if r.status_code < 400:
             if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
                 try:
-                    evt = {
-                        "media_type": media_type,
-                        "title": (md.get("title") if media_type=="movie" else md.get("grandparentTitle")),
-                        "year": (md.get("year") if media_type=="movie" else (md.get("grandparentYear") or md.get("year"))),
-                        "ids": (ids_all or ids or {}),
-                        "progress": prog,
-                        "account": acc_title,
-                        "server_uuid": srv_uuid_evt,
-                        "session_key": sess,
-                        "raw": payload,
-                    }
-                    auto_remove_if_config_allows(evt, cfg)
+                    ids_payload = (ids_all or ids or {})
+                    _call_remove_across(ids_payload, media_type)
                     st = {**st, "wl_removed": True}
                 except Exception:
                     pass
@@ -470,18 +482,8 @@ def process_webhook(
             if r.status_code < 400:
                 if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
                     try:
-                        evt = {
-                            "media_type": media_type,
-                            "title": (md.get("title") if media_type=="movie" else md.get("grandparentTitle")),
-                            "year": (md.get("year") if media_type=="movie" else (md.get("grandparentYear") or md.get("year"))),
-                            "ids": (ids_all or found or {}),
-                            "progress": prog,
-                            "account": acc_title,
-                            "server_uuid": srv_uuid_evt,
-                            "session_key": sess,
-                            "raw": payload,
-                        }
-                        auto_remove_if_config_allows(evt, cfg)
+                        ids_payload = (ids_all or found or {})
+                        _call_remove_across(ids_payload, media_type)
                         st = {**st, "wl_removed": True}
                     except Exception:
                         pass

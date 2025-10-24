@@ -154,18 +154,16 @@ def _log(msg: str, level: str = "INFO") -> None:
 def _dbg(msg: str) -> None:
     if _is_debug(): print(f"DEBUG [TRAKT] {msg}")
 
+# --- central removal hook (across providers) -----------------------------------
 try:
-    from _auto_remove_plex import remove_by_ids as _rm_plex_by_ids
+    from _auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 except Exception:
-    _rm_plex_by_ids = None
+    _rm_across = None
 try:
-    import _watchlist as _wl_mod
+    # optional secondary export if provided in API layer
+    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # type: ignore
 except Exception:
-    _wl_mod = None
-try:
-    import _watchlistAPI as _wl_api
-except Exception:
-    _wl_api = None
+    _rm_across_api = None
 
 def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     s = (cfg.get("scrobble") or {})
@@ -175,31 +173,24 @@ def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     if isinstance(types, str):  return media_type in types
     return False
 
-def _maybe_auto_remove(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
+def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
     if not _cfg_delete_enabled(cfg, ev.media_type): return
     ids = _ids(ev)
     if not ids: return
     try:
-        if _rm_plex_by_ids:
-            _log(f"Auto-remove (Plex) via _auto_remove_plex ids={ids}")
-            _rm_plex_by_ids(ids, types=[ev.media_type])
+        if callable(_rm_across):
+            _log(f"Auto-remove across providers via _auto_remove_watchlist ids={ids}", "INFO")
+            _rm_across(ids, ev.media_type)
             return
     except Exception as e:
-        _log(f"Auto-remove _auto_remove_plex failed: {e}", "WARN")
+        _log(f"Auto-remove across (_auto_remove_watchlist) failed: {e}", "WARN")
     try:
-        if _wl_mod and hasattr(_wl_mod, "remove_from_plex_watchlist_by_ids"):
-            _log(f"Auto-remove (Plex) via _watchlist ids={ids}")
-            _wl_mod.remove_from_plex_watchlist_by_ids(ids)
+        if callable(_rm_across_api):
+            _log(f"Auto-remove across providers via _watchlistAPI ids={ids}", "INFO")
+            _rm_across_api(ids, ev.media_type)  # type: ignore
             return
     except Exception as e:
-        _log(f"Auto-remove _watchlist failed: {e}", "WARN")
-    try:
-        if _wl_api and hasattr(_wl_api, "remove_from_plex_by_ids"):
-            _log(f"Auto-remove (Plex) via _watchlistAPI ids={ids}")
-            _wl_api.remove_from_plex_by_ids(ids)
-            return
-    except Exception as e:
-        _log(f"Auto-remove _watchlistAPI failed: {e}", "WARN")
+        _log(f"Auto-remove across (_watchlistAPI) failed: {e}", "WARN")
 
 def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
     try:
@@ -336,7 +327,7 @@ class TraktSink(ScrobbleSink):
             if res.get("ok"):
                 _log(f"{path} {res['status']}")
                 if action == "stop" and p_send >= _force_stop_at(cfg):
-                    _maybe_auto_remove(ev, cfg)
+                    _auto_remove_across(ev, cfg)
                 return
             last_err = res
             if res.get("status") == 404:
@@ -352,14 +343,14 @@ class TraktSink(ScrobbleSink):
                 if res.get("ok"):
                     _log(f"{path} {res['status']}")
                     if action == "stop" and p_send >= _force_stop_at(cfg):
-                        _maybe_auto_remove(ev, cfg)
+                        _auto_remove_across(ev, cfg)
                     return
                 last_err = res
 
         if last_err and last_err.get("status") == 409 and action == "stop" and ("watched_at" in str(last_err.get("resp"))):
             _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
             if p_send >= _force_stop_at(cfg):
-                _maybe_auto_remove(ev, cfg)
+                _auto_remove_across(ev, cfg)
             return
 
         if last_err: _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")

@@ -5,7 +5,7 @@ import urllib.parse
 from fastapi import APIRouter, Query, Body, Path as FPath
 from fastapi.responses import JSONResponse
 
-# Use registry-driven watchlist ops; no fallbacks
+# Use registry-driven watchlist
 from _watchlist import (
     build_watchlist,
     delete_watchlist_batch,
@@ -18,14 +18,12 @@ from _watchlist import (
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
-
 # ---------- helpers ----------
 def _norm_key(x: Any) -> str:
     s = str((x.get("key") if isinstance(x, dict) else x) or "").strip()
     return urllib.parse.unquote(s) if "%" in s else s
 
 def _active_providers(cfg: Dict[str, Any]) -> List[str]:
-    # Only configured providers; dynamic (no hardcoded whitelist)
     try:
         manifest = detect_available_watchlist_providers(cfg) or []
     except Exception:
@@ -40,12 +38,29 @@ def _active_providers(cfg: Dict[str, Any]) -> List[str]:
     return out
 
 def _item_label(state: Dict[str, Any], key: str, prov: str) -> Tuple[str, str]:
-    # Returns ("movie"|"show", "Title (Year)")
     it = (_find_item_in_state_for_provider(state, key, prov) or _find_item_in_state(state, key) or {})
     kind = _type_from_item_or_guess(it, key)
     title = it.get("title") or it.get("name") or key
     y = it.get("year") or it.get("release_year")
     return ("show" if kind == "tv" else "movie", f"{title} ({y})" if y else str(title))
+
+def _candidate_keys_from_ids(ids: Dict[str, Any]) -> List[str]:
+    keys: List[str] = []
+    imdb = ids.get("imdb")
+    if isinstance(imdb, str) and imdb:
+        keys.append(f"imdb:{imdb if imdb.startswith('tt') else 'tt'+imdb}")
+    tmdb = ids.get("tmdb")
+    if tmdb not in (None, ""):
+        keys.append(f"tmdb:{tmdb}")
+    tvdb = ids.get("tvdb")
+    if tvdb not in (None, ""):
+        keys.append(f"tvdb:{tvdb}")
+    # Keep order & dedupe
+    seen, out = set(), []
+    for k in keys:
+        if k not in seen:
+            seen.add(k); out.append(k)
+    return out
 
 def _bulk_delete(provider: str, keys_raw: List[Any]) -> Dict[str, Any]:
     from cw_platform.config_base import load_config
@@ -64,7 +79,7 @@ def _bulk_delete(provider: str, keys_raw: List[Any]) -> Dict[str, Any]:
     prov = (provider or "ALL").upper().strip()
 
     if prov == "ALL":
-        targets = active[:]  # all connected
+        targets = active[:]
         if not targets:
             return {"ok": False, "error": "no connected providers"}
     else:
@@ -113,6 +128,98 @@ def _bulk_delete(provider: str, keys_raw: List[Any]) -> Dict[str, Any]:
     }
 
 
+# ---------- programmatic API (for auto-remove) ----------
+def remove_across_providers_by_ids(ids: Dict[str, Any], media_type: Optional[str] = None) -> Dict[str, Any]:
+    from cw_platform.config_base import load_config
+    from _syncAPI import _load_state
+    from crosswatch import _append_log
+
+    cfg = load_config()
+    state = _load_state() or {}
+    if not ids or not isinstance(ids, dict):
+        return {"ok": False, "error": "missing ids"}
+
+    keys = _candidate_keys_from_ids(ids)
+    if not keys:
+        return {"ok": False, "error": "no candidate keys from ids"}
+
+    providers = _active_providers(cfg)
+    if not providers:
+        return {"ok": False, "error": "no connected providers"}
+
+    results: List[Dict[str, Any]] = []
+    total_deleted = 0
+
+    for prov in providers:
+        found_key = None
+        for k in keys:
+            if _find_item_in_state_for_provider(state, k, prov):
+                found_key = k
+                break
+        if not found_key:
+            results.append({"provider": prov, "ok": False, "reason": "not_in_state", "attempted": False})
+            continue
+
+        try:
+            r = delete_watchlist_batch([found_key], prov, state, cfg) or {}
+            deleted = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
+            total_deleted += deleted
+            ok = deleted > 0
+            results.append({"provider": prov, "ok": ok, "deleted": deleted, "key": found_key})
+            kind, label = _item_label(state, found_key, prov)
+            safe_label = (label or "").replace("'", "’")
+            _append_log("SYNC", f"[WL] auto-remove by ids: {kind} '{safe_label}' on {prov}: {'OK' if ok else 'NOOP'}")
+        except Exception as e:
+            results.append({"provider": prov, "ok": False, "error": str(e)})
+            _append_log("SYNC", f"[WL] auto-remove on {prov} failed: {e}")
+
+    any_ok = any(r.get("ok") for r in results)
+    return {
+        "ok": any_ok,
+        "deleted_ok": sum(int(r.get("deleted", 0)) for r in results if r.get("ok")),
+        "results": results,
+    }
+
+def remove_from_provider_by_ids(provider: str, ids: Dict[str, Any], media_type: Optional[str] = None) -> Dict[str, Any]:
+    from cw_platform.config_base import load_config
+    from _syncAPI import _load_state
+    from crosswatch import _append_log
+
+    cfg = load_config()
+    state = _load_state() or {}
+    prov = (provider or "").strip().upper()
+    if not prov:
+        return {"ok": False, "error": "missing provider"}
+    if prov not in _active_providers(cfg):
+        return {"ok": False, "error": f"provider '{prov}' not connected"}
+
+    keys = _candidate_keys_from_ids(ids)
+    if not keys:
+        return {"ok": False, "error": "no candidate keys from ids"}
+
+    found_key = None
+    for k in keys:
+        if _find_item_in_state_for_provider(state, k, prov):
+            found_key = k
+            break
+    if not found_key:
+        return {"ok": False, "reason": "not_in_state"}
+
+    try:
+        r = delete_watchlist_batch([found_key], prov, state, cfg) or {}
+        deleted = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
+        ok = deleted > 0
+        kind, label = _item_label(state, found_key, prov)
+        _append_log("SYNC", f"[WL] remove_by_ids on {prov}: {kind} '{label}' → {'OK' if ok else 'NOOP'}")
+        return {"ok": ok, "deleted": deleted, "provider": prov, "key": found_key}
+    except Exception as e:
+        _append_log("SYNC", f"[WL] remove_by_ids on {prov} failed: {e}")
+        return {"ok": False, "error": str(e), "provider": prov}
+
+def remove_from_plex_by_ids(ids: Dict[str, Any], media_type: Optional[str] = None) -> Dict[str, Any]:
+    return remove_from_provider_by_ids("PLEX", ids, media_type)
+
+
 # ---------- routes ----------
 @router.get("/")
 def api_watchlist(
@@ -137,7 +244,6 @@ def api_watchlist(
     if not st:
         return JSONResponse({"ok": False, "error": "No snapshot found or empty.", "missing_tmdb_key": not has_key}, status_code=200)
 
-    # No compat shim: expect new signature only
     try:
         items = build_watchlist(st, tmdb_ok=has_key) or []
     except Exception as e:
@@ -148,7 +254,6 @@ def api_watchlist(
     if limit:
         items = items[:limit]
 
-    # Optional TMDb enrichment (skipped when key missing)
     enriched = 0
     eff_overview = overview if (overview != "none" and has_key) else "none"
     if eff_overview != "none":
@@ -227,7 +332,6 @@ def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str,
 
 @router.post("/delete_batch")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    # Backward-compat alias; same behavior
     provider = str(payload.get("provider") or "ALL").strip().upper()
     keys = payload.get("keys") or []
     return _bulk_delete(provider, keys)

@@ -13,6 +13,30 @@ _DEF_WEBHOOK = {
 }
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 80, "regress_tolerance_percent": 5}
 
+# --- cross-provider auto-remove hooks ---
+try:
+    from _auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+except Exception:
+    _rm_across = None
+try:
+    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # fallback
+except Exception:
+    _rm_across_api = None
+
+def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
+    if not isinstance(ids, dict) or not ids: return
+    try:
+        if callable(_rm_across):
+            _rm_across(ids, media_type); return
+    except Exception:
+        pass
+    try:
+        if callable(_rm_across_api):
+            _rm_across_api(ids, media_type); return
+    except Exception:
+        pass
+
+
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
@@ -356,10 +380,17 @@ def process_webhook(
         except Exception: rj = {"raw": (r.text or "")[:200]}
         _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
         if r.status_code < 400:
+            if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
+                try:
+                    _call_remove_across(ids_pref or {}, media_type)
+                    st = {**st, "wl_removed": True}
+                except Exception:
+                    pass
             _SCROBBLE_STATE[sess] = {
                 "ts": now, "last_event": ev_lc,
                 "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
                 "prog": prog,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
             try:
                 action_name = intended.rsplit("/", 1)[-1]
@@ -373,5 +404,6 @@ def process_webhook(
 
     code, rj = last_resp if last_resp else (500, {"error": "unknown"})
     _emit(logger, f"{intended} {code} {(str(rj)[:180])}", "ERROR")
-    _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog}
+    _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0), "prog": prog,
+                             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {})}
     return {"ok": False, "status": code, "trakt": rj}
