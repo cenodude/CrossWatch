@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json, time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 _TTL_PATH = Path("/config/.cw_state/watchlist_wl_autoremove.json")
 _TTL_SECONDS = 120
@@ -68,14 +68,26 @@ def _once_per_ttl(key: str) -> bool:
 def _log(msg: str, level: str = "INFO") -> None:
     try:
         from crosswatch import _append_log
-        _append_log(level, msg)
+        _append_log("TRAKT", f"{level} [WL-AUTO] {msg}")
         if level.upper() != "DEBUG":
             return
     except Exception:
         pass
-    print(f"[WL-AUTO] {level} {msg}")
+    if level.upper() == "DEBUG":
+        print(f"[WL-AUTO] {level} {msg}")
 
-def remove_by_ids(ids: Dict[str, Any] | None, media_type: str | None = None) -> Dict[str, Any]:
+def _cfg_delete_enabled(cfg: Dict[str, Any], media_type: str) -> bool:
+    s = (cfg.get("scrobble") or {})
+    if not s.get("delete_plex"):
+        return False
+    types = s.get("delete_plex_types") or []
+    if isinstance(types, list):
+        return (media_type in types) or (media_type.rstrip("s") + "s" in types)
+    if isinstance(types, str):
+        return media_type in types
+    return False
+
+def remove_across_providers_by_ids(ids: Dict[str, Any] | None, media_type: str | None = None) -> Dict[str, Any]:
     norm = _norm_ids(ids)
     if not norm:
         _log("auto-remove skipped: no usable IDs in payload", "DEBUG")
@@ -87,12 +99,67 @@ def remove_by_ids(ids: Dict[str, Any] | None, media_type: str | None = None) -> 
     try:
         import _watchlistAPI as WLAPI
         res = WLAPI.remove_across_providers_by_ids(norm, media_type or "")
-        ok = bool(res.get("ok"))
+        ok = bool(res.get("ok")) if isinstance(res, dict) else bool(res)
         if ok:
-            _log(f"auto-remove OK ids={norm} media={media_type} → {res.get('results')}")
+            _log(f"auto-remove OK ids={norm} media={media_type}")
         else:
             _log(f"auto-remove NOOP ids={norm} media={media_type} → {res}", "DEBUG")
         return res if isinstance(res, dict) else {"ok": ok}
     except Exception as e:
         _log(f"auto-remove failed via _watchlistAPI: {e}", "WARN")
-        return {"ok": False, "error": str(e), "ids": norm, "media_type": media_type}
+        try:
+            from cw_platform.config_base import load_config
+            from _syncAPI import _load_state
+            from _watchlist import delete_watchlist_batch
+            cfg = load_config()
+            st = _load_state() or {}
+            keys: List[str] = []
+            for k in ("imdb", "tmdb", "tvdb", "trakt"):
+                v = norm.get(k)
+                if v:
+                    keys.append(f"{k}:{v}")
+            keys = list(dict.fromkeys(keys))
+            if not keys:
+                return {"ok": False, "error": "no-keys"}
+            res2 = delete_watchlist_batch(keys=keys, prov="ALL", state=st, cfg=cfg) or {}
+            ok2 = bool(res2.get("ok"))
+            if ok2:
+                _log(f"fallback delete_watchlist_batch OK ids={norm}")
+            else:
+                _log(f"fallback delete_watchlist_batch NOOP ids={norm} → {res2}", "DEBUG")
+            return res2
+        except Exception as e2:
+            _log(f"fallback failed: {e2}", "WARN")
+            return {"ok": False, "error": str(e2), "ids": norm, "media_type": media_type}
+
+def auto_remove_if_config_allows(evt: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
+    try:
+        if cfg is None:
+            from cw_platform.config_base import load_config as _load_cfg
+            cfg = _load_cfg()
+    except Exception:
+        cfg = cfg or {}
+    media_type = (evt.get("media_type") or "movie").strip().lower()
+    if not _cfg_delete_enabled(cfg or {}, media_type):
+        _log(f"auto-remove disabled by config for type={media_type}", "DEBUG")
+        return None
+    try:
+        force_at = int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at")) or 95)
+    except Exception:
+        force_at = 95
+    prog = 0
+    try:
+        prog = int(evt.get("progress") or 0)
+    except Exception:
+        prog = 0
+    if prog < force_at:
+        _log(f"auto-remove skipped due to progress {prog}% < {force_at}%", "DEBUG")
+        return None
+    ids = evt.get("ids") or {}
+    if not isinstance(ids, dict) or not ids:
+        _log("auto-remove skipped: event has no ids", "DEBUG")
+        return None
+    return remove_across_providers_by_ids(ids, media_type)
+
+def remove_by_ids(ids: Dict[str, Any] | None, media_type: str | None = None) -> Dict[str, Any]:
+    return remove_across_providers_by_ids(ids, media_type)
