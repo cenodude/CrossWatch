@@ -156,7 +156,7 @@ def _dbg(msg: str) -> None:
 
 # --- central removal hook (across providers) -----------------------------------
 try:
-    from _auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+    from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 except Exception:
     _rm_across = None
 try:

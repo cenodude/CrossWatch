@@ -17,7 +17,8 @@ from providers.scrobble.scrobble import (
     Dispatcher, ScrobbleSink, ScrobbleEvent,
     from_plex_pssn, from_plex_flat_playing,
 )
-from providers.scrobble._auto_remove_plex import auto_remove_if_config_allows
+
+from providers.scrobble._auto_remove_watchlist import auto_remove_if_config_allows
 
 def _cfg() -> dict[str, Any]:
     p = Path("/config/config.json")

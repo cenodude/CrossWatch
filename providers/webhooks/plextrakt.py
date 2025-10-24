@@ -18,10 +18,8 @@ _DEF_WEBHOOK = {
 _DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
 
 # --- cross-provider auto-remove hooks ---
-try:
-    from _auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
-except Exception:
-    _rm_across = None
+from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+
 try:
     from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # fallback
 except Exception:
