@@ -63,7 +63,7 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
           <li>Sync playlists (one-/two-way — disabled)</li>
-          <li>Auto-remove from Plex watchlist after finish</li>
+          <li>Auto-remove from watchlist after finish</li>
         </ul>
       </td>
       <td valign="top">
