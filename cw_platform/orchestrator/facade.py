@@ -100,56 +100,59 @@ class Orchestrator:
 
     #--- Main run method ----------------------------------------------------------
     def run(self, *, dry_run: bool=False, only_feature: Optional[str]=None, write_state_json: bool=True, state_path: Optional[str]=None, progress: Optional[object]=None, **kwargs) -> Dict[str, Any]:
-        if progress is not None:
-            if callable(progress):
-                self.on_progress = progress
-                self.emitter.cb = progress
-            elif isinstance(progress, bool):
-                if progress and self.on_progress is None:
-                    self.emitter.cb = lambda s: print(s, flush=True)
-                elif not progress:
-                    self.emitter.cb = None
-        if kwargs:
-            try: self.dbg("run.kwargs.ignored", keys=sorted(kwargs.keys()))
+        prev_cb = self.emitter.cb
+        prev_on = self.on_progress
+        try:
+            if progress is not None:
+                if callable(progress):
+                    self.on_progress = progress
+                    self.emitter.cb = progress
+                elif isinstance(progress, bool):
+                    if progress and self.on_progress is None:
+                        self.emitter.cb = lambda s: print(s, flush=True)
+                    elif not progress:
+                        self.emitter.cb = None
+            if kwargs:
+                try: self.dbg("run.kwargs.ignored", keys=sorted(kwargs.keys()))
+                except Exception: pass
+
+            self.dry_run = bool(dry_run)
+            self.only_feature = only_feature
+            self.write_state_json = bool(write_state_json)
+            self.state_path = Path(state_path) if state_path else None
+
+            summary = _run_pairs(self.context)
+
+            try:
+                enabled_feats = self._enabled_features()
+                if enabled_feats:
+                    self._persist_feature_baselines(features=enabled_feats)
+            except Exception:
+                pass
+
+            try: self._persist_state_wall(feature='watchlist')
+            except Exception: pass
+            try:
+                self.state_store.clear_watchlist_hide()
+                self.dbg('hidefile.cleared', feature='watchlist', scope='end-of-run')
+            except Exception: pass
+            try:
+                if hasattr(self.stats, 'http_overview'):
+                    http24 = self.stats.http_overview(hours=24)
+                    self.emit('http:overview', window_hours=24, data=http24)
             except Exception: pass
 
-        self.dry_run = bool(dry_run)
-        self.only_feature = only_feature
-        self.write_state_json = bool(write_state_json)
-        self.state_path = Path(state_path) if state_path else None
-
-        summary = _run_pairs(self.context)
-
-        # Persist feature baselines (used by insights for titles)
-        try:
-            enabled_feats = self._enabled_features()
-            if enabled_feats:
-                self._persist_feature_baselines(features=enabled_feats)
-        except Exception:
-            pass
-
-        # Persist watchlist wall
-        try: self._persist_state_wall(feature='watchlist')
-        except Exception: pass
-        try:
-            self.state_store.clear_watchlist_hide()
-            self.dbg('hidefile.cleared', feature='watchlist', scope='end-of-run')
-        except Exception: pass
-        try:
-            if hasattr(self.stats, 'http_overview'):
-                http24 = self.stats.http_overview(hours=24)
-                self.emit('http:overview', window_hours=24, data=http24)
-        except Exception: pass
-
-        # Persist HTTP overview
-        try:
-            if hasattr(self.stats, "overview"):
-                st = self.state_store.load_state()
-                ov = self.stats.overview(st)
-                self.emit("stats:overview", overview=ov)
-        except Exception:
-            pass
-        return summary
+            try:
+                if hasattr(self.stats, "overview"):
+                    st = self.state_store.load_state()
+                    ov = self.stats.overview(st)
+                    self.emit("stats:overview", overview=ov)
+            except Exception:
+                pass
+            return summary
+        finally:
+            self.emitter.cb = prev_cb
+            self.on_progress = prev_on
 
     def run_pairs(self, *args, **kwargs) -> Dict[str, Any]:
         return self.run(*args, **kwargs)
@@ -207,7 +210,6 @@ class Orchestrator:
                     if v.get("enable") or v.get("enabled"): feats.add(name)
         if self.only_feature:
             feats &= {self.only_feature}
-        # Always keep watchlist as a safe baseline when nothing explicit is enabled
         if not feats:
             feats.add("watchlist")
         return sorted(feats)

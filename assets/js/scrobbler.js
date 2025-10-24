@@ -110,7 +110,7 @@
     const loadPlexBtn=$("#sc-load-users",STATE.mount); if(loadPlexBtn) loadPlexBtn.style.display = prov==="plex" ? "" : "none";
     const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = prov!=="plex";
 
-    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = prov==="plex" ? "" : "none";
+    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = "";
 
     if(watcherOn){
       if(prov==="plex"){
@@ -128,6 +128,12 @@
         <div class="wh-top" style="--wh-logo:28px">
           <div class="wh-left">
             <label class="wh-toggle"><input type="checkbox" id="sc-enable-webhook"><span>Enable</span></label>
+            <div style="margin-top:6px">
+              <label class="sc-toggle">
+                <input type="checkbox" id="sc-delete-plex-webhook">
+                <span class="one-line">Auto-remove from Watchlists</span>
+              </label>
+            </div>
           </div>
           <div class="wh-endpoints">
             <div class="codepair right">
@@ -169,12 +175,6 @@
                   <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
                 </div>
               </div>
-            </div>
-            <div style="margin-top:8px">
-              <label class="sc-toggle">
-                <input type="checkbox" id="sc-delete-plex-webhook">
-                <span class="one-line">Auto-remove from Plex Watchlist</span>
-              </label>
             </div>
           </div>
         </details>
@@ -295,7 +295,7 @@
             <div id="sc-delete-plex-watch-wrap" style="margin-top:8px">
               <label class="sc-toggle">
                 <input type="checkbox" id="sc-delete-plex-watch">
-                <span class="one-line">Auto-remove from Plex Watchlist</span>
+                <span class="one-line">Auto-remove from Watchlists</span>
               </label>
             </div>
           </div>
@@ -423,7 +423,7 @@
     const delEnabled=!!read("scrobble.delete_plex",false);
     const delWh=$("#sc-delete-plex-webhook",STATE.mount); if(delWh) delWh.checked=delEnabled;
     const delW=$("#sc-delete-plex-watch",STATE.mount); if(delW) delW.checked=delEnabled;
-    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = prov==="plex" ? "" : "none";
+    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = "";
 
     restoreDetailsState("#sc-filters",false,"sc-filters-open");
     restoreDetailsState("#sc-advanced",false,"sc-advanced-open");

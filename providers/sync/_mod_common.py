@@ -76,6 +76,14 @@ class SnapshotProgress:
         self._last_done = 0
 
     def tick(self, done: int, *, total: Optional[int] = None, ok: Optional[bool] = None, force: bool = False) -> None:
+        t = self.total if total is None else total
+        if not force:
+            try:
+                if int(done or 0) == 0 and int(t or 0) == 0:
+                    self._last_done = 0
+                    return
+            except Exception:
+                pass
         now = time.monotonic()
         if not force and (now - self._last_ts) * 1000 < self._throttle:
             self._last_done = max(self._last_done, int(done))
@@ -87,7 +95,6 @@ class SnapshotProgress:
             "feature": self.feature,
             "done": int(done),
         }
-        t = self.total if total is None else total
         if t is not None:
             try:
                 payload["total"] = int(t)
