@@ -283,6 +283,8 @@ DEFAULT_CFG: Dict[str, Any] = {
         "webhook": {
             "pause_debounce_seconds": 5,                # Ignore micro-pauses
             "suppress_start_at": 99,                    # Suppress near-end "start" flaps (credits)
+            "suppress_autoplay_seconds": 15,            # Plex autoplay when set on 10 sec (increase a few sec)
+            "probe_session_progress": True,             # Call GET /status/sessions on your Plex server and match the item by ratingKey/sessionKey
 
             # Plex-only filters
             "filters_plex": {
@@ -294,7 +296,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         # Trakt sink rules (progress decisions)
         "trakt": {
             "stop_pause_threshold": 85,                 # <85% STOP → send as PAUSE (your “watched” bar)
-            "force_stop_at": 85,                        # ≥85% always STOP (bypass debounces)
+            "force_stop_at": 95,                        # ≥85% always STOP (bypass debounces)
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }
     },
