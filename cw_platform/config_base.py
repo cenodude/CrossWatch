@@ -58,6 +58,7 @@ DEFAULT_CFG: Dict[str, Any] = {
 
         # Watchlist via Discover (with PMS fallback toggle)
         "watchlist_allow_pms_fallback": False,          # Allow PMS watchlist fallback when needed. Keep False for strict Discover-only behavior.
+        "watchlist_page_size": 100,                     # Discover page size (100-200). Higher = faster, but more risk of 504 timeouts.
         "watchlist_query_limit": 25,                    # Max Discover search results per query (10–25). Lower = faster, 25 = safer.
         "watchlist_write_delay_ms": 0,                  # Optional pacing between Discover writes; set 50–150 if you hit 429/5xx.
         "watchlist_title_query": True,                  # Use title/slug tokens for Discover candidate fetching (Discover is text-only).

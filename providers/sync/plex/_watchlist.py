@@ -621,7 +621,6 @@ def _hydrate_ids_cached(token: str, rk: str) -> Dict[str, Any]:
     return m
 
 # ── public API: index ─────────────────────────────────────────────────────────
-
 def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
     if not token:
@@ -629,41 +628,53 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     session = adapter.client.session
     timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
     retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
-
+    cfg = _cfg(adapter)
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("watchlist") if callable(prog_mk) else None
-
-    cont = _get_container(
-        session, f"{DISCOVER}/library/sections/watchlist/all", token,
-        timeout=timeout, retries=retries,
-        params={"includeCollections": 1, "includeExternalMedia": 1},
-    )
-    mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
-    try:
-        total = int((mc or {}).get("size")) if isinstance(mc, Mapping) and str((mc or {}).get("size","")).isdigit() else None
-    except Exception:
-        total = None
-
-    rows = list(_iter_meta_rows(cont))
-    if total is None:
-        total = len(rows)
-
-    if prog:
-        try: prog.tick(0, total=total, force=True)
-        except Exception: pass
+    page_size = _cfg_int(cfg, "watchlist_page_size", 100)
+    base_params = {"includeCollections": 1, "includeExternalMedia": 1}
 
     out: Dict[str, Dict[str, Any]] = {}
-    done = 0
-    for row in rows:
-        m = normalize_discover_row(row, token=token)
-        out[canonical_key(m)] = m
-        done += 1
-        if prog:
-            try: prog.tick(done, total=total)
+    done = 0; total: Optional[int] = None; start = 0
+    raw = 0; coll = 0; typ: Dict[str,int] = {}
+    while True:
+        params = dict(base_params)
+        params["X-Plex-Container-Start"] = start
+        params["X-Plex-Container-Size"] = page_size
+        params["offset"] = start
+        params["limit"] = page_size
+        cont = _get_container(session, f"{DISCOVER}/library/sections/watchlist/all", token,
+                              timeout=timeout, retries=retries, params=params, accept_json=True)
+        mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
+        if total is None:
+            try:
+                t = (mc or {}).get("totalSize") or (mc or {}).get("size")
+                total = int(t) if t is not None and str(t).isdigit() else None
+            except Exception:
+                total = None
+        rows = list(_iter_meta_rows(cont)); raw += len(rows)
+        if prog and start == 0:
+            try: prog.tick(0, total=(total if total is not None else 0), force=True)
             except Exception: pass
-
+        if not rows: break
+        stop = False
+        for row in rows:
+            m = normalize_discover_row(row, token=token)
+            k = canonical_key(m)
+            if k in out: coll += 1
+            out[k] = m
+            t = (m.get("type") or "movie").lower(); typ[t] = typ.get(t,0)+1
+            done += 1
+            if prog:
+                try: prog.tick(done, total=(total if total is not None else done))
+                except Exception: pass
+            if total is not None and done >= total:
+                stop = True; break
+        if stop: break
+        if total is None and len(rows) < page_size: break
+        start += len(rows)
     _unfreeze_keys_if_present(out.keys())
-    _log(f"index size: {len(out)}")
+    _log(f"index size: {len(out)} raw={raw} coll={coll} types={typ}")
     return out
 
 # ── public API: add/remove ────────────────────────────────────────────────────

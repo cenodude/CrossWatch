@@ -142,6 +142,7 @@ class PLEXConfig:
     timeout: float = 10.0
     max_retries: int = 3
     watchlist_allow_pms_fallback: bool = True
+    watchlist_page_size: int = 100
 
 class PLEXClient:
     """
@@ -323,6 +324,7 @@ class PLEXModule:
             timeout=float(plex_cfg.get("timeout", cfg.get("timeout", 10.0))),
             max_retries=int(plex_cfg.get("max_retries", cfg.get("max_retries", 3))),
             watchlist_allow_pms_fallback=bool(plex_cfg.get("watchlist_allow_pms_fallback", True)),
+            watchlist_page_size=int(plex_cfg.get("watchlist_page_size", 100)),
         )
         configure_plex_context(
             baseurl=self.cfg.baseurl,
