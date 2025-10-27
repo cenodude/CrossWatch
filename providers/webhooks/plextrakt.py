@@ -31,6 +31,20 @@ except Exception:
 def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
     if not isinstance(ids, dict) or not ids: return
     try:
+        cfg = _load_config()
+        s = (cfg.get("scrobble") or {})
+        if not s.get("delete_plex"): return
+        tps = s.get("delete_plex_types") or []
+        mt = (media_type or "").strip().lower()
+        allow = False
+        if isinstance(tps, list):
+            allow = (mt in tps) or ((mt.rstrip("s") + "s") in tps)
+        elif isinstance(tps, str):
+            allow = mt in tps
+        if not allow: return
+    except Exception:
+        pass
+    try:
         if callable(_rm_across): _rm_across(ids, media_type); return
     except Exception:
         pass
@@ -129,6 +143,15 @@ def _del_trakt(path: str, cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     return requests.delete(url, headers=_headers(cfg), timeout=12)
 
+def _get_trakt_watching(cfg: Dict[str, Any]) -> None:
+    try:
+        r = requests.get(f"{TRAKT_API}/users/me/watching", headers=_headers(cfg), timeout=8)
+        try: body = r.json()
+        except Exception: body = (r.text or "")[:200]
+        _emit(None, f"trakt watching {r.status_code}: {str(body)[:200]}", "DEBUG")
+    except Exception as e:
+        _emit(None, f"trakt watching check error: {e}", "DEBUG")
+
 def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     body = {**body, **_app_meta(cfg)}
@@ -141,6 +164,8 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
             pass
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     if r.status_code == 409:
+        if _is_debug():
+            _get_trakt_watching(cfg)
         txt = (r.text or "")
         if ("expires_at" in txt or "watched_at" in txt):
             try:
@@ -149,6 +174,8 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
             except Exception:
                 pass
             r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+            if _is_debug() and r.status_code == 409:
+                _get_trakt_watching(cfg)
     if r.status_code in (429, 500, 502, 503, 504):
         try: ra = float(r.headers.get("Retry-After") or "1")
         except Exception: ra = 1.0
@@ -711,6 +738,13 @@ def process_webhook(
                                  "autoplay_pending": False, "autoplay_until": 0.0}
         return {"ok": True, "suppressed": True}
 
+    if event == "media.stop" and st.get("finished") is True and abs((st.get("prog", 0.0)) - prog) <= 1.0:
+        _emit(logger, "suppress duplicate stop", "DEBUG")
+        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "prog": prog, "sk": sk_current,
+                                 "finished": True,
+                                 "autoplay_pending": False, "autoplay_until": 0.0}
+        return {"ok": True, "suppressed": True}
+
     if intended == "/scrobble/stop" and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
@@ -722,6 +756,11 @@ def process_webhook(
                                  "finished": (prog >= force_stop_at),
                                  "autoplay_pending": False, "autoplay_until": 0.0}
         return {"ok": True, "ignored": True}
+
+    if intended == "/scrobble/stop" and prog >= force_stop_at:
+        try: _del_trakt("/checkin", cfg)
+        except Exception: pass
+        time.sleep(0.15)
 
     _emit(logger, f"trakt intent {intended} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
     r = _post_trakt(intended, body, cfg)
@@ -739,6 +778,25 @@ def process_webhook(
             try: rj = r.json()
             except Exception: rj = {"raw": (r.text or "")[:200]}
             _emit(logger, f"trakt {intended} (rescue) -> {r.status_code}", "DEBUG")
+
+    if r.status_code == 409 and intended == "/scrobble/stop":
+        raw_txt = r.text or ""
+        if ("expires_at" in raw_txt or "watched_at" in raw_txt):
+            if prog >= force_stop_at and not (st.get("wl_removed") is True):
+                try:
+                    ids_payload = (ids_all or ids or {})
+                    _call_remove_across(ids_payload, media_type)
+                    st = {**st, "wl_removed": True}
+                except Exception:
+                    pass
+            _SCROBBLE_STATE[sess] = {
+                "ts": now, "last_event": event, "last_pause_ts": st.get("last_pause_ts", 0),
+                "prog": prog, "sk": sk_current, "finished": True,
+                "autoplay_pending": False, "autoplay_until": 0.0,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            }
+            _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
+            return {"ok": True, "status": 200, "action": intended, "trakt": rj, "note": "409_checkin"}
 
     if r.status_code < 400:
         if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):

@@ -255,6 +255,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         users = sorted(best.values(), key=lambda x: (rank.get(x["type"], 9), x["username"].lower()))
         return {"users": users, "count": len(users)}
 
+    @app.get("/api/plex/users", tags=["plex"])
+    def plex_users():
+        return plex_pickusers()
+
     # ---------- JELLYFIN ----------
     @app.post("/api/jellyfin/login", tags=["auth"])
     def api_jellyfin_login(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
@@ -347,12 +351,62 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     @app.get("/api/emby/inspect", tags=["emby"])
     def emby_inspect():
         emby_ensure_whitelist_defaults()
-        return emby_inspect_and_persist()
+        out = emby_inspect_and_persist()
+        try:
+            if not (out or {}).get("user_id"):
+                cfg = load_config(); em = (cfg.get("emby") or {})
+                server = (em.get("server") or "").rstrip("/")
+                token = (em.get("access_token") or "").strip()
+                if server and token:
+                    r = requests.get(f"{server}/Users/Me", headers={"X-Emby-Token": token, "Accept": "application/json"}, timeout=float(em.get("timeout", 15) or 15), verify=bool(em.get("verify_ssl", False)))
+                    if r.ok:
+                        me = r.json() or {}
+                        out = dict(out or {})
+                        out.setdefault("user_id", me.get("Id") or me.get("id") or "")
+                        out.setdefault("username", me.get("Name") or me.get("name") or "")
+        except Exception:
+            pass
+        return out
 
     @app.get("/api/emby/libraries", tags=["emby"])
     def emby_libraries():
         emby_ensure_whitelist_defaults()
         return {"libraries": emby_fetch_libraries_from_cfg()}
+
+    @app.get("/api/emby/users", tags=["emby"])
+    def emby_users():
+        cfg = load_config(); em = (cfg.get("emby") or {})
+        server = (em.get("server") or "").rstrip("/")
+        token = (em.get("access_token") or "").strip()
+        if not server or not token:
+            return JSONResponse({"ok": False, "error": "Not connected to Emby"}, 401)
+        timeout = float(em.get("timeout", 15) or 15)
+        verify = bool(em.get("verify_ssl", False))
+        headers = {"X-Emby-Token": token, "Accept": "application/json"}
+        users: list[dict] = []
+        try:
+            r = requests.get(f"{server}/Users", headers=headers, timeout=timeout, verify=verify)
+            if r.ok:
+                data = r.json() or []
+                arr = data.get("Items") if isinstance(data, dict) else data
+                if isinstance(arr, list):
+                    for u in arr:
+                        users.append({
+                            "id": (u or {}).get("Id") or (u or {}).get("id"),
+                            "username": (u or {}).get("Name") or (u or {}).get("name") or "",
+                            "IsAdministrator": bool(((u or {}).get("Policy") or {}).get("IsAdministrator")) if isinstance((u or {}).get("Policy"), dict) else bool((u or {}).get("IsAdministrator") or False),
+                            "IsHidden": bool(((u or {}).get("Policy") or {}).get("IsHidden")) if isinstance((u or {}).get("Policy"), dict) else bool((u or {}).get("IsHidden") or False),
+                            "IsDisabled": bool(((u or {}).get("Policy") or {}).get("IsDisabled")) if isinstance((u or {}).get("Policy"), dict) else bool((u or {}).get("IsDisabled") or False),
+                        })
+            else:
+                mr = requests.get(f"{server}/Users/Me", headers=headers, timeout=timeout, verify=verify)
+                if mr.ok:
+                    me = mr.json() or {}
+                    users = [{"id": me.get("Id") or me.get("id"), "username": me.get("Name") or me.get("name") or ""}]
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, _status_from_msg(str(e)))
+        users = [u for u in users if (u or {}).get("username")]
+        return {"users": users, "count": len(users)}
 
     # ---------- TRAKT ----------
     def trakt_request_pin() -> dict:
@@ -546,4 +600,3 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return out
 
     return None
-

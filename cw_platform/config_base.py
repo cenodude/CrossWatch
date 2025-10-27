@@ -266,7 +266,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "enabled": False,                               # Master toggle
         "mode": "watch",                                # "watch" | "webhook"
         "delete_plex": False,                           # Old name but still valid. Auto-remove movies from all your Watchlists, for all media servers
-        "delete_plex_types": ["movie"],                 # ["movie"] 
+        "delete_plex_types": ["movie"],                 # Old name but still valid. Movie/show/episode
 
         # Watcher settings
         "watch": {

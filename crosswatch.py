@@ -581,7 +581,7 @@ async def _lifespan(app):
             scfg = (load_config().get("scheduling") or {})
             if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
                 scheduler.refresh()
-            _UIHostLogger("SYNC")("scheduler: started & refreshed", level="INFO")
+            _UIHostLogger("SYNC")("scheduler: started and refreshed", level="INFO")
     except Exception as e:
         try: _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
         except Exception: pass

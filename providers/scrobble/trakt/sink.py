@@ -157,47 +157,55 @@ try:
 except Exception:
     _rm_across_api = None
 
+def _norm_type(t: str) -> str:
+    s = (t or "").strip().lower()
+    if s.endswith("s"): s = s[:-1]
+    if s == "series": s = "show"
+    return s
+
 def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     s = (cfg.get("scrobble") or {})
     if not s.get("delete_plex"): return False
     types = s.get("delete_plex_types") or []
-    if isinstance(types, list): return (media_type in types) or (media_type.rstrip("s")+"s" in types)
-    if isinstance(types, str):  return media_type in types
-    return False
+    mt = _norm_type(media_type)
+    if isinstance(types, str): return _norm_type(types) == mt
+    try:
+        allowed = {_norm_type(x) for x in types if str(x).strip()}
+    except Exception:
+        return False
+    return mt in allowed
 
 def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
-    mt = str(getattr(ev, "media_type", "") or "").strip().lower()
-    if mt != "movie":
-        _log(f"Auto-remove skipped: media_type={mt or 'unknown'} (only 'movie' allowed)", "DEBUG")
-        return
-
+    mt = _norm_type(str(getattr(ev, "media_type", "") or ""))
     if not _cfg_delete_enabled(cfg, mt):
-        _log("Auto-remove skipped: disabled by config for type=movie", "DEBUG")
+        _log(f"Auto-remove skipped: disabled by config for type={mt or 'unknown'}", "DEBUG")
         return
 
-    ids = _ids(ev)
+    # Prefer show-level IDs for episodes; fallback to episode/movie IDs.
+    ids = _show_ids(ev) if mt == "episode" else _ids(ev)
+    if not ids:
+        ids = _ids(ev)
     if not ids:
         _log("Auto-remove skipped: no provider IDs available", "DEBUG")
         return
 
     try:
         if callable(_rm_across):
-            _log(f"Auto-remove across providers via _auto_remove_watchlist ids={ids}", "INFO")
-            _rm_across(ids, "movie")
+            _log(f"Auto-remove across providers ids={ids} media={mt}", "INFO")
+            _rm_across(ids, mt)
             return
     except Exception as e:
         _log(f"Auto-remove across (_auto_remove_watchlist) failed: {e}", "WARN")
 
     try:
         if callable(_rm_across_api):
-            _log(f"Auto-remove across providers via _watchlistAPI ids={ids}", "INFO")
-            _rm_across_api(ids, "movie")  # type: ignore
+            _log(f"Auto-remove across providers via _watchlistAPI ids={ids} media={mt}", "INFO")
+            _rm_across_api(ids, mt)  # type: ignore
             return
     except Exception as e:
         _log(f"Auto-remove across (_watchlistAPI) failed: {e}", "WARN")
 
     _log("Auto-remove skipped: no available remove-across implementation", "DEBUG")
-
 
 def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
     try:
@@ -247,6 +255,8 @@ class TraktSink(ScrobbleSink):
         self._ids_logged: set[str] = set()
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
+        self._warn_no_token = False
+        self._warn_no_client = False
 
     def _mkey(self, ev: ScrobbleEvent) -> str:
         ids = ev.ids or {}; parts=[]
@@ -339,6 +349,21 @@ class TraktSink(ScrobbleSink):
 
     def send(self, ev: ScrobbleEvent) -> None:
         cfg = _cfg()
+
+        t = (cfg.get("trakt") or {})
+        client_id = t.get("client_id") or t.get("api_key")
+        token = _TOKEN_OVERRIDE or t.get("access_token") or ((cfg.get("auth") or {}).get("trakt") or {}).get("access_token")
+        if not client_id:
+            if not self._warn_no_client:
+                _log("Missing trakt.client_id/api_key in config.json — skipping scrobble", "ERROR")
+                self._warn_no_client = True
+            return
+        if not token:
+            if not self._warn_no_token:
+                _log("Missing Trakt access_token — connect Trakt to enable scrobble", "ERROR")
+                self._warn_no_token = True
+            return
+
         sk, mk = str(ev.session_key or "?"), self._mkey(ev)
         p_now  = _clamp(ev.progress)
         tol    = _regress_tol(cfg)

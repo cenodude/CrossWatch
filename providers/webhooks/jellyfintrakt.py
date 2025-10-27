@@ -24,13 +24,25 @@ except Exception:
 def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
     if not isinstance(ids, dict) or not ids: return
     try:
-        if callable(_rm_across):
-            _rm_across(ids, media_type); return
+        cfg = _load_config()
+        s = (cfg.get("scrobble") or {})
+        if not s.get("delete_plex"): return
+        tps = s.get("delete_plex_types") or []
+        mt = (media_type or "").strip().lower()
+        allow = False
+        if isinstance(tps, list):
+            allow = (mt in tps) or ((mt.rstrip("s") + "s") in tps)
+        elif isinstance(tps, str):
+            allow = mt in tps
+        if not allow: return
     except Exception:
         pass
     try:
-        if callable(_rm_across_api):
-            _rm_across_api(ids, media_type); return
+        if callable(_rm_across): _rm_across(ids, media_type); return
+    except Exception:
+        pass
+    try:
+        if callable(_rm_across_api): _rm_across_api(ids, media_type); return
     except Exception:
         pass
 
@@ -122,6 +134,15 @@ def _del_trakt(path: str, cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     return requests.delete(url, headers=_headers(cfg), timeout=12)
 
+def _get_trakt_watching(cfg: Dict[str, Any]) -> None:
+    try:
+        r = requests.get(f"{TRAKT_API}/users/me/watching", headers=_headers(cfg), timeout=8)
+        try: body = r.json()
+        except Exception: body = (r.text or "")[:200]
+        _emit(None, f"trakt watching {r.status_code}: {str(body)[:200]}", "DEBUG")
+    except Exception as e:
+        _emit(None, f"trakt watching check error: {e}", "DEBUG")
+
 def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
     body = {**body, **_app_meta(cfg)}
@@ -134,6 +155,8 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
             pass
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     if r.status_code == 409:
+        if _is_debug():
+            _get_trakt_watching(cfg)
         try: txt = (r.text or "")
         except Exception: txt = ""
         if ("expires_at" in txt or "watched_at" in txt):
@@ -143,6 +166,8 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
             except Exception:
                 pass
             r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+            if _is_debug() and r.status_code == 409:
+                _get_trakt_watching(cfg)
     if r.status_code in (429, 500, 502, 503, 504):
         try: ra = float(r.headers.get("Retry-After") or "1")
         except Exception: ra = 1.0
@@ -472,11 +497,12 @@ def process_webhook(
         return {"ok": True, "suppressed": True}
 
     intended = path
+
     if intended == "/scrobble/stop":
         if prog < stop_pause_threshold: intended = "/scrobble/pause"
         elif prog < force_stop_at: intended = "/scrobble/pause"
         elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
-            _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}%", "DEBUG")
+            _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
             intended = "/scrobble/pause"; prog = last_prog
 
     if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
@@ -495,6 +521,11 @@ def process_webhook(
                                  "finished": (prog >= force_stop_at)}
         return {"ok": True, "ignored": True}
 
+    if intended == "/scrobble/stop" and prog >= force_stop_at:
+        try: _del_trakt("/checkin", cfg)
+        except Exception: pass
+        time.sleep(0.15)
+
     _emit(logger, f"trakt intent {intended} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
     r = _post_trakt(intended, body, cfg)
     try: rj = r.json()
@@ -510,6 +541,22 @@ def process_webhook(
             try: rj = r.json()
             except Exception: rj = {"raw": (r.text or "")[:200]}
             _emit(logger, f"trakt {intended} (rescue) -> {r.status_code}", "DEBUG")
+
+    if r.status_code == 409 and intended == "/scrobble/stop":
+        raw_txt = r.text or ""
+        if ("expires_at" in raw_txt or "watched_at" in raw_txt):
+            if prog >= force_stop_at and not (st.get("wl_removed") is True):
+                try:
+                    _call_remove_across(ids_all or {}, media_type)
+                    st = {**st, "wl_removed": True}
+                except Exception:
+                    pass
+            _SCROBBLE_STATE[sess] = {
+                "ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0),
+                "prog": prog, "sk": sk_current, "finished": True,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            }
+            return {"ok": True, "status": 200, "action": intended, "trakt": rj, "note": "409_checkin"}
 
     if r.status_code < 400:
         if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):

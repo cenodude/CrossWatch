@@ -38,7 +38,7 @@ def _emby_bt(cfg: dict[str, Any]) -> tuple[str, str]:
     base = str(e.get("server", "")).strip().rstrip("/")
     tok = str(e.get("access_token", "")).strip()
     if not base or not tok:
-        raise ValueError("Missing emby.server or emby.access_token in config.json")
+        return "", ""
     if "://" not in base:
         base = "http://" + base
     return base, tok
@@ -134,7 +134,12 @@ def _media_name(ev: ScrobbleEvent) -> str:
 class EmbyWatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 0.7) -> None:
         self._base, self._tok = _emby_bt(_cfg())
-        self._server_id = _server_id(self._base, self._tok)
+        self._disabled = False
+        if not self._base or not self._tok:
+            self._disabled = True
+            self._server_id = None
+        else:
+            self._server_id = _server_id(self._base, self._tok)
         self._dispatch = Dispatcher(list(sinks or []), cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
         self._poll = max(0.3, float(poll_secs))
         self._stop = threading.Event()
@@ -147,7 +152,6 @@ class EmbyWatchService:
         self._dbg_last_ts = 0.0
 
     def _log(self, msg: str, level: str = "INFO") -> None:
-        # Print-only; suppress DEBUG when runtime.debug is false.
         if str(level).upper() == "DEBUG" and not _is_debug():
             return
         print(f"{level} [EMBYWATCH] {msg}")
@@ -247,7 +251,6 @@ class EmbyWatchService:
         if not self._passes_filters(ev):
             return
         sk = str(ev.session_key or "")
-        # This is the only INFO from the watcher (keep default level=INFO):
         self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={sk}")
         self._dispatch.dispatch(ev)
         if sk:
@@ -359,6 +362,9 @@ class EmbyWatchService:
 
     def start(self) -> None:
         self._stop.clear()
+        if self._disabled:
+            self._log("Missing emby.server or emby.access_token in config.json", "ERROR")
+            return
         self._log(f"Emby watcher starting → {self._base}", "DEBUG")
         while not self._stop.is_set():
             self._tick()

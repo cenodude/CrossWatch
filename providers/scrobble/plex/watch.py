@@ -88,7 +88,6 @@ class WatchService:
         self._attempt = 0
 
     def _log(self, msg: str, level: str = "INFO") -> None:
-        # Print-only logging; suppress DEBUG when runtime.debug is false.
         if str(level).upper() == "DEBUG" and not _is_debug():
             return
         print(f"{level} [WATCH] {msg}")
@@ -138,7 +137,6 @@ class WatchService:
             return _allow()
 
         import re as _re
-
         def norm(s: str) -> str:
             return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
@@ -354,11 +352,8 @@ class WatchService:
                     return
                 self._last_emit[sk] = (ev.action, ev.progress)
 
-            # The only INFO emitted from watcher:
             self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
             self._dispatch.dispatch(ev)
-
-            # NOTE: WL-AUTO removal is handled inside TraktSink after a confirmed stop.
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")
 
@@ -368,6 +363,9 @@ class WatchService:
         while not self._stop.is_set():
             try:
                 base, token = _plex_btok(_cfg())
+                if not token:
+                    self._log("Missing plex.account_token or plex.token in config.json", "ERROR")
+                    return
                 self._plex = PlexServer(base, token)
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,

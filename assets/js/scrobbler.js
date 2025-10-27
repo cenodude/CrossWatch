@@ -62,8 +62,26 @@
 
   const API={
     cfgGet:()=>j("/api/config"),
-    users:async()=>{const x=await j("/api/plex/users");const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];return Array.isArray(a)?a:[];},
-    serverUUID:()=>j("/api/plex/server_uuid"),
+    users:async()=>{
+      if(provider()==="emby"){
+        const x=await j("/api/emby/users");
+        const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
+        return Array.isArray(a)?a:[]; 
+      }else{
+        const x=await j("/api/plex/users");
+        const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
+        return Array.isArray(a)?a:[]; 
+      }
+    },
+    serverUUID:async()=>{
+      if(provider()==="emby"){
+        const x=await j("/api/emby/inspect");
+        const uid=x?.user_id||x?.user?.Id||x?.id||"";
+        return { id: uid };
+      }else{
+        return j("/api/plex/server_uuid");
+      }
+    },
     pms:async()=>{const x=await j("/api/plex/pms");const a=Array.isArray(x)?x:Array.isArray(x?.servers)?x.servers:[];return Array.isArray(a)?a:[];},
     watch:{
       status:()=>j("/debug/watch/status"),
@@ -72,9 +90,9 @@
     }
   };
 
-  function chip(label,onRemove){
+  function chip(label,onRemove,onPick){
     const c=el("span",{className:"chip"}),t=el("span",{textContent:label}),rm=el("span",{className:"rm",title:"Remove",textContent:"×"});
-    on(rm,"click",()=>onRemove&&onRemove(label)); c.append(t,rm); return c;
+    on(rm,"click",()=>onRemove&&onRemove(label)); if(onPick) on(t,"click",()=>onPick(label)); c.append(t,rm); return c;
   }
 
   function setWatcherStatus(ui){
@@ -84,6 +102,7 @@
     if(badge){ badge.textContent=alive?"Active":"Stopped"; badge.classList.toggle("is-on",alive); badge.classList.toggle("is-off",!alive); }
     if(last) last.textContent=ui?.lastSeen?`Last seen: ${ui.lastSeen}`:"";
     if(up)   up.textContent=ui?.uptime?`Uptime: ${ui.uptime}`:"";
+    STATE.watchAlive = alive;
   }
 
   function isValidServerUrl(v){ if(!v) return false; try{const u=new URL(v);return (u.protocol==="http:"||u.protocol==="https:")&&!!u.host;}catch{return false;} }
@@ -107,18 +126,32 @@
     const disc=$("#sc-pms-discovered",STATE.mount); if(disc) disc.style.display = prov==="plex" ? "" : "none";
     const btnDisc=$("#sc-pms-refresh",STATE.mount); if(btnDisc) btnDisc.disabled = prov!=="plex";
 
-    const loadPlexBtn=$("#sc-load-users",STATE.mount); if(loadPlexBtn) loadPlexBtn.style.display = prov==="plex" ? "" : "none";
-    const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = prov!=="plex";
+    const loadBtn=$("#sc-load-users",STATE.mount); if(loadBtn){ loadBtn.style.display=""; loadBtn.textContent = prov==="plex" ? "Load Plex users" : "Load Emby users"; }
+    const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = false;
+    const uuidLabel=$("#sc-uuid-label",STATE.mount); if(uuidLabel) uuidLabel.textContent = prov==="plex" ? "Server UUID" : "User ID";
+    const uuidInput=$("#sc-server-uuid",STATE.mount); if(uuidInput) uuidInput.placeholder = prov==="plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
 
     const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = "";
 
+    const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
+    const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
     if(watcherOn){
       if(prov==="plex"){
-        isValidServerUrl(srv)?setNote("sc-pms-note",`Using ${srv}`):setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
+        if(!plexTokenOk){ setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err"); }
+        else if(!isValidServerUrl(srv)) setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
+        else setNote("sc-pms-note",`Using ${srv}`);
       }else{
-        setNote("sc-pms-note", srv?`Using ${srv}`:"");
+        if(!embyTokenOk){ setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err"); }
+        else setNote("sc-pms-note", srv?`Using ${srv}`:"");
       }
     } else setNote("sc-pms-note","");
+
+    if(loadBtn){
+      if(prov==="plex" && !plexTokenOk) loadBtn.disabled=true; else if(prov==="emby" && !embyTokenOk) loadBtn.disabled=true; else loadBtn.disabled=!watcherOn;
+    }
+    if(fetchUuid){
+      if(prov==="plex" && !plexTokenOk) fetchUuid.disabled=true; else if(prov==="emby" && !embyTokenOk) fetchUuid.disabled=true; else fetchUuid.disabled=!watcherOn;
+    }
   }
 
   function buildUI(){
@@ -284,7 +317,7 @@
                 </div>
               </div>
               <div>
-                <div class="muted">Server UUID</div>
+                <div class="muted" id="sc-uuid-label">Server UUID</div>
                 <div id="sc-uuid-note" class="micro-note"></div>
                 <div style="display:flex; gap:8px; align-items:center; margin-top:6px">
                   <input id="sc-server-uuid" class="input" placeholder="e.g. abcd1234..." style="flex:1">
@@ -372,6 +405,21 @@
     return $all(".chip > span:first-child",host).map(s=>String(s.textContent||"").trim()).filter(Boolean);
   }
 
+  function onSelectWatchUser(name){
+    if(provider()!=="emby") return;
+    const list=Array.isArray(STATE.users)?STATE.users:[];
+    const hit=list.find(u=>String(u?.username||u?.Name||u?.name||"").toLowerCase()===String(name||"").toLowerCase());
+    const id=hit?.id||hit?.Id;
+    if(id){
+      const inp=$("#sc-server-uuid",STATE.mount); if(inp) inp.value=id;
+      write("scrobble.watch.filters.server_uuid",id);
+      write("scrobble.watch.filters.user_id",id);
+      setNote("sc-uuid-note","User ID set from username");
+    }else{
+      setNote("sc-uuid-note","User not found","err");
+    }
+  }
+
   function populate(){
     const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
     const useWebhook=enabled&&mode==="webhook",useWatch=enabled&&mode==="watch";
@@ -385,7 +433,7 @@
       const embyUser = String(read("emby.username", read("emby.user",""))||"").trim();
       if(embyUser){ wlWatch=[embyUser]; write("scrobble.watch.filters.username_whitelist",wlWatch); }
     }
-    const hostW=$("#sc-whitelist",STATE.mount); if(hostW){ hostW.innerHTML=""; wlWatch.forEach(u=>hostW.append(chip(u,removeUserWatch))); }
+    const hostW=$("#sc-whitelist",STATE.mount); if(hostW){ hostW.innerHTML=""; wlWatch.forEach(u=>hostW.append(chip(u,removeUserWatch,prov==="emby"?onSelectWatchUser:undefined))); }
     const suWatch=read("scrobble.watch.filters.server_uuid",""),suInpW=$("#sc-server-uuid",STATE.mount); if(suInpW) suInpW.value=suWatch||"";
 
     const wlWeb=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[]));
@@ -439,7 +487,14 @@
     const prov=provider();
     const srvProv = prov==="plex" ? "plex.server_url" : "emby.server";
     const srv=String(read(srvProv,"")||"");
-    if(prov==="plex" && !isValidServerUrl(srv)) return setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
+    const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
+    const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
+    if(prov==="plex"){
+      if(!plexTokenOk) return setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err");
+      if(!isValidServerUrl(srv)) return setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
+    }else{
+      if(!embyTokenOk) return setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err");
+    }
     try{ await API.watch.start(prov); }catch{ setNote("sc-pms-note","Start failed","err"); }
     refreshWatcher();
   }
@@ -447,8 +502,14 @@
 
   async function fetchServerUUID(){
     try{
+      const prov=provider();
       const x=await API.serverUUID(),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid",STATE.mount);
-      if(inp&&v){ inp.value=v; write("scrobble.watch.filters.server_uuid",v); setNote("sc-uuid-note","Server UUID fetched"); } else setNote("sc-uuid-note","No server UUID","err");
+      if(inp&&v){
+        inp.value=v;
+        write("scrobble.watch.filters.server_uuid",v);
+        if(prov==="emby") write("scrobble.watch.filters.user_id",v);
+        setNote("sc-uuid-note",prov==="plex"?"Server UUID fetched":"User ID fetched");
+      } else setNote("sc-uuid-note",prov==="plex"?"No server UUID":"No user ID","err");
     }catch{ setNote("sc-uuid-note","Fetch failed","err"); }
   }
   async function loadPmsList(){
@@ -466,25 +527,26 @@
   function onAddUserWatch(){
     const inp=$("#sc-user-input",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
     const cur=asArray(read("scrobble.watch.filters.username_whitelist",[]));
-    if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.watch.filters.username_whitelist",next); $("#sc-whitelist",STATE.mount).append(chip(v,removeUserWatch)); inp.value=""; }
+    if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.watch.filters.username_whitelist",next); $("#sc-whitelist",STATE.mount).append(chip(v,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)); inp.value=""; }
   }
   function removeUserWatch(u){
     const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])),next=cur.filter(x=>String(x)!==String(u));
     write("scrobble.watch.filters.username_whitelist",next);
-    const host=$("#sc-whitelist",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWatch)));
+    const host=$("#sc-whitelist",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)));
   }
   async function loadUsers(){
     try{
-      const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
-      const names=filtered.map(u=>u?.username||u?.title).filter(Boolean),host=$("#sc-whitelist",STATE.mount); let added=0;
-      for(const n of names){ const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.watch.filters.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWatch)); added++; } }
-      setNote("sc-users-note",added?`Loaded ${added} user(s)`:"No eligible managed/owner users");
+      const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true||u?.IsAdministrator===true||u?.IsHidden===false||u?.IsDisabled===false);
+      STATE.users = Array.isArray(list)?list:[];
+      const names=filtered.map(u=>u?.username||u?.title||u?.Name||u?.name).filter(Boolean),host=$("#sc-whitelist",STATE.mount); let added=0;
+      for(const n of names){ const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.watch.filters.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)); added++; } }
+      setNote("sc-users-note",added?`Loaded ${added} user(s)`:"No eligible users");
     }catch{ setNote("sc-users-note","Load users failed","err"); }
   }
 
   async function fetchServerUUIDWebhook(){
     try{
-      const x=await API.serverUUID(),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid-webhook",STATE.mount);
+      const x=await j("/api/plex/server_uuid"),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid-webhook",STATE.mount);
       if(inp&&v){ inp.value=v; write("scrobble.webhook.filters_plex.server_uuid",v); setNote("sc-uuid-note-webhook","Server UUID fetched"); } else setNote("sc-uuid-note-webhook","No server UUID","err");
     }catch{ setNote("sc-uuid-note-webhook","Fetch failed","err"); }
   }
@@ -499,11 +561,32 @@
   }
   async function loadUsersWebhook(){
     try{
-      const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
+      const x=await j("/api/plex/users"); const list=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
+      const filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
       const names=filtered.map(u=>u?.username||u?.title).filter(Boolean),host=$("#sc-whitelist-webhook",STATE.mount); let added=0;
       for(const n of names){ const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.webhook.filters_plex.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWebhook)); added++; } }
       setNote("sc-users-note-webhook",added?`Loaded ${added} user(s)`:"No eligible managed/owner users");
     }catch{ setNote("sc-users-note-webhook","Load users failed","err"); }
+  }
+
+  async function hydrateEmby(){
+    try{
+      const info=await j("/api/emby/inspect");
+      const server=String(info?.server||"").trim();
+      const username=String(info?.username||info?.user?.Name||"").trim();
+      const uid=String(info?.user_id||info?.user?.Id||"").trim();
+      if(server){ write("emby.server",server); const inp=$("#sc-pms-input",STATE.mount); if(inp) inp.value=server; }
+      if(username){
+        const cur=asArray(read("scrobble.watch.filters.username_whitelist",[]));
+        if(!cur.includes(username)){ write("scrobble.watch.filters.username_whitelist",[...cur,username]); const host=$("#sc-whitelist",STATE.mount); if(host) host.append(chip(username,removeUserWatch,onSelectWatchUser)); }
+      }
+      if(uid){
+        const inp=$("#sc-server-uuid",STATE.mount); if(inp) inp.value=uid;
+        write("scrobble.watch.filters.server_uuid",uid);
+        write("scrobble.watch.filters.user_id",uid);
+        setNote("sc-uuid-note","User ID detected");
+      }
+    }catch{}
   }
 
   function wire(){
@@ -514,12 +597,16 @@
     on($("#sc-copy-emby",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/embytrakt`); setNote("sc-endpoint-note",ok?"Emby endpoint copied":"Copy failed",ok?"":"err"); });
 
     on($("#sc-add-user",STATE.mount),"click",onAddUserWatch);
-    on($("#sc-load-users",STATE.mount),"click",()=>{ if(provider()==="plex") loadUsers(); });
+    on($("#sc-load-users",STATE.mount),"click",()=>{ loadUsers(); });
     on($("#sc-watch-start",STATE.mount),"click",onWatchStart);
     on($("#sc-watch-stop",STATE.mount),"click",onWatchStop);
     on($("#sc-watch-refresh",STATE.mount),"click",()=>{refreshWatcher(); try{ w.refreshWatchLogs?.(); }catch{}});
-    on($("#sc-fetch-uuid",STATE.mount),"click",()=>{ if(provider()==="plex") fetchServerUUID(); });
-    on($("#sc-server-uuid",STATE.mount),"input",e=>write("scrobble.watch.filters.server_uuid",String(e.target.value||"").trim()));
+    on($("#sc-fetch-uuid",STATE.mount),"click",()=>{ fetchServerUUID(); });
+    on($("#sc-server-uuid",STATE.mount),"input",e=>{
+      const v=String(e.target.value||"").trim();
+      write("scrobble.watch.filters.server_uuid",v);
+      if(provider()==="emby") write("scrobble.watch.filters.user_id",v);
+    });
 
     on($("#sc-add-user-webhook",STATE.mount),"click",onAddUserWebhook);
     on($("#sc-load-users-webhook",STATE.mount),"click",loadUsersWebhook);
@@ -538,11 +625,23 @@
     bindPercentInput("#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
 
     const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),pv=$("#sc-provider",STATE.mount);
-    const syncExclusive=src=>{const webOn=!!wh?.checked,watOn=!!wa?.checked; if(src==="webhook"&&webOn&&wa) wa.checked=false; if(src==="watch"&&watOn&&wh) wh.checked=false; write("scrobble.enabled",(!!wh?.checked)|| (!!wa?.checked)); write("scrobble.mode",(!!wa?.checked)?"watch":"webhook"); applyModeDisable();};
+    const syncExclusive=async src=>{
+      const webOn=!!wh?.checked,watOn=!!wa?.checked;
+      if(src==="webhook"&&webOn&&wa) wa.checked=false;
+      if(src==="watch"&&watOn&&wh) wh.checked=false;
+      write("scrobble.enabled",(!!wh?.checked)|| (!!wa?.checked));
+      write("scrobble.mode",(!!wa?.checked)?"watch":"webhook");
+      if(src==="watch" && !wa.checked){
+        try{ await API.watch.stop(); }catch{}
+        write("scrobble.watch.autostart",false);
+        const auto=$("#sc-autostart",STATE.mount); if(auto) auto.checked=false;
+      }
+      applyModeDisable();
+    };
     if(wh) on(wh,"change",()=>syncExclusive("webhook"));
     if(wa) on(wa,"change",()=>syncExclusive("watch"));
     on($("#sc-autostart",STATE.mount),"change",e=>write("scrobble.watch.autostart",!!e.target.checked));
-    on(pv,"change",e=>{ const val=String(e.target.value||"plex").toLowerCase(); write("scrobble.watch.provider",val); populate(); });
+    on(pv,"change",e=>{ const val=String(e.target.value||"plex").toLowerCase(); write("scrobble.watch.provider",val); populate(); if(val==="emby") hydrateEmby(); });
 
     on($("#sc-pms-refresh",STATE.mount),"click",()=>{ if(provider()==="plex") loadPmsList(); });
     on($("#sc-pms-select",STATE.mount),"change",e=>{ if(provider()!=="plex") return; const v=String(e.target.value||"").trim(); if(v){ $("#sc-pms-input",STATE.mount).value=v; write("plex.server_url",v); setNote("sc-pms-note",`Using ${v}`);} applyModeDisable();});
@@ -575,7 +674,7 @@
       if(!STATE.webhookHost){ makeSec("sc-sec-webhook","Webhook"); STATE.webhookHost=$("#scrob-webhook",STATE.mount); }
       if(!STATE.watcherHost){ makeSec("sc-sec-watch","Watcher"); STATE.watcherHost=$("#scrob-watcher",STATE.mount); }
     }
-    buildUI(); wire(); populate(); refreshWatcher(); if(provider()==="plex") loadPmsList().catch(()=>{});
+    buildUI(); wire(); populate(); refreshWatcher(); if(provider()==="plex") loadPmsList().catch(()=>{}); if(provider()==="emby") hydrateEmby();
   }
 
   function mountLegacy(targetEl,cfg){ init({ mountId: targetEl?.id, cfg: cfg||(w._cfgCache||{}) }); }
@@ -592,6 +691,7 @@
 
     const wlWatch = namesFromChips("#sc-whitelist");
     const suWatch = String($("#sc-server-uuid",STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid","")).trim();
+    const userIdWatch = String(read("scrobble.watch.filters.user_id","")||"").trim();
 
     return {
       enabled,
@@ -609,7 +709,7 @@
         autostart:!!read("scrobble.watch.autostart",false),
         pause_debounce_seconds:read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
         suppress_start_at:read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at),
-        filters:{ username_whitelist: wlWatch.length?wlWatch:asArray(read("scrobble.watch.filters.username_whitelist",[])), server_uuid: suWatch||"" }
+        filters:{ username_whitelist: wlWatch.length?wlWatch:asArray(read("scrobble.watch.filters.username_whitelist",[])), server_uuid: suWatch||"", user_id: userIdWatch || (provider()==="emby"?suWatch:"") }
       },
       trakt:{
         stop_pause_threshold:read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold),
