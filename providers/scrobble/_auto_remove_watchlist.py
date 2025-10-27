@@ -162,27 +162,45 @@ def auto_remove_if_config_allows(evt: Any, cfg: Dict[str, Any] | None = None) ->
             cfg = _load_cfg()
     except Exception:
         cfg = cfg or {}
+
     e = _extract_evt(evt)
-    media_type = str((e.get("media_type") or "movie")).strip().lower()
-    if not _cfg_delete_enabled(cfg or {}, media_type):
-        _log(f"auto-remove disabled by config for type={media_type}", "DEBUG")
+
+    media_type = str((e.get("media_type") or "")).strip().lower()
+    if media_type != "movie":
+        _log(f"auto-remove skipped: media_type={media_type or 'unknown'} (only 'movie' allowed)", "DEBUG")
         return None
+
+    if not _cfg_delete_enabled(cfg or {}, "movie"):
+        _log("auto-remove disabled by config for type=movie", "DEBUG")
+        return None
+
     try:
         force_at = int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at")) or 95)
     except Exception:
         force_at = 95
+
     try:
         prog = int(e.get("progress") or 0)
     except Exception:
         prog = 0
+
     if prog < force_at:
         _log(f"auto-remove skipped due to progress {prog}% < {force_at}%", "DEBUG")
         return None
+
     ids = e.get("ids") or {}
     if not isinstance(ids, dict) or not ids:
         _log("auto-remove skipped: event has no ids", "DEBUG")
         return None
-    return remove_across_providers_by_ids(ids, media_type)
+
+    _log(f"auto-remove (WL-AUTO) executing for movie ids={ids}", "INFO")
+    return remove_across_providers_by_ids(ids, "movie")
+
 
 def remove_by_ids(ids: Dict[str, Any] | None, media_type: str | None = None) -> Dict[str, Any]:
-    return remove_across_providers_by_ids(ids, media_type)
+    mt = str(media_type or "").strip().lower()
+    if mt != "movie":
+        _log(f"remove_by_ids skipped: media_type={mt or 'unknown'} (only 'movie' allowed)", "DEBUG")
+        return {"ok": False, "skipped": True, "reason": "not_movie"}
+
+    return remove_across_providers_by_ids(ids or {}, "movie")

@@ -166,23 +166,38 @@ def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     return False
 
 def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
-    if not _cfg_delete_enabled(cfg, ev.media_type): return
+    mt = str(getattr(ev, "media_type", "") or "").strip().lower()
+    if mt != "movie":
+        _log(f"Auto-remove skipped: media_type={mt or 'unknown'} (only 'movie' allowed)", "DEBUG")
+        return
+
+    if not _cfg_delete_enabled(cfg, mt):
+        _log("Auto-remove skipped: disabled by config for type=movie", "DEBUG")
+        return
+
     ids = _ids(ev)
-    if not ids: return
+    if not ids:
+        _log("Auto-remove skipped: no provider IDs available", "DEBUG")
+        return
+
     try:
         if callable(_rm_across):
             _log(f"Auto-remove across providers via _auto_remove_watchlist ids={ids}", "INFO")
-            _rm_across(ids, ev.media_type)
+            _rm_across(ids, "movie")
             return
     except Exception as e:
         _log(f"Auto-remove across (_auto_remove_watchlist) failed: {e}", "WARN")
+
     try:
         if callable(_rm_across_api):
             _log(f"Auto-remove across providers via _watchlistAPI ids={ids}", "INFO")
-            _rm_across_api(ids, ev.media_type)  # type: ignore
+            _rm_across_api(ids, "movie")  # type: ignore
             return
     except Exception as e:
         _log(f"Auto-remove across (_watchlistAPI) failed: {e}", "WARN")
+
+    _log("Auto-remove skipped: no available remove-across implementation", "DEBUG")
+
 
 def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
     try:
