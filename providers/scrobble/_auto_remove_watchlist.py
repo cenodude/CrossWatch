@@ -1,4 +1,3 @@
-# providers/scrobble/_auto_remove_watchlist.py
 from __future__ import annotations
 
 import json, time
@@ -132,14 +131,39 @@ def remove_across_providers_by_ids(ids: Dict[str, Any] | None, media_type: str |
             _log(f"fallback failed: {e2}", "WARN")
             return {"ok": False, "error": str(e2), "ids": norm, "media_type": media_type}
 
-def auto_remove_if_config_allows(evt: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
+def _extract_evt(evt: Any) -> Dict[str, Any]:
+    if isinstance(evt, dict):
+        return evt
+    out: Dict[str, Any] = {}
+    try:
+        mt = getattr(evt, "media_type", None)
+        if mt is not None:
+            out["media_type"] = mt
+    except Exception:
+        pass
+    try:
+        pr = getattr(evt, "progress", None)
+        if pr is not None:
+            out["progress"] = pr
+    except Exception:
+        pass
+    try:
+        ids = getattr(evt, "ids", None)
+        if isinstance(ids, dict):
+            out["ids"] = ids
+    except Exception:
+        pass
+    return out
+
+def auto_remove_if_config_allows(evt: Any, cfg: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
     try:
         if cfg is None:
             from cw_platform.config_base import load_config as _load_cfg
             cfg = _load_cfg()
     except Exception:
         cfg = cfg or {}
-    media_type = (evt.get("media_type") or "movie").strip().lower()
+    e = _extract_evt(evt)
+    media_type = str((e.get("media_type") or "movie")).strip().lower()
     if not _cfg_delete_enabled(cfg or {}, media_type):
         _log(f"auto-remove disabled by config for type={media_type}", "DEBUG")
         return None
@@ -147,15 +171,14 @@ def auto_remove_if_config_allows(evt: Dict[str, Any], cfg: Dict[str, Any] | None
         force_at = int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at")) or 95)
     except Exception:
         force_at = 95
-    prog = 0
     try:
-        prog = int(evt.get("progress") or 0)
+        prog = int(e.get("progress") or 0)
     except Exception:
         prog = 0
     if prog < force_at:
         _log(f"auto-remove skipped due to progress {prog}% < {force_at}%", "DEBUG")
         return None
-    ids = evt.get("ids") or {}
+    ids = e.get("ids") or {}
     if not isinstance(ids, dict) or not ids:
         _log("auto-remove skipped: event has no ids", "DEBUG")
         return None

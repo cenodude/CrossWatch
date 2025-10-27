@@ -91,9 +91,9 @@ def _tok_refresh(cfg: dict[str, Any]) -> bool:
         new_cfg = dict(cfg); t2 = dict(new_cfg.get("trakt") or {})
         t2["access_token"], t2["refresh_token"] = acc, new_rt
         new_cfg["trakt"] = t2; _save_cfg(new_cfg)
-        _log("Trakt token refreshed (persisted)")
+        _log("Trakt token refreshed (persisted)", "DEBUG")
     except Exception:
-        _log("Trakt token refreshed (runtime only)")
+        _log("Trakt token refreshed (runtime only)", "DEBUG")
     return True
 
 def _ids(ev: ScrobbleEvent) -> dict[str, Any]:
@@ -142,25 +142,17 @@ def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | Non
     return None
 
 def _log(msg: str, level: str = "INFO") -> None:
-    if BASE_LOG:
-        try:
-            BASE_LOG(str(msg), level=level.upper(), module="TRAKT")
-            if level.upper() != "DEBUG": return
-        except Exception:
-            pass
     if level.upper() == "DEBUG" and not _is_debug(): return
     print(f"{level} [TRAKT] {msg}")
 
 def _dbg(msg: str) -> None:
     if _is_debug(): print(f"DEBUG [TRAKT] {msg}")
 
-# --- central removal hook (across providers) -----------------------------------
 try:
     from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 except Exception:
     _rm_across = None
 try:
-    # optional secondary export if provided in API layer
     from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # type: ignore
 except Exception:
     _rm_across_api = None
@@ -199,6 +191,32 @@ def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
     except Exception:
         return False
 
+def _ids_desc_map(ids: dict[str, Any]) -> str:
+    for k in ("trakt","imdb","tmdb","tvdb"):
+        v = ids.get(k)
+        if v is not None: return f"{k}:{v}"
+    return "title/year"
+
+def _media_name(ev: ScrobbleEvent) -> str:
+    if ev.media_type == "episode":
+        s = ev.season if ev.season is not None else 0
+        n = ev.number if ev.number is not None else 0
+        t = ev.title or "?"
+        try: return f"{t} S{int(s):02d}E{int(n):02d}"
+        except Exception: return f"{t}"
+    return ev.title or "?"
+
+def _extract_skeleton_from_body(b: dict[str, Any]) -> dict[str, Any]:
+    out = dict(b)
+    out.pop("progress", None)
+    out.pop("app_version", None)
+    out.pop("app_date", None)
+    return out
+
+def _body_ids_desc(b: dict[str, Any]) -> str:
+    ids = ((b.get("movie") or {}).get("ids")) or ((b.get("show") or {}).get("ids")) or ((b.get("episode") or {}).get("ids")) or {}
+    return _ids_desc_map(ids if isinstance(ids, dict) else {})
+
 class TraktSink(ScrobbleSink):
     def __init__(self, logger=None):
         self._logr = logger if logger else (BASE_LOG.child("TRAKT") if (BASE_LOG and hasattr(BASE_LOG,"child")) else None)
@@ -210,6 +228,10 @@ class TraktSink(ScrobbleSink):
         self._last_sent: dict[str, float] = {}
         self._p_sess:   dict[tuple[str, str], int] = {}
         self._p_glob:   dict[str, int] = {}
+        self._best:     dict[str, dict[str, Any]] = {}
+        self._ids_logged: set[str] = set()
+        self._last_intent_path: dict[str, str] = {}
+        self._last_intent_prog: dict[str, int] = {}
 
     def _mkey(self, ev: ScrobbleEvent) -> str:
         ids = ev.ids or {}; parts=[]
@@ -223,6 +245,11 @@ class TraktSink(ScrobbleSink):
             t,y = ev.title or "", ev.year or 0
             parts.append(f"{t}|{y}" + (f"|S{(ev.season or 0):02d}E{(ev.number or 0):02d}" if ev.media_type=="episode" else ""))
         return "|".join(parts)
+
+    def _ckey(self, ev: ScrobbleEvent) -> str:
+        ids = ev.ids or {}
+        if ids.get("plex"): return f"plex:{ids.get('plex')}"
+        return self._mkey(ev)
 
     def _debounced(self, session_key: str | None, action: str) -> bool:
         if action == "start": return False
@@ -273,10 +300,27 @@ class TraktSink(ScrobbleSink):
             if s >= 400:
                 short = (r.text or "")[:400]
                 if s == 404: short += " (Trakt could not match the item)"
-                return {"ok":False,"status":s,"resp":short}
-            try: return {"ok":True,"status":s,"resp":r.json()}
-            except Exception: return {"ok":True,"status":s,"resp":(r.text or "")[:400]}
+                try:
+                    j = r.json()
+                    return {"ok":False,"status":s,"resp":j}
+                except Exception:
+                    return {"ok":False,"status":s,"resp":short}
+            try:
+                return {"ok":True,"status":s,"resp":r.json()}
+            except Exception:
+                return {"ok":True,"status":s,"resp":(r.text or "")[:400]}
         return {"ok":False,"status":429,"resp":"rate_limited"}
+
+    def _should_log_intent(self, key: str, path: str, prog: int) -> bool:
+        last_p = self._last_intent_prog.get(key, None)
+        last_path = self._last_intent_path.get(key, None)
+        if last_path != path: ok = True
+        elif last_p is None: ok = True
+        else: ok = (prog - int(last_p)) >= 5
+        if ok:
+            self._last_intent_path[key] = path
+            self._last_intent_prog[key] = int(prog)
+        return ok
 
     def send(self, ev: ScrobbleEvent) -> None:
         cfg = _cfg()
@@ -286,9 +330,16 @@ class TraktSink(ScrobbleSink):
         p_sess = self._p_sess.get((sk,mk), -1)
         p_glob = self._p_glob.get(mk, -1)
 
+        name = _media_name(ev)
+        ids_now = _ids(ev)
+        key = self._ckey(ev)
+        if key not in self._ids_logged:
+            _log(f"ids resolved: {name} -> {_ids_desc_map(ids_now)}", "DEBUG")
+            self._ids_logged.add(key)
+
         if ev.action == "start":
             if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
-                _log("Restart detected: align start floor to 2% (no 0%)")
+                _log("Restart detected: align start floor to 2% (no 0%)", "DEBUG")
                 p_send = 2
                 self._p_glob[mk] = max(2, p_glob if p_glob >= 0 else 2)
                 self._p_sess[(sk,mk)] = 2
@@ -307,7 +358,7 @@ class TraktSink(ScrobbleSink):
         action = ev.action
         if ev.action == "stop":
             if p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
-                _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})")
+                _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"; p_send = last_sess
             elif p_send < thr:
                 action = "pause"
@@ -320,14 +371,43 @@ class TraktSink(ScrobbleSink):
         path = { "start":"/scrobble/start", "pause":"/scrobble/pause", "stop":"/scrobble/stop" }[action]
         last_err = None
 
-        for body in self._bodies(ev, p_send):
-            body = {**body, **_app_meta(cfg)}
-            _dbg(f"→ {path} body={body}")
+        best = self._best.get(key)
+        if not best and ev.media_type == "episode":
+            found = _guid_search(ev, cfg)
+            if found:
+                epi_ids = {"trakt": found["trakt"]} if "trakt" in found else found
+                skeleton = {"episode": {"ids": epi_ids}}
+                self._best[key] = {"skeleton": skeleton, "ids_desc": _ids_desc_map(epi_ids), "ts": time.time()}
+                best = self._best.get(key)
+
+        bodies: list[dict[str, Any]] = []
+        if best and isinstance(best.get("skeleton"), dict):
+            b0 = {"progress": p_send, **best["skeleton"], **_app_meta(cfg)}
+            if self._should_log_intent(key, path, int(b0.get("progress") or p_send)):
+                _log(f"trakt intent {path} using cached {best.get('ids_desc','title/year')}, prog={b0.get('progress')}", "DEBUG")
+            bodies.append(b0)
+        else:
+            bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_send)]
+
+        for i, body in enumerate(bodies):
+            if not (best and i == 0):
+                prog_i = int(float(body.get("progress") or p_send))
+                if self._should_log_intent(key, path, prog_i):
+                    _log(f"trakt intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
             if res.get("ok"):
-                _log(f"{path} {res['status']}")
+                try: act = (res.get("resp") or {}).get("action") or path.rsplit("/",1)[-1]
+                except Exception: act = path.rsplit("/",1)[-1]
+                _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
+                _log(f"{path} {res['status']}", "DEBUG")
+                skeleton = _extract_skeleton_from_body(body)
+                self._best[key] = {"skeleton": skeleton, "ids_desc": _body_ids_desc(body), "ts": time.time()}
                 if action == "stop" and p_send >= _force_stop_at(cfg):
                     _auto_remove_across(ev, cfg)
+                try:
+                    _log(f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}", "INFO")
+                except Exception:
+                    pass
                 return
             last_err = res
             if res.get("status") == 404:
@@ -338,12 +418,22 @@ class TraktSink(ScrobbleSink):
             epi_ids = _guid_search(ev, cfg)
             if epi_ids:
                 body = {"progress": p_send, "episode": {"ids": epi_ids}, **_app_meta(cfg)}
-                _dbg(f"Resolved via search; retry ids={epi_ids}")
+                if self._should_log_intent(key, path, int(body.get("progress") or p_send)):
+                    _log(f"trakt intent {path} using {_ids_desc_map(epi_ids)}, prog={body.get('progress')}", "DEBUG")
                 res = self._send_http(path, body, cfg)
                 if res.get("ok"):
-                    _log(f"{path} {res['status']}")
+                    try: act = (res.get("resp") or {}).get("action") or path.rsplit("/",1)[-1]
+                    except Exception: act = path.rsplit("/",1)[-1]
+                    _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
+                    _log(f"{path} {res['status']}", "DEBUG")
+                    skeleton = _extract_skeleton_from_body(body)
+                    self._best[key] = {"skeleton": skeleton, "ids_desc": _ids_desc_map(epi_ids), "ts": time.time()}
                     if action == "stop" and p_send >= _force_stop_at(cfg):
                         _auto_remove_across(ev, cfg)
+                    try:
+                        _log(f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}", "INFO")
+                    except Exception:
+                        pass
                     return
                 last_err = res
 

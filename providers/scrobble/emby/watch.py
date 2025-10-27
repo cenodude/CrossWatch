@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, Dict, Tuple, Set
 
 try:
-    from _logging import log as BASE_LOG
+    from _logging import log as BASE_LOG  # not used; print-only logging below
 except Exception:
     BASE_LOG = None
 
@@ -20,8 +20,16 @@ def _cfg() -> dict[str, Any]:
         return {}
 
 def _is_debug() -> bool:
+    """Robustly interpret runtime.debug (bool/int/str)."""
     try:
-        return bool(((_cfg().get("runtime") or {}).get("debug")))
+        v = ((_cfg().get("runtime") or {}).get("debug"))
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return v != 0
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "yes", "on", "y", "t")
+        return False
     except Exception:
         return False
 
@@ -105,6 +113,24 @@ def _cfg_for_dispatch(server_id: str | None) -> dict[str, Any]:
         cfg["plex"] = px
     return cfg
 
+def _ids_desc(ids: dict[str, Any] | None) -> str:
+    d = ids or {}
+    for k in ("trakt","imdb","tmdb","tvdb"):
+        if d.get(k): return f"{k}:{d[k]}"
+    for k in ("trakt_show","imdb_show","tmdb_show","tvdb_show"):
+        if d.get(k): return f"{k.replace('_show','')}:{d[k]}"
+    return "none"
+
+def _media_name(ev: ScrobbleEvent) -> str:
+    if (ev.media_type or "").lower() == "episode":
+        s = ev.season if isinstance(ev.season,int) else None
+        n = ev.number if isinstance(ev.number,int) else None
+        base = ev.title or "?"
+        if s is not None and n is not None:
+            return f"{base} S{s:02}E{n:02}"
+        return base
+    return ev.title or "?"
+
 class EmbyWatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 0.7) -> None:
         self._base, self._tok = _emby_bt(_cfg())
@@ -121,16 +147,14 @@ class EmbyWatchService:
         self._dbg_last_ts = 0.0
 
     def _log(self, msg: str, level: str = "INFO") -> None:
-        if BASE_LOG:
-            try:
-                BASE_LOG(str(msg), level=level.upper(), module="EMBYWATCH")
-                return
-            except Exception:
-                pass
+        # Print-only; suppress DEBUG when runtime.debug is false.
+        if str(level).upper() == "DEBUG" and not _is_debug():
+            return
         print(f"{level} [EMBYWATCH] {msg}")
 
     def _dbg(self, msg: str) -> None:
-        return
+        if _is_debug():
+            print(f"DEBUG [EMBYWATCH] {msg}")
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         if ev.session_key and ev.session_key in self._allowed_sessions:
@@ -217,9 +241,13 @@ class EmbyWatchService:
         }
 
     def _emit(self, ev: ScrobbleEvent) -> None:
+        act = "playing" if ev.action == "start" else ("paused" if ev.action == "pause" else "stop")
+        self._log(f"incoming '{act}' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'", "DEBUG")
+        self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
         if not self._passes_filters(ev):
             return
         sk = str(ev.session_key or "")
+        # This is the only INFO from the watcher (keep default level=INFO):
         self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={sk}")
         self._dispatch.dispatch(ev)
         if sk:
@@ -306,7 +334,7 @@ class EmbyWatchService:
             meta = memo.get("meta") or {}
             if not meta:
                 del self._last[sid]
-                continue  # no metadata → skip stop
+                continue
 
             if last_p >= force_at or dt >= 2.0:
                 fake = {"Id": sid, "UserName": meta.get("account"), "NowPlayingItem": {}, "PlayState": {}}
@@ -331,14 +359,14 @@ class EmbyWatchService:
 
     def start(self) -> None:
         self._stop.clear()
-        self._log(f"Emby watcher starting → {self._base}")
+        self._log(f"Emby watcher starting → {self._base}", "DEBUG")
         while not self._stop.is_set():
             self._tick()
             time.sleep(self._poll)
 
     def stop(self) -> None:
         self._stop.set()
-        self._log("Emby watcher stopping")
+        self._log("Emby watcher stopping", "DEBUG")
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
