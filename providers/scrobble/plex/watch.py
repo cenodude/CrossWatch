@@ -26,15 +26,11 @@ def _cfg() -> dict[str, Any]:
         return {}
 
 def _is_debug() -> bool:
-    """Robustly interpret runtime.debug (bool/int/str)."""
     try:
         v = ((_cfg().get("runtime") or {}).get("debug"))
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, (int, float)):
-            return v != 0
-        if isinstance(v, str):
-            return v.strip().lower() in ("1", "true", "yes", "on", "y", "t")
+        if isinstance(v, bool): return v
+        if isinstance(v, (int, float)): return v != 0
+        if isinstance(v, str): return v.strip().lower() in ("1", "true", "yes", "on", "y", "t")
         return False
     except Exception:
         return False
@@ -47,19 +43,15 @@ def _plex_btok(cfg: dict[str, Any]) -> tuple[str, str]:
     return base, (px.get("account_token") or px.get("token") or "")
 
 def _safe_int(x: Any) -> int | None:
-    try:
-        return int(x)
-    except Exception:
-        return None
+    try: return int(x)
+    except Exception: return None
 
 def _ids_desc(ids: dict[str, Any] | None) -> str:
     d = ids or {}
     for k in ("trakt", "imdb", "tmdb", "tvdb"):
-        if d.get(k):
-            return f"{k}:{d[k]}"
+        if d.get(k): return f"{k}:{d[k]}"
     for k in ("trakt_show", "imdb_show", "tmdb_show", "tvdb_show"):
-        if d.get(k):
-            return f"{k.replace('_show','')}:{d[k]}"
+        if d.get(k): return f"{k.replace('_show','')}:{d[k]}"
     return "none"
 
 def _media_name(ev: ScrobbleEvent) -> str:
@@ -71,6 +63,22 @@ def _media_name(ev: ScrobbleEvent) -> str:
             return f"{base} S{s:02}E{n:02}"
         return base
     return ev.title or "?"
+
+def _watch_pause_debounce_seconds(cfg: dict[str, Any]) -> int:
+    try: return int((((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds", 5)))
+    except Exception: return 5
+
+def _watch_suppress_start_at(cfg: dict[str, Any]) -> int:
+    try: return int((((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99)))
+    except Exception: return 99
+
+def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
+    try: return int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80)))
+    except Exception: return 80
+
+def _force_stop_at(cfg: dict[str, Any]) -> int:
+    try: return int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95)))
+    except Exception: return 95
 
 class WatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, dispatcher: Dispatcher | None = None) -> None:
@@ -84,8 +92,13 @@ class WatchService:
         self._allowed_sessions: set[str] = set()
         self._last_seen: dict[str, float] = {}
         self._last_emit: dict[str, tuple[str, int]] = {}
-        self._wl_removed: set[str] = set()  # retained but unused
+        self._wl_removed: set[str] = set()
         self._attempt = 0
+
+        self._max_seen: dict[str, int] = {}
+        self._first_seen: dict[str, float] = {}
+        self._last_pause_ts: dict[str, float] = {}
+        self._filtered_ts: dict[str, float] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         if str(level).upper() == "DEBUG" and not _is_debug():
@@ -176,12 +189,10 @@ class WatchService:
                     out.setdefault("imdb", gid.split("imdb://", 1)[1])
                 elif "tmdb://" in gid:
                     v = gid.split("tmdb://", 1)[1]
-                    if v.isdigit():
-                        out.setdefault("tmdb", int(v))
+                    if v.isdigit(): out.setdefault("tmdb", int(v))
                 elif "thetvdb://" in gid or "tvdb://" in gid:
                     v = gid.split("://", 1)[1]
-                    if v.isdigit():
-                        out.setdefault("tvdb", int(v))
+                    if v.isdigit(): out.setdefault("tvdb", int(v))
         except Exception:
             pass
         return out
@@ -256,16 +267,24 @@ class WatchService:
         sid = str(ev.session_key or "")
         rk = str((ev.ids or {}).get("plex") or "")
         tgt = None
-        for v in sessions:
-            try:
-                if (sid and str(getattr(v, "sessionKey", "")) == sid) or (rk and str(getattr(v, "ratingKey", "")) == rk):
-                    tgt = v
-                    break
-            except Exception:
-                pass
+        if rk:
+            for v in sessions:
+                try:
+                    if str(getattr(v, "ratingKey", "")) == rk:
+                        tgt = v; break
+                except Exception:
+                    pass
+        elif sid:
+            for v in sessions:
+                try:
+                    if str(getattr(v, "sessionKey", "")) == sid:
+                        tgt = v; break
+                except Exception:
+                    pass
         if not tgt:
             return None
-        d, vo = getattr(tgt, "duration", None), getattr(tgt, "viewOffset", None)
+        d = getattr(tgt, "duration", None)
+        vo = getattr(tgt, "viewOffset", None)
         try:
             d = int(d) if d is not None else None
             vo = int(vo) if vo is not None else None
@@ -274,6 +293,14 @@ class WatchService:
         if not d or vo is None:
             return None
         return int(round(100 * max(0, min(vo, d)) / float(d)))
+
+    def _throttled_filtered_log(self, ev: ScrobbleEvent) -> None:
+        key = f"{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
+        now = time.time()
+        last = self._filtered_ts.get(key, 0.0)
+        if now - last >= 30.0:
+            self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
+            self._filtered_ts[key] = now
 
     def _handle_alert(self, alert: dict[str, Any]) -> None:
         try:
@@ -298,8 +325,7 @@ class WatchService:
                 if ev and ev.session_key:
                     self._psn_sessions.add(str(ev.session_key))
             if not ev:
-                flat = dict(alert)
-                flat["_type"] = "playing"
+                flat = dict(alert); flat["_type"] = "playing"
                 ev = from_plex_flat_playing(flat, defaults=defaults)
                 if ev and ev.session_key:
                     self._psn_sessions.add(str(ev.session_key))
@@ -311,8 +337,12 @@ class WatchService:
             self._log(f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'", "DEBUG")
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
             if not self._passes_filters(ev):
-                self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
+                self._throttled_filtered_log(ev)
                 return
+
+            sk = str(ev.session_key) if ev.session_key else None
+            if sk and sk not in self._first_seen:
+                self._first_seen[sk] = time.time()
 
             want = ev.progress
             best = want
@@ -323,28 +353,52 @@ class WatchService:
                 if 5 <= best <= 95:
                     break
                 time.sleep(0.25)
-            if best != want:
+
+            if ev.action == "stop" and (best is None or best == want):
+                prev = self._last_emit.get(sk or "", (None, None))[1] if sk else None
+                if isinstance(prev, int):
+                    best = prev
+
+            if best != want and best is not None:
                 self._dbg(f"probe correction: {want}% → {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
 
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
 
+            if sk:
+                self._max_seen[sk] = max(ev.progress, self._max_seen.get(sk, 0))
+
+            sup_at = _watch_suppress_start_at(cfg)
+            if ev.action == "start" and ev.progress >= sup_at:
+                self._dbg(f"suppress start at {ev.progress}% (>= {float(sup_at):.1f}%)")
+                return
+
+            if ev.action == "pause" and sk:
+                now = time.time()
+                lastp = self._last_pause_ts.get(sk, 0.0)
+                if now - lastp < max(0, _watch_pause_debounce_seconds(cfg)):
+                    self._dbg(f"drop pause due to debounce sess={sk} dt={now - lastp:.2f}s")
+                    return
+                self._last_pause_ts[sk] = now
+
             if ev.session_key and ev.action == "stop":
                 skd, now = str(ev.session_key), time.time()
-                force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get(
-                    "force_stop_at",
-                    ((_cfg().get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 95)
-                )))
-                elapsed = now - self._last_seen.get(skd, 0.0)
-                if ev.progress < force_at and elapsed < 2.0:
-                    self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={force_at} dt={elapsed:.2f}s")
-                    return
+                thr = _stop_pause_threshold(cfg)
+                maxp = self._max_seen.get(skd, ev.progress)
+                if ev.progress >= 98 and maxp < thr:
+                    ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp})
+                    self._dbg(f"demote stop→pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
+                else:
+                    elapsed = now - self._last_seen.get(skd, 0.0)
+                    fstop = _force_stop_at(cfg)
+                    if ev.progress < fstop and elapsed < 2.0:
+                        self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={fstop} dt={elapsed:.2f}s")
+                        return
 
             if ev.session_key:
                 self._last_seen[str(ev.session_key)] = time.time()
 
-            sk = str(ev.session_key) if ev.session_key else None
             if sk:
                 last = self._last_emit.get(sk)
                 if last and ev.action == "stop" and last[0] == "stop" and abs(ev.progress - last[1]) <= 1:

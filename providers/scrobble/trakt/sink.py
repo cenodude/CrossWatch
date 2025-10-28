@@ -118,9 +118,21 @@ def _force_stop_at(cfg: dict[str, Any]) -> int:
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95))
     except Exception: return 95
 
+def _complete_at(cfg: dict[str, Any]) -> int:
+    try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("complete_at", 0))
+    except Exception: return 0
+
 def _regress_tol(cfg: dict[str, Any]) -> int:
     try: return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("regress_tolerance_percent", 5))
     except Exception: return 5
+
+def _watch_pause_debounce(cfg: dict[str, Any]) -> int:
+    try: return int((((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds", 5)))
+    except Exception: return 5
+
+def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
+    try: return float((((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99)))
+    except Exception: return 99.0
 
 def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | None:
     ids = ev.ids or {}
@@ -180,15 +192,12 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
     if not _cfg_delete_enabled(cfg, mt):
         _log(f"Auto-remove skipped: disabled by config for type={mt or 'unknown'}", "DEBUG")
         return
-
-    # Prefer show-level IDs for episodes; fallback to episode/movie IDs.
     ids = _show_ids(ev) if mt == "episode" else _ids(ev)
     if not ids:
         ids = _ids(ev)
     if not ids:
         _log("Auto-remove skipped: no provider IDs available", "DEBUG")
         return
-
     try:
         if callable(_rm_across):
             _log(f"Auto-remove across providers ids={ids} media={mt}", "INFO")
@@ -196,7 +205,6 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
             return
     except Exception as e:
         _log(f"Auto-remove across (_auto_remove_watchlist) failed: {e}", "WARN")
-
     try:
         if callable(_rm_across_api):
             _log(f"Auto-remove across providers via _watchlistAPI ids={ids} media={mt}", "INFO")
@@ -204,7 +212,6 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
             return
     except Exception as e:
         _log(f"Auto-remove across (_watchlistAPI) failed: {e}", "WARN")
-
     _log("Auto-remove skipped: no available remove-across implementation", "DEBUG")
 
 def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
@@ -276,10 +283,10 @@ class TraktSink(ScrobbleSink):
         if ids.get("plex"): return f"plex:{ids.get('plex')}"
         return self._mkey(ev)
 
-    def _debounced(self, session_key: str | None, action: str) -> bool:
+    def _debounced(self, session_key: str | None, action: str, debounce_s: int) -> bool:
         if action == "start": return False
         k = f"{session_key}:{action}"; now=time.time()
-        if now - self._last_sent.get(k,0.0) < 5.0: return True
+        if now - self._last_sent.get(k,0.0) < max(1, int(debounce_s)): return True
         self._last_sent[k] = now; return False
 
     def _bodies(self, ev: ScrobbleEvent, p: int) -> list[dict[str, Any]]:
@@ -396,8 +403,21 @@ class TraktSink(ScrobbleSink):
         thr = _stop_pause_threshold(cfg)
         last_sess = p_sess
         action = ev.action
+
+        comp = _complete_at(cfg)
+        if action == "start" and p_send >= _watch_suppress_start_at(cfg):
+            _log(f"suppress start at {p_send}% (>= {_watch_suppress_start_at(cfg)}%)", "DEBUG")
+            if p_send > (p_glob if p_glob >= 0 else -1): self._p_glob[mk] = p_send
+            self._p_sess[(sk,mk)] = p_send
+            return
+
+        if comp and p_send >= comp and action != "stop":
+            action = "stop"
+
         if ev.action == "stop":
-            if p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+            if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
+                action = "stop"
+            elif p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
                 _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"; p_send = last_sess
             elif p_send < thr:
@@ -406,7 +426,8 @@ class TraktSink(ScrobbleSink):
         if p_send != p_sess: self._p_sess[(sk,mk)] = p_send
         if p_send > (p_glob if p_glob >= 0 else -1): self._p_glob[mk] = p_send
 
-        if not (action == "stop" and p_send >= _force_stop_at(cfg)) and self._debounced(ev.session_key, action): return
+        comp_thr = max(_force_stop_at(cfg), comp or 0)
+        if not (action == "stop" and p_send >= comp_thr) and self._debounced(ev.session_key, action, _watch_pause_debounce(cfg)): return
 
         path = { "start":"/scrobble/start", "pause":"/scrobble/pause", "stop":"/scrobble/stop" }[action]
         last_err = None
@@ -442,7 +463,7 @@ class TraktSink(ScrobbleSink):
                 _log(f"{path} {res['status']}", "DEBUG")
                 skeleton = _extract_skeleton_from_body(body)
                 self._best[key] = {"skeleton": skeleton, "ids_desc": _body_ids_desc(body), "ts": time.time()}
-                if action == "stop" and p_send >= _force_stop_at(cfg):
+                if action == "stop" and p_send >= comp_thr:
                     _auto_remove_across(ev, cfg)
                 try:
                     _log(f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}", "INFO")
@@ -468,7 +489,7 @@ class TraktSink(ScrobbleSink):
                     _log(f"{path} {res['status']}", "DEBUG")
                     skeleton = _extract_skeleton_from_body(body)
                     self._best[key] = {"skeleton": skeleton, "ids_desc": _ids_desc_map(epi_ids), "ts": time.time()}
-                    if action == "stop" and p_send >= _force_stop_at(cfg):
+                    if action == "stop" and p_send >= comp_thr:
                         _auto_remove_across(ev, cfg)
                     try:
                         _log(f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}", "INFO")
@@ -479,7 +500,7 @@ class TraktSink(ScrobbleSink):
 
         if last_err and last_err.get("status") == 409 and action == "stop" and ("watched_at" in str(last_err.get("resp"))):
             _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
-            if p_send >= _force_stop_at(cfg):
+            if p_send >= comp_thr:
                 _auto_remove_across(ev, cfg)
             return
 

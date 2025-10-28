@@ -20,7 +20,6 @@ def _cfg() -> dict[str, Any]:
         return {}
 
 def _is_debug() -> bool:
-    """Robustly interpret runtime.debug (bool/int/str)."""
     try:
         v = ((_cfg().get("runtime") or {}).get("debug"))
         if isinstance(v, bool):
@@ -147,6 +146,7 @@ class EmbyWatchService:
         self._last: Dict[str, Dict[str, Any]] = {}
         self._last_emit: Dict[str, Tuple[str, str]] = {}
         self._allowed_sessions: Set[str] = set()
+        self._filtered_sessions: Set[str] = set()
         self._dbg_last_total = None
         self._dbg_last_playing = None
         self._dbg_last_ts = 0.0
@@ -245,12 +245,20 @@ class EmbyWatchService:
         }
 
     def _emit(self, ev: ScrobbleEvent) -> None:
+        sk = str(ev.session_key or "")
+        if not self._passes_filters(ev):
+            if sk and sk not in self._filtered_sessions:
+                self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
+                self._filtered_sessions.add(sk)
+            return
+        if sk and sk in self._filtered_sessions:
+            try:
+                self._filtered_sessions.remove(sk)
+            except Exception:
+                pass
         act = "playing" if ev.action == "start" else ("paused" if ev.action == "pause" else "stop")
         self._log(f"incoming '{act}' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'", "DEBUG")
         self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
-        if not self._passes_filters(ev):
-            return
-        sk = str(ev.session_key or "")
         self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={sk}")
         self._dispatch.dispatch(ev)
         if sk:
@@ -337,6 +345,10 @@ class EmbyWatchService:
             meta = memo.get("meta") or {}
             if not meta:
                 del self._last[sid]
+                try:
+                    self._filtered_sessions.discard(sid)
+                except Exception:
+                    pass
                 continue
 
             if last_p >= force_at or dt >= 2.0:
@@ -359,6 +371,10 @@ class EmbyWatchService:
                 if not (last_em and last_em[0] == "stop"):
                     self._emit(ev)
                 del self._last[sid]
+                try:
+                    self._filtered_sessions.discard(sid)
+                except Exception:
+                    pass
 
     def start(self) -> None:
         self._stop.clear()
