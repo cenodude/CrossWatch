@@ -54,21 +54,23 @@ CrossWatch aims to become a one-for-all synchronization system for locally hoste
 - One brain for all your media syncs.
 - Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL) in one tool.
   - No API? Use the **Exporter** to dump Watchlist/History/Ratings CSVs (TMDb, Letterboxd, etc.).
+- Sync between media servers: Plex, Jellyfin, Emby - Sync between trackers: SIMKL, TRAKT - or Sync from/to media servers and trackers.
+  - Also great for backups or to keep your media servers in sync.
 - Beautiful UI, rich debug logs, and lots of sensible toggles.
 - Simple **and** advanced scheduling for real freedom.
 - Unified, visual Watchlist across providers — filter, search, bulk remove, etc.
 - **Back-to-the-Future (Fallback GUID)**  
   - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
-- **Intelligent Webhooks** (Plex / Jellyfin / Emby)
+- **Intelligent Webhooks** (Plex / Jellyfin / Emby) -> Trakt
   - Plex autoplay quarantine: skip credits without losing “now playing” on Trakt.
   - Many (advanced) filters, multi-ID matching, hardened STOP/PAUSE, etc.
-- **Watcher** (Plex / Emby)
+- **Watcher** (Plex / Emby) -> Trakt 
   - Plugin-free, subscription-free; just works.
   - Same guardrails for clean history; smart regress/duplicate suppression.
   - Multi-ID matching with layered fallbacks.
 - **Watchlist Auto-Remove**
-  - Clears items from your Watchlist after a **verified finish** (done in the Trakt sink).
-  - Watchlists only — libraries stay untouched.
+  - Clears items from your Watchlist after a **verified finish**
+  - Watchlists only, your libraries stay untouched.
   - Type-aware: movies by default; shows/episodes optional.
 - **Analyzer**
   - Finds items **stuck** between providers (Plex, Jellyfin, Trakt, SIMKL).
