@@ -1,6 +1,7 @@
 # providers/webhooks/jellyfintrakt.py
 from __future__ import annotations
 import json, time, requests
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Callable
 
 TRAKT_API = "https://api.trakt.tv"
@@ -11,10 +12,15 @@ _DEF_WEBHOOK = {
     "pause_debounce_seconds": 5,
     "suppress_start_at": 99,
     "filters_jellyfin": {"username_whitelist": []},
+    "suppress_autoplay_seconds": 0,
+    "post_stop_play_guard_seconds": 0,
+    "start_guard_min_progress": 0,
+    "guard_autoplay_seconds": 0,
+    "cancel_checkin_on_stop": True,
+    "anti_autoplay_seconds": 0,
 }
-_DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5}
+_DEF_TRAKT = {"stop_pause_threshold": 80, "force_stop_at": 95, "regress_tolerance_percent": 5, "complete_at": 95}
 
-# --- cross-provider auto-remove hooks ---
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
     from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -22,11 +28,13 @@ except Exception:
     _rm_across_api = None
 
 def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
-    if not isinstance(ids, dict) or not ids: return
+    if not isinstance(ids, dict) or not ids:
+        return
     try:
         cfg = _load_config()
         s = (cfg.get("scrobble") or {})
-        if not s.get("delete_plex"): return
+        if not s.get("delete_plex"):
+            return
         tps = s.get("delete_plex_types") or []
         mt = (media_type or "").strip().lower()
         allow = False
@@ -34,34 +42,49 @@ def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
             allow = (mt in tps) or ((mt.rstrip("s") + "s") in tps)
         elif isinstance(tps, str):
             allow = mt in tps
-        if not allow: return
+        if not allow:
+            return
     except Exception:
         pass
     try:
-        if callable(_rm_across): _rm_across(ids, media_type); return
+        if callable(_rm_across):
+            _rm_across(ids, media_type); return
     except Exception:
         pass
     try:
-        if callable(_rm_across_api): _rm_across_api(ids, media_type); return
+        if callable(_rm_across_api):
+            _rm_across_api(ids, media_type); return
     except Exception:
         pass
 
-# --- config/io -----------------------------------------------------------------
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
         return load_config()
     except Exception:
-        with open("config.json", "r", encoding="utf-8") as f:
-            return json.load(f)
+        pass
+    for p in ("/config/config.json", "config.json"):
+        try:
+            fp = Path(p)
+            if fp.exists():
+                return json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return {}
 
 def _save_config(cfg: Dict[str, Any]) -> None:
     try:
         from crosswatch import save_config as _save
-        _save(cfg)
+        _save(cfg); return
     except Exception:
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        pass
+    try:
+        Path("/config/config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        try:
+            Path("config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
 def _is_debug() -> bool:
     try:
@@ -70,12 +93,20 @@ def _is_debug() -> bool:
     except Exception:
         return False
 
-def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
+def _emit(logger: Optional[object], msg: str, level: str = "INFO"):
     try:
         if level == "DEBUG" and not _is_debug():
             return
-        if logger:
-            logger(msg, level=level, module="SCROBBLE"); return
+        if logger is not None:
+            if callable(logger):
+                logger(msg, level=level, module="SCROBBLE"); return
+            logmeth = getattr(logger, "log", None)
+            if callable(logmeth):
+                lvlno = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}.get(level.upper(), 20)
+                logmeth(lvlno, msg); return
+            levmeth = getattr(logger, level.lower(), None)
+            if callable(levmeth):
+                levmeth(msg); return
     except Exception:
         pass
     if level == "DEBUG" and not _is_debug():
@@ -95,12 +126,16 @@ def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
         wh["filters_jellyfin"] = {"username_whitelist": []}; changed = True
     if "filters" in wh:
         del wh["filters"]; changed = True
+    for k, dv in _DEF_WEBHOOK.items():
+        if k not in wh:
+            wh[k] = dv; changed = True
     for k, dv in _DEF_TRAKT.items():
-        if k not in trk: trk[k] = dv; changed = True
-    if changed: _save_config(cfg)
+        if k not in trk:
+            trk[k] = dv; changed = True
+    if changed:
+        _save_config(cfg)
     return cfg
 
-# --- trakt http ----------------------------------------------------------------
 def _tokens(cfg: Dict[str, Any]) -> Dict[str, str]:
     tr = cfg.get("trakt") or {}
     au = ((cfg.get("auth") or {}).get("trakt") or {})
@@ -175,7 +210,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
-# --- id helpers ----------------------------------------------------------------
 def _cache_get(key: tuple) -> Optional[Any]:
     try: return _TRAKT_ID_CACHE.get(key)
     except Exception: return None
@@ -194,7 +228,7 @@ def _grab(d: Mapping[str, Any], keys: list[str]) -> Any:
     return None
 
 def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
-    ids: Dict[str, Any] = {}
+    ids = {}
     pids = (md.get("ProviderIds") or {}) if isinstance(md, dict) else {}
     flat = {"tmdb": root.get("Provider_tmdb"), "imdb": root.get("Provider_imdb"), "tvdb": root.get("Provider_tvdb")}
     def norm_imdb(v): s = str(v).strip(); return s if s.startswith("tt") else (f"tt{s}" if s else "")
@@ -203,7 +237,9 @@ def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dic
     imdb = pids.get("Imdb") or pids.get("imdb") or flat["imdb"]
     tvdb = pids.get("Tvdb") or pids.get("tvdb") or flat["tvdb"]
     if tmdb: ids["tmdb"] = maybe_int(tmdb)
-    if imdb: imdb = norm_imdb(imdb);  if imdb: ids["imdb"] = imdb
+    if imdb:
+        imdb = norm_imdb(imdb)
+        if imdb: ids["imdb"] = imdb
     if tvdb: ids["tvdb"] = maybe_int(tvdb)
     return ids
 
@@ -331,12 +367,15 @@ def _body_ids_desc(b: Dict[str, Any]) -> str:
     ids = ((b.get("movie") or {}).get("ids")) or ((b.get("show") or {}).get("ids")) or ((b.get("episode") or {}).get("ids"))
     return _ids_desc(ids if ids else "none")
 
-# --- progress + server-played --------------------------------------------------
 def _progress(payload: Mapping[str, Any], md: Mapping[str, Any]) -> float:
     if isinstance(payload.get("Progress"), (int, float)):
         return round(max(0.0, min(100.0, float(payload["Progress"]))), 2)
-    pos = payload.get("PlaybackPositionTicks") or payload.get("PositionTicks") or payload.get("PositionMs") or 0
-    dur = (md.get("RunTimeTicks") or 0) or payload.get("RunTimeTicks") or payload.get("DurationMs") or 0
+    ps = payload.get("PlayState") or {}
+    pb = payload.get("Playback") or {}
+    pos = (payload.get("PlaybackPositionTicks") or payload.get("PositionTicks") or payload.get("PositionMs") or
+           ps.get("PositionTicks") or ps.get("PositionMs") or pb.get("PositionTicks") or pb.get("PositionMs") or 0)
+    dur = ((md.get("RunTimeTicks") or 0) or payload.get("RunTimeTicks") or ps.get("RunTimeTicks") or
+           pb.get("RunTimeTicks") or payload.get("DurationMs") or 0)
     def to_ms(v: Any) -> float:
         try: v = float(v)
         except Exception: return 0.0
@@ -356,7 +395,6 @@ def _played_override(payload: Mapping[str, Any], md: Mapping[str, Any]) -> bool:
         pass
     return False
 
-# --- event mapping -------------------------------------------------------------
 def _map_event(event: str) -> Optional[str]:
     e = (event or "").strip().lower()
     if e in ("playbackstart", "playbackstarted", "playbackresume", "unpause", "play"): return "/scrobble/start"
@@ -364,230 +402,305 @@ def _map_event(event: str) -> Optional[str]:
     if e in ("playbackstop", "playbackstopped", "stop", "scrobble"): return "/scrobble/stop"
     return None
 
-# --- main ----------------------------------------------------------------------
+def _as_bool(v: Any) -> Optional[bool]:
+    if isinstance(v, bool): return v
+    if v is None: return None
+    s = str(v).strip().lower()
+    if s in ("1","true","yes","y","on"): return True
+    if s in ("0","false","no","n","off"): return False
+    return None
+
+def _extract_paused(payload: Mapping[str, Any]) -> Optional[bool]:
+    ps = payload.get("PlayState") or {}
+    pb = payload.get("Playback") or {}
+    for k in ("IsPaused", "Paused"):
+        b = _as_bool(payload.get(k))
+        if b is not None: return b
+        b = _as_bool(ps.get(k))
+        if b is not None: return b
+        b = _as_bool(pb.get(k))
+        if b is not None: return b
+    return None
+
+def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str:
+    v = md.get("Id")
+    if v: return str(v)
+    for k in ("imdb","tmdb","tvdb","trakt"):
+        vv = ids_all.get(k)
+        if vv: return f"{k}:{vv}"
+    name = (md.get("SeriesName") or md.get("Name") or "")
+    s, n = _episode_numbers(md, md)
+    if name and isinstance(s, int) and isinstance(n, int):
+        return f"{name}|S{s}E{n}"
+    y = md.get("ProductionYear") or ""
+    return f"{name}|{y}"
+
+def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str:
+    base = str(payload.get("PlaySessionId") or payload.get("SessionId") or payload.get("DeviceId") or "n/a")
+    return base + "|" + _session_media_key(md, ids_all)
+
 def process_webhook(
     payload: Dict[str, Any],
     headers: Mapping[str, str],
     raw: Optional[bytes] = None,
     logger: Optional[Callable[..., None]] = None,
 ) -> Dict[str, Any]:
-    cfg = _ensure_scrobble(_load_config())
+    try:
+        cfg = _ensure_scrobble(_load_config())
 
-    sc = cfg.get("scrobble") or {}
-    if not sc.get("enabled", True) or str(sc.get("mode", "webhook")).lower() != "webhook":
-        _emit(logger, "scrobble webhook disabled", "DEBUG"); return {"ok": True, "ignored": True}
+        sc = cfg.get("scrobble") or {}
+        if not sc.get("enabled", True) or str(sc.get("mode", "webhook")).lower() != "webhook":
+            _emit(logger, "scrobble webhook disabled", "DEBUG"); return {"ok": True, "ignored": True}
 
-    if not payload:
-        _emit(logger, "empty payload", "WARN"); return {"ok": True, "ignored": True}
+        if not payload:
+            _emit(logger, "empty payload", "WARN"); return {"ok": True, "ignored": True}
 
-    if ((cfg.get("trakt") or {}).get("client_id") or "") == "":
-        _emit(logger, "missing trakt.client_id", "ERROR"); return {"ok": False}
+        if ((cfg.get("trakt") or {}).get("client_id") or "") == "":
+            _emit(logger, "missing trakt.client_id", "ERROR"); return {"ok": False}
 
-    wh = (sc.get("webhook") or {})
-    pause_debounce = int(wh.get("pause_debounce_seconds", _DEF_WEBHOOK["pause_debounce_seconds"]) or 0)
-    suppress_start_at = float(wh.get("suppress_start_at", _DEF_WEBHOOK["suppress_start_at"]) or 99)
-    allow_users = set(((wh.get("filters_jellyfin") or {}).get("username_whitelist") or []))
+        wh = (sc.get("webhook") or {})
+        pause_debounce = int(wh.get("pause_debounce_seconds", _DEF_WEBHOOK["pause_debounce_seconds"]) or 0)
+        suppress_start_at = float(wh.get("suppress_start_at", _DEF_WEBHOOK["suppress_start_at"]) or 99)
+        allow_users = set(((wh.get("filters_jellyfin") or {}).get("username_whitelist") or []))
+        guard_autoplay = float(wh.get("guard_autoplay_seconds") or wh.get("suppress_autoplay_seconds") or 0)
+        post_stop_guard = float(wh.get("post_stop_play_guard_seconds") or 0)
+        start_guard_min = float(wh.get("start_guard_min_progress") or 0)
+        anti_autoplay = float(wh.get("anti_autoplay_seconds") or 0)
+        cancel_checkin_on_stop = bool(wh.get("cancel_checkin_on_stop", True))
 
-    tset = (sc.get("trakt") or {})
-    stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
-    force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
-    regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
+        tset = (sc.get("trakt") or {})
+        stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
+        force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
+        complete_at = float(tset.get("complete_at", _DEF_TRAKT["complete_at"]))
+        regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
 
-    md = (payload.get("Item") or payload.get("item") or {})
-    md.setdefault("Type", _grab(payload, ["ItemType", "type"]) or md.get("Type"))
-    md.setdefault("Name", _grab(payload, ["Name", "ItemName", "title"]) or md.get("Name"))
-    md.setdefault("SeriesName", _grab(payload, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or md.get("SeriesName"))
-    md.setdefault("RunTimeTicks", payload.get("RunTimeTicks") or md.get("RunTimeTicks"))
-    pids = dict(md.get("ProviderIds") or {})
-    for k_src, k_norm in [("Provider_tmdb", "Tmdb"), ("Provider_imdb", "Imdb"), ("Provider_tvdb", "Tvdb")]:
-        if payload.get(k_src) and not pids.get(k_norm):
-            pids[k_norm] = payload[k_src]
-    if pids: md["ProviderIds"] = pids
+        md = (payload.get("Item") or payload.get("item") or {})
+        md.setdefault("Type", _grab(payload, ["ItemType", "type"]) or md.get("Type"))
+        md.setdefault("Name", _grab(payload, ["Name", "ItemName", "title"]) or md.get("Name"))
+        md.setdefault("SeriesName", _grab(payload, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or md.get("SeriesName"))
+        md.setdefault("RunTimeTicks", payload.get("RunTimeTicks") or md.get("RunTimeTicks"))
+        pids = dict(md.get("ProviderIds") or {})
+        for k_src, k_norm in [("Provider_tmdb", "Tmdb"), ("Provider_imdb", "Imdb"), ("Provider_tvdb", "Tvdb")]:
+            if payload.get(k_src) and not pids.get(k_norm):
+                pids[k_norm] = payload[k_src]
+        if pids: md["ProviderIds"] = pids
 
-    media_type_raw = (md.get("Type") or "").strip().lower()
-    media_type = "movie" if media_type_raw == "movie" else ("episode" if media_type_raw == "episode" else "")
-    event = (_grab(payload, ["NotificationType", "Event", "event"]) or "").strip()
-    acc_title = (_grab(payload, ["NotificationUsername", "Username", "UserName"]) or "").strip()
+        media_type_raw = (md.get("Type") or "").strip().lower()
+        media_type = "movie" if media_type_raw == "movie" else ("episode" if media_type_raw == "episode" else "")
+        event = (_grab(payload, ["NotificationType", "Event", "event"]) or "").strip()
+        acc_title = (_grab(payload, ["NotificationUsername", "Username", "UserName"]) or "").strip()
+        if not acc_title:
+            acc_title = ((_grab(payload, ["User", "user"]) or {}) or {}).get("Name") or ""
 
-    media_name_dbg = md.get("Name") or md.get("SeriesName") or "?"
-    if media_type == "episode":
-        try:
-            show = (md.get("SeriesName") or _grab(payload, ["SeriesName", "SeriesTitle"]) or "").strip()
-            ep = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
-            season, number = _episode_numbers(md, payload)
-            if isinstance(season, int) and isinstance(number, int) and show:
-                media_name_dbg = f"{show} S{season:02}E{number:02}" + (f" — {ep}" if ep else "")
-            elif show and ep:
-                media_name_dbg = f"{show} — {ep}"
-            else:
-                media_name_dbg = show or ep or media_name_dbg
-        except Exception:
-            pass
+        media_name_dbg = md.get("Name") or md.get("SeriesName") or "?"
+        if media_type == "episode":
+            try:
+                show = (md.get("SeriesName") or _grab(payload, ["SeriesName", "SeriesTitle"]) or "").strip()
+                ep = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
+                season, number = _episode_numbers(md, payload)
+                if isinstance(season, int) and isinstance(number, int) and show:
+                    media_name_dbg = f"{show} S{season:02}E{number:02}" + (f" — {ep}" if ep else "")
+                elif show and ep:
+                    media_name_dbg = f"{show} — {ep}"
+                else:
+                    media_name_dbg = show or ep or media_name_dbg
+            except Exception:
+                pass
 
-    _emit(logger, f"incoming '{event}' user='{acc_title}' media='{media_name_dbg}'", "DEBUG")
+        _emit(logger, f"incoming '{event}' user='{acc_title}' media='{media_name_dbg}'", "DEBUG")
 
-    if allow_users and acc_title and acc_title not in allow_users:
-        _emit(logger, f"ignored user '{acc_title}'", "DEBUG"); return {"ok": True, "ignored": True}
-    if not md or media_type not in ("movie", "episode"):
-        return {"ok": True, "ignored": True}
+        if allow_users and acc_title and acc_title not in allow_users:
+            _emit(logger, f"ignored user '{acc_title}'", "DEBUG"); return {"ok": True, "ignored": True}
+        if not md or media_type not in ("movie", "episode"):
+            return {"ok": True, "ignored": True}
 
-    ids_pref = _ids_from_providerids(md, payload)
-    ids_all = dict(ids_pref)
-    _emit(logger, f"ids resolved: {media_name_dbg} -> {_ids_desc(ids_all)}", "DEBUG")
+        ids_pref = _ids_from_providerids(md, payload)
+        ids_all = dict(ids_pref)
+        _emit(logger, f"ids resolved: {media_name_dbg} -> {_ids_desc(ids_all)}", "DEBUG")
 
-    prog_raw = _progress(payload, md)
-    sess = str(payload.get("PlaySessionId") or payload.get("SessionId") or payload.get("DeviceId") or md.get("Id") or "n/a")
-    now = time.time()
-    st = _SCROBBLE_STATE.get(sess) or {}
+        prog_raw = _progress(payload, md)
+        sess = _make_session_id(payload, md, ids_all)
+        now = time.time()
+        st = _SCROBBLE_STATE.get(sess) or {}
 
-    ev_lc = (event or "").lower()
-    if st.get("last_event") == ev_lc and (now - float(st.get("ts", 0))) < 1.0:
-        return {"ok": True, "dedup": True}
-    if ev_lc in ("playbackpause", "playbackpaused") and (now - float(st.get("last_pause_ts", 0))) < pause_debounce:
-        _emit(logger, f"debounce pause ({pause_debounce}s)", "DEBUG")
-        _SCROBBLE_STATE[sess] = {**st, "ts": now, "last_event": ev_lc}; return {"ok": True, "debounced": True}
+        ev_lc = (event or "").lower()
+        paused_flag = _extract_paused(payload)
+        _emit(logger, f"pause-state prev={st.get('paused')} now={paused_flag}", "DEBUG")
 
-    sk_current = str(payload.get("PlaySessionId") or payload.get("SessionId") or "")
-    is_start = ev_lc in ("playbackstart", "playbackstarted", "playbackresume", "unpause", "play")
-    finished_flag = bool(st.get("finished"))
-    fresh_start = (is_start and float(prog_raw) <= 5.0 and (
-        finished_flag or
-        (st.get("last_event") in ("playbackstop", "playbackstopped", "scrobble")) or
-        (sk_current and sk_current != st.get("sk")) or
-        (float(st.get("prog", 0.0)) >= force_stop_at)
-    ))
+        if st.get("last_event") == ev_lc and (now - float(st.get("ts", 0))) < 1.0 and not (paused_flag is not None and paused_flag != st.get("paused")):
+            return {"ok": True, "dedup": True}
 
-    last_prog = float(st.get("prog", 0.0))
-    prog = prog_raw
-    tol_pts = max(0.0, regress_tol)
-    last_prog_for_clamp = 0.0 if fresh_start else last_prog
-    if prog + tol_pts < last_prog_for_clamp:
-        _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog_for_clamp:.2f}% (tol={tol_pts}%)", "DEBUG")
-        prog = last_prog_for_clamp
+        is_pause_like = ev_lc in ("playbackpause", "playbackpaused")
+        if (is_pause_like or paused_flag is True) and (now - float(st.get("last_pause_ts", 0))) < pause_debounce:
+            _emit(logger, f"debounce pause ({pause_debounce}s)", "DEBUG")
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog_raw, "sk": str(payload.get("PlaySessionId") or payload.get("SessionId") or ""), "finished": (prog_raw >= complete_at), "paused": True}
+            return {"ok": True, "debounced": True}
 
-    if ev_lc in ("playbackpause", "playbackpaused") and prog >= 99.9 and last_prog > 0.0:
-        np = max(last_prog, 95.0); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {np:.2f}%", "DEBUG"); prog = np
+        sk_current = str(payload.get("PlaySessionId") or payload.get("SessionId") or "")
+        is_start = ev_lc in ("playbackstart", "playbackstarted", "playbackresume", "unpause", "play")
+        finished_flag = bool(st.get("finished"))
+        fresh_start = (is_start and float(prog_raw) <= 5.0 and (
+            finished_flag or
+            (st.get("last_event") in ("playbackstop", "playbackstopped", "scrobble")) or
+            (sk_current and sk_current != st.get("sk")) or
+            (float(st.get("prog", 0.0)) >= complete_at)
+        ))
 
-    if ev_lc in ("playbackstop", "playbackstopped") and last_prog >= force_stop_at and prog < last_prog:
-        _emit(logger, f"promote STOP: using last progress {last_prog:.1f}% (current {prog:.1f}%)", "DEBUG")
-        prog = last_prog
+        last_prog = float(st.get("prog", 0.0))
+        prog = prog_raw
+        tol_pts = max(0.0, regress_tol)
+        last_prog_for_clamp = 0.0 if fresh_start else last_prog
+        if not st and ev_lc == "playbackprogress":
+            last_prog_for_clamp = 0.0
+        is_seek_jump = (ev_lc == "playbackprogress") and (last_prog > 0.0) and (abs(prog_raw - last_prog) >= 20.0)
+        if is_seek_jump:
+            _emit(logger, f"seek jump {last_prog:.2f}% → {prog_raw:.2f}% (no clamp)", "DEBUG")
+            last_prog_for_clamp = 0.0
+        if ev_lc == "playbackprogress" and last_prog >= complete_at and prog_raw + tol_pts < last_prog:
+            last_prog_for_clamp = 0.0
+        if prog + tol_pts < last_prog_for_clamp:
+            _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog_for_clamp:.2f}% (tol={tol_pts}%)", "DEBUG")
+            prog = last_prog_for_clamp
 
-    if ev_lc in ("playbackstop", "playbackstopped", "scrobble") and prog < force_stop_at and _played_override(payload, md):
-        _emit(logger, f"server says played → force STOP at ≥95%", "DEBUG")
-        prog = max(prog, last_prog, 95.0)
+        if ev_lc in ("playbackpause", "playbackpaused") and prog >= 99.9 and last_prog > 0.0:
+            np = max(last_prog, complete_at); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {np:.2f}%", "DEBUG"); prog = np
 
-    if ev_lc in ("playbackstop", "playbackstopped") and prog < force_stop_at:
-        dt = now - float(st.get("ts", 0))
-        if dt < 2.0:
-            _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
-            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current,
-                                     "finished": (prog >= force_stop_at)}
+        if ev_lc in ("playbackstop", "playbackstopped") and last_prog >= complete_at and prog < last_prog:
+            _emit(logger, f"promote STOP: using last progress {last_prog:.1f}% (current {prog:.1f}%)", "DEBUG")
+            prog = last_prog
+
+        if ev_lc in ("playbackstop", "playbackstopped", "scrobble") and prog < complete_at and _played_override(payload, md):
+            _emit(logger, f"server says played → force STOP at ≥{complete_at:.0f}%", "DEBUG")
+            prog = max(prog, last_prog, complete_at)
+
+        if ev_lc in ("playbackstop", "playbackstopped") and prog < complete_at:
+            dt = now - float(st.get("ts", 0))
+            if dt < 2.0:
+                _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{complete_at}%)", "DEBUG")
+                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused")}
+                return {"ok": True, "suppressed": True}
+
+        derived = None
+        if ev_lc == "playbackprogress":
+            if paused_flag is True and st.get("paused") is not True:
+                derived = "/scrobble/pause"
+            elif paused_flag is False and st.get("paused") is True:
+                derived = "/scrobble/start"
+
+        intended = derived or _map_event(event)
+
+        if intended is None:
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused") if paused_flag is None else paused_flag}
+            return {"ok": True, "ignored": True}
+
+        if intended == "/scrobble/start":
+            if prog >= suppress_start_at:
+                _emit(logger, f"suppress start at {prog:.1f}% (>= {suppress_start_at}%)", "DEBUG")
+                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": False}
+                return {"ok": True, "suppressed": True}
+            last_stop_ts = float(st.get("last_stop_ts") or 0)
+            guard_window = max(guard_autoplay, post_stop_guard, anti_autoplay)
+            if guard_window > 0 and last_stop_ts > 0 and (now - last_stop_ts) <= guard_window and prog < max(0.0, start_guard_min):
+                _emit(logger, f"suppress autoplay start dt={now - last_stop_ts:.1f}s p={prog:.1f}% (<{start_guard_min}%)", "DEBUG")
+                _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": False, "paused": False, "last_stop_ts": last_stop_ts}
+                return {"ok": True, "suppressed": True}
+
+        if intended == "/scrobble/stop":
+            if prog < stop_pause_threshold: intended = "/scrobble/pause"
+            elif prog < complete_at: intended = "/scrobble/pause"
+            elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
+                _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
+                intended = "/scrobble/pause"; prog = last_prog
+
+        if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
+        if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
+
+        if ev_lc in ("playbackstop", "playbackstopped") and st.get("last_event") in ("playbackstop", "playbackstopped") and abs((st.get("prog", 0.0)) - prog) <= 1.0:
+            _emit(logger, "suppress duplicate stop", "DEBUG")
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused"), "last_stop_ts": now}
             return {"ok": True, "suppressed": True}
 
-    path = _map_event(event)
-    if not path:
-        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current,
-                                 "finished": (prog >= force_stop_at)}
-        return {"ok": True, "ignored": True}
+        body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger)
+        if not body:
+            _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
+            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused")}
+            return {"ok": True, "ignored": True}
 
-    if path == "/scrobble/start" and prog >= suppress_start_at:
-        _emit(logger, f"suppress start at {prog:.1f}% (>= {suppress_start_at}%)", "DEBUG")
-        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current,
-                                 "finished": (prog >= force_stop_at)}
-        return {"ok": True, "suppressed": True}
+        if intended == "/scrobble/stop" and prog >= complete_at and cancel_checkin_on_stop:
+            try: _del_trakt("/checkin", cfg)
+            except Exception: pass
+            time.sleep(0.15)
 
-    intended = path
+        _emit(logger, f"trakt intent {intended} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
+        r = _post_trakt(intended, body, cfg)
+        try: rj = r.json()
+        except Exception: rj = {"raw": (r.text or "")[:200]}
+        _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
 
-    if intended == "/scrobble/stop":
-        if prog < stop_pause_threshold: intended = "/scrobble/pause"
-        elif prog < force_stop_at: intended = "/scrobble/pause"
-        elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
-            _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
-            intended = "/scrobble/pause"; prog = last_prog
+        if r.status_code == 404 and media_type == "episode":
+            found = _guid_search_episode(ids_all, cfg, logger=logger)
+            if found:
+                body2 = {"progress": float(round(prog, 2)), "episode": {"ids": found}}
+                _emit(logger, f"trakt intent {intended} using {_ids_desc(found)} (rescue)", "DEBUG")
+                r = _post_trakt(intended, body2, cfg)
+                try: rj = r.json()
+                except Exception: rj = {"raw": (r.text or "")[:200]}
+                _emit(logger, f"trakt {intended} (rescue) -> {r.status_code}", "DEBUG")
 
-    if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
-    if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
+        if r.status_code == 409 and intended == "/scrobble/stop":
+            raw_txt = r.text or ""
+            if ("expires_at" in raw_txt or "watched_at" in raw_txt):
+                if prog >= complete_at and not (st.get("wl_removed") is True):
+                    try:
+                        _call_remove_across(ids_all or {}, media_type)
+                        st = {**st, "wl_removed": True}
+                    except Exception:
+                        pass
+                _SCROBBLE_STATE[sess] = {
+                    "ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0),
+                    "prog": prog, "sk": sk_current, "finished": True,
+                    **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+                    "paused": False,
+                    "last_stop_ts": now,
+                }
+                return {"ok": True, "status": 200, "action": intended, "trakt": rj, "note": "409_checkin"}
 
-    if ev_lc in ("playbackstop", "playbackstopped") and st.get("last_event") in ("playbackstop", "playbackstopped") and abs((st.get("prog", 0.0)) - prog) <= 1.0:
-        _emit(logger, "suppress duplicate stop", "DEBUG")
-        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current,
-                                 "finished": (prog >= force_stop_at)}
-        return {"ok": True, "suppressed": True}
-
-    body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger)
-    if not body:
-        _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
-        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current,
-                                 "finished": (prog >= force_stop_at)}
-        return {"ok": True, "ignored": True}
-
-    if intended == "/scrobble/stop" and prog >= force_stop_at:
-        try: _del_trakt("/checkin", cfg)
-        except Exception: pass
-        time.sleep(0.15)
-
-    _emit(logger, f"trakt intent {intended} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
-    r = _post_trakt(intended, body, cfg)
-    try: rj = r.json()
-    except Exception: rj = {"raw": (r.text or "")[:200]}
-    _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
-
-    if r.status_code == 404 and media_type == "episode":
-        found = _guid_search_episode(ids_all, cfg, logger=logger)
-        if found:
-            body2 = {"progress": float(round(prog, 2)), "episode": {"ids": found}}
-            _emit(logger, f"trakt intent {intended} using {_ids_desc(found)} (rescue)", "DEBUG")
-            r = _post_trakt(intended, body2, cfg)
-            try: rj = r.json()
-            except Exception: rj = {"raw": (r.text or "")[:200]}
-            _emit(logger, f"trakt {intended} (rescue) -> {r.status_code}", "DEBUG")
-
-    if r.status_code == 409 and intended == "/scrobble/stop":
-        raw_txt = r.text or ""
-        if ("expires_at" in raw_txt or "watched_at" in raw_txt):
-            if prog >= force_stop_at and not (st.get("wl_removed") is True):
+        if r.status_code < 400:
+            if intended == "/scrobble/stop" and prog >= complete_at and not (st.get("wl_removed") is True):
                 try:
                     _call_remove_across(ids_all or {}, media_type)
                     st = {**st, "wl_removed": True}
                 except Exception:
                     pass
             _SCROBBLE_STATE[sess] = {
-                "ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0),
-                "prog": prog, "sk": sk_current, "finished": True,
+                "ts": now, "last_event": ev_lc,
+                "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
+                "prog": prog,
+                "sk": sk_current,
+                "finished": (intended == "/scrobble/stop" and prog >= complete_at),
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+                "paused": (intended == "/scrobble/pause"),
+                **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
             }
-            return {"ok": True, "status": 200, "action": intended, "trakt": rj, "note": "409_checkin"}
-
-    if r.status_code < 400:
-        if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
             try:
-                _call_remove_across(ids_all or {}, media_type)
-                st = {**st, "wl_removed": True}
+                action_name = intended.rsplit("/", 1)[-1]
+                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
             except Exception:
                 pass
+            return {"ok": True, "status": 200, "action": intended, "trakt": rj}
+
+        _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
         _SCROBBLE_STATE[sess] = {
-            "ts": now, "last_event": ev_lc,
-            "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
+            "ts": now,
+            "last_event": ev_lc,
+            "last_pause_ts": st.get("last_pause_ts", 0),
             "prog": prog,
             "sk": sk_current,
-            "finished": (intended == "/scrobble/stop" and prog >= force_stop_at),
+            "finished": (prog >= complete_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            "paused": st.get("paused") if paused_flag is None else paused_flag,
         }
-        try:
-            action_name = intended.rsplit("/", 1)[-1]
-            _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
-        except Exception:
-            pass
-        return {"ok": True, "status": 200, "action": intended, "trakt": rj}
-
-    _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
-    _SCROBBLE_STATE[sess] = {
-        "ts": now,
-        "last_event": ev_lc,
-        "last_pause_ts": st.get("last_pause_ts", 0),
-        "prog": prog,
-        "sk": sk_current,
-        "finished": (prog >= force_stop_at),
-        **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
-    }
-    return {"ok": False, "status": r.status_code, "trakt": rj}
+        return {"ok": False, "status": r.status_code, "trakt": rj}
+    except Exception as e:
+        _emit(logger, f"process_webhook error: {e}", "ERROR")
+        return {"ok": False, "error": str(e)}
