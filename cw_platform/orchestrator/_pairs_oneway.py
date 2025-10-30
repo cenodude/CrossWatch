@@ -1,3 +1,7 @@
+#  cw_platform/orchestration/_pairs_oneway.py
+#  One-way synchronization logic for data pairs.
+#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
 from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -44,7 +48,7 @@ def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[
              "episodes":"episode","episode":"episode","ep":"episode","eps":"episode"}
     types_raw = [str(t).strip().lower() for t in (fcfg.get("types") or []) if isinstance(t, (str, bytes))]
     types = {alias.get(t, t.rstrip("s")) for t in types_raw if t}
-    from_date = str(fcfg.get("from_date") or "").strip()  # YYYY-MM-DD
+    from_date = str(fcfg.get("from_date") or "").strip()
 
     def _keep(v: Mapping[str, Any]) -> bool:
         vt = alias.get(str(v.get("type","")).strip().lower(),
@@ -54,7 +58,7 @@ def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[
         if from_date:
             ra = (v.get("rated_at") or v.get("ratedAt") or "").strip()
             if not ra:
-                return True  # no timestamp → keep (don’t over-filter)
+                return True
             if ra[:10] < from_date:
                 return False
         return True
@@ -71,11 +75,6 @@ def run_one_way_feature(
     fcfg: Mapping[str, Any],
     health_map: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """
-    One-way sync driver (src → dst) for a single feature.
-    - Present vs delta semantics respected per provider
-    - Observed-deletes disabled automatically if a provider says so
-    """
     cfg, emit, dbg = ctx.config, ctx.emit, ctx.dbg
     sync_cfg = (cfg.get("sync") or {})
     provs = ctx.providers
@@ -96,7 +95,6 @@ def run_one_way_feature(
     allow_adds = flags["allow_adds"]
     allow_removes = flags["allow_removals"]
 
-    # Health status checks
     Hs = health_map.get(src) or {}
     Hd = health_map.get(dst) or {}
     ss = _health_status(Hs)
@@ -108,7 +106,6 @@ def run_one_way_feature(
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": False, "added": 0, "removed": 0, "unresolved": 0}
 
-    # Feature support & health gating
     if (not _supports_feature(src_ops, feature)) or (not _supports_feature(dst_ops, feature)) \
        or (not _health_feature_ok(Hs, feature)) or (not _health_feature_ok(Hd, feature)):
         emit("feature:unsupported", src=src, dst=dst, feature=feature,
@@ -117,18 +114,15 @@ def run_one_way_feature(
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": True, "added": 0, "removed": 0, "unresolved": 0}
 
-    # Early exit if source is down (nothing to add)
     if src_down:
         emit("writes:skipped", src=src, dst=dst, feature=feature, reason="source_down")
         emit("feature:done", src=src, dst=dst, feature=feature)
         return {"ok": True, "added": 0, "removed": 0, "unresolved": 0}
 
-    # Observed-deletes handling
     include_observed = bool(sync_cfg.get("include_observed_deletes", True))
     if src_down or dst_down:
-        include_observed = False  # safer if either side is down
+        include_observed = False
 
-    # Capability check helper
     def _cap_obsdel(ops) -> Optional[bool]:
         try:
             v = (ops.capabilities() or {}).get("observed_deletes")
@@ -137,16 +131,14 @@ def run_one_way_feature(
             return None
 
     try:
-        if _cap_obsdel(src_ops) is False or _cap_obsdel(dst_ops) is False:
-            include_observed = False
+        if (_cap_obsdel(src_ops) is False) or (_cap_obsdel(dst_ops) is False):
             pair_key_dbg = "-".join(sorted([src, dst]))
             emit("debug",
-                 msg="observed.deletions.forced_off",
+                 msg="observed.deletions.partial",
                  feature=feature, pair=pair_key_dbg, reason="provider_capability")
     except Exception:
         pass
 
-    # Normalization helper for applier results
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
         rem = _rate_remaining(health_map.get(pname))
@@ -155,7 +147,36 @@ def run_one_way_feature(
             return base + 1000
         return base
 
-    # Normalization helper for applier results
+    def _bust_snapshot(pname: str) -> None:
+        try:
+            sc = getattr(ctx, "snap_cache", None)
+            if isinstance(sc, dict):
+                sc.pop((pname, feature), None)
+                sc.pop(pname, None)
+        except Exception:
+            pass
+
+    def _alias_index(idx: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+        m: Dict[str, str] = {}
+        for ck, it in (idx or {}).items():
+            ids = (it.get("ids") or {})
+            for k, v in (ids or {}).items():
+                if v is None or str(v) == "": continue
+                m[f"{k}:{str(v).lower()}"] = ck
+        return m
+
+    def _present(idx: Dict[str, Any], alias: Dict[str, str], it: Mapping[str, Any]) -> bool:
+        ck = _ck(it)
+        if ck in idx: return True
+        ids = (it.get("ids") or {})
+        try:
+            for k, v in (ids or {}).items():
+                if v is None or str(v) == "": continue
+                if f"{k}:{str(v).lower()}" in alias: return True
+        except Exception:
+            pass
+        return False
+
     snaps = build_snapshots_for_feature(
         feature=feature,
         config=cfg,
@@ -168,13 +189,11 @@ def run_one_way_feature(
     src_cur = snaps.get(src) or {}
     dst_cur = snaps.get(dst) or {}
 
-    # Compute diffs
     prev_state = ctx.state_store.load_state() or {}
     prev_provs = (prev_state.get("providers") or {})
     prev_src = dict((((prev_provs.get(src, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
     prev_dst = dict((((prev_provs.get(dst, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
 
-    # Suspect snapshot detection + coercion
     drop_guard = bool(sync_cfg.get("drop_guard", False))
     suspect_min_prev = int((cfg.get("runtime") or {}).get("suspect_min_prev", 20))
     suspect_ratio = float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10))
@@ -209,7 +228,6 @@ def run_one_way_feature(
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
 
-    # Present vs delta semantics (merge baseline for delta providers)
     try:
         dst_sem = str((dst_ops.capabilities() or {}).get("index_semantics", "present")).lower()
     except Exception:
@@ -222,7 +240,6 @@ def run_one_way_feature(
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
 
-    # Feature-specific pre-filtering (e.g., ratings from_date/types)
     if feature == "ratings":
         src_idx  = _ratings_filter_index(src_idx,  fcfg)
         dst_full = _ratings_filter_index(dst_full, fcfg)
@@ -230,13 +247,22 @@ def run_one_way_feature(
     else:
         adds, removes = diff(src_idx, dst_full)
 
-    # Honor gates
+    src_alias = _alias_index(src_idx)
+    dst_alias = _alias_index(dst_full)
+    if adds:
+        adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
+    if removes:
+        removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+        try:
+            removes = [it for it in removes if _ck(it) in prev_dst]
+        except Exception:
+            pass
+
     if not allow_adds:
         adds = []
     if not allow_removes:
         removes = []
 
-    # Apply observed-deletes filtering
     removes = _maybe_block_mass_delete(
         removes, baseline_size=len(dst_full),
         allow_mass_delete=bool(sync_cfg.get("allow_mass_delete", True)),
@@ -244,13 +270,12 @@ def run_one_way_feature(
         emit=emit, dbg=dbg, dst_name=dst, feature=feature,
     )
 
-    # Apply blackbox filtering (pre-write)
     pair_key = "-".join(sorted([src, dst]))
-    adds = apply_blocklist(
-        ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
-    )
+    if feature != "watchlist":
+        adds = apply_blocklist(
+            ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
+        )
 
-    # skip items already marked unresolved for this destination/feature
     try:
         unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
     except Exception:
@@ -261,18 +286,15 @@ def run_one_way_feature(
         try:
             adds = [it for it in adds if _ck(it) not in unresolved_known]
         except Exception:
-            # if canonical keying fails, keep items
             pass
         _blocked = _before - len(adds)
         if _blocked:
             emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
 
-    # Load blackbox keys for dst+feature
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes),
         src_count=len(src_idx), dst_count=len(dst_full))
 
-    # Blackbox + Phantom Guard setup 
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))
     ttl_days = int(bb.get("cooldown_days") or 0) or None
@@ -281,11 +303,9 @@ def run_one_way_feature(
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
-    # Precompute attempted canonical keys 
     attempted_keys = {_ck(it) for it in adds}
     key2item = {_ck(it): _minimal(it) for it in adds}
 
-    # Apply additions
     added_effective = 0
     res_add: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
     unresolved_new_total = 0
@@ -333,13 +353,11 @@ def run_one_way_feature(
 
             prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
 
-            # Fallback: provider gave us no identifiable unresolved entries, but confirmed nothing.
             if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds:
                 try:
                     record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
                     new_unresolved = set(attempted_keys)
                     unresolved_new_total += len(new_unresolved)
-                    # Recompute confirmed_keys to reflect the synthesized unresolved set
                     confirmed_keys = [k for k in attempted_keys if k not in new_unresolved]
                 except Exception:
                     pass
@@ -375,8 +393,8 @@ def run_one_way_feature(
                     v = key2item.get(k)
                     if v:
                         dst_full[k] = v
+                _bust_snapshot(dst)
 
-    # Apply removals
     removed_count = 0
     rem_keys_attempted: List[str] = []
     res_remove: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
@@ -447,8 +465,8 @@ def run_one_way_feature(
                 for k in rem_keys_attempted:
                     if k in dst_full:
                         dst_full.pop(k, None)
+                _bust_snapshot(dst)
 
-    #--- Commit new baselines + checkpoints ---------------------------------
     try:
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
@@ -478,7 +496,6 @@ def run_one_way_feature(
     except Exception:
         pass
 
-    #-- Cascade removals in state store -----------------------------------
     try:
         if removes:
             cascade_removals(
@@ -490,7 +507,6 @@ def run_one_way_feature(
 
     emit("feature:done", src=src, dst=dst, feature=feature)
     
-    # Final result
     return {
         "ok": True,
         "added": int(added_effective),

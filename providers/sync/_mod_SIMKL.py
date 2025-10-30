@@ -1,6 +1,9 @@
 # /providers/sync/_mod_SIMKL.py
+# CrossWatch SIMKL module
+#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+
 from __future__ import annotations
-__VERSION__ = "0.2.0"
+__VERSION__ = "1.0.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 # stdlib
