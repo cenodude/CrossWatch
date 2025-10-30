@@ -45,11 +45,8 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
 </p>
 
-**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby**, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It also fully replaces my previous project Plex2SIMKL, with a more modular architecture and broader multi-provider support.
+**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby**, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.
 
-CrossWatch aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.
-
----
 ## Why is CrossWatch different? (in a nutshell)
 - One brain for all your media syncs.
 - Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL) in one tool.
