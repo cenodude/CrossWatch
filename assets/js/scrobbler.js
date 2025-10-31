@@ -248,7 +248,13 @@
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
           <label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-watcher"> Enable</label>
-          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span style="opacity:.75;font-size:12px">Sink</span>
+            <select id="sc-sink" class="input" style="width:180px">
+              <option value="trakt">Trakt</option>
+              <option value="simkl">SIMKL</option>
+              <option value="simkl,trakt">Both (SIMKL + Trakt)</option>
+            </select>
             <span style="opacity:.75;font-size:12px">Provider</span>
             <select id="sc-provider" class="input" style="width:140px">
               <option value="plex">Plex</option>
@@ -425,8 +431,9 @@
     const useWebhook=enabled&&mode==="webhook",useWatch=enabled&&mode==="watch";
     const prov=provider();
 
-    const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount),pvSel=$("#sc-provider",STATE.mount);
+    const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount),pvSel=$("#sc-provider",STATE.mount),skSel=$("#sc-sink",STATE.mount);
     if(whEl) whEl.checked=useWebhook; if(waEl) waEl.checked=useWatch; if(pvSel) pvSel.value=prov;
+    if(skSel) skSel.value=String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase();
 
     let wlWatch=asArray(read("scrobble.watch.filters.username_whitelist",[]));
     if(prov==="emby" && wlWatch.length===0){
@@ -624,7 +631,7 @@
     bindPercentInput("#sc-force-stop-webhook","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at);
     bindPercentInput("#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
 
-    const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),pv=$("#sc-provider",STATE.mount);
+    const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),pv=$("#sc-provider",STATE.mount),sk=$("#sc-sink",STATE.mount);
     const syncExclusive=async src=>{
       const webOn=!!wh?.checked,watOn=!!wa?.checked;
       if(src==="webhook"&&webOn&&wa) wa.checked=false;
@@ -642,6 +649,7 @@
     if(wa) on(wa,"change",()=>syncExclusive("watch"));
     on($("#sc-autostart",STATE.mount),"change",e=>write("scrobble.watch.autostart",!!e.target.checked));
     on(pv,"change",e=>{ const val=String(e.target.value||"plex").toLowerCase(); write("scrobble.watch.provider",val); populate(); if(val==="emby") hydrateEmby(); });
+    on(sk,"change",e=>{ const val=String(e.target.value||"trakt").toLowerCase(); write("scrobble.watch.sink",val); });
 
     on($("#sc-pms-refresh",STATE.mount),"click",()=>{ if(provider()==="plex") loadPmsList(); });
     on($("#sc-pms-select",STATE.mount),"change",e=>{ if(provider()!=="plex") return; const v=String(e.target.value||"").trim(); if(v){ $("#sc-pms-input",STATE.mount).value=v; write("plex.server_url",v); setNote("sc-pms-note",`Using ${v}`);} applyModeDisable();});
@@ -706,6 +714,7 @@
       },
       watch:{
         provider: provider(),
+        sink: String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase(),
         autostart:!!read("scrobble.watch.autostart",false),
         pause_debounce_seconds:read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
         suppress_start_at:read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at),

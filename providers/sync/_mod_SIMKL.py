@@ -1,6 +1,6 @@
 # /providers/sync/_mod_SIMKL.py
 # CrossWatch SIMKL module
-#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
 from __future__ import annotations
 __VERSION__ = "1.0.0"

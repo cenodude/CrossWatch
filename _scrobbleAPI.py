@@ -7,7 +7,6 @@ from cw_platform.config_base import load_config
 from urllib.parse import parse_qs
 import urllib.parse, json, threading
 
-#  plexapi
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
@@ -17,7 +16,6 @@ except Exception:
 
 router = APIRouter(tags=["Scrobbler"])
 
-# helper: pull live buffers from crosswatch
 def _env_logs(request: Request | None = None):
     if request is not None:
         try:
@@ -27,7 +25,6 @@ def _env_logs(request: Request | None = None):
                 return lb, ml
         except Exception:
             pass
-    # fallback: import-time module
     try:
         import crosswatch as CW
         return getattr(CW, "LOG_BUFFERS", {}), getattr(CW, "MAX_LOG_LINES", 2000)
@@ -42,7 +39,6 @@ def _debug_on() -> bool:
     except Exception:
         return False
 
-# --- helpers -------------------------------------------------------------------
 def _watch_kind(w) -> str | None:
     try:
         name = getattr(getattr(w, "__class__", None), "__name__", "") or ""
@@ -53,7 +49,6 @@ def _watch_kind(w) -> str | None:
         pass
     return None
 
-# ---- Plex identity helpers ----
 def _plex_token(cfg: Dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
 
@@ -70,7 +65,6 @@ def _account(cfg: Dict[str, Any]):
         return None
 
 def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
-    # 1) config override
     plex = cfg.get("plex") or {}
     if plex.get("server_uuid"):
         return str(plex["server_uuid"]).strip()
@@ -79,7 +73,6 @@ def _resolve_plex_server_uuid(cfg: Dict[str, Any]) -> str:
     if not acc:
         return ""
 
-    # 2) pick owned PMS; prefer host hint
     host_hint = ""
     base = (plex.get("server_url") or "").strip()
     if base:
@@ -161,7 +154,6 @@ def _list_plex_users(cfg: Dict[str, Any]) -> List[dict]:
         users.append(owner)
     users.extend(managed)
 
-    # prefer owner > managed > friend
     rank = {"owner": 3, "managed": 2, "friend": 1}
     out: Dict[str, dict] = {}
     for u in users:
@@ -240,7 +232,6 @@ def _list_pms_servers(cfg: Dict[str, Any]) -> List[dict]:
         pass
     return servers
 
-# ---- Plex routes ----
 @router.get("/api/plex/server_uuid")
 def api_plex_server_uuid() -> JSONResponse:
     cfg = load_config()
@@ -267,7 +258,6 @@ def api_plex_pms() -> JSONResponse:
     servers = _list_pms_servers(cfg)
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
-# ---- Watch logs ----
 @router.get("/debug/watch/logs")
 def debug_watch_logs(
     request: Request,
@@ -285,7 +275,6 @@ def debug_watch_logs(
         merged.extend(LOG_BUFFERS.get(t, []))
     return JSONResponse({"tags": sel, "tail": tail, "lines": merged[-tail:]}, headers={"Cache-Control": "no-store"})
 
-# ---- Scrobble watch ----
 @router.get("/debug/watch/status")
 def debug_watch_status(request: Request):
     w = getattr(request.app.state, "watch", None)
@@ -318,36 +307,51 @@ def _ensure_watch_started(request: Request, provider: str | None = None):
             or (((cfg.get("scrobble") or {}).get("watch") or {}).get("provider"))
             or "plex").lower().strip()
 
-    w = None
-    if not provider:
-        try:
-            from crosswatch import autostart_from_config
-            w = autostart_from_config()
-        except Exception:
-            w = None
-
-    if not w:
-        from providers.scrobble.trakt.sink import TraktSink
-        sinks = [TraktSink()]
-        make_watch = None
-
-        if prov == "emby":
+    watch_cfg = ((cfg.get("scrobble") or {}).get("watch") or {})
+    sink_cfg = (watch_cfg.get("sink") or "trakt")
+    names = [s.strip().lower() for s in str(sink_cfg).split(",") if s and s.strip()]
+    added = set()
+    sinks = []
+    for name in names or ["trakt"]:
+        if name == "trakt" and "trakt" not in added:
             try:
-                from providers.scrobble.emby.watch import make_default_watch as _mk
-                make_watch = _mk
+                from providers.scrobble.trakt.sink import TraktSink
+                sinks.append(TraktSink())
+                added.add("trakt")
             except Exception:
-                make_watch = None
+                pass
+        elif name == "simkl" and "simkl" not in added:
+            try:
+                from providers.scrobble.simkl.sink import SimklSink
+                sinks.append(SimklSink())
+                added.add("simkl")
+            except Exception:
+                pass
+    if not sinks:
+        try:
+            from providers.scrobble.trakt.sink import TraktSink
+            sinks = [TraktSink()]
+        except Exception:
+            sinks = []
 
-        if make_watch is None:
-            from providers.scrobble.plex.watch import make_default_watch as _mk
+    make_watch = None
+    if prov == "emby":
+        try:
+            from providers.scrobble.emby.watch import make_default_watch as _mk
             make_watch = _mk
-            prov = "plex"
+        except Exception:
+            make_watch = None
 
-        w = make_watch(sinks=sinks)
-        if hasattr(w, "start_async"):
-            w.start_async()
-        else:
-            threading.Thread(target=w.start, daemon=True).start()
+    if make_watch is None:
+        from providers.scrobble.plex.watch import make_default_watch as _mk
+        make_watch = _mk
+        prov = "plex"
+
+    w = make_watch(sinks=sinks)
+    if hasattr(w, "start_async"):
+        w.start_async()
+    else:
+        threading.Thread(target=w.start, daemon=True).start()
 
     request.app.state.watch = w
     return w
@@ -372,7 +376,6 @@ def debug_watch_stop(request: Request):
     request.app.state.watch = None
     return {"ok": True, "alive": False}
 
-# ---- JellyfinTrakt webhook and Emby----
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request):
     from crosswatch import _UIHostLogger
@@ -404,7 +407,6 @@ async def webhook_jellyfintrakt(request: Request):
     ct = (request.headers.get("content-type") or "").lower()
     log(f"jf-webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
 
-    # Parse body
     payload = {}
     try:
         if "application/x-www-form-urlencoded" in ct:
@@ -420,10 +422,8 @@ async def webhook_jellyfintrakt(request: Request):
         log(f"jf-webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
-    # Friendly summary (works with Jellyfin Webhook plugin)
     md = (payload.get("Item") or payload.get("item") or payload.get("Metadata") or {}) or {}
     event = (payload.get("NotificationType") or payload.get("Event") or "").strip() or "?"
-    # user from several possible fields
     user = (
         ((payload.get("User") or {}).get("Name"))
         or payload.get("UserName")
@@ -431,7 +431,6 @@ async def webhook_jellyfintrakt(request: Request):
         or ""
     ).strip()
 
-    # pretty title
     mtype = (md.get("Type") or md.get("type") or "").strip().lower()
     if mtype == "episode":
         series = (md.get("SeriesName") or md.get("SeriesTitle") or "").strip()
@@ -451,14 +450,12 @@ async def webhook_jellyfintrakt(request: Request):
 
     log(f"jf-webhook: payload summary event='{event}' user='{user}' media='{title}'", "DEBUG")
 
-    # Hand off to the scrobbler
     try:
         res = jf_process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
     except Exception as e:
         log(f"jf-webhook: process_webhook raised: {e}", "ERROR")
         return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
 
-    # Outcome hints
     if res.get("error"):
         log(f"jf-webhook: result error={res['error']}", "WARN")
     elif res.get("ignored"):
@@ -475,10 +472,8 @@ async def webhook_jellyfintrakt(request: Request):
 
 @router.post("/webhook/embytrakt")
 async def webhook_embytrakt(request: Request):
-    # Reuse the Jellyfin handler (same payload shape)
     return await webhook_jellyfintrakt(request)
 
-# ---- PlexTrakt webhook ----
 @router.post("/webhook/plextrakt")
 async def webhook_trakt(request: Request):
     from crosswatch import _UIHostLogger
@@ -514,7 +509,6 @@ async def webhook_trakt(request: Request):
             part = form.get("payload")
             if part is None:
                 raise ValueError("multipart: no 'payload' part")
-
             if isinstance(part, (bytes, bytearray)):
                 payload = json.loads(part.decode("utf-8", errors="replace"))
             elif hasattr(part, "read"):
@@ -523,18 +517,15 @@ async def webhook_trakt(request: Request):
             else:
                 payload = json.loads(str(part))
             log("webhook: parsed multipart payload", "DEBUG")
-
         elif "application/x-www-form-urlencoded" in ct:
             d = parse_qs(raw.decode("utf-8", errors="replace"))
             if not d.get("payload"):
                 raise ValueError("urlencoded: no 'payload' key")
             payload = json.loads(d["payload"][0])
             log("webhook: parsed urlencoded payload", "DEBUG")
-
         else:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
             log("webhook: parsed json payload", "DEBUG")
-
     except Exception as e:
         snippet = (raw[:200].decode("utf-8", errors="replace") if raw else "<no body>")
         log(f"webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")

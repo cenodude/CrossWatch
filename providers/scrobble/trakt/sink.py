@@ -1,4 +1,6 @@
 # providers/scrobble/trakt/sink.py
+# Trakt.tv scrobble sink for CrossWatch
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import time, json, requests
@@ -6,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 TRAKT_API   = "https://api.trakt.tv"
-APP_AGENT   = "CrossWatch/Scrobble/1.1"
+APP_AGENT   = "CrossWatch/Scrobble/0.3"
 _TOKEN_OVERRIDE: str | None = None
 
 try:
@@ -169,6 +171,45 @@ try:
 except Exception:
     _rm_across_api = None
 
+# --- cross-sink auto-remove dedupe (short TTL) ---
+_AR_TTL = 60
+def _ar_state_file() -> Path:
+    base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
+    try: base.mkdir(parents=True, exist_ok=True)
+    except Exception: pass
+    return base / "auto_remove_seen.json"
+
+def _ar_seen(key: str) -> bool:
+    p = _ar_state_file()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+    now = time.time()
+    try:
+        data = {k: v for k, v in data.items() if (now - float(v)) < _AR_TTL}
+    except Exception:
+        data = {}
+    if key in data:
+        try: p.write_text(json.dumps(data), encoding="utf-8")
+        except Exception: pass
+        return True
+    data[key] = now
+    try: p.write_text(json.dumps(data), encoding="utf-8")
+    except Exception: pass
+    return False
+
+def _ar_key(ids: dict, media_type: str) -> str:
+    for k in ("imdb","tmdb","tvdb","trakt","simkl"):
+        v = ids.get(k)
+        if v:
+            return f"{media_type}:{k}:{v}"
+    try:
+        return f"{media_type}:{json.dumps(ids, sort_keys=True)}"
+    except Exception:
+        return f"{media_type}:title/year"
+# --- end dedupe helpers ---
+
 def _norm_type(t: str) -> str:
     s = (t or "").strip().lower()
     if s.endswith("s"): s = s[:-1]
@@ -197,6 +238,10 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
         ids = _ids(ev)
     if not ids:
         _log("Auto-remove skipped: no provider IDs available", "DEBUG")
+        return
+    key = _ar_key(ids, mt)
+    if _ar_seen(key):
+        _log("Auto-remove deduped (already handled by another sink)", "DEBUG")
         return
     try:
         if callable(_rm_across):

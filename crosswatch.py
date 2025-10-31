@@ -1,3 +1,7 @@
+# /crosswatch.py
+# CrossWatch Web API (FastAPI)
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+#
 # --------------- CrossWatch Web API (FastAPI) ---------------
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -84,6 +88,7 @@ from pydantic import BaseModel
 
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
+from providers.scrobble.simkl.sink import SimklSink
 from providers.scrobble.plex.watch import WatchService as PlexWatchService
 try:
     from providers.scrobble.emby.watch import autostart_from_config as emby_autostart
@@ -229,10 +234,31 @@ def _apply_debug_env_from_config() -> None:
         os.environ["CW_DEBUG"] = "1"
     elif not on and os.environ.get("CW_DEBUG"):
         os.environ.pop("CW_DEBUG", None)
+
+# --- Sinks builder (reads scrobble.watch.sink)
+def _build_sinks_from_config(cfg) -> list:
+    watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
+    sink_cfg = (watch_cfg.get("sink") or "trakt")
+    names = [s.strip().lower() for s in str(sink_cfg).split(",") if s and s.strip()]
+    added, sinks = set(), []
+    for name in (names or ["trakt"]):
+        if name == "trakt" and "trakt" not in added:
+            try:
+                sinks.append(TraktSink()); added.add("trakt")
+            except Exception:
+                pass
+        elif name == "simkl" and "simkl" not in added:
+            try:
+                sinks.append(SimklSink()); added.add("simkl")
+            except Exception:
+                pass
+    if not sinks:
+        try:
+            sinks = [TraktSink()]
+        except Exception:
+            sinks = []
+    return sinks
         
-_apply_debug_env_from_config()
-
-
 # --- Autostart watch service (reads config, returns instance or None)
 def autostart_from_config():
     cfg = load_config()
@@ -242,32 +268,24 @@ def autostart_from_config():
 
     provider = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
     filters = ((sc.get("watch") or {}).get("filters") or {}) if isinstance(sc.get("watch"), dict) else {}
-    sinks = [TraktSink()]
+    sinks = _build_sinks_from_config(cfg)
 
-    if provider == "emby":
-        if emby_autostart:
-            return emby_autostart()
-        try:
-            from providers.scrobble.emby.watch import make_default_watch as _mk
-            w = _mk(sinks=sinks)
-            if hasattr(w, "set_filters") and isinstance(filters, dict):
-                w.set_filters(filters)
-            if hasattr(w, "start_async"): w.start_async()
-            else: threading.Thread(target=w.start, daemon=True).start()
-            return w
-        except Exception:
-            return None
-
-    # Plex (default)
-    if plex_autostart:
-        return plex_autostart()
     try:
-        from providers.scrobble.plex.watch import make_default_watch as _mk
+        if provider == "emby":
+            from providers.scrobble.emby.watch import make_default_watch as _mk
+        else:
+            from providers.scrobble.plex.watch import make_default_watch as _mk
+    except Exception:
+        return None
+
+    try:
         w = _mk(sinks=sinks)
         if hasattr(w, "set_filters") and isinstance(filters, dict):
             w.set_filters(filters)
-        if hasattr(w, "start_async"): w.start_async()
-        else: threading.Thread(target=w.start, daemon=True).start()
+        if hasattr(w, "start_async"):
+            w.start_async()
+        else:
+            threading.Thread(target=w.start, daemon=True).start()
         return w
     except Exception:
         return None
@@ -485,7 +503,7 @@ class _UIHostLogger:
 
     def bind(self, **ctx):
         c = dict(self._ctx); c.update(ctx)
-        return _UIHostLogger(self._tag, self._module, c)
+        return _UIHostLogger(self._tag, name, c)
 
     def child(self, name: str):
         return _UIHostLogger(self._tag, name, dict(self._ctx))
@@ -552,7 +570,8 @@ async def _lifespan(app):
                     from providers.scrobble.emby.watch import make_default_watch as make_default_watch
                 else:
                     from providers.scrobble.plex.watch import make_default_watch as make_default_watch
-                w2 = make_default_watch(sinks=[TraktSink()])
+                sinks_fb = _build_sinks_from_config(cfg)
+                w2 = make_default_watch(sinks=sinks_fb)
                 try:
                     filters = ((sc.get("watch") or {}).get("filters") or {})
                     if hasattr(w2, "set_filters") and isinstance(filters, dict):

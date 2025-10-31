@@ -272,6 +272,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
             "provider": "plex",                         # Active watcher either "plex" or "emby" (default: "plex")
+            "sink": "trakt",                            # "trakt" | "simkl" | "simkl,trakt"
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
