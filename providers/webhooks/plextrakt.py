@@ -53,7 +53,6 @@ def _call_remove_across(ids: Dict[str, Any], media_type: str) -> None:
     except Exception:
         pass
 
-# --- config/io ---
 def _load_config() -> Dict[str, Any]:
     try:
         from crosswatch import load_config
@@ -109,7 +108,6 @@ def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if changed: _save_config(cfg)
     return cfg
 
-# --- trakt http ---
 def _tokens(cfg: Dict[str, Any]) -> Dict[str, str]:
     tr = cfg.get("trakt") or {}
     au = ((cfg.get("auth") or {}).get("trakt") or {})
@@ -183,7 +181,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
 
-# --- id helpers ---
 def _ids_from_candidates(candidates: Iterable[Any]) -> Dict[str, Any]:
     for c in candidates:
         if not c: continue
@@ -241,13 +238,36 @@ def _all_ids_from_metadata(md: Dict[str, Any]) -> Dict[str, Any]:
 def _episode_ids_from_md(md: Dict[str, Any]) -> Dict[str, Any]:
     ids: Dict[str, Any] = {}
     s = str(md.get("guid") or "")
-    if not s: return ids
-    m = _PAT_TVDB.search(s)
-    if m: ids["tvdb"] = int(m.group(1))
-    m = _PAT_TMDB.search(s)
-    if m: ids["tmdb"] = int(m.group(1))
-    m = _PAT_IMDB.search(s)
-    if m: ids["imdb"] = m.group(1)
+    if s:
+        m = _PAT_TVDB.search(s)
+        if m: ids["tvdb"] = int(m.group(1))
+        m = _PAT_TMDB.search(s)
+        if m: ids["tmdb"] = int(m.group(1))
+        m = _PAT_IMDB.search(s)
+        if m: ids["imdb"] = m.group(1)
+    gi = md.get("Guid") or []
+    for g in gi:
+        v = g.get("id") if isinstance(g, dict) else (g if isinstance(g, str) else "")
+        if not v: continue
+        m = _PAT_TMDB.search(v)
+        if m and "tmdb" not in ids: ids["tmdb"] = int(m.group(1))
+        m = _PAT_IMDB.search(v)
+        if m and "imdb" not in ids: ids["imdb"] = m.group(1)
+        m = _PAT_TVDB.search(v)
+        if m and "tvdb" not in ids: ids["tvdb"] = int(m.group(1))
+    return ids
+
+def _show_ids_from_md(md: Dict[str, Any]) -> Dict[str, Any]:
+    ids: Dict[str, Any] = {}
+    for k in ("grandparentGuid", "parentGuid"):
+        s = md.get(k)
+        if not s: continue
+        m = _PAT_TMDB.search(s)
+        if m and "tmdb" not in ids: ids["tmdb"] = int(m.group(1))
+        m = _PAT_IMDB.search(s)
+        if m and "imdb" not in ids: ids["imdb"] = m.group(1)
+        m = _PAT_TVDB.search(s)
+        if m and "tvdb" not in ids: ids["tvdb"] = int(m.group(1))
     return ids
 
 def _ids_from_metadata(md: Dict[str, Any], media_type: str) -> Dict[str, Any]:
@@ -267,7 +287,6 @@ def _describe_ids(ids: Dict[str, Any] | str) -> str:
         return "none"
     return str(ids)
 
-# --- progress + plex probe ---
 def _progress(payload: Dict[str, Any]) -> float:
     md = payload.get("Metadata") or {}
     vo = payload.get("viewOffset") or md.get("viewOffset") or 0
@@ -319,7 +338,6 @@ def _probe_played_status(cfg: Dict[str, Any], rating_key: Any) -> bool:
     except Exception:
         return False
 
-# --- trakt id resolve (no title/year) ---
 def _cache_get(key: tuple) -> Optional[Any]:
     try: return _TRAKT_ID_CACHE.get(key)
     except Exception: return None
@@ -372,7 +390,7 @@ def _resolve_trakt_show_id(ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=
     _cache_put(key, None); return None
 
 def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any] | None:
-    for key in ("imdb", "tvdb", "tmdb"):
+    for key in ("tmdb", "imdb", "tvdb"):
         val = ids_hint.get(key)
         if not val: continue
         try:
@@ -392,12 +410,47 @@ def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=N
                 return out
     return None
 
+def _show_ids_from_episode_hint(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = ids_hint.get(key)
+        if not val:
+            continue
+        try:
+            r = requests.get(f"{TRAKT_API}/search/{key}/{val}",
+                             params={"type": "episode", "limit": 1},
+                             headers=_headers(cfg), timeout=10)
+            if r.status_code != 200:
+                continue
+            arr = r.json() or []
+        except Exception:
+            continue
+        for hit in arr:
+            show_ids = ((hit.get("show") or {}).get("ids") or {})
+            out = {k: show_ids[k] for k in ("trakt","tvdb","tmdb","imdb") if show_ids.get(k)}
+            if out:
+                _emit(logger, f"guid search resolved SHOW ids from episode: {out}", "DEBUG")
+                return out
+    return {}
+
+def _title_search_show_ids(title: str, cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    try:
+        if not title: return {}
+        r = requests.get(f"{TRAKT_API}/search/show", params={"query": title, "limit": 1},
+                         headers=_headers(cfg), timeout=10)
+        if r.status_code != 200: return {}
+        arr = r.json() or []
+        if not arr: return {}
+        ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
+        return {k: ids[k] for k in ("trakt","tvdb","tmdb","imdb") if ids.get(k)}
+    except Exception:
+        return {}
+
 def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Optional[int]:
     s = md.get("parentIndex"); e = md.get("index")
     key = ("episode", ids_all.get("imdb"), ids_all.get("tmdb"), ids_all.get("tvdb"), s, e)
-    c = _cache_get(key); 
+    c = _cache_get(key)
     if c is not None: return c
-    hint = {**_episode_ids_from_md(md), **ids_all}
+    hint = {**_episode_ids_from_md(md), **ids_all, **_all_ids_from_metadata(md)}
     found = _guid_search_episode(hint, cfg, logger=logger)
     tid = (found or {}).get("trakt")
     if isinstance(tid, int):
@@ -417,7 +470,7 @@ def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: 
     _cache_put(key, None); return None
 
 def _best_id_key_order(media_type: str) -> tuple[str, ...]:
-    return ("imdb", "tmdb", "tvdb") if media_type == "movie" else ("tvdb", "tmdb", "imdb")
+    return ("imdb", "tmdb", "tvdb") if media_type == "movie" else ("tmdb", "imdb", "tvdb")
 
 def _build_primary_body(media_type: str, md: Dict[str, Any], ids_all: Dict[str, Any],
                         prog: float, cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
@@ -430,10 +483,20 @@ def _build_primary_body(media_type: str, md: Dict[str, Any], ids_all: Dict[str, 
         return {}
     tid = _resolve_trakt_episode_id(md, ids_all, cfg, logger=logger)
     if tid: return {"progress": p, "episode": {"ids": {"trakt": tid}}}
-    season = md.get("parentIndex"); number = md.get("index")
-    for k in _best_id_key_order("episode"):
-        if k in ids_all:
-            return {"progress": p, "show": {"ids": {k: ids_all[k]}}, "episode": {"season": season, "number": number}}
+    s = md.get("parentIndex"); n = md.get("index")
+    show_ids = _show_ids_from_md(md)
+    if not show_ids:
+        hint = {**_episode_ids_from_md(md), **ids_all, **_all_ids_from_metadata(md)}
+        show_ids = _show_ids_from_episode_hint(hint, cfg, logger=logger)
+    if not show_ids:
+        show_tid = _resolve_trakt_show_id(ids_all, cfg, logger=logger)
+        if show_tid: show_ids = {"trakt": int(show_tid)}
+    if not show_ids:
+        title = (md.get("grandparentTitle") or "").strip()
+        if title:
+            show_ids = _title_search_show_ids(title, cfg, logger=logger)
+    if show_ids and isinstance(s, int) and isinstance(n, int):
+        return {"progress": p, "show": {"ids": show_ids}, "episode": {"season": s, "number": n}}
     return {}
 
 def _body_ids_desc(b: Dict[str, Any]) -> str:
@@ -441,7 +504,6 @@ def _body_ids_desc(b: Dict[str, Any]) -> str:
     ids = ((b.get("movie") or {}).get("ids")) or ((b.get("show") or {}).get("ids")) or ((b.get("episode") or {}).get("ids"))
     return _describe_ids(ids if ids else "none")
 
-# --- filters ---
 def _account_matches(allow_users: set[str], payload: Dict[str, Any], logger=None) -> bool:
     if not allow_users: return True
     def norm(s: str) -> str: return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
@@ -469,7 +531,6 @@ def _account_key(payload: Dict[str, Any]) -> str:
     title = str(acc.get("title") or "")
     return acc_uuid or f"id:{acc_id}" or title or "unknown"
 
-# --- sessions helpers for autoplay guard ---
 def _player_state_from_sessions(cfg: Dict[str, Any], target_rk: str, target_sk: str, acc_id: str, acc_title: str) -> str:
     try:
         base, token = _plex_base_token(cfg)
@@ -534,7 +595,6 @@ def _check_autoplay_after(cfg: Dict[str, Any], payload: Dict[str, Any], md: Dict
     except Exception as e:
         _emit(logger, f"autoplay check error: {e}", "DEBUG")
 
-# --- main ---
 def process_webhook(
     payload: Dict[str, Any],
     headers: Mapping[str, str],
@@ -602,10 +662,11 @@ def process_webhook(
     if not md or media_type not in ("movie", "episode"):
         return {"ok": True, "ignored": True}
 
-    ids = _ids_from_metadata(md, media_type)
-    ids_all = _all_ids_from_metadata(md)
-    if not ids: ids = {}
-    _emit(logger, f"ids resolved: {media_name_dbg} -> {_describe_ids(ids or ids_all)}", "DEBUG")
+    show_ids = _show_ids_from_md(md)
+    epi_ids = _episode_ids_from_md(md)
+    all_ids = _all_ids_from_metadata(md)
+    ids_all2 = {**show_ids, **epi_ids} if (show_ids or epi_ids) else dict(all_ids)
+    _emit(logger, f"ids resolved: {media_name_dbg} -> {_describe_ids((show_ids or epi_ids) or all_ids)}", "DEBUG")
 
     prog_raw = _progress(payload)
 
@@ -637,7 +698,6 @@ def process_webhook(
                     "ts": now, "last_event": "autoplay_quarantined", "prog": 0.0, "sk": sk_current,
                     "autoplay_pending": True, "autoplay_until": now + float(suppress_autoplay), "finished": False,
                 }
-                ids_all2 = {**ids_all, **(ids or {})}
                 threading.Thread(
                     target=_check_autoplay_after,
                     args=(cfg, payload, md, ids_all2, suppress_autoplay, suppress_start_at, stop_pause_threshold, force_stop_at, logger),
@@ -738,17 +798,9 @@ def process_webhook(
                                  "autoplay_pending": False, "autoplay_until": 0.0}
         return {"ok": True, "suppressed": True}
 
-    if event == "media.stop" and st.get("finished") is True and abs((st.get("prog", 0.0)) - prog) <= 1.0:
-        _emit(logger, "suppress duplicate stop", "DEBUG")
-        _SCROBBLE_STATE[sess] = {"ts": now, "last_event": event, "prog": prog, "sk": sk_current,
-                                 "finished": True,
-                                 "autoplay_pending": False, "autoplay_until": 0.0}
-        return {"ok": True, "suppressed": True}
-
-    if intended == "/scrobble/stop" and prog >= force_stop_at:
+    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
-    ids_all2 = {**ids_all, **(ids or {})}
     body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
     if not body:
         _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
@@ -769,7 +821,7 @@ def process_webhook(
     _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
 
     if r.status_code == 404 and media_type == "episode":
-        epi_hint = {**(_episode_ids_from_md(md) or {}), **ids_all}
+        epi_hint = {**(_episode_ids_from_md(md) or {}), **ids_all2}
         found = _guid_search_episode(epi_hint, cfg, logger=logger)
         if found:
             body2 = {"progress": float(round(prog, 2)), "episode": {"ids": found}}
@@ -784,8 +836,7 @@ def process_webhook(
         if ("expires_at" in raw_txt or "watched_at" in raw_txt):
             if prog >= force_stop_at and not (st.get("wl_removed") is True):
                 try:
-                    ids_payload = (ids_all or ids or {})
-                    _call_remove_across(ids_payload, media_type)
+                    _call_remove_across(ids_all2 or {}, media_type)
                     st = {**st, "wl_removed": True}
                 except Exception:
                     pass
@@ -801,8 +852,7 @@ def process_webhook(
     if r.status_code < 400:
         if intended == "/scrobble/stop" and prog >= force_stop_at and not (st.get("wl_removed") is True):
             try:
-                ids_payload = (ids_all or ids or {})
-                _call_remove_across(ids_payload, media_type)
+                _call_remove_across(ids_all2 or {}, media_type)
                 st = {**st, "wl_removed": True}
             except Exception:
                 pass
@@ -835,7 +885,6 @@ def process_webhook(
     }
     return {"ok": False, "status": r.status_code, "trakt": rj}
 
-# --- event mapping ---
 def _map_event(event: str) -> Optional[str]:
     e = (event or "").lower()
     if e in ("media.play", "media.resume"): return "/scrobble/start"
