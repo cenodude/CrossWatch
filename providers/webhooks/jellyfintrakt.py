@@ -231,17 +231,27 @@ def _grab(d: Mapping[str, Any], keys: list[str]) -> Any:
 def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
     ids = {}
     pids = (md.get("ProviderIds") or {}) if isinstance(md, dict) else {}
-    flat = {"tmdb": root.get("Provider_tmdb"), "imdb": root.get("Provider_imdb"), "tvdb": root.get("Provider_tvdb")}
+    flat = {
+        "tmdb": root.get("Provider_tmdb") or root.get("Tmdb") or root.get("TheMovieDb") or root.get("SeriesTmdbId") or root.get("SeriesTmdb"),
+        "imdb": root.get("Provider_imdb") or root.get("Imdb") or root.get("SeriesImdbId") or root.get("SeriesImdb"),
+        "tvdb": root.get("Provider_tvdb") or root.get("Tvdb") or root.get("TheTVDB") or root.get("TheTvdb") or root.get("SeriesTvdbId") or root.get("SeriesTvdb"),
+    }
     def norm_imdb(v): s = str(v).strip(); return s if s.startswith("tt") else (f"tt{s}" if s else "")
-    def maybe_int(v): s = str(v).strip(); return int(s) if s.isdigit() else (s if s else None)
-    tmdb = pids.get("Tmdb") or pids.get("tmdb") or flat["tmdb"]
+    def maybe_int(v):
+        s = str(v).strip()
+        return int(s) if s.isdigit() else (s if s else None)
+    tmdb = pids.get("Tmdb") or pids.get("tmdb") or pids.get("TheMovieDb") or flat["tmdb"]
     imdb = pids.get("Imdb") or pids.get("imdb") or flat["imdb"]
-    tvdb = pids.get("Tvdb") or pids.get("tvdb") or flat["tvdb"]
-    if tmdb: ids["tmdb"] = maybe_int(tmdb)
+    tvdb = pids.get("Tvdb") or pids.get("tvdb") or pids.get("TheTVDB") or pids.get("TheTvdb") or flat["tvdb"]
+    if tmdb:
+        v = maybe_int(tmdb)
+        if v is not None: ids["tmdb"] = v
     if imdb:
         imdb = norm_imdb(imdb)
         if imdb: ids["imdb"] = imdb
-    if tvdb: ids["tvdb"] = maybe_int(tvdb)
+    if tvdb:
+        v = maybe_int(tvdb)
+        if v is not None: ids["tvdb"] = v
     return ids
 
 def _episode_numbers(md: Mapping[str, Any], root: Mapping[str, Any]) -> tuple[Any, Any]:
@@ -253,15 +263,15 @@ def _episode_numbers(md: Mapping[str, Any], root: Mapping[str, Any]) -> tuple[An
 
 def _ids_desc(ids: Dict[str, Any] | str) -> str:
     if isinstance(ids, dict):
-        if "imdb" in ids: return f"imdb:{ids['imdb']}"
         if "tmdb" in ids: return f"tmdb:{ids['tmdb']}"
+        if "imdb" in ids: return f"imdb:{ids['imdb']}"
         if "tvdb" in ids: return f"tvdb:{ids['tvdb']}"
         if "trakt" in ids: return f"trakt:{ids['trakt']}"
         return "none"
     return str(ids)
 
 def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any] | None:
-    for key in ("imdb", "tvdb", "tmdb"):
+    for key in ("tmdb", "imdb", "tvdb"):
         val = ids_hint.get(key)
         if not val: continue
         try:
@@ -274,7 +284,7 @@ def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=N
         except Exception: arr = []
         for hit in arr:
             epi_ids = ((hit.get("episode") or {}).get("ids") or {})
-            out = {k: epi_ids[k] for k in ("trakt", "imdb", "tmdb", "tvdb") if epi_ids.get(k)}
+            out = {k: epi_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if epi_ids.get(k)}
             if out:
                 _emit(logger, f"guid search resolved episode ids: {out}", "DEBUG")
                 return out
@@ -320,8 +330,8 @@ def _resolve_trakt_show_id(ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=
             _emit(logger, f"trakt show id resolve error: {e}", "DEBUG")
     _cache_put(key, None); return None
 
-def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Optional[int]:
-    s, e = _episode_numbers(md, md)
+def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=None, root: Optional[Mapping[str, Any]] = None) -> Optional[int]:
+    s, e = _episode_numbers(md, root or md)
     key = ("episode", ids_all.get("imdb"), ids_all.get("tmdb"), ids_all.get("tvdb"), s, e)
     c = _cache_get(key)
     if c is not None: return c
@@ -345,23 +355,124 @@ def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: 
     _cache_put(key, None); return None
 
 def _best_id_key_order(media_type: str) -> tuple[str, ...]:
-    return ("imdb", "tmdb", "tvdb") if media_type == "movie" else ("tvdb", "tmdb", "imdb")
+    return ("imdb", "tmdb", "tvdb") if media_type == "movie" else ("tmdb", "imdb", "tvdb")
+
+def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
+    sp = (md.get("SeriesProviderIds") or root.get("SeriesProviderIds") or {}) or {}
+    out = {}
+    vals = {
+        "tvdb": sp.get("Tvdb") or sp.get("tvdb") or sp.get("TheTVDB") or sp.get("TheTvdb") or root.get("SeriesTvdbId") or root.get("SeriesTvdb"),
+        "tmdb": sp.get("Tmdb") or sp.get("tmdb") or sp.get("TheMovieDb") or root.get("SeriesTmdbId") or root.get("SeriesTmdb"),
+        "imdb": sp.get("Imdb") or sp.get("imdb") or root.get("SeriesImdbId") or root.get("SeriesImdb"),
+    }
+    try:
+        if vals["tvdb"]: out["tvdb"] = int(str(vals["tvdb"]).strip())
+    except: pass
+    try:
+        if vals["tmdb"]: out["tmdb"] = int(str(vals["tmdb"]).strip())
+    except: pass
+    if vals["imdb"]:
+        s = str(vals["imdb"]).strip()
+        out["imdb"] = s if s.startswith("tt") else (f"tt{s}" if s else "")
+    return {k: v for k, v in out.items() if v}
+
+def _show_ids_from_episode_hint(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = ids_hint.get(key)
+        if not val:
+            continue
+        try:
+            r = requests.get(f"{TRAKT_API}/search/{key}/{val}",
+                             params={"type": "episode", "limit": 1},
+                             headers=_headers(cfg), timeout=10)
+            if r.status_code != 200:
+                continue
+            arr = r.json() or []
+        except Exception:
+            continue
+        for hit in arr:
+            show_ids = ((hit.get("show") or {}).get("ids") or {})
+            out = {k: show_ids[k] for k in ("trakt","tmdb","imdb","tvdb") if show_ids.get(k)}
+            if out:
+                _emit(logger, f"guid search resolved SHOW ids from episode: {out}", "DEBUG")
+                return out
+    return {}
+
+def _resolve_episode_by_showids(show_ids: Dict[str, Any], season: Any, number: Any, cfg: Dict[str, Any], logger=None) -> Optional[int]:
+    if not isinstance(season, int) or not isinstance(number, int):
+        return None
+    for pref in ("trakt","tmdb","imdb","tvdb"):
+        sid = show_ids.get(pref)
+        if not sid:
+            continue
+        try:
+            r = requests.get(f"{TRAKT_API}/shows/{sid}/seasons/{season}/episodes/{number}",
+                             headers=_headers(cfg), timeout=10)
+            if r.status_code == 200:
+                ej = r.json() or {}
+                tid = ((ej.get("ids") or {}).get("trakt"))
+                if tid:
+                    return int(tid)
+        except Exception as ex:
+            _emit(logger, f"episode lookup via show ids error: {ex}", "DEBUG")
+    return None
 
 def _build_primary_body(media_type: str, md: Dict[str, Any], ids_all: Dict[str, Any],
-                        prog: float, cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+                        prog: float, cfg: Dict[str, Any], logger=None, root: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     p = float(round(prog, 2))
+
     if media_type == "movie":
         tid = _resolve_trakt_movie_id(ids_all, cfg, logger=logger)
-        if tid: return {"progress": p, "movie": {"ids": {"trakt": tid}}}
+        if tid:
+            return {"progress": p, "movie": {"ids": {"trakt": tid}}}
         for k in _best_id_key_order("movie"):
-            if k in ids_all: return {"progress": p, "movie": {"ids": {k: ids_all[k]}}}
+            if k in ids_all:
+                return {"progress": p, "movie": {"ids": {k: ids_all[k]}}}
         return {}
-    tid = _resolve_trakt_episode_id(md, ids_all, cfg, logger=logger)
-    if tid: return {"progress": p, "episode": {"ids": {"trakt": tid}}}
-    s, n = _episode_numbers(md, md)
-    for k in _best_id_key_order("episode"):
-        if k in ids_all:
-            return {"progress": p, "show": {"ids": {k: ids_all[k]}}, "episode": {"season": s, "number": n}}
+
+    tid = _resolve_trakt_episode_id(md, ids_all, cfg, logger=logger, root=root)
+    if tid:
+        return {"progress": p, "episode": {"ids": {"trakt": tid}}}
+
+    s, n = _episode_numbers(md, root or md)
+
+    show_ids = {}
+    try:
+        show_ids = _series_ids_from_payload(md, root or md) or {}
+    except Exception:
+        pass
+
+    if not show_ids:
+        try:
+            episode_hint = {**_ids_from_providerids(md, root or md), **(ids_all or {})}
+            show_ids = _show_ids_from_episode_hint(episode_hint, cfg, logger=logger) or {}
+            if show_ids:
+                _emit(logger, f"derived SHOW ids from episode hint: {show_ids}", "DEBUG")
+        except Exception:
+            pass
+
+    if not show_ids:
+        try:
+            title = (md.get("SeriesName") or (root or {}).get("SeriesName") or (root or {}).get("SeriesTitle") or "").strip()
+            if title:
+                r = requests.get(f"{TRAKT_API}/search/show",
+                                 params={"query": title, "limit": 1},
+                                 headers=_headers(cfg), timeout=10)
+                if r.status_code == 200:
+                    arr = r.json() or []
+                    if arr:
+                        si = ((arr[0] or {}).get("show") or {}).get("ids") or {}
+                        if si:
+                            show_ids = {k: si[k] for k in ("trakt","tmdb","imdb","tvdb") if si.get(k)}
+        except Exception:
+            pass
+
+    if show_ids and isinstance(s, int) and isinstance(n, int):
+        etid = _resolve_episode_by_showids(show_ids, s, n, cfg, logger=logger)
+        if isinstance(etid, int):
+            return {"progress": p, "episode": {"ids": {"trakt": etid}}}
+        return {"progress": p, "show": {"ids": show_ids}, "episode": {"season": s, "number": n}}
+
     return {}
 
 def _body_ids_desc(b: Dict[str, Any]) -> str:
@@ -423,14 +534,14 @@ def _extract_paused(payload: Mapping[str, Any]) -> Optional[bool]:
         if b is not None: return b
     return None
 
-def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str:
+def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any], root: Optional[Mapping[str, Any]] = None) -> str:
     v = md.get("Id")
     if v: return str(v)
     for k in ("imdb","tmdb","tvdb","trakt"):
         vv = ids_all.get(k)
         if vv: return f"{k}:{vv}"
     name = (md.get("SeriesName") or md.get("Name") or "")
-    s, n = _episode_numbers(md, md)
+    s, n = _episode_numbers(md, root or md)
     if name and isinstance(s, int) and isinstance(n, int):
         return f"{name}|S{s}E{n}"
     y = md.get("ProductionYear") or ""
@@ -438,7 +549,7 @@ def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str
 
 def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str:
     base = str(payload.get("PlaySessionId") or payload.get("SessionId") or payload.get("DeviceId") or "n/a")
-    return base + "|" + _session_media_key(md, ids_all)
+    return base + "|" + _session_media_key(md, ids_all, root=payload)
 
 def process_webhook(
     payload: Dict[str, Any],
@@ -481,7 +592,7 @@ def process_webhook(
         md.setdefault("SeriesName", _grab(payload, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or md.get("SeriesName"))
         md.setdefault("RunTimeTicks", payload.get("RunTimeTicks") or md.get("RunTimeTicks"))
         pids = dict(md.get("ProviderIds") or {})
-        for k_src, k_norm in [("Provider_tmdb", "Tmdb"), ("Provider_imdb", "Imdb"), ("Provider_tvdb", "Tvdb")]:
+        for k_src, k_norm in [("Provider_tmdb", "Tmdb"), ("Provider_imdb", "Imdb"), ("Provider_tvdb", "Tvdb"), ("TheMovieDb","TheMovieDb"), ("TheTVDB","TheTVDB")]:
             if payload.get(k_src) and not pids.get(k_norm):
                 pids[k_norm] = payload[k_src]
         if pids: md["ProviderIds"] = pids
@@ -515,9 +626,10 @@ def process_webhook(
         if not md or media_type not in ("movie", "episode"):
             return {"ok": True, "ignored": True}
 
-        ids_pref = _ids_from_providerids(md, payload)
-        ids_all = dict(ids_pref)
-        _emit(logger, f"ids resolved: {media_name_dbg} -> {_ids_desc(ids_all)}", "DEBUG")
+        ids_epi  = _ids_from_providerids(md, payload) or {}
+        ids_show = _series_ids_from_payload(md, payload) or {}
+        ids_all  = {**ids_show, **ids_epi}
+        _emit(logger, f"ids resolved: {media_name_dbg} -> {_ids_desc(ids_show or ids_epi)}", "DEBUG")
 
         prog_raw = _progress(payload, md)
         sess = _make_session_id(payload, md, ids_all)
@@ -621,7 +733,7 @@ def process_webhook(
             _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused"), "last_stop_ts": now}
             return {"ok": True, "suppressed": True}
 
-        body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger)
+        body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger, root=payload)
         if not body:
             _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
             _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused")}
@@ -639,7 +751,8 @@ def process_webhook(
         _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
 
         if r.status_code == 404 and media_type == "episode":
-            found = _guid_search_episode(ids_all, cfg, logger=logger)
+            epi_hint = _ids_from_providerids(md, md) or {}
+            found = _guid_search_episode(epi_hint, cfg, logger=logger)
             if found:
                 body2 = {"progress": float(round(prog, 2)), "episode": {"ids": found}}
                 _emit(logger, f"trakt intent {intended} using {_ids_desc(found)} (rescue)", "DEBUG")
@@ -684,7 +797,10 @@ def process_webhook(
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
             }
             try:
+                action_name = intended.rsplit("/", 1)[[-1]][0]
+            except Exception:
                 action_name = intended.rsplit("/", 1)[-1]
+            try:
                 _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
             except Exception:
                 pass
