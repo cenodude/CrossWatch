@@ -1,4 +1,5 @@
 # _FastAPI.py
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from pathlib import Path
 
@@ -413,20 +414,33 @@ function render(payload){
   if(none){ const hdr=document.querySelector('.ops-header'); if(btn&&hdr) hdr.appendChild(btn); return; }
 
   keys.forEach(K=>{
-    const d=P[K]||{}, name=titleCase(K);
+    const d = P[K] || {};
+    const LABELS = { PLEX:'Plex', TRAKT:'Trakt', SIMKL:'SIMKL', JELLYFIN:'Jellyfin', EMBY:'Emby', MDBLIST:'MDBlist' };
+    const name = LABELS[K] || titleCase(K);
     const connected=!!d.connected;
     let vip=false, detail='';
+
     if(!connected){
       detail=d.reason || `${name} not connected`;
     }else{
       if(K.toUpperCase()==='PLEX'){
         vip=!!(d.plexpass||d.subscription?.plan);
-        if(vip){ detail=`Plex Pass – ${d.subscription?.plan||'Active'}`; }
+        if(vip){ detail=`Plex Pass — ${d.subscription?.plan||'Active'}`; }
       }else if(K.toUpperCase()==='TRAKT'){
-        vip=!!d.vip; detail=vip?'VIP status – Enabled':'';
+        vip=!!d.vip;
+        detail = vip ? 'VIP status — Enabled' : '';
       }else if(K.toUpperCase()==='EMBY'){
         vip=!!d.premiere;
         if(vip){ detail='Premiere — Active'; }
+      } else if (K.toUpperCase() === 'MDBLIST') {
+        vip = !!d.vip; // crown if patron
+        const lim = (d && typeof d === 'object' && d.limits && typeof d.limits === 'object') ? d.limits : {};
+        const used = Number(lim.api_requests_count);
+        const max  = Number(lim.api_requests);
+        const usedStr = Number.isFinite(used) ? used.toLocaleString() : '-';
+        const maxStr  = Number.isFinite(max)  ? max.toLocaleString()  : '-';
+        const pat = d.patron_status || '';
+        detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` — Status: ${pat}` : '');
       }
     }
     host.appendChild(makeConn({name,connected,vip,detail}));

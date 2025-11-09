@@ -1,5 +1,6 @@
 /* assets/crosswatch.js *
 /* This file needs to be refactored and split up over time. - its garbage right now. */
+/* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 /* Global showTab bootstrap (runs first) */
 (function(){
@@ -481,7 +482,7 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
   setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
   setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
-  setBadge("badge-mdblist",  "MDBList",  connState(mdbl  ?? false), stale, "MDBLIST",  mdbl);
+  setBadge("badge-mdblist",  "MDBlist",  connState(mdbl ?? false), stale, "MDBLIST", mdbl);
 }
 
 function fetchWithTimeout(url, opts = {}, ms = 15000) {

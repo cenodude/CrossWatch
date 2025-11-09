@@ -1,8 +1,10 @@
 # _probesAPI.py
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, Tuple, Callable
 import os, json, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
@@ -27,7 +29,7 @@ PROVIDERS = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist")
 STATUS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
 PROBE_CACHE: Dict[str, Tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS}
 PROBE_DETAIL_CACHE: Dict[str, Tuple[float, bool, str]] = {k: (0.0, False, "") for k in PROVIDERS}
-_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {k: (0.0, {}) for k in ("plex", "trakt", "emby")}
+_USERINFO_CACHE: Dict[str, Tuple[float, dict]] = {k: (0.0, {}) for k in ("plex", "trakt", "emby", "mdblist")}
 
 # ---- HTTP helpers ----
 def _http_get(url: str, headers: Dict[str, str], timeout: int = HTTP_TIMEOUT) -> Tuple[int, bytes]:
@@ -224,6 +226,53 @@ def plex_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
         out["plexpass"] = bool(plexpass)
         out["subscription"] = {"plan": plan, "status": status}
     _USERINFO_CACHE["plex"] = (now, out); return out
+    
+def mdblist_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
+    ts, info = _USERINFO_CACHE.get("mdblist", (0.0, {}))
+    now = time.time()
+    if now - ts < max_age_sec and isinstance(info, dict):
+        return info
+
+    md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {})
+    api_key = (md.get("api_key") or "").strip()
+    if not api_key:
+        _USERINFO_CACHE["mdblist"] = (now, {})
+        return {}
+
+    url = f"https://api.mdblist.com/user?apikey={quote(api_key)}"
+    code, body = _http_get(url, headers=UA, timeout=6)
+
+    out: Dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+
+        def _to_int(v):
+            try:
+                return int(v)
+            except Exception:
+                return 0
+
+        limits = {
+            "api_requests": _to_int(j.get("api_requests")),
+            "api_requests_count": _to_int(j.get("api_requests_count")),
+        }
+        patron_status = j.get("patron_status") or None
+        is_supporter = bool(j.get("is_supporter"))
+
+        # Treat supporters/patrons as "vip" for crown display
+        vip = is_supporter or (str(patron_status).lower() in ("active_patron", "patron", "supporter"))
+
+        out = {
+            "vip": vip,
+            "vip_type": "patron" if vip else None,
+            "patron_status": patron_status,
+            "username": j.get("username"),
+            "user_id": j.get("user_id"),
+            "limits": limits,
+        }
+
+    _USERINFO_CACHE["mdblist"] = (now, out)
+    return out
 
 def trakt_user_info(cfg: Dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict:
     ts, info = _USERINFO_CACHE["trakt"]; now = time.time()
@@ -332,9 +381,10 @@ DETAIL_PROBES: Dict[str, Callable[..., Tuple[bool, str]]] = {
     "MDBLIST": _probe_mdblist_detail,
 }
 USERINFO_FNS: Dict[str, Callable[..., dict]] = {
-    "PLEX": plex_user_info,
-    "TRAKT": trakt_user_info,
-    "EMBY": emby_user_info,
+    "PLEX":   plex_user_info,
+    "TRAKT":  trakt_user_info,
+    "EMBY":   emby_user_info,
+    "MDBLIST": mdblist_user_info,
 }
 
 # ---- FastAPI ----
@@ -351,8 +401,8 @@ def register_probes(app: FastAPI, load_config_fn):
         pairs = cfg.get("pairs") or []
         any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
 
-        # Probe all providers in parallel
         probe_age = 0 if fresh else PROBE_TTL
+        user_age  = 0 if fresh else USERINFO_TTL
         with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
             futs = {ex.submit(_safe_probe_detail, fn, cfg, probe_age): name for name, fn in DETAIL_PROBES.items()}
             results: Dict[str, Tuple[bool, str]] = {}
@@ -363,20 +413,20 @@ def register_probes(app: FastAPI, load_config_fn):
                 except Exception as e:
                     results[name] = (False, f"probe failed: {e}")
 
-        # Unpack with defaults to avoid KeyErrors
-        plex_ok, plex_reason       = results.get("PLEX", (False, ""))
-        simkl_ok, simkl_reason     = results.get("SIMKL", (False, ""))
-        trakt_ok, trakt_reason     = results.get("TRAKT", (False, ""))
-        jelly_ok, jelly_reason     = results.get("JELLYFIN", (False, ""))
-        emby_ok, emby_reason       = results.get("EMBY", (False, ""))
-        mdbl_ok, mdbl_reason       = results.get("MDBLIST", (False, ""))
+        plex_ok, plex_reason   = results.get("PLEX", (False, ""))
+        simkl_ok, simkl_reason = results.get("SIMKL", (False, ""))
+        trakt_ok, trakt_reason = results.get("TRAKT", (False, ""))
+        jelly_ok, jelly_reason = results.get("JELLYFIN", (False, ""))
+        emby_ok, emby_reason   = results.get("EMBY", (False, ""))
+        mdbl_ok, mdbl_reason   = results.get("MDBLIST", (False, ""))
 
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
         # User info only when connected
-        info_plex  = _safe_userinfo(plex_user_info,  cfg, max_age_sec=USERINFO_TTL) if plex_ok  else {}
-        info_trakt = _safe_userinfo(trakt_user_info, cfg, max_age_sec=USERINFO_TTL) if trakt_ok else {}
-        info_emby  = _safe_userinfo(emby_user_info,  cfg, max_age_sec=USERINFO_TTL) if emby_ok  else {}
+        info_plex  = _safe_userinfo(plex_user_info,    cfg, max_age_sec=user_age)  if plex_ok  else {}
+        info_trakt = _safe_userinfo(trakt_user_info,   cfg, max_age_sec=user_age)  if trakt_ok else {}
+        info_emby  = _safe_userinfo(emby_user_info,    cfg, max_age_sec=user_age)  if emby_ok  else {}
+        info_mdbl  = _safe_userinfo(mdblist_user_info, cfg, max_age_sec=user_age)  if mdbl_ok  else {}
 
         data = {
             "plex_connected":     plex_ok,
@@ -389,19 +439,38 @@ def register_probes(app: FastAPI, load_config_fn):
             "can_run":            bool(any_pair_ready),
             "ts":                 int(now),
             "providers": {
-                "PLEX":     { "connected": plex_ok,  **({} if plex_ok  else {"reason": plex_reason}),
-                            **({} if not info_plex else {
-                                "plexpass": bool(info_plex.get("plexpass")),
-                                "subscription": info_plex.get("subscription") or {}
-                            })},
+                "PLEX": {
+                    "connected": plex_ok, **({} if plex_ok else {"reason": plex_reason}),
+                    **({} if not info_plex else {
+                        "plexpass": bool(info_plex.get("plexpass")),
+                        "subscription": info_plex.get("subscription") or {}
+                    })
+                },
                 "SIMKL":    { "connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason}) },
-                "TRAKT":    { "connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
-                            **({} if not info_trakt else {"vip": bool(info_trakt.get("vip")),
-                                                            "vip_type": info_trakt.get("vip_type")})},
+                "TRAKT": {
+                    "connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
+                    **({} if not info_trakt else {
+                        "vip": bool(info_trakt.get("vip")),
+                        "vip_type": info_trakt.get("vip_type")
+                    })
+                },
                 "JELLYFIN": { "connected": jelly_ok, **({} if jelly_ok else {"reason": jelly_reason}) },
-                "EMBY":     { "connected": emby_ok,  **({} if emby_ok  else {"reason": emby_reason}),
-                            **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))})},
-                "MDBLIST":  { "connected": mdbl_ok,  **({} if mdbl_ok  else {"reason": mdbl_reason}) },
+                "EMBY": {
+                    "connected": emby_ok, **({} if emby_ok else {"reason": emby_reason}),
+                    **({} if not info_emby else { "premiere": bool(info_emby.get("premiere")) })
+                },
+                "MDBLIST": {
+                    "connected": mdbl_ok, **({} if mdbl_ok else {"reason": mdbl_reason}),
+                    **({} if not info_mdbl else {
+                        "vip": bool(info_mdbl.get("vip")),
+                        "vip_type": info_mdbl.get("vip_type"),
+                        "patron_status": info_mdbl.get("patron_status"),
+                        "limits": {
+                            "api_requests": int(((info_mdbl.get("limits") or {}).get("api_requests") or 0)),
+                            "api_requests_count": int(((info_mdbl.get("limits") or {}).get("api_requests_count") or 0)),
+                        }
+                    })
+                },
             },
         }
 
