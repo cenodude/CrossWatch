@@ -49,7 +49,7 @@
 
 ## Why is CrossWatch different? (in a nutshell)
 - One brain for all your media syncs.
-- Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL) in one tool.
+- Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, Mdblist) in one tool.
   - No API? Use the **Exporter** to dump Watchlist/History/Ratings CSVs (TMDb, Letterboxd, etc.).
 - Sync between media servers: Plex, Jellyfin, Emby - Sync between trackers: SIMKL, TRAKT - or Sync from/to media servers and trackers.
   - Also great for backups or to keep your media servers in sync.
