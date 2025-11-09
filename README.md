@@ -23,7 +23,9 @@
 
 <!-- Caption directly under screenshots -->
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
-<img width="788" height="236" alt="image" src="https://github.com/user-attachments/assets/a678ebee-d750-45d2-8dab-a8550f913670" />
+<p align="center">
+  <img width="788" height="236" alt="image" src="https://github.com/user-attachments/assets/a678ebee-d750-45d2-8dab-a8550f913670" />
+</p>
 
 <!-- Download + Wiki + Best Practices (badge-style, GitHub-friendly) -->
 <p align="center">
