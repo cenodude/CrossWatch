@@ -73,7 +73,7 @@
   - Watchlists only, your libraries stay untouched.
   - Type-aware: movies by default; shows/episodes optional.
 - **Analyzer**
-  - Finds items **stuck** between providers (Plex, Jellyfin, Trakt, SIMKL).
+  - Finds items **stuck** between providers (Plex, Jellyfin, Trakt, SIMKL, Mdblist).
   - Shows **Issues: N** per your sync pairs with concrete fix hints.
 
 <h2 align="center">🚀 Features</h2>
@@ -174,9 +174,3 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 
 CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b> — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
 Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
-
----
-
-## ⚖️ License
-
-MIT © <a href="https://github.com/cenodude">cenodude</a>
