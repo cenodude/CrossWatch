@@ -90,13 +90,14 @@
       </td>
       <td valign="top">
         <ul style="margin:0;padding-left:1.1em">
-          <li>Analyzer — finds broken or missing matches/IDs</li>
-          <li>Exporter — CSV for popular services</li>
+          <li>Analyzer - finds broken or missing matches/IDs</li>
+          <li>Exporter - CSV files for popular service</li>
           <li>Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
             <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
             &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?logo=trakt&logoColor=white&labelColor=1f2328" />
+            &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
           </li>
           <li><strong>Media servers:</strong>
             <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
@@ -108,6 +109,7 @@
     </tr>
   </table>
 </div>
+
 
 ---
 
