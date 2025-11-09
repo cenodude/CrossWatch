@@ -48,7 +48,9 @@ code {
   --plex-rgb: 229,160,13;
   --simkl-rgb: 0,194,255;
   --emby-rgb: 76, 175, 80;
+  --mdblist-rgb: 59, 122, 189;
 }
+
 /* Brand solid colors (hex) and accents */
 :root {
   --plex: #e5a00d;
@@ -56,6 +58,7 @@ code {
   --emby: #4CAF50;
   --tmdb: #01d277;
   --trakt: #ed1c24;
+  --mdblist: #3B7ABD;
 }
 /* Switch palette (initial variant) */
 :root {
@@ -463,6 +466,7 @@ header {
 .prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
 .prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
 .prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
+.prov-card.brand-mdblist { --brand-color: var(--mdblist); --brand-rgb: var(--mdblist-rgb); }
 
 /* shared styling */
 .prov-card[class*="brand-"] {
@@ -520,6 +524,11 @@ header {
   color: var(--emby);
   background: rgba(var(--emby-rgb), .12);
   border-color: rgba(var(--emby-rgb), .35);
+}
+.brand-ico.mdblist{
+  color: var(--mdblist);
+  background: rgba(var(--mdblist-rgb), .12);
+  border-color: rgba(var(--mdblist-rgb), .35);
 }
 
 /* layout */
@@ -1605,6 +1614,10 @@ select {
   border-left: 3px solid var(--emby);
   padding-left: 10px
 }
+#sec-mdblist > .head {
+  border-left: 3px solid var(--mdblist);
+  padding-left: 10px
+}
 .prov-card[data-prov="Plex"] .prov-head::after {
   content: " ";
   position: absolute;
@@ -1655,6 +1668,14 @@ select {
   background-size: contain !important;
   border-radius: 8px;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
+}
+.prov-card[data-prov="MDBLIST"] .prov-head::after{
+  content:" ";
+  position:absolute; top:8px; right:10px; width:28px; height:28px; z-index:50;
+  background-color: rgba(0,0,0,.55) !important;
+  background-image: url("/assets/img/MDBLIST.svg?v=1") !important;
+  background-repeat:no-repeat !important; background-position:center !important; background-size:contain !important;
+  border-radius:8px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
 }
 
 .prov-card[data-prov="Emby"] .prov-head::after,

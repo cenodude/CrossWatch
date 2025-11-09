@@ -62,7 +62,7 @@ def _registry_sync_providers() -> list[str]:
     return [k.replace("_mod_", "").upper() for k in (MR_MODULES.get("SYNC") or {}).keys()]
 
 def _normalize_label(pid: str) -> str:
-    m = {"PLEX": "Plex", "SIMKL": "SIMKL", "TRAKT": "Trakt", "JELLYFIN": "Jellyfin", "EMBY": "Emby"}
+    m = {"PLEX": "Plex", "SIMKL": "SIMKL", "TRAKT": "Trakt", "JELLYFIN": "Jellyfin", "EMBY": "Emby", "MDBLIST": "MDBList"}
     return m.get(pid.upper(), pid.title())
 
 def _feat_enabled(fmap: dict | None, name: str) -> bool:
@@ -613,6 +613,31 @@ def _delete_on_plex_batch(items: list[dict[str, Any]], state: dict[str,Any], cfg
     for it in items or []:
         _delete_on_plex_single(it["key"], state, cfg)
 
+_MDBLIST_REMOVE = "https://api.mdblist.com/watchlist/items/remove"
+
+def _delete_on_mdblist_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) -> None:
+    api_key = (cfg.get("api_key") or cfg.get("apikey") or "").strip()
+    if not api_key: raise RuntimeError("MDBLIST not configured")
+    payload = {"movies": [], "shows": []}
+    for it in items or []:
+        ids = _ids_from_key_or_item(it["key"], it["item"])
+        entry: dict[str, Any] = {}
+        tmdb = ids.get("tmdb")
+        imdb = ids.get("imdb")
+        if tmdb and str(tmdb).isdigit(): entry["tmdb"] = int(str(tmdb))
+        elif tmdb: entry["tmdb"] = tmdb
+        if imdb: entry["imdb"] = imdb
+        if entry:
+            if it.get("type") == "movie":
+                payload["movies"].append(entry)
+            else:
+                payload["shows"].append(entry)
+    payload = {k: v for k, v in payload.items() if v}
+    if not payload: raise RuntimeError("MDBLIST delete: no resolvable IDs")
+    url = f"{_MDBLIST_REMOVE}?{urlencode({'apikey': api_key})}"
+    r = requests.post(url, json=payload, timeout=45)
+    if not r.ok: raise RuntimeError(f"MDBLIST delete failed: {getattr(r,'text','no response')}")
+
 
 # --- Public delete API ---
 def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg: dict[str,Any]) -> dict[str,Any]:
@@ -634,6 +659,7 @@ def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg
         "TRAKT":   lambda items: _delete_on_trakt_batch(items, cfg.get("trakt", {}) or {}),
         "JELLYFIN":lambda items: _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {}),
         "EMBY":    lambda items: _delete_on_emby_batch(items, cfg.get("emby", {}) or {}),
+        "MDBLIST": lambda items: _delete_on_mdblist_batch(items, cfg.get("mdblist", {}) or {}),
     }
 
     if prov == "ALL":
@@ -688,6 +714,8 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
             _delete_and_drop("JELLYFIN", lambda items: _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {}))
         elif prov == "EMBY":
             _delete_and_drop("EMBY", lambda items: _delete_on_emby_batch(items, cfg.get("emby", {}) or {}))
+        elif prov == "MDBLIST":
+            _delete_and_drop("MDBLIST", lambda items: _delete_on_mdblist_batch(items, cfg.get("mdblist", {}) or {}))
         elif prov == "ALL":
             details = {}
             for p in _registry_sync_providers():
@@ -702,6 +730,8 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
                         _delete_and_drop("JELLYFIN", lambda items: _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {}))
                     elif p == "EMBY":
                         _delete_and_drop("EMBY", lambda items: _delete_on_emby_batch(items, cfg.get("emby", {}) or {}))
+                    elif p == "MDBLIST":
+                        _delete_and_drop("MDBLIST", lambda items: _delete_on_mdblist_batch(items, cfg.get("mdblist", {}) or {}))
                     else:
                         details[p] = {"ok": False, "error": "delete not supported"}; continue
                     details[p] = {"ok": True}

@@ -1,4 +1,4 @@
-# _exporter.py
+# _export.py
 from __future__ import annotations
 
 import csv, io, json, os, re, time
@@ -41,21 +41,38 @@ def _norm_ids(ids: Dict[str, Any]) -> Dict[str, str]:
         m = re.search(r"(\d+)", str(v))
         if m:
             out["imdb"] = f"tt{m.group(1)}"
-    for ns in ("tmdb", "tvdb", "trakt", "simkl"):
+    for ns in ("tmdb", "tvdb", "trakt", "simkl", "mdblist"):
         v = ids.get(ns)
         if v is None:
             continue
         m = re.search(r"(\d+)", str(v))
-        if m:
-            out[ns] = m.group(1)
+        out[ns] = m.group(1) if m else str(v)
     if ids.get("slug"):
         out["slug"] = str(ids["slug"])
     return out
 
+def _pick_title(it: Dict[str, Any]) -> str:
+    return str(it.get("title") or it.get("name") or it.get("series_title") or it.get("show_title") or "")
+
+def _pick_year(it: Dict[str, Any]) -> str:
+    # Try direct ints/strings
+    for k in ("year", "release_year", "first_air_year", "movie_year", "show_year"):
+        v = it.get(k)
+        if v:
+            return str(v)
+    # Extract YYYY from common date fields
+    for k in ("first_aired", "released", "air_date", "release_date"):
+        v = it.get(k)
+        if isinstance(v, str):
+            m = re.search(r"\b(19|20)\d{2}\b", v)
+            if m:
+                return m.group(0)
+    return ""
+
 def _row_base(it: Dict[str, Any]) -> Tuple[str, str, str, str, Dict[str, str]]:
     t = str(it.get("type") or "")
-    title = str(it.get("title") or "")
-    year = str(it.get("year") or "")
+    title = _pick_title(it)
+    year = _pick_year(it)
     ids = _norm_ids(it.get("ids") or {})
     watched = (it.get("watched_at") or it.get("watchedAt") or it.get("viewed_at") or it.get("rated_at") or "") or ""
     return t, title, year, watched, ids
@@ -283,6 +300,7 @@ def _build_tmdb(provider: str, feature: str, s: Dict[str, Any], keys: List[str])
         return _tmdb_build_trakt_v2(provider, feature, s, keys)
     if p == "SIMKL":
         return _tmdb_build_simkl_v1(provider, feature, s, keys)
+    # MDBLIST (and others) fall back to IMDb v3 dialect
     return _tmdb_build_imdb_v3(provider, feature, s, keys)
 
 _BUILDERS = {
@@ -316,7 +334,7 @@ def api_export_options():
 
 @router.get("/export/sample", response_class=JSONResponse)
 def api_export_sample(
-    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
@@ -341,7 +359,7 @@ def api_export_sample(
 
 @router.get("/export/file")
 def api_export_file(
-    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     q: str = Query("", description="optional search filter (server-side)"),

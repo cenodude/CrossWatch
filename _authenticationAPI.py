@@ -407,6 +407,32 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return JSONResponse({"ok": False, "error": str(e)}, _status_from_msg(str(e)))
         users = [u for u in users if (u or {}).get("username")]
         return {"users": users, "count": len(users)}
+    
+    # ---------- MDBLIST ----------
+    @app.post("/api/mdblist/save", tags=["auth"])
+    def api_mdblist_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        try:
+            key = str((payload or {}).get("api_key") or "").strip()
+            cfg = load_config(); cfg.setdefault("mdblist", {})["api_key"] = key
+            save_config(cfg)
+            _safe_log(log_fn, "MDBLIST", "[MDBLIST] api_key saved")
+            if isinstance(probe_cache, dict): probe_cache["mdblist"] = (0.0, False)
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR save: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/mdblist/disconnect", tags=["auth"])
+    def api_mdblist_disconnect() -> Dict[str, Any]:
+        try:
+            cfg = load_config(); cfg.setdefault("mdblist", {})["api_key"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "MDBLIST", "[MDBLIST] disconnected")
+            if isinstance(probe_cache, dict): probe_cache["mdblist"] = (0.0, False)
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
+            return {"ok": False, "error": str(e)}
 
     # ---------- TRAKT ----------
     def trakt_request_pin() -> dict:

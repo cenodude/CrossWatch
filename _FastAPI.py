@@ -1,6 +1,5 @@
 # _FastAPI.py
 from __future__ import annotations
-
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -24,7 +23,6 @@ FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64
 
 
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
-    """Mount /assets and expose favicons."""
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
@@ -44,13 +42,10 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     def favicon_ico() -> Response:  # serve SVG for legacy path
         return _svg_resp()
 
-
 def register_ui_root(app: FastAPI) -> None:
-    """Serve the single-page UI at /."""
     @app.get("/", include_in_schema=False, tags=["ui"])
     def ui_root() -> HTMLResponse:
         return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
-
 
 def get_index_html() -> str:
     return r"""<!doctype html><html lang="en"><head>
@@ -203,6 +198,7 @@ def get_index_html() -> str:
               <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
             </span>
           </div>
@@ -295,6 +291,7 @@ def get_index_html() -> str:
 <script src="/assets/auth/auth.trakt.js" defer></script>
 <script src="/assets/auth/auth.jellyfin.js" defer></script>
 <script src="/assets/auth/auth.emby.js" defer></script>
+<script src="/assets/auth/auth.mdblist.js" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
 
@@ -358,6 +355,7 @@ function isProviderConfigured(key,cfg){
     case 'SIMKL':    return !!(c?.simkl?.access_token);
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
     case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
+    case 'MDBLIST':  return !!(c?.mdblist?.api_key);
     default: return false;
   }
 }

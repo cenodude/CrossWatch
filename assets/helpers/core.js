@@ -107,6 +107,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.trakt?.access_token || cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
   if (has(cfg?.jellyfin?.access_token || cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
   if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
+  if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
 
   return S;
 }
@@ -302,6 +303,7 @@ function normalizeProviders(input) {
     TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
     JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
     EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
+    MDBLIST:  normOne(pick(p, "MDBLIST")  ?? p.mdblist_connected),
   };
 }
 
@@ -362,7 +364,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
 
 // Hide/show badges by provider
 function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby" };
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist" };
   for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
     if (el) el.classList.toggle("hidden", !active?.[prov]);
@@ -472,12 +474,14 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   const trakt   = pickCase(p, "TRAKT");
   const jelly   = pickCase(p, "JELLYFIN");
   const emby    = pickCase(p, "EMBY");
+  const mdbl  = pickCase(p, "MDBLIST");
 
   setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
   setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
   setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
   setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
   setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
+  setBadge("badge-mdblist",  "MDBList",  connState(mdbl  ?? false), stale, "MDBLIST",  mdbl);
 }
 
 function fetchWithTimeout(url, opts = {}, ms = 15000) {
@@ -510,6 +514,7 @@ async function refreshStatus(force = false) {
       TRAKT:    norm(pick(pRaw, "TRAKT"),    (r.trakt_connected   ?? r.trakt)),
       JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
       EMBY:     norm(pick(pRaw, "EMBY"),     (r.emby_connected    ?? r.emby)),
+      MDBLIST:  norm(pick(pRaw, "MDBLIST"),  (r.mdblist_connected  ?? r.mdblist)),
     };
 
     renderConnectorStatus(providers, { stale: false });
@@ -523,6 +528,7 @@ async function refreshStatus(force = false) {
       trakt_connected:    !!(providers.TRAKT?.connected    ?? providers.TRAKT?.ok),
       jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
       emby_connected:     !!(providers.EMBY?.connected     ?? providers.EMBY?.ok),
+      mdblist_connected:  !!(providers.MDBLIST?.connected  ?? providers.MDBLIST?.ok),
     };
 
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
@@ -576,6 +582,7 @@ async function manualRefreshStatus() {
         TRAKT:    { connected: !!s.trakt_connected },
         JELLYFIN: { connected: !!s.jellyfin_connected },
         EMBY:     { connected: !!s.emby_connected },
+        MDBLIST:  { connected: !!s.mdblist_connected },
       }, { stale: true });
     }
 
@@ -765,19 +772,37 @@ async function showTab(n) {
 
   // WATCHLIST
   if (n === "watchlist") {
-    layout?.classList.add("single"); layout?.classList.remove("full");
+    layout?.classList.add("single");
+    layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
 
     try {
       const firstLoad = !window.__watchlistLoaded;
       if (firstLoad) {
-        // Initial import; watchlist.js init() does its own fetch+render
-        await import("/assets/js/watchlist.js");
+        const base = new URL("./assets/js/watchlist.js", document.baseURI).href;
+        const wlUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
+
+        try {
+          await import(/* @vite-ignore */ wlUrl);
+        } catch (_) {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement("script");
+            s.type = "module";
+            s.src = wlUrl;
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+        }
+
         window.__watchlistLoaded = true;
       } else {
-        // Subsequent visits only
-        if (window.Watchlist?.refresh) await window.Watchlist.refresh();
-        else window.dispatchEvent(new CustomEvent("watchlist:refresh"));
+        // Subsequent visits
+        if (window.Watchlist?.refresh) {
+          await window.Watchlist.refresh();
+        } else {
+          window.dispatchEvent(new CustomEvent("watchlist:refresh"));
+        }
       }
     } catch (e) {
       console.warn("Watchlist load/refresh failed:", e);
@@ -1815,6 +1840,9 @@ async function loadConfig() {
   // TMDB
   setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
 
+  // MDBLIST
+  setRaw("mdblist_key",         val(cfg.mdblist?.api_key));
+
   // TRAKT
   setRaw("trakt_client_id",     val(cfg.trakt?.client_id));
   setRaw("trakt_client_secret", val(cfg.trakt?.client_secret));
@@ -1873,6 +1901,7 @@ async function saveSettings() {
     "trakt_client_id",
     "trakt_client_secret",
     "tmdb_api_key",
+    "mdblist_key"
   ]).forEach(id => {
     const el = document.getElementById(id);
     if (el && !el.__touchedWired) {
@@ -1920,6 +1949,7 @@ async function saveSettings() {
     const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
     const prevTraktCid = norm(serverCfg?.trakt?.client_id);
     const prevTraktSec = norm(serverCfg?.trakt?.client_secret);
+    const prevMdbl     = norm(serverCfg?.mdblist?.api_key);
     const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
 
@@ -1976,6 +2006,13 @@ async function saveSettings() {
     const sTmdb   = readSecretSafe("tmdb_api_key", prevTmdb);
     const sTrkCid = readSecretSafe("trakt_client_id", prevTraktCid);
     const sTrkSec = readSecretSafe("trakt_client_secret", prevTraktSec);
+    const sMdbl   = readSecretSafe("mdblist_key", prevMdbl);
+
+    if (sMdbl.changed) {
+      cfg.mdblist = cfg.mdblist || {};
+      if (sMdbl.clear) delete cfg.mdblist.api_key; else cfg.mdblist.api_key = sMdbl.set;
+      changed = true;
+    }
 
     if (sPlex.changed) {
       cfg.plex = cfg.plex || {};
@@ -2837,6 +2874,8 @@ async function mountAuthProviders() {
     const html = await res.text();
     const slot = document.getElementById("auth-providers");
     if (slot) slot.innerHTML = html;
+
+    window.initMDBListAuthUI?.();
 
     document.getElementById("btn-copy-plex-pin")
       ?.addEventListener("click", (e) => copyInputValue?.("plex_pin", e.currentTarget));

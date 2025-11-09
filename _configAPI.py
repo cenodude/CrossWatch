@@ -68,6 +68,7 @@ def api_config_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         ("tmdb","api_key"),
         ("jellyfin","access_token"),
         ("emby","api_key"), ("emby","access_token"),
+        ("mdblist","api_key"),
     ]
     for path in secrets:
         cur = current; inc = incoming; dst = merged

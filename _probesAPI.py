@@ -21,7 +21,7 @@ PROBE_TTL    = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
 
 # Providers we know
-PROVIDERS = ("plex", "simkl", "trakt", "jellyfin", "emby")
+PROVIDERS = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist")
 
 # ---- Caches ----
 STATUS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
@@ -93,6 +93,16 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
     code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     ok = (code == 200); PROBE_CACHE["trakt"] = (now, ok); return ok
+    
+def probe_mdblist(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
+    ts, ok = PROBE_CACHE["mdblist"]; now = time.time()
+    if now - ts < max_age_sec: return ok
+    md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {})
+    key = (md.get("api_key") or "").strip()
+    if not key:
+        PROBE_CACHE["mdblist"] = (now, False); return False
+    code, _ = _http_get(f"https://api.mdblist.com/user?apikey={key}", headers=UA)
+    ok = (code == 200); PROBE_CACHE["mdblist"] = (now, ok); return ok
 
 def probe_jellyfin(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["jellyfin"]; now = time.time()
@@ -148,6 +158,17 @@ def _probe_trakt_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tu
     code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     ok = (code == 200); rsn = "" if ok else _reason_http(code, "Trakt")
     PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn); return ok, rsn
+    
+def _probe_mdblist_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
+    ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]; now = time.time()
+    if now - ts < max_age_sec: return ok, rsn
+    md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {})
+    key = (md.get("api_key") or "").strip()
+    if not key:
+        rsn = "MDBLIST: missing api_key"; PROBE_DETAIL_CACHE["mdblist"] = (now, False, rsn); return False, rsn
+    code, _ = _http_get(f"https://api.mdblist.com/user?apikey={key}", headers=UA)
+    ok = (code == 200); rsn = "" if ok else _reason_http(code, "MDBLIST")
+    PROBE_DETAIL_CACHE["mdblist"] = (now, ok, rsn); return ok, rsn
 
 def _probe_jellyfin_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["jellyfin"]; now = time.time()
@@ -262,6 +283,9 @@ def _prov_configured(cfg: dict, name: str) -> bool:
     if n == "emby":
         em = cfg.get("emby") or {}
         return bool((em.get("server") or "").strip() and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip())
+    if n == "mdblist":
+        md = cfg.get("mdblist") or {}
+        return bool((md.get("api_key") or "").strip())
     return False
 
 def _pair_ready(cfg: dict, pair: dict) -> bool:
@@ -288,14 +312,15 @@ def _safe_userinfo(fn: Callable, cfg, max_age_sec=0) -> dict:
         return {}
 
 # Back-compat helper (tuple ordering kept)
-def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool, bool, bool]:
+def connected_status(cfg: Dict[str, Any]) -> Tuple[bool, bool, bool, bool, bool, bool, bool]:
     plex_ok,  _ = _safe_probe_detail(_probe_plex_detail,   cfg, max_age_sec=PROBE_TTL)
     simkl_ok, _ = _safe_probe_detail(_probe_simkl_detail,  cfg, max_age_sec=PROBE_TTL)
     trakt_ok, _ = _safe_probe_detail(_probe_trakt_detail,  cfg, max_age_sec=PROBE_TTL)
     jelly_ok, _ = _safe_probe_detail(_probe_jellyfin_detail,cfg, max_age_sec=PROBE_TTL)
     emby_ok,  _ = _safe_probe_detail(_probe_emby_detail,    cfg, max_age_sec=PROBE_TTL)
+    mdbl_ok,  _ = _safe_probe_detail(_probe_mdblist_detail, cfg, max_age_sec=PROBE_TTL)
     debug = bool((cfg.get("runtime") or {}).get("debug"))
-    return plex_ok, simkl_ok, trakt_ok, jelly_ok, emby_ok, debug
+    return plex_ok, simkl_ok, trakt_ok, jelly_ok, emby_ok, mdbl_ok, debug
 
 # ---- Registry to reduce branching ----
 DETAIL_PROBES: Dict[str, Callable[..., Tuple[bool, str]]] = {
@@ -304,6 +329,7 @@ DETAIL_PROBES: Dict[str, Callable[..., Tuple[bool, str]]] = {
     "TRAKT": _probe_trakt_detail,
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
+    "MDBLIST": _probe_mdblist_detail,
 }
 USERINFO_FNS: Dict[str, Callable[..., dict]] = {
     "PLEX": plex_user_info,
@@ -343,6 +369,7 @@ def register_probes(app: FastAPI, load_config_fn):
         trakt_ok, trakt_reason     = results.get("TRAKT", (False, ""))
         jelly_ok, jelly_reason     = results.get("JELLYFIN", (False, ""))
         emby_ok, emby_reason       = results.get("EMBY", (False, ""))
+        mdbl_ok, mdbl_reason       = results.get("MDBLIST", (False, ""))
 
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
@@ -357,25 +384,24 @@ def register_probes(app: FastAPI, load_config_fn):
             "trakt_connected":    trakt_ok,
             "jellyfin_connected": jelly_ok,
             "emby_connected":     emby_ok,
+            "mdblist_connected":  mdbl_ok,
             "debug":              debug,
             "can_run":            bool(any_pair_ready),
             "ts":                 int(now),
             "providers": {
-                "PLEX": {
-                    "connected": plex_ok,
-                    **({} if plex_ok else {"reason": plex_reason}),
-                    **({} if not info_plex else {
-                        "plexpass": bool(info_plex.get("plexpass")),
-                        "subscription": info_plex.get("subscription") or {}
-                    })
-                },
-                "SIMKL":    {"connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason})},
-                "TRAKT":    {"connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
-                             **({} if not info_trakt else {"vip": bool(info_trakt.get("vip")),
-                                                           "vip_type": info_trakt.get("vip_type")})},
-                "JELLYFIN": {"connected": jelly_ok, **({} if jelly_ok else {"reason": jelly_reason})},
-                "EMBY":     {"connected": emby_ok,  **({} if emby_ok  else {"reason": emby_reason}),
-                             **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))})},
+                "PLEX":     { "connected": plex_ok,  **({} if plex_ok  else {"reason": plex_reason}),
+                            **({} if not info_plex else {
+                                "plexpass": bool(info_plex.get("plexpass")),
+                                "subscription": info_plex.get("subscription") or {}
+                            })},
+                "SIMKL":    { "connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason}) },
+                "TRAKT":    { "connected": trakt_ok, **({} if trakt_ok else {"reason": trakt_reason}),
+                            **({} if not info_trakt else {"vip": bool(info_trakt.get("vip")),
+                                                            "vip_type": info_trakt.get("vip_type")})},
+                "JELLYFIN": { "connected": jelly_ok, **({} if jelly_ok else {"reason": jelly_reason}) },
+                "EMBY":     { "connected": emby_ok,  **({} if emby_ok  else {"reason": emby_reason}),
+                            **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))})},
+                "MDBLIST":  { "connected": mdbl_ok,  **({} if mdbl_ok  else {"reason": mdbl_reason}) },
             },
         }
 

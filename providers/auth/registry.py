@@ -1,10 +1,4 @@
 # providers/auth/registry.py
-"""
-Robust auth provider registry:
-- Discovers modules named _auth_*.py under providers.auth
-- Imports each module safely (continues on errors)
-- Aggregates their manifests and optional HTML snippets
-"""
 from __future__ import annotations
 
 import importlib
@@ -23,7 +17,6 @@ except Exception:
     PKG_PATHS = []
 
 # ---------- discovery helpers ----------
-
 def _filesystem_module_names() -> List[str]:
     """Also scan the package dirs directly for _auth_*.py files."""
     names: set[str] = set()
@@ -62,13 +55,9 @@ def _safe_import(fullname: str):
     try:
         return importlib.import_module(fullname)
     except Exception:
-        # Keep silent but skip this provider; uncomment for debugging:
-        # import traceback; traceback.print_exc()
         return None
 
 def _iter_auth_modules():
-    """Yield imported provider modules safely."""
-    # Make Python see newly added/renamed files (important when reload=no)
     importlib.invalidate_caches()
     for modname in _discover_module_names():
         mod = _safe_import(f"{PKG_NAME}.{modname}")
@@ -78,10 +67,6 @@ def _iter_auth_modules():
 # ---------- provider extraction ----------
 
 def _provider_from_module(mod):
-    """
-    Preferred: module-level PROVIDER instance.
-    Fallback: first class providing a `manifest()` method; try to instantiate it.
-    """
     prov = getattr(mod, "PROVIDER", None)
     if prov is not None:
         return prov
@@ -95,7 +80,6 @@ def _provider_from_module(mod):
     return None
 
 def _manifest_to_dict(man: Any) -> Dict[str, Any]:
-    """Convert dataclass or plain object to dict."""
     if dataclasses.is_dataclass(man):
         return dataclasses.asdict(man)  # type: ignore[arg-type]
     if isinstance(man, dict):

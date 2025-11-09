@@ -117,6 +117,7 @@ _ID_RX = {
     "trakt": re.compile(r"^\d+$"),
     "simkl": re.compile(r"^\d+$"),
     "emby": re.compile(r"^[A-Za-z0-9-]{4,}$"),
+    "mdblist": re.compile(r"^\d+$"),
 }
 
 def _read_cw_state() -> Dict[str, Any]:
@@ -139,7 +140,7 @@ def _alias_keys(obj: Dict[str, Any]) -> List[str]:
     if obj.get("_key"):
         out.append(obj["_key"])
 
-    for ns in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "plex", "emby", "guid"):
+    for ns in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "plex", "emby", "guid", "mdblist"):
         v = ids.get(ns)
         if v:
             vs = str(v)

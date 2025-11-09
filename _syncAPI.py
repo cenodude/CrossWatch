@@ -24,7 +24,6 @@ def _env():
     return load_config, save_config
 
 def _rt():
-    # Bind to the running app module
     import sys, importlib
     m = sys.modules.get("crosswatch") or sys.modules.get("__main__")
     if m is None or not hasattr(m, "LOG_BUFFERS"):
@@ -51,7 +50,6 @@ _ALLOWED_RATING_TYPES: tuple[str, ...] = ("movies", "shows", "seasons", "episode
 _ALLOWED_RATING_MODES: tuple[str, ...] = ("only_new", "from_date", "all")
 
 def _normalize_ratings_block(v: dict | bool | None) -> dict:
-    # Bool → dict; ensure sane defaults
     if isinstance(v, bool):
         return {
             "enable": bool(v), "add": bool(v), "remove": False,
@@ -91,13 +89,11 @@ def _normalize_ratings_block(v: dict | bool | None) -> dict:
     return d
 
 def _ensure_pair_ratings_defaults(cfg: Dict[str, Any]) -> None:
-    # Normalize ratings blocks on read
     for p in (cfg.get("pairs") or []):
         feats = p.setdefault("features", {})
         feats["ratings"] = _normalize_ratings_block(feats.get("ratings"))
 
 def _normalize_features(f: dict | None) -> dict:
-    # Apply uniform feature shape
     f = dict(f or {})
     for k in FEATURE_KEYS:
         v = f.get(k)
@@ -130,7 +126,8 @@ def _summary_reset() -> None:
             "running": False, "started_at": None, "finished_at": None, "duration_sec": None,
             "cmd": "", "version": "",
             "emby_pre": None, "emby_post": None,
-            "plex_pre": None, "simkl_pre": None, "plex_post": None, "simkl_post": None,
+            "plex_pre": None, "simkl_pre": None, "trakt_pre": None, "jellyfin_pre": None, "mdblist_pre": None,
+            "plex_post": None, "simkl_post": None, "trakt_post": None, "jellyfin_post": None, "mdblist_post": None,
             "result": "", "exit_code": None, "timeline": {"start": False, "pre": False, "post": False, "done": False},
             "raw_started_ts": None,
         })
@@ -179,7 +176,6 @@ def _item_sig_key(v: dict) -> str:
         return f"{typ}|title:{t}|year:{y}"
 
 def _persist_state_via_orc(orc, *, feature: str = "watchlist") -> dict:
-    # Save minimal state from orchestrator snapshots
     rt=_rt(); minimal = rt[9]
     snaps = orc.build_snapshots(feature=feature)
     providers: Dict[str, Any] = {}; wall: List[dict] = []; seen = set()
@@ -349,7 +345,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     rows.sort(key=_evt_epoch)
     anyin = lambda s, toks: any(t in s for t in toks)
 
-    # --- De-dupe bookkeeping (per lane + kind) ----------------------------
     seen = {
         "watchlist": {"add": set(), "remove": set(), "update": set()},
         "ratings":   {"add": set(), "remove": set(), "update": set()},
@@ -377,7 +372,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
         sig    = _sig_for_event(e)
 
-        # --- WATCHLIST (+ / − / ~)
         if ("watchlist" in action) or (feat == "watchlist"):
             lane = "watchlist"
             if anyin(action, ("remove", "unwatchlist", "delete", "del", "rm", "clear")):
@@ -397,7 +391,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                     feats[lane]["spotlight_add"].append(title)
             continue
 
-        # --- RATINGS (+ / − / ~)
         if (action in ("rate", "rating", "update_rating", "unrate")) or ("rating" in action) or ("rating" in feat):
             lane = "ratings"
             if anyin(action, ("unrate", "remove", "clear", "delete", "unset", "erase")):
@@ -417,7 +410,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                     feats[lane]["spotlight_update"].append(title)
             continue
 
-        # --- HISTORY (+ / − / ~)
         is_history_feat = (feat in ("history", "watch", "watched")) or ("history" in action)
         if "watchlist" not in action:
             is_add_like    = anyin(action, ("watch", "scrobble", "checkin", "mark_watched", "history_add", "add_history"))
@@ -443,7 +435,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                     feats[lane]["spotlight_update"].append(title)
             continue
 
-        # --- PLAYLISTS (+ / − / ~)
         if ("playlist" in action) or ("playlist" in feat):
             lane = "playlists"
             if anyin(action, ("remove", "delete", "rm", "del", "clear")):
@@ -463,7 +454,6 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                     feats[lane]["spotlight_add"].append(title)
             continue
 
-    # Keep only the last 3 spotlight entries per lane
     for lane in feats.values():
         lane["spotlight_add"]    = (lane["spotlight_add"]    or [])[-3:]
         lane["spotlight_remove"] = (lane["spotlight_remove"] or [])[-3:]
@@ -504,9 +494,6 @@ def _parse_sync_line(line: str) -> None:
         except Exception: pass
         _summary_set("cmd", short_cmd); _summary_set_timeline("start", True); return
 
-    m = re.search(r"Version\s+(?P<ver>[0-9][0-9A-Za-z\.\-\+_]*)", s)
-    if m: _summary_set("version", m.group("ver")); return
-
     m = re.search(r"Pre-sync counts:\s*(?P<pairs>.+)$", s, re.IGNORECASE)
     if m:
         pairs = re.findall(r"\b([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(\d+)", m.group("pairs"))
@@ -514,7 +501,7 @@ def _parse_sync_line(line: str) -> None:
             key = name.lower()
             try: val_i = int(val)
             except Exception: continue
-            if key in ("plex","simkl","trakt","jellyfin","emby"): _summary_set(f"{key}_pre", val_i)
+            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist"): _summary_set(f"{key}_pre", val_i)
         _summary_set_timeline("pre", True); return
 
     m = re.search(r"Post-sync:\s*(?P<rest>.+)$", s, re.IGNORECASE)
@@ -525,7 +512,7 @@ def _parse_sync_line(line: str) -> None:
             key = name.lower()
             try: val_i = int(val)
             except Exception: continue
-            if key in ("plex","simkl","trakt","jellyfin","emby"): _summary_set(f"{key}_post", val_i)
+            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist"): _summary_set(f"{key}_post", val_i)
         mres = re.search(r"(?:→|->|=>)\s*([A-Za-z]+)", rest)
         if mres: _summary_set("result", mres.group(1).upper())
         _summary_set_timeline("post", True); return
@@ -877,10 +864,9 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
 
 # ----- Provider counts (fast; state + tiny TTL cache) -----
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
-_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY")
+_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST")
 
 def _counts_from_state(state: dict | None) -> dict | None:
-    """Defensive reader: tolerate shape drift; log offenders; return None only if state unusable."""
     if not isinstance(state, dict):
         return None
     provs = state.get("providers")
@@ -903,7 +889,6 @@ def _counts_from_state(state: dict | None) -> dict | None:
         count = 0
 
         if isinstance(wl, dict):
-            # preferred: checkpoint.items → baseline.items → items (dict/list/int/str)
             chk = wl.get("checkpoint")
             if isinstance(chk, dict) and isinstance(chk.get("items"), dict):
                 count = len(chk["items"])
@@ -937,7 +922,6 @@ def _counts_from_state(state: dict | None) -> dict | None:
     return out
 
 def _counts_from_orchestrator(cfg: dict) -> dict:
-    # One snapshot per provider, then count
     from cw_platform.orchestrator import Orchestrator
     snaps = Orchestrator(config=cfg).build_snapshots(feature="watchlist")
     out = {k: 0 for k in _PROVIDER_ORDER}
@@ -1099,7 +1083,8 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             snap = _summary_snapshot()
             key = (
                 snap.get("running"), snap.get("exit_code"),
-                snap.get("plex_post"), snap.get("simkl_post"),
+                snap.get("plex_post"), snap.get("simkl_post"), snap.get("trakt_post"),
+                snap.get("jellyfin_post"), snap.get("mdblist_post"),
                 snap.get("result"), snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),
                 json.dumps(snap.get("features", {}), sort_keys=True),

@@ -1,3 +1,4 @@
+# _inightAPI.py
 from __future__ import annotations
 import json, time
 from typing import Any, Dict, List, Tuple, Optional, Callable
@@ -71,7 +72,7 @@ def register_insights(app: FastAPI):
         _append_log         = getattr(CW, "_append_log", lambda *a, **k: None)
         _compute_lanes_impl = getattr(CW, "_compute_lanes_from_stats", None)
 
-        # === Patch: friendly titles for insights events ===
+        # Decorate event titles for the UI
         def _format_event_title(e: Dict[str, Any]) -> Dict[str, Any]:
             out = dict(e)
             t = str(e.get("type") or "").lower()
@@ -105,9 +106,8 @@ def register_insights(app: FastAPI):
                 out["display_title"] = title or "Item"
 
             return out
-        # === End patch ===
 
-        # Feature keys are dynamic; ensure stable order with watchlist first
+        # Feature keys are dynamic; keep watchlist first
         base_feats = ("watchlist", "ratings", "history", "playlists")
         def _features_from(obj) -> List[str]:
             keys = []
@@ -163,9 +163,7 @@ def register_insights(app: FastAPI):
                     data = STATS.data or {}
                 samples = list((data or {}).get("samples") or [])
                 events  = [e for e in list((data or {}).get("events") or []) if not str(e.get("key", "")).startswith("agg:")]
-                # === Patch: decorate events with friendly display labels ===
                 events = [_format_event_title(e) for e in events]
-                # === End patch ===
                 http_block = dict((data or {}).get("http") or {})
                 generated_at = (data or {}).get("generated_at")
                 samples.sort(key=lambda r: int(r.get("ts") or 0))
@@ -224,13 +222,14 @@ def register_insights(app: FastAPI):
                         "trakt_post":    d.get("trakt_post"),
                         "jellyfin_post": d.get("jellyfin_post"),
                         "emby_post":     d.get("emby_post"),
+                        "mdblist_post":  d.get("mdblist_post"),
                     })
                 except Exception as e:
                     _append_log("INSIGHTS", f"[!] report parse failed {p.name}: {e}")
         except Exception as e:
             _append_log("INSIGHTS", f"[!] report scan failed: {e}")
 
-        # Watchtime (fast approximate, optional TMDB refiner)
+        # Watchtime (approx; optional TMDB refinement)
         wall = _load_wall_snapshot()
         state = None
         if not wall and callable(_get_orchestrator):

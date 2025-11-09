@@ -77,6 +77,19 @@ DEFAULT_CFG: Dict[str, Any] = {
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
     },
+    
+     "mdblist": {
+        "api_key": "",                                  # Your MDBList API key
+        "timeout": 10,                                  # HTTP timeout (seconds)
+        "max_retries": 3,                               # Retry budget
+        "watchlist_shadow_ttl_hours": 0,                # Shadow TTL (hours); 0 = disabled
+        "watchlist_shadow_validate": True,              # Validate shadow on every run
+        "ratings_per_page": 200,                        # Items per page when indexing
+        "ratings_max_pages": 50,                        # Max pages per type
+        "ratings_chunk_size": 25,                       # Batch size for POST/REMOVE
+        "ratings_write_delay_ms": 600,                  # Optional pacing between writes
+        "ratings_max_backoff_ms": 8000                  # Max backoff time for retries     
+    },
 
     "trakt": {
         "client_id": "",                                # From your Trakt app  

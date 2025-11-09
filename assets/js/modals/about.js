@@ -135,7 +135,7 @@ async function renderHostedAbout(hostEl){
         ${foldCard("fold-sync","Synchronization Providers", rowsFromGroup(mods.groups?.SYNC))}
         <div class="card">
   <div class="note">
-    <b>Disclaimer.</b> This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Trakt, Plex, Emby, Jellyfin, or Simkl. Use at your own risk.
+    <b>Disclaimer.</b> This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Trakt, Plex, Emby, Jellyfin, Simkl or mdblist. Use at your own risk.
     <ul style="margin:.5em 0 0 1.25em;">
       <li>All product names, logos, and brands are property of their respective owners and used for identification only.</li>
       <li>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</li>

@@ -1,4 +1,4 @@
-// watchlist.js - client-side watchlist management
+// watchlist.js - client-side watchlist management (patched)
 
 (function () {
 
@@ -33,8 +33,8 @@
   .wl-table td.genre{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .wl-table th.sortable{cursor:pointer;user-select:none}
   .wl-table th.sortable::after{content:"";margin-left:6px;opacity:.6}
-  .wl-table th.sort-asc::after{content:"▲"}
-  .wl-table th.sort-desc::after{content:"▼"}
+  .wl-table th.sort-asc::after{content:"▲"} /* patched */
+  .wl-table th.sort-desc::after{content:"▼"} /* patched */
 
   /* Poster thumb in list */
   .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
@@ -146,13 +146,21 @@
             <select id="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select>
 
             <label>Search</label>
-            <input id="wl-q" class="wl-input" placeholder="Search title…">
+            <input id="wl-q" class="wl-input" placeholder="Search title...">
 
             <label>Type</label>
             <select id="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option></select>
 
             <label>Provider</label>
-            <select id="wl-provider" class="wl-input"><option value="">All</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option><option value="EMBY">EMBY</option></select>
+            <select id="wl-provider" class="wl-input">
+              <option value="">All</option>
+              <option value="PLEX">PLEX</option>
+              <option value="SIMKL">SIMKL</option>
+              <option value="TRAKT">TRAKT</option>
+              <option value="JELLYFIN">JELLYFIN</option>
+              <option value="EMBY">EMBY</option>
+              <option value="MDBLIST">MDBLIST</option>
+            </select>
 
             <label id="wl-size-label">Size</label>
             <input id="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0">
@@ -170,7 +178,7 @@
           </div></div>
 
           <div class="ins-row" style="justify-content:flex-end;gap:8px">
-            <button id="wl-more" class="wl-btn" aria-expanded="false">More…</button>
+            <button id="wl-more" class="wl-btn" aria-expanded="false">More...</button>
             <button id="wl-clear" class="wl-btn">Reset</button>
           </div>
         </div>
@@ -181,7 +189,13 @@
             <label>Delete</label>
             <div class="wl-actions" style="display:flex;gap:10px">
               <select id="wl-delete-provider" class="wl-input" style="flex:1">
-                <option value="ALL">ALL (default)</option><option value="PLEX">PLEX</option><option value="SIMKL">SIMKL</option><option value="TRAKT">TRAKT</option><option value="JELLYFIN">JELLYFIN</option><option value="EMBY">EMBY</option>
+                <option value="ALL">ALL (default)</option>
+                <option value="PLEX">PLEX</option>
+                <option value="SIMKL">SIMKL</option>
+                <option value="TRAKT">TRAKT</option>
+                <option value="JELLYFIN">JELLYFIN</option>
+                <option value="EMBY">EMBY</option>
+                <option value="MDBLIST">MDBLIST</option>
               </select>
               <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
             </div>
@@ -254,7 +268,6 @@
   }
 
   /* ========= column resizing ========= */
-  let _resizing = false;
   function attachResizers() {
     const cg = document.querySelector(".wl-table colgroup");
     if (!cg) return;
@@ -307,7 +320,7 @@
   applyCols(true);
   attachResizers();
 
-  /* ======== dates & state ======== */
+  /* ======== data & state ======== */
   let [items, filtered] = [[], []];
   const selected = new Set();
   const hiddenSet = (() => { try { return new Set(JSON.parse(localStorage.getItem("wl.hidden") || "[]")); } catch { return new Set(); } })();
@@ -321,7 +334,7 @@
   const derivedCache = new Map();
   let activeProviders = new Set();
 
-  let TMDB_OK = true; 
+  let TMDB_OK = true;
 
   /* ========= utils ========= */
   const esc = s => String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
@@ -468,7 +481,14 @@
   };
 
   /* ========= providers & metrics ========= */
-  const SRC_LOGOS = { PLEX:"/assets/img/PLEX.svg", SIMKL:"/assets/img/SIMKL.svg", TRAKT:"/assets/img/TRAKT.svg", JELLYFIN:"/assets/img/JELLYFIN.svg", EMBY:"/assets/img/EMBY.svg" };
+  const SRC_LOGOS = {
+    PLEX:"/assets/img/PLEX.svg",
+    SIMKL:"/assets/img/SIMKL.svg",
+    TRAKT:"/assets/img/TRAKT.svg",
+    JELLYFIN:"/assets/img/JELLYFIN.svg",
+    EMBY:"/assets/img/EMBY.svg",
+    MDBLIST:"/assets/img/MDBLIST.svg"
+  };
   const providerChip = (name, ok) => {
     const src = SRC_LOGOS[name], icon = ok ? "check_circle" : "cancel", cls = ok ? "ok" : "miss";
     return `<span class="wl-mat ${cls}" title="${name}${ok ? " present" : " missing"}">${src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`}<span class="material-symbol">${icon}</span></span>`;
@@ -478,8 +498,8 @@
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
 
   function updateMetrics() {
-    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add" };
-    const ORDER = ["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"];
+    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add", MDBLIST:"grading" };
+    const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
     const counts = ORDER.reduce((acc, p) => (acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0), acc), {});
     metricsEl.innerHTML = ORDER.filter(p => activeProviders.has(p)).map(p =>
       `<div class="metric" data-w="${p}"><span class="material-symbol">${ICON[p]}</span><div><div class="m-val">${counts[p]}</div><div class="m-lbl">${p}</div></div></div>`
@@ -503,8 +523,11 @@
         return cmpDir(diff);
       },
       genre: (a, b) => {
-        const ga = (extractGenres(a)[0] || "").toLowerCase(), gb = (extractGenres(b)[0] || "").toLowerCase();
-        const va = ga || (sortDir === "asc" ? "\uffff" : ""), vb = gb || (sortDir === "asc" ? "\uffff" : "");
+        const ga = (extractGenres(a)[0] || "").toLowerCase();
+        const gb = (extractGenres(b)[0] || "").toLowerCase();
+        const sentinel = "\uFFFF"; /* patched */
+        const va = ga || (sortDir === "asc" ? sentinel : "");
+        const vb = gb || (sortDir === "asc" ? sentinel : "");
         const diff = cmp(va, vb) || byTitle(a, b);
         return cmpDir(diff);
       },
@@ -542,14 +565,12 @@
   }
 
   /* ========= filters ========= */
-  // UI: overlays on posters only
   const applyOverlayPrefUI = () => {
     postersEl.classList.toggle("wl-hide-overlays", prefs.overlays === "no");
     const show = viewMode === "posters";
     [overlaysLabel, overlaysSel].forEach(el => el.style.display = show ? "" : "none");
   };
 
-  // normalize released filter
   const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" : "both");
 
   function applyFilters() {
@@ -603,7 +624,6 @@
     return null;
   }
 
-  // open/close trailer modal
   function openTrailerWithUrl(url, title="Trailer") {
     const box = trailerModal.querySelector(".box");
     box.querySelector("iframe")?.remove();
@@ -624,7 +644,6 @@
   document.addEventListener("keydown", e => { if (e.key === "Escape" && trailerModal?.classList.contains("show")) closeTrailer(); }, true);
   trailerModal?.addEventListener("click", e => { if (e.target === trailerModal) closeTrailer(); }, true);
 
-  // circular score svg
   function createScoreSVG(score0to100) {
     const v = Math.max(0, Math.min(100, Number(score0to100) || 0));
     const r = 26, c = 2 * Math.PI * r, off = c * (1 - v / 100);
@@ -635,7 +654,6 @@
     </svg>`;
   }
 
-  // render detail panel
   function renderDetail(it, meta) {
     const isMovie = String(it.type || "").toLowerCase() === "movie";
     const poster = artUrl(it, "w154") || "/assets/img/placeholder_poster.svg";
@@ -644,7 +662,7 @@
     const genresText = (Array.isArray(meta?.genres) ? meta.genres : Array.isArray(it?.genres) ? it.genres : []).slice(0,3).join(", ");
     const relIso = isMovie ? (meta?.detail?.release_date || meta?.release?.date || it?.release_date) : (meta?.detail?.first_air_date || it?.first_air_date);
     const metaLine = [isMovie ? "Movie" : "TV", runtime, fmtDateSmart(relIso, toLocale()), meta?.certification || meta?.release?.cert || meta?.detail?.certification, genresText]
-      .filter(Boolean).map((p,i)=> i? `<span class="dot">•</span><span class="chip">${esc(p)}</span>` : `<span class="chip">${esc(p)}</span>`).join("");
+      .filter(Boolean).map((p,i)=> i? `<span class="dot">&bull;</span><span class="chip">${esc(p)}</span>` : `<span class="chip">${esc(p)}</span>`).join("");
 
     const score100 = Number.isFinite(meta?.score) ? Math.round(meta.score) : (Number.isFinite(meta?.vote_average) ? Math.round(meta.vote_average*10) : null);
     const scoreCls = score100 == null ? "" : score100 >= 70 ? "good" : score100 >= 40 ? "mid" : "bad";
@@ -681,14 +699,13 @@
     }, true);
   }
 
-/* preview & detail */
-let activePreviewKey = null;
-function forceHideDetail(){ if(!detailEl) return; detailEl.classList.remove("show"); activePreviewKey=null; }
-function showPreview(it){ const k=normKey(it); activePreviewKey=k; getMetaFor(it).then(m=>{ if(activePreviewKey===k) renderDetail(it,m||{}); }); }
-function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePreviewKey===k){ detailEl.classList.remove("show"); activePreviewKey=null; } }
+  /* preview & detail */
+  let activePreviewKey = null;
+  function forceHideDetail(){ if(!detailEl) return; detailEl.classList.remove("show"); activePreviewKey=null; }
+  function showPreview(it){ const k=normKey(it); activePreviewKey=k; getMetaFor(it).then(m=>{ if(activePreviewKey===k) renderDetail(it,m||{}); }); }
+  function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePreviewKey===k){ detailEl.classList.remove("show"); activePreviewKey=null; } }
 
   /* ========= render ========= */
-  // tiny ui toggles
   const _show = (el, on) => el && (el.style.display = on ? "" : "none");
 
   function render() {
@@ -747,10 +764,16 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
       const t = ((it.type || "").toLowerCase() === "show") ? "tv" : (it.type || "").toLowerCase();
       const typeLabel = t === "movie" ? "Movie" : "Show";
       const thumb = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
-      const p = providersOf(it), have = { PLEX:p.includes("PLEX"), SIMKL:p.includes("SIMKL"), TRAKT:p.includes("TRAKT"), JELLYFIN:p.includes("JELLYFIN"), EMBY:p.includes("EMBY") };
-      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}</div>`;
-      const rel = fmtDateSmart(getReleaseIso(it), toLocale());
-      const genresList = extractGenres(it).slice(0,3).join(", ");
+      const p = providersOf(it);
+      const have = {
+        PLEX:p.includes("PLEX"),
+        SIMKL:p.includes("SIMKL"),
+        TRAKT:p.includes("TRAKT"),
+        JELLYFIN:p.includes("JELLYFIN"),
+        EMBY:p.includes("EMBY"),
+        MDBLIST:p.includes("MDBLIST")
+      };
+      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}</div>`;
       const d = getDerived(it);
 
       tr.innerHTML = `
@@ -763,7 +786,6 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
         <td><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
       `;
 
-      // if either is missing, hydrate once; this will also update the cache
       if (!d.relFmt || !d.genresText) setTimeout(() => hydrateRow(it, tr), 0);
 
       tr.querySelector('input[type=checkbox]')?.addEventListener("change", e => { e.target.checked ? selected.add(key) : selected.delete(key); updateSelCount(); }, true);
@@ -784,7 +806,6 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
   }
 
   /* ========= snackbar & selection/delete ========= */
-  // snackbar
   let snackTimer = null;
   function snackbar(html){
     clearTimeout(snackTimer); snackTimer = null;
@@ -793,15 +814,14 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     snackTimer = setTimeout(() => (snack.classList.add("wl-hidden"), snackTimer = null), 1800);
   }
 
-  // delete provider dropdown
   function rebuildDeleteProviderOptions(){
     const byKey = mapProvidersByKey(items), union = new Set(), prev = delProv.value;
     for (const k of selected) byKey.get(k)?.forEach?.(p => union.add(p));
-    delProv.innerHTML = `<option value="ALL">ALL (default)</option>${["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY"].filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
+    const ALL = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
+    delProv.innerHTML = `<option value="ALL">ALL (default)</option>${ALL.filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
   }
 
-  // selection count + buttons
   function updateSelCount(){
     selCount.textContent = `${selected.size} selected`;
     rebuildDeleteProviderOptions();
@@ -809,7 +829,6 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     document.getElementById("wl-hide").disabled = selected.size === 0;
   }
 
-  // server delete
   async function postDelete(keys, provider){
     const send = async prov => {
       const r = await fetch("/api/watchlist/delete", {
@@ -829,10 +848,9 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     return res;
   }
 
-  // delete click (progress + optimistic UI)
   const delBtn = document.getElementById("wl-delete");
   delBtn?.addEventListener("click", async () => {
-    forceHideDetail(); 
+    forceHideDetail();
     if (!selected.size) return snackbar("Nothing selected");
     const provider = (delProv?.value || "ALL");
     const PROV_UP = provider.toUpperCase();
@@ -840,7 +858,7 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     const total = keys.length, CHUNK = 50;
 
     delBtn.disabled = delProv.disabled = true;
-    const progress = d => { snack.innerHTML = `Deleting <b>${d}/${total}</b> ${PROV_UP==="ALL"?"across providers":"from "+PROV_UP}…`; snack.classList.remove("wl-hidden"); };
+    const progress = d => { snack.innerHTML = `Deleting <b>${d}/${total}</b> ${PROV_UP==="ALL"?"across providers":"from "+PROV_UP}...`; snack.classList.remove("wl-hidden"); };
     progress(0);
 
     let done = 0, ok = 0;
@@ -858,7 +876,7 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
       if (!s.size){ const idx = items.findIndex(it => normKey(it) === k); if (idx > -1) items.splice(idx,1); }
     }
     selected.clear(); applyFilters(); updateSelCount();
-    forceHideDetail(); 
+    forceHideDetail();
     hardReloadWatchlist().catch(()=>{});
 
     snackbar(ok>0 ? (PROV_UP==="ALL" ? `Deleted on available providers for ${ok}/${total}` : `Deleted ${ok}/${total} on ${PROV_UP}`) : "Delete completed with no visible changes");
@@ -932,8 +950,9 @@ function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePrevie
     if (cfg?.simkl?.access_token) active.add("SIMKL");
     if (cfg?.trakt?.access_token) active.add("TRAKT");
     if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
-    if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY"); 
-    
+    if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");
+    if (cfg?.mdblist?.api_key) active.add("MDBLIST");
+
     activeProviders = active;
     providerActive = (p, have) => (activeProviders.has(p) ? providerChip(p, have) : "");
 

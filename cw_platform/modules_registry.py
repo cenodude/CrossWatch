@@ -9,6 +9,7 @@ MODULES = {
         "_auth_TRAKT":    "providers.auth._auth_TRAKT",
         "_auth_JELLYFIN": "providers.auth._auth_JELLYFIN",
         "_auth_EMBY":     "providers.auth._auth_EMBY",
+        "_auth_MDBLIST":  "providers.auth._auth_MDBLIST",
     },
     "SYNC": {
         "_mod_PLEX":     "providers.sync._mod_PLEX",
@@ -16,6 +17,7 @@ MODULES = {
         "_mod_TRAKT":    "providers.sync._mod_TRAKT",
         "_mod_JELLYFIN": "providers.sync._mod_JELLYFIN",
         "_mod_EMBY":     "providers.sync._mod_EMBY",
+        "_mod_MDBLIST":  "providers.sync._mod_MDBLIST",
     },
 }
 

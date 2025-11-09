@@ -52,6 +52,7 @@
     if (has(cfg?.simkl?.access_token)) S.add("simkl");
     if (has(cfg?.jellyfin?.access_token)) S.add("jellyfin");
     if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("emby");
+    if (has(cfg?.mdblist?.api_key)) S.add("mdblist");
     _cfgSet=S; _cfgAt=Date.now(); return S;
   }
 
@@ -505,6 +506,7 @@ const s=document.createElement("style");s.id=id;s.textContent=`
 #stats-card #stat-providers [data-provider=trakt]{--brand:237,28,36;--wm:url("/assets/img/TRAKT.svg")}
 #stats-card #stat-providers [data-provider=jellyfin]{--brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg")}
 #stats-card #stat-providers [data-provider=emby]{--brand:82,181,75;--wm:url("/assets/img/EMBY.svg")}
+#stats-card #stat-providers [data-provider=mdblist]{--brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg")}
 #stats-card #stat-providers{ --prov-cols:4; --tile-h:96px; }
 #stats-card #stat-providers .tile .n{
   position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
