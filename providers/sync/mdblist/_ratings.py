@@ -11,10 +11,9 @@ except Exception:
     from _id_map import minimal as id_minimal  # type: ignore
 
 BASE = "https://api.mdblist.com"
-# switched to /sync endpoints
-URL_LIST   = f"{BASE}/sync/ratings"          # GET (paginated)
-URL_UPSERT = f"{BASE}/sync/ratings"          # POST add/update
-URL_UNRATE = f"{BASE}/sync/ratings/remove"   # POST remove
+URL_LIST   = f"{BASE}/sync/ratings"
+URL_UPSERT = f"{BASE}/sync/ratings"
+URL_UNRATE = f"{BASE}/sync/ratings/remove"
 
 CACHE_PATH = Path("/config/.cw_state/mdblist_ratings.index.json")
 CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -23,7 +22,6 @@ def _log(msg: str):
     if os.getenv("CW_DEBUG") or os.getenv("CW_MDBLIST_DEBUG"):
         print(f"[MDBLIST:ratings] {msg}")
 
-# ---------- cfg helpers ----------
 def _cfg(adapter) -> Mapping[str, Any]:
     c = getattr(adapter, "config", {}) or {}
     if isinstance(c, dict) and isinstance(c.get("mdblist"), dict):
@@ -40,11 +38,6 @@ def _cfg_int(d: Mapping[str, Any], key: str, default: int) -> int:
     try: return int(d.get(key, default))
     except Exception: return default
 
-def _cfg_float(d: Mapping[str, Any], key: str, default: float) -> float:
-    try: return float(d.get(key, default))
-    except Exception: return default
-
-# ---------- ids / kind / key ----------
 def _ids_for_mdblist(it: Mapping[str, Any]) -> Dict[str, Any]:
     ids = dict((it.get("ids") or {}))
     if not ids:
@@ -63,24 +56,44 @@ def _pick_kind(it: Mapping[str, Any]) -> str:
     t = (it.get("type") or it.get("mediatype") or "").strip().lower()
     if t in ("movie","movies"): return "movies"
     if t in ("show","tv","series","shows"): return "shows"
+    if t in ("season","seasons"): return "seasons"
+    if t in ("episode","episodes"): return "episodes"
     if str((it.get("movie") or "")).lower() == "true": return "movies"
     if str((it.get("show") or "")).lower()  == "true": return "shows"
     return "movies"
 
 def _key_of(obj: Mapping[str, Any]) -> str:
     ids = dict((obj.get("ids") or obj) or {})
+    kind = (obj.get("type") or "").lower()
     imdb = (ids.get("imdb") or ids.get("imdb_id") or "").strip()
-    if imdb: return f"imdb:{imdb}"
-    tmdb = ids.get("tmdb") or ids.get("tmdb_id")
-    if tmdb: return f"tmdb:{int(tmdb)}"
-    tvdb = ids.get("tvdb") or ids.get("tvdb_id")
-    if tvdb: return f"tvdb:{int(tvdb)}"
-    mdbl = ids.get("mdblist") or ids.get("id")
-    if mdbl: return f"mdblist:{mdbl}"
+    base = ""
+    if imdb: base = f"imdb:{imdb}"
+    else:
+        tmdb = ids.get("tmdb") or ids.get("tmdb_id")
+        if tmdb: base = f"tmdb:{int(tmdb)}"
+        else:
+            tvdb = ids.get("tvdb") or ids.get("tvdb_id")
+            if tvdb: base = f"tvdb:{int(tvdb)}"
+            else:
+                mdbl = ids.get("mdblist") or ids.get("id")
+                if mdbl: base = f"mdblist:{mdbl}"
+    if kind in ("season","episode"):
+        if not base:
+            t = (obj.get("title") or "").strip(); y = obj.get("year")
+            base = f"title:{t}|year:{y}" if t and y else ""
+    if kind == "season":
+        s = obj.get("season")
+        if base and s is not None: return f"season:{base}:S{int(s)}"
+        if base: return f"season:{base}"
+    if kind == "episode":
+        s = obj.get("season"); e = obj.get("number")
+        if e is None: e = obj.get("episode")
+        if base and s is not None and e is not None: return f"episode:{base}:{int(s)}x{int(e)}"
+        if base: return f"episode:{base}"
+    if base: return base
     t = (obj.get("title") or "").strip(); y = obj.get("year")
     return f"title:{t}|year:{y}" if t and y else f"obj:{hash(json.dumps(obj, sort_keys=True)) & 0xffffffff}"
 
-# ---------- rating helpers ----------
 def _valid_rating(v: Any) -> Optional[int]:
     try:
         i = int(str(v).strip())
@@ -91,7 +104,6 @@ def _valid_rating(v: Any) -> Optional[int]:
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-# ---------- cache ----------
 def _load_cache() -> Dict[str, Any]:
     try:
         if not CACHE_PATH.exists(): return {}
@@ -122,17 +134,23 @@ def _merge_by_key(dst: Dict[str, Any], src: Iterable[Mapping[str, Any]]) -> None
             if a >= b:
                 dst[k] = dict(m)
 
-# ---------- fetch index (patched for /sync/ratings) ----------
 def _row_movie(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     try:
         rating = _valid_rating(row.get("rating"))
         if rating is None: return None
-        ids = row.get("movie", {}).get("ids") or {}
+        mv = row.get("movie") or {}
+        ids = (mv.get("ids") or {})
         ids = {"imdb": ids.get("imdb"), "tmdb": ids.get("tmdb"), "tvdb": ids.get("tvdb")}
         ids = {k:v for k,v in ids.items() if v}
         if not ids: return None
+        title = (mv.get("title") or mv.get("name") or "").strip()
+        y = mv.get("year") or mv.get("release_year")
+        try: year = int(y) if y is not None else None
+        except Exception: year = None
         out = {"type": "movie", "ids": ids, "rating": rating}
         if row.get("rated_at"): out["rated_at"] = row["rated_at"]
+        if title: out["title"] = title
+        if year: out["year"] = year
         return out
     except Exception:
         return None
@@ -141,12 +159,81 @@ def _row_show(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     try:
         rating = _valid_rating(row.get("rating"))
         if rating is None: return None
-        ids = row.get("show", {}).get("ids") or {}
+        sh = row.get("show") or {}
+        ids = (sh.get("ids") or {})
         ids = {"imdb": ids.get("imdb"), "tmdb": ids.get("tmdb"), "tvdb": ids.get("tvdb")}
         ids = {k:v for k,v in ids.items() if v}
         if not ids: return None
+        title = (sh.get("title") or sh.get("name") or "").strip()
+        y = sh.get("year") or sh.get("first_air_year")
+        if not y:
+            fa = (sh.get("first_air_date") or sh.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit(): y = int(fa[:4])
+        try: year = int(y) if y is not None else None
+        except Exception: year = None
         out = {"type": "show", "ids": ids, "rating": rating}
         if row.get("rated_at"): out["rated_at"] = row["rated_at"]
+        if title: out["title"] = title
+        if year: out["year"] = year
+        return out
+    except Exception:
+        return None
+
+def _row_season(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        rating = _valid_rating(row.get("rating"))
+        if rating is None: return None
+        sv = row.get("season") or {}
+        show = sv.get("show") or {}
+        sids = dict((sv.get("ids") or {}))
+        sids = {"tmdb": sids.get("tmdb"), "tvdb": sids.get("tvdb")}
+        sids = {k:v for k,v in sids.items() if v}
+        sh_ids = dict((show.get("ids") or {}))
+        sh_ids = {"imdb": sh_ids.get("imdb"), "tmdb": sh_ids.get("tmdb"), "tvdb": sh_ids.get("tvdb")}
+        sh_ids = {k:v for k,v in sh_ids.items() if v}
+        ids = sids or sh_ids
+        if not ids: return None
+        title = (show.get("title") or show.get("name") or sv.get("name") or "").strip()
+        y = show.get("year") or show.get("first_air_year")
+        if not y:
+            fa = (show.get("first_air_date") or show.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit(): y = int(fa[:4])
+        try: year = int(y) if y is not None else None
+        except Exception: year = None
+        out = {"type": "season", "ids": ids, "rating": rating, "season": sv.get("number")}
+        if row.get("rated_at"): out["rated_at"] = row["rated_at"]
+        if title: out["title"] = title
+        if year: out["year"] = year
+        return out
+    except Exception:
+        return None
+
+def _row_episode(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        rating = _valid_rating(row.get("rating"))
+        if rating is None: return None
+        ev = row.get("episode") or {}
+        show = ev.get("show") or {}
+        eids = dict((ev.get("ids") or {}))
+        eids = {"tmdb": eids.get("tmdb"), "tvdb": eids.get("tvdb")}
+        eids = {k:v for k,v in eids.items() if v}
+        sh_ids = dict((show.get("ids") or {}))
+        sh_ids = {"imdb": sh_ids.get("imdb"), "tmdb": sh_ids.get("tmdb"), "tvdb": sh_ids.get("tvdb")}
+        sh_ids = {k:v for k,v in sh_ids.items() if v}
+        ids = eids or sh_ids
+        if not ids: return None
+        title = (show.get("title") or show.get("name") or ev.get("name") or "").strip()
+        y = show.get("year") or show.get("first_air_year")
+        if not y:
+            fa = (show.get("first_air_date") or show.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit(): y = int(fa[:4])
+        try: year = int(y) if y is not None else None
+        except Exception: year = None
+        num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
+        out = {"type": "episode", "ids": ids, "rating": rating, "season": ev.get("season"), "number": num}
+        if row.get("rated_at"): out["rated_at"] = row["rated_at"]
+        if title: out["title"] = title
+        if year: out["year"] = year
         return out
     except Exception:
         return None
@@ -180,14 +267,68 @@ def build_index(adapter, *, per_page: int = 1000, max_pages: int = 9999) -> Dict
             break
         data = r.json() if (r.text or "").strip() else {}
         movies = data.get("movies") or []
-        shows  = data.get("shows") or []
+        shows  = data.get("shows")  or []
+        seasons_top = data.get("seasons") or []
+        episodes_top = data.get("episodes") or []
 
         minis: List[Dict[str, Any]] = []
         for row in movies:
             m = _row_movie(row)
             if m: minis.append(m)
+
         for row in shows:
             m = _row_show(row)
+            if m: minis.append(m)
+            sh = row.get("show") or {}
+            sh_ids = (sh.get("ids") or {})
+            ids_sh = {
+                k: v for k, v in {
+                    "imdb": sh_ids.get("imdb"),
+                    "tmdb": sh_ids.get("tmdb"),
+                    "tvdb": sh_ids.get("tvdb"),
+                }.items() if v
+            }
+            title = (sh.get("title") or sh.get("name") or "").strip()
+            y = sh.get("year") or sh.get("first_air_year")
+            if not y:
+                fa = (sh.get("first_air_date") or sh.get("first_aired") or "").strip()
+                if len(fa) >= 4 and fa[:4].isdigit(): y = int(fa[:4])
+            try: year = int(y) if y is not None else None
+            except Exception: year = None
+
+            for sv in row.get("seasons") or []:
+                sr = _valid_rating(sv.get("rating"))
+                sids = dict((sv.get("ids") or {}))
+                sids = {k: sids.get(k) for k in ("tmdb","tvdb") if sids.get(k)}
+                ids_for_season = sids or {k: ids_sh.get(k) for k in ("tmdb","tvdb") if ids_sh.get(k)}
+                if sr is not None and ids_for_season:
+                    sm = {"type": "season", "ids": ids_for_season, "rating": sr, "season": sv.get("number")}
+                    ra = sv.get("rated_at")
+                    if ra: sm["rated_at"] = ra
+                    if title: sm["title"] = title
+                    if year: sm["year"] = year
+                    minis.append(sm)
+                for ev in sv.get("episodes") or []:
+                    er = _valid_rating(ev.get("rating"))
+                    if er is None: continue
+                    eids = dict((ev.get("ids") or {}))
+                    eids = {k: eids.get(k) for k in ("tmdb","tvdb") if eids.get(k)}
+                    ids_for_episode = eids or ids_sh
+                    if not ids_for_episode: continue
+                    num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
+                    em = {"type": "episode", "ids": ids_for_episode, "rating": er, "season": sv.get("number"), "number": num}
+                    rae = ev.get("rated_at")
+                    if rae: em["rated_at"] = rae
+                    if title: em["title"] = title
+                    if year: em["year"] = year
+                    minis.append(em)
+
+        for row in seasons_top:
+            m = _row_season(row)
+            if m: minis.append(m)
+
+        for row in episodes_top:
+            m = _row_episode(row)
             if m: minis.append(m)
 
         for m in minis:
@@ -204,35 +345,64 @@ def build_index(adapter, *, per_page: int = 1000, max_pages: int = 9999) -> Dict
     _log(f"index size: {len(out)}")
     return out
 
-# ---------- writes ----------
 def _chunk(seq: List[Any], n: int) -> Iterable[List[Any]]:
     n = max(1, int(n))
     for i in range(0, len(seq), n):
         yield seq[i:i+n]
 
 def _bucketize(items: Iterable[Mapping[str, Any]]) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
-    body: Dict[str, List[Dict[str, Any]]] = {}
+    body: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": [], "seasons": [], "episodes": []}
     accepted: List[Dict[str, Any]] = []
 
     def push(bucket: str, obj: Dict[str, Any]):
         body.setdefault(bucket, []).append(obj)
 
     for it in items or []:
+        kind = _pick_kind(it)
         rating = _valid_rating(it.get("rating"))
         if rating is None:
             continue
-        ids = _ids_for_mdblist(it) or {}
+
+        ids = _ids_for_mdblist(it) or _ids_for_mdblist(it.get("show_ids") or {})
         if not ids:
             continue
-        kind = _pick_kind(it)
-        obj = {"ids": ids, "rating": rating}  # nested ids for /sync/ratings
+
         ra = it.get("rated_at")
-        if ra: obj["rated_at"] = ra
+
         if kind == "movies":
-            push("movies", obj); t = "movie"
-        else:
-            push("shows", obj);  t = "show"
-        accepted.append(id_minimal({"type": t, "ids": ids, "rating": rating, "rated_at": ra}))
+            obj = {"ids": ids, "rating": rating}
+            if ra: obj["rated_at"] = ra
+            push("movies", obj)
+            accepted.append(id_minimal({"type": "movie", "ids": ids, "rating": rating, "rated_at": ra}))
+            continue
+
+        if kind == "shows":
+            obj = {"ids": ids, "rating": rating}
+            if ra: obj["rated_at"] = ra
+            push("shows", obj)
+            accepted.append(id_minimal({"type": "show", "ids": ids, "rating": rating, "rated_at": ra}))
+            continue
+
+        if kind == "seasons":
+            s = it.get("season") or it.get("number")
+            if s is None:
+                continue
+            obj = {"ids": ids, "season": int(s), "rating": rating}
+            if ra: obj["rated_at"] = ra
+            push("seasons", obj)
+            accepted.append(id_minimal({"type": "season", "ids": ids, "rating": rating, "rated_at": ra}))
+            continue
+
+        s = it.get("season")
+        e = it.get("number") if it.get("number") is not None else it.get("episode")
+        if s is None or e is None:
+            continue
+        obj = {"ids": ids, "season": int(s), "number": int(e), "rating": rating}
+        if ra: obj["rated_at"] = ra
+        push("episodes", obj)
+        accepted.append(id_minimal({"type": "episode", "ids": ids, "rating": rating, "rated_at": ra}))
+
+    body = {k: v for k, v in body.items() if v}
     return body, accepted
 
 def _write(adapter, items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> Tuple[int, List[Dict[str, Any]]]:
@@ -256,7 +426,7 @@ def _write(adapter, items: Iterable[Mapping[str, Any]], *, unrate: bool = False)
     ok = 0
     unresolved: List[Dict[str, Any]] = []
 
-    for bucket in ("movies", "shows"):
+    for bucket in ("movies", "shows", "seasons", "episodes"):
         rows = body.get(bucket) or []
         for part in _chunk(rows, chunk):
             payload = {bucket: part}
@@ -273,22 +443,17 @@ def _write(adapter, items: Iterable[Mapping[str, Any]], *, unrate: bool = False)
                 )
                 if r.status_code in (200, 201):
                     d = r.json() if (r.text or "").strip() else {}
+                    kinds = ("movies", "shows", "seasons", "episodes")
                     if unrate:
                         removed = d.get("removed") or {}
-                        ok += int(removed.get("movies") or 0) + int(removed.get("shows") or 0) \
-                              + int(removed.get("seasons") or 0) + int(removed.get("episodes") or 0)
+                        ok += sum(int(removed.get(k) or 0) for k in kinds)
                     else:
-                        updated = d.get("updated") or {}
-                        delta = int(updated.get("movies") or 0) + int(updated.get("shows") or 0) \
-                                + int(updated.get("seasons") or 0) + int(updated.get("episodes") or 0)
-                        if delta == 0:
-                            # fallback for any older/alternative shapes
-                            added    = d.get("added") or {}
-                            existing = d.get("existing") or {}
-                            ok += int(added.get("movies") or 0) + int(added.get("shows") or 0) \
-                                  + int(existing.get("movies") or 0) + int(existing.get("shows") or 0)
-                        else:
-                            ok += delta
+                        updated  = d.get("updated")  or {}
+                        added    = d.get("added")    or {}
+                        existing = d.get("existing") or {}
+                        ok += sum(int(updated.get(k)  or 0) for k in kinds)
+                        ok += sum(int(added.get(k)    or 0) for k in kinds)
+                        ok += sum(int(existing.get(k) or 0) for k in kinds)
                     time.sleep(max(0.0, delay_ms/1000.0))
                     break
 
@@ -303,7 +468,7 @@ def _write(adapter, items: Iterable[Mapping[str, Any]], *, unrate: bool = False)
                 _log(f"{'UNRATE' if unrate else 'UPSERT'} failed {r.status_code}: {(r.text or '')[:200]}")
                 for x in part:
                     iid = x.get("ids") or {}
-                    t = "movie" if bucket == "movies" else "show"
+                    t = "movie" if bucket == "movies" else ("show" if bucket == "shows" else ("season" if bucket == "seasons" else "episode"))
                     unresolved.append({"item": id_minimal({"type": t, "ids": iid}), "hint": f"http:{r.status_code}"})
                 break
 
@@ -322,5 +487,5 @@ def _write(adapter, items: Iterable[Mapping[str, Any]], *, unrate: bool = False)
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     return _write(adapter, items, unrate=False)
 
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+def remove(adapter, items: Iterable[Mapping[str, Any]]):
     return _write(adapter, items, unrate=True)

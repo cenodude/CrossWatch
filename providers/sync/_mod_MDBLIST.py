@@ -58,7 +58,7 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "ratings": {
-                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True, "unrate": True, "from_date": False
             },
         },
@@ -139,7 +139,7 @@ class MDBLISTModule:
 
     @staticmethod
     def supported_features() -> Dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": True, "history": False, "playlists": False}
+        toggles = {"watchlist": True, "ratings": False, "history": False, "playlists": False}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
