@@ -2,29 +2,42 @@
 (function () {
   "use strict";
 
-  // --- utils
   const Q = (s, r = document) => r.querySelector(s);
   const Qa = (s, r = document) => Array.from(r.querySelectorAll(s) || []);
   const ESC = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const SECTION = "#sec-jellyfin";
   const LIB_URL = "/api/jellyfin/libraries";
 
-  let H = new Set(); // history lib ids
-  let R = new Set(); // ratings lib ids
+  let H = new Set();
+  let R = new Set();
   let hydrated = false;
 
-  // --- tiny helpers
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const maskToken = (has) => { const el = Q("#jfy_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
-  // --- libraries UI
   function applyFilter() {
     const qv = (Q("#jfy_lib_filter")?.value || "").toLowerCase().trim();
     Qa("#jfy_lib_matrix .lm-row").forEach((r) => {
       const name = (r.querySelector(".lm-name")?.textContent || "").toLowerCase();
       r.classList.toggle("hide", !!qv && !name.includes(qv));
     });
+  }
+
+  function syncHidden() {
+    const selH = Q("#jfy_lib_history");
+    const selR = Q("#jfy_lib_ratings");
+    if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
+  }
+
+  function syncSelectAll() {
+    const rows = Qa("#jfy_lib_matrix .lm-row:not(.hide)");
+    const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
+    const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
+    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all");
+    if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
+    if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
   }
 
   function renderLibraries(libs) {
@@ -37,12 +50,22 @@
       row.className = "lm-row"; row.dataset.id = id;
       row.innerHTML = `
         <div class="lm-name">${ESC(it.title)}</div>
-        <button class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
-        <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>`;
+        <button type="button" class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
+        <button type="button" class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>`;
       f.appendChild(row);
     });
     box.appendChild(f);
     applyFilter();
+    syncHidden();
+    syncSelectAll();
+  }
+
+  function repaint() {
+    const libs = Qa("#jfy_lib_matrix .lm-row").map(r => ({
+      key: r.dataset.id,
+      title: r.querySelector(".lm-name")?.textContent || ""
+    }));
+    renderLibraries(libs);
   }
 
   async function jfyLoadLibraries() {
@@ -54,7 +77,6 @@
     } catch { renderLibraries([]); }
   }
 
-  // --- hydrate from /api/config (auto when section becomes visible)
   async function hydrateFromConfig() {
     if (hydrated) return;
     try {
@@ -77,17 +99,15 @@
 
       hydrated = true;
       await jfyLoadLibraries();
-    } catch { /* ignore */ }
+    } catch { }
   }
 
-  // ensure hydrate when section is present and visible
   function ensureHydrate() {
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
     if (sec && (!body || visible(body))) hydrateFromConfig();
   }
 
-  // observe section insertion (SPAs/late render)
   if (!Q(SECTION)) {
     const mo = new MutationObserver(() => {
       if (Q(SECTION)) { mo.disconnect(); ensureHydrate(); }
@@ -95,20 +115,17 @@
     mo.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // click on the section header → open → hydrate
   document.addEventListener("click", (e) => {
     const head = Q("#sec-jellyfin .head");
     if (head && head.contains(e.target)) setTimeout(ensureHydrate, 0);
   }, true);
 
-  // run once on ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => setTimeout(ensureHydrate, 30));
   } else {
     setTimeout(ensureHydrate, 30);
   }
 
-  // --- auto-fill from inspect
   async function jfyAuto() {
     try {
       const r = await fetch("/api/jellyfin/inspect?ts=" + Date.now(), { cache: "no-store" });
@@ -120,7 +137,6 @@
     } catch {}
   }
 
-  // --- login
   async function jfyLogin() {
     const server = (Q("#jfy_server")?.value || "").trim();
     const username = (Q("#jfy_user")?.value || "").trim();
@@ -142,7 +158,6 @@
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
 
-  // --- delete token
   async function jfyDeleteToken() {
     const delBtn = document.querySelector('#sec-jellyfin .btn.danger');
     const msg = document.querySelector('#jfy_msg');
@@ -157,7 +172,6 @@
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok && (j.ok !== false)) {
-        // unmask + clear password field
         const tok = document.querySelector('#jfy_tok'); if (tok) { tok.value = ''; tok.dataset.masked = '0'; }
         const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
         if (msg) { msg.className = 'msg'; msg.textContent = 'Access token removed.'; }
@@ -171,7 +185,6 @@
     }
   }
 
-  // --- merge back to cfg
   function mergeJellyfinIntoCfg(cfg) {
     const v = (sel) => (Q(sel)?.value || "").trim();
     const jf = (cfg.jellyfin = cfg.jellyfin || {});
@@ -187,55 +200,64 @@
     return cfg;
   }
 
-  // --- toggles + master toggles
   document.addEventListener("click", (ev) => {
-    const t = ev.target; if (!(t instanceof HTMLElement)) return;
+    const t = ev.target; if (!(t instanceof Element)) return;
+    const btn = t.closest(".lm-dot"); if (!btn) return;
 
-    if (t.classList.contains("lm-dot")) {
-      const row = t.closest(".lm-row"); if (!row) return;
-      const id = String(row.dataset.id || ""), kind = t.dataset.kind;
-      const on = !t.classList.contains("on");
-      t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
-      if (kind === "history") (on ? H.add(id) : H.delete(id)); else (on ? R.add(id) : R.delete(id));
-      return;
-    }
-
-    if (t.id === "jfy_hist_all" && t.classList.contains("lm-dot")) {
-      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+    if (btn.id === "jfy_hist_all") {
+      ev.preventDefault(); ev.stopPropagation();
+      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
       H = new Set();
       Qa("#jfy_lib_matrix .lm-dot.hist").forEach((b) => {
         b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
         if (on) { const r = b.closest(".lm-row"); if (r) H.add(String(r.dataset.id || "")); }
       });
+      syncHidden();
+      repaint();
+      syncSelectAll();
       return;
     }
 
-    if (t.id === "jfy_rate_all" && t.classList.contains("lm-dot")) {
-      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+    if (btn.id === "jfy_rate_all") {
+      ev.preventDefault(); ev.stopPropagation();
+      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
       R = new Set();
       Qa("#jfy_lib_matrix .lm-dot.rate").forEach((b) => {
         b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
         if (on) { const r = b.closest(".lm-row"); if (r) R.add(String(r.dataset.id || "")); }
       });
+      syncHidden();
+      repaint();
+      syncSelectAll();
+      return;
+    }
+
+    if (btn.closest("#jfy_lib_matrix")) {
+      ev.preventDefault(); ev.stopPropagation();
+      const row = btn.closest(".lm-row"); if (!row) return;
+      const id = String(row.dataset.id || ""), kind = btn.dataset.kind;
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
+      if (kind === "history") (on ? H.add(id) : H.delete(id)); else (on ? R.add(id) : R.delete(id));
+      syncHidden();
+      repaint();
+      syncSelectAll();
       return;
     }
   }, true);
 
   document.addEventListener("input", (ev) => { if (ev.target?.id === "jfy_lib_filter") applyFilter(); }, true);
 
-  // expose
   window.jfyAuto = jfyAuto;
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
   window.jfyLogin = jfyLogin;
   window.jfyDeleteToken = jfyDeleteToken;
 
-  // optional integration
   window.registerSettingsCollector?.(mergeJellyfinIntoCfg);
   document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
 })();
 
-// Force Jellyfin settings collapsed by default
 (function(){
   const SEL = '#sec-jellyfin details.settings';
   const collapse = (root=document) => root.querySelectorAll(SEL).forEach(d=>{ d.open = false; d.removeAttribute('open'); });

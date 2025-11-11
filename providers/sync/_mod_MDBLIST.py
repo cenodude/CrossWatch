@@ -139,7 +139,7 @@ class MDBLISTModule:
 
     @staticmethod
     def supported_features() -> Dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": False, "history": False, "playlists": False}
+        toggles = {"watchlist": True, "ratings": True, "history": False, "playlists": False}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
