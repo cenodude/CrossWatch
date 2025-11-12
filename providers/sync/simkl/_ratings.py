@@ -28,11 +28,9 @@ URL_REMOVE  = f"{BASE}/sync/ratings/remove"
 
 STATE_DIR        = Path("/config/.cw_state")
 UNRESOLVED_PATH  = str(STATE_DIR / "simkl_ratings.unresolved.json")
-R_SHADOW_PATH    = str(STATE_DIR / "simkl.ratings.shadow.json")  # write-through for backfill ratings
+R_SHADOW_PATH    = str(STATE_DIR / "simkl.ratings.shadow.json")
 
 ID_KEYS = ("simkl","imdb","tmdb","tvdb","mal","anidb")
-
-# ── utils ─────────────────────────────────────────────────────────────────────
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
@@ -54,7 +52,7 @@ def _norm_rating(v: Any) -> Optional[int]:
         n = int(round(float(v)))
     except Exception:
         return None
-    return n if 1 <= n <= 10 else None  # 0 → use remove()
+    return n if 1 <= n <= 10 else None
 
 def _now() -> int: return int(time.time())
 
@@ -89,8 +87,6 @@ def _save_json(path: str, data: Mapping[str, Any]) -> None:
     except Exception as e:
         _log(f"save {Path(path).name} failed: {e}")
 
-# ── unresolved ────────────────────────────────────────────────────────────────
-
 def _load_unresolved() -> Dict[str, Any]: return _load_json(UNRESOLVED_PATH)
 def _save_unresolved(data: Mapping[str, Any]) -> None: _save_json(UNRESOLVED_PATH, data)
 
@@ -115,7 +111,6 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
         if k in data: del data[k]; changed = True
     if changed: _save_unresolved(data)
 
-# ── ratings write-through shadow ──────────────────────────────────────────────
 def _rshadow_ttl_seconds() -> int:
     try: return int(os.getenv("CW_SIMKL_RATINGS_SHADOW_TTL", str(7*24*3600)))
     except Exception: return 7*24*3600
@@ -134,7 +129,6 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
         ra = it.get("rated_at") or it.get("ratedAt") or ""
         ts = _as_epoch(ra) or now
         if not bk or rt is None: continue
-        # one per base key; keep most recent
         old = store.get(bk) or {}
         old_ts = _as_epoch(old.get("rated_at")) or 0
         if ts >= old_ts:
@@ -147,7 +141,7 @@ def _rshadow_merge_into(out: Dict[str, Dict[str, Any]], thaw: set) -> None:
     now = _now(); changed = False; merged = 0; cleaned = 0
     for bk, rec in list(store.items()):
         exp = int(rec.get("exp") or 0)
-        if exp and exp < now:  # expire quietly
+        if exp and exp < now:
             del store[bk]; changed = True; cleaned += 1; continue
         rec_rt = _norm_rating(rec.get("rating")); rec_ra = rec.get("rated_at") or ""
         if rec_rt is None: 
@@ -160,10 +154,8 @@ def _rshadow_merge_into(out: Dict[str, Dict[str, Any]], thaw: set) -> None:
             continue
         cur_rt = _norm_rating(cur.get("rating"))
         cur_ts = _as_epoch(cur.get("rated_at")) or 0
-        # if server has same/newer rating, drop from shadow
         if (cur_rt == rec_rt) and (cur_ts >= rec_ts):
             del store[bk]; changed = True; cleaned += 1; continue
-        # if our shadow is newer, prefer it
         if rec_ts > cur_ts:
             m = dict(cur); m["rating"] = rec_rt; m["rated_at"] = rec_ra
             out[bk] = m; merged += 1
@@ -171,20 +163,13 @@ def _rshadow_merge_into(out: Dict[str, Dict[str, Any]], thaw: set) -> None:
     if cleaned or changed:
         sh["items"] = store; _rshadow_save(sh)
 
-# ── index (delta) ─────────────────────────────────────────────────────────────
-
 def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-    """
-    Pull /sync/ratings/{movies|shows|anime}?date_from=... → {key -> minimal+rating,rated_at}.
-    Activities gate skips no-op runs. Progress: fixed grand total first.
-    """
     sess = adapter.client.session
     tmo  = adapter.cfg.timeout
 
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("ratings") if callable(prog_mk) else None
 
-    # activities gate
     if since_iso is None:
         acts, _ = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
         if isinstance(acts, Mapping):
@@ -209,7 +194,6 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
     df_shows  = coalesce_date_from("ratings:shows",  cfg_date_from=since_iso)
     df_anime  = coalesce_date_from("ratings:anime",  cfg_date_from=since_iso)
 
-    # pre-fetch rows to fix progress total
     def _fetch_rows(kind: str, df_iso: str) -> List[Mapping[str, Any]]:
         try:
             r = sess.post(URL_GET_T(kind, f"?date_from={df_iso}"), headers=hdrs, timeout=tmo)
@@ -234,7 +218,6 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
         try: prog.tick(0, total=grand_total, force=True)
         except Exception: pass
 
-    # ingest
     done = 0
     max_movies: Optional[int] = None
     max_shows:  Optional[int] = None
@@ -280,7 +263,6 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
 
     _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_movies}|{df_shows}|{df_anime}")
 
-    # watermarks
     if max_movies is not None: update_watermark_if_new("ratings:movies", _as_iso(max_movies))
     if max_shows  is not None: update_watermark_if_new("ratings:shows",  _as_iso(max_shows))
     if max_anime  is not None: update_watermark_if_new("ratings:anime",  _as_iso(max_anime))
@@ -290,8 +272,6 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
     _unfreeze_if_present(thaw)
     _log(f"index size: {len(out)}")
     return out
-
-# ── writes ────────────────────────────────────────────────────────────────────
 
 def _movie_entry_add(it: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     ids = _ids_of(it); rating = _norm_rating(it.get("rating"))
@@ -320,7 +300,6 @@ def _episode_entry_add(it: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     return ent
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Rate items (1–10). Supports movies, shows, and episodes."""
     sess, hdrs = adapter.client.session, _headers(adapter)
     movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []; episodes: List[Dict[str, Any]] = []
     unresolved: List[Dict[str, Any]] = []; thaw_keys: List[str] = []
@@ -337,13 +316,8 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                 ev = dict(id_minimal(it)); ev["rating"] = ent["rating"]; ev["rated_at"] = ent.get("rated_at",""); rshadow_events.append(ev)
             else:
                 unresolved.append({"item": id_minimal(it), "hint": "missing_ids_or_rating"})
-        elif typ == "episode":
-            ent = _episode_entry_add(it)
-            if ent:
-                episodes.append(ent); thaw_keys.append(simkl_key_of(id_minimal(it)))
-                ev = dict(id_minimal(it)); ev["rating"] = ent["rating"]; ev["rated_at"] = ent.get("rated_at",""); rshadow_events.append(ev)
-            else:
-                unresolved.append({"item": id_minimal(it), "hint": "missing_show_ids_or_s/e_or_rating"})
+        elif typ in ("episode","season"):
+            unresolved.append({"item": id_minimal(it), "hint": "unsupported_type"})
         else:
             ent = _show_entry_add(it)
             if ent:
@@ -380,7 +354,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     return 0, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Unrate items. Supports movies, shows, and episodes."""
     sess, hdrs = adapter.client.session, _headers(adapter)
     movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []; episodes: List[Dict[str, Any]] = []
     unresolved: List[Dict[str, Any]] = []; thaw_keys: List[str] = []
@@ -394,12 +367,8 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
         typ = (it.get("type") or "movie").lower()
         if typ == "movie":
             movies.append({"ids": ids})
-        elif typ == "episode":
-            s = int(it.get("season") or it.get("season_number") or 0)
-            e = int(it.get("episode") or it.get("episode_number") or 0)
-            if not s or not e:
-                unresolved.append({"item": id_minimal(it), "hint":"missing_s/e"}); continue
-            episodes.append({"ids": ids, "season": s, "episode": e})
+        elif typ in ("episode","season"):
+            unresolved.append({"item": id_minimal(it), "hint":"unsupported_type"}); continue
         else:
             shows.append({"ids": ids})
         thaw_keys.append(simkl_key_of(id_minimal(it)))

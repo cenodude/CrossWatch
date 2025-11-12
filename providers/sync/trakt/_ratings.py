@@ -18,6 +18,7 @@ except Exception:
     from _id_map import minimal as id_minimal  # type: ignore
 
 BASE = "https://api.trakt.tv"
+URL_ACT    = f"{BASE}/sync/last_activities"
 URL_RAT_MOV = f"{BASE}/sync/ratings/movies"
 URL_RAT_SHO = f"{BASE}/sync/ratings/shows"
 URL_RAT_SEA = f"{BASE}/sync/ratings/seasons"
@@ -63,8 +64,20 @@ def _save_cache(items: Mapping[str, Any]) -> None:
     except Exception as e:
         _log(f"cache.save failed: {e}")
 
+def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> Dict[str, Any]:
+    allowed = ("trakt","tmdb","tvdb") if kind in ("seasons","episodes") else ("trakt","imdb","tmdb","tvdb")
+    out: Dict[str, Any] = {}
+    for k in allowed:
+        v = ids.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        out[k] = s if k == "imdb" else (int(s) if s.isdigit() else None)
+    return {k: v for k, v in out.items() if v is not None}
+
 def _merge_by_canonical(dst: Dict[str, Any], src: Iterable[Mapping[str, Any]]) -> None:
-    # Prefer more IDs; tie -> newer rated_at
     def q(x: Mapping[str, Any]) -> Tuple[int, str]:
         ids = x.get("ids") or {}
         score = sum(1 for k in ("trakt","imdb","tmdb","tvdb") if ids.get(k))
@@ -76,11 +89,41 @@ def _merge_by_canonical(dst: Dict[str, Any], src: Iterable[Mapping[str, Any]]) -
             dst[k] = dict(m)
 
 def _chunk_iter(lst: List[Dict[str, Any]], size: int) -> Iterable[List[Dict[str, Any]]]:
-    # Simple chunker for POST payloads
     n = int(size or 0)
     if n <= 0: n = 100
     for i in range(0, len(lst), n):
         yield lst[i:i+n]
+
+def _load_cache_doc() -> Dict[str, Any]:
+    try:
+        p = Path(CACHE_PATH)
+        if not p.exists(): return {}
+        return json.loads(p.read_text("utf-8") or "{}")
+    except Exception:
+        return {}
+
+def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
+    try:
+        p = Path(CACHE_PATH); p.parent.mkdir(parents=True, exist_ok=True)
+        doc = {"generated_at": _now_iso(), "items": dict(items), "wm": dict(wm or {})}
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
+        os.replace(tmp, p)
+        _log(f"cache.saved -> {p} ({len(items)})")
+    except Exception as e:
+        _log(f"cache.save failed: {e}")
+
+def _extract_ratings_wm(acts: Mapping[str, Any]) -> Dict[str, str]:
+    r = acts.get("ratings") or acts or {}
+    def g(k: str) -> str:
+        v = r.get(k) or {}
+        return str(v.get("rated_at") or "")
+    return {
+        "movies": g("movies"),
+        "shows": g("shows"),
+        "seasons": g("seasons"),
+        "episodes": g("episodes"),
+    }
 
 # -------------------- fetch (one-shot) --------------------
 
@@ -125,7 +168,6 @@ def _dedupe_canonical(items: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, An
         if not cur:
             idx[k] = m
         else:
-            # Prefer newer timestamp
             if str(m.get("rated_at") or "") >= str(cur.get("rated_at") or ""):
                 idx[k] = m
     return idx
@@ -133,26 +175,37 @@ def _dedupe_canonical(items: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, An
 # -------------------- public: index --------------------
 
 def build_index(adapter, *, per_page: int = 200, max_pages: int = 50) -> Dict[str, Dict[str, Any]]:
-    """
-    Contract for orchestrator: return {canonical_key: minimal_with_rating}.
-    Strategy:
-      1) If cache exists, trust it (fast path, stable -> no fake diffs).
-      2) Else one-shot fetch, dedupe on canonical key, save cache, return.
-    """
-    # Allow config overrides (fallback to defaults if missing/empty)
     per_page  = int(getattr(adapter.cfg, "ratings_per_page",  per_page)  or per_page)
     max_pages = int(getattr(adapter.cfg, "ratings_max_pages", max_pages) or max_pages)
 
-    # 1) trust cache if present
-    cached = _load_cache()
-    if cached:
-        _log(f"index (cache): {len(cached)}")
-        return cached
-
-    # 2) first-time fetch
     sess = adapter.client.session
     headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
     tmo = adapter.cfg.timeout; rr = getattr(adapter.cfg, "max_retries", 3)
+
+    doc = _load_cache_doc()
+    cached_items = dict(doc.get("items") or {})
+    cached_wm    = dict(doc.get("wm") or {})
+
+    wm_remote: Optional[Dict[str, str]] = None
+    try:
+        r = sess.get(URL_ACT, headers=headers, timeout=tmo)
+        if r.status_code == 200:
+            wm_remote = _extract_ratings_wm(r.json() or {})
+    except Exception as e:
+        _log(f"activities fetch failed: {e}")
+
+    if wm_remote and cached_items:
+        newer = False
+        for k in ("movies","shows","seasons","episodes"):
+            if str(wm_remote.get(k,"")) > str(cached_wm.get(k,"")):
+                newer = True
+                break
+        if not newer:
+            _log(f"index (cache, activities unchanged): {len(cached_items)}")
+            return cached_items
+    elif cached_items and not wm_remote:
+        _log(f"index (cache, activities unavailable): {len(cached_items)}")
+        return cached_items
 
     movies   = _fetch_bucket(sess, headers, URL_RAT_MOV, "movie",   per_page, max_pages, tmo, rr)
     shows    = _fetch_bucket(sess, headers, URL_RAT_SHO, "show",    per_page, max_pages, tmo, rr)
@@ -164,16 +217,12 @@ def build_index(adapter, *, per_page: int = 200, max_pages: int = 50) -> Dict[st
     idx = _dedupe_canonical(all_items)
     _log(f"index size: {len(idx)} (m={len(movies)}, sh={len(shows)}, se={len(seasons)}, ep={len(episodes)})")
 
-    _save_cache(idx)
+    _save_cache_doc(idx, wm_remote or cached_wm)
     return idx
 
 # -------------------- public: writes --------------------
 
 def _bucketize_for_upsert(items: Iterable[Mapping[str, Any]]) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
-    """
-    Build payload for /sync/ratings. Return (body, accepted_minimals_for_cache).
-    NOTE: We don't resolve missing ids for episodes/seasons. Keep it simple.
-    """
     body: Dict[str, List[Dict[str, Any]]] = {}
     accepted: List[Dict[str, Any]] = []
 
@@ -186,13 +235,12 @@ def _bucketize_for_upsert(items: Iterable[Mapping[str, Any]]) -> Tuple[Dict[str,
             continue
         kind = (pick_trakt_kind(it) or "").lower()
         if not kind:
-            # fallback guess
             t = (it.get("type") or "").lower()
             kind = {"movie":"movies","show":"shows","season":"seasons","episode":"episodes"}.get(t, "movies")
 
-        ids = ids_for_trakt(it) or {}
+        ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
         if not ids:
-            continue  # skip if we can't identify the item minimally
+            continue
 
         obj: Dict[str, Any] = {"ids": ids, "rating": rating}
         ra = it.get("rated_at")
@@ -207,7 +255,6 @@ def _bucketize_for_upsert(items: Iterable[Mapping[str, Any]]) -> Tuple[Dict[str,
     return body, accepted
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Upsert ratings; merge accepted into cache so next run sees them present."""
     sess = adapter.client.session
     headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
     tmo = adapter.cfg.timeout
@@ -216,7 +263,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     if not body:
         return 0, []
 
-    # Chunked POSTs per bucket
     chunk = int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100)
     ok_total = 0
     unresolved: List[Dict[str, Any]] = []
@@ -235,21 +281,19 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             else:
                 _log(f"UPSERT failed {r.status_code}: {(r.text or '')[:200]}")
 
-    # Merge into cache (single pass)
     if ok_total > 0:
-        cache = _load_cache()
+        doc = _load_cache_doc()
+        cache = dict(doc.get("items") or {})
         _merge_by_canonical(cache, accepted)
-        _save_cache(cache)
+        _save_cache_doc(cache, doc.get("wm") or {})
 
     return ok_total, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Unrate; remove from cache so next run sees them gone."""
     sess = adapter.client.session
     headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
     tmo = adapter.cfg.timeout
 
-    # Build ids-only body and accepted list
     buckets: Dict[str, List[Dict[str, Any]]] = {}
     accepted_minimals: List[Dict[str, Any]] = []
     def push(bucket: str, obj: Dict[str, Any]):
@@ -257,7 +301,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
     for it in items or []:
         kind = (pick_trakt_kind(it) or "").lower()
-        ids = ids_for_trakt(it) or {}
+        ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
         if not ids:
             continue
         if   kind == "movies":   push("movies",   {"ids": ids}); t = "movie"
@@ -269,7 +313,6 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     if not buckets:
         return 0, []
 
-    # Chunked POSTs per bucket
     chunk = int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100)
     ok_total = 0
     unresolved: List[Dict[str, Any]] = []
@@ -286,11 +329,11 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             else:
                 _log(f"UNRATE failed {r.status_code}: {(r.text or '')[:200]}")
 
-    # Drop from cache (single pass)
     if ok_total > 0:
-        cache = _load_cache()
+        doc = _load_cache_doc()
+        cache = dict(doc.get("items") or {})
         for m in accepted_minimals:
             cache.pop(key_of(m), None)
-        _save_cache(cache)
+        _save_cache_doc(cache, doc.get("wm") or {})
 
     return ok_total, unresolved

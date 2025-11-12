@@ -342,6 +342,39 @@ def build_index(adapter, *, per_page: int = 1000, max_pages: int = 9999) -> Dict
             break
         page += 1
 
+    def _fetch_type_pages(type_name: str):
+        p = 1
+        done = 0
+        while True:
+            r = request_with_retries(
+                sess, "GET", URL_LIST,
+                params={"apikey": apikey, "page": p, "limit": per_page, "type": type_name},
+                timeout=timeout, max_retries=retries
+            )
+            if r.status_code != 200:
+                _log(f"GET /sync/ratings?type={type_name} page {p} -> {r.status_code}")
+                break
+            d = r.json() if (r.text or "").strip() else {}
+            rows = d.get(type_name) or []
+            if not rows:
+                break
+            if type_name == "seasons":
+                for row in rows:
+                    m = _row_season(row)
+                    if m: out[_key_of(m)] = m
+            elif type_name == "episodes":
+                for row in rows:
+                    m = _row_episode(row)
+                    if m: out[_key_of(m)] = m
+            pag = d.get("pagination") or {}
+            done += 1
+            if not bool(pag.get("has_more")) or done >= max_pages:
+                break
+            p += 1
+
+    _fetch_type_pages("seasons")
+    _fetch_type_pages("episodes")
+
     kinds = {"movie":0,"show":0,"season":0,"episode":0}
     for v in out.values():
         k = (v.get("type") or "").lower()
@@ -360,13 +393,13 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> T
     body: Dict[str, List[Dict[str, Any]]] = {"movies": [], "shows": []}
     accepted: List[Dict[str, Any]] = []
 
-    seen = {"movies":0,"shows":0,"seasons":0,"episodes":0}
-    kept = {"movies":0,"shows":0,"seasons":0,"episodes":0}
-    attach = {"season_to_show":0,"episode_to_season":0}
-    skip  = {"invalid_rating":0,"missing_ids":0,"missing_season":0,"missing_episode":0,"missing_show_ids":0}
+    seen = {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0}
+    kept = {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0}
+    attach = {"season_to_show": 0, "episode_to_season": 0}
+    skip  = {"invalid_rating": 0, "missing_ids": 0, "missing_season": 0, "missing_episode": 0, "missing_show_ids": 0}
 
     shows: Dict[str, Dict[str, Any]] = {}
-    seasons_index: Dict[Tuple[str,int], Dict[str, Any]] = {}
+    seasons_index: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
     def ensure_show(ids: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         sk = _show_key(ids)
@@ -378,44 +411,55 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> T
 
     for it in items or []:
         kind = _pick_kind(it)
-        if kind in seen: seen[kind]+=1
+        if kind in seen:
+            seen[kind] += 1
 
         if kind in ("seasons", "episodes"):
-            ids = _ids_for_mdblist(it.get("show_ids") or {}) or _ids_for_mdblist(it)
+            ids = _ids_for_mdblist(it.get("show_ids") or {})
+            if not ids:
+                skip["missing_show_ids"] += 1
+                continue
         else:
             ids = _ids_for_mdblist(it)
-        if not ids:
-            skip["missing_ids"]+=1
-            continue
+            if not ids:
+                skip["missing_ids"] += 1
+                continue
 
         rating = _valid_rating(it.get("rating"))
         ra = it.get("rated_at")
 
         if kind == "movies":
             if rating is None and not unrate:
-                skip["invalid_rating"]+=1; continue
+                skip["invalid_rating"] += 1
+                continue
             obj = {"ids": ids}
             if not unrate:
                 obj["rating"] = rating
-                if ra: obj["rated_at"] = ra
+                if ra:
+                    obj["rated_at"] = ra
             body["movies"].append(obj)
             accepted.append(id_minimal({"type": "movie", "ids": ids, "rating": rating, "rated_at": ra}))
-            kept["movies"]+=1
+            kept["movies"] += 1
             continue
 
         if kind == "shows":
+            if rating is None and not unrate:
+                skip["invalid_rating"] += 1
+                continue
             sk, grp = ensure_show(ids)
             if not unrate and rating is not None:
                 grp["rating"] = rating
-                if ra: grp["rated_at"] = ra
+                if ra:
+                    grp["rated_at"] = ra
             accepted.append(id_minimal({"type": "show", "ids": ids, "rating": rating, "rated_at": ra}))
-            kept["shows"]+=1
+            kept["shows"] += 1
             continue
 
         if kind == "seasons":
             s = it.get("season") or it.get("number")
             if s is None:
-                skip["missing_season"]+=1; continue
+                skip["missing_season"] += 1
+                continue
             sk, grp = ensure_show(ids)
             s = int(s)
             sp = seasons_index.get((sk, s))
@@ -423,18 +467,20 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> T
                 sp = {"number": s}
                 seasons_index[(sk, s)] = sp
                 grp.setdefault("seasons", []).append(sp)
-                attach["season_to_show"]+=1
+                attach["season_to_show"] += 1
             if not unrate and rating is not None:
                 sp["rating"] = rating
-                if ra: sp["rated_at"] = ra
+                if ra:
+                    sp["rated_at"] = ra
             accepted.append(id_minimal({"type": "season", "ids": ids, "rating": rating, "rated_at": ra}))
-            kept["seasons"]+=1
+            kept["seasons"] += 1
             continue
 
         s = it.get("season")
         e = it.get("number") if it.get("number") is not None else it.get("episode")
         if s is None or e is None:
-            skip["missing_episode"]+=1; continue
+            skip["missing_episode"] += 1
+            continue
         sk, grp = ensure_show(ids)
         s = int(s); e = int(e)
         sp = seasons_index.get((sk, s))
@@ -442,15 +488,15 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> T
             sp = {"number": s}
             seasons_index[(sk, s)] = sp
             grp.setdefault("seasons", []).append(sp)
-            attach["season_to_show"]+=1
+            attach["season_to_show"] += 1
         ep = {"number": e}
         if not unrate and rating is not None:
             ep["rating"] = rating
-            if ra: ep["rated_at"] = ra
+            if ra:
+                ep["rated_at"] = ra
         sp.setdefault("episodes", []).append(ep)
-        attach["episode_to_season"]+=1
+        attach["episode_to_season"] += 1
         accepted.append(id_minimal({"type": "episode", "ids": ids, "rating": rating, "rated_at": ra}))
-        kept["episodes"]+=1
 
     if shows:
         for grp in shows.values():
@@ -461,7 +507,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unrate: bool = False) -> T
                         sp["episodes"] = sorted(sp["episodes"], key=lambda x: int(x.get("number") or 0))
         body["shows"] = list(shows.values())
 
-    body = {k:v for k,v in body.items() if v}
+    body = {k: v for k, v in body.items() if v}
 
     _log(f"aggregate seen={seen} attach={attach} skip={skip} out_sizes={{k:len(v) for k,v in body.items()}} unrate={unrate}")
     if body.get("shows"):

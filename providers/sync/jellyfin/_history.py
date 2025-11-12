@@ -135,7 +135,7 @@ def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
     sid = (str(series_id or "").strip()) or ""
     if not sid: return {}
     try:
-        r = http.get(f"/Items/{sid}", params={"fields": "ProviderIds,ProductionYear"})
+        r = http.get(f"/Items/{sid}", params={"Fields": "ProviderIds,ProductionYear"})
         if getattr(r, "status_code", 0) != 200: return {}
         body = r.json() or {}
         pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
@@ -174,7 +174,7 @@ def _unmark_played(http, uid: str, item_id: str) -> bool:
 
 def _dst_user_state(http, uid: str, iid: str) -> Tuple[bool, int]:
     try:
-        r = http.get(f"/Users/{uid}/Items/{iid}", params={"fields": "UserData"})
+        r = http.get(f"/Users/{uid}/Items/{iid}", params={"Fields": "UserData"})
         if getattr(r, "status_code", 0) != 200: return False, 0
         data = r.json() or {}
         ud = data.get("UserData") or {}
@@ -209,17 +209,17 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
 
     while True:
         params: Dict[str, Any] = {
-            "includeItemTypes": "Movie,Episode",
-            "recursive": True,
-            "enableUserData": True,
-            "fields": "ProviderIds,ProductionYear,UserData,Type,IndexNumber,ParentIndexNumber,SeriesName,SeriesId,Name,ParentId",
-            "filters": "IsPlayed",
-            "sortBy": "DateLastPlayed",
-            "sortOrder": "Descending",
-            "startIndex": start,
-            "limit": page_size,
-            "enableTotalRecordCount": True,
-            "userId": uid,
+            "IncludeItemTypes": "Movie,Episode",
+            "Recursive": True,
+            "EnableUserData": True,
+            "Fields": "ProviderIds,ProductionYear,UserData,Type,IndexNumber,ParentIndexNumber,SeriesName,SeriesId,Name,ParentId",
+            "Filters": "IsPlayed",
+            "SortBy": "DatePlayed",
+            "SortOrder": "Descending",
+            "StartIndex": start,
+            "Limit": page_size,
+            "EnableTotalRecordCount": False,
+            "UserId": uid,
         }
         params.update(jf_scope_history(adapter.cfg))
 

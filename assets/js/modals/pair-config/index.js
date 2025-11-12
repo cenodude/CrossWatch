@@ -23,6 +23,34 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function iconPath(n){const key=String(n||"").trim().toUpperCase();return `/assets/img/${key}.svg`}
 function logoHTML(n,l){const src=iconPath(n),alt=(l||n||"Provider")+" logo";return `<span class="prov-wrap"><img class="prov-logo" src="${src}" alt="${alt}" width="36" height="36" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block'"/><span class="prov-fallback" style="display:none">${l||n||"—"}</span></span>`}
 
+const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]}};
+function ratingsDisabledFor(state){
+  const names=[state?.src,state?.dst].map(x=>String(x||"").trim().toUpperCase());
+  const out=new Set();
+  names.forEach(n=>{const r=RATINGS_TYPE_RULES[n];if(r&&Array.isArray(r.disable))r.disable.forEach(t=>out.add(t))});
+  return out;
+}
+function applyRatingsTypeRules(state){
+  const rt=state.options?.ratings||{};
+  const dis=ratingsDisabledFor(state);
+  const all=["movies","shows","seasons","episodes"];
+  all.forEach(t=>{
+    const cb=ID("cx-rt-type-"+t);
+    if(!cb)return;
+    const row=cb.closest(".opt-row");
+    if(dis.has(t)){
+      cb.checked=false;cb.disabled=true;if(row)row.classList.add("muted");
+    }else{
+      cb.disabled=false;if(row)row.classList.remove("muted");
+    }
+  });
+  const checked=all.filter(t=>{const cb=ID("cx-rt-type-"+t);return cb&&cb.checked&&!dis.has(t)});
+  state.options.ratings=Object.assign({},rt,{types:checked});
+  const allOn=all.filter(t=>!dis.has(t)).every(t=>ID("cx-rt-type-"+t)?.checked);
+  const allCb=ID("cx-rt-type-all");if(allCb)allCb.checked=!!allOn;
+  try{updateRtSummary()}catch{}
+}
+
 // Flow anim CSS
 function flowAnimCSSOnce(){if(ID("cx-flow-anim-css"))return;const st=document.createElement("style");st.id="cx-flow-anim-css";st.textContent=`@keyframes cx-flow-one{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
 @keyframes cx-flow-two-a{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
@@ -39,7 +67,7 @@ function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)
 function updateRtSummary(){
   const m=ID("cx-modal"),st=m?.__state,rt=st?.options?.ratings||{},det=ID("cx-rt-adv"),sum=det?.querySelector("summary");
   if(!sum)return;
-  const types=Array.isArray(rt.types)&&rt.types.length?rt.types.join(", "):"movies, shows, episodes";
+  const types=Array.isArray(rt.types)&&rt.types.length?rt.types.join(", "):"movies, shows, seasons, episodes";
   const mode=String(rt.mode||"all")==="from_date"?(rt.from_date?`From ${rt.from_date}`:"From a date"):"All";
   sum.innerHTML=`<span class="pill">Scope: ${types}</span><span class="summary-gap">•</span><span class="pill">Mode: ${mode}</span>`;
   sum.setAttribute("aria-expanded",det.open?"true":"false");
@@ -99,7 +127,7 @@ function defaultState(){
     providers:[],src:null,dst:null,feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
-      ratings:{enable:false,add:false,remove:false,types:["movies","shows","episodes"],mode:"all",from_date:""},
+      ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
       history:{enable:false,add:false,remove:false},
       playlists:{enable:false,add:true,remove:false}
     },
@@ -196,7 +224,7 @@ const commonFeatures=(state)=>!state.src||!state.dst?[]:["watchlist","ratings","
 const defaultFor=(k)=>k==="watchlist"?{enable:false,add:false,remove:false}:k==="playlists"?{enable:false,add:true,remove:false}:{enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
-    if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","episodes"],mode:"all",from_date:""},state.options.ratings||{});
+    if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -307,7 +335,7 @@ function applySubDisable(feature){
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
     ratings: [
-      "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
+      "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
     history: ["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col","#cx-tr-hs-unres"],
@@ -478,7 +506,6 @@ function renderFeaturePanel(state){
 
     const parts = [`<div class="panel-title">Advanced</div>`];
     
-    // Jellyfin
     if (hasJelly(state)) {
       const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
       parts.push(`
@@ -503,7 +530,6 @@ function renderFeaturePanel(state){
       `);
     }
 
-    // Plex
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
       const defPri = ["imdb","tmdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
@@ -541,7 +567,6 @@ function renderFeaturePanel(state){
       `);
     }
 
-    // Emby
     if (hasEmby(state)) {
       const emAdv = (state.cfgRaw?.emby?.watchlist) || {};
       const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
@@ -567,7 +592,6 @@ function renderFeaturePanel(state){
       `);
     }
 
-    // Trakt
     if (hasTrakt(state)) {
       const tr = (state.cfgRaw?.trakt) || {};
       parts.push(`
@@ -610,9 +634,9 @@ function renderFeaturePanel(state){
       <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>
       <div class="panel-title small">Scope</div>
       <div class="grid2 compact">
-        <div class="opt-row"><label for="cx-rt-type-all">All</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-type-all">All</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-movies">Movies</label><label class="switch"><input id="cx-rt-type-movies" type="checkbox" ${hasType("movies")?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-rt-type-shows">Shows</label><label class="switch"><input id="cx-rt-type-shows" type="checkbox" ${hasType("shows")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="cx-rt-type-seasons">Seasons</label><label class="switch"><input id="cx-rt-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-rt-type-episodes">Episodes</label><label class="switch"><input id="cx-rt-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
       </div>`;
 
@@ -663,6 +687,7 @@ function renderFeaturePanel(state){
     right.innerHTML = parts.join("");
     try{updateRtSummary()}catch{}
     applySubDisable("ratings");
+    applyRatingsTypeRules(state);
     return;
   }
 
@@ -842,22 +867,28 @@ function bindChangeHandlers(state,root){
     if(id.startsWith("cx-rt-")){
       if(id==="cx-rt-enable"&&ID("cx-rt-enable")?.checked){
         ID("cx-rt-add").checked=true;ID("cx-rt-remove").checked=false;
-        ["movies","shows","episodes"].forEach(t=>{const cb=ID("cx-rt-type-"+t);if(cb)cb.checked=true});
+        const dis=ratingsDisabledFor(state);
+        ["movies","shows","seasons","episodes"].forEach(t=>{const cb=ID("cx-rt-type-"+t);if(cb)cb.checked=!dis.has(t)});
         const all=ID("cx-rt-type-all");if(all)all.checked=true;
         const modeSel=ID("cx-rt-mode");if(modeSel)modeSel.value="all";
         const fd=ID("cx-rt-from-date");if(fd){fd.value="";fd.disabled=true}
       }
       if(id==="cx-rt-type-all"){
-        const on=!!ID("cx-rt-type-all")?.checked;["movies","shows","episodes"].forEach(t=>{const cb=ID("cx-rt-type-"+t);if(cb)cb.checked=on});
-      }else if(/^cx-rt-type-(movies|shows|episodes)$/.test(id)){
-        const allOn=["movies","shows","episodes"].every(t=>ID("cx-rt-type-"+t)?.checked);const allCb=ID("cx-rt-type-all");if(allCb)allCb.checked=!!allOn;
+        const on=!!ID("cx-rt-type-all")?.checked;const dis=ratingsDisabledFor(state);
+        ["movies","shows","seasons","episodes"].forEach(t=>{const cb=ID("cx-rt-type-"+t);if(cb&&!dis.has(t))cb.checked=on});
+      }else if(/^cx-rt-type-(movies|shows|seasons|episodes)$/.test(id)){
+        const dis=ratingsDisabledFor(state);
+        const allOn=["movies","shows","seasons","episodes"].filter(t=>!dis.has(t)).every(t=>ID("cx-rt-type-"+t)?.checked);
+        const allCb=ID("cx-rt-type-all");if(allCb)allCb.checked=!!allOn;
       }
       if(id==="cx-rt-mode"){
         const md=ID("cx-rt-mode")?.value||"all",fd=ID("cx-rt-from-date");
         if(fd){fd.disabled=md!=="from_date";if(md!=="from_date")fd.value=""}
       }
       const rt=state.options.ratings||{};
-      const types=ID("cx-rt-type-all")?.checked?["movies","shows","episodes"]:["movies","shows","episodes"].filter(t=>ID("cx-rt-type-"+t)?.checked);
+      const dis=ratingsDisabledFor(state);
+      const enabledTypes=["movies","shows","seasons","episodes"].filter(t=>!dis.has(t));
+      const types=ID("cx-rt-type-all")?.checked?enabledTypes:enabledTypes.filter(t=>ID("cx-rt-type-"+t)?.checked);
       state.options.ratings=Object.assign({},rt,{
         enable:!!ID("cx-rt-enable")?.checked,
         add:!!ID("cx-rt-add")?.checked,
@@ -867,6 +898,7 @@ function bindChangeHandlers(state,root){
       });
       state.visited.add("ratings");
       try{updateRtSummary()}catch{}
+      applyRatingsTypeRules(state);
     }
 
     if(id.startsWith("cx-hs-")){
@@ -982,7 +1014,6 @@ async function saveConfigBits(state){
       );
     }
 
-    // --- Plex — persist from any tab if inputs exist ---
     {
       const plex = Object.assign({}, cfg.plex || {});
       const n = (id) => parseInt((ID(id)?.value || "").trim(), 10);
@@ -991,7 +1022,6 @@ async function saveConfigBits(state){
         return Number.isFinite(v) ? Math.max(min, v) : def;
       };
 
-      // Core provider settings
       if (ID("plx-rating-workers"))  plex.rating_workers  = num("plx-rating-workers", 1, plex.rating_workers ?? 12);
       if (ID("plx-history-workers")) plex.history_workers = num("plx-history-workers", 1, plex.history_workers ?? 12);
       if (ID("plx-timeout"))         plex.timeout         = num("plx-timeout", 1, plex.timeout ?? 10);
@@ -1001,7 +1031,6 @@ async function saveConfigBits(state){
       }
       if (ID("plx-fallback-guid"))   plex.fallback_GUID   = !!ID("plx-fallback-guid").checked;
 
-      // Watchlist (Advanced → Plex)
       if (ID("plx-wl-pms"))          plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms").checked;
       if (ID("plx-wl-limit"))        plex.watchlist_query_limit        = num("plx-wl-limit", 1, plex.watchlist_query_limit ?? 25);
       if (ID("plx-wl-delay")) {
@@ -1017,7 +1046,6 @@ async function saveConfigBits(state){
 
       cfg.plex = plex;
     }
-    // --- end Plex ---
 
     if(ID("jf-timeout")){
       const jf=Object.assign({},cfg.jellyfin||{});

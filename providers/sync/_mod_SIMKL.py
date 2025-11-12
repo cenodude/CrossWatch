@@ -131,7 +131,7 @@ def get_manifest() -> Mapping[str, Any]:
             "index_semantics": "delta",      # present vs delta
             "observed_deletes": False,       # do not rely on observed deletions
             "ratings": {
-                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True, "unrate": True, "from_date": True,
             },
         },

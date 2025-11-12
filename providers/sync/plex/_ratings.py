@@ -238,18 +238,21 @@ def _fetch_one_rating(srv, rk: str) -> Optional[Dict[str, Any]]:
         return None
 
     r = _norm_rating(getattr(it, "userRating", None))
-    if not r or r <= 0: return None
+    if not r or r <= 0:
+        return None
 
     m: Dict[str, Any] = plex_normalize(it) or {}
-    if not m: return None
+    if not m:
+        return None
 
     m["rating"] = r
     ts = _as_epoch(getattr(it, "lastRatedAt", None))
-    if ts: m["rated_at"] = _iso(ts)
+    if ts:
+        m["rated_at"] = _iso(ts)
 
+    # Normalize type
     t = (getattr(it, "type", None) or m.get("type") or "movie").lower()
-    if t in ("movie", "show", "season", "episode"): m["type"] = t
-    else: m["type"] = "movie"
+    m["type"] = t if t in ("movie", "show", "season", "episode") else "movie"
     try:
         if m["type"] == "season":
             m["series_title"] = getattr(it, "parentTitle", None) or getattr(it, "grandparentTitle", None)
@@ -260,6 +263,42 @@ def _fetch_one_rating(srv, rk: str) -> Optional[Dict[str, Any]]:
             m["episode"] = getattr(it, "index", None)
     except Exception:
         pass
+
+    if m["type"] in ("season", "episode") and not m.get("show_ids"):
+        show_ids: Dict[str, Any] = {}
+
+        # GUID mapping from parent/grandparent
+        p_guid = getattr(it, "parentGuid", None) if m["type"] == "season" else getattr(it, "grandparentGuid", None)
+        if p_guid:
+            try:
+                show_ids = ids_from(p_guid) or {}
+            except Exception:
+                show_ids = {}
+
+        if not show_ids:
+            prk = getattr(it, "parentRatingKey", None) if m["type"] == "season" else getattr(it, "grandparentRatingKey", None)
+            if prk:
+                try:
+                    parent_obj = srv.fetchItem(int(prk))
+                    parent_norm = plex_normalize(parent_obj) or {}
+                    show_ids = (parent_norm.get("ids") or {})
+                except Exception:
+                    show_ids = {}
+
+        show_ids = {k: v for k, v in show_ids.items() if k in ("imdb", "tmdb", "tvdb") and v}
+        if show_ids:
+            m["show_ids"] = show_ids
+
+    for key in ("season", "episode"):
+        if m.get(key) is not None:
+            try:
+                m[key] = int(m[key])
+            except Exception:
+                pass
+    if m.get("type") == "season":
+        title = (m.get("title") or "").strip().lower()
+        if title in ("season", f"season {m.get('season')}".lower()) and m.get("series_title"):
+            m.setdefault("title", m["series_title"])
 
     return m
 
