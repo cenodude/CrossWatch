@@ -77,7 +77,6 @@
   - Shows **Issues: N** per your sync pairs with concrete fix hints.
 
 <h2 align="center">🚀 Features</h2>
-
 <div align="center">
   <table style="display:inline-block;text-align:left;">
     <tr>
