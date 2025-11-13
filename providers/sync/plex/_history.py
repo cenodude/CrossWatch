@@ -21,6 +21,7 @@ except Exception:
     from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
+SHADOW_PATH = "/config/.cw_state/plex_history.shadow.json"
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
@@ -37,8 +38,6 @@ def _emit(evt: dict) -> None:
         print(f"[PLEX:{feature}] {line}", flush=True)
     except Exception:
         pass
-
-# -- time helpers --------------------------------------------------------------
 
 def _as_epoch(v: Any) -> Optional[int]:
     if v is None: return None
@@ -62,8 +61,6 @@ def _as_epoch(v: Any) -> Optional[int]:
 
 def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
-
-# -- config helpers ------------------------------------------------------------
 
 def _plex_cfg(adapter) -> Mapping[str, Any]:
     cfg = getattr(adapter, "config", {}) or {}
@@ -109,8 +106,6 @@ def _row_section_id(h) -> Optional[str]:
         if m: return m.group(1)
     return None
 
-# -- unresolved store ----------------------------------------------------------
-
 def _load_unresolved() -> Dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
@@ -155,7 +150,39 @@ def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
 def _is_frozen(it: Mapping[str, Any]) -> bool:
     return _event_key(it) in _load_unresolved()
 
-# -- snapshot filters ----------------------------------------------------------
+def _load_shadow() -> Dict[str, Any]:
+    try:
+        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def _save_shadow(data: Mapping[str, Any]) -> None:
+    try:
+        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
+        tmp = SHADOW_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, SHADOW_PATH)
+    except Exception:
+        pass
+
+def _shadow_add(it: Mapping[str, Any]) -> None:
+    try:
+        key = _event_key(it)
+        if not key:
+            return
+        data = _load_shadow()
+        entry = data.get(key) or {"item": id_minimal(it)}
+        entry["item"] = id_minimal(it)
+        entry["watched_at"] = it.get("watched_at")
+        entry["last_seen"] = _iso(int(datetime.now(timezone.utc).timestamp()))
+        if "first_seen" not in entry:
+            entry["first_seen"] = entry["last_seen"]
+        data[key] = entry
+        _save_shadow(data)
+    except Exception:
+        pass
 
 def _has_external_ids(minimal: Mapping[str, Any]) -> bool:
     ids = minimal.get("ids") or {}
@@ -179,8 +206,6 @@ def _keep_in_snapshot(adapter, minimal: Mapping[str, Any]) -> bool:
         guid = _guid_from_minimal(minimal)
         if guid and any(guid.startswith(p.lower()) for p in prefixes): return False
     return True
-
-# -- index (present-state) -----------------------------------------------------
 
 _FETCH_CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -395,6 +420,23 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
                 try: prog.tick(done, total=total)
                 except Exception: pass
 
+    try:
+        sh = _load_shadow()
+        if sh:
+            for ek, entry in list(sh.items()):
+                m = entry.get("item") or {}
+                ts = _as_epoch(entry.get("watched_at"))
+                if not ts:
+                    continue
+                row = dict(m)
+                row["watched"] = True
+                row["watched_at"] = _iso(ts)
+                k = f"{canonical_key(row)}@{ts}"
+                if k not in out:
+                    out[k] = row
+    except Exception:
+        pass
+
     if prog:
         try: prog.done(ok=True, total=total)
         except Exception: pass
@@ -402,8 +444,6 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
     _log(f"index size: {len(out)} (ignored={ignored}, since={since}, scanned={total}, "
          f"workers={workers}, unique={len(unique_rks)}, user={uname or acct_id})")
     return out
-
-# -- add/remove (guarded) ------------------------------------------------------
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
@@ -436,7 +476,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             continue
 
         if _scrobble_with_date(srv, rk, ts):
-            ok += 1; _unfreeze_keys_if_present([_event_key(it)])
+            ok += 1; _unfreeze_keys_if_present([_event_key(it)]); _shadow_add(it)
         else:
             _freeze_item(it, action="add", reasons=["scrobble_failed"])
             unresolved.append({"item": id_minimal(it), "hint": "scrobble_failed"})
@@ -477,8 +517,6 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-# -- resolution + write helpers ------------------------------------------------
-
 def _find_rk_by_guid_http(srv, guid_list: Iterable[str], allow: Set[str]) -> Optional[str]:
     for g in guid_list or []:
         try:
@@ -498,6 +536,45 @@ def _find_rk_by_guid_http(srv, guid_list: Iterable[str], allow: Set[str]) -> Opt
                     return str(rk)
         except Exception:
             continue
+    return None
+
+def _episode_rk_from_show(show_obj, season, episode) -> Optional[str]:
+    try:
+        eps = []
+        try:
+            eps = show_obj.episodes() or []
+        except Exception:
+            eps = []
+        for e in eps:
+            s_ok = (season is None) or getattr(e, "parentIndex", None) == season or getattr(e, "seasonNumber", None) == season
+            e_ok = (episode is None) or getattr(e, "index", None) == episode
+            if s_ok and e_ok:
+                rk = getattr(e, "ratingKey", None)
+                if rk:
+                    return str(rk)
+    except Exception:
+        pass
+    try:
+        srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
+        sid = getattr(show_obj, "ratingKey", None)
+        if srv and sid and hasattr(srv, "_session"):
+            r = srv._session.get(
+                srv.url(f"/library/metadata/{sid}/children"),
+                params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 500},
+                timeout=8,
+            )
+            if r.ok:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(r.text or "")
+                for ep in root.findall(".//Video"):
+                    s_ok = (season is None) or int(ep.attrib.get("parentIndex","0") or "0") == int(season)
+                    e_ok = (episode is None) or int(ep.attrib.get("index","0") or "0") == int(episode)
+                    if s_ok and e_ok:
+                        rk = ep.attrib.get("ratingKey")
+                        if rk:
+                            return str(rk)
+    except Exception:
+        pass
     return None
 
 def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
@@ -540,7 +617,6 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
             if obj:
                 hits.append(obj)
 
-    # Fast path: server-wide GUID lookup (XML), then JSON helper. Title search is a last resort.
     if not hits and guids:
         rk_fast = _find_rk_by_guid_http(srv, guids, allow)
         if rk_fast:
@@ -608,6 +684,19 @@ def _resolve_rating_key(adapter, it: Mapping[str, Any]) -> Optional[str]:
     if not hits:
         return None
 
+    if is_episode:
+        ep_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "episode"]
+        if ep_hits:
+            best_ep = max(ep_hits, key=_score)
+            rk = getattr(best_ep, "ratingKey", None)
+            return str(rk) if rk else None
+        show_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "show"]
+        for sh in show_hits:
+            rk2 = _episode_rk_from_show(sh, season, episode)
+            if rk2:
+                return rk2
+        return None
+
     best = max(hits, key=_score)
     rk = getattr(best, "ratingKey", None)
     return str(rk) if rk else None
@@ -617,6 +706,9 @@ def _scrobble_with_date(srv, rating_key: Any, epoch: int) -> bool:
         try:
             obj = srv.fetchItem(int(rating_key))
             if obj:
+                typ = (getattr(obj, "type", "") or "").lower()
+                if typ not in ("episode", "movie"):
+                    return False
                 try:
                     obj.markWatched()
                     return True

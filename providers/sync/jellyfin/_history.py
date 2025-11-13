@@ -190,7 +190,6 @@ def _dst_user_state(http, uid: str, iid: str) -> Tuple[bool, int]:
         return False, 0
 
 # --- event index (watched_at) + presence merge --------------------------------
-
 def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
@@ -251,8 +250,11 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 }
             elif typ == "Episode":
                 show_ids = _series_ids_for(http, row.get("SeriesId"))
+                ep_title = m.get("title") or row.get("Name")
                 event = {
                     "type": "episode",
+                    "ids": dict(m.get("ids") or {}),
+                    "title": ep_title,
                     "show_ids": show_ids,
                     "season": m.get("season"),
                     "episode": m.get("episode"),
@@ -298,11 +300,15 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
 
     bb = _bb_load()
     if bb:
+        ttl = int(getattr(getattr(adapter, "cfg", None), "blackbox_presence_ttl_seconds", 900) or 900)
+        now_ep = int(datetime.now(timezone.utc).timestamp())
         added = 0
         for k, meta in bb.items():
             if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
-                out.setdefault(k, {"watched": True})
-                added += 1
+                since_ep = _parse_iso_to_epoch(meta.get("since")) or 0
+                if since_ep and (now_ep - since_ep) <= ttl:
+                    out.setdefault(k, {"watched": True})
+                    added += 1
         if added:
             _log(f"blackbox presence merged: +{added}")
 

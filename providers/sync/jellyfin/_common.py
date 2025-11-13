@@ -233,6 +233,10 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> List[st
 
 # --- provider index -----------------------------------------------------------
 def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
+    cache = getattr(adapter, "_provider_index_cache", None)
+    if isinstance(cache, dict) and cache:
+        return cache
+
     http, uid = adapter.client, adapter.cfg.user_id
     out: Dict[str, List[Dict[str, Any]]] = {}
     start, limit, total = 0, 500, None
@@ -269,10 +273,10 @@ def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
         start += len(items)
         if not items or (total is not None and start >= total):
             break
-    # Make candidate order stable across runs
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
     _log_summary(f"provider-index built keys={len(out)}")
+    setattr(adapter, "_provider_index_cache", out)
     return out
 
 def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, Any]]:
