@@ -83,6 +83,8 @@ ul{margin:0; padding-left:1.1em}
 .badge.trakt{ background:#ED1C24; color:#fff; }
 .badge.plex{ background:#FFA620; color:#111; }
 .badge.jellyfin{ background:#946AD9; color:#fff; }
+.badge.mdblist{ background:#2185D0; color:#fff; }
+.badge.emby{ background:#4CAF50; color:#fff; }
 
 /* Code blocks */
 pre{
