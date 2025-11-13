@@ -10,11 +10,11 @@
 
   <!-- SEO -->
   <link rel="canonical" href="https://cenodude.github.io/CrossWatch/" />
-  <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Simkl, and Trakt. Local-first Docker app with neon web UI, scheduler, dry-runs, and modular providers." />
-  <meta name="keywords" content="CrossWatch, Plex, Jellyfin, Simkl, Trakt, watchlist sync, ratings sync, history sync, scrobbling, Docker, self-hosted" />
+  <meta name="description" content="CrossWatch syncs watchlists, ratings, and history across Plex, Jellyfin, Emby, SIMKL, MDBlist, and Trakt. Local-first Docker app with neon web UI, scheduler, dry-runs, and modular providers." />
+  <meta name="keywords" content="CrossWatch, Plex, Jellyfin, Emby, SIMKL, MDBlist, Trakt, watchlist sync, ratings sync, history sync, scrobbling, Docker, self-hosted" />
   <meta name="robots" content="index,follow" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
+  <meta property="og:title" content="CrossWatch — Sync Plex, Jellyfin, Emby, SIMKL, MDBlist, Trakt" />
   <meta property="og:description" content="Local-first sync engine with neon web UI: watchlists, ratings, history, scrobbling, scheduler, and dry-runs." />
   <meta property="og:url" content="https://cenodude.github.io/CrossWatch/" />
   <meta property="og:site_name" content="CrossWatch" />
@@ -23,8 +23,8 @@
   <meta property="og:image:height" content="1109" />
   <meta property="og:locale" content="en_US" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="CrossWatch — Sync Plex, Jellyfin, Simkl & Trakt" />
-  <meta name="twitter:description" content="Local-first sync engine for Plex, Jellyfin, Simkl & Trakt. Scheduler, dry-runs, neon UI." />
+  <meta name="twitter:title" content="CrossWatch — Sync Plex, Jellyfin, Emby, SIMKL, MDBlist, Trakt" />
+  <meta name="twitter:description" content="Local-first sync engine for Plex, Jellyfin, Emby, SIMKL, MDBlist, Trakt. Scheduler, dry-runs, neon UI." />
   <meta name="twitter:image" content="images/screenshot1.jpg" />
 
   <!-- Assets -->
@@ -40,7 +40,7 @@
 
     <!-- Intro -->
     <section class="panel center" style="margin-top:16px">
-      <p><strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Simkl, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.</p>
+      <p><strong>CrossWatch</strong> is a lightweight synchronization engine that keeps your Plex, Jellyfin, Emby, SIMKL, MDBlist, and Trakt in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history with a modular architecture and broader multi-provider support.</p>
       <p><strong>CrossWatch</strong> aims to become a one-for-all synchronization system for locally hosted environments. Its modular architecture allows new providers to be added easily. This approach keeps the system maintainable, testable, and easy to extend as new platforms emerge.</p>
     </section>
 
@@ -86,11 +86,13 @@
           <strong>Trackers:</strong>
           <span class="badge simkl">SIMKL</span>
           <span class="badge trakt">Trakt</span>
+          <span class="badge mdblist">MDBlist</span>
         </div>
         <div class="row">
           <strong>Media servers:</strong>
           <span class="badge plex">Plex</span>
           <span class="badge jellyfin">Jellyfin</span>
+          <span class="badge emby">Emby</span>
         </div>
       </div>
     </section>
@@ -123,8 +125,6 @@ services:
 
       <p class="hint">Open <code>http://localhost:8787</code> after the container is up. Configure providers, create pairs, dry-run, then enable writes.</p>
     </section>
-
-    <!-- Screenshots (anchors use data-full to avoid navigation) -->
     <section id="screens" class="panel">
       <h2>Screenshots</h2>
       <div class="gallery" data-gallery>
@@ -134,17 +134,6 @@ services:
         <a href="#" data-full="images/screenshot4.jpg" data-title="Watchlist – Posters"><img loading="lazy" src="images/screenshot4.jpg" alt="Watchlist – Posters"></a>
       </div>
       <p class="hint">Click to view full size. Use ← → or swipe. Esc to close.</p>
-    </section>
-
-    <!-- Early development (one centered box) -->
-    <section id="status" class="panel center centered">
-      <h2>⚠️ Early development</h2>
-      <p class="lead">Testing only — do not use in production. <span class="muted">Always back up your data before a real sync.</span></p>
-      <ul class="status compact">
-        <li><strong>Plex & Trakt:</strong> mostly working, incl. live scrobbling (Plex → Trakt)</li>
-        <li><strong>SIMKL & Jellyfin:</strong> still maturing (active testing)</li>
-        <li><strong>Road to v0.2.0:</strong> deep cleanup & refactors; fewer new features, more fixes & polish</li>
-      </ul>
     </section>
   </main>
 
