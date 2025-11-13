@@ -113,9 +113,6 @@
   </table>
 </div>
 
-
----
-
 ## ⬇️ Download
 
 - **Docker (recommended):**
@@ -171,6 +168,13 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 ---
 
 ## 🎬 Live Scrobbling (Plex/Jellyfin/Emby → Trakt and/or SIMKL)
-
 CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b> — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
 Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
+
+---
+
+## Architecture
+<p align="center">
+<img width="268" height="408" alt="image" src="https://github.com/user-attachments/assets/c3461874-e1e3-4b3a-b4ed-c4fab0e7bc5b" />
+</p>
+
