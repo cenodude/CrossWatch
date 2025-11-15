@@ -1,4 +1,3 @@
-# _analyzer.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -14,7 +13,6 @@ from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR
 
-# ── Router / Paths
 router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
@@ -43,7 +41,10 @@ def _trakt_headers() -> Dict[str, str]:
 def _load_state() -> Dict[str, Any]:
     if not STATE_PATH.exists():
         raise HTTPException(404, "state.json not found")
-    return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(500, "Failed to parse state.json")
 
 def _save_state(s: Dict[str, Any]) -> None:
     with _LOCK:
@@ -71,45 +72,37 @@ def _find_item(s: Dict[str, Any], prov: str, feat: str, key: str):
         return None, None
     return b, b[key]
 
-# ── Counting / collection
+# ── Counts
 def _counts(s: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
     out: Dict[str, Dict[str, int]] = {}
-    for p, f, _, _ in _iter_items(s):
-        r = out.setdefault(p, {"history": 0, "watchlist": 0, "ratings": 0, "total": 0})
-        r[f] += 1
-        r["total"] += 1
+    for prov, pv in (s.get("providers") or {}).items():
+        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "total": 0})
+        total = 0
+        for feat in ("history", "watchlist", "ratings"):
+            items = (((pv or {}).get(feat) or {}).get("baseline") or {}).get("items") or {}
+            n = len(items)
+            cur[feat] = n
+            total += n
+        cur["total"] = total
     return out
 
 def _collect_items(s: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for p, f, k, it in _iter_items(s):
+    for prov, feat, k, it in _iter_items(s):
         out.append(
             {
-                "provider": p,
-                "feature": f,
+                "provider": prov,
+                "feature": feat,
                 "key": k,
-                "type": it.get("type"),
                 "title": it.get("title"),
                 "year": it.get("year"),
+                "type": it.get("type"),
                 "ids": it.get("ids") or {},
             }
         )
     return out
 
-# ── Key / alias helpers
-def _rekey(items: Dict[str, Any], old_key: str, item: Dict[str, Any]) -> str:
-    ids = item.get("ids") or {}
-    for ns in ("imdb", "tmdb", "tvdb"):
-        if ids.get(ns):
-            new = f"{ns}:{ids[ns]}"
-            if new != old_key:
-                items.pop(old_key, None)
-                items[new] = item
-                return new
-            break
-    return old_key
-
-_ID_RX = {
+_ID_RX: Dict[str, re.Pattern[str]] = {
     "imdb": re.compile(r"^tt\d{5,}$"),
     "tmdb": re.compile(r"^\d+$"),
     "tvdb": re.compile(r"^\d+$"),
@@ -240,15 +233,87 @@ def _has_peer_by_pairs(
             return True
     return False
 
-# ── Problems + fixes
+def _pair_stats(s: Dict[str, Any]) -> List[Dict[str, Any]]:
+    stats: List[Dict[str, Any]] = []
+    pairs = _pair_map(_cfg(), s)
+    idx_cache = _indices_for(s)
+    for (prov, feat), targets in pairs.items():
+        src_items = _bucket(s, prov, feat) or {}
+        for dst in targets:
+            total = 0
+            synced = 0
+            idx = idx_cache.get((dst, feat)) or {}
+            for k, v in src_items.items():
+                if v.get("_ignore_missing_peer"):
+                    continue
+                total += 1
+                vv = dict(v)
+                vv["_key"] = k
+                alias_keys = _alias_keys(vv)
+                if any(a in idx for a in alias_keys):
+                    synced += 1
+            stats.append(
+                {
+                    "source": prov,
+                    "target": dst,
+                    "feature": feat,
+                    "total": total,
+                    "synced": synced,
+                    "unsynced": max(total - synced, 0),
+                }
+            )
+    return stats
+
+# ── Problems
 def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
     probs: List[Dict[str, Any]] = []
     CORE = ("imdb", "tmdb", "tvdb")
 
     pairs = _pair_map(_cfg(), s)
     idx_cache = _indices_for(s)
+    cw_state = _read_cw_state()
+    unresolved_index: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
+    for name, body in (cw_state or {}).items():
+        if not isinstance(body, dict):
+            continue
+        if not name.endswith(".json"):
+            continue
+        base = name[:-5]
+        if "_" not in base:
+            continue
+        prov_raw, rest = base.split("_", 1)
+        if "." in rest:
+            feat_raw, suffix = rest.split(".", 1)
+        else:
+            feat_raw, suffix = rest, ""
+        if suffix not in ("unresolved", "shadow"):
+            continue
+        prov_key = prov_raw.upper()
+        feat_key = feat_raw.lower()
+        key = (prov_key, feat_key)
+        idx = unresolved_index.setdefault(key, {})
+        for uk, rec in body.items():
+            if not isinstance(rec, dict):
+                continue
+            item = rec.get("item") or {}
+            if not isinstance(item, dict):
+                continue
+            vv = dict(item)
+            alias_key = uk
+            if "@" in alias_key:
+                alias_key = alias_key.split("@", 1)[0]
+            vv["_key"] = alias_key
+            aks = _alias_keys(vv)
+            if not aks:
+                continue
+            meta: Dict[str, Any] = {"file": name, "kind": suffix}
+            reasons = rec.get("reasons")
+            if isinstance(reasons, list):
+                meta["reasons"] = reasons
+            for ak in aks:
+                lst = idx.setdefault(ak, [])
+                lst.append(meta)
 
-    # missing_peer
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         union_targets = [idx_cache.get((t, feat)) or {} for t in targets]
@@ -260,21 +325,36 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                 continue
             vv = dict(v)
             vv["_key"] = k
-            if not any(ak in merged_keys for ak in _alias_keys(vv)):
-                probs.append(
-                    {
-                        "severity": "warn",
-                        "type": "missing_peer",
-                        "provider": prov,
-                        "feature": feat,
-                        "key": k,
-                        "title": v.get("title"),
-                        "year": v.get("year"),
-                        "targets": targets,
-                    }
-                )
+            alias_keys = _alias_keys(vv)
+            if not any(ak in merged_keys for ak in alias_keys):
+                prob: Dict[str, Any] = {
+                    "severity": "warn",
+                    "type": "missing_peer",
+                    "provider": prov,
+                    "feature": feat,
+                    "key": k,
+                    "title": v.get("title"),
+                    "year": v.get("year"),
+                    "targets": targets,
+                }
+                hints: List[Dict[str, Any]] = []
+                for dst in targets:
+                    idx_key = (str(dst).upper(), feat.lower())
+                    uidx = unresolved_index.get(idx_key) or {}
+                    for ak in alias_keys:
+                        for meta in uidx.get(ak, []):
+                            h: Dict[str, Any] = {"provider": dst, "feature": feat}
+                            if "reasons" in meta:
+                                h["reasons"] = meta["reasons"]
+                            if "file" in meta:
+                                h["source"] = meta["file"]
+                            if "kind" in meta:
+                                h["kind"] = meta["kind"]
+                            hints.append(h)
+                if hints:
+                    prob["hints"] = hints
+                probs.append(prob)
 
-    # id format + key/id mismatches
     for p, f, k, it in _iter_items(s):
         ids = it.get("ids") or {}
         for ns in CORE:
@@ -296,39 +376,42 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             ns, kid = k.split(":", 1)
             base = kid.split("#", 1)[0].strip()
             val = str((ids.get(ns) or "")).strip()
-            if ns in CORE:
-                if not val:
-                    probs.append(
-                        {
-                            "severity": "warn",
-                            "type": "key_missing_ids",
-                            "provider": p,
-                            "feature": f,
-                            "key": k,
-                            "id_name": ns,
-                            "expected": base,
-                        }
-                    )
-                elif val != base:
-                    probs.append(
-                        {
-                            "severity": "info",
-                            "type": "key_ids_mismatch",
-                            "provider": p,
-                            "feature": f,
-                            "key": k,
-                            "id_name": ns,
-                            "expected": base,
-                            "got": val,
-                        }
-                    )
-
-    # orphan keys from cw_state
-    present = {k for *_, k, _ in _iter_items(s)}
-    for fname, body in _read_cw_state().items():
-        for k in (body.get("items") or {}).keys():
-            if k not in present:
-                probs.append({"severity": "info", "type": "shadow_orphan", "source": fname, "key": k})
+            if base and val and base != val:
+                probs.append(
+                    {
+                        "severity": "info",
+                        "type": "key_ids_mismatch",
+                        "provider": p,
+                        "feature": f,
+                        "key": k,
+                        "id_name": ns,
+                        "id_value": val,
+                        "key_base": base,
+                    }
+                )
+        missing = [ns for ns in CORE if not ids.get(ns)]
+        if missing and ids:
+            probs.append(
+                {
+                    "severity": "info",
+                    "type": "missing_ids",
+                    "provider": p,
+                    "feature": f,
+                    "key": k,
+                    "missing": missing,
+                }
+            )
+        if ids and not any(ids.get(ns) for ns in CORE):
+            probs.append(
+                {
+                    "severity": "info",
+                    "type": "key_missing_ids",
+                    "provider": p,
+                    "feature": f,
+                    "key": k,
+                    "ids": ids,
+                }
+            )
 
     return probs
 
@@ -360,6 +443,137 @@ def _norm(ns: str, v: str) -> str | None:
         m = re.search(r"(\d+)", s)
         return m.group(1) if m else None
     return s or None
+
+def _rekey(b: Dict[str, Any], old_key: str, it: Dict[str, Any]) -> str:
+    ids = it.get("ids") or {}
+    parts = old_key.split(":", 1)
+    ns = parts[0]
+    base = ids.get(ns) or ""
+    if not base:
+        for cand in ("imdb", "tmdb", "tvdb"):
+            if ids.get(cand):
+                ns = cand
+                base = ids[cand]
+                break
+    base = str(base).strip()
+    if not base:
+        return old_key
+    suffix = ""
+    if "#" in old_key:
+        suffix = old_key.split("#", 1)[1]
+    new_key = f"{ns}:{base}"
+    if suffix:
+        new_key += f"#{suffix}"
+    if new_key == old_key:
+        return old_key
+    if new_key in b:
+        return old_key
+    b[new_key] = it
+    b.pop(old_key, None)
+    return new_key
+
+def _tmdb(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    k = _tmdb_key()
+    if not k:
+        raise HTTPException(400, "tmdb.api_key missing in config.json")
+    r = requests.get(f"https://api.themoviedb.org/3{path}", params={**(params or {}), "api_key": k}, timeout=8)
+    r.raise_for_status()
+    return r.json()
+
+def _trakt(path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    h = _trakt_headers()
+    if not h.get("trakt-api-key"):
+        raise HTTPException(400, "trakt.client_id missing in config.json")
+    r = requests.get(f"https://api.trakt.tv{path}", params=params, headers=h, timeout=8)
+    r.raise_for_status()
+    return r.json()
+
+def _tmdb_bulk(ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    if not ids:
+        return {}
+    key = _tmdb_key()
+    if not key:
+        return {}
+    out: Dict[int, Dict[str, Any]] = {}
+    for chunk_start in range(0, len(ids), 20):
+        chunk = ids[chunk_start : ids[chunk_start + 20]]
+        url = "https://api.themoviedb.org/3/movie"
+        params = {
+            "api_key": key,
+            "language": "en-US",
+            "append_to_response": "release_dates",
+        }
+        for mid in chunk:
+            try:
+                r = requests.get(f"{url}/{mid}", params=params, timeout=10)
+                if r.ok:
+                    out[mid] = r.json()
+            except Exception:
+                continue
+    return out
+
+def _tmdb_region_dates(meta: Dict[int, Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    out: Dict[int, Dict[str, Any]] = {}
+    for mid, data in (meta or {}).items():
+        rels = (data.get("release_dates") or {}).get("results") or []
+        best: Dict[str, Any] | None = None
+        for entry in rels:
+            region = (entry.get("iso_3166_1") or "").upper()
+            if region not in ("US", "GB", "NL", "DE", "FR", "CA", "AU", "NZ", "IE", "ES", "IT"):
+                continue
+            for rel in entry.get("release_dates") or []:
+                if rel.get("type") not in (3, 4):
+                    continue
+                date = rel.get("release_date")
+                if not date:
+                    continue
+                cand = {"region": region, "date": date}
+                if not best or cand["date"] < best["date"]:
+                    best = cand
+        if best:
+            out[mid] = best
+    return out
+
+def _ratings_audit(s: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    tmdb_ids: List[int] = []
+    tmdb_map: Dict[int, Dict[str, Any]] = {}
+    for prov, feat, k, it in _iter_items(s):
+        if feat != "ratings":
+            continue
+        if (it.get("type") or "").lower() != "movie":
+            continue
+        ids = it.get("ids") or {}
+        tmdb = ids.get("tmdb")
+        if not tmdb:
+            continue
+        try:
+            mid = int(str(tmdb).strip())
+        except ValueError:
+            continue
+        tmdb_ids.append(mid)
+    tmdb_ids = sorted(set(tmdb_ids))
+    tmdb_map = _tmdb_region_dates(_tmdb_bulk(tmdb_ids))
+
+    for prov, feat, k, it in _iter_items(s):
+        if feat != "ratings":
+            continue
+        if (it.get("type") or "").lower() != "movie":
+            continue
+        ids = it.get("ids") or {}
+        tmdb = ids.get("tmdb")
+        if not tmdb:
+            continue
+        try:
+            mid = int(str(tmdb).strip())
+        except ValueError:
+            continue
+        rel = tmdb_map.get(mid) or {}
+        out.setdefault(prov, {}).setdefault(feat, {})[k] = {
+            "ids": ids,
+            "tmdb_release": rel,
+        }
+    return out
 
 def _apply_fix(s: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
     t, prov, feat, key = body.get("type"), body.get("provider"), body.get("feature"), body.get("key")
@@ -406,23 +620,6 @@ def _apply_fix(s: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, prov, feat, new, it, idx)
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
 
-# ── External lookups
-def _tmdb(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    k = _tmdb_key()
-    if not k:
-        raise HTTPException(400, "tmdb.api_key missing in config.json")
-    r = requests.get(f"https://api.themoviedb.org/3{path}", params={**(params or {}), "api_key": k}, timeout=8)
-    r.raise_for_status()
-    return r.json()
-
-def _trakt(path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    h = _trakt_headers()
-    if not h.get("trakt-api-key"):
-        raise HTTPException(400, "trakt.client_id missing in config.json")
-    r = requests.get(f"https://api.trakt.tv{path}", params=params, headers=h, timeout=8)
-    r.raise_for_status()
-    return r.json()
-
 # ── Suggest
 def _anchor(key: str):
     if "#" not in key:
@@ -448,57 +645,127 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     seen: set[str] = set()
 
     def push(new_ids: Dict[str, Any], why: str, conf: float, src: str) -> None:
-        merged = {**ids, **{k: v for k, v in (new_ids or {}).items() if v}}
+        merged = {
+            **ids,
+            **{k: v for k, v in (new_ids or {}).items() if v},
+        }
         sig = _sig(merged)
-        if sig in seen:
+        dedup_key = f"{src}|{why}|{sig}"
+        if dedup_key in seen:
             return
-        seen.add(sig)
-        out.append({"ids": merged, "reason": why, "source": src, "confidence": round(conf, 3)})
+        seen.add(dedup_key)
+        out.append(
+            {
+                "ids": merged,
+                "reason": why,
+                "source": src,
+                "confidence": round(conf, 3),
+            }
+        )
 
-    if ":" in key:
-        ns, rest = key.split(":", 1)
-        base = rest.split("#", 1)[0].strip()
-        if ns in ("imdb", "tmdb", "tvdb", "trakt") and not ids.get(ns):
-            push({ns: base}, f"from key:{ns}", 0.92, "key")
+    # from key
+    try:
+        if ":" in key:
+            ns, rest = key.split(":", 1)
+            base = rest.split("#", 1)[0].strip()
+            if ns in ("imdb", "tmdb", "tvdb", "trakt") and not ids.get(ns):
+                push({ns: base}, f"from key:{ns}", 0.92, "key")
+    except Exception:
+        pass
 
-    peer = _peer_ids(s, it)
-    if peer:
-        push(peer, "from peers (title/year/type)", 0.87, "peers")
+    # from peers (same title/year/type in state)
+    try:
+        peer = _peer_ids(s, it)
+        if peer:
+            push(peer, "from peers (title/year/type)", 0.87, "peers")
+    except Exception:
+        pass
 
+    # TMDB from imdb
     try:
         if ids.get("imdb"):
             f = _tmdb(f"/find/{ids['imdb']}", {"external_source": "imdb_id"})
             if typ == "movie" and f.get("movie_results"):
                 tid = f["movie_results"][0]["id"]
                 ext = _tmdb(f"/movie/{tid}/external_ids", {})
-                push({"tmdb": tid, "imdb": ext.get("imdb_id")}, "TMDB ext (movie)", 0.98, "tmdb")
+                push(
+                    {"tmdb": tid, "imdb": ext.get("imdb_id")},
+                    "TMDB ext (movie)",
+                    0.98,
+                    "tmdb",
+                )
             elif typ in ("show", "episode") and (f.get("tv_results") or f.get("tv_episode_results")):
                 base = (f.get("tv_results") or [{"id": None}])[0]["id"]
                 if typ == "show" and base:
                     ext = _tmdb(f"/tv/{base}/external_ids", {})
-                    push({"tmdb": base, "imdb": ext.get("imdb_id"), "tvdb": ext.get("tvdb_id")}, "TMDB ext (tv)", 0.98, "tmdb")
+                    push(
+                        {
+                            "tmdb": base,
+                            "imdb": ext.get("imdb_id"),
+                            "tvdb": ext.get("tvdb_id"),
+                        },
+                        "TMDB ext (tv)",
+                        0.98,
+                        "tmdb",
+                    )
                 if typ == "episode" and base and se:
                     sN, eN = se
-                    ext = _tmdb(f"/tv/{base}/season/{sN}/episode/{eN}/external_ids", {})
-                    push({"tmdb": base, "imdb": ext.get("imdb_id"), "tvdb": ext.get("tvdb_id")}, "TMDB ext (ep)", 0.98, "tmdb")
+                    ext = _tmdb(
+                        f"/tv/{base}/season/{sN}/episode/{eN}/external_ids", {}
+                    )
+                    push(
+                        {
+                            "tmdb": base,
+                            "imdb": ext.get("imdb_id"),
+                            "tvdb": ext.get("tvdb_id"),
+                        },
+                        "TMDB ext (ep)",
+                        0.98,
+                        "tmdb",
+                    )
     except Exception:
         pass
 
+    # TMDB from tmdb id
     try:
         if ids.get("tmdb"):
             if typ == "movie":
                 ext = _tmdb(f"/movie/{ids['tmdb']}/external_ids", {})
-                push({"imdb": ext.get("imdb_id")}, "TMDB ext (movie)", 0.98, "tmdb")
+                push(
+                    {"imdb": ext.get("imdb_id")},
+                    "TMDB ext (movie)",
+                    0.98,
+                    "tmdb",
+                )
             elif typ == "show":
                 ext = _tmdb(f"/tv/{ids['tmdb']}/external_ids", {})
-                push({"imdb": ext.get("imdb_id"), "tvdb": ext.get("tvdb_id")}, "TMDB ext (tv)", 0.98, "tmdb")
+                push(
+                    {
+                        "imdb": ext.get("imdb_id"),
+                        "tvdb": ext.get("tvdb_id"),
+                    },
+                    "TMDB ext (tv)",
+                    0.98,
+                    "tmdb",
+                )
             elif typ == "episode" and se:
                 sN, eN = se
-                ext = _tmdb(f"/tv/{ids['tmdb']}/season/{sN}/episode/{eN}/external_ids", {})
-                push({"imdb": ext.get("imdb_id"), "tvdb": ext.get("tvdb_id")}, "TMDB ext (ep)", 0.98, "tmdb")
+                ext = _tmdb(
+                    f"/tv/{ids['tmdb']}/season/{sN}/episode/{eN}/external_ids", {}
+                )
+                push(
+                    {
+                        "imdb": ext.get("imdb_id"),
+                        "tvdb": ext.get("tvdb_id"),
+                    },
+                    "TMDB ext (ep)",
+                    0.98,
+                    "tmdb",
+                )
     except Exception:
         pass
 
+    # TMDB search by title/year
     try:
         if title:
             if typ == "movie":
@@ -509,26 +776,102 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
                     yr = int((cand.get("release_date") or "0000")[:4] or 0)
                     conf = 0.9 - min(abs((year or 0) - yr), 2) * 0.05
                     ext = _tmdb(f"/movie/{tid}/external_ids", {})
-                    push({"tmdb": tid, "imdb": ext.get("imdb_id")}, "TMDB search(movie)", conf, "tmdb")
+                    push(
+                        {"tmdb": tid, "imdb": ext.get("imdb_id")},
+                        "TMDB search(movie)",
+                        conf,
+                        "tmdb",
+                    )
             elif typ in ("show", "episode"):
-                r = _tmdb("/search/tv", {"query": title, "first_air_date_year": year or ""})
+                r = _tmdb(
+                    "/search/tv",
+                    {"query": title, "first_air_date_year": year or ""},
+                )
                 if r.get("results"):
                     base = r["results"][0]["id"]
                     ext = _tmdb(f"/tv/{base}/external_ids", {})
-                    push({"tmdb": base, "imdb": ext.get("imdb_id"), "tvdb": ext.get("tvdb_id")}, "TMDB search(tv)", 0.88, "tmdb")
+                    push(
+                        {
+                            "tmdb": base,
+                            "imdb": ext.get("imdb_id"),
+                            "tvdb": ext.get("tvdb_id"),
+                        },
+                        "TMDB search(tv)",
+                        0.88,
+                        "tmdb",
+                    )
     except Exception:
         pass
 
+    # Alt/language title hints
     try:
-        if title:
-            t = {"movie": "movie", "show": "show", "episode": "episode"}.get(typ, "movie,show")
+        core_ids = {
+            ns: str(ids.get(ns)).strip()
+            for ns in ("imdb", "tmdb", "tvdb")
+            if ids.get(ns)
+        }
+        if core_ids and title:
+            base_title = title.strip().lower()
+            prov_up = (prov or "").upper()
+            # combo's that often have alt/language titles
+            lang_prov_targets = {
+                "PLEX": {"JELLYFIN", "EMBY"},
+                "JELLYFIN": {"PLEX", "EMBY"},
+                "EMBY": {"PLEX", "JELLYFIN"},
+            }
+            allowed_targets = lang_prov_targets.get(prov_up, set())
+            if allowed_targets:
+                hint_with: List[Tuple[str, str]] = []
+                for p2, f2, k2, it2 in _iter_items(s):
+                    if f2 != feat:
+                        continue
+                    p2_up = (p2 or "").upper()
+                    if p2_up not in allowed_targets:
+                        continue
+                    ids2 = it2.get("ids") or {}
+                    if not any(
+                        str(ids2.get(ns) or "").strip() == val
+                        for ns, val in core_ids.items()
+                    ):
+                        continue
+                    t2 = (it2.get("title") or "").strip()
+                    if not t2:
+                        continue
+                    if t2.strip().lower() == base_title:
+                        continue
+                    hint_with.append((p2_up, t2))
+                    if len(hint_with) >= 1:
+                        break
+                if hint_with:
+                    p2_up, t2 = hint_with[0]
+                    why = f"Possible language/alt-title mismatch with {p2_up}"
+                    push({}, why, 0.84, "titles")
+    except Exception:
+        pass
+
+    # Trakt search by title/year
+    try:
+        core_have = any(ids.get(ns) for ns in ("imdb", "tmdb", "tvdb"))
+        if title and not core_have:
+            tmap = {"movie": "movie", "show": "show", "episode": "episode"}
+            t = tmap.get(typ, "movie,show")
             r = _trakt("/search/" + t, {"query": title, "year": year or ""})
             for e in (r or [])[:3]:
-                ids2 = (e.get("movie") or e.get("show") or e.get("episode") or {}).get("ids") or {}
+                ids2 = (
+                    e.get("movie")
+                    or e.get("show")
+                    or e.get("episode")
+                    or {}
+                ).get("ids") or {}
                 push(
-                    {"trakt": ids2.get("trakt"), "imdb": ids2.get("imdb"), "tmdb": ids2.get("tmdb"), "tvdb": ids2.get("tvdb")},
+                    {
+                        "trakt": ids2.get("trakt"),
+                        "imdb": ids2.get("imdb"),
+                        "tmdb": ids2.get("tmdb"),
+                        "tvdb": ids2.get("tvdb"),
+                    },
                     "Trakt search",
-                    0.86,
+                    0.80,
                     "trakt",
                 )
     except Exception:
@@ -555,97 +898,50 @@ def api_state():
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
 def api_problems():
-    return {"problems": _problems(_load_state())}
+    s = _load_state()
+    return {"problems": _problems(s), "pair_stats": _pair_stats(s)}
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
 def api_ratings_audit():
     s = _load_state()
+    return _ratings_audit(s)
 
-    def _ratings_items(prov: str) -> Dict[str, Any]:
-        pv = (s.get("providers") or {}).get(prov) or {}
-        return ((pv.get("ratings") or {}).get("baseline") or {}).get("items") or {}
+@router.get("/analyzer/cw-state", response_class=JSONResponse)
+def api_cw_state():
+    return _read_cw_state()
 
-    def _alias_keys_r(obj: Dict[str, Any]) -> List[str]:
-        t = str(obj.get("type") or "").lower()
-        ids = dict(obj.get("ids") or {})
-        out: List[str] = []
-        seen: set[str] = set()
-        if obj.get("_key"):
-            out.append(obj["_key"])
-        for ns in ("trakt", "imdb", "tmdb", "tvdb", "slug"):
-            v = ids.get(ns)
-            if v:
-                vs = str(v)
-                out.append(f"{ns}:{vs}")
-                if t in ("movie", "show", "season", "episode"):
-                    out.append(f"{t}:{ns}:{vs}")
-        res: List[str] = []
-        for k in out:
-            if k not in seen:
-                seen.add(k)
-                res.append(k)
-        return res
-
-    def _alias_index_r(items: Dict[str, Any]) -> Dict[str, str]:
-        idx: Dict[str, str] = {}
-        for k, v in items.items():
-            vv = dict(v)
-            vv["_key"] = k
-            for ak in _alias_keys_r(vv):
-                idx.setdefault(ak, k)
-        return idx
-
-    def _sus(items: Dict[str, Any]):
-        o = []
-        for k, v in items.items():
-            f: List[str] = []
-            if not (v.get("title") or "").strip():
-                f.append("no_title")
-            if not (v.get("year") or 0):
-                f.append("no_year")
-            if not (v.get("ids") or {}).get("trakt"):
-                f.append("no_trakt_id")
-            if f:
-                o.append([k, v, f])
-        return o
-
-    plex = _ratings_items("PLEX")
-    trakt = _ratings_items("TRAKT")
-    only_p = sorted(set(plex) - set(trakt))
-    only_t = sorted(set(trakt) - set(plex))
-    pa = _alias_index_r(plex)
-    ta = _alias_index_r(trakt)
-
-    def _keys_from(src: Dict[str, Any], idx_dst: Dict[str, str]) -> List[List[str]]:
-        out: List[List[str]] = []
-        for k in src:
-            al = _alias_keys_r({"_key": k, **src[k]})
-            hit = next((idx_dst[a] for a in al if a in idx_dst), None)
-            if hit:
-                out.append([k, hit])
-        return out
-
-    ap = _keys_from(plex, ta)
-    at = _keys_from(trakt, pa)
-
-    return {
-        "counts": {
-            "plex": len(plex),
-            "trakt": len(trakt),
-            "only_in_plex": len(only_p),
-            "only_in_trakt": len(only_t),
-            "alias_hits_from_plex": len(ap),
-            "alias_hits_from_trakt": len(at),
-            "plex_suspects": len(_sus(plex)),
-            "trakt_suspects": len(_sus(trakt)),
-        },
-        "only_in_plex": only_p,
-        "only_in_trakt": only_t,
-        "alias_hits_from_plex": ap,
-        "alias_hits_from_trakt": at,
-        "plex_suspects": _sus(plex),
-        "trakt_suspects": _sus(trakt),
-    }
+@router.post("/analyzer/patch", response_class=JSONResponse)
+def api_patch(payload: Dict[str, Any]):
+    for f in ("provider", "feature", "key", "ids"):
+        if f not in payload:
+            raise HTTPException(400, f"Missing {f}")
+    s = _load_state()
+    b, it = _find_item(s, payload["provider"], payload["feature"], payload["key"])
+    if not b or not it:
+        raise HTTPException(404, "Item not found")
+    ids = dict(it.get("ids") or {})
+    for k, v in (payload.get("ids") or {}).items():
+        nv = _norm(k, v)
+        if nv is None:
+            ids.pop(k, None)
+        else:
+            ids[k] = nv
+    it["ids"] = ids
+    new = payload["key"]
+    if payload.get("rekey"):
+        new = _rekey(b, payload["key"], it)
+    if payload.get("merge_peer_ids"):
+        peer_ids = _peer_ids(s, it)
+        for k, v in peer_ids.items():
+            if k not in ids and v:
+                ids[k] = v
+    it["ids"] = ids
+    new = _rekey(b, payload["key"], it)
+    pairs = _pair_map(_cfg(), s)
+    idx = _indices_for(s)
+    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, payload["provider"], payload["feature"], new, it, idx)
+    _save_state(s)
+    return {"ok": True, "new_key": new}
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
 def api_suggest(payload: Dict[str, Any]):

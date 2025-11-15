@@ -1,27 +1,103 @@
 // assets/js/modals/analyzer/index.js
-// Neon-themed analyzer modal with waiting overlay.
-const fjson = async (u,o)=>{const r=await fetch(u,o); if(!r.ok) throw new Error(r.status); return r.json();};
-const Q=(s,r=document)=>r.querySelector(s); const QA=(s,r=document)=>Array.from(r.querySelectorAll(s));
-const esc=s=> (window.CSS?.escape?CSS.escape(s):String(s).replace(/[^\w-]/g,"\\$&"));
-const tagOf=(p,f,k)=>`${p}::${f}::${k}`;
-const chips=(ids)=>Object.entries(ids||{}).map(([k,v])=>`<span class="chip mono">${k}:${v}</span>`).join("");
-const fmtCounts=(c)=>Object.entries(c||{}).map(([p,v])=>`${p}: ${v.total} (H:${v.history}/W:${v.watchlist}/R:${v.ratings||0})`).join(" • ");
-const FIXABLE = new Set(["missing_peer","missing_ids","key_missing_ids","key_ids_mismatch","invalid_id_format"]);
+const fjson = async (u, o) => {
+  const r = await fetch(u, o);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+};
+const Q = (s, r = document) => r.querySelector(s);
+const QA = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s =>
+  (window.CSS?.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&"));
+const tagOf = (p, f, k) => `${p}::${f}::${k}`;
+const chips = ids =>
+  Object.entries(ids || {})
+    .map(([k, v]) => `<span class="chip mono">${k}:${v}</span>`)
+    .join("");
 
-// Inject CSS once
-function css(){
+const fmtCounts = c => {
+  const entries = Object.entries(c || {});
+  if (!entries.length) return "";
+  const shortName = p => {
+    const up = String(p || "").toUpperCase();
+    if (up === "JELLYFIN") return "JF";
+    if (up === "MDBLIST") return "MDB";
+    return up;
+  };
+  return entries
+    .map(([p, v]) => {
+      const total =
+        v.total || (v.history || 0) + (v.watchlist || 0) + (v.ratings || 0);
+      const label = shortName(p);
+      const shortTotal =
+        total > 999
+          ? `${(total / 1000).toFixed(1).replace(/\.0$/, "")}k`
+          : total;
+      return `${label} ${shortTotal}`;
+    })
+    .join(" | ");
+};
+
+const ID_FIELDS = [
+  "imdb",
+  "tmdb",
+  "tvdb",
+  "trakt",
+  "plex",
+  "simkl",
+  "emby",
+  "mdblist"
+];
+
+function css() {
   if (Q("#an-css")) return;
-  const el=document.createElement("style"); el.id="an-css"; el.textContent = `
+  const el = document.createElement("style");
+  el.id = "an-css";
+  el.textContent = `
   .modal-root{position:relative;display:flex;flex-direction:column;height:100%}
-  .cx-head{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
+  .cx-head{display:flex;align-items:center;gap:10px;justify-content:space-between;background:radial-gradient(circle at top,#313870,#050814);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
   .cx-left{display:flex;align-items:center;gap:12px;flex:1}
   .cx-title{font-weight:800}
+  .an-pairs{display:flex;flex-wrap:wrap;gap:6px;padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.12);background:#070b14}
+  .an-pair-chip{
+    font-size:12px;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 10px;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.18);
+    background:radial-gradient(circle at top,#151a2e,#050814);
+    opacity:.8;
+    color:#f5f6ff;
+    font-weight:600;
+    letter-spacing:.03em;
+    text-transform:uppercase;
+    box-shadow:0 0 12px #000000aa;
+    transition:background .16s ease,box-shadow .16s ease,opacity .16s ease,transform .12s ease;
+  }
+  .an-pair-chip:hover{opacity:1;box-shadow:0 0 18px #6a5cff66;transform:translateY(-1px);}
+  .an-pair-chip.on{background:linear-gradient(90deg,#2b5cff,#23a8ff);box-shadow:0 0 14px #6a5cffaa;opacity:1}
+  .an-pair-chip span.dir{opacity:.9}
   .an-actions{display:flex;gap:8px;align-items:center}
-  .pill{border:1px solid rgba(255,255,255,.12);background:#0e1320;color:#dbe8ff;border-radius:16px;padding:6px 12px;font-weight:700}
-  .pill.ghost{background:#0b0f19;color:#c8d3ff}
-  #an-toggle-ids{white-space:nowrap;min-width:140px;padding:6px 16px}
-  .badge{padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:#0b0f19}
+  .pill{
+    border:1px solid rgba(255,255,255,.12);
+    background:#0e1320;
+    color:#dbe8ff;
+    border-radius:16px;
+    padding:6px 12px;
+    font-size:13px;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    white-space:nowrap;
+    flex:0 0 auto;
+  }
+  .pill.ghost{background:transparent}
+  .pill[disabled]{opacity:.55;pointer-events:none}
   .close-btn{border:1px solid rgba(255,255,255,.2);background:#171b2a;color:#fff;border-radius:10px;padding:6px 10px}
+  #an-toggle-ids{white-space:nowrap;min-width:110px;padding:6px 16px}
+  .badge{padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:#0b0f19}
   .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(220px,1fr) 8px minmax(180px,1fr);overflow:hidden}
   .an-split{height:8px;background:linear-gradient(90deg,#27214b,#2b5cff);box-shadow:0 0 10px #6a5cff88 inset;cursor:row-resize}
   .an-grid{overflow:auto;border-bottom:1px solid rgba(255,255,255,.08)}
@@ -34,15 +110,45 @@ function css(){
   .ids{opacity:.9}
   .an-grid.show-ids .ids{display:block}
   .an-grid .ids{display:none}
-  .issue{padding:10px;border-bottom:1px solid rgba(255,255,255,.06)}
-  .issue .h{font-weight:800;margin-bottom:6px}
-  .col-head{position:relative;user-select:none}
-  .resizer{position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:col-resize}
-  .an-footer{position:sticky;bottom:0;display:flex;justify-content:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(11,15,25,.9),rgba(11,15,25,.98))}
-  .an-footer .stats{font-weight:700;color:#dbe8ff}
+  .row .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .title small{opacity:.7;margin-left:6px}
+  .row .prov{font-weight:600}
+  .row .feat{opacity:.8}
+  .row .counts{font-size:12px;opacity:.8}
+  .sort{cursor:pointer;user-select:none}
+  .sort span.label{margin-right:4px}
+  .sort span.dir{opacity:.7;font-size:11px}
+  .issue{border-radius:12px;padding:10px 11px;margin-bottom:8px;background:radial-gradient(circle at top left,#262349,#050814);border:1px solid rgba(255,255,255,.1);box-shadow:0 0 14px #111526}
+  .issue .h{font-weight:700;margin-bottom:4px}
+  .issue .badge{margin-top:4px}
+  .issue.manual-ids{margin-top:4px}
+  .ids-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .ids-edit-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+  .ids-edit-row label{display:flex;align-items:center;gap:6px;font-size:12px;opacity:.9}
+  .ids-edit-row label span{min-width:52px;text-transform:uppercase;letter-spacing:.03em;color:#9fb4ff}
+  .ids-edit-row input{flex:1 1 auto;background:#050814;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:4px 6px;font-size:12px;color:#dbe8ff}
+  .ids-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+  .an-footer{
+    padding:8px 12px;
+    border-top:1px solid rgba(255,255,255,.12);
+    display:flex;
+    align-items:center;
+    font-size:12px;
+    background:#050814;
+    gap:8px;
+  }
+  .an-footer #an-issues-count{
+    font-weight:600;
+    color:#dbe8ff;
+  }
+  .an-footer .stats{
+    margin-left:auto;
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+    opacity:.78;
+  }
+  .an-footer .stats.empty{opacity:.45}
   input[type=search]{background:#0b0f19;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
-  #an-search{flex:1 1 720px;min-width:420px;width:auto}
-  /* Neon scrollbars */
+  #an-search{flex:1 1 420px;min-width:220px;max-width:460px;width:auto}
   .an-grid, .an-issues{scrollbar-width:thin; scrollbar-color:#7a6bff #0b0f19;}
   .an-grid::-webkit-scrollbar, .an-issues::-webkit-scrollbar{height:12px;width:12px}
   .an-grid::-webkit-scrollbar-track, .an-issues::-webkit-scrollbar-track{background:#0b0f19}
@@ -50,8 +156,7 @@ function css(){
     background:linear-gradient(180deg,#7a6bff,#23a8ff);
     border-radius:10px; border:2px solid #0b0f19; box-shadow:0 0 12px #7a6bff88 inset;
   }
-
-  /* ── Neon waiting overlay ─────────────────────────────────────────────── */
+  .unsync-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:radial-gradient(circle,#ffb0b0,#ff2757);box-shadow:0 0 6px #ff2757aa;vertical-align:middle}
   .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
   .wait-overlay.hidden{opacity:0;pointer-events:none}
@@ -68,17 +173,12 @@ function css(){
   document.head.appendChild(el);
 }
 
-function gridTemplateFrom(widths){ return widths.map(w=>`${w}px`).join(" "); }
-function fixHint(provider, feature){
-  const where = (p)=> p==="PLEX" ? "Plex" : (p==="JELLYFIN" ? "Jellyfin" : (p==="EMBY" ? "Emby" : "your media server"));
-  if (provider==="SIMKL" || provider==="TRAKT"){
-    return `Don’t edit on ${provider}. Fix the match in Plex/Emby/Jellyfin (use “Match” / correct IDs), then run a sync.`;
-  }
-  return `Open ${where(provider)} → item → “Match” (or edit metadata) → ensure IMDb/TMDB/TVDB IDs and year/title are correct. Then run a sync.`;
+function gridTemplateFrom(widths) {
+  return widths.map(w => `${w}px`).join(" ");
 }
 
 export default {
-  async mount(root){
+  async mount(root) {
     css();
     root.classList.add("modal-root");
     root.innerHTML = `
@@ -86,6 +186,7 @@ export default {
         <div class="cx-left">
           <div class="cx-title">Analyzer</div>
           <button class="pill ghost" id="an-toggle-ids">IDs: hidden</button>
+          <button class="pill ghost" id="an-scope">Scope: issues</button>
           <input id="an-search" type="search" placeholder="title, year, provider, feature…">
         </div>
         <div class="an-actions">
@@ -93,15 +194,18 @@ export default {
           <button class="close-btn" id="an-close">Close</button>
         </div>
       </div>
+      <div class="an-pairs" id="an-pairs"></div>
       <div class="an-wrap" id="an-wrap">
         <div class="an-grid" id="an-grid"></div>
         <div class="an-split" id="an-split" title="drag to resize"></div>
         <div class="an-issues" id="an-issues"></div>
       </div>
-      <div class="an-footer"><span class="mono" id="an-issues-count">Issues: 0</span>&nbsp;•&nbsp;<span class="stats mono" id="an-stats">—</span></div>
+      <div class="an-footer">
+        <span class="mono" id="an-issues-count">Issues: 0</span>
+        <div class="stats empty" id="an-stats"></div>
+      </div>
     `;
 
-    // Neon waiting overlay
     const wait = document.createElement("div");
     wait.id = "an-wait";
     wait.className = "wait-overlay hidden";
@@ -112,166 +216,646 @@ export default {
       </div>`;
     root.appendChild(wait);
 
-    // Small helper to control the overlay
-    let waitSlowTimer = null, waitShownAt = 0;
-    const setWaitText = (t)=> { const el=Q("#an-wait-text",root); if (el) el.textContent = t; };
-    function showWait(text="Loading…"){
-      setWaitText(text); Q("#an-wait",root).classList.remove("hidden"); waitShownAt = performance.now();
+    let waitSlowTimer = null;
+    let waitShownAt = 0;
+    const setWaitText = t => {
+      const el = Q("#an-wait-text", root);
+      if (el) el.textContent = t;
+    };
+    function showWait(text) {
+      waitShownAt = performance.now();
+      const el = Q("#an-wait", root);
+      if (el) el.classList.remove("hidden");
+      setWaitText(text || "Working…");
       clearTimeout(waitSlowTimer);
-      // If it drags, reassure the user
-      waitSlowTimer = setTimeout(()=> setWaitText(`${text} (still working…)`), 3000);
+      waitSlowTimer = setTimeout(
+        () => setWaitText(`${text} (still working…)`),
+        3000
+      );
     }
-    function hideWait(){
-      clearTimeout(waitSlowTimer); waitSlowTimer=null;
-      const minVisible = 250; // avoid flicker
+    function hideWait() {
+      clearTimeout(waitSlowTimer);
+      waitSlowTimer = null;
+      const minVisible = 250;
       const elapsed = performance.now() - waitShownAt;
-      const doHide = ()=> Q("#an-wait",root).classList.add("hidden");
-      if (elapsed < minVisible) setTimeout(doHide, minVisible - elapsed); else doHide();
+      const doHide = () => Q("#an-wait", root).classList.add("hidden");
+      if (elapsed < minVisible) setTimeout(doHide, minVisible - elapsed);
+      else doHide();
     }
 
-    const wrap=Q("#an-wrap",root), grid=Q("#an-grid",root), issues=Q("#an-issues",root);
-    const stats=Q("#an-stats",root), issuesCount=Q("#an-issues-count",root), search=Q("#an-search",root);
-    const btnRun=Q("#an-run",root), btnToggleIDs=Q("#an-toggle-ids",root), btnClose=Q("#an-close",root);
-    const split=Q("#an-split",root);
+    const wrap = Q("#an-wrap", root);
+    const grid = Q("#an-grid", root);
+    const issues = Q("#an-issues", root);
+    const pairBar = Q("#an-pairs", root);
+    const stats = Q("#an-stats", root);
+    const issuesCount = Q("#an-issues-count", root);
+    const search = Q("#an-search", root);
+    const btnRun = Q("#an-run", root);
+    const btnToggleIDs = Q("#an-toggle-ids", root);
+    const btnClose = Q("#an-close", root);
+    const btnScope = Q("#an-scope", root);
+    const split = Q("#an-split", root);
 
-    let COLS = (JSON.parse(localStorage.getItem("an.cols")||"null")) || [110, 110, 430, 80, 100];
-    let ITEMS=[], VIEW=[], SORT_KEY="title", SORT_DIR="asc", SHOW_IDS=false;
-    let PROB={all:[],fix:[]};
-    let SELECTED=null;
+    let COLS =
+      JSON.parse(localStorage.getItem("an.cols") || "null") ||
+      [110, 110, 430, 80, 100];
+    let ITEMS = [];
+    let VIEW = [];
+    let SORT_KEY = "title";
+    let SORT_DIR = "asc";
+    let SHOW_IDS = false;
+    let SELECTED = null;
+    let PAIRS = [];
+    let PAIR_FILTER = new Set();
+    let PAIR_STATS = [];
+    let PAIR_SCOPE_KEYS = new Set();
+    let UNSYNCED = new Set();
+    let SCOPE = "issues";
 
-    function applySplit(top,total){const bar=8,min=140,clamped=Math.max(min,Math.min(total-bar-min,top)); wrap.style.gridTemplateRows=`${clamped}px 8px 1fr`; localStorage.setItem("an.split.r",(clamped/total).toFixed(4));}
-    function restoreSplit(){const r=parseFloat(localStorage.getItem("an.split.r")||"0.62");const tot=wrap.getBoundingClientRect().height;applySplit(Math.round(r*tot),tot);}
-    function dragY(){const rect=wrap.getBoundingClientRect();const tot=rect.height;const mv=e=>{const y=(e.touches?e.touches[0].clientY:e.clientY);applySplit((y-rect.top),tot)}; const up=()=>{window.removeEventListener("mousemove",mv);window.removeEventListener("mouseup",up);window.removeEventListener("touchmove",mv);window.removeEventListener("touchend",up)}; window.addEventListener("mousemove",mv);window.addEventListener("mouseup",up);window.addEventListener("touchmove",mv,{passive:false});window.addEventListener("touchend",up);}
-    split.addEventListener("mousedown",dragY); split.addEventListener("touchstart",(e)=>{dragY();e.preventDefault()},{passive:false});
+    function applySplit(top, total) {
+      const bar = 8;
+      const min = 140;
+      const clamped = Math.max(
+        min,
+        Math.min(total - min - bar, top)
+      );
+      wrap.style.gridTemplateRows = `${clamped}px 8px 1fr`;
+      localStorage.setItem("an.split.r", (clamped / total).toFixed(4));
+    }
+    function restoreSplit() {
+      const r = parseFloat(localStorage.getItem("an.split.r") || "0.5") || 0.5;
+      const rect = wrap.getBoundingClientRect();
+      const tot = rect.height || 420;
+      applySplit(Math.round(r * tot), tot);
+    }
+    function dragY() {
+      const rect = wrap.getBoundingClientRect();
+      const tot = rect.height || 420;
+      let startY = 0;
+      let startTop = 0;
+      const mv = e => {
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const y = clientY - rect.top;
+        applySplit(startTop + y - startY, tot);
+        e.preventDefault();
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", mv);
+        document.removeEventListener("mouseup", up);
+        document.removeEventListener("touchmove", mv);
+        document.removeEventListener("touchend", up);
+      };
+      const dn = e => {
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        startY = clientY - rect.top;
+        const firstRow = (wrap.style.gridTemplateRows || "").split(" ")[0];
+        startTop = parseFloat(firstRow) || rect.height * 0.6;
+        document.addEventListener("mousemove", mv);
+        document.addEventListener("mouseup", up);
+        document.addEventListener("touchmove", mv, { passive: false });
+        document.addEventListener("touchend", up);
+        e.preventDefault();
+      };
+      split.addEventListener("mousedown", dn);
+      split.addEventListener(
+        "touchstart",
+        e => {
+          dn(e);
+          e.preventDefault();
+        },
+        { passive: false }
+      );
+    }
 
-    function setCols(){
+    function setCols() {
       grid.style.setProperty("--col-template", gridTemplateFrom(COLS));
-      grid.querySelectorAll(".row").forEach(r=> r.style.gridTemplateColumns = gridTemplateFrom(COLS));
+      grid
+        .querySelectorAll(".row")
+        .forEach(r => (r.style.gridTemplateColumns = gridTemplateFrom(COLS)));
     }
 
-    const val=(r,k)=>k==="provider"?r.provider||"":k==="feature"?r.feature||"":k==="title"?(r.title||"").toLowerCase():k==="year"?(+r.year||0):k==="type"?r.type||"":(r.title||"").toLowerCase();
-    const sortRows=(r)=>r.sort((a,b)=>{const d=SORT_DIR==="asc"?1:-1,va=val(a,SORT_KEY),vb=val(b,SORT_KEY);return va<vb?-1*d:va>vb?1*d:0});
-
-    function renderHeader(){
-      const res = (i)=>`<div class="resizer" data-i="${i}"></div>`;
-      const head = `
-      <div class="row head" style="grid-template-columns:${gridTemplateFrom(COLS)}">
-        <div class="col-head sort" data-k="provider"><b>Provider</b>${res(0)}</div>
-        <div class="col-head sort" data-k="feature"><b>Feature</b>${res(1)}</div>
-        <div class="col-head sort" data-k="title"><b>Title</b>${res(2)}</div>
-        <div class="col-head sort" data-k="year"><b>Year</b>${res(3)}</div>
-        <div class="col-head sort" data-k="type"><b>Type</b>${res(4)}</div>
-      </div>`;
-      return head;
-    }
-
-    function renderBody(rows){
-      return rows.map(r=>`
-        <div class="row ${SELECTED===tagOf(r.provider,r.feature,r.key)?'sel':''}" data-tag="${esc(tagOf(r.provider,r.feature,r.key))}" style="grid-template-columns:${gridTemplateFrom(COLS)}">
-          <div>${r.provider}</div>
-          <div>${r.feature}</div>
-          <div><div>${r.title||'Untitled'}</div><div class="ids mono">${chips(r.ids)}</div></div>
-          <div>${r.year||''}</div>
-          <div>${r.type||''}</div>
-        </div>`).join("");
-    }
-
-    function bindHeader(){
-      QA(".head .sort", grid).forEach(h=> h.addEventListener("click", () => {
-        const k=h.dataset.k; SORT_DIR = (SORT_KEY===k && SORT_DIR==="asc")?"desc":"asc"; SORT_KEY=k; draw();
-      }));
-      QA(".resizer", grid).forEach(el=>{
-        let i=+el.dataset.i, startX=0, startW=0;
-        const down=(e)=>{startX=(e.touches?e.touches[0].clientX:e.clientX); startW=COLS[i]; document.addEventListener("mousemove",move); document.addEventListener("mouseup",up); document.addEventListener("touchmove",move,{passive:false}); document.addEventListener("touchend",up); e.stopPropagation(); e.preventDefault();}
-        const move=(e)=>{const x=(e.touches?e.touches[0].clientX:e.clientX); const dx=x-startX; COLS[i]=Math.max(70,startW+dx); setCols();}
-        const up=()=>{document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up); document.removeEventListener("touchmove",move); document.removeEventListener("touchend",up); localStorage.setItem("an.cols",JSON.stringify(COLS));}
-        el.addEventListener("mousedown",down); el.addEventListener("touchstart",down,{passive:false});
+    function sortRows(rows) {
+      const k = SORT_KEY;
+      const dir = SORT_DIR === "asc" ? 1 : -1;
+      const val = r => {
+        if (k === "title") return (r.title || "").toLowerCase();
+        if (k === "year") return r.year || 0;
+        if (k === "provider") return r.provider || "";
+        if (k === "feature") return r.feature || "";
+        if (k === "type") return r.type || "";
+        return r.title || "";
+      };
+      return rows.sort((a, b) => {
+        const va = val(a);
+        const vb = val(b);
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
       });
     }
 
-    function draw(){
-      grid.innerHTML = renderHeader() + renderBody(sortRows(VIEW.slice()));
-      bindHeader(); setCols();
-      QA(".row:not(.head)",grid).forEach(r=> r.addEventListener("click", ()=> select(r.getAttribute("data-tag")) ));
+    function renderHeader() {
+      const dirMark = k =>
+        SORT_KEY === k ? (SORT_DIR === "asc" ? "▲" : "▼") : "";
+      return `
+        <div class="row head" style="grid-template-columns:${gridTemplateFrom(
+          COLS
+        )}">
+          <div class="cell sort" data-k="provider"><span class="label">Provider</span><span class="dir">${dirMark(
+            "provider"
+          )}</span></div>
+          <div class="cell sort" data-k="feature"><span class="label">Feature</span><span class="dir">${dirMark(
+            "feature"
+          )}</span></div>
+          <div class="cell sort" data-k="title"><span class="label">Title</span><span class="dir">${dirMark(
+            "title"
+          )}</span></div>
+          <div class="cell sort" data-k="year"><span class="label">Year</span><span class="dir">${dirMark(
+            "year"
+          )}</span></div>
+          <div class="cell sort" data-k="type"><span class="label">Type</span><span class="dir">${dirMark(
+            "type"
+          )}</span></div>
+        </div>`;
     }
 
-    function filter(q){
-      q=(q||"").toLowerCase().trim();
-      if(!q){ VIEW=ITEMS.slice(); draw(); return; }
-      const W=q.split(/\s+/g);
-      VIEW=ITEMS.filter(r=>{
-        const hay=[r.provider,r.feature,r.title,String(r.year||""),r.type].join(" ").toLowerCase();
-        return W.every(w=>hay.includes(w));
+    function renderBody(rows) {
+      return rows
+        .map(r => {
+          const tag = tagOf(r.provider, r.feature, r.key);
+          const uns = UNSYNCED.has(tag);
+          return `<div class="row${SELECTED === tag ? " sel" : ""}" data-tag="${tag}">
+          <div class="prov">${r.provider}</div>
+          <div class="feat">${r.feature}</div>
+          <div>
+            <div class="title">${
+              uns
+                ? '<span class="unsync-dot" title="Missing peer"></span>'
+                : ""
+            }${r.title || "Untitled"}${
+              r.year ? ` <small>(${r.year})</small>` : ""
+            }</div>
+            <div class="ids mono">${chips(r.ids)}</div>
+          </div>
+          <div>${r.year || ""}</div>
+          <div>${r.type || ""}</div>
+        </div>`;
+        })
+        .join("");
+    }
+
+    function bindHeader() {
+      QA(".head .sort", grid).forEach(h =>
+        h.addEventListener("click", () => {
+          const k = h.dataset.k;
+          SORT_DIR =
+            SORT_KEY === k && SORT_DIR === "asc" ? "desc" : "asc";
+          SORT_KEY = k;
+          draw();
+        })
+      );
+    }
+
+    function inPairScope(r) {
+      if (!PAIR_SCOPE_KEYS || !PAIR_SCOPE_KEYS.size) return true;
+      const key = `${String(r.provider || "").toUpperCase()}::${String(
+        r.feature || ""
+      ).toLowerCase()}`;
+      return PAIR_SCOPE_KEYS.has(key);
+    }
+
+    function baseItems() {
+      const scoped = ITEMS.filter(inPairScope);
+      if (SCOPE === "issues") {
+        if (!UNSYNCED || !UNSYNCED.size) return [];
+        return scoped.filter(r =>
+          UNSYNCED.has(tagOf(r.provider, r.feature, r.key))
+        );
+      }
+      return scoped;
+    }
+
+    function draw() {
+      grid.innerHTML = renderHeader() + renderBody(sortRows(VIEW.slice()));
+      bindHeader();
+      setCols();
+      QA(".row:not(.head)", grid).forEach(r =>
+        r.addEventListener("click", () =>
+          select(r.getAttribute("data-tag"))
+        )
+      );
+    }
+
+    function filter(q) {
+      q = (q || "").toLowerCase().trim();
+      const base = baseItems();
+      if (!q) {
+        VIEW = base.slice();
+        draw();
+        return;
+      }
+      const W = q.split(/\s+/g);
+      VIEW = base.filter(r => {
+        const hay = [r.provider, r.feature, r.title, r.year, r.type]
+          .map(x => String(x || "").toLowerCase())
+          .join(" ");
+        return W.every(w => hay.includes(w));
       });
       draw();
     }
 
-    function closeModal(){
-      window.cxCloseModal?.();
+    function fixHint(provider, feature) {
+      const p = String(provider || "").toUpperCase();
+      const f = String(feature || "").toLowerCase();
+
+      const where = prov => {
+        switch (prov) {
+          case "PLEX":
+            return "Plex";
+          case "JELLYFIN":
+            return "Jellyfin";
+          case "EMBY":
+            return "Emby";
+          case "TRAKT":
+            return "Trakt";
+          case "SIMKL":
+            return "Simkl";
+          case "MDBLIST":
+            return "mdblist";
+          default:
+            return "source";
+        }
+      };
+
+      const isServer = ["PLEX", "JELLYFIN", "EMBY"].includes(p);
+      const isTracker = ["TRAKT", "SIMKL", "MDBLIST"].includes(p);
+
+      if (f === "history") {
+        if (isServer) {
+          return `Check that watch history is correctly matched in ${where(
+            p
+          )}. Prefer IMDb/TMDB/TVDB IDs; avoid local-only matches. For Plex/Jellyfin/Emby, language or alt-title differences (e.g. Dutch vs English episode titles) often mean one side is missing those IDs.`;
+        }
+        if (isTracker) {
+          return `This history entry is missing a peer on at least one media server. Check that the matching item exists in Plex/Jellyfin/Emby with correct IMDb/TMDB/TVDB IDs and that your sync pair towards ${where(
+            p
+          )} is enabled.`;
+        }
+        return `Check that watch history is correctly matched. Prefer IMDb/TMDB/TVDB IDs; avoid local-only matches.`;
+      }
+
+      if (f === "watchlist") {
+        if (isServer) {
+          return `Check that the title exists on all paired trackers and has matching IMDb/TMDB/TVDB IDs. If one side uses localized titles, make sure both sides share the same core IDs; title language alone is not enough for matching.`;
+        }
+        if (isTracker) {
+          return `Check that the item exists on the paired media server (Plex/Jellyfin/Emby) with correct IMDb/TMDB/TVDB IDs. The watchlist on ${where(
+            p
+          )} follows the server once IDs and sync are correct.`;
+        }
+        return `Check that the title exists on both sides and has matching IMDb/TMDB/TVDB IDs. Run a sync after fixing IDs.`;
+      }
+
+      if (f === "ratings") {
+        if (isTracker) {
+          return `Ensure ratings are set on the same item on both sides with the same core IDs. In practice you usually fix mismatches on the media server and then re-sync into ${where(
+            p
+          )}.`;
+        }
+        return `Ensure ratings are set on the same item on both sides with the same core IDs. Fix mismatches in ${where(
+          p
+        )} and re-sync.`;
+      }
+
+      return `Open ${where(
+        p
+      )} → item → “Match” (or edit metadata) and make sure IMDb/TMDB/TVDB IDs and year/title are correct. Then run a sync.`;
     }
 
-    function suggestionCard(it, s){
-      const hdr = `Suggestion for: <b>${it.title||"Untitled"}</b>${it.year?` <span class="mono">(${it.year})</span>`:""}`;
-      const meta = `${s.reason} ${(s.confidence?`<span class="mono">(${(s.confidence*100|0)}%)</span>`:"")}`;
+    function manualIdsBlock(it) {
+      const ids = it.ids || {};
+      const inputs = ID_FIELDS.map(name => {
+        const val = ids[name] || "";
+        return `<label><span>${name}</span><input type="text" data-idfield="${name}" value="${String(
+          val
+        )}"></label>`;
+      }).join("");
       return `
-        <div class="issue">
-          <div class="h">${hdr}</div>
-          <div>${meta}</div>
-          <div class="mono ids" style="margin-top:6px">${chips(s.ids)}</div>
+        <div class="issue manual-ids">
+          <div class="h">Manual IDs</div>
+          <div class="ids-edit">
+            <div class="ids-edit-row">
+              ${inputs}
+            </div>
+            <div class="ids-edit-actions">
+              <button type="button" class="pill" data-act="patch-ids">Save IDs</button>
+              <button type="button" class="pill ghost" data-act="reset-ids">Reset</button>
+            </div>
+          </div>
         </div>`;
     }
 
-    async function select(tag){
-      SELECTED=tag; draw();
-      const [provider,feature,key]=tag.split("::");
-      const it = ITEMS.find(r=> tagOf(r.provider,r.feature,r.key)===tag);
-      if (!it) { issues.innerHTML = "<div class='issue'><div class='h'>No selection</div></div>"; return; }
-      const meta = await fjson("/api/analyzer/suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider,feature,key})}).catch(()=>({suggestions:[]}));
-      const sugs = meta.suggestions||[];
-      const guidance = `<div class="issue">
-        <div class="h">${it.title||"Untitled"} ${it.year?`(${it.year})`:""} • <span class="mono">${provider}/${feature}</span></div>
-        <div>${fixHint(provider, feature)}</div>
-      </div>`;
-      const lines = sugs.slice(0,5).map(s=>suggestionCard(it,s)).join("") || `<div class="issue"><div class="h">No suggestions</div><div class="mono">Match it manually in Plex/Emby/Jellyfin and sync.</div></div>`;
-      issues.innerHTML = guidance + lines;
-      issues.scrollTop = 0;
+    function bindManualIds(provider, feature, key, it) {
+      const box = Q(".issue.manual-ids", issues);
+      if (!box) return;
+      const inputs = QA("input[data-idfield]", box);
+      const btnSave = Q("button[data-act='patch-ids']", box);
+      const btnReset = Q("button[data-act='reset-ids']", box);
+      const original = Object.assign({}, it.ids || {});
+
+      if (btnReset) {
+        btnReset.addEventListener("click", () => {
+          inputs.forEach(inp => {
+            const f = inp.getAttribute("data-idfield") || "";
+            inp.value = original[f] || "";
+          });
+        });
+      }
+
+      if (!btnSave) return;
+      btnSave.addEventListener("click", async () => {
+        if (btnSave.disabled) return;
+        const idsPayload = {};
+        inputs.forEach(inp => {
+          const f = inp.getAttribute("data-idfield") || "";
+          const v = inp.value.trim();
+          idsPayload[f] = v || null;
+        });
+        const prev = btnSave.textContent;
+        btnSave.disabled = true;
+        btnSave.textContent = "Saving…";
+        try {
+          const body = {
+            provider,
+            feature,
+            key,
+            ids: idsPayload,
+            rekey: true,
+            merge_peer_ids: false
+          };
+          const res = await fjson("/api/analyzer/patch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          const newKey =
+            res && res.new_key ? String(res.new_key) : key;
+          const tagOld = tagOf(provider, feature, key);
+          const idx = ITEMS.findIndex(
+            r => tagOf(r.provider, r.feature, r.key) === tagOld
+          );
+          if (idx >= 0) {
+            const cleanIds = {};
+            Object.entries(idsPayload).forEach(([k, v]) => {
+              if (v && String(v).trim())
+                cleanIds[k] = String(v).trim();
+            });
+            ITEMS[idx].ids = cleanIds;
+            ITEMS[idx].key = newKey;
+          }
+          await analyze(true);
+          const newTag = tagOf(provider, feature, newKey);
+          SELECTED = newTag;
+          await select(newTag);
+        } catch (err) {
+          console.error(err);
+          alert("Failed to save IDs. Check console for details.");
+        } finally {
+          btnSave.disabled = false;
+          btnSave.textContent = prev;
+        }
+      });
     }
 
-    // Fetch active pairs and build a map of allowed provider-feature to target providers
+    async function select(tag) {
+      SELECTED = tag;
+      draw();
+      const [provider, feature, key] = tag.split("::");
+      const it = ITEMS.find(
+        r => tagOf(r.provider, r.feature, r.key) === tag
+      );
+      if (!it) {
+        issues.innerHTML =
+          "<div class='issue'><div class='h'>No selection</div></div>";
+        return;
+      }
+
+      const unsynced = UNSYNCED.has(tag);
+      let sugs = [];
+      if (unsynced) {
+        const meta = await fjson("/api/analyzer/suggest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, feature, key })
+        }).catch(() => ({ suggestions: [] }));
+        sugs = meta.suggestions || [];
+      }
+
+      if (!unsynced) {
+        const guidance = `<div class="issue">
+          <div class="h">${it.title || "Untitled"} ${
+          it.year ? `(${it.year})` : ""
+        } • <span class="mono">${provider}/${feature}</span></div>
+          <div>This item appears synced correctly for active pairs. No analyzer issues detected.</div>
+        </div>`;
+        const manual = manualIdsBlock(it);
+        issues.innerHTML = guidance + manual;
+        issues.scrollTop = 0;
+        bindManualIds(provider, feature, key, it);
+        return;
+      }
+
+      const guidance = `<div class="issue">
+        <div class="h">${it.title || "Untitled"} ${
+        it.year ? `(${it.year})` : ""
+      } • <span class="mono">${provider}/${feature}</span></div>
+        <div>${fixHint(provider, feature)}</div>
+      </div>`;
+
+      const lines =
+        sugs
+          .slice(0, 5)
+          .map(s => {
+            const hdr = `${
+              s.reason || "Candidate"
+            } • <span class="mono">${s.source || ""}</span>`;
+            const meta = `Confidence ${(
+              (s.confidence || 0) * 100
+            ).toFixed(1)}%`;
+            return `
+        <div class="issue">
+          <div class="h">${hdr}</div>
+          <div>${meta}</div>
+          <div class="mono ids" style="margin-top:6px">${chips(
+            s.ids
+          )}</div>
+        </div>`;
+          })
+          .join("") ||
+        `<div class="issue"><div class="h">No candidates</div><div>Match it manually in your media server (Plex/Emby/Jellyfin) and sync back to your trackers.</div></div>`;
+
+      const manual = manualIdsBlock(it);
+      issues.innerHTML = guidance + lines + manual;
+      issues.scrollTop = 0;
+      bindManualIds(provider, feature, key, it);
+    }
+
+    function renderPairs() {
+      if (!pairBar) return;
+      const list = (PAIRS || []).filter(p => p && p.enabled);
+      if (!PAIR_FILTER.size && list.length) {
+        try {
+          const raw = localStorage.getItem("an.pairs");
+          if (raw) {
+            const ids = JSON.parse(raw);
+            if (Array.isArray(ids))
+              ids.forEach(id => PAIR_FILTER.add(String(id)));
+          }
+        } catch {}
+        if (!PAIR_FILTER.size) {
+          for (const p of list) PAIR_FILTER.add(String(p.id));
+        }
+      }
+      if (!list.length) {
+        pairBar.innerHTML = "";
+        return;
+      }
+      const statsByKey = {};
+      for (const st of PAIR_STATS || []) {
+        const key = `${String(st.source || "").toUpperCase()}::${String(
+          st.target || ""
+        ).toUpperCase()}`;
+        if (!statsByKey[key])
+          statsByKey[key] = { total: 0, synced: 0, unsynced: 0 };
+        statsByKey[key].total += st.total || 0;
+        statsByKey[key].synced += st.synced || 0;
+        statsByKey[key].unsynced += st.unsynced || 0;
+      }
+      const html = list
+        .map(p => {
+          const src = String(p.source || "").toUpperCase();
+          const dst = String(p.target || "").toUpperCase();
+          const keyAB = `${src}::${dst}`;
+          const keyBA = `${dst}::${src}`;
+          const stAB = statsByKey[keyAB] || {
+            total: 0,
+            synced: 0,
+            unsynced: 0
+          };
+          const stBA = statsByKey[keyBA] || {
+            total: 0,
+            synced: 0,
+            unsynced: 0
+          };
+          const total = stAB.total + stBA.total;
+          const unsynced = stAB.unsynced + stBA.unsynced;
+          const on =
+            !PAIR_FILTER.size || PAIR_FILTER.has(String(p.id));
+          const mode = String(p.mode || "one-way").toLowerCase();
+          const dir =
+            mode === "two-way" ||
+            mode === "bi" ||
+            mode === "both" ||
+            mode === "mirror"
+              ? "⇄"
+              : "→";
+          const badge = total
+            ? `<span class="mono">${unsynced || 0}/${total}</span>`
+            : "";
+          const cls = `an-pair-chip${on ? " on" : ""}`;
+          return `<button type="button" class="${cls}" data-id="${esc(
+            String(p.id || "")
+          )}"><span class="mono">${src}</span><span class="dir">${dir}</span><span class="mono">${dst}</span>${badge}</button>`;
+        })
+        .join("");
+      pairBar.innerHTML = html;
+
+      const allIds = list.map(p => String(p.id));
+      QA(".an-pair-chip", pairBar).forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id") || "";
+          if (!id) return;
+          const allSelected =
+            allIds.length > 0 &&
+            allIds.every(x => PAIR_FILTER.has(x)) &&
+            PAIR_FILTER.size === allIds.length;
+          if (allSelected) {
+            PAIR_FILTER = new Set([id]);
+          } else if (PAIR_FILTER.size === 1 && PAIR_FILTER.has(id)) {
+            PAIR_FILTER = new Set(allIds);
+          } else {
+            if (PAIR_FILTER.has(id)) PAIR_FILTER.delete(id);
+            else PAIR_FILTER.add(id);
+            if (!PAIR_FILTER.size) {
+              PAIR_FILTER = new Set(allIds);
+            }
+          }
+          try {
+            localStorage.setItem(
+              "an.pairs",
+              JSON.stringify(Array.from(PAIR_FILTER))
+            );
+          } catch {}
+          renderPairs();
+          analyze(true);
+        });
+      });
+    }
+
     async function getActivePairMap() {
       try {
         const arr = await fjson("/api/pairs", { cache: "no-store" });
         const map = new Map();
-        const on = (feat) => feat && (typeof feat.enable === "boolean" ? feat.enable : !!feat);
+        const on = feat =>
+          feat && (typeof feat.enable === "boolean" ? feat.enable : !!feat);
         const add = (src, feat, dst) => {
-          const k = `${String(src||"").toUpperCase()}::${feat}`;
+          const k = `${String(src || "").toUpperCase()}::${feat}`;
           if (!map.has(k)) map.set(k, new Set());
-          map.get(k).add(String(dst||"").toUpperCase());
+          map.get(k).add(String(dst || "").toUpperCase());
         };
-        for (const p of (arr || [])) {
-          if (!p?.enabled) continue;
-          const src = (p.source || "").toUpperCase();
-          const dst = (p.target || "").toUpperCase();
+        PAIRS = (arr || [])
+          .filter(p => p && p.source && p.target)
+          .map(p => {
+            const src = String(p.source || "").toUpperCase();
+            const dst = String(p.target || "").toUpperCase();
+            const id = String(p.id || `${src}->${dst}`);
+            return Object.assign({}, p, { source: src, target: dst, id });
+          });
+        renderPairs();
+        for (const p of PAIRS) {
+          if (!p.enabled) continue;
+          if (PAIR_FILTER.size && !PAIR_FILTER.has(String(p.id)))
+            continue;
+          const src = p.source;
+          const dst = p.target;
           const mode = String(p.mode || "one-way").toLowerCase();
           const F = p.features || {};
-          for (const feat of ["history","watchlist","ratings"]) {
+          for (const feat of ["history", "watchlist", "ratings"]) {
             if (!on(F[feat])) continue;
             add(src, feat, dst);
-            if (["two-way","bi","both","mirror"].includes(mode)) add(dst, feat, src);
+            if (
+              mode === "two-way" ||
+              mode === "bi" ||
+              mode === "both" ||
+              mode === "mirror"
+            )
+              add(dst, feat, src);
           }
         }
         return map;
-      } catch { return new Map(); }
+      } catch {
+        return new Map();
+      }
     }
 
-    // Load + analyze with neon waiting overlay
-    async function load(){
+    async function load() {
       restoreSplit();
+      dragY();
       showWait("Reading state.json…");
       let s;
       try {
         s = await fjson("/api/analyzer/state");
-      } catch (err) {
+      } catch {
         s = { counts: {}, items: [] };
         issues.innerHTML = `
           <div class="issue">
@@ -279,74 +863,119 @@ export default {
             <div>Run a sync to generate a baseline, then reopen Analyzer.</div>
           </div>`;
       }
-      ITEMS = s.items || []; VIEW = ITEMS.slice();
-      stats.textContent = fmtCounts(s.counts) || "—";
+      ITEMS = s.items || [];
+      VIEW = ITEMS.slice();
+      const countsText = fmtCounts(s.counts);
+      stats.textContent = countsText;
+      if (!countsText) stats.classList.add("empty");
+      else stats.classList.remove("empty");
       issuesCount.textContent = "Issues: 0";
       draw();
       setWaitText("Analyzing…");
-      try { await analyze(true); } finally { hideWait(); }
+      try {
+        await analyze(true);
+      } finally {
+        hideWait();
+      }
     }
 
-    async function analyze(silent=false){
+    async function analyze(silent = false) {
       if (!silent) showWait("Analyzing…");
       const [pairMap, meta] = await Promise.all([
         getActivePairMap(),
-        fjson("/api/analyzer/problems").catch(()=>({problems:[]})),
+        fjson("/api/analyzer/problems").catch(() => ({ problems: [] }))
       ]);
+
+      PAIR_STATS = meta.pair_stats || [];
+      PAIR_SCOPE_KEYS = new Set(pairMap ? Array.from(pairMap.keys()) : []);
+      renderPairs();
+
       const all = meta.problems || [];
+      const hasPairFilter = pairMap && pairMap.size > 0;
       const seen = new Set();
-      const per = { history:0, watchlist:0, ratings:0 };
+      const per = { history: 0, watchlist: 0, ratings: 0 };
       const keep = [];
 
       for (const p of all) {
         if (p.type !== "missing_peer") continue;
-        const key = `${String(p.provider||"").toUpperCase()}::${String(p.feature||"").toLowerCase()}`;
-        const allowed = pairMap.get(key);
-        if (!allowed) continue;
-        const tgts = (p.targets||[]).map(t => String(t||"").toUpperCase());
-        if (!tgts.some(t => allowed.has(t))) continue;
+
+        if (hasPairFilter) {
+          const key = `${String(p.provider || "").toUpperCase()}::${String(
+            p.feature || ""
+          ).toLowerCase()}`;
+          const allowed = pairMap.get(key);
+          if (!allowed) continue;
+          const tgts = (p.targets || []).map(t =>
+            String(t || "").toUpperCase()
+          );
+          if (!tgts.some(t => allowed.has(t))) continue;
+        }
+
         const sig = `${p.provider}::${p.feature}::${p.key}`;
         if (seen.has(sig)) continue;
         seen.add(sig);
-        per[p.feature] = (per[p.feature]||0) + 1;
+        per[p.feature] = (per[p.feature] || 0) + 1;
         keep.push(p);
       }
 
-      PROB.all = all;
-      PROB.fix = keep;
+      UNSYNCED = new Set(
+        keep.map(p => tagOf(p.provider, p.feature, p.key))
+      );
 
       const parts = [`Issues: ${keep.length}`];
-      if (per.history)   parts.push(`H:${per.history}`);
+      if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
-      if (per.ratings)   parts.push(`R:${per.ratings}`);
+      if (per.ratings) parts.push(`R:${per.ratings}`);
       issuesCount.textContent = parts.join(" • ");
 
-      if (!keep.length){
-        issues.innerHTML = `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+      filter(search.value || "");
+
+      if (!keep.length) {
+        issues.innerHTML =
+          `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
         if (!silent) hideWait();
         return;
       }
       const first = keep[0];
       const tag = tagOf(first.provider, first.feature, first.key);
       await select(tag);
-      SELECTED = tag; draw();
+      SELECTED = tag;
       if (!silent) hideWait();
     }
 
-    btnRun.addEventListener('click', async (e) => {
-      e.preventDefault(); e.stopPropagation();
+    btnRun.addEventListener("click", async e => {
+      e.preventDefault();
+      e.stopPropagation();
       if (btnRun.disabled) return;
       const prev = btnRun.textContent;
-      btnRun.disabled = true; btnRun.textContent = 'Analyzing…';
-      try { await analyze(false); }
-      finally { btnRun.disabled = false; btnRun.textContent = prev; }
+      btnRun.disabled = true;
+      btnRun.textContent = "Analyzing…";
+      try {
+        await analyze(false);
+      } finally {
+        btnRun.disabled = false;
+        btnRun.textContent = prev;
+      }
     });
 
-    btnToggleIDs.onclick = () => { SHOW_IDS = !SHOW_IDS; btnToggleIDs.textContent = `IDs: ${SHOW_IDS?'shown':'hidden'}`; grid.classList.toggle("show-ids", SHOW_IDS); };
-    search.addEventListener("input", (e)=>filter(e.target.value));
-    btnClose.addEventListener("click", closeModal);
+    btnToggleIDs.onclick = () => {
+      SHOW_IDS = !SHOW_IDS;
+      btnToggleIDs.textContent = `IDs: ${
+        SHOW_IDS ? "shown" : "hidden"
+      }`;
+      grid.classList.toggle("show-ids", SHOW_IDS);
+    };
+    btnScope.onclick = () => {
+      SCOPE = SCOPE === "issues" ? "all" : "issues";
+      btnScope.textContent = `Scope: ${SCOPE}`;
+      filter(search.value || "");
+    };
+    search.addEventListener("input", e => filter(e.target.value));
+    btnClose.addEventListener("click", () => {
+      if (window.cxCloseModal) window.cxCloseModal();
+    });
 
     await load();
-    },
-    unmount(){ /* noop */ }
-    };
+  },
+  unmount() {}
+};
