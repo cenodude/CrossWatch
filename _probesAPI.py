@@ -1,4 +1,5 @@
 # _probesAPI.py
+# CrossWatch - Probes API for multiple services
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, Tuple, Callable
@@ -9,7 +10,6 @@ from urllib.parse import quote
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
-# Optional Plex user info via plexapi
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
@@ -98,13 +98,12 @@ def probe_trakt(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     
 def probe_mdblist(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["mdblist"]; now = time.time()
-    if now - ts < max_age_sec: return ok
-    md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {})
-    key = (md.get("api_key") or "").strip()
-    if not key:
-        PROBE_CACHE["mdblist"] = (now, False); return False
-    code, _ = _http_get(f"https://api.mdblist.com/user?apikey={key}", headers=UA)
-    ok = (code == 200); PROBE_CACHE["mdblist"] = (now, ok); return ok
+    if now - ts < max_age_sec:
+        return ok
+    info = mdblist_user_info(cfg, max_age_sec=max_age_sec)
+    ok = bool(info)
+    PROBE_CACHE["mdblist"] = (now, ok)
+    return ok
 
 def probe_jellyfin(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["jellyfin"]; now = time.time()
@@ -163,14 +162,17 @@ def _probe_trakt_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tu
     
 def _probe_mdblist_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]; now = time.time()
-    if now - ts < max_age_sec: return ok, rsn
-    md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {})
-    key = (md.get("api_key") or "").strip()
-    if not key:
-        rsn = "MDBLIST: missing api_key"; PROBE_DETAIL_CACHE["mdblist"] = (now, False, rsn); return False, rsn
-    code, _ = _http_get(f"https://api.mdblist.com/user?apikey={key}", headers=UA)
-    ok = (code == 200); rsn = "" if ok else _reason_http(code, "MDBLIST")
-    PROBE_DETAIL_CACHE["mdblist"] = (now, ok, rsn); return ok, rsn
+    if now - ts < max_age_sec:
+        return ok, rsn
+    info = mdblist_user_info(cfg, max_age_sec=max_age_sec)
+    if not info:
+        ok = False
+        rsn = "MDBLIST: user lookup failed"
+    else:
+        ok = True
+        rsn = ""
+    PROBE_DETAIL_CACHE["mdblist"] = (now, ok, rsn)
+    return ok, rsn
 
 def _probe_jellyfin_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["jellyfin"]; now = time.time()

@@ -1,3 +1,6 @@
+# _analyzer.py
+# CrossWatch - Data analyzer for state
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from collections import defaultdict
@@ -202,6 +205,97 @@ def _pair_map(cfg: Dict[str, Any], state: Dict[str, Any]) -> DefaultDict[Tuple[s
                 add(dst, f, src)
     return mp
 
+# ── Pair-level library whitelisting (Analyzer-side)
+def _supports_pair_libs(prov: str) -> bool:
+    return str(prov or "").upper() in ("PLEX", "EMBY", "JELLYFIN")
+
+def _item_library_id(it: Dict[str, Any]) -> str | None:
+    if not isinstance(it, dict):
+        return None
+
+    for k in (
+        "library_id",
+        "libraryId",
+        "library",
+        "section_id",
+        "sectionId",
+        "section",
+        "lib_id",
+        "libraryid",
+    ):
+        v = it.get(k)
+        if v not in (None, "", []):
+            return str(v).strip()
+
+    for nest_key in ("meta", "server", "userData", "userdata", "extra"):
+        nest = it.get(nest_key) or {}
+        if isinstance(nest, dict):
+            for k in ("library_id", "libraryId", "library", "section_id", "sectionId", "section"):
+                v = nest.get(k)
+                if v not in (None, "", []):
+                    return str(v).strip()
+
+    return None
+
+def _pair_lib_filters(cfg: Dict[str, Any]) -> Dict[Tuple[str, str, str], set[str]]:
+    out: Dict[Tuple[str, str, str], set[str]] = {}
+    for pr in (cfg.get("pairs") or []):
+        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
+        if not (src and dst):
+            continue
+        if pr.get("enabled") is False:
+            continue
+
+        mode = str(pr.get("mode") or "one-way").lower()
+        feats = pr.get("features") or {}
+        if not isinstance(feats, dict):
+            continue
+
+        for feat in ("history", "watchlist", "ratings"):
+            fcfg = feats.get(feat) or {}
+            if not (isinstance(fcfg, dict) and (fcfg.get("enable") or fcfg.get("enabled"))):
+                continue
+
+            libs_dict = fcfg.get("libraries") or {}
+            if not isinstance(libs_dict, dict):
+                libs_dict = {}
+
+            def add_dir(a: str, b: str) -> None:
+                if not _supports_pair_libs(a):
+                    return
+                raw = libs_dict.get(a) or libs_dict.get(a.lower()) or libs_dict.get(a.upper())
+                if isinstance(raw, (list, tuple)) and raw:
+                    allowed = set(str(x).strip() for x in raw if str(x).strip())
+                    if allowed:
+                        out[(a, feat, b)] = allowed
+
+            add_dir(src, dst)
+            if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
+                add_dir(dst, src)
+
+    return out
+
+def _passes_pair_lib_filter(
+    pair_libs: Dict[Tuple[str, str, str], set[str]] | None,
+    prov: str,
+    feat: str,
+    dst: str,
+    item: Dict[str, Any],
+) -> bool:
+    if not pair_libs:
+        return True
+    p = str(prov or "").upper()
+    f = str(feat or "").lower()
+    d = str(dst or "").upper()
+    allowed = pair_libs.get((p, f, d))
+    if not allowed:
+        return True
+    lid = _item_library_id(item)
+    if lid is None:
+        return True
+    return lid in allowed
+
 def _indices_for(s: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, str]]:
     out: Dict[Tuple[str, str], Dict[str, str]] = {}
     for p, f, _, _ in _iter_items(s):
@@ -218,16 +312,25 @@ def _has_peer_by_pairs(
     item_key: str,
     item: Dict[str, Any],
     idx_cache: Dict[Tuple[str, str], Dict[str, str]],
+    pair_libs: Dict[Tuple[str, str, str], set[str]] | None = None,
 ) -> bool:
     if feat not in ("history", "watchlist", "ratings"):
         return True
     targets = pairs.get((prov, feat.lower()), [])
     if not targets:
         return True
+
+    filtered_targets: List[str] = []
+    for dst in targets:
+        if _passes_pair_lib_filter(pair_libs, prov, feat, dst, item):
+            filtered_targets.append(dst)
+    if not filtered_targets:
+        return True  # out of scope for all pair dirs
+
     vv = dict(item)
     vv["_key"] = item_key
     keys = set(_alias_keys(vv))
-    for dst in targets:
+    for dst in filtered_targets:
         idx = idx_cache.get((dst, feat)) or {}
         if any(k in idx for k in keys):
             return True
@@ -237,21 +340,28 @@ def _pair_stats(s: Dict[str, Any]) -> List[Dict[str, Any]]:
     stats: List[Dict[str, Any]] = []
     pairs = _pair_map(_cfg(), s)
     idx_cache = _indices_for(s)
+    pair_libs = _pair_lib_filters(_cfg())
+
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         for dst in targets:
             total = 0
             synced = 0
             idx = idx_cache.get((dst, feat)) or {}
+
             for k, v in src_items.items():
                 if v.get("_ignore_missing_peer"):
                     continue
+                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v):
+                    continue
+
                 total += 1
                 vv = dict(v)
                 vv["_key"] = k
                 alias_keys = _alias_keys(vv)
                 if any(a in idx for a in alias_keys):
                     synced += 1
+
             stats.append(
                 {
                     "source": prov,
@@ -271,6 +381,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     pairs = _pair_map(_cfg(), s)
     idx_cache = _indices_for(s)
+    pair_libs = _pair_lib_filters(_cfg())
     cw_state = _read_cw_state()
     unresolved_index: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
     for name, body in (cw_state or {}).items():
@@ -316,16 +427,28 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
-        union_targets = [idx_cache.get((t, feat)) or {} for t in targets]
-        if not union_targets:
+        if not targets:
             continue
-        merged_keys = set().union(*[set(d.keys()) for d in union_targets]) if union_targets else set()
+
         for k, v in src_items.items():
             if v.get("_ignore_missing_peer"):
                 continue
+
+            filtered_targets: List[str] = []
+            union_targets: List[Dict[str, str]] = []
+            for t in targets:
+                if _passes_pair_lib_filter(pair_libs, prov, feat, t, v):
+                    filtered_targets.append(t)
+                    union_targets.append(idx_cache.get((t, feat)) or {})
+
+            if not union_targets:
+                continue  # out of scope
+
+            merged_keys = set().union(*[set(d.keys()) for d in union_targets]) if union_targets else set()
             vv = dict(v)
             vv["_key"] = k
             alias_keys = _alias_keys(vv)
+
             if not any(ak in merged_keys for ak in alias_keys):
                 prob: Dict[str, Any] = {
                     "severity": "warn",
@@ -335,10 +458,11 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "key": k,
                     "title": v.get("title"),
                     "year": v.get("year"),
-                    "targets": targets,
+                    "targets": filtered_targets,
                 }
+
                 hints: List[Dict[str, Any]] = []
-                for dst in targets:
+                for dst in filtered_targets:
                     idx_key = (str(dst).upper(), feat.lower())
                     uidx = unresolved_index.get(idx_key) or {}
                     for ak in alias_keys:
@@ -617,7 +741,8 @@ def _apply_fix(s: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
 
     pairs = _pair_map(_cfg(), s)
     idx = _indices_for(s)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, prov, feat, new, it, idx)
+    pair_libs = _pair_lib_filters(_cfg())
+    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, prov, feat, new, it, idx, pair_libs)
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
 
 # ── Suggest
@@ -785,7 +910,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
             elif typ in ("show", "episode"):
                 r = _tmdb(
                     "/search/tv",
-                    {"query": title, "first_air_date_year": year or ""},
+                    {"query": title, "first_air_date_year": year or ""}, 
                 )
                 if r.get("results"):
                     base = r["results"][0]["id"]
@@ -813,7 +938,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
         if core_ids and title:
             base_title = title.strip().lower()
             prov_up = (prov or "").upper()
-            # combo's that often have alt/language titles
             lang_prov_targets = {
                 "PLEX": {"JELLYFIN", "EMBY"},
                 "JELLYFIN": {"PLEX", "EMBY"},
@@ -939,7 +1063,10 @@ def api_patch(payload: Dict[str, Any]):
     new = _rekey(b, payload["key"], it)
     pairs = _pair_map(_cfg(), s)
     idx = _indices_for(s)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, payload["provider"], payload["feature"], new, it, idx)
+    pair_libs = _pair_lib_filters(_cfg())
+    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+        s, pairs, payload["provider"], payload["feature"], new, it, idx, pair_libs
+    )
     _save_state(s)
     return {"ok": True, "new_key": new}
 
@@ -984,7 +1111,10 @@ def api_edit(payload: Dict[str, Any]):
     new = _rekey(b, payload["key"], it)
     pairs = _pair_map(_cfg(), s)
     idx = _indices_for(s)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, payload["provider"], payload["feature"], new, it, idx)
+    pair_libs = _pair_lib_filters(_cfg())
+    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+        s, pairs, payload["provider"], payload["feature"], new, it, idx, pair_libs
+    )
     _save_state(s)
     return {"ok": True, "new_key": new}
 

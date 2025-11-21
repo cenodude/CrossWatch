@@ -1,4 +1,6 @@
 # _scheduling.py
+# CrossWatch - Scheduling module for automated sync tasks
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import random

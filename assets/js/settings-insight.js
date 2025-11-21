@@ -2,9 +2,7 @@
 (function (w, d) {
   "use strict";
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Tiny helpers (DOM, sleep, fetch, time, misc)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Helpers
   const $  = (sel, root) => (root || d).querySelector(sel);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function fetchJSON(url){ try{ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) return null; return await r.json(); }catch{ return null; } }
@@ -15,9 +13,7 @@
   }
   const coalesceNextRun = o => o ? (o.next_run_at ?? o.next_run ?? o.next ?? null) : null;
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Styles (scoped to the insight card)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Styles
   const css = `
   #cw-settings-grid{
     width:100%; margin-top:12px; display:grid;
@@ -83,6 +79,33 @@
   .si-h { color: #E6EAFD; font-weight: 700; line-height: 1.2; }
   .si-one { color: #C3CAE3; font-size: 13px; margin-top: 2px; }
 
+  /* Whitelisting block (Option A) */
+  .si-wl { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
+  .si-wl-level { display:flex; flex-direction:column; gap:6px; }
+  .si-wl-level-title{
+    font-size:12px; font-weight:700; letter-spacing:.2px;
+    color:#D6DBF0; opacity:.9; margin-left:2px;
+  }
+  .si-wl-list{ display:flex; flex-direction:column; gap:4px; padding-left:2px; }
+  .si-wl-item{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:2px 0;
+  }
+  .si-wl-name{
+    color:#E6EAFD; font-weight:600; font-size:13px; white-space:nowrap;
+  }
+  .si-wl-chips{ display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+  .si-chip{
+    display:inline-flex; align-items:center; gap:4px;
+    font-size:11px; font-weight:700; letter-spacing:.2px;
+    color:#C9CFF0;
+    padding:2px 6px;
+    border-radius:6px;
+    background: rgba(140,120,255,0.08);
+    border: 1px solid rgba(140,120,255,0.22);
+    line-height:1.2;
+  }
+
   /* Wizard (empty state) */
   .si-empty {
     display: flex;
@@ -104,14 +127,9 @@
   }
   `;
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Style injection (idempotent)
-  // ────────────────────────────────────────────────────────────────────────────
   function ensureStyle(){ if($("#cw-settings-insight-style")) return; const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // DOM scaffolding (grid + aside + card)
-  // ────────────────────────────────────────────────────────────────────────────
+  // DOM structure setup
   function ensureGrid(){
     const page=$("#page-settings"); if(!page) return null;
     let left=page.querySelector("#cw-settings-left, .settings-wrap, .settings, .accordion, .content, .page-inner");
@@ -143,9 +161,7 @@
     return nodes;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Data sources (config + summaries)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Data fetching and summarization
   async function readConfig() {
     const cfg = await fetchJSON("/api/config?t=" + Date.now());
     return cfg || {};
@@ -227,13 +243,75 @@
   async function getScrobblerSummary(cfg){
     const sc=cfg?.scrobble||{}; const mode=(sc?.mode||"").toLowerCase(); const enabled=!!sc?.enabled;
     let watcher={ alive:false, has_watch:false, stop_set:false };
-    if(enabled && mode==="watch"){ const s=await fetchJSON("/debug/watch/status"); watcher={ alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set }; }
+    if(enabled && mode==="watch"){ const s=await fetchJSON("/api/watch/status"); watcher={ alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set }; }
     return { mode: enabled ? (mode||"webhook") : "", enabled, watcher };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // UI builders (icons, rows, empty states, render)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Whitelisting summary
+  function getWhitelistingSummary(cfg){
+    const providers = [
+      { key:"plex", label:"Plex" },
+      { key:"emby", label:"Emby" },
+      { key:"jellyfin", label:"Jellyfin" }
+    ];
+    const cats = ["history","ratings","watchlist","playlists"];
+
+    const serverActive = [];
+    for (const p of providers) {
+      const base = cfg?.[p.key] || {};
+      const byCat = {};
+
+      for (const c of cats) {
+        const libs = base?.[c]?.libraries;
+        if (Array.isArray(libs) && libs.length > 0) byCat[c] = libs.length;
+      }
+
+      if (Object.keys(byCat).length) serverActive.push({ label:p.label, byCat });
+    }
+
+    const pairsRaw = cfg?.pairs || cfg?.connections || [];
+    const pairs = Array.isArray(pairsRaw) ? pairsRaw : [];
+
+    const pairActive = [];
+    const seen = new Set();
+    const provKeys = ["PLEX","EMBY","JELLYFIN"];
+    const provLabel = { PLEX:"Plex", EMBY:"Emby", JELLYFIN:"Jellyfin" };
+
+    for (const pair of pairs) {
+      const feats = pair?.features || {};
+      const provSets = { PLEX:new Set(), EMBY:new Set(), JELLYFIN:new Set() };
+
+      for (const fk of Object.keys(feats)) {
+        const libsObj = feats?.[fk]?.libraries;
+        if (!libsObj || typeof libsObj !== "object") continue;
+
+        for (const pk of provKeys) {
+          const libs = libsObj?.[pk];
+          if (Array.isArray(libs) && libs.length > 0) libs.forEach(x => provSets[pk].add(String(x)));
+        }
+      }
+
+      const byProv = {};
+      for (const pk of provKeys) {
+        if (provSets[pk].size > 0) byProv[provLabel[pk]] = provSets[pk].size;
+      }
+
+      if (Object.keys(byProv).length) {
+        const s = String(pair?.source || "").toUpperCase();
+        const t = String(pair?.target || "").toUpperCase();
+        const label = (s && t) ? `${s}→${t}` : String(pair?.id || "pair");
+        if (!seen.has(label)) {
+          seen.add(label);
+          pairActive.push({ label, byProv });
+        }
+      }
+    }
+
+    return { serverActive, pairActive };
+  }
+
+  
+  // UI Rendering
   const I = (name, size) => `<span class="material-symbols-rounded" style="font-size:${size||30}px">${name}</span>`;
 
   function row(iconName, title, oneLine){
@@ -245,6 +323,56 @@
         <div class="si-one">${oneLine}</div>
       </div>`;
     return el;
+  }
+
+  function whitelistHTML(wl){
+    if (!wl) return "";
+    const { serverActive, pairActive } = wl;
+    if (!serverActive.length && !pairActive.length) return "";
+
+    const catShort = { history:"H", ratings:"R", watchlist:"W", playlists:"P" };
+
+    const out = [];
+    out.push(`<div class="si-wl">`);
+
+    if (serverActive.length) {
+      out.push(`<div class="si-wl-level">`);
+      out.push(`<div class="si-wl-level-title">Server-level</div>`);
+      out.push(`<div class="si-wl-list">`);
+      for (const s of serverActive) {
+        const chips = Object.keys(s.byCat)
+          .map(c => `<span class="si-chip">${catShort[c] || c[0].toUpperCase()} ${s.byCat[c]}</span>`)
+          .join("");
+        out.push(`
+          <div class="si-wl-item">
+            <span class="si-wl-name">${s.label}</span>
+            <span class="si-wl-chips">${chips}</span>
+          </div>
+        `);
+      }
+      out.push(`</div></div>`);
+    }
+
+    if (pairActive.length) {
+      out.push(`<div class="si-wl-level">`);
+      out.push(`<div class="si-wl-level-title">Pair-level</div>`);
+      out.push(`<div class="si-wl-list">`);
+      for (const p of pairActive) {
+        const chips = Object.keys(p.byProv)
+          .map(k => `<span class="si-chip">${k} ${p.byProv[k]}</span>`)
+          .join("");
+        out.push(`
+          <div class="si-wl-item">
+            <span class="si-wl-name">${p.label}</span>
+            <span class="si-wl-chips">${chips}</span>
+          </div>
+        `);
+      }
+      out.push(`</div></div>`);
+    }
+
+    out.push(`</div>`);
+    return out.join("");
   }
 
   function renderWizard() {
@@ -289,6 +417,10 @@
     body.appendChild(row("lock","Authentication Providers",
       `Detected providers: ${data.auth.detected}, Configured: ${data.auth.configured}`));
     body.appendChild(row("link","Synchronization Pairs",  `Pairs: ${data.pairs.count}`));
+
+    const wlBlock = whitelistHTML(data.whitelist);
+    if (wlBlock) body.appendChild(row("filter_alt","Whitelisting", wlBlock));
+
     if (data.meta.configured === 0) {
       body.appendChild(row(
         "image",
@@ -309,9 +441,8 @@
     body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}`));
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Layout sync (keeps the card height sensible)
-  // ────────────────────────────────────────────────────────────────────────────
+
+  // Layout sync
   function syncHeight(){
     const left=$("#cw-settings-left") || $("#page-settings .settings-wrap, #page-settings .settings, #page-settings .accordion, #page-settings .content, #page-settings .page-inner");
     const scroll=$("#cw-si-scroll");
@@ -320,10 +451,7 @@
     const top=12, maxViewport=Math.max(200,(w.innerHeight-top-16)), maxByLeft=Math.max(200,rect.height);
     scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Refresh loop (state + scheduler)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Refresh loop
   let _loopTimer = null;
 
   async function tick(){
@@ -334,7 +462,8 @@
       const [auth,pairs,meta,sched,scrob]=await Promise.all([
         getAuthSummary(cfg), getPairsSummary(cfg), getMetadataSummary(), getSchedulingSummary(), getScrobblerSummary(cfg)
       ]);
-      render({auth,pairs,meta,sched,scrob});
+      const whitelist = getWhitelistingSummary(cfg);
+      render({auth,pairs,meta,sched,scrob,whitelist});
       syncHeight();
       if (_loopTimer) clearTimeout(_loopTimer);
       _loopTimer = setTimeout(tick, 10000);
@@ -343,10 +472,7 @@
       _loopTimer = setTimeout(tick, 3000);
     }
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Bootstrapping & event wiring (safe to call multiple times)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Bootstrapping
   (async function boot(){
     if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 

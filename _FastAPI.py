@@ -1,4 +1,5 @@
 # _FastAPI.py
+# CrossWatch - FastAPI utilities for UI
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from pathlib import Path
@@ -65,6 +66,10 @@ def get_index_html() -> str:
   #save-fab{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));z-index:10000;display:flex;justify-content:center;align-items:center;pointer-events:none;background:transparent}
   #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
   #save-fab.hidden,#save-frost.hidden{display:none}
+  
+  #conn-badges.vip-badges{display:grid;grid-template-columns:repeat(4,auto);gap:8px;justify-content:flex-end;}
+  #conn-badges.vip-badges .conn-item{margin:0;}
+  
   .ops-header{display:flex;align-items:center;gap:12px}
   .ops-header-flex { display:flex; align-items:center; gap:.75rem; }
   #btn-status-refresh.sync-ctrl{
@@ -79,6 +84,44 @@ def get_index_html() -> str:
   #btn-status-refresh.spinning { animation: spin 1s linear infinite; }
   #btn-status-refresh.spinning .icon { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  
+  /* Auth provider configured dots */
+  .auth-dot{
+    width:18px;height:18px;border-radius:999px;
+    display:inline-block;flex:0 0 auto;
+    background:rgba(255,255,255,.22);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+    margin-left:auto;      /* push to far right */
+    margin-right:16px;     /* align with your red line */
+  }
+  .auth-dot.on{
+    background:#30ff8a;
+    box-shadow:
+      0 0 8px rgba(48,255,138,.95),
+      0 0 18px rgba(48,255,138,.75),
+      0 0 34px rgba(48,255,138,.55);
+    animation:cw-auth-pulse 4s ease-in-out infinite;
+  }
+
+  @keyframes cw-auth-pulse{
+    0%,100%{
+      transform:scale(1);
+      opacity:.95;
+      box-shadow:
+        0 0 8px rgba(48,255,138,.95),
+        0 0 18px rgba(48,255,138,.75),
+        0 0 34px rgba(48,255,138,.55);
+    }
+    50%{
+      transform:scale(1.28);
+      opacity:1;
+      box-shadow:
+        0 0 12px rgba(48,255,138,1),
+        0 0 26px rgba(48,255,138,.9),
+        0 0 44px rgba(48,255,138,.7);
+    }
+  }
+
 </style>
 </head><body>
 
@@ -232,34 +275,62 @@ def get_index_html() -> str:
           </div>
         </div>
         
-        <div class="section" id="sec-scrobbler">
-          <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
-            <span class="chev">▶</span><strong>Scrobbler</strong>
-            <span title="Plex/Jellyfin/Emby to Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
-            </span>
-          </div>
-          <div class="body" id="scrobble-mount">
-            <div class="section" id="sc-sec-webhook">
-              <div class="head" onclick="toggleSection('sc-sec-webhook')"><span class="chev">▶</span><strong>Webhook</strong></div>
-              <div class="body"><div id="scrob-webhook"></div></div>
+      <div class="section" id="sec-scrobbler">
+        <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
+          <span class="chev">▶</span><strong>Scrobbler</strong>
+          <span title="Plex/Jellyfin/Emby to Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
+            <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
+            <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+            <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
+          </span>
+        </div>
+        <div class="body" id="scrobble-mount">
+          <div class="section" id="sc-sec-webhook">
+            <div class="head" onclick="toggleSection('sc-sec-webhook')">
+              <span class="chev">▶</span><strong>Webhook</strong>
             </div>
-            <div class="section" id="sc-sec-watch">
-              <div class="head" onclick="toggleSection('sc-sec-watch')"><span class="chev">▶</span><strong>Watcher</strong></div>
-              <div class="body"><div id="scrob-watcher"></div></div>
+            <div class="body"><div id="scrob-webhook"></div></div>
+          </div>
+          <div class="section" id="sc-sec-watch">
+            <div class="head" onclick="toggleSection('sc-sec-watch')">
+              <span class="chev">▶</span><strong>Watcher</strong>
+            </div>
+            <div class="body"><div id="scrob-watcher"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" id="sec-ui">
+        <div class="head" onclick="toggleSection('sec-ui')" style="display:flex;align-items:center">
+          <span class="chev">▶</span>
+          <strong>User Interface</strong>
+        </div>
+        <div class="body">
+          <div class="grid2">
+            <div>
+              <label>Watchlist Preview</label>
+              <select id="ui_show_watchlist_preview">
+                <option value="true">Show</option>
+                <option value="false">Hide</option>
+              </select>
             </div>
           </div>
         </div>
+      </div>
 
         <div class="section" id="sec-troubleshoot">
           <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Maintenance</strong></div>
           <div class="body">
-            <div class="sub">Use these actions to reset application state. They are safe but cannot be undone.</div>
+            <div class="sub">Use these actions to reset CrossWatch states. They are safe but cannot be undone.</div>
             <div><label>Debug</label><select id="debug"><option value="off">off</option><option value="on">on</option><option value="mods">on — including MOD debug</option><option value="full">on — full</option></select></div>
-            <div class="chiprow"><button class="btn danger" onclick="clearState()">Clear State</button><button class="btn danger" onclick="clearCache()">Clear Cache</button><button class="btn danger" onclick="resetStats()">Reset Statistics</button></div>
+            <div class="chiprow">
+            <button class="btn danger" onclick="clearState()">Clear state</button>
+            <button class="btn danger" onclick="clearCache()">Clear cache</button>
+            <button class="btn danger" onclick="resetStats()">Reset statistics</button>
+            <button class="btn danger" onclick="resetCurrentlyPlaying()">Reset Currently Playing</button>
+            <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
+          </div>
             <div id="tb_msg" class="msg ok hidden">Done ✓</div>
           </div>
         </div>
@@ -361,6 +432,88 @@ function isProviderConfigured(key,cfg){
   }
 }
 
+// ---- Auth provider configured dots  ----
+function ensureAuthDot(secId, on){
+  const sec = document.getElementById(secId);
+  if(!sec) return false;
+
+  const head = sec.querySelector(".head") || sec.firstElementChild;
+  if(!head) return false;
+
+  // ensure flex so margin-left:auto works
+  const ds = getComputedStyle(head).display;
+  if(ds !== "flex"){
+    head.style.display = "flex";
+    head.style.alignItems = "center";
+  }
+
+  let dot = head.querySelector(".auth-dot");
+  if(!dot){
+    dot = document.createElement("span");
+    dot.className = "auth-dot";
+    head.appendChild(dot); // last child => rightmost
+  }
+
+  dot.classList.toggle("on", !!on);
+  dot.title = on ? "Configured" : "Not configured";
+  dot.setAttribute("aria-label", dot.title);
+  return true;
+}
+
+async function refreshAuthDots(force=false){
+  const cfg = await getConfig(force);
+  const map = [
+    ["sec-plex",     "PLEX"],
+    ["sec-emby",     "EMBY"],
+    ["sec-jellyfin", "JELLYFIN"],
+    ["sec-trakt",    "TRAKT"],
+    ["sec-simkl",    "SIMKL"],
+    ["sec-mdblist",  "MDBLIST"],
+  ];
+
+  let any = false;
+  map.forEach(([id,key]) => {
+    any = ensureAuthDot(id, isProviderConfigured(key, cfg)) || any;
+  });
+  return any;
+}
+window.refreshAuthDots = refreshAuthDots;
+
+function watchAuthMount(){
+  const IDS = ["sec-plex","sec-emby","sec-jellyfin","sec-trakt","sec-simkl","sec-mdblist"];
+  const hasAny = () => IDS.some(id => document.getElementById(id));
+
+  if (hasAny()){
+    refreshAuthDots(true).catch(()=>{});
+    return;
+  }
+
+  const mo = new MutationObserver(() => {
+    if (!hasAny()) return;
+    mo.disconnect();
+    refreshAuthDots(true).catch(()=>{});
+  });
+
+  mo.observe(document.documentElement, { childList:true, subtree:true });
+}
+
+let __authMo = null;
+
+function watchAuthMount(){
+  const host = document.getElementById("auth-providers");
+  if (!host || __authMo) return;
+
+  __authMo = new MutationObserver(() => {
+    refreshAuthDots(false).catch(()=>{});
+  });
+
+  __authMo.observe(host, { childList: true, subtree: true });
+}
+
+// run when auth HTML lands / settings change
+document.addEventListener("settings-collect", () => refreshAuthDots(true), true);
+document.addEventListener("tab-changed", () => refreshAuthDots(false), true);
+
 // Connection pill; 'detail' becomes the tooltip
 function makeConn({name,connected,vip,detail}){
   const w=document.createElement('div'); w.className='conn-item';
@@ -396,60 +549,105 @@ document.addEventListener('DOMContentLoaded',placeRefreshTopRight,{once:true});
   }
 })();
 
-// Render status; shows reason as tooltip when disconnected
+// Render status
 function render(payload){
-  const host=document.getElementById('conn-badges'); if(!host) return;
+  const host = document.getElementById('conn-badges');
+  if (!host) return;
+
   host.classList.add('vip-badges');
 
-  const btn=document.getElementById('btn-status-refresh');
-  if(btn && host.contains(btn)) host.removeChild(btn);
-  host.querySelectorAll('.conn-item').forEach(n=>n.remove());
+  // layout: max 5 per row
+  const MAX_PER_ROW = 5;
+  host.style.display = 'grid';
+  host.style.gridTemplateColumns = `repeat(${MAX_PER_ROW}, max-content)`;
+  host.style.columnGap = '8px';
+  host.style.rowGap = '8px';
 
-  const P=payload?.providers||{};
-  const cfg=__cfg||{};
-  const keys=Object.keys(P).filter(k=>isProviderConfigured(k,cfg)).sort();
+  const btn = document.getElementById('btn-status-refresh');
+  if (btn && host.contains(btn)) host.removeChild(btn);
+  host.querySelectorAll('.conn-item').forEach(n => n.remove());
 
-  const none=keys.length===0;
-  host.classList.toggle('hidden',none);
-  if(none){ const hdr=document.querySelector('.ops-header'); if(btn&&hdr) hdr.appendChild(btn); return; }
+  const P   = payload?.providers || {};
+  const cfg = __cfg || {};
+  const keys = Object.keys(P).filter(k => isProviderConfigured(k, cfg)).sort();
 
-  keys.forEach(K=>{
+  const none = keys.length === 0;
+  host.classList.toggle('hidden', none);
+  if (none) {
+    const hdr = document.querySelector('.ops-header');
+    if (btn && hdr) hdr.appendChild(btn);
+    return;
+  }
+
+  const items = [];
+
+  keys.forEach(K => {
     const d = P[K] || {};
-    const LABELS = { PLEX:'Plex', TRAKT:'Trakt', SIMKL:'SIMKL', JELLYFIN:'Jellyfin', EMBY:'Emby', MDBLIST:'MDBlist' };
+    const LABELS = {
+      PLEX: 'Plex',
+      TRAKT: 'Trakt',
+      SIMKL: 'SIMKL',
+      JELLYFIN: 'Jellyfin',
+      EMBY: 'Emby',
+      MDBLIST: 'MDBlist'
+    };
     const name = LABELS[K] || titleCase(K);
-    const connected=!!d.connected;
-    let vip=false, detail='';
+    const connected = !!d.connected;
+    let vip = false;
+    let detail = '';
 
-    if(!connected){
-      detail=d.reason || `${name} not connected`;
-    }else{
-      if(K.toUpperCase()==='PLEX'){
-        vip=!!(d.plexpass||d.subscription?.plan);
-        if(vip){ detail=`Plex Pass — ${d.subscription?.plan||'Active'}`; }
-      }else if(K.toUpperCase()==='TRAKT'){
-        vip=!!d.vip;
+    if (!connected) {
+      detail = d.reason || `${name} not connected`;
+    } else {
+      if (K.toUpperCase() === 'PLEX') {
+        vip = !!(d.plexpass || d.subscription?.plan);
+        if (vip) detail = `Plex Pass — ${d.subscription?.plan || 'Active'}`;
+      } else if (K.toUpperCase() === 'TRAKT') {
+        vip = !!d.vip;
         detail = vip ? 'VIP status — Enabled' : '';
-      }else if(K.toUpperCase()==='EMBY'){
-        vip=!!d.premiere;
-        if(vip){ detail='Premiere — Active'; }
+      } else if (K.toUpperCase() === 'EMBY') {
+        vip = !!d.premiere;
+        if (vip) detail = 'Premiere — Active';
       } else if (K.toUpperCase() === 'MDBLIST') {
-        vip = !!d.vip; // crown if patron
+        vip = !!d.vip;
         const lim = (d && typeof d === 'object' && d.limits && typeof d.limits === 'object') ? d.limits : {};
         const used = Number(lim.api_requests_count);
         const max  = Number(lim.api_requests);
         const usedStr = Number.isFinite(used) ? used.toLocaleString() : '-';
-        const maxStr  = Number.isFinite(max)  ? max.toLocaleString()  : '-';
+        const maxStr  = Number.isFinite(max)  ? max.toLocaleString() : '-';
         const pat = d.patron_status || '';
         detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` — Status: ${pat}` : '');
       }
     }
-    host.appendChild(makeConn({name,connected,vip,detail}));
+
+    const el = makeConn({ name, connected, vip, detail });
+    el.style.margin = '0';
+    items.push(el);
   });
+
+  for (let i = 0; i < items.length; i += MAX_PER_ROW) {
+    const row = items.slice(i, i + MAX_PER_ROW);
+    const rowIndex = i / MAX_PER_ROW;
+
+    // pad later rows on the left with invisible spacers
+    if (rowIndex > 0 && row.length < MAX_PER_ROW) {
+      const pad = MAX_PER_ROW - row.length;
+      for (let p = 0; p < pad; p++) {
+        const spacer = document.createElement('div');
+        spacer.className = 'conn-item conn-spacer';
+        spacer.style.visibility = 'hidden';
+        spacer.style.margin = '0';
+        spacer.style.pointerEvents = 'none';
+        host.appendChild(spacer);
+      }
+    }
+
+    row.forEach(el => host.appendChild(el));
+  }
 
   putRefreshBeforeTrakt();
 }
 
-// Abortable fetch with short timeout for snappy UI
 async function fetchAndRender(e){
   e?.preventDefault?.();
   const btn=e?.currentTarget||document.getElementById('btn-status-refresh'); if(!btn) return;
@@ -461,6 +659,7 @@ async function fetchAndRender(e){
 
   try{
     await getConfig(true);
+    refreshAuthDots(false).catch(()=>{});
     const r=await fetch('/api/status?fresh=1',{cache:'no-store',signal:ctl.signal});
     const d=r.ok?await r.json():null;
     render(d?.providers?d:{providers:{}});
@@ -479,8 +678,22 @@ window.manualRefreshStatus=fetchAndRender;
 async function init(){
   if(typeof putRefreshBeforeTrakt==='function') putRefreshBeforeTrakt();
   if(typeof getConfig==='function') await getConfig();
+
+  watchAuthMount();
+
+  // auth providers mount async, so retry longer as fallback
+  let tries = 0;
+  const retryDots = async () => {
+    try {
+      if (await refreshAuthDots(false)) return;
+    } catch {}
+    if (++tries < 50) setTimeout(retryDots, 200); // ~10s
+  };
+  retryDots();
+
   fetchAndRender();
 }
+
 document.readyState==='loading'
   ? document.addEventListener('DOMContentLoaded',init,{once:true})
   : init();
@@ -526,7 +739,7 @@ document.readyState==='loading'
 </script>
 
 <script>
-// Save UX wrapper: resilient, updates status, restores button label
+// Save UX wrapper:
 (() => {
   const install = () => {
     const orig = window.saveSettings;

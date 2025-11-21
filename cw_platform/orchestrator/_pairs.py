@@ -161,11 +161,27 @@ def run_pairs(ctx) -> Dict[str, Any]:
         used_defaults = (not selector_raw or selector_raw == "multi") and not feat_map
 
         features = _feature_list_for_pair(pair)
+        
+        # skip pairs with no enabled features
+        if not features:
+            emit(
+                "run:pair:skip",
+                src=src,
+                dst=dst,
+                mode=mode,
+                reason="no-features",
+            )
+            continue
+
+        if used_defaults:
+            emit_info(f"No per-feature map set for {src}→{dst}; running defaults: {features}")
+
+        emit("run:pair", i=i, n=len(pairs), src=src,
+             dst=dst, mode=mode, features=features)
         if used_defaults:
             emit_info(f"No per-feature map set for {src}→{dst}; running defaults: {features}")
 
         emit("run:pair", i=i, n=len(pairs), src=src, dst=dst, mode=mode, features=features)
-
         sops = provs.get(src)
         dops = provs.get(dst)
         if not sops or not dops:
@@ -238,7 +254,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
         try:
             if hasattr(ctx, "hidefile_clear"):
                 ctx.hidefile_clear("watchlist")
-                emit("debug", msg="hidefile.cleared", feature="watchlist", scope="end-of-run")
         except Exception:
             pass
 

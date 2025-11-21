@@ -1,7 +1,8 @@
 # _watchlistAPI.py
+# CrossWatch - Unified watchlist manager for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from typing import Optional, Literal, Dict, Any, List, Tuple
 import urllib.parse
-
 from fastapi import APIRouter, Query, Body, Path as FPath
 from fastapi.responses import JSONResponse
 
@@ -127,7 +128,6 @@ def _bulk_delete(provider: str, keys_raw: List[Any]) -> Dict[str, Any]:
         "results": results,
     }
 
-
 # ---------- programmatic API (for auto-remove) ----------
 def remove_across_providers_by_ids(ids: Dict[str, Any], media_type: Optional[str] = None) -> Dict[str, Any]:
     from cw_platform.config_base import load_config
@@ -219,7 +219,6 @@ def remove_from_provider_by_ids(provider: str, ids: Dict[str, Any], media_type: 
 def remove_from_plex_by_ids(ids: Dict[str, Any], media_type: Optional[str] = None) -> Dict[str, Any]:
     return remove_from_provider_by_ids("PLEX", ids, media_type)
 
-
 # ---------- routes ----------
 @router.get("/")
 def api_watchlist(
@@ -296,7 +295,6 @@ def api_watchlist(
         status_code=200,
     )
 
-
 @router.delete("/{key}")
 def api_watchlist_delete(
     key: str = FPath(...),
@@ -322,13 +320,11 @@ def api_watchlist_delete(
     res.setdefault("provider", prov)
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
-
 @router.post("/delete")
 def api_watchlist_delete_multi(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     provider = str(payload.get("provider") or "ALL").strip().upper()
     keys = payload.get("keys") or []
     return _bulk_delete(provider, keys)
-
 
 @router.post("/delete_batch")
 def api_watchlist_delete_batch(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

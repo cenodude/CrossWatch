@@ -1,4 +1,6 @@
 # _schedulingAPI.py
+# CrossWatch - Scheduling API for task management
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from fastapi import APIRouter, Body
 
 from typing import Dict, Any

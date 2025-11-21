@@ -55,8 +55,17 @@
   }
 
   // --- hydrate from /api/config (auto when section becomes visible)
-  async function hydrateFromConfig() {
-    if (hydrated) return;
+  function embySectionLooksEmpty() {
+    const s1 = Q("#emby_server") || Q("#emby_server_url");
+    const u1 = Q("#emby_user") || Q("#emby_username");
+    const tok = Q("#emby_tok");
+    const vals = [s1, u1, tok].map(el => el ? String(el.value || "").trim() : "");
+    return vals.every(v => !v);
+  }
+
+  // --- hydrate from /api/config (auto when section becomes visible)
+  async function hydrateFromConfig(force = false) {
+    if (hydrated && !force) return;
     try {
       const r = await fetch("/api/config", { cache: "no-store" });
       if (!r.ok) return;
@@ -84,8 +93,11 @@
   function ensureHydrate() {
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
-    if (sec && (!body || visible(body))) hydrateFromConfig();
+    if (!sec || (body && !visible(body))) return;
+    const force = embySectionLooksEmpty();
+    hydrateFromConfig(force);
   }
+
 
   // observe section insertion (SPAs/late render)
   if (!Q(SECTION)) {
@@ -137,6 +149,7 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) { if (msg) { msg.className = "msg warn"; msg.textContent = "Login failed"; } return; }
       put("#emby_server_url", server); put("#emby_username", username);
+      if (j?.user_id) put("#emby_user_id", j.user_id);
       maskToken(true); if (Q("#emby_pass")) Q("#emby_pass").value = "";
       if (msg) { msg.className = "msg"; msg.textContent = "Emby connected."; }
       await embyLoadLibraries();

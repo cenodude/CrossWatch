@@ -82,11 +82,10 @@
         return j("/api/plex/server_uuid");
       }
     },
-    pms:async()=>{const x=await j("/api/plex/pms");const a=Array.isArray(x)?x:Array.isArray(x?.servers)?x.servers:[];return Array.isArray(a)?a:[];},
     watch:{
-      status:()=>j("/debug/watch/status"),
-      start:(prov)=>t(`/debug/watch/start${prov?`?provider=${encodeURIComponent(prov)}`:""}`,{method:"POST"}),
-      stop:()=>t("/debug/watch/stop",{method:"POST"})
+      status:()=>j("/api/watch/status"),
+      start:(prov)=>t(`/api/watch/start${prov?`?provider=${encodeURIComponent(prov)}`:""}`,{method:"POST"}),
+      stop:()=>t("/api/watch/stop",{method:"POST"})
     }
   };
 
@@ -123,9 +122,6 @@
     const req = $("#sc-server-required",STATE.mount); if(req) req.style.display = prov==="plex" ? "" : "none";
     const lab = $("#sc-server-label",STATE.mount); if(lab) lab.textContent = lbl;
 
-    const disc=$("#sc-pms-discovered",STATE.mount); if(disc) disc.style.display = prov==="plex" ? "" : "none";
-    const btnDisc=$("#sc-pms-refresh",STATE.mount); if(btnDisc) btnDisc.disabled = prov!=="plex";
-
     const loadBtn=$("#sc-load-users",STATE.mount); if(loadBtn){ loadBtn.style.display=""; loadBtn.textContent = prov==="plex" ? "Load Plex users" : "Load Emby users"; }
     const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = false;
     const uuidLabel=$("#sc-uuid-label",STATE.mount); if(uuidLabel) uuidLabel.textContent = prov==="plex" ? "Server UUID" : "User ID";
@@ -135,22 +131,55 @@
 
     const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
     const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
+
+    const sink=String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase();
+    const traktTokenOk=!!String(read("trakt.access_token","")||"").trim();
+    const simklTokenOk=!!String(read("simkl.access_token","")||"").trim();
+
+    let sinkOk=true;
+    let sinkErr="";
+    const wantsTrakt = sink.includes("trakt");
+    const wantsSimkl = sink.includes("simkl");
+
+    if (wantsTrakt && !traktTokenOk && wantsSimkl && !simklTokenOk) {
+      sinkOk=false;
+      sinkErr="SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt.";
+    } else if (wantsTrakt && !traktTokenOk) {
+      sinkOk=false;
+      sinkErr="Trakt is not connected. Go to Authentication → Trakt.";
+    } else if (wantsSimkl && !simklTokenOk) {
+      sinkOk=false;
+      sinkErr="SIMKL is not connected. Go to Authentication → SIMKL.";
+    }
+
     if(watcherOn){
       if(prov==="plex"){
         if(!plexTokenOk){ setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err"); }
         else if(!isValidServerUrl(srv)) setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
+        else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
         else setNote("sc-pms-note",`Using ${srv}`);
       }else{
         if(!embyTokenOk){ setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err"); }
+        else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
         else setNote("sc-pms-note", srv?`Using ${srv}`:"");
       }
     } else setNote("sc-pms-note","");
 
     if(loadBtn){
-      if(prov==="plex" && !plexTokenOk) loadBtn.disabled=true; else if(prov==="emby" && !embyTokenOk) loadBtn.disabled=true; else loadBtn.disabled=!watcherOn;
+      if(prov==="plex" && !plexTokenOk) loadBtn.disabled=true;
+      else if(prov==="emby" && !embyTokenOk) loadBtn.disabled=true;
+      else loadBtn.disabled=!watcherOn;
     }
     if(fetchUuid){
-      if(prov==="plex" && !plexTokenOk) fetchUuid.disabled=true; else if(prov==="emby" && !embyTokenOk) fetchUuid.disabled=true; else fetchUuid.disabled=!watcherOn;
+      if(prov==="plex" && !plexTokenOk) fetchUuid.disabled=true;
+      else if(prov==="emby" && !embyTokenOk) fetchUuid.disabled=true;
+      else fetchUuid.disabled=!watcherOn;
+    }
+
+    const startBtn=$("#sc-watch-start",STATE.mount);
+    if(startBtn){
+      const providerOk = prov==="plex" ? (plexTokenOk && isValidServerUrl(srv)) : embyTokenOk;
+      startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
     }
   }
 
@@ -226,8 +255,8 @@
       `;
     }
 
-    if(STATE.watcherHost){
-      STATE.watcherHost.innerHTML=`
+    if (STATE.watcherHost) {
+      STATE.watcherHost.innerHTML = `
         <style>
           .cc-wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px}
           .cc-card{padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
@@ -247,7 +276,9 @@
         </style>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-          <label style="display:inline-flex;gap:8px;align-items:center"><input type="checkbox" id="sc-enable-watcher"> Enable</label>
+          <label style="display:inline-flex;gap:8px;align-items:center">
+            <input type="checkbox" id="sc-enable-watcher"> Enable
+          </label>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <span style="opacity:.75;font-size:12px">Sink</span>
             <select id="sc-sink" class="input" style="width:180px">
@@ -266,17 +297,15 @@
         <div class="cc-wrap">
           <div class="cc-card" id="sc-card-server">
             <div class="cc-head">
-              <div><span id="sc-server-label">Plex Server</span> <span id="sc-server-required" class="pill req">required</span></div>
-              <button id="sc-pms-refresh" class="btn small">Fetch</button>
+              <div>
+                <span id="sc-server-label">Plex Server</span>
+                <span id="sc-server-required" class="pill req">required</span>
+              </div>
             </div>
             <div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div>
-            <div id="sc-pms-discovered" style="margin-top:10px">
-              <div class="muted">Discovered servers</div>
-              <select id="sc-pms-select" class="input" style="width:100%;margin-top:6px"><option value="">— select a server —</option></select>
-            </div>
             <div style="margin-top:12px">
-              <div class="muted">Manual URL (http(s)://host[:port])</div>
-              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" />
+              <div class="muted">Server URL (http(s)://host[:port])</div>
+              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" readonly/>
             </div>
           </div>
 
@@ -303,7 +332,9 @@
                 <button id="sc-watch-refresh" class="btn small">Refresh</button>
               </div>
               <div class="cc-auto">
-                <label class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
+                <label class="sc-toggle">
+                  <input type="checkbox" id="sc-autostart"> Autostart on boot
+                </label>
               </div>
             </div>
           </div>
@@ -426,6 +457,18 @@
     }
   }
 
+  // Force fresh config before populate and keep global cache in sync
+  async function refreshCfgBeforePopulate() {
+    try {
+      const fresh = await API.cfgGet();
+      if (fresh && typeof fresh === "object") {
+        STATE.cfg = fresh;
+        try { w._cfgCache = fresh; } catch {}
+      }
+    } catch {}
+  }
+
+  // Populate UI from config
   function populate(){
     const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
     const useWebhook=enabled&&mode==="webhook",useWatch=enabled&&mode==="watch";
@@ -461,7 +504,10 @@
     const pmsInp=$("#sc-pms-input",STATE.mount);
     const plexUrl=String(read("plex.server_url","")||"");
     const embyUrl=String(read("emby.server","")||"");
-    if(pmsInp) pmsInp.value = prov==="plex" ? plexUrl : embyUrl;
+    if (pmsInp) {
+      pmsInp.value = prov === "plex" ? plexUrl : embyUrl;
+      pmsInp.disabled = true;
+    } 
 
     const set=(id,v)=>{const n=$(id,STATE.mount); if(n) n.value=norm100(v,v);};
     set("#sc-pause-debounce",read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
@@ -518,18 +564,6 @@
         setNote("sc-uuid-note",prov==="plex"?"Server UUID fetched":"User ID fetched");
       } else setNote("sc-uuid-note",prov==="plex"?"No server UUID":"No user ID","err");
     }catch{ setNote("sc-uuid-note","Fetch failed","err"); }
-  }
-  async function loadPmsList(){
-    try{
-      const sel=$("#sc-pms-select",STATE.mount); if(!sel) return;
-      sel.innerHTML=`<option value="">Loading…</option>`;
-      const list=await API.pms(); STATE.pms=list; sel.innerHTML=`<option value="">— select a server —</option>`;
-      for(const s of list){ const best=s.best_url||"",nm=s.name||s.product||"Plex Media Server",owned=s.owned?" (owned)":""; sel.append(el("option",{value:best||"",textContent:best?`${nm}${owned} — ${best}`:nm+owned})); }
-      setNote("sc-pms-note",list.length?"Pick a discovered server or enter a URL":"No servers discovered. Enter a URL.",list.length?null:"err");
-    }catch{
-      const sel=$("#sc-pms-select",STATE.mount); if(sel) sel.innerHTML=`<option value="">— select a server —</option>`;
-      setNote("sc-pms-note","Fetch failed. Enter a URL manually.","err");
-    }
   }
   function onAddUserWatch(){
     const inp=$("#sc-user-input",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
@@ -648,15 +682,28 @@
     if(wh) on(wh,"change",()=>syncExclusive("webhook"));
     if(wa) on(wa,"change",()=>syncExclusive("watch"));
     on($("#sc-autostart",STATE.mount),"change",e=>write("scrobble.watch.autostart",!!e.target.checked));
-    on(pv,"change",e=>{ const val=String(e.target.value||"plex").toLowerCase(); write("scrobble.watch.provider",val); populate(); if(val==="emby") hydrateEmby(); });
-    on(sk,"change",e=>{ const val=String(e.target.value||"trakt").toLowerCase(); write("scrobble.watch.sink",val); });
-
-    on($("#sc-pms-refresh",STATE.mount),"click",()=>{ if(provider()==="plex") loadPmsList(); });
-    on($("#sc-pms-select",STATE.mount),"change",e=>{ if(provider()!=="plex") return; const v=String(e.target.value||"").trim(); if(v){ $("#sc-pms-input",STATE.mount).value=v; write("plex.server_url",v); setNote("sc-pms-note",`Using ${v}`);} applyModeDisable();});
+    on(pv,"change",e=>{ 
+      const val=String(e.target.value||"plex").toLowerCase(); 
+      write("scrobble.watch.provider",val); 
+      populate(); 
+      if(val==="emby") hydrateEmby(); 
+    });
+    on(sk,"change",e=>{ 
+      const val=String(e.target.value||"trakt").toLowerCase(); 
+      write("scrobble.watch.sink",val); 
+      applyModeDisable();
+    });
     on($("#sc-pms-input",STATE.mount),"input",e=>{
       const v=String(e.target.value||"").trim();
-      if(provider()==="plex"){ write("plex.server_url",v); if(v&&!isValidServerUrl(v)) setNote("sc-pms-note","Invalid URL. Use http(s)://host[:port]","err"); else if(v) setNote("sc-pms-note",`Using ${v}`); else setNote("sc-pms-note","Plex Server is required when Watcher is enabled","err"); }
-      else{ write("emby.server",v); setNote("sc-pms-note", v?`Using ${v}`:""); }
+      if(provider()==="plex"){ 
+        write("plex.server_url",v); 
+        if(v&&!isValidServerUrl(v)) setNote("sc-pms-note","Invalid URL. Use http(s)://host[:port]","err"); 
+        else if(v) setNote("sc-pms-note",`Using ${v}`); 
+        else setNote("sc-pms-note","Plex Server is required when Watcher is enabled","err"); 
+      } else { 
+        write("emby.server",v); 
+        setNote("sc-pms-note", v?`Using ${v}`:""); 
+      }
       applyModeDisable();
     });
 
@@ -672,58 +719,95 @@
     });
   }
 
-  function init(opts={}){
+  async function init(opts={}) {
     STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
     STATE.cfg   = opts.cfg || w._cfgCache || {};
     STATE.webhookHost = $("#scrob-webhook",STATE.mount);
     STATE.watcherHost = $("#scrob-watcher",STATE.mount);
     if(!STATE.webhookHost || !STATE.watcherHost){
-      const root=STATE.mount||d.body,makeSec=(id,title)=>{const sec=el("div",{className:"section",id}); sec.innerHTML=`<div class="head"><strong>${title}</strong></div><div class="body"><div id="${id==="sc-sec-webhook"?"scrob-webhook":"scrob-watcher"}"></div></div>`; root.append(sec);};
+      const root=STATE.mount||d.body;
+      const makeSec=(id,title)=>{ 
+        const sec=el("div",{className:"section",id}); 
+        sec.innerHTML=`<div class="head"><strong>${title}</strong></div><div class="body"><div id="${id==="sc-sec-webhook"?"scrob-webhook":"scrob-watcher"}"></div></div>`;
+        root.append(sec);
+      };
       if(!STATE.webhookHost){ makeSec("sc-sec-webhook","Webhook"); STATE.webhookHost=$("#scrob-webhook",STATE.mount); }
       if(!STATE.watcherHost){ makeSec("sc-sec-watch","Watcher"); STATE.watcherHost=$("#scrob-watcher",STATE.mount); }
     }
-    buildUI(); wire(); populate(); refreshWatcher(); if(provider()==="plex") loadPmsList().catch(()=>{}); if(provider()==="emby") hydrateEmby();
+    buildUI();
+    wire();
+    await refreshCfgBeforePopulate();
+    populate();
+    await refreshWatcher();
+    if (provider() === "emby") await hydrateEmby();
   }
 
-  function mountLegacy(targetEl,cfg){ init({ mountId: targetEl?.id, cfg: cfg||(w._cfgCache||{}) }); }
+  function mountLegacy(targetEl,cfg){
+    return init({ mountId: targetEl?.id, cfg: cfg||(w._cfgCache||{}) });
+  }
 
   function getScrobbleConfig(){
     commitAdvancedInputsWatch();
     commitAdvancedInputsWebhook();
     commitAdvancedInputsTrakt();
 
-    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
+    const enabled = !!read("scrobble.enabled", false);
+    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
 
     const wlWeb = namesFromChips("#sc-whitelist-webhook");
-    const suWeb = String($("#sc-server-uuid-webhook",STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid","")).trim();
+    const suWeb = String(
+      $("#sc-server-uuid-webhook", STATE.mount)?.value ?? 
+      read("scrobble.webhook.filters_plex.server_uuid", "")
+    ).trim();
 
     const wlWatch = namesFromChips("#sc-whitelist");
-    const suWatch = String($("#sc-server-uuid",STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid","")).trim();
-    const userIdWatch = String(read("scrobble.watch.filters.user_id","")||"").trim();
+    const suWatch = String(
+      $("#sc-server-uuid", STATE.mount)?.value ?? 
+      read("scrobble.watch.filters.server_uuid", "")
+    ).trim();
+    const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
+
+    const filtersWatch = {
+      username_whitelist: wlWatch.length
+        ? wlWatch
+        : asArray(read("scrobble.watch.filters.username_whitelist", []))
+    };
+
+    if (provider() !== "emby") {
+      filtersWatch.server_uuid = suWatch || "";
+      if (userIdWatch) {
+        filtersWatch.user_id = userIdWatch;
+      }
+    }
 
     return {
       enabled,
-      mode: mode==="watch"?"watch":"webhook",
+      mode: mode === "watch" ? "watch" : "webhook",
       delete_plex: !!read("scrobble.delete_plex", false),
       delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
-      webhook:{
-        pause_debounce_seconds:read("scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
-        suppress_start_at:read("scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at),
-        filters_plex:{ username_whitelist: wlWeb.length?wlWeb:asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])), server_uuid: suWeb||"" },
-        filters_jellyfin: read("scrobble.webhook.filters_jellyfin",{}) || { username_whitelist: [] }
+      webhook: {
+        pause_debounce_seconds: read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
+        suppress_start_at: read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at),
+        filters_plex: {
+          username_whitelist: wlWeb.length
+            ? wlWeb
+            : asArray(read("scrobble.webhook.filters_plex.username_whitelist", [])),
+          server_uuid: suWeb || ""
+        },
+        filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] }
       },
-      watch:{
+      watch: {
         provider: provider(),
-        sink: String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase(),
-        autostart:!!read("scrobble.watch.autostart",false),
-        pause_debounce_seconds:read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds),
-        suppress_start_at:read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at),
-        filters:{ username_whitelist: wlWatch.length?wlWatch:asArray(read("scrobble.watch.filters.username_whitelist",[])), server_uuid: suWatch||"", user_id: userIdWatch || (provider()==="emby"?suWatch:"") }
+        sink: String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase(),
+        autostart: !!read("scrobble.watch.autostart", false),
+        pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
+        suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
+        filters: filtersWatch
       },
-      trakt:{
-        stop_pause_threshold:read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold),
-        force_stop_at:read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at),
-        regress_tolerance_percent:read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent)
+      trakt: {
+        stop_pause_threshold: read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold),
+        force_stop_at: read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at),
+        regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent)
       }
     };
   }
@@ -737,9 +821,9 @@
   w.Scrobbler={ init, mount:mountLegacy, getConfig:getScrobbleConfig, getRootPatch };
   w.getScrobbleConfig=getScrobbleConfig; w.getRootPatch=getRootPatch;
 
-  d.addEventListener("DOMContentLoaded", async ()=>{
-    const root=d.getElementById("scrobble-mount"); if(!root) return;
-    let cfg=null; try{ cfg=await API.cfgGet(); }catch{ cfg=w._cfgCache||{}; }
-    init({ mountId:"scrobble-mount", cfg });
+  d.addEventListener("DOMContentLoaded", ()=>{
+    const root = d.getElementById("scrobble-mount");
+    if (!root) return;
+    init({ mountId: "scrobble-mount" });
   });
 })(window, document);

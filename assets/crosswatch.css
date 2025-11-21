@@ -965,7 +965,16 @@ header {
   background: #0a0a17;
   padding: 6px 10px;
   border-radius: 999px;
-  color: #e7e9f4
+  color: #e7e9f4;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* selected library in whitelist */
+.chip.on {
+  background: linear-gradient(135deg, var(--accent, #7c5cff), var(--accent2, #19c37d));
+  border-color: rgba(124, 92, 255, .9);
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, .4), 0 0 14px rgba(124, 92, 255, .35);
 }
 .pill {
   backdrop-filter: blur(4px)
@@ -1456,7 +1465,8 @@ select {
   border-radius: 12px
 }
 .wall-wrap .row-scroll {
-  --poster-gap: 10px
+  --poster-gap: 10px;
+  grid-auto-columns: 130px; /* watchlist preview cover size*/
 }
 .wl-grid {
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr))
@@ -2122,7 +2132,7 @@ select {
 }
 .section.open>.body {
   padding: 12px 14px;
-  max-height: 650px
+  max-height: 850px   /* settings max height for expanded section */
 }
 .ops-header {
   display: flex;

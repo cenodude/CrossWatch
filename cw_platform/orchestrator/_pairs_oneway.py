@@ -41,6 +41,76 @@ except Exception:  # pragma: no cover
         return {"ok": True, "count": 0}
     def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
         return {"ok": True, "count": 0}
+    
+_PROVIDER_KEY_MAP = {
+    "PLEX": "plex",
+    "JELLYFIN": "jellyfin",
+    "EMBY": "emby",
+}
+
+def _effective_library_whitelist(
+    cfg: Mapping[str, Any],
+    provider_name: str,
+    feature: str,
+    fcfg: Mapping[str, Any],
+) -> List[str]:
+
+    if feature not in ("history", "ratings"):
+        return []
+
+    libs: List[str] = []
+
+    # Pair-level override
+    lib_cfg = fcfg.get("libraries")
+    if isinstance(lib_cfg, dict):
+        per = lib_cfg.get(provider_name.upper()) or lib_cfg.get(provider_name.lower())
+        if isinstance(per, (list, tuple)):
+            libs = [str(x).strip() for x in per if str(x).strip()]
+    elif isinstance(lib_cfg, (list, tuple)):
+        libs = [str(x).strip() for x in lib_cfg if str(x).strip()]
+
+    if libs:
+        return libs
+
+    key = _PROVIDER_KEY_MAP.get(str(provider_name).upper())
+    if not key:
+        return []
+
+    prov_cfg = cfg.get(key) or {}
+    feat_cfg = (prov_cfg.get(feature) or {})
+    base_libs = feat_cfg.get("libraries") or []
+    if isinstance(base_libs, (list, tuple)):
+        return [str(x).strip() for x in base_libs if str(x).strip()]
+
+    return []
+
+def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str, Any]:
+    if not libs or not idx:
+        return dict(idx)
+
+    allowed = {str(x).strip() for x in libs if str(x).strip()}
+    if not allowed:
+        return dict(idx)
+
+    out: Dict[str, Any] = {}
+    for ck, item in idx.items():
+        v = item or {}
+        lid = (
+            v.get("library_id")
+            or v.get("libraryId")
+            or v.get("library")
+            or v.get("section_id")
+            or v.get("sectionId")
+        )
+        if lid is None:
+            continue
+        try:
+            if str(lid).strip() in allowed:
+                out[ck] = v
+        except Exception:
+            continue
+
+    return out
 
 # Feature-specific filters
 def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[str, Any]:
@@ -227,6 +297,20 @@ def run_one_way_feature(
         eff_src, eff_dst = dict(src_cur), dict(dst_cur)
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
+
+    # --- pair-level library whitelist (PLEX/JELLYFIN/EMBY history/ratings) -----
+    libs_src: List[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
+    libs_dst: List[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
+
+    if libs_src:
+        prev_src = _filter_index_by_libraries(prev_src, libs_src)
+        src_cur = _filter_index_by_libraries(src_cur, libs_src)
+        eff_src = _filter_index_by_libraries(eff_src, libs_src)
+
+    if libs_dst:
+        prev_dst = _filter_index_by_libraries(prev_dst, libs_dst)
+        dst_cur = _filter_index_by_libraries(dst_cur, libs_dst)
+        eff_dst = _filter_index_by_libraries(eff_dst, libs_dst)
 
     try:
         dst_sem = str((dst_ops.capabilities() or {}).get("index_semantics", "present")).lower()

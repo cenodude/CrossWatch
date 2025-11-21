@@ -47,15 +47,66 @@
     const deadline = Date.now() + 120000;
     const back = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
     let i = 0;
+    let detailTries = 0;
+    let autoTried = false;
+
     const poll = async () => {
       if (Date.now() >= deadline) { plexPoll = null; return; }
+
       const settingsVisible = !!($("page-settings") && !$("page-settings").classList.contains("hidden"));
-      if (d.hidden || !settingsVisible) { plexPoll = setTimeout(poll, 5000); return; }
-      let cfg = null; try { cfg = await fetch("/api/config" + bust(), { cache: "no-store" }).then(r => r.json()); } catch {}
-      const tok = (cfg?.plex?.account_token || "").trim();
-      if (tok) { try { const el = $("plex_token"); if (el) el.value = tok; } catch {} try { setPlexSuccess(true); } catch {} plexPoll = null; return; }
+      if (d.hidden || !settingsVisible) {
+        plexPoll = setTimeout(poll, 5000);
+        return;
+      }
+
+      let cfg = null;
+      try {
+        cfg = await fetch("/api/config" + bust(), { cache: "no-store" }).then(r => r.json());
+      } catch {}
+
+      const p = (cfg && cfg.plex) || {};
+      const tok = (p.account_token || "").trim();
+
+      if (tok) {
+        try {
+          const tokenEl = $("plex_token");
+          if (tokenEl) tokenEl.value = tok;
+
+          const urlEl  = $("plex_server_url");
+          const userEl = $("plex_username");
+          const idEl   = $("plex_account_id");
+
+          const cfgUrl  = (p.server_url || "").trim();
+          const cfgUser = (p.username || "").trim();
+          const cfgId   = (p.account_id != null ? String(p.account_id) : "").trim();
+
+          if (urlEl && !urlEl.value && cfgUrl)  urlEl.value = cfgUrl;
+          if (userEl && !userEl.value && cfgUser) userEl.value = cfgUser;
+          if (idEl && !idEl.value && cfgId)    idEl.value = cfgId;
+
+          if (!autoTried && typeof plexAuto === "function" && (!cfgUser || !cfgId)) {
+            autoTried = true;
+            try { await plexAuto(); } catch {}
+          }
+
+          const haveDetails = !!(cfgUrl || cfgUser || cfgId);
+
+          if (haveDetails || detailTries++ >= 5) {
+            try { setPlexSuccess(true); } catch {}
+            plexPoll = null;
+            return;
+          }
+        } catch (e) {
+          console.warn("plex token poll hydrate failed", e);
+          try { setPlexSuccess(true); } catch {}
+          plexPoll = null;
+          return;
+        }
+      }
+
       plexPoll = setTimeout(poll, back[Math.min(i++, back.length - 1)]);
     };
+
     plexPoll = setTimeout(poll, 1000);
   }
 
@@ -121,20 +172,51 @@
     const dl = document.getElementById("plex_server_suggestions");
     if (!dl) return "";
 
-    const seen = new Set();
     const items = [];
+    const seen = new Set();
 
-    const add = (url, meta = {}) => {
-      if (!url) return;
-      const key = url.trim();
-      if (seen.has(key)) return;
-      seen.add(key);
+    const isPrivateHost = (host) => {
+      if (!host) return false;
+      const h = host.toLowerCase();
 
-      const { local = false, relay = false, proto = "", hostKind = "domain" } = meta;
-      const effProto = proto || (key.startsWith("https://") ? "https" : "http");
+      const isPrivateDotted = (ip) => {
+        const p = ip.split(".").map(n => parseInt(n, 10));
+        if (p.length !== 4 || p.some(n => !Number.isFinite(n) || n < 0 || n > 255)) return false;
+        if (p[0] === 10) return true;
+        if (p[0] === 192 && p[1] === 168) return true;
+        if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+        if (p[0] === 127) return true;
+        if (p[0] === 169 && p[1] === 254) return true;
+        return false;
+      };
+
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return isPrivateDotted(h);
+
+      const m = h.match(/^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$/);
+      if (m) return isPrivateDotted(m[1].replace(/-/g, "."));
+
+      return false;
+    };
+
+    const add = (key, meta = {}) => {
+      const url = (key || "").trim().replace(/\/+$/, "");
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+
+      const local    = !!meta.local;
+      const relay    = !!meta.relay;
+      const proto    = (meta.proto || "").toLowerCase();
+      const hostKind = meta.hostKind || "domain";
+
+      let host = "";
+      try { host = new URL(url).hostname || ""; } catch {}
+      const privateHost = isPrivateHost(host);
+      const effProto = proto || (url.startsWith("https://") ? "https" : "http");
+
       const score =
         (local ? 8 : 0) +
         (!relay ? 4 : 0) +
+        (privateHost ? 3 : 0) +
         (effProto === "http" ? 2 : 0) +
         (hostKind === "ip" ? 1 : 0);
 
@@ -142,10 +224,10 @@
         local ? "local" : "remote",
         relay ? "relay" : "direct",
         effProto,
-        hostKind
+        privateHost ? "private" : hostKind
       ].join(", ");
 
-      items.push({ url: key, score, label: `${key} — ${tags}` });
+      items.push({ url, score, label: `${url} — ${tags}` });
     };
 
     (servers || []).forEach((s) => {
@@ -155,13 +237,11 @@
         const local = !!c.local;
         const relay = !!c.relay;
 
-        // Always include clean IP forms (http + https)
         if (address) {
           add(`http://${address}${port}`,  { local, relay, proto: "http",  hostKind: "ip" });
           add(`https://${address}${port}`, { local, relay, proto: "https", hostKind: "ip" });
         }
 
-        // Also include the original connection URI (plex.direct)
         if (c.uri) {
           try {
             const u = new URL(c.uri);
@@ -181,7 +261,6 @@
       .map((it) => `<option value="${it.url}" label="${it.label}"></option>`)
       .join("");
 
-    // return best candidate (useful for auto-fill)
     return items[0]?.url || "";
   }
 
@@ -191,18 +270,18 @@
     const setIfEmpty = (el, val) => { if (el && !el.value && val) el.value = String(val); };
 
     try {
-      // 1) Read current config first
+      // Load existing config server_url first
       let cfgUrl = "";
       try {
         const rCfg = await fetch("/api/config?ts=" + Date.now(), { cache: "no-store" });
         if (rCfg.ok) {
           const cfg = await rCfg.json();
           cfgUrl = (cfg?.plex?.server_url || "").trim();
-          if (cfgUrl && urlEl) urlEl.value = cfgUrl; // lock to existing config value
+          if (cfgUrl && urlEl) urlEl.value = cfgUrl;
         }
       } catch {}
 
-      // 2) Load PMS servers to populate suggestions (but don't override field)
+      // 1) If we have a valid config URL, skip PMS fetch
       let bestSuggestion = "";
       try {
         const r = await fetch("/api/plex/pms?ts=" + Date.now(), { cache: "no-store" });
@@ -213,20 +292,39 @@
         }
       } catch {}
 
-      // If the input is still empty (no config url), put in the best suggestion
-      if (urlEl && !urlEl.value && bestSuggestion) {
-        urlEl.value = bestSuggestion;
-        urlEl.dispatchEvent(new Event("input",  { bubbles: true }));
-        urlEl.dispatchEvent(new Event("change", { bubbles: true }));
+      if (urlEl && bestSuggestion) {
+        const curr = (urlEl.value || "").trim();
+
+        const currCloudish = (() => {
+          if (!curr) return false;
+          try {
+            const h = (new URL(curr)).hostname.toLowerCase();
+            return h.endsWith(".plex.direct") || h.endsWith(".plex.tv") || h.endsWith(".plexapp.com");
+          } catch {
+            return /plex\.direct|plex\.tv|plexapp\.com/i.test(curr);
+          }
+        })();
+
+        const bestPrivateHttp =
+          /^http:\/\//i.test(bestSuggestion) &&
+          /^(http:\/\/)?(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.|169\.254\.)/i.test(bestSuggestion);
+
+        if (!curr || (currCloudish && bestPrivateHttp)) {
+          urlEl.value = bestSuggestion;
+          urlEl.dispatchEvent(new Event("input",  { bubbles: true }));
+          urlEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
       }
 
-      // 3) Hydrate username / PMS account_id (never overwrite a non-empty server_url)
+      // Hydrate username/account_id via /api/plex/inspect
       try {
         const rr = await fetch("/api/plex/inspect?ts=" + Date.now(), { cache: "no-store" });
         if (rr.ok) {
           const dta = await rr.json();
-          const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = String(val); };
-          // only set server_url if field is still empty
+          const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el && val != null) el.value = String(val);
+          };
           setIfEmpty(urlEl, dta.server_url);
           if (dta.username) set("plex_username", dta.username);
           if (dta.account_id != null) set("plex_account_id", dta.account_id);
@@ -237,7 +335,8 @@
       console.warn("[plex] Auto-Fetch failed", e);
     }
   }
-    // ---------- User picker
+  
+  // ---------- User picker
   let __plexUsers = null;
 
   async function fetchPlexUsers() {
@@ -362,9 +461,18 @@
 
   // ---------- Libraries
   async function plexLoadLibraries() {
+    let libs = [];
     try {
-      const r = await fetch("/api/plex/libraries" + bust(), { cache: "no-store" }); if (!r.ok) return [];
-      const j = await r.json(); const libs = Array.isArray(j?.libraries) ? j.libraries : [];
+      const r = await fetch("/api/plex/libraries" + bust(), { cache: "no-store" });
+      if (r.ok) {
+        const j = await r.json();
+        libs = Array.isArray(j?.libraries) ? j.libraries : [];
+      }
+    } catch (e) {
+      console.warn("[plex] libraries fetch failed", e);
+    }
+
+    try {
       const fill = (id) => {
         const el = $(id); if (!el) return;
         const keep = new Set(Array.from(el.selectedOptions || []).map(o => o.value));
@@ -377,10 +485,31 @@
           el.appendChild(o);
         });
       };
-      fill("plex_lib_history"); fill("plex_lib_ratings");
-      getPlexState().libs = libs.map(it => ({ id: String(it.key), title: String(it.title), type: String(it.type || "lib") }));
-      return libs;
-    } catch { return []; }
+      fill("plex_lib_history");
+      fill("plex_lib_ratings");
+    } catch (e) {
+      console.warn("[plex] library select fill failed", e);
+    }
+
+    try {
+      getPlexState().libs = libs.map(it => ({
+        id: String(it.key),
+        title: String(it.title),
+        type: String(it.type || "lib")
+      }));
+    } catch (e) {
+      console.warn("[plex] state update failed", e);
+    }
+    try {
+      const hasServer =
+        (document.getElementById("plex_server_url")?.value?.trim() || "") &&
+        (document.getElementById("plex_token")?.value?.trim() || "");
+      if (!libs.length && hasServer) {
+        notify("No libraries could be loaded from Plex. Check the Server URL and make sure this is a Plex server your account can access.");
+      }
+    } catch {}
+
+    return libs;
   }
 
   // --- refresh libs (used by the "Load libraries" button) ---
@@ -433,7 +562,16 @@
 
     function render() {
       const libs = getPlexState().libs;
-      host.innerHTML = libs.length ? libs.map(rowHTML).join("") : `<div class="sub">No libraries loaded.</div>`;
+      const hasServer =
+        (document.getElementById("plex_server_url")?.value?.trim() || "") &&
+        (document.getElementById("plex_token")?.value?.trim() || "");
+      if (!libs.length && hasServer) {
+        notify("No libraries could be loaded from Plex. Check the Server URL and make sure this is a Plex server your account can access.");
+      }
+
+      host.innerHTML = libs.length
+        ? libs.map(rowHTML).join("")
+        : `<div class="sub">No libraries loaded.</div>`;
       applyFilter();
       setSelFromSet(histSel, st.hist);
       setSelFromSet(rateSel, st.rate);
@@ -505,15 +643,28 @@
   }
 
   function mergePlexIntoCfg(cfg) {
-    const v = sel => { const el = q(sel); return el ? String(el.value || "").trim() : ""; };
+    const v = (sel) => {
+      const el = q(sel);
+      return el ? String(el.value || "").trim() : null;
+    };
+
     cfg = cfg || (w.__cfg ||= {});
     const plex = (cfg.plex = cfg.plex || {});
-    const url = v("#plex_server_url");
+
+    const url  = v("#plex_server_url");
     const user = v("#plex_username");
     const aid  = v("#plex_account_id");
+
     if (url)  plex.server_url = url;
     if (user) plex.username   = user;
-    if (aid !== "") { const n = parseInt(aid, 10); if (Number.isFinite(n)) plex.account_id = n; }
+
+    // Always ensure account_id is a positive integer; fallback to 1
+    if (aid !== null) {
+      let n = parseInt(aid, 10);
+      if (!Number.isFinite(n) || n <= 0) n = 1;
+      plex.account_id = n;
+    }
+
     let hist = readMatrixSelection("hist");
     let rate = readMatrixSelection("rate");
     if (hist === null) hist = readSelectInts("#plex_lib_history") || [];
@@ -523,7 +674,7 @@
     return cfg;
   }
 
-  // track if server URL changed (so we can refresh after save)
+  // track if server URL changed 
   let __plexUrlDirty = false;
 
   // ---------- Hook save

@@ -59,14 +59,31 @@ def _pluck(cfg: CfgLike, *path: str) -> Any:
             return None
     return cur
 
+# -- library id via ancestors cache -------------------------------------------
+_jf_lib_anc_cache: Dict[str, Optional[str]] = {}
+def _jf_lib_id_via_ancestors(http, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
+    if not iid:
+        return None
+    if iid in _jf_lib_anc_cache:
+        return _jf_lib_anc_cache[iid]
+    try:
+        r = http.get(f"/Items/{iid}/Ancestors", params={"Fields": "Id"})
+        if getattr(r, "status_code", 0) == 200:
+            root_keys = set(str(k) for k in (roots or {}).keys())
+            for a in (r.json() or []):
+                aid = str((a or {}).get("Id") or "")
+                if aid in root_keys:
+                    _jf_lib_anc_cache[iid] = aid
+                    return aid
+    except Exception:
+        pass
+    _jf_lib_anc_cache[iid] = None
+    return None
+
 def jf_library_scope(cfg: CfgLike, feature: str) -> Dict[str, Any]:
-    """
-    Build Jellyfin item-query scope from config.
-    """
-    jf = _pluck(cfg, "jellyfin") or cfg  # allow passing full cfg or jf-subdict
+    jf = _pluck(cfg, "jellyfin") or cfg
     libs = _as_list_str(_pluck(jf, feature, "libraries"))
     if not libs:
-        # Fallbacks for dataclass-style configs (e.g. cfg.history_libraries / cfg.ratings_libraries)
         libs_attr = _as_list_str(getattr(cfg, f"{feature}_libraries", None))
         if libs_attr:
             libs = libs_attr
@@ -77,8 +94,8 @@ def jf_library_scope(cfg: CfgLike, feature: str) -> Dict[str, Any]:
     if not libs:
         return {}
     if len(libs) == 1:
-        return {"parentId": libs[0], "recursive": True}
-    return {"ancestorIds": libs, "recursive": True}
+        return {"ParentId": libs[0], "Recursive": True}
+    return {"AncestorIds": libs, "Recursive": True}
 
 def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> Dict[str, Any]:
     out = dict(params or {})
@@ -92,7 +109,6 @@ def jf_scope_ratings(cfg: CfgLike) -> Dict[str, Any]:
     return jf_library_scope(cfg, "ratings")
 
 def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
-    """Union of history + ratings libraries. Falls back gracefully."""
     # Try mapping style: cfg['jellyfin'][feature]['libraries']
     jf_map = _pluck(cfg, "jellyfin") or cfg
     libs_h = _as_list_str(_pluck(jf_map, "history", "libraries"))
@@ -120,12 +136,153 @@ def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
             for x in _as_list_str(getattr(rate_obj, "libraries", None)):
                 if x and x not in seen:
                     seen.add(x); libs.append(x)
+
     if not libs:
         return {}
     if len(libs) == 1:
         return {"parentId": libs[0], "recursive": True}
     return {"ancestorIds": libs, "recursive": True}
 
+# --- library roots / mapping --------------------------------------------------
+def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
+    """Fetch Jellyfin library roots for canonical mapping."""
+    roots: Dict[str, Dict[str, Any]] = {}
+    if not user_id:
+        return roots
+    try:
+        url = f"/Users/{user_id}/Views"
+        r = http.get(url)
+        if getattr(r, "status_code", 0) == 200:
+            data = r.json() or {}
+            for it in data.get("Items") or []:
+                lid = str(it.get("Id") or it.get("Key") or "").strip()
+                if not lid:
+                    continue
+                meta = roots.setdefault(lid, {
+                    "id": lid,
+                    "name": (it.get("Name") or it.get("Title") or "").strip() or None,
+                    "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
+                    "paths": [],
+                })
+                locs = it.get("Locations") or it.get("Path") or []
+                if isinstance(locs, str):
+                    locs = [locs]
+                for p in locs:
+                    s = str(p or "").strip()
+                    if s and s not in meta["paths"]:
+                        meta["paths"].append(s)
+        if not roots:
+            r2 = http.get("/Library/MediaFolders")
+            if getattr(r2, "status_code", 0) == 200:
+                data2 = r2.json() or {}
+                for it in data2.get("Items") or []:
+                    lid = str(it.get("Id") or it.get("Key") or "").strip()
+                    if not lid:
+                        continue
+                    meta = roots.setdefault(lid, {
+                        "id": lid,
+                        "name": (it.get("Name") or it.get("Title") or "").strip() or None,
+                        "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
+                        "paths": [],
+                    })
+                    locs = it.get("Locations") or it.get("Path") or []
+                    if isinstance(locs, str):
+                        locs = [locs]
+                    for p in locs:
+                        s = str(p or "").strip()
+                        if s and s not in meta["paths"]:
+                            meta["paths"].append(s)
+    except Exception:
+        pass
+    return roots
+
+def jf_get_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
+    """Return cached library roots or fetch them once per adapter."""
+    roots = getattr(adapter, "_jf_library_roots", None)
+    if isinstance(roots, dict) and roots:
+        return roots
+    http = getattr(adapter, "client", None)
+    cfg = getattr(adapter, "cfg", None)
+    user_id = getattr(cfg, "user_id", None) if cfg is not None else None
+    if not http or not user_id:
+        return {}
+    roots = jf_build_library_roots(http, str(user_id))
+    setattr(adapter, "_jf_library_roots", roots)
+    return roots
+
+def jf_resolve_library_id(
+    row: Mapping[str, Any],
+    roots: Mapping[str, Mapping[str, Any]],
+    scope_libs: Optional[List[str]] = None,
+    http=None,
+) -> Optional[str]:
+    # Explicit single-library scope always wins
+    if scope_libs and len(scope_libs) == 1:
+        return str(scope_libs[0])
+
+    candidates: List[str] = []
+
+    lid = row.get("LibraryId")
+    if lid:
+        candidates.append(str(lid))
+
+    anc = row.get("AncestorIds") or []
+    for x in anc:
+        if x:
+            candidates.append(str(x))
+
+    pid = row.get("ParentId")
+    if isinstance(pid, str) and pid:
+        candidates.append(pid)
+
+    # Direct matches against known roots (view ids)
+    for cid in candidates:
+        if cid in roots:
+            return cid
+
+    # Deep lookup: walk ancestors and find the first view-root id
+    if http and row.get("Id"):
+        deep = _jf_lib_id_via_ancestors(http, str(row["Id"]), roots)
+        if deep:
+            return deep
+
+    # Path-based match when available
+    path = (row.get("Path") or "").strip()
+    if path and roots:
+        best: Optional[str] = None
+        best_len = -1
+        lp = path.lower()
+        for lib_id, meta in roots.items():
+            for root in meta.get("paths") or []:
+                rp = str(root or "").rstrip("/\\")
+                if not rp:
+                    continue
+                rpl = rp.lower()
+                if lp.startswith(rpl) and len(rp) > best_len:
+                    best = lib_id
+                    best_len = len(rp)
+        if best:
+            return best
+
+    # Fallback by collection/type
+    want: Optional[str] = None
+    ctype = (row.get("CollectionType") or "").strip().lower()
+    if ctype:
+        want = ctype
+    else:
+        t = (row.get("Type") or "").strip().lower()
+        if t == "movie":
+            want = "movies"
+        elif t in ("series", "episode", "season"):
+            want = "tvshows"
+
+    if want:
+        for lib_id, meta in roots.items():
+            mt = (meta.get("collection_type") or "").strip().lower()
+            if mt and mt == want:
+                return lib_id
+
+    return None
 
 # --- type & id helpers --------------------------------------------------------
 def _norm_type(t: Any) -> str:

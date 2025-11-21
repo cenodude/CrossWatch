@@ -231,6 +231,198 @@ function getOpts(state,key){
   return state.options[key];
 }
 
+function getFeatureLibraries(state,feature,provider){
+  const f=getOpts(state,feature);
+  const libs=f.libraries&&typeof f.libraries==="object"?f.libraries:{};
+  if(!f.libraries) f.libraries=libs;
+  const cur=libs[provider];
+  const arr=Array.isArray(cur)?cur.map(x=>String(x)):[];
+  return {config:f,libraries:libs,selected:arr};
+}
+
+function setFeatureLibraries(state,feature,provider,values){
+  const f=getOpts(state,feature);
+  const libs=f.libraries&&typeof f.libraries==="object"?f.libraries:{};
+  libs[provider]=Array.isArray(values)?values.map(x=>String(x)):[];
+  f.libraries=libs;
+  state.options[feature]=f;
+  state.visited.add(feature);
+}
+
+let pairServerCfgPromise=null;
+
+function fetchServerLibraries(kind){
+  let url=null;
+  if(kind==="PLEX") url="/api/plex/libraries";
+  else if(kind==="JELLYFIN") url="/api/jellyfin/libraries";
+  else if(kind==="EMBY") url="/api/emby/libraries";
+  if(!url) return Promise.resolve([]);
+  return fetch(url+"?cb="+Date.now(),{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{
+    const list=j&&Array.isArray(j.libraries)?j.libraries:[];
+    return list;
+  }).catch(()=>[]);
+}
+
+function fetchPairServerConfig(){
+  if(pairServerCfgPromise) return pairServerCfgPromise;
+  pairServerCfgPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{}).catch(()=>({}));
+  return pairServerCfgPromise;
+}
+
+function filterLibsByServerConfig(libs,kind,feature,cfg){
+  try{
+    let prov="";
+    if(kind==="PLEX") prov="plex";
+    else if(kind==="JELLYFIN") prov="jellyfin";
+    else if(kind==="EMBY") prov="emby";
+    if(!prov) return libs;
+    const f=feature==="history"?"history":feature==="ratings"?"ratings":feature;
+    const serverLibs=cfg?.[prov]?.[f]?.libraries;
+    const ids=Array.isArray(serverLibs)?serverLibs.map(x=>String(x)):[];
+    if(!ids.length) return libs;
+    const S=new Set(ids);
+    return (libs||[]).filter(lib=>S.has(String(lib.key)));
+  }catch(e){
+    return libs;
+  }
+}
+
+function fetchPairLibraries(kind,feature){
+  return Promise.all([
+    fetchServerLibraries(kind),
+    fetchPairServerConfig()
+  ]).then(([libs,cfg])=>filterLibsByServerConfig(libs,kind,feature,cfg));
+}
+
+function renderPairLibChips(state,kind,feature,libs){
+  let hostId="";
+  if(kind==="PLEX"&&feature==="history") hostId="plx-hist-libs";
+  else if(kind==="PLEX"&&feature==="ratings") hostId="plx-rate-libs";
+  else if(kind==="JELLYFIN"&&feature==="history") hostId="jf-hist-libs";
+  else if(kind==="JELLYFIN"&&feature==="ratings") hostId="jf-rate-libs";
+  else if(kind==="EMBY"&&feature==="history") hostId="em-hist-libs";
+  else if(kind==="EMBY"&&feature==="ratings") hostId="em-rate-libs";
+  const host=ID(hostId);
+  if(!host) return;
+  const info=getFeatureLibraries(state,feature,kind);
+  const sel=new Set(info.selected);
+  const list=Array.isArray(libs)&&libs.length?libs:info.selected.map(id=>({key:id,title:id}));
+  host.innerHTML="";
+  list.forEach(lib=>{
+    const key=String(lib.key);
+    const title=lib.title||key;
+    const btn=document.createElement("button");
+    btn.type="button";
+    btn.className="chip"+(sel.has(key)?" on":"");
+    btn.textContent=title;
+    btn.dataset.key=key;
+    btn.addEventListener("click",()=>{
+      const cur=getFeatureLibraries(state,feature,kind);
+      const next=new Set(cur.selected);
+      if(next.has(key)) next.delete(key); else next.add(key);
+      setFeatureLibraries(state,feature,kind,Array.from(next));
+      renderPairLibChips(state,kind,feature,list);
+    });
+    host.appendChild(btn);
+  });
+  if(!list.length){
+    const empty=document.createElement("div");
+    empty.className="muted";
+    empty.textContent="No libraries";
+    host.appendChild(empty);
+  }
+}
+
+function initPairLibraryUI(state){
+  const hasPL=hasPlex(state);
+  const hasJF=hasJelly(state);
+  const hasEM=hasEmby(state);
+  const plBox=ID("plx-pair-libs");
+  const jfBox=ID("jf-pair-libs");
+  const emBox=ID("em-pair-libs");
+  if(plBox) plBox.style.display=hasPL?"":"none";
+  if(jfBox) jfBox.style.display=hasJF?"":"none";
+  if(emBox) emBox.style.display=hasEM?"":"none";
+
+  if(hasPL){
+    const btn=ID("plx-libs-load");
+    const load=()=>{
+      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      Promise.all([
+        fetchPairLibraries("PLEX","history").then(libs=>{
+          renderPairLibChips(state,"PLEX","history",libs);
+        }),
+        fetchPairLibraries("PLEX","ratings").then(libs=>{
+          renderPairLibChips(state,"PLEX","ratings",libs);
+        })
+      ]).finally(()=>{
+        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+      });
+    };
+    
+    if(btn&&!btn.__wired){
+      btn.__wired=true;
+      btn.addEventListener("click",load);
+    }
+    load();
+  }else{
+    const btn=ID("plx-libs-load");
+    if(btn) btn.disabled=true;
+  }
+
+  if(hasJF){
+    const btn=ID("jf-libs-load");
+    const load=()=>{
+      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      Promise.all([
+        fetchPairLibraries("JELLYFIN","history").then(libs=>{
+          renderPairLibChips(state,"JELLYFIN","history",libs);
+        }),
+        fetchPairLibraries("JELLYFIN","ratings").then(libs=>{
+          renderPairLibChips(state,"JELLYFIN","ratings",libs);
+        })
+      ]).finally(()=>{
+        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+      });
+    };
+
+    if(btn&&!btn.__wired){
+      btn.__wired=true;
+      btn.addEventListener("click",load);
+    }
+    load();
+  }else{
+    const btn=ID("jf-libs-load");
+    if(btn) btn.disabled=true;
+  }
+
+  if(hasEM){
+    const btn=ID("em-libs-load");
+    const load=()=>{
+      if(btn){btn.disabled=true;btn.textContent="Loading…";}
+      Promise.all([
+        fetchPairLibraries("EMBY","history").then(libs=>{
+          renderPairLibChips(state,"EMBY","history",libs);
+        }),
+        fetchPairLibraries("EMBY","ratings").then(libs=>{
+          renderPairLibChips(state,"EMBY","ratings",libs);
+        })
+      ]).finally(()=>{
+        if(btn){btn.disabled=false;btn.textContent="Load libraries";}
+      });
+    };
+
+    if(btn&&!btn.__wired){
+      btn.__wired=true;
+      btn.addEventListener("click",load);
+    }
+    load();
+  }else{
+    const btn=ID("em-libs-load");
+    if(btn) btn.disabled=true;
+  }
+}
+
 function restartFlowAnimation(mode){
   const rail=ID("cx-flow-rail");if(!rail)return;
   const arrow=rail.querySelector(".arrow"),dots=[...rail.querySelectorAll(".dot.flow")];
@@ -372,6 +564,19 @@ function renderFeaturePanel(state){
           <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
           <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div>
         </div>
+        <div class="prov-box" id="plx-pair-libs">
+          <div class="panel-title small">Pair library whitelist</div>
+          <div class="muted">Empty = use server-level whitelist.</div>
+          <div class="opt-row">
+            <label>History</label>
+            <div class="chip-row" id="plx-hist-libs"></div>
+          </div>
+          <div class="opt-row">
+            <label>Ratings</label>
+            <div class="chip-row" id="plx-rate-libs"></div>
+          </div>
+          <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
+        </div>
       </div></details>
 
       <details class="mods fold" id="prov-jelly">
@@ -380,6 +585,19 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
+          </div>
+          <div class="prov-box" id="jf-pair-libs">
+            <div class="panel-title small">Pair library whitelist</div>
+            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="opt-row">
+              <label>History</label>
+              <div class="chip-row" id="jf-hist-libs"></div>
+            </div>
+            <div class="opt-row">
+              <label>Ratings</label>
+              <div class="chip-row" id="jf-rate-libs"></div>
+            </div>
+            <button type="button" class="cx-btn small" id="jf-libs-load">Load libraries</button>
           </div>
         </div>
       </details>
@@ -390,6 +608,19 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
             <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
+          </div>
+          <div class="prov-box" id="em-pair-libs">
+            <div class="panel-title small">Pair library whitelist</div>
+            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="opt-row">
+              <label>History</label>
+              <div class="chip-row" id="em-hist-libs"></div>
+            </div>
+            <div class="opt-row">
+              <label>Ratings</label>
+              <div class="chip-row" id="em-rate-libs"></div>
+            </div>
+            <button type="button" class="cx-btn small" id="em-libs-load">Load libraries</button>
           </div>
         </div>
       </details>
@@ -411,6 +642,9 @@ function renderFeaturePanel(state){
         grid.insertBefore(row, before || null); 
       }
     }
+
+    initPairLibraryUI(state);
+
     const main = Q(".cx-main");
     let warn = ID("cx-prov-warn");
     if (!warn) {
@@ -421,7 +655,7 @@ function renderFeaturePanel(state){
     }
     warn.innerHTML = `
       <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-      Advanced provider settings — do not change unless you know what you're doing!
+      Provider specific settings — whitelist libraries are included in above (Plex, Jellyfin, Emby) sections, but ONLY if they are part of this Pair.
     `;
     QA(".fold").forEach(f=>{f.classList.remove("open")});
     return;
@@ -691,84 +925,84 @@ function renderFeaturePanel(state){
     return;
   }
 
-    if (state.feature === "history") {
-      const hs = getOpts(state, "history");
-      const trCfg = (state.cfgRaw?.trakt) || {};
-      const emCfg = (state.cfgRaw?.emby?.history) || {};
-      const trColRow = hasTrakt(state)
-        ? `<div class="opt-row">
+  if (state.feature === "history") {
+    const hs = getOpts(state, "history");
+    const trCfg = (state.cfgRaw?.trakt) || {};
+    const emCfg = (state.cfgRaw?.emby?.history) || {};
+    const trColRow = hasTrakt(state)
+      ? `<div class="opt-row">
             <label for="cx-tr-hs-col">Add collections to Trakt</label>
             <label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}><span class="slider"></span></label>
           </div>`
-        : "";
+      : "";
 
-      left.innerHTML = `<div class="panel-title">History — basics</div>
-        <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="grid2">
-          <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
-          <div class="opt-row"><label class="muted">Remove (disabled)</label>
-            <label class="switch" style="opacity:.5;pointer-events:none">
-              <input id="cx-hs-remove" type="checkbox" disabled>
-              <span class="slider"></span>
-            </label>
-          </div>
-          ${trColRow}
+    left.innerHTML = `<div class="panel-title">History — basics</div>
+      <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
+      <div class="grid2">
+        <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label class="muted">Remove (disabled)</label>
+          <label class="switch" style="opacity:.5;pointer-events:none">
+            <input id="cx-hs-remove" type="checkbox" disabled>
+            <span class="slider"></span>
+          </label>
         </div>
-        <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
+        ${trColRow}
+      </div>
+      <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
 
-      const parts = [`<div class="panel-title">Advanced</div>`];
+    const parts = [`<div class="panel-title">Advanced</div>`];
 
-      if (hasTrakt(state)) {
-        parts.push(`
-          <div class="panel-title small" style="margin-top:6px">Trakt</div>
-          <details id="cx-tr-hs">
-            <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
-            <div class="grid2 compact">
-              <div class="opt-row">
-                <label for="cx-tr-hs-numfb">Number Fallback</label>
-                <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
-              </div>
-              <div class="opt-row">
-                <label for="cx-tr-hs-unres">Unresolved Freeze</label>
-                <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
-              </div>
+    if (hasTrakt(state)) {
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Trakt</div>
+        <details id="cx-tr-hs">
+          <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="cx-tr-hs-numfb">Number Fallback</label>
+              <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
             </div>
-          </details>
-        `);
-      }
-
-      if (hasEmby(state)) {
-        const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
-        parts.push(`
-          <div class="panel-title small" style="margin-top:6px">Emby</div>
-          <details id="cx-em-hs">
-            <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
-            <div class="grid2 compact">
-              <div class="opt-row">
-                <label for="cx-em-hs-limit">Query limit</label>
-                <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
-              </div>
-              <div class="opt-row">
-                <label for="cx-em-hs-delay">Write delay (ms)</label>
-                <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
-              </div>
-              <div class="opt-row" style="grid-column:1/-1">
-                <label for="cx-em-hs-guid">GUID priority</label>
-                <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
-              </div>
+            <div class="opt-row">
+              <label for="cx-tr-hs-unres">Unresolved Freeze</label>
+              <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
             </div>
-          </details>
-        `);
-      }
-
-      if (parts.length === 1) {
-        parts.push(`<div class="muted">More controls coming later.</div>`);
-      }
-
-      right.innerHTML = parts.join("");
-      applySubDisable("history");
-      return;
+          </div>
+        </details>
+      `);
     }
+
+    if (hasEmby(state)) {
+      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Emby</div>
+        <details id="cx-em-hs">
+          <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="cx-em-hs-limit">Query limit</label>
+              <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
+            </div>
+            <div class="opt-row">
+              <label for="cx-em-hs-delay">Write delay (ms)</label>
+              <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="cx-em-hs-guid">GUID priority</label>
+              <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (parts.length === 1) {
+      parts.push(`<div class="muted">More controls coming later.</div>`);
+    }
+
+    right.innerHTML = parts.join("");
+    applySubDisable("history");
+    return;
+  }
 
   if (state.feature === "playlists") {
     const pl=getOpts(state,"playlists");
@@ -860,7 +1094,8 @@ function bindChangeHandlers(state,root){
     if(id==="cx-wl-enable"||id==="cx-rt-enable"||id==="cx-hs-enable"||id==="cx-pl-enable"){applySubDisable(id.startsWith("cx-wl")?"watchlist":id.startsWith("cx-rt")?"ratings":id.startsWith("cx-hs")?"history":"playlists")}
 
     if(id.startsWith("cx-wl-")){
-      state.options.watchlist={enable:!!ID("cx-wl-enable")?.checked,add:!!ID("cx-wl-add")?.checked,remove:!!ID("cx-wl-remove")?.checked};
+      const prev=state.options.watchlist||{};
+      state.options.watchlist=Object.assign({},prev,{enable:!!ID("cx-wl-enable")?.checked,add:!!ID("cx-wl-add")?.checked,remove:!!ID("cx-wl-remove")?.checked});
       state.visited.add("watchlist");
     }
 
@@ -902,12 +1137,14 @@ function bindChangeHandlers(state,root){
     }
 
     if(id.startsWith("cx-hs-")){
-      state.options.history={enable:!!ID("cx-hs-enable")?.checked,add:!!ID("cx-hs-add")?.checked,remove:false};
+      const prev=state.options.history||{};
+      state.options.history=Object.assign({},prev,{enable:!!ID("cx-hs-enable")?.checked,add:!!ID("cx-hs-add")?.checked,remove:false});
       state.visited.add("history");
     }
 
     if(id.startsWith("cx-pl-")){
-      state.options.playlists={enable:!!ID("cx-pl-enable")?.checked,add:!!ID("cx-pl-add")?.checked,remove:!!ID("cx-pl-remove")?.checked};
+      const prev=state.options.playlists||{};
+      state.options.playlists=Object.assign({},prev,{enable:!!ID("cx-pl-enable")?.checked,add:!!ID("cx-pl-add")?.checked,remove:!!ID("cx-pl-remove")?.checked});
       state.visited.add("playlists");
     }
 
@@ -1221,14 +1458,24 @@ export default{
     hostEl.__doSave=async()=>{
       await saveConfigBits(state);
       const payload=buildPayload(state,wrap);
+
+      const feats=payload.features||{};
+      const enabledKeys=Object.keys(feats).filter(k=>feats[k]?.enable);
+      if(!enabledKeys.length){
+        const ok=window.confirm("This pair has no enabled features.\nIt will not transfer any data.\nSave anyway?");
+        if(!ok)return;
+      }
+
       const res=await savePair(payload);
-      if(!res.ok){ alert("Save failed"); return; }
+      if(!res.ok){alert("Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs()}
         else{
           const r=await fetch("/api/pairs",{cache:"no-store"});
-          const arr=r.ok?await r.json():[]; window.cx=window.cx||{}; window.cx.pairs=Array.isArray(arr)?arr:[];
+          const arr=r.ok?await r.json():[];
+          window.cx=window.cx||{};
+          window.cx.pairs=Array.isArray(arr)?arr:[];
         }
         document.dispatchEvent(new Event("cx-state-change"));
         window.cxRenderPairsOverlay?.();

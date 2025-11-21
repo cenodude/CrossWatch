@@ -1,5 +1,5 @@
 # /crosswatch.py
-# CrossWatch Web API (FastAPI)
+# CrossWatch - Web API (FastAPI)
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 #
 # --------------- CrossWatch Web API (FastAPI) ---------------
@@ -57,6 +57,7 @@ from _syncAPI import (
     _compute_lanes_from_stats,
     _lane_is_empty,
     _parse_epoch,
+    api_run_sync,
 )
 
 from _watchlist import build_watchlist, _get_provider_items, _load_hide_set, _save_hide_set
@@ -743,12 +744,19 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         
 # --- Scheduler wiring
 def _start_sync_from_scheduler() -> bool:
-    if _is_sync_running():
+    try:
+        payload = {"source": "scheduler"}
+        res = api_run_sync(payload) or {}
+    except Exception as e:
+        _append_log("SYNC", f"[!] Scheduler: api_run_sync failed: {e}")
         return False
-    run_id = str(int(time.time()))
-    th = threading.Thread(target=_run_pairs_thread, args=(run_id,), daemon=True)
-    th.start()
-    RUNNING_PROCS["SYNC"] = th
+
+    if not res.get("ok"):
+        return False
+    if res.get("skipped"):
+        _append_log("SYNC", f"[i] Scheduler: skipped run ({res.get('skipped')})")
+        return False
+
     return True
 
 scheduler = SyncScheduler(

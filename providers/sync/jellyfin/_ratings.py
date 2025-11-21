@@ -9,17 +9,42 @@ except Exception:
     from _id_map import minimal as id_minimal, canonical_key  # type: ignore
 
 from ._common import normalize as jelly_normalize
-from ._common import jf_scope_ratings
+from ._common import jf_scope_ratings, jf_get_library_roots, jf_resolve_library_id
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_ratings.unresolved.json"
+SHADOW_PATH = "/config/.cw_state/jellyfin_ratings.shadow.json"
+
+# --- shadow (presence echo) ---------------------------------------------------
+
+def _shadow_load() -> Dict[str, int]:
+    try:
+        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f) or {}
+            return {str(k): int(v) for k, v in raw.items()}
+    except Exception:
+        return {}
+
+def _shadow_save(d: Mapping[str, int]) -> None:
+    try:
+        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
+        with open(SHADOW_PATH, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        pass
+
+
+# --- logging -----------------------------------------------------------------
 
 def _dbg_on() -> bool:
     return bool(os.environ.get("CW_JELLYFIN_DEBUG") or os.environ.get("CW_DEBUG"))
 
 def _log(msg: str) -> None:
-    if _dbg_on(): print(f"[JELLYFIN:ratings] {msg}")
+    if _dbg_on():
+        print(f"[JELLYFIN:ratings] {msg}")
 
-# -- unresolved store
+
+# --- unresolved store --------------------------------------------------------
+
 def _load() -> Dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
@@ -46,21 +71,30 @@ def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
     _save(data)
 
 def _thaw_if_present(keys: Iterable[str]) -> None:
-    data = _load(); changed = False
+    data = _load()
+    changed = False
     for k in list(keys or []):
         if k in data:
-            data.pop(k, None); changed = True
+            data.pop(k, None)
+            changed = True
     if changed:
         _save(data)
 
-# -- cfg
+
+# --- cfg ---------------------------------------------------------------------
+
 def _limit(adapter) -> int:
     v = getattr(getattr(adapter, "cfg", None), "ratings_query_page", None)
-    if v is None: v = 500
-    try: return max(50, int(v))
-    except Exception: return 500
+    if v is None:
+        v = 500
+    try:
+        return max(50, int(v))
+    except Exception:
+        return 500
 
-# -- http helpers
+
+# --- http helpers ------------------------------------------------------------
+
 def _body_snip(r, n: int = 240) -> str:
     try:
         t = r.text() if callable(getattr(r, "text", None)) else getattr(r, "text", "")
@@ -68,7 +102,10 @@ def _body_snip(r, n: int = 240) -> str:
     except Exception:
         return "no-body"
 
-# -- low-level write (numeric rating 0..10; accepts 0..5 upscale)
+
+# --- low-level write ---------------------------------------------------------
+# Numeric rating 0..10; accepts 0..5 upscale.
+
 def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
     try:
         payload: Dict[str, Any] = {}
@@ -76,13 +113,15 @@ def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
             payload["Rating"] = None
         else:
             r = float(rating)
-            if 0.0 <= r <= 5.0: r *= 2.0  # 5★ -> 10pt
+            if 0.0 <= r <= 5.0:
+                r *= 2.0
             r = max(0.0, min(10.0, r))
             payload["Rating"] = round(r, 1)
 
         r1 = http.post(f"/UserItems/{item_id}/UserData", params={"userId": uid}, json=payload)
         ok = getattr(r1, "status_code", 0) in (200, 204)
-        if ok: return True
+        if ok:
+            return True
 
         r2 = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
         ok2 = getattr(r2, "status_code", 0) in (200, 204)
@@ -95,18 +134,34 @@ def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
             )
         return ok2
     except Exception as e:
-        if _dbg_on(): _log(f"write exception item={item_id} err={e!r}")
+        if _dbg_on():
+            _log(f"write exception item={item_id} err={e!r}")
         return False
 
-# -- index (paginate; only real user ratings; scoped to whitelisted libraries)
+
+# --- index builder -----------------------------------------------------------
+
 def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("ratings") if callable(prog_mk) else None
 
     http = adapter.client
-    uid  = adapter.cfg.user_id
+    uid = adapter.cfg.user_id
     page = _limit(adapter)
     start = 0
+
+    scope_params = jf_scope_ratings(adapter.cfg)
+    scope_libs: List[str] = []
+    if isinstance(scope_params, Mapping):
+        pid = scope_params.get("ParentId")
+        if pid:
+            scope_libs = [str(pid)]
+        else:
+            anc = scope_params.get("AncestorIds")
+            if isinstance(anc, (list, tuple)):
+                scope_libs = [str(x) for x in anc if x]
+
+    roots = jf_get_library_roots(adapter)
 
     out: Dict[str, Dict[str, Any]] = {}
     total_seen = 0
@@ -117,7 +172,11 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
             "recursive": True,
             "includeItemTypes": "Movie,Series,Episode",
             "enableUserData": True,
-            "fields": "ProviderIds,ProductionYear,UserData,UserRating,Type,IndexNumber,ParentIndexNumber,SeriesName,Name,ParentId",
+            "fields": (
+                "ProviderIds,ProductionYear,UserData,UserRating,Type,"
+                "IndexNumber,ParentIndexNumber,SeriesName,Name,"
+                "ParentId,LibraryId,AncestorIds"
+            ),
             "startIndex": start,
             "limit": page,
             "enableTotalRecordCount": True,
@@ -125,18 +184,21 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
             "sortBy": "SortName",
             "sortOrder": "Ascending",
         }
-        params.update(jf_scope_ratings(adapter.cfg))
+        if scope_params:
+            params.update(scope_params)
 
         r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         rows = body.get("Items") or []
-        if not rows: break
+        if not rows:
+            break
 
         for row in rows:
             total_seen += 1
             ud = row.get("UserData") or {}
             rating = row.get("UserRating")
-            if rating is None: rating = ud.get("Rating")
+            if rating is None:
+                rating = ud.get("Rating")
             try:
                 rf = float(rating)
             except (TypeError, ValueError):
@@ -146,6 +208,9 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
 
             try:
                 m = jelly_normalize(row)
+                lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
+                m = dict(m)
+                m["library_id"] = lib_id
                 m["rating"] = round(rf, 1)
 
                 k = canonical_key(m)
@@ -163,22 +228,48 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
 
         start += len(rows)
         if prog:
-            try: prog.tick(total_seen, total=max(total_seen, start))
-            except Exception: pass
-        if len(rows) < page: break
+            try:
+                prog.tick(total_seen, total=max(total_seen, start))
+            except Exception:
+                pass
+        if len(rows) < page:
+            break
 
     if prog:
-        try: prog.done(ok=True, total=len(out))
-        except Exception: pass
+        try:
+            prog.done(ok=True, total=len(out))
+        except Exception:
+            pass
+
+    if _dbg_on():
+        seen_libs: Dict[str, int] = {}
+        for m in out.values():
+            lid = m.get("library_id") or "NONE"
+            lid_s = str(lid)
+            seen_libs[lid_s] = seen_libs.get(lid_s, 0) + 1
+        _log(f"library_id distribution: {seen_libs}")
+
+    shadow = _shadow_load()
+    if shadow:
+        added = 0
+        for k in shadow.keys():
+            if k not in out:
+                out.setdefault(k, {"shadow": True})
+                added += 1
+        if added:
+            _log(f"shadow merged: +{added}")
 
     _thaw_if_present(out.keys())
     _log(f"index size: {len(out)}")
     return out
 
-# -- writes
+# --- writes ------------------------------------------------------------------
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    http = adapter.client; uid = adapter.cfg.user_id
-    ok = 0; unresolved: List[Dict[str, Any]] = []
+    http = adapter.client
+    uid = adapter.cfg.user_id
+    ok = 0
+    unresolved: List[Dict[str, Any]] = []
+    shadow = _shadow_load()
 
     from ._common import resolve_item_id
     for it in items or []:
@@ -196,19 +287,27 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             _freeze(it, reason="resolve_failed")
             continue
 
+        k = canonical_key(id_minimal(it))
         if _rate(http, uid, iid, rf):
             ok += 1
-            _thaw_if_present([canonical_key(id_minimal(it))])
+            shadow[k] = int(shadow.get(k, 0)) + 1
+            _thaw_if_present([k])
         else:
             unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
             _freeze(it, reason="write_failed")
+
+    shadow = {k: v for k, v in shadow.items() if v > 0}
+    _shadow_save(shadow)
 
     _log(f"add done: +{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    http = adapter.client; uid = adapter.cfg.user_id
-    ok = 0; unresolved: List[Dict[str, Any]] = []
+    http = adapter.client
+    uid = adapter.cfg.user_id
+    ok = 0
+    unresolved: List[Dict[str, Any]] = []
+    shadow = _shadow_load()
 
     from ._common import resolve_item_id
     for it in items or []:
@@ -218,12 +317,22 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             _freeze(it, reason="resolve_failed")
             continue
 
+        k = canonical_key(id_minimal(it))
         if _rate(http, uid, iid, None):
             ok += 1
-            _thaw_if_present([canonical_key(id_minimal(it))])
+            cur = int(shadow.get(k, 0))
+            nxt = max(0, cur - 1)
+            if nxt > 0:
+                shadow[k] = nxt
+            else:
+                shadow.pop(k, None)
+            _thaw_if_present([k])
         else:
             unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
             _freeze(it, reason="write_failed")
+
+    shadow = {k: v for k, v in shadow.items() if v > 0}
+    _shadow_save(shadow)
 
     _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
     return ok, unresolved

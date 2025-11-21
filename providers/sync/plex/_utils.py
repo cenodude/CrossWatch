@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, re, json, time, xml.etree.ElementTree as ET, requests
+import os, re, json, time, ipaddress, xml.etree.ElementTree as ET, requests
 from requests.exceptions import SSLError, ConnectionError
 from typing import Any, Dict, Mapping, Optional, Tuple, List
 
@@ -45,9 +45,7 @@ def _write_json_atomic(p: str, data: Mapping[str, Any]) -> None:
     except Exception as e: _log(f"config write failed: {e}")
 
 def _is_empty(v: Any) -> bool: return v is None or (isinstance(v, str) and v.strip() == "")
-
 def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]: return _read_json(path)
-
 def save_config(cfg: Mapping[str, Any], path: str = CONFIG_PATH) -> None: _write_json_atomic(path, dict(cfg))
 
 def _plex(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -114,7 +112,7 @@ def _fallback_bases(base_url: str) -> List[str]:
 def _try_get(s: requests.Session, base: str, path: str, timeout: float) -> Optional[requests.Response]:
     url = f"{base.rstrip('/')}{path}"
     try:
-        _log(f"GET {url} verify={s.verify}")
+        # only log on errors/fallbacks
         return s.get(url, timeout=timeout)
     except (SSLError, ConnectionError) as e:
         _log(f"primary failed: {e}")
@@ -123,7 +121,8 @@ def _try_get(s: requests.Session, base: str, path: str, timeout: float) -> Optio
                 _log(f"fallback → {fb}{path}")
                 s.verify = fb.startswith("https://") and s.verify
                 r = s.get(f"{fb}{path}", timeout=timeout)
-                if r is not None: return r
+                if r is not None:
+                    return r
             except Exception as ee:
                 _log(f"fallback failed: {ee}")
     except Exception as e:
@@ -139,19 +138,54 @@ def discover_server_url_from_server(srv) -> Optional[str]:
 
 def _pick_server_url_from_resources(xml_text: str) -> str:
     try:
+        from urllib.parse import urlparse
+        import re, ipaddress
+
+        def host_flags(uri: str):
+            # (is_ip_host, is_private_ip)
+            h = (urlparse(uri).hostname or "").strip()
+            if not h:
+                return False, False
+
+            # plain IP host
+            try:
+                ip = ipaddress.ip_address(h)
+                return True, bool(ip.is_private or ip.is_link_local)
+            except Exception:
+                pass
+
+            # hyphenated plex.direct -> treat as IP
+            m = re.match(r"^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$", h, re.I)
+            if m:
+                dotted = m.group(1).replace("-", ".")
+                try:
+                    ip = ipaddress.ip_address(dotted)
+                    return False, bool(ip.is_private or ip.is_link_local)
+                except Exception:
+                    pass
+
+            return False, False
+
         root = ET.fromstring(xml_text); servers: List[tuple] = []
         for dev in root.findall(".//Device"):
             if "server" in (dev.attrib.get("provides") or ""):
                 for c in dev.findall(".//Connection"):
                     uri = (c.attrib.get("uri") or "").strip()
-                    if not uri: continue
-                    local = (c.attrib.get("local") or "") in ("1","true","yes")
-                    relay = (c.attrib.get("relay") or "") in ("1","true","yes")
-                    https = uri.startswith("https://")
-                    servers.append((local, not relay, https, uri.rstrip("/")))
-        servers.sort(key=lambda t:(t[0],t[1],t[2]), reverse=True)
-        return servers[0][3] if servers else ""
-    except Exception: return ""
+                    if not uri:
+                        continue
+                    local = (c.attrib.get("local") or "") in ("1", "true", "yes")
+                    relay = (c.attrib.get("relay") or "") in ("1", "true", "yes")
+                    direct = not relay
+                    http = uri.startswith("http://")
+                    is_ip, is_priv = host_flags(uri)
+
+                    # local > direct > private LAN > http > ip-host > everything else
+                    servers.append((local, direct, is_priv, http, is_ip, uri.rstrip("/")))
+
+        servers.sort(key=lambda t: (t[0], t[1], t[2], t[3], t[4]), reverse=True)
+        return servers[0][5] if servers else ""
+    except Exception:
+        return ""
 
 def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> Optional[str]:
     try:

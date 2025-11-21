@@ -1,8 +1,10 @@
 # _maintenanceAPI.py
+# CrossWatch - Maintenance API for CrossWatch
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from fastapi import APIRouter, Body
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-import os, json, shutil
+import os, json, shutil, threading
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
@@ -151,7 +153,59 @@ def reset_stats(
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    
+@router.post("/reset-currently-watching")
+def reset_currently_watching() -> Dict[str, Any]:
+    _, _, CW_STATE_DIR, _, _, _append_log = _cw()
+    path = CW_STATE_DIR / "currently_watching.json"
+    existed = path.exists()
+    try:
+        if existed:
+            try:
+                path.unlink(missing_ok=True)
+            except TypeError:
+                if path.exists():
+                    path.unlink()
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Reset currently_watching.json (currently playing).",
+            )
+        except Exception:
+            pass
+        return {"ok": True, "path": str(path), "existed": bool(existed)}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "path": str(path),
+            "existed": bool(existed),
+        }
 
+@router.post("/restart")
+def restart_crosswatch() -> Dict[str, Any]:
+    _, _, _, _, _, _append_log = _cw()
+    try:
+        _append_log(
+            "TRBL",
+            "\x1b[91m[TROUBLESHOOT]\x1b[0m Restart requested via /api/maintenance/restart.",
+        )
+    except Exception:
+        pass
+
+    def _kill():
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Terminating process for restart.",
+            )
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Timer(0.75, _kill).start()
+    return {"ok": True, "message": "Restart scheduled"}
+      
 @router.post("/reset-state")
 def reset_state(
     mode: str=Body("clear_both"),  # clear_both|clear_state|clear_tombstones|clear_tombstone_entries|clear_cw_state_only|rebuild

@@ -10,6 +10,8 @@ from ._common import (
     chunked,
     sleep_ms,
     jf_scope_history,
+    jf_get_library_roots,
+    jf_resolve_library_id,
 )
 
 try:
@@ -129,8 +131,29 @@ def _epoch_to_iso_z(ts: int) -> str:
 def _now_iso_z() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# --- series ids helper --------------------------------------------------------
+# Deep lookup:
+_lib_anc_cache: Dict[str, Optional[str]] = {}
 
+def _lib_id_via_ancestors(http, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
+    if not iid:
+        return None
+    if iid in _lib_anc_cache:
+        return _lib_anc_cache[iid]
+    try:
+        r = http.get(f"/Items/{iid}/Ancestors", params={"Fields": "Id"})
+        if getattr(r, "status_code", 0) == 200:
+            root_keys = set(str(k) for k in roots.keys())
+            for a in (r.json() or []):
+                aid = str((a or {}).get("Id") or "")
+                if aid in root_keys:
+                    _lib_anc_cache[iid] = aid
+                    return aid
+    except Exception:
+        pass
+    _lib_anc_cache[iid] = None
+    return None
+
+# Series IDs fetcher
 def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
     sid = (str(series_id or "").strip()) or ""
     if not sid: return {}
@@ -194,7 +217,8 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
 
-    http = adapter.client; uid = adapter.cfg.user_id
+    http = adapter.client
+    uid = adapter.cfg.user_id
     page_size = _history_limit(adapter)
 
     since_epoch = 0
@@ -202,42 +226,74 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
         since_epoch = int(since)
     elif isinstance(since, str):
         since_epoch = int(_parse_iso_to_epoch(since) or 0)
+        
+    scope_params = jf_scope_history(adapter.cfg) or {}
+    scope_libs: List[str] = []
+    if isinstance(scope_params, Mapping):
+        pid = scope_params.get("ParentId") or scope_params.get("parentId")
+        if pid:
+            scope_libs = [str(pid)]
+        else:
+            anc = scope_params.get("AncestorIds") or scope_params.get("ancestorIds")
+            if isinstance(anc, (list, tuple)):
+                scope_libs = [str(x) for x in anc if x]
 
+    roots = jf_get_library_roots(adapter)
+    if roots:
+        _log(f"library_roots: {sorted(roots.keys())}")
     start = 0
+    
     events: List[Tuple[int, Dict[str, Any]]] = []
 
     while True:
         params: Dict[str, Any] = {
-            "IncludeItemTypes": "Movie,Episode",
-            "Recursive": True,
-            "EnableUserData": True,
-            "Fields": "ProviderIds,ProductionYear,UserData,Type,IndexNumber,ParentIndexNumber,SeriesName,SeriesId,Name,ParentId",
-            "Filters": "IsPlayed",
+            "UserId": uid,
             "SortBy": "DatePlayed",
             "SortOrder": "Descending",
+            "IncludeItemTypes": "Movie,Episode",
+            "Recursive": "true",
+            "Filters": "IsPlayed",
+            "Fields": (
+                "ProviderIds,MediaSources,Path,Overview,"
+                "ParentId,LibraryId,AncestorIds,"
+                "SeriesName,SeriesId,IndexNumber,ParentIndexNumber,DateLastMediaAdded"
+            ),
             "StartIndex": start,
             "Limit": page_size,
-            "EnableTotalRecordCount": False,
-            "UserId": uid,
         }
-        params.update(jf_scope_history(adapter.cfg))
+
+        if scope_params:
+            params.update(scope_params)
 
         r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         rows = body.get("Items") or []
-        if not rows: break
+        if not rows:
+            break
 
         for row in rows:
             ud = row.get("UserData") or {}
             lp = ud.get("LastPlayedDate") or row.get("DateLastPlayed") or None
             ts = _parse_iso_to_epoch(lp) or 0
-            if ts <= since_epoch:
+            if not ts:
+                continue
+            if since_epoch and ts <= since_epoch:
                 rows = []
                 break
 
             m = jelly_normalize(row)
+
+            # Resolve canonical library_id
+            lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
+            if not lib_id and row.get("Id"):
+                lib_id = _lib_id_via_ancestors(http, str(row["Id"]), roots)
+
+            m = dict(m)
+            m["library_id"] = lib_id
+
             watched_at = _epoch_to_iso_z(ts)
             typ = (row.get("Type") or "").strip()
+
 
             if typ == "Movie":
                 event: Dict[str, Any] = {
@@ -265,38 +321,50 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             else:
                 continue
 
+            # Force library id when scoped to a single library
+            lib_id: Optional[str] = None
+            lib_id = m.get("library_id")
+
+            if lib_id:
+                event["library_id"] = lib_id
+
             ev_key = f"{canonical_key(m)}@{ts}"
-            events.append((ts, {"key": ev_key, "base": m}, event))
+            out_ev = dict(event)
+            if lib_id:
+                out_ev["library_id"] = lib_id  # duplicate to top level
+            events.append((ts, {"key": ev_key, "base": m}, out_ev))
 
         start += len(body.get("Items") or [])
-        if isinstance(limit, int) and limit > 0 and len(events) >= int(limit): break
-        if not rows: break
+        if isinstance(limit, int) and limit > 0 and len(events) >= int(limit):
+            break
+        if not rows:
+            break
 
     events.sort(key=lambda x: x[0], reverse=True)
     if isinstance(limit, int) and limit > 0:
         events = events[: int(limit)]
 
-    total = len(events)
     out: Dict[str, Dict[str, Any]] = {}
-    if prog:
-        try: prog.tick(0, total=total, force=True)
-        except Exception: pass
-
-    done = 0
-    for _, meta, event in events:
-        out[meta["key"]] = event
-        done += 1
-        if prog:
-            try: prog.tick(done, total=total)
-            except Exception: pass
+    for ts, meta, ev in events:
+        key = meta["key"]
+        cur = out.get(key)
+        if cur is None or (cur.get("watched_at") or "") < (ev.get("watched_at") or ""):
+            out[key] = ev
+    # Base keys that already have a real event (key@ts)
+    event_bases = set()
+    for ek in out.keys():
+        event_bases.add(ek.split("@", 1)[0])
 
     shadow = _shadow_load()
     if shadow:
         added = 0
         for k in list(shadow.keys()):
+            if k in event_bases or k in out:
+                continue
             out.setdefault(k, {"watched": True})
             added += 1
-        _log(f"shadow merged: +{added}")
+        if added:
+            _log(f"shadow merged: +{added}")
 
     bb = _bb_load()
     if bb:
@@ -304,6 +372,8 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
         now_ep = int(datetime.now(timezone.utc).timestamp())
         added = 0
         for k, meta in bb.items():
+            if k in event_bases or k in out:
+                continue
             if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
                 since_ep = _parse_iso_to_epoch(meta.get("since")) or 0
                 if since_ep and (now_ep - since_ep) <= ttl:
@@ -311,6 +381,25 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                     added += 1
         if added:
             _log(f"blackbox presence merged: +{added}")
+
+    # Debug: show library_id distribution versus configured libraries
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
+        try:
+            cfg_libs = list(
+                getattr(adapter.cfg, "history_libraries", None)
+                or getattr(adapter.cfg, "libraries", None)
+                or []
+            )
+        except Exception:
+            cfg_libs = []
+
+        lib_counts: Dict[str, int] = {}
+        for ev in out.values():
+            lid = ev.get("library_id") or "NONE"
+            s = str(lid)
+            lib_counts[s] = lib_counts.get(s, 0) + 1
+
+        _log(f"history index libs cfg={cfg_libs} distribution={lib_counts}")
 
     _log(f"index size: {len(out)} (events+presence)")
     return out
@@ -324,7 +413,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
     wants: Dict[str, Mapping[str, Any]] = {}
     for it in items or []:
-        m = id_minimal(it)
+        m = jelly_normalize(it)
         wants[canonical_key(m)] = m
 
     mids: List[Tuple[str, str]] = []
@@ -340,34 +429,77 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     shadow = _shadow_load()
     bb = _bb_load()
     ok = 0
+    stats = {
+        "wrote": 0,
+        "forced": 0,
+        "backdated": 0,
+        "skip_newer": 0,
+        "skip_played_untimed": 0,
+        "skip_missing_date": 0,
+        "fail_mark": 0,
+    }
+
+    total = len(mids)
+    if total:
+        _log(f"apply:add:start dst=JELLYFIN feature=history count={total}")
+
+    processed = 0
 
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
             src_ts = _parse_iso_to_epoch(wants[k].get("watched_at")) or 0
-            src_iso = _epoch_to_iso_z(src_ts) if src_ts else None
+            if not src_ts:
+                unresolved.append({"item": id_minimal(wants[k]), "hint": "missing_watched_at"})
+                _freeze(wants[k], reason="missing_watched_at")
+                stats["skip_missing_date"] += 1
+                processed += 1
+                continue
 
+            src_iso = _epoch_to_iso_z(src_ts)
             played, dst_ts = _dst_user_state(http, uid, iid)
 
             if played and dst_ts and src_ts and dst_ts >= src_ts:
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
+                stats["skip_newer"] += 1
+                processed += 1
+                if (processed % 25) == 0:
+                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                sleep_ms(delay)
                 continue
 
             if played and not dst_ts and not src_ts:
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z()}
+                stats["skip_played_untimed"] += 1
+                processed += 1
+                if (processed % 25) == 0:
+                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                sleep_ms(delay)
                 continue
 
             if _mark_played(http, uid, iid, date_played_iso=src_iso):
                 ok += 1
                 shadow[k] = int(shadow.get(k, 0)) + 1
                 bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
+                stats["wrote"] += 1
             else:
                 unresolved.append({"item": wants[k], "hint": "mark_played_failed"})
                 _freeze(wants[k], reason="write_failed")
+                stats["fail_mark"] += 1
+
+            processed += 1
+            if (processed % 25) == 0:
+                _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
             sleep_ms(delay)
 
     _shadow_save(shadow); _bb_save(bb)
     if ok: _thaw_if_present([k for k, _ in mids])
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _log(
+        "add done: "
+        f"+{ok} / unresolved {len(unresolved)} | "
+        f"wrote={stats['wrote']} forced={stats['forced']} backdated={stats['backdated']} "
+        f"skip_newer={stats['skip_newer']} skip_played_untimed={stats['skip_played_untimed']} "
+        f"skip_missing_date={stats['skip_missing_date']} fail_mark={stats['fail_mark']}"
+    )
     return ok, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
@@ -377,7 +509,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
     wants: Dict[str, Mapping[str, Any]] = {}
     for it in items or []:
-        m = id_minimal(it)
+        m = jelly_normalize(it)
         wants[canonical_key(m)] = m
 
     mids: List[Tuple[str, str]] = []

@@ -1,13 +1,12 @@
 # _wallAPI.py
+# CrossWatch - Wall API for watchlist management
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Dict, Any, List
-
 from fastapi import FastAPI, Query
-
 from cw_platform.config_base import load_config
 from _syncAPI import _load_state
 from _watchlist import build_watchlist, detect_available_watchlist_providers
-
 
 def _load_wall_snapshot() -> list[dict]:
     try:
@@ -17,13 +16,11 @@ def _load_wall_snapshot() -> list[dict]:
     except Exception:
         return []
 
-
 def refresh_wall() -> list[dict]:
     try:
         return build_watchlist(_load_state() or {}, tmdb_ok=True)
     except Exception:
         return []
-
 
 def _configured_provider_ids(cfg: Dict[str, Any]) -> List[str]:
     # Dynamic provider list from registry
@@ -36,7 +33,6 @@ def _configured_provider_ids(cfg: Dict[str, Any]) -> List[str]:
         for it in manifest
         if isinstance(it, dict) and it.get("configured") and str(it.get("id") or "").upper() != "ALL"
     ]
-
 
 def register_wall(app: FastAPI):
     @app.get("/api/state/wall", tags=["wall"])

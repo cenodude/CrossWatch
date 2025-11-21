@@ -1,9 +1,16 @@
 # providers/webhooks/jellyfintrakt.py
-
+# CrossWatch - Jellyfin Trakt Scrobbler Webhook Module
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import json, time, requests
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Callable
+try:
+    from _logging import log as BASE_LOG
+except Exception:
+    BASE_LOG = None
+
+from providers.scrobble.currently_watching import update_from_payload as _cw_update
 
 TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: Dict[str, Dict[str, Any]] = {}
@@ -95,24 +102,49 @@ def _is_debug() -> bool:
         return False
 
 def _emit(logger: Optional[object], msg: str, level: str = "INFO"):
+    lvl_raw = str(level or "INFO")
+    lvl_up = lvl_raw.upper()
     try:
-        if level == "DEBUG" and not _is_debug():
+        if lvl_up == "DEBUG" and not _is_debug():
             return
-        if logger is not None:
-            if callable(logger):
-                logger(msg, level=level, module="SCROBBLE"); return
-            logmeth = getattr(logger, "log", None)
-            if callable(logmeth):
-                lvlno = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}.get(level.upper(), 20)
-                logmeth(lvlno, msg); return
-            levmeth = getattr(logger, level.lower(), None)
-            if callable(levmeth):
-                levmeth(msg); return
     except Exception:
         pass
-    if level == "DEBUG" and not _is_debug():
-        return
-    print(f"[SCROBBLE] {level} {msg}")
+    try:
+        if logger is not None:
+            if callable(logger):
+                logger(msg, level=lvl_raw, module="SCROBBLE")
+                return
+
+            logmeth = getattr(logger, "log", None)
+            if callable(logmeth):
+                lvlno = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}.get(lvl_up, 20)
+                logmeth(lvlno, msg)
+                return
+
+            levmeth = getattr(logger, lvl_raw.lower(), None)
+            if callable(levmeth):
+                levmeth(msg)
+                return
+    except Exception:
+        pass
+    try:
+        if BASE_LOG:
+            logr = BASE_LOG.child("SCROBBLE")
+            if lvl_up == "DEBUG":
+                logr.debug(msg)
+            elif lvl_up == "INFO":
+                logr.info(msg)
+            elif lvl_up == "WARN":
+                logr.warn(msg)
+            elif lvl_up == "ERROR":
+                logr.error(msg)
+            else:
+                logr(msg, level=lvl_up)
+            return
+    except Exception:
+        pass
+    print(f"[SCROBBLE] {lvl_up} {msg}")
+
 
 def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     changed = False
@@ -732,6 +764,57 @@ def process_webhook(
             _emit(logger, "suppress duplicate stop", "DEBUG")
             _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused"), "last_stop_ts": now}
             return {"ok": True, "suppressed": True}
+
+        try:
+            stop_flag = (intended == "/scrobble/stop")
+
+            if media_type == "episode":
+                title = (md.get("SeriesName") or md.get("Name") or "").strip()
+            else:
+                title = (md.get("Name") or md.get("SeriesName") or "").strip()
+
+            year = md.get("ProductionYear") or md.get("Year")
+
+            season_val = None
+            episode_val = None
+            if media_type == "episode":
+                try:
+                    season_val, episode_val = _episode_numbers(md, payload)
+                except Exception:
+                    season_val = episode_val = None
+
+            duration_ms = None
+            try:
+                rticks = md.get("RunTimeTicks") or payload.get("RunTimeTicks")
+                if rticks:
+                    duration_ms = to_ms(rticks)
+            except Exception:
+                duration_ms = None
+
+            if intended == "/scrobble/start":
+                cw_state = "playing"
+            elif intended == "/scrobble/pause":
+                cw_state = "paused"
+            elif intended == "/scrobble/stop":
+                cw_state = "stopped"
+            else:
+                cw_state = None
+
+            _cw_update(
+                source="jellyfintrakt",
+                media_type=media_type,
+                title=title,
+                year=year,
+                season=season_val,
+                episode=episode_val,
+                progress=prog,
+                stop=stop_flag,
+                duration_ms=duration_ms,
+                cover=None,
+                state=cw_state,
+            )
+        except Exception:
+            pass
 
         body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger, root=payload)
         if not body:

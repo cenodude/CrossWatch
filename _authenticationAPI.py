@@ -1,4 +1,6 @@
 # _authenticationAPI.py
+# CrossWatch - Authentication API for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple, Callable
@@ -128,18 +130,50 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         try:
             info = plex_request_pin()
             pin_id, code, exp_epoch = info["id"], info["code"], int(info["expires_epoch"])
-            cfg2 = load_config(); cfg2.setdefault("plex", {})["_pending_pin"] = {"id": pin_id, "code": code}; save_config(cfg2)
+            cfg2 = load_config()
+            cfg2.setdefault("plex", {})["_pending_pin"] = {"id": pin_id, "code": code}
+            save_config(cfg2)
 
             def waiter(_pin_id: int):
                 token = plex_wait_for_token(_pin_id, timeout_sec=360, interval=1.0)
                 if token:
-                    cfg = load_config(); cfg.setdefault("plex", {})["account_token"] = token; save_config(cfg)
-                    _safe_log(log_fn, "PLEX", "\x1b[92m[PLEX]\x1b[0m Token acquired and saved."); _probe_bust("plex")
+                    cfg = load_config()
+                    plex_cfg = cfg.setdefault("plex", {})
+
+                    plex_cfg["account_token"] = token
+                    existing_url = (plex_cfg.get("server_url") or "").strip()
+                    existing_user = (plex_cfg.get("username") or "").strip()
+                    existing_aid  = str(plex_cfg.get("account_id") or "").strip()
+                    need_auto_inspect = not (existing_url or existing_user or existing_aid)
+
+                    save_config(cfg)
+
+                    _safe_log(log_fn, "PLEX", "\x1b[92m[PLEX]\x1b[0m Token acquired and saved.")
+                    _probe_bust("plex")
+
+                    if need_auto_inspect:
+                        try:
+                            ensure_whitelist_defaults()
+                        except Exception:
+                            pass
+                        try:
+                            inspect_and_persist()
+                        except Exception as e:
+                            _safe_log(log_fn, "PLEX", f"[PLEX] auto-inspect failed: {e}")
                 else:
                     _safe_log(log_fn, "PLEX", "\x1b[91m[PLEX]\x1b[0m PIN expired or not authorized.")
 
             threading.Thread(target=waiter, args=(pin_id,), daemon=True).start()
-            return {"ok": True, "code": code, "pin_id": pin_id, "expiresIn": max(0, exp_epoch - int(time.time()))}
+
+            remaining = max(0, exp_epoch - int(time.time()))
+            return {
+                "ok": True,
+                "code": code,
+                "pin_id": pin_id,
+                "id": pin_id,
+                "expiresIn": remaining,
+                "expires_epoch": remaining,
+            }
         except Exception as e:
             _safe_log(log_fn, "PLEX", f"[PLEX] ERROR: {e}")
             return {"ok": False, "error": str(e)}
@@ -163,67 +197,94 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     @app.get("/api/plex/pickusers", tags=["plex"])
     def plex_pickusers():
-        cfg = load_config(); plex = (cfg.get("plex") or {})
+        cfg = load_config()
+        plex = (cfg.get("plex") or {})
         token = (plex.get("account_token") or "").strip()
         base  = (plex.get("server_url") or "").strip()
-        if not token: return {"users": [], "count": 0}
-        if not base:
-            try: base = (inspect_and_persist() or {}).get("server_url") or ""
-            except Exception: base = ""
-        if not base: return {"users": [], "count": 0}
+        if not token or not base:
+            return {"users": [], "count": 0}
 
         norm = lambda s: (s or "").strip().lower()
-        is_local_id = lambda x: (isinstance(x, int) and 0 < x < 100000) or (str(x).isdigit() and 0 < int(x) < 100000)
+        is_local_id = (
+            lambda x: (isinstance(x, int) and 0 < x < 100000)
+            or (str(x).isdigit() and 0 < int(x) < 100000)
+        )
         rank = {"owner": 0, "managed": 1, "friend": 2}
 
         verify = plex_utils._resolve_verify_from_cfg(cfg, base)
         s = plex_utils._build_session(token, verify)
         r = plex_utils._try_get(s, base, "/accounts", timeout=10.0)
 
-        pms_by_cloud: Dict[int, dict] = {}; pms_by_user: Dict[str, dict] = {}; pms_rows = []
+        pms_by_cloud: Dict[int, dict] = {}
+        pms_by_user: Dict[str, dict] = {}
+        pms_rows = []
         if r and r.ok and (r.text or "").lstrip().startswith("<"):
             try:
                 root = ET.fromstring(r.text)
                 for acc in root.findall(".//Account"):
                     pid = acc.attrib.get("id") or acc.attrib.get("ID")
-                    if not is_local_id(pid): continue
+                    if not is_local_id(pid):
+                        continue
                     pms_id = int(pid)
-                    try: cloud_id = int(acc.attrib.get("accountID") or acc.attrib.get("accountId") or 0)
-                    except: cloud_id = 0
+                    try:
+                        cloud_id = int(
+                            acc.attrib.get("accountID")
+                            or acc.attrib.get("accountId")
+                            or 0
+                        )
+                    except Exception:
+                        cloud_id = 0
                     own = str(acc.attrib.get("own") or "").lower() in ("1", "true", "yes")
-                    username = (acc.attrib.get("username") or acc.attrib.get("name") or "").strip()
+                    username = (
+                        acc.attrib.get("username") or acc.attrib.get("name") or ""
+                    ).strip()
                     typ = "owner" if own else "managed"
                     row = {"pms_id": pms_id, "username": username, "type": typ}
                     pms_rows.append(row)
-                    if cloud_id: pms_by_cloud[cloud_id] = row
-                    if username: pms_by_user[norm(username)] = row
+                    if cloud_id:
+                        pms_by_cloud[cloud_id] = row
+                    if username:
+                        pms_by_user[norm(username)] = row
             except Exception:
                 pass
 
         cloud_users = []
         try:
-            cr = requests.get("https://plex.tv/api/users", headers={"X-Plex-Token": token, "Accept": "application/xml"}, timeout=10)
+            cr = requests.get(
+                "https://plex.tv/api/users",
+                headers={"X-Plex-Token": token, "Accept": "application/xml"},
+                timeout=10,
+            )
             if cr.ok and (cr.text or "").lstrip().startswith("<"):
                 root = ET.fromstring(cr.text)
                 for u in root.findall(".//User"):
-                    cloud_users.append({
-                        "cloud_id": int(u.attrib.get("id") or 0),
-                        "username": u.attrib.get("username") or "",
-                        "title": u.attrib.get("title") or u.attrib.get("username") or "",
-                        "type": "friend",
-                    })
+                    cloud_users.append(
+                        {
+                            "cloud_id": int(u.attrib.get("id") or 0),
+                            "username": u.attrib.get("username") or "",
+                            "title": u.attrib.get("title") or u.attrib.get("username") or "",
+                            "type": "friend",
+                        }
+                    )
         except Exception:
             pass
+
         try:
-            me = requests.get("https://plex.tv/api/v2/user", headers={"X-Plex-Token": token}, timeout=8)
+            me = requests.get(
+                "https://plex.tv/api/v2/user",
+                headers={"X-Plex-Token": token},
+                timeout=8,
+            )
             if me.ok:
                 j = me.json()
-                cloud_users.append({
-                    "cloud_id": int(j.get("id") or 0),
-                    "username": (j.get("username") or j.get("title") or "") or "",
-                    "title": (j.get("title") or j.get("username") or "") or "",
-                    "type": "owner",
-                })
+                cloud_users.append(
+                    {
+                        "cloud_id": int(j.get("id") or 0),
+                        "username": (j.get("username") or j.get("title") or "") or "",
+                        "title": (j.get("title") or j.get("username") or "") or "",
+                        "type": "owner",
+                    }
+                )
         except Exception:
             pass
 
@@ -243,16 +304,25 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         best: Dict[str, dict] = {}
         for u in merged:
             key = norm(u["username"]) or f"__id_{u['id']}"
-            uid = u["id"]; is_pms = isinstance(uid, int) and uid < 100000
+            uid = u["id"]
+            is_pms = isinstance(uid, int) and uid < 100000
             cur = best.get(key)
             if not cur:
-                best[key] = u; continue
+                best[key] = u
+                continue
             cur_is_pms = isinstance(cur["id"], int) and cur["id"] < 100000
-            better = (is_pms and not cur_is_pms) or (rank.get(u["type"], 9) < rank.get(cur["type"], 9)) \
-                     or (isinstance(uid, int) and isinstance(cur["id"], int) and uid < cur["id"])
-            if better: best[key] = u
+            better = (
+                (is_pms and not cur_is_pms)
+                or (rank.get(u["type"], 9) < rank.get(cur["type"], 9))
+                or (isinstance(uid, int) and isinstance(cur["id"], int) and uid < cur["id"])
+            )
+            if better:
+                best[key] = u
 
-        users = sorted(best.values(), key=lambda x: (rank.get(x["type"], 9), x["username"].lower()))
+        users = sorted(
+            best.values(),
+            key=lambda x: (rank.get(x["type"], 9), x["username"].lower()),
+        )
         return {"users": users, "count": len(users)}
 
     @app.get("/api/plex/users", tags=["plex"])

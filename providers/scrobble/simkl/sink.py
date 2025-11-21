@@ -1,5 +1,5 @@
 # providers/scrobble/simkl/sink.py
-# Simkl.com scrobble sink for CrossWatch
+# CrossWatch - Scrobble Simkl Sink
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -16,13 +16,27 @@ except Exception:
     BASE_LOG = None
 
 def _log(msg: str, lvl: str = "INFO") -> None:
+    lvl_up = (str(lvl) or "INFO").upper()
+    if lvl_up == "DEBUG" and not _is_debug():
+        return
+
     if BASE_LOG:
         try:
-            BASE_LOG.child("SIMKL").log(lvl, msg)
+            logger = BASE_LOG.child("SIMKL")
+            if lvl_up == "DEBUG":
+                logger.debug(msg)
+            elif lvl_up == "INFO":
+                logger.info(msg)
+            elif lvl_up == "WARN":
+                logger.warn(msg)
+            elif lvl_up == "ERROR":
+                logger.error(msg)
+            else:
+                logger(msg, level=lvl_up)
             return
         except Exception:
             pass
-    print(f"[SIMKL:{lvl}] {msg}")
+    print(f"[SIMKL:{lvl_up}] {msg}")
 
 def _cfg() -> dict[str, Any]:
     try:
@@ -308,6 +322,9 @@ class SimklSink(ScrobbleSink):
 
         action = (getattr(ev, "action", "") or "").lower()
         p_raw = float(getattr(ev, "progress", 0) or 0)
+        p_raw = max(0.0, min(100.0, p_raw))
+        if action == "start" and p_raw < 2.0:
+            p_raw = 2.0
         comp_thr = max(_stop_pause_threshold(cfg), _complete_at(cfg))
         name = _media_name(ev)
         key = self._ckey(ev)
@@ -321,9 +338,7 @@ class SimklSink(ScrobbleSink):
         if p_glob >= 0 and p_raw < max(0, p_glob - tol) and action != "start":
             return
         self._p_glob[key] = max(p_glob, int(p_raw))
-
         path = "/scrobble/start" if action == "start" else "/scrobble/pause" if action == "pause" else "/scrobble/stop"
-
         p_send = round(float(p_raw), 2)
         bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_send)]
 

@@ -64,6 +64,7 @@
     const has = !!txt(cfg?.mdblist?.api_key);
     const i = el("mdblist_key");
     maskInput(i, has);
+    el("mdblist_hint")?.classList.toggle("hidden", has);
     await refresh();
   }
 
@@ -77,6 +78,7 @@
     try {
       await saveKeyNarrow(key);
       if (i) maskInput(i, true);
+      el("mdblist_hint")?.classList.add("hidden");
       note("MDBList key saved");
       await refresh();
     } catch {
@@ -90,6 +92,7 @@
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       const i = el("mdblist_key");
       maskInput(i, false);
+      el("mdblist_hint")?.classList.remove("hidden");
       setConn(false);
       note("MDBList disconnected");
     } catch {

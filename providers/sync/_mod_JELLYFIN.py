@@ -2,7 +2,7 @@
 # Jellyfin adapter: manifest + client + feature registry + OPS wrapper.
 
 from __future__ import annotations
-__VERSION__ = "0.2.0"
+__VERSION__ = "1.0.0"
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 
 import os, time, json, requests
@@ -16,7 +16,6 @@ def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
         print(f"[JELLYFIN] {msg}")
 
-# Strict relative imports: keep packages import-safe
 from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history   as feat_history
@@ -31,13 +30,10 @@ from ._mod_common import (
     label_jellyfin,
     make_snapshot_progress,
 )
-
-# Orchestrator ctx (fallback if not injected)
 try:  # type: ignore[name-defined]
     ctx  # type: ignore
 except Exception:
     ctx = None  # type: ignore
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # manifest
@@ -66,7 +62,6 @@ def get_manifest() -> Mapping[str, Any]:
             },
         },
     }
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # config + client
@@ -144,7 +139,6 @@ class JFClient:
         p = self.BASE_PATH_USER.format(user_id=self.cfg.user_id)
         return self.get(p)
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # module wrapper
 
@@ -169,7 +163,6 @@ def _present_flags() -> Dict[str, bool]:
     }
 
 class JELLYFINModule:
-    """Adapter used by the orchestrator and feature modules."""
     def __init__(self, cfg: Mapping[str, Any]):
         # Pull provider cfg
         jf = dict((cfg or {}).get("jellyfin") or {})
@@ -189,7 +182,7 @@ class JELLYFINModule:
             "tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"
         ]
 
-        # History sub-config (separate knobs; default guid order from watchlist)
+        # History sub-config
         hi = dict(jf.get("history") or {})
         hi_qlim = int(hi.get("history_query_limit", 25) or 25)
         hi_wdel = int(hi.get("history_write_delay_ms", 0) or 0)
@@ -267,28 +260,21 @@ class JELLYFINModule:
             features = {k: False for k in ("watchlist", "history", "ratings", "playlists")}
             api = {"ping": {"status": None}, "info": {"status": None}, "user": {"status": None}}
             return {"ok": True, "status": "ok", "latency_ms": latency_ms, "features": features, "details": details, "api": api}
+        
+        # Single-call health: user probe
+        try:
+            ru = self.client.user_probe()
+        except Exception:
+            ru = None
 
-        rp = self.client.ping()
-        ri = self.client.system_info()
-        ru = self.client.user_probe()
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        ping_ok = bool(getattr(rp, "ok", False))
-        info_ok = bool(getattr(ri, "ok", False))
-        server_ok = bool(ping_ok or info_ok)
-
-        user_code = getattr(ru, "status_code", None)
-        auth_ok = bool(getattr(ru, "ok", False) and user_code == 200)
-
-        product = version = None
-        try:
-            if info_ok and ri.text:
-                j = ri.json()
-                if isinstance(j, dict):
-                    product = j.get("ProductName")
-                    version = j.get("Version")
-        except Exception:
-            pass
+        user_code = getattr(ru, "status_code", None) if ru is not None else None
+        user_ok = bool(getattr(ru, "ok", False)) if ru is not None else False
+        server_ok = bool(user_ok and user_code is not None and user_code < 500)
+        auth_ok = bool(user_ok and user_code == 200)
+        product = "Jellyfin Server"
+        version = None
 
         base_ready = bool(server_ok and auth_ok)
         features = {
@@ -299,23 +285,28 @@ class JELLYFINModule:
         }
 
         checks: List[bool] = [features[k] for k, on in enabled.items() if on]
-        if checks and all(checks): status = "ok"
-        elif checks and any(checks): status = "degraded"
-        else: status = "auth_failed" if (user_code in (401, 403)) else "down"
+        if checks and all(checks):
+            status = "ok"
+        elif checks and any(checks):
+            status = "degraded"
+        else:
+            status = "auth_failed" if (user_code in (401, 403)) else "down"
 
         ok = status in ("ok", "degraded")
 
         reasons: List[str] = []
         if not server_ok:
-            ping_code = getattr(rp, "status_code", None)
-            info_code = getattr(ri, "status_code", None)
-            if ping_code and ping_code >= 400: reasons.append(f"ping:http:{ping_code}")
-            if info_code and info_code >= 400: reasons.append(f"info:http:{info_code}")
-            if not reasons: reasons.append("server_unreachable")
+            if user_code and user_code >= 500:
+                reasons.append(f"user:http:{user_code}")
+            else:
+                reasons.append("server_unreachable")
         if not auth_ok:
-            if user_code in (401, 403): reasons.append("user:unauthorized")
-            elif user_code: reasons.append(f"user:http:{user_code}")
-            else: reasons.append("user:unreachable")
+            if user_code in (401, 403):
+                reasons.append("user:unauthorized")
+            elif user_code and user_code < 500:
+                reasons.append(f"user:http:{user_code}")
+            else:
+                reasons.append("user:unreachable")
 
         details: Dict[str, Any] = {
             "server_ok": server_ok,
@@ -323,12 +314,12 @@ class JELLYFINModule:
             "server": {"product": product, "version": version},
         }
         disabled = [k for k, v in enabled.items() if not v]
-        if disabled: details["disabled"] = disabled
-        if reasons:  details["reason"] = "; ".join(reasons)
+        if disabled:
+            details["disabled"] = disabled
+        if reasons:
+            details["reason"] = "; ".join(reasons)
 
         api = {
-            "ping": {"status": getattr(rp, "status_code", None)},
-            "info": {"status": getattr(ri, "status_code", None)},
             "user": {"status": user_code},
         }
 
@@ -426,7 +417,6 @@ class _JellyfinOPS:
         }
         
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        """Lightweight config gate: no network, no side effects."""
         c  = cfg or {}
         jf = c.get("jellyfin") or {}
         au = (c.get("auth") or {}).get("jellyfin") or {}
@@ -435,7 +425,6 @@ class _JellyfinOPS:
         token   = (jf.get("access_token") or au.get("access_token") or "").strip()
         user_id = (jf.get("user_id")      or au.get("user_id")      or "").strip()
 
-        # Mirror the client ctor requirements: need all three
         return bool(server and token and user_id)
 
     def _adapter(self, cfg: Mapping[str, Any]) -> JELLYFINModule:

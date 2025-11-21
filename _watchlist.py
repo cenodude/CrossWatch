@@ -1,6 +1,7 @@
 # _watchlist.py
+# CrossWatch - Watchlist management helpers
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-
 from typing import Any, Dict, Set, List
 from pathlib import Path
 from datetime import datetime
@@ -17,7 +18,6 @@ try:
 except Exception:
     MyPlexAccount = None  # type: ignore
     _HAVE_PLEXAPI = False
-
 
 # --- Paths & state ---
 def _state_path() -> Path:
@@ -55,7 +55,6 @@ def _save_state_dict(path: Path, state: Dict[str, Any]) -> None:
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
-
 
 # --- Registry & provider helpers ---
 def _registry_sync_providers() -> list[str]:
@@ -104,7 +103,6 @@ def _find_item_in_state_for_provider(state: Dict[str, Any], key: str, provider: 
     it = _get_provider_items(state, provider).get(key)
     return dict(it) if it else {}
 
-
 # --- Generic ID/typing helpers ---
 def _norm_type(x: str | None) -> str:
     t = (x or "").strip().lower()
@@ -149,7 +147,6 @@ def _type_from_item_or_guess(item: Dict[str, Any], key: str) -> str:
 _SIMKL_ID_KEYS = ("simkl","imdb","tmdb","tvdb","slug")
 def _simkl_filter_ids(ids: Dict[str, Any]) -> Dict[str, Any]:
     return {k: str(v) for k, v in ids.items() if k in _SIMKL_ID_KEYS and v}
-
 
 # --- Plex GUID helpers ---
 def _pick_added(d: Dict[str, Any]) -> str | None:
@@ -206,7 +203,6 @@ def _extract_plex_identifiers(item: dict) -> tuple[str|None,str|None]:
     guid = item.get("guid") or ids.get("guid") or (item.get("plex") or {}).get("guid")
     rating = item.get("ratingKey") or item.get("id") or ids.get("ratingKey") or (item.get("plex") or {}).get("ratingKey") or (item.get("plex") or {}).get("id")
     return (str(guid) if guid else None, str(rating) if rating else None)
-
 
 # --- Jellyfin/Emby (MediaBrowser) helpers ---
 def _jf_base(cfg: dict[str,Any]) -> str:
@@ -354,7 +350,6 @@ def _jf_lookup_by_provider_ids(cfg: dict[str,Any], headers: dict[str,str], token
             continue
     return None
 
-
 # --- Build merged watchlist (UI) ---
 def _get_items(state: dict[str,Any], prov: str) -> dict[str,Any]:
     return _get_provider_items(state, prov)
@@ -408,7 +403,6 @@ def build_watchlist(state: dict[str,Any], tmdb_ok: bool) -> list[dict[str,Any]]:
 
     out.sort(key=lambda x: (x.get("added_epoch") or 0, x.get("year") or 0), reverse=True)
     return out
-
 
 # --- Provider deletes ---
 def _del_key_from_provider_items(state: Dict[str, Any], provider: str, key: str) -> bool:
@@ -511,7 +505,6 @@ def _delete_on_plex_single(key: str, state: dict[str,Any], cfg: dict[str,Any]) -
 
     if any(matches(m) for m in account.watchlist(maxresults=100000)):
         raise RuntimeError("PlexAPI reported removal but item still present")
-
 
 _SIMKL_HIST, _SIMKL_WL = "https://api.simkl.com/sync/history/remove","https://api.simkl.com/sync/watchlist/remove"
 
@@ -638,7 +631,6 @@ def _delete_on_mdblist_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) -
     r = requests.post(url, json=payload, timeout=45)
     if not r.ok: raise RuntimeError(f"MDBLIST delete failed: {getattr(r,'text','no response')}")
 
-
 # --- Public delete API ---
 def delete_watchlist_batch(keys: list[str], prov: str, state: dict[str,Any], cfg: dict[str,Any]) -> dict[str,Any]:
     prov = (prov or "").upper().strip()
@@ -753,7 +745,6 @@ def delete_watchlist_item(key: str, state_path: Path, cfg: dict[str,Any], log=No
     except Exception as e:
         _log("TRBL", f"[WATCHLIST] {prov} delete failed: {e}")
         return {"ok": False, "error": str(e), "provider": prov}
-
 
 # --- Provider detection (registry only) ---
 def detect_available_watchlist_providers(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:

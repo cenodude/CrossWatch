@@ -1,4 +1,6 @@
 # _configAPI.py
+# CrossWatch - Configuration API for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict
 

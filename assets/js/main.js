@@ -324,7 +324,7 @@
 
     if (justFinished && runKey && _finishedForRun !== runKey) {
       _finishedForRun = runKey;
-      optimistic = false;
+       try { sync._optimistic = false; } catch {}
 
       try { window.updatePreviewVisibility?.(); window.refreshSchedulingBanner?.(); } catch {}
       try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch {}
@@ -405,10 +405,14 @@
       esSummary.addEventListener("progress:snapshot", onSnap);
       esSummary.addEventListener("snapshot:progress", onSnap);
 
-      esSummary.addEventListener("progress:apply", ev => { try{
-        const d=JSON.parse(ev.data||"{}");
-        sync.prog({feature:"__global__",done:d.done,total:d.total});
-      }catch{} });
+      const onApplyProg = (ev) => { try {
+        const d = JSON.parse(ev.data || "{}");
+        sync.applyProg(d);
+      } catch {} };
+
+      esSummary.addEventListener("progress:apply", onApplyProg);
+      esSummary.addEventListener("apply:add:progress", onApplyProg);
+      esSummary.addEventListener("apply:remove:progress", onApplyProg);
 
       ["apply:add:start","apply:remove:start"].forEach(name=> esSummary.addEventListener(name, ev=>{
         try{ sync.applyStart(JSON.parse(ev.data||"{}")); }catch{}
@@ -428,56 +432,34 @@
     }catch{}
   };
 
-  window.openLogStream = function openLogStream(){
-    try{
-      try{ esLogs?.close?.(); }catch{}
+  window.openLogStream = function openLogStream() {
+    try {
+      try { esLogs?.close?.(); } catch {}
       esLogs = new EventSource("/api/logs/stream");
-      window.esLogs = esLogs; // expose for guards
-
-      esLogs.onopen = ()=> { window.esLogs = esLogs; };
-
+      window.esLogs = esLogs;
+      esLogs.onopen = () => { window.esLogs = esLogs; };
       esLogs.onmessage = (ev) => {
-        try{
+        try {
           const txt = String(ev.data || "");
 
-          if (!sync.isStreamArmed?.() && /(?:\bSYNC\b.*\bstart\b|\brun\b.*\bstart|\bstarting\b.*\bsync|\brunning pairs\b)/i.test(txt)) {
-            sync.markInit();
-          }
-
+          // Look for: [SYNC] exit code: 0
           const m = txt.match(/\[SYNC\]\s*exit\s*code\s*:\s*(\d+)/i);
-          if (m) {
-            if (!sync.state().timeline.start) {
-              sync.reset(); setRunButtonState(false); renderAll();
-            } else {
-              sync.done();  setRunButtonState(false);
-            }
+          if (!m) return;
+
+          const code = parseInt(m[1], 10);
+          if (code === 0 && typeof sync?.done === "function" && sync.isRunning?.()) {
+            sync.done();
+            setRunButtonState(false);
           }
-        } catch{}
+        } catch {}
       };
 
-      const onSnap = (ev)=>{ try{ sync.snap(JSON.parse(ev.data||"{}")); }catch{} };
-      esLogs.addEventListener("snapshot:progress", onSnap);
-      esLogs.addEventListener("progress:snapshot", onSnap);
-
-      ["apply:add:start","apply:remove:start"].forEach(name=> esLogs.addEventListener(name, ev=>{
-        try{ sync.applyStart(JSON.parse(ev.data||"{}")); }catch{}
-      }));
-      ["apply:add:done","apply:remove:done"].forEach(name=> esLogs.addEventListener(name, ev=>{
-        try{ sync.applyDone(JSON.parse(ev.data||"{}")); }catch{}
-      }));
-      esLogs.addEventListener("progress:apply", ev => {
-        try{ sync.applyProg(JSON.parse(ev.data||"{}")); }catch{}
-      });
-
-      esLogs.addEventListener("run:done", ()=>{ try{ sync.done(); setRunButtonState(false); }catch{} });
-      ["run:error","run:aborted"].forEach(name=> esLogs.addEventListener(name, ()=>{ try{ sync.error(); setRunButtonState(false); }catch{} }));
-
       esLogs.onerror = () => {
-        try{ esLogs.close(); }catch{}
+        try { esLogs.close(); } catch {}
         window.esLogs = null;
         setTimeout(openLogStream, 2000);
       };
-    }catch{}
+    } catch {}
   };
 
   // Public UX hooks compatible with old calls

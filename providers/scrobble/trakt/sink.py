@@ -1,5 +1,5 @@
 # providers/scrobble/trakt/sink.py
-# Trakt.tv scrobble sink for CrossWatch
+# CrossWatch - Trakt.tv scrobble sink implementation
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -156,11 +156,32 @@ def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | Non
     return None
 
 def _log(msg: str, level: str = "INFO") -> None:
-    if level.upper() == "DEBUG" and not _is_debug(): return
-    print(f"{level} [TRAKT] {msg}")
+    lvl_up = (str(level) or "INFO").upper()
+
+    if lvl_up == "DEBUG" and not _is_debug():
+        return
+
+    if BASE_LOG and hasattr(BASE_LOG, "child"):
+        try:
+            logger = BASE_LOG.child("TRAKT")
+            if lvl_up == "DEBUG":
+                logger.debug(msg)
+            elif lvl_up == "INFO":
+                logger.info(msg)
+            elif lvl_up == "WARN":
+                logger.warn(msg)
+            elif lvl_up == "ERROR":
+                logger.error(msg)
+            else:
+                logger(msg, level=lvl_up)
+            return
+        except Exception:
+            pass
+    print(f"[TRAKT:{lvl_up}] {msg}")
+
 
 def _dbg(msg: str) -> None:
-    if _is_debug(): print(f"DEBUG [TRAKT] {msg}")
+    _log(msg, "DEBUG")
 
 try:
     from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across

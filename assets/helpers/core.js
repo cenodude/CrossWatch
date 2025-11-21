@@ -502,7 +502,9 @@ async function refreshStatus(force = false) {
     await refreshPairedProviders(force ? 0 : 5000);
 
     // 2) Fetch live status
-    const r = await fetchWithTimeout("/api/status" + (force ? "?fresh=1" : ""), {}, 15000).then(r => r.json());
+    // const r = await fetchWithTimeout("/api/status" + (force ? "?fresh=1" : ""), {}, 15000).then(r => r.json());
+    const r = await fetchWithTimeout("/api/status", {}, 15000);
+
     if (typeof appDebug !== "undefined") appDebug = !!r.debug;
 
     const pick = (obj, k) => (obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()]);
@@ -694,7 +696,6 @@ async function softRefreshMain() {
   try {
     const tasks = [
       (async () => { try { await refreshStatus(); } catch {} })(),
-      (async () => { try { window.manualRefreshStatus?.(); } catch {} })(),
       (async () => { try { await refreshStats(); } catch {} })(),
       (async () => { try { window.refreshInsights?.(); } catch {} })(),
       (async () => { try { await updatePreviewVisibility?.(); } catch {} })(),
@@ -707,10 +708,8 @@ async function softRefreshMain() {
 
 async function hardRefreshMain({ layout, statsCard }) {
   enforceMainLayout();
-  try { await fetch("/api/debug/clear_probe_cache", { method: "POST", cache: "no-store" }); } catch {}
   try { if (typeof lastStatusMs !== "undefined") lastStatusMs = 0; } catch {}
-  await refreshStatus(true);
-  window.manualRefreshStatus?.();
+  await refreshStatus(true); 
   await refreshStats(true);
   window.refreshInsights?.(true);
 
@@ -1462,14 +1461,15 @@ document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 // Small buffer used to assemble Server-Sent Events (SSE) chunks
 let detBuf = "";
 
-
 function scanForEvents(chunk) {
   const lines = String(chunk).split('\n');
   for (const line of lines) {
     if (!line || line[0] !== '{') continue;
     try {
       const obj = JSON.parse(line);
-      if (obj && obj.event) window.Progress?.onEvent(obj);
+      if (obj && obj.event && !window.SyncBar) {
+        window.Progress?.onEvent(obj);
+      }
     } catch (_) { /* non-JSON line; ignore */ }
   }
 }
@@ -1813,6 +1813,15 @@ async function loadConfig() {
   _setVal("metadata_locale", cfg.metadata?.locale || "");
   _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
+  // User Interface
+  (function () {
+    const ui = cfg.ui || cfg.user_interface || {};
+    const sel = document.getElementById("ui_show_watchlist_preview");
+    if (!sel) return;
+    const on = (typeof ui.show_watchlist_preview === "boolean") ? !!ui.show_watchlist_preview : true;
+    sel.value = on ? "true" : "false";
+  })();
+
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
 // --- Sensitive fields: inject RAW values from config (do not mark as touched)
@@ -1953,7 +1962,7 @@ async function saveSettings() {
     const prevMdbl     = norm(serverCfg?.mdblist?.api_key);
     const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
-
+    const prevUiShow = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
 
     const uiMode   = _getVal("mode");
     const uiSource = _getVal("source");
@@ -1999,6 +2008,19 @@ async function saveSettings() {
       cfg.metadata.ttl_hours = Math.max(1, uiMetaTTL);
       changed = true;
     }
+
+    // User Interface (Watchlist Preview toggle)
+    (function () {
+      const sel = document.getElementById("ui_show_watchlist_preview");
+      if (!sel) return;
+      const raw = String(sel.value || "true").toLowerCase();
+      const uiShow = raw === "false" ? false : true;
+      if (uiShow !== prevUiShow) {
+        cfg.ui = cfg.ui || {};
+        cfg.ui.show_watchlist_preview = uiShow;
+        changed = true;
+      }
+    })();
 
     // Secrets (tokens, keys, client ids/secrets)
     const sPlex   = readSecretSafe("plex_token", prevPlex);
@@ -2094,7 +2116,7 @@ async function saveSettings() {
 
       const readFromWhitelist = () => {
         const rows = document.querySelectorAll("#jfy_lib_whitelist .whrow");
-        if (!rows.length) return null;
+        if (!rows.length) return null;  
         const H = [], R = [];
         rows.forEach(r => {
           const id = String(r.dataset.id || "").trim(); // GUID string
@@ -2145,34 +2167,135 @@ async function saveSettings() {
       console.warn("saveSettings: jellyfin merge failed", e);
     }
 
+      // Emby whitelist (driven by matrix state)
+    try {
+      const readFromMatrix = () => {
+        const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
+        if (!rows.length) return null;
+        const H = [], R = [];
+        rows.forEach((r) => {
+          const id = String(r.dataset.id || "").trim(); // GUID string
+          if (!id) return;
+          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
+          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
+        });
+        return { H, R };
+      };
+
+      const readFromWhitelist = () => {
+        const rows = document.querySelectorAll("#emby_lib_whitelist .whrow");
+        if (!rows.length) return null;
+        const H = [], R = [];
+        rows.forEach((r) => {
+          const id = String(r.dataset.id || "").trim();
+          if (!id) return;
+          if (r.querySelector(".whtog.hist.on")) H.push(id);
+          if (r.querySelector(".whtog.rate.on")) R.push(id);
+        });
+        return { H, R };
+      };
+
+      const readFromSelects = () => {
+        const toStrs = (selector) => {
+          const el = document.querySelector(selector);
+          if (!el) return null;
+          const opts = el.selectedOptions
+            ? Array.from(el.selectedOptions)
+            : Array.from(el.querySelectorAll("option:checked"));
+          return opts
+            .map((o) => String(o.value || o.dataset.value || o.textContent).trim())
+            .filter(Boolean);
+        };
+        return {
+          H: toStrs("#emby_lib_history"),
+          R: toStrs("#emby_lib_ratings"),
+        };
+      };
+
+      const src = readFromMatrix() || readFromWhitelist() || readFromSelects();
+
+      const same = (a, b) => {
+        const A = (a || []).map(String).filter(Boolean).sort();
+        const B = (b || []).map(String).filter(Boolean).sort();
+        if (A.length !== B.length) return false;
+        for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
+        return true;
+      };
+
+      if (src) {
+        const prevH = (serverCfg?.emby?.history?.libraries || []).map(String);
+        const prevR = (serverCfg?.emby?.ratings?.libraries || []).map(String);
+
+        if (!same(src.H, prevH)) {
+          (cfg.emby ||= {}).history = Object.assign(
+            {},
+            cfg.emby.history || {},
+            { libraries: src.H || [] }
+          );
+          changed = true;
+        }
+        if (!same(src.R, prevR)) {
+          (cfg.emby ||= {}).ratings = Object.assign(
+            {},
+            cfg.emby.ratings || {},
+            { libraries: src.R || [] }
+          );
+          changed = true;
+        }
+      }
+    } catch (e) {
+      console.warn("saveSettings: emby merge failed", e);
+    }
+
     // Plex root patch + whitelist (driven by matrix state)
     try {
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
       const uiUser = norm(document.getElementById("plex_username")?.value   || "");
       const uiAidS = norm(document.getElementById("plex_account_id")?.value || "");
-      const uiAid  = uiAidS === "" ? null : parseInt(uiAidS, 10);
 
-      const prevUrl  = norm(serverCfg?.plex?.server_url);
-      const prevUser = norm(serverCfg?.plex?.username);
-      const prevAid  = Number.isFinite(serverCfg?.plex?.account_id) ? serverCfg.plex.account_id : null;
+      // Normalise account_id: always end up with a positive int, default 1
+      let uiAid = null;
+      if (uiAidS !== "") {
+        const n = parseInt(uiAidS, 10);
+        uiAid = Number.isFinite(n) && n > 0 ? n : 1;
+      }
+
+      const prevUrl   = norm(serverCfg?.plex?.server_url);
+      const prevUser  = norm(serverCfg?.plex?.username);
+      const prevAidRaw = serverCfg?.plex?.account_id;
+      const prevAid =
+        Number.isFinite(prevAidRaw) && prevAidRaw > 0
+          ? prevAidRaw
+          : 1;
 
       if (uiUrl && uiUrl !== prevUrl) {
-        (cfg.plex ||= {}).server_url = uiUrl; changed = true;
+        (cfg.plex ||= {}).server_url = uiUrl;
+        changed = true;
       }
       if (uiUser && uiUser !== prevUser) {
-        (cfg.plex ||= {}).username = uiUser; changed = true;
+        (cfg.plex ||= {}).username = uiUser;
+        changed = true;
       }
-      if (uiAid !== null && Number.isFinite(uiAid) && uiAid !== prevAid) {
-        (cfg.plex ||= {}).account_id = uiAid; changed = true;
+
+      if (uiAid !== null) {
+        // User explicitly set something in the field (even if it was garbage)
+        if (uiAid !== prevAid) {
+          (cfg.plex ||= {}).account_id = uiAid;
+          changed = true;
+        }
+      } else if (!Number.isFinite(prevAidRaw) || prevAidRaw <= 0) {
+        // Field empty and previous config had no usable value → force 1
+        (cfg.plex ||= {}).account_id = 1;
+        changed = true;
       }
 
       // ---- verify_ssl checkbox ---------------------------------
       const uiVerify   = !!document.getElementById("plex_verify_ssl")?.checked;
       const prevVerify = !!(serverCfg?.plex?.verify_ssl);
       if (uiVerify !== prevVerify) {
-        (cfg.plex ||= {}).verify_ssl = uiVerify; changed = true;
+        (cfg.plex ||= {}).verify_ssl = uiVerify;
+        changed = true;
       }
-      // ----------------------------------------------------------------
 
       // --- read selections from the matrix' in-memory state -----------
       const st = (window.__plexState || { hist: new Set(), rate: new Set() });
@@ -2206,7 +2329,6 @@ async function saveSettings() {
     } catch (e) {
       console.warn("saveSettings: plex merge failed", e);
     }
-
     // Scrobbler merge
     try {
       if (typeof window.getScrobbleConfig === "function") {
@@ -2373,6 +2495,53 @@ async function resetStats() {
     m.classList.remove("hidden");
     m.textContent = btnText + " – failed (network)";
 
+    setTimeout(() => m.classList.add("hidden"), 2200);
+  }
+}
+
+async function resetCurrentlyPlaying() {
+  const btnText = "Reset Currently Playing";
+  try {
+    const r = await fetch("/api/maintenance/reset-currently-watching", {
+      method: "POST"
+    });
+    const j = await r.json();
+    const m = document.getElementById("tb_msg");
+    if (!m) return;
+
+    m.classList.remove("hidden");
+    m.textContent = j.ok
+      ? btnText + " – done ✓"
+      : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
+    setTimeout(() => m.classList.add("hidden"), 2200);
+  } catch (_) {
+    const m = document.getElementById("tb_msg");
+    if (!m) return;
+    m.classList.remove("hidden");
+    m.textContent = btnText + " – failed (network)";
+    setTimeout(() => m.classList.add("hidden"), 2200);
+  }
+}
+
+async function restartCrossWatch() {
+  const btnText = "Restart CrossWatch";
+  try {
+    const r = await fetch("/api/maintenance/restart", { method: "POST" });
+    let j = {};
+    try { j = await r.json(); } catch {}
+    const m = document.getElementById("tb_msg");
+    if (!m) return;
+
+    m.classList.remove("hidden");
+    m.textContent = j.ok
+      ? btnText + " – requested ✓"
+      : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
+    setTimeout(() => m.classList.add("hidden"), 2200);
+  } catch (_) {
+    const m = document.getElementById("tb_msg");
+    if (!m) return;
+    m.classList.remove("hidden");
+    m.textContent = btnText + " – failed (network)";
     setTimeout(() => m.classList.add("hidden"), 2200);
   }
 }
@@ -2589,13 +2758,17 @@ function artUrl(item, size) {
 async function loadWall() {
   try {
     const card = document.getElementById("placeholder-card");
-    const [wlEnabled, hasKey] = await Promise.all([
+    const [wlEnabled, hasKey, uiAllowed] = await Promise.all([
       typeof isWatchlistEnabledInPairs === "function" ? isWatchlistEnabledInPairs() : true,
-      typeof hasTmdbKey === "function" ? hasTmdbKey() : true
+      typeof hasTmdbKey === "function" ? hasTmdbKey() : true,
+      typeof isWatchlistPreviewAllowed === "function" ? isWatchlistPreviewAllowed() : true
     ]);
-    if (!wlEnabled || !hasKey) { card?.classList.add("hidden"); return; }
-    card?.classList.remove("hidden");
-  } catch {}
+    if (!wlEnabled || !hasKey || !uiAllowed) {
+      if (card) card.classList.add("hidden");
+      return;
+    }
+    if (card) card.classList.remove("hidden");
+  } catch (_) {}
 
   const myReq = ++wallReqSeq;
   const card = document.getElementById("placeholder-card");
@@ -2754,11 +2927,17 @@ async function loadWall() {
 
 async function updateWatchlistPreview() {
   try {
-    const [hasKey, wlEnabled] = await Promise.all([
+    const [hasKey, wlEnabled, uiAllowed] = await Promise.all([
       hasTmdbKey?.(),
-      isWatchlistEnabledInPairs?.()
+      isWatchlistEnabledInPairs?.(),
+      isWatchlistPreviewAllowed?.()
     ]);
-    if (!hasKey || !wlEnabled) return;
+    const card = document.getElementById("placeholder-card");
+    if (!hasKey || !wlEnabled || !uiAllowed) {
+      if (card) card.classList.add("hidden");
+      window.wallLoaded = false;
+      return;
+    }
     await loadWall();
     window.wallLoaded = true;
   } catch (e) {
@@ -2780,6 +2959,22 @@ function isOnMain(){
   if (t) return t === "main";
   var th = document.getElementById("tab-main");
   return !!(th && th.classList.contains("active"));
+}
+
+async function isWatchlistPreviewAllowed(){
+  try {
+    if (window._cfgCache) {
+      const ui = window._cfgCache.ui || window._cfgCache.user_interface || {};
+      if (typeof ui.show_watchlist_preview === "boolean") return !!ui.show_watchlist_preview;
+    }
+    const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+    window._cfgCache = cfg;
+    const ui = cfg.ui || cfg.user_interface || {};
+    if (typeof ui.show_watchlist_preview === "boolean") return !!ui.show_watchlist_preview;
+  } catch (e) {
+    console.warn("isWatchlistPreviewAllowed failed, falling back to true", e);
+  }
+  return true;
 }
 
 // Update preview visibility based on context
@@ -2804,12 +2999,12 @@ async function updatePreviewVisibility() {
 
     if (!isOnMain?.()) { hideAll(); return false; }
 
-    let hasKey = false, wlEnabled = false;
+    let hasKey = false, wlEnabled = false, uiAllowed = true;
     try { hasKey = await hasTmdbKey?.(); } catch {}
     try { wlEnabled = await isWatchlistEnabledInPairs?.(); } catch {}
+    try { uiAllowed = await isWatchlistPreviewAllowed?.(); } catch {}
 
-    if (!hasKey || !wlEnabled) { hideAll(); return false; }
-
+    if (!hasKey || !wlEnabled || !uiAllowed) { hideAll(); return false; }
     if (card.classList.contains("hidden")) card.classList.remove("hidden");
 
     if (!window.wallLoaded && !window.__wallLoading) {

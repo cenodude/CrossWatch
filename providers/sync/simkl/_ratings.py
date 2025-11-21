@@ -1,4 +1,6 @@
 # /providers/sync/simkl/_ratings.py
+#  Simkl ratings sync module
+#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import os, json, time
 from pathlib import Path
@@ -15,7 +17,6 @@ from ._common import (
     update_watermark_if_new,
     get_watermark,
 )
-
 try:
     from cw_platform.id_map import minimal as id_minimal
 except Exception:
@@ -26,11 +27,13 @@ URL_GET_T   = lambda t, qs="": f"{BASE}/sync/ratings/{t}{qs}"
 URL_ADD     = f"{BASE}/sync/ratings"
 URL_REMOVE  = f"{BASE}/sync/ratings/remove"
 
+RATINGS_KINDS = ("movies", "shows")
+
 STATE_DIR        = Path("/config/.cw_state")
 UNRESOLVED_PATH  = str(STATE_DIR / "simkl_ratings.unresolved.json")
 R_SHADOW_PATH    = str(STATE_DIR / "simkl.ratings.shadow.json")
 
-ID_KEYS = ("simkl","imdb","tmdb","tvdb","mal","anidb")
+ID_KEYS = ("simkl","imdb","tmdb","tvdb")
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
@@ -175,12 +178,11 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
         if isinstance(acts, Mapping):
             wm_m = get_watermark("ratings:movies") or ""
             wm_s = get_watermark("ratings:shows")  or ""
-            wm_a = get_watermark("ratings:anime")  or ""
             lm = extract_latest_ts(acts, (("movies","rated"), ("ratings","movies"), ("movies","all")))
             ls = extract_latest_ts(acts, (("shows","rated"),  ("ratings","shows"),  ("shows","all")))
-            la = extract_latest_ts(acts, (("anime","rated"),  ("ratings","anime"),  ("anime","all")))
-            if (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s) and (la is None or la <= wm_a):
-                _log(f"activities unchanged; ratings noop (m={lm} s={ls} a={la})")
+
+            if (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s):
+                _log(f"activities unchanged; ratings noop (m={lm} s={ls})")
                 if prog:
                     try: prog.done(ok=True, total=0)
                     except Exception: pass
@@ -192,7 +194,6 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
 
     df_movies = coalesce_date_from("ratings:movies", cfg_date_from=since_iso)
     df_shows  = coalesce_date_from("ratings:shows",  cfg_date_from=since_iso)
-    df_anime  = coalesce_date_from("ratings:anime",  cfg_date_from=since_iso)
 
     def _fetch_rows(kind: str, df_iso: str) -> List[Mapping[str, Any]]:
         try:
@@ -211,9 +212,7 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
 
     rows_movies = _fetch_rows("movies", df_movies)
     rows_shows  = _fetch_rows("shows",  df_shows)
-    rows_anime  = _fetch_rows("anime",  df_anime)
-
-    grand_total = len(rows_movies) + len(rows_shows) + len(rows_anime)
+    grand_total = len(rows_movies) + len(rows_shows)
     if prog:
         try: prog.tick(0, total=grand_total, force=True)
         except Exception: pass
@@ -221,10 +220,9 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
     done = 0
     max_movies: Optional[int] = None
     max_shows:  Optional[int] = None
-    max_anime:  Optional[int] = None
 
     def _ingest(kind: str, rows: List[Mapping[str, Any]]) -> Optional[int]:
-        nonlocal done, max_movies, max_shows, max_anime
+        nonlocal done, max_movies, max_shows
         latest: Optional[int] = None
         for row in rows:
             rt = _norm_rating(row.get("user_rating") if "user_rating" in row else row.get("rating"))
@@ -234,7 +232,7 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
                     try: prog.tick(done, total=grand_total)
                     except Exception: pass
                 continue
-            media = (row.get("movie") or row.get("show") or row.get("anime") or {})
+            media = (row.get("movie") or row.get("show") or {})
             m = simkl_normalize(media)
             m["rating"]   = rt
             m["rated_at"] = row.get("user_rated_at") or row.get("rated_at") or ""
@@ -248,28 +246,34 @@ def build_index(adapter, *, since_iso: Optional[str] = None) -> Dict[str, Dict[s
                 except Exception: pass
         if kind == "movies": max_movies = latest
         elif kind == "shows": max_shows = latest
-        elif kind == "anime": max_anime = latest
         return latest
 
     _ingest("movies", rows_movies)
     _ingest("shows",  rows_shows)
-    _ingest("anime",  rows_anime)
-
     _rshadow_merge_into(out, thaw)
 
     if prog:
         try: prog.done(ok=True, total=grand_total)
         except Exception: pass
 
-    _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_movies}|{df_shows}|{df_anime}")
+    _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} from={df_movies}|{df_shows}")
+    if max_movies is not None:
+        update_watermark_if_new("ratings:movies", _as_iso(max_movies))
+    if max_shows is not None:
+        update_watermark_if_new("ratings:shows", _as_iso(max_shows))
 
-    if max_movies is not None: update_watermark_if_new("ratings:movies", _as_iso(max_movies))
-    if max_shows  is not None: update_watermark_if_new("ratings:shows",  _as_iso(max_shows))
-    if max_anime  is not None: update_watermark_if_new("ratings:anime",  _as_iso(max_anime))
-    latest_any = max([t for t in (max_movies, max_shows, max_anime) if isinstance(t, int)] or [None]) if any(x is not None for x in (max_movies, max_shows, max_anime)) else None
-    if isinstance(latest_any, int): update_watermark_if_new("ratings", _as_iso(latest_any))
+    latest_any = max(
+        [t for t in (max_movies, max_shows) if isinstance(t, int)] or [None]
+    ) if any(x is not None for x in (max_movies, max_shows)) else None
 
+    if isinstance(latest_any, int):
+        update_watermark_if_new("ratings", _as_iso(latest_any))
     _unfreeze_if_present(thaw)
+    try:
+        _rshadow_put_all(out.values())
+    except Exception as e:
+        _log(f"shadow.put index skipped: {e}")
+
     _log(f"index size: {len(out)}")
     return out
 
@@ -355,26 +359,36 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     sess, hdrs = adapter.client.session, _headers(adapter)
-    movies: List[Dict[str, Any]] = []; shows: List[Dict[str, Any]] = []; episodes: List[Dict[str, Any]] = []
-    unresolved: List[Dict[str, Any]] = []; thaw_keys: List[str] = []
+    movies: List[Dict[str, Any]] = []
+    shows: List[Dict[str, Any]] = []
+    episodes: List[Dict[str, Any]] = []
+    unresolved: List[Dict[str, Any]] = []
+    thaw_keys: List[str] = []
 
     for it in items or []:
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}"); continue
+            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            continue
+
         ids = _ids_of(it) or _show_ids_of_episode(it)
         if not ids:
-            unresolved.append({"item": id_minimal(it), "hint": "missing_ids"}); continue
+            unresolved.append({"item": id_minimal(it), "hint": "missing_ids"})
+            continue
+
         typ = (it.get("type") or "movie").lower()
         if typ == "movie":
             movies.append({"ids": ids})
-        elif typ in ("episode","season"):
-            unresolved.append({"item": id_minimal(it), "hint":"unsupported_type"}); continue
+        elif typ in ("episode", "season"):
+            unresolved.append({"item": id_minimal(it), "hint": "unsupported_type"})
+            continue
         else:
             shows.append({"ids": ids})
+
         thaw_keys.append(simkl_key_of(id_minimal(it)))
 
     if not (movies or shows or episodes):
         return 0, unresolved
+
     body: Dict[str, Any] = {}
     if movies:   body["movies"]   = movies
     if shows:    body["shows"]    = shows
@@ -384,9 +398,24 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
         r = sess.post(URL_REMOVE, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
         if 200 <= r.status_code < 300:
             _unfreeze_if_present(thaw_keys)
+            try:
+                sh = _rshadow_load()
+                store = dict(sh.get("items") or {})
+                changed = False
+                for k in thaw_keys:
+                    if k in store:
+                        store.pop(k, None)
+                        changed = True
+                if changed:
+                    sh["items"] = store
+                    _rshadow_save(sh)
+            except Exception:
+                pass
+
             ok = len(movies) + len(shows) + len(episodes)
             _log(f"remove done: -{ok}")
             return ok, unresolved
+
         _log(f"REMOVE failed {r.status_code}: {(r.text or '')[:180]}")
     except Exception as e:
         _log(f"REMOVE error: {e}")

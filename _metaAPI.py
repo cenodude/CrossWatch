@@ -1,6 +1,6 @@
 # _metaAPI.py
-
-# --- stdlib ---
+# CrossWatch - Metadata API for media information
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from typing import Dict, Any, Tuple, Optional, List
 from functools import lru_cache
 from pathlib import Path
@@ -19,7 +19,6 @@ from cw_platform.config_base import load_config
 # Router: metadata surface
 router = APIRouter(tags=["metadata"])
 
-# Provider registry (best-effort; keeps API up even if providers are missing)
 try:
     from providers.metadata.registry import metadata_providers_html, metadata_providers_manifests
 except Exception:
@@ -27,7 +26,6 @@ except Exception:
     metadata_providers_manifests = lambda: []
 
 # ----- Public: Providers -----
-
 @router.get("/api/metadata/providers", tags=["metadata"])
 def api_metadata_providers():
     # JSON-safe provider manifests
@@ -38,8 +36,7 @@ def api_metadata_providers_html():
     # Simple HTML listing
     return HTMLResponse(metadata_providers_html())
 
-# ----- Runtime bridge (lazy to avoid import cycles) -----
-
+# ----- Runtime bridge  -----
 def _env():
     try:
         import crosswatch as CW
@@ -61,7 +58,6 @@ def _shorten(txt: str, limit: int = 280) -> str:
     return f"{cut}…"
 
 # ----- Cache/TTL helpers -----
-
 def _cfg_meta_ttl_secs() -> int:
     try:
         md = (load_config() or {}).get("metadata") or {}
@@ -150,7 +146,6 @@ def _prune_meta_cache_if_needed() -> None:
         pass
 
 # ----- Manager bridge -----
-
 def _ttl_bucket(seconds: int) -> int:
     return int(time.time() // max(1, seconds))
 
@@ -165,7 +160,6 @@ def _resolve_tmdb_cached(ttl_key: int, entity: str, tmdb_id: str, locale: str | 
         return {}
 
 # ----- Public helpers (import-safe) -----
-
 def get_meta(api_key: str, typ: str, tmdb_id: str | int, cache_dir: Path | str, *, need: dict | None = None, locale: str | None = None) -> dict:
     entity = "movie" if str(typ).lower() == "movie" else "show"
     eff_need = need or {"poster": True, "backdrop": True, "logo": False}
@@ -222,7 +216,6 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     return str(path), mime
 
 # ----- Artwork proxy -----
-
 @router.get("/art/tmdb/{typ}/{tmdb_id}", tags=["artwork"])
 def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Query("w342")):
     t = typ.lower()
@@ -242,7 +235,6 @@ def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Q
         return PlainTextResponse(f"Poster not available: {e}", status_code=404)
 
 # ----- Resolve (single) -----
-
 class MetadataResolveIn(BaseModel):
     entity: Optional[str] = None
     ids: Dict[str, Any]
@@ -266,7 +258,6 @@ def api_metadata_resolve(payload: MetadataResolveIn = Body(...)):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 # ----- Resolve (bulk) -----
-
 @router.post("/api/metadata/bulk", tags=["metadata"])
 def api_metadata_bulk(
     payload: Dict[str, Any] = Body(..., description="items[] with {type|entity|media_type, tmdb}; need{} optional"),

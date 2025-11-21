@@ -1,6 +1,6 @@
 # /providers/sync/_mod_MDBLIST.py
 from __future__ import annotations
-__VERSION__ = "0.1.0"
+__VERSION__ = "1.0.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 import os, time
@@ -79,20 +79,9 @@ class MDBLISTClient:
         self.session = build_session("MDBLIST", ctx, feature_label="MDBLIST")
 
     def connect(self) -> "MDBLISTClient":
-        try:
-            r = request_with_retries(
-                self.session, "GET",
-                f"{self.BASE}/watchlist/items",
-                params={"apikey": self.cfg.api_key, "limit": 1, "offset": 0, "unified": 1},
-                timeout=self.cfg.timeout, max_retries=self.cfg.max_retries,
-            )
-            if r.status_code in (401, 403):
-                raise MDBLISTAuthError("MDBList auth failed")
-            if r.status_code >= 500:
-                raise MDBLISTError(f"MDBList service error: {r.status_code}")
-            _log("Connected to MDBList API")
-        except Exception as e:
-            raise MDBLISTError(f"MDBList connect failed: {e}") from e
+        if not self.cfg.api_key:
+            raise MDBLISTAuthError("Missing MDBList api_key")
+        _log("MDBList client initialized and ready")
         return self
 
     def get(self, url: str, **kw):
@@ -109,7 +98,6 @@ class MDBLISTClient:
 
 class MDBLISTError(RuntimeError): pass
 class MDBLISTAuthError(MDBLISTError): pass
-
 class MDBLISTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         m = dict((cfg.get("mdblist") or {}))
@@ -120,13 +108,11 @@ class MDBLISTModule:
         )
         if not self.cfg.api_key:
             raise MDBLISTAuthError("Missing MDBList api_key")
-
         if m.get("debug") in (True, "1", 1):
             os.environ.setdefault("CW_MDBLIST_DEBUG", "1")
-
         self.client = MDBLISTClient(self.cfg, cfg).connect()
         self.raw_cfg = cfg
-        self.config = cfg  # for feature modules expecting adapter.config
+        self.config = cfg
 
         def _mk_prog(feature: str):
             try: return make_snapshot_progress(ctx, dst="MDBLIST", feature=feature)
@@ -145,16 +131,13 @@ class MDBLISTModule:
 
     def _is_enabled(self, feature: str) -> bool:
         return bool(self.supported_features().get(feature, False))
-
     def manifest(self) -> Mapping[str, Any]:
         return get_manifest()
-
     def health(self) -> Mapping[str, Any]:
         enabled = self.supported_features()
         need_any = any(enabled.values())
         if not need_any:
             return {"ok": True, "status": "ok", "latency_ms": 0, "features": {}, "details": {"disabled": ["watchlist","ratings"]}, "api": {}}
-
         tmo = max(3.0, min(self.cfg.timeout, 15.0))
         base = self.client.BASE
         sess = self.client.session
@@ -179,9 +162,7 @@ class MDBLISTModule:
             rate = parse_rate_limit(r.headers)
         except Exception:
             wl_ok = False
-
         latency_ms = int((time.perf_counter() - start) * 1000)
-
         features = {
             "watchlist": wl_ok if enabled.get("watchlist") else False,
             "ratings":   wl_ok if enabled.get("ratings") else False,
@@ -204,7 +185,6 @@ class MDBLISTModule:
         if disabled: details["disabled"] = disabled
         if retry_after is not None:
             details["retry_after_s"] = retry_after
-
         api = {
             "watchlist": {"status": wl_code, "retry_after": retry_after, "rate": rate},
         }
@@ -274,17 +254,12 @@ class _MDBLISTOps:
 
     def _adapter(self, cfg: Mapping[str, Any]) -> MDBLISTModule:
         return MDBLISTModule(cfg)
-
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
-
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
-
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
-
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
-
 OPS = _MDBLISTOps()

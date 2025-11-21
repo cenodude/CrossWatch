@@ -43,6 +43,73 @@ except Exception:
         return {"ok": True, "count": 0}
     def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
         return {"ok": True, "count": 0}
+    
+_PROVIDER_KEY_MAP = {
+    "PLEX": "plex",
+    "JELLYFIN": "jellyfin",
+    "EMBY": "emby",
+}
+
+def _effective_library_whitelist(
+    cfg: Mapping[str, Any],
+    provider_name: str,
+    feature: str,
+    fcfg: Mapping[str, Any],
+) -> List[str]:
+    if feature not in ("history", "ratings"):
+        return []
+
+    libs: List[str] = []
+    lib_cfg = fcfg.get("libraries")
+    if isinstance(lib_cfg, dict):
+        per = lib_cfg.get(provider_name.upper()) or lib_cfg.get(provider_name.lower())
+        if isinstance(per, (list, tuple)):
+            libs = [str(x).strip() for x in per if str(x).strip()]
+    elif isinstance(lib_cfg, (list, tuple)):
+        libs = [str(x).strip() for x in lib_cfg if str(x).strip()]
+
+    if libs:
+        return libs
+
+    key = _PROVIDER_KEY_MAP.get(str(provider_name).upper())
+    if not key:
+        return []
+
+    prov_cfg = cfg.get(key) or {}
+    feat_cfg = (prov_cfg.get(feature) or {})
+    base_libs = feat_cfg.get("libraries") or []
+    if isinstance(base_libs, (list, tuple)):
+        return [str(x).strip() for x in base_libs if str(x).strip()]
+
+    return []
+
+def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str, Any]:
+    if not libs or not idx:
+        return dict(idx)
+
+    allowed = {str(x).strip() for x in libs if str(x).strip()}
+    if not allowed:
+        return dict(idx)
+
+    out: Dict[str, Any] = {}
+    for ck, item in idx.items():
+        v = item or {}
+        lid = (
+            v.get("library_id")
+            or v.get("libraryId")
+            or v.get("library")
+            or v.get("section_id")
+            or v.get("sectionId")
+        )
+        if lid is None:
+            continue
+        try:
+            if str(lid).strip() in allowed:
+                out[ck] = v
+        except Exception:
+            continue
+
+    return out
 
 def _confirmed(res: dict) -> int:
     return int((res or {}).get("confirmed", (res or {}).get("count", 0)) or 0)
@@ -203,7 +270,21 @@ def _two_way_sync(
 
     A_eff = (dict(prevA) | dict(A_cur)) if a_sem == "delta" else dict(A_eff_guard)
     B_eff = (dict(prevB) | dict(B_cur)) if b_sem == "delta" else dict(B_eff_guard)
+    
+    # --- pair-level library whitelist for media servers (history/ratings) -----
+    libs_A = _effective_library_whitelist(cfg, a, feature, fcfg)
+    libs_B = _effective_library_whitelist(cfg, b, feature, fcfg)
 
+    if libs_A:
+        prevA = _filter_index_by_libraries(prevA, libs_A)
+        A_cur = _filter_index_by_libraries(A_cur, libs_A)
+        A_eff = _filter_index_by_libraries(A_eff, libs_A)
+
+    if libs_B:
+        prevB = _filter_index_by_libraries(prevB, libs_B)
+        B_cur = _filter_index_by_libraries(B_cur, libs_B)
+        B_eff = _filter_index_by_libraries(B_eff, libs_B)
+    # -------------------------------------------------------------------------
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600

@@ -91,8 +91,9 @@ def html() -> str:
           <input id="mdblist_key" type="password" placeholder="••••••••" />
           <button id="mdblist_save" class="btn">Connect</button>
         </div>
-        <div class="muted" style="margin-top:6px">
-          Get it on <a href="https://mdblist.com" target="_blank" rel="noopener">mdblist.com</a> → Preferences.
+        <div id="mdblist_hint" class="msg warn" style="margin-top:8px">
+          You need an MDBList API key. Create one at
+          <a href="https://mdblist.com/preferences/" target="_blank" rel="noopener">MDBList Preferences</a>.
         </div>
       </div>
 

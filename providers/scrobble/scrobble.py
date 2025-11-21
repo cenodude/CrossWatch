@@ -1,4 +1,6 @@
 # providers/scrobble/scrobble.py
+# CrossWatch - Generic scrobbling module
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import os, json, re, time
@@ -15,10 +17,11 @@ except Exception:
 def _log(msg: str, lvl: str = "INFO") -> None:
     if BASE_LOG:
         try:
-            BASE_LOG(str(msg), level=lvl, module="SCROBBLE"); return
+            BASE_LOG(str(msg), level=lvl, module="SCROBBLE")
+            return
         except Exception:
             pass
-    print(f"{lvl} [SCROBBLE] {msg}")
+    print(f"[SCROBBLE:{(lvl or 'INFO').upper()}] {msg}")
 
 def _load_config() -> dict[str, Any]:
     from pathlib import Path

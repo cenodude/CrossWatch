@@ -294,9 +294,15 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
         _shadow_merge_into(out, thaw)
         _log(f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso}")
 
-    if latest_ts_movies: update_watermark_if_new("history:movies", _as_iso(latest_ts_movies))
-    if latest_ts_shows:  update_watermark_if_new("history:shows",  _as_iso(latest_ts_shows))
+    if latest_ts_movies:
+        update_watermark_if_new("history:movies", _as_iso(latest_ts_movies))
+    if latest_ts_shows:
+        update_watermark_if_new("history:shows", _as_iso(latest_ts_shows))
     _unfreeze(thaw)
+    try:
+        _shadow_put_all(out.values())
+    except Exception as e:
+        _log(f"shadow.put index skipped: {e}")
 
     _log(f"index size: {len(out)}"); return out
 

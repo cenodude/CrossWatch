@@ -1,3 +1,6 @@
+# /providers/scrobble/_auto_remove_watchlist.py
+# CrossWatch - Auto-remove from Watchlist on Scrobble Completion
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)f
 from __future__ import annotations
 
 import json, time

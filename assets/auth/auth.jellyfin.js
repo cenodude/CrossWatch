@@ -77,8 +77,16 @@
     } catch { renderLibraries([]); }
   }
 
-  async function hydrateFromConfig() {
-    if (hydrated) return;
+  function jfySectionLooksEmpty() {
+    const s1 = Q("#jfy_server") || Q("#jfy_server_url");
+    const u1 = Q("#jfy_user") || Q("#jfy_username");
+    const tok = Q("#jfy_tok");
+    const vals = [s1, u1, tok].map(el => el ? String(el.value || "").trim() : "");
+    return vals.every(v => !v);
+  }
+
+  async function hydrateFromConfig(force = false) {
+    if (hydrated && !force) return;
     try {
       const r = await fetch("/api/config", { cache: "no-store" });
       if (!r.ok) return;
@@ -105,7 +113,9 @@
   function ensureHydrate() {
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
-    if (sec && (!body || visible(body))) hydrateFromConfig();
+    if (!sec || (body && !visible(body))) return;
+    const force = jfySectionLooksEmpty();
+    hydrateFromConfig(force);
   }
 
   if (!Q(SECTION)) {
@@ -152,6 +162,7 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) { if (msg) { msg.className = "msg warn"; msg.textContent = "Login failed"; } return; }
       put("#jfy_server_url", server); put("#jfy_username", username);
+      if (j?.user_id) put("#jfy_user_id", j.user_id);
       maskToken(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
       if (msg) { msg.className = "msg"; msg.textContent = "Jellyfin connected."; }
       await jfyLoadLibraries();

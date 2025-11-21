@@ -1,4 +1,6 @@
 # _statistics.py
+# CrossWatch - Statistics and Metrics Management
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple

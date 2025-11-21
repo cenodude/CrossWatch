@@ -1,5 +1,5 @@
 # _versionAPI.py
-# CrossWatch version API
+# CrossWatch - Version Management API
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -19,13 +19,11 @@ __all__ = ["router"]
 router = APIRouter(prefix="/api", tags=["version"])
 
 # ── Environment & constants
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.3.9")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.4.0")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
-
 
 def _github_api() -> str:
     return f"https://api.github.com/repos/{REPO}/releases/latest"
-
 
 # ── Helpers -------------------------------------------------------------------
 def _env_modules() -> Dict[str, Dict[str, str]]:
@@ -35,16 +33,13 @@ def _env_modules() -> Dict[str, Dict[str, str]]:
     except Exception:
         return {}
 
-
 def _norm(v: str) -> str:
     """Normalize version strings: trim and drop a leading 'v'."""
     return re.sub(r"^\s*v", "", (v or "").strip(), flags=re.IGNORECASE)
 
-
 def _ttl_marker(seconds: int = 300) -> int:
     """Integer marker that changes every `seconds`; safe for lru_cache keys."""
     return int(time.time() // seconds)
-
 
 @lru_cache(maxsize=1)
 def _cached_latest_release(_marker: int) -> Dict[str, Any]:
@@ -70,7 +65,6 @@ def _cached_latest_release(_marker: int) -> Dict[str, Any]:
             "published_at": None,
         }
 
-
 def _is_update_available(current: str, latest: str | None) -> bool:
     if not latest:
         return False
@@ -80,13 +74,11 @@ def _is_update_available(current: str, latest: str | None) -> bool:
         # Fallback for non-PEP440 tags
         return latest != current
 
-
 def _ver_tuple(s: str) -> Tuple[int, ...]:
     try:
         return tuple(int(p) for p in re.findall(r"\d+", (s or "")))
     except Exception:
         return (0,)
-
 
 def _get_module_version(mod_path: str) -> str:
     try:
@@ -100,8 +92,7 @@ def _get_module_version(mod_path: str) -> str:
         )
     except Exception:
         return "0.0.0"
-
-
+    
 # ── API -----------------------------------------------------------------------
 @router.get("/update")
 def api_update() -> Dict[str, Any]:
@@ -119,7 +110,6 @@ def api_update() -> Dict[str, Any]:
         "published_at": cache.get("published_at"),
     }
 
-
 @router.get("/version")
 def get_version() -> Dict[str, Any]:
     cache = _cached_latest_release(_ttl_marker(300))
@@ -131,7 +121,6 @@ def get_version() -> Dict[str, Any]:
         "update_available": _is_update_available(cur, lat or cur),
         "html_url": cache.get("html_url"),
     }
-
 
 @router.get("/version/check")
 def api_version_check() -> Dict[str, Any]:
@@ -147,7 +136,6 @@ def api_version_check() -> Dict[str, Any]:
         "notes": "",
         "published_at": None,
     }
-
 
 @router.get("/modules/versions")
 def get_module_versions() -> Dict[str, Any]:

@@ -65,31 +65,51 @@ def _parse_ts(v) -> int | None:
     except Exception:
         return None
         
-def build_snapshots_for_feature(*, feature: str, config: Mapping[str, Any], providers: Mapping[str, InventoryOps], snap_cache: Dict[Tuple[str,str], Tuple[float, Dict[str, Dict[str, Any]]]], snap_ttl_sec: int, dbg, emit_info) -> Dict[str, Dict[str, Any]]:
+def build_snapshots_for_feature(*, feature: str, config: Mapping[str, Any], providers: Mapping[str, InventoryOps], snap_cache: Dict[Tuple[str,str], Tuple[float, Dict[str, Dict[str, Any]]]], snap_ttl_sec: int, dbg, emit_info) -> Dict[str, Dict[str, Dict[str, Any]]]:
     snaps: Dict[str, Dict[str, Any]] = {}
-    now = time.time(); allowed = allowed_providers_for_feature(config, feature)
+    now = time.time()
+    allowed = allowed_providers_for_feature(config, feature)
+
     for name, ops in providers.items():
-        if not ops.features().get(feature, False): continue
+        if not ops.features().get(feature, False):
+            continue
+
         if allowed and name.upper() not in allowed:
-            dbg("snapshot.skip", provider=name, feature=feature, reason="not-in-pairs"); continue
+            # snapshot for this provider not needed for current pairs; skip
+            continue
+
         if not provider_configured(config, name):
-            dbg("snapshot.skip", provider=name, feature=feature, reason="not-configured"); continue
+            # provider not configured; skip
+            continue
+
         memo_key = (name, feature)
         if snap_ttl_sec > 0:
             ent = snap_cache.get(memo_key)
             if ent and (now - ent[0]) < snap_ttl_sec:
-                snaps[name] = ent[1]; dbg("snapshot.memo", provider=name, feature=feature, count=len(ent[1])); continue
+                snaps[name] = ent[1]
+                dbg("snapshot.memo", provider=name, feature=feature, count=len(ent[1]))
+                continue
+
         degraded = False
         try:
             idx = ops.build_index(config, feature=feature) or {}
         except Exception as e:
-            emit_info(f"[!] snapshot.failed provider={name} feature={feature} error={e}"); dbg("provider.degraded", provider=name, feature=feature); degraded = True; idx = {}
-        if isinstance(idx, list): canon = {canonical_key(v): v for v in idx}
-        else: canon = {canonical_key(v): v for v in idx.values()} if idx else {}
+            emit_info(f"[!] snapshot.failed provider={name} feature={feature} error={e}")
+            dbg("provider.degraded", provider=name, feature=feature)
+            degraded = True
+            idx = {}
+
+        if isinstance(idx, list):
+            canon = {canonical_key(v): v for v in idx}
+        else:
+            canon = {canonical_key(v): v for v in idx.values()} if idx else {}
         snaps[name] = canon
+
         if snap_ttl_sec > 0:
-            if degraded or not canon: dbg("snapshot.no_cache_empty", provider=name, feature=feature, degraded=bool(degraded))
-            else: snap_cache[memo_key] = (now, canon)
+            if degraded or not canon:
+                dbg("snapshot.no_cache_empty", provider=name, feature=feature, degraded=bool(degraded))
+            else:
+                snap_cache[memo_key] = (now, canon)
         dbg("snapshot", provider=name, feature=feature, count=len(canon))
     return snaps
     

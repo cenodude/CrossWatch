@@ -1,4 +1,6 @@
 # _export.py
+# CrossWatchh - Export scrobbled data to various formats
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import csv, io, json, os, re, time

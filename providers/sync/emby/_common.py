@@ -97,8 +97,32 @@ def with_emby_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> Di
     out.update(emby_library_scope(cfg, feature))
     return out
 
-def emby_scope_history(cfg: CfgLike) -> Dict[str, Any]:
-    return emby_library_scope(cfg, "history")
+def emby_scope_history(cfg):
+    dyn = getattr(cfg, "scope", None) or getattr(cfg, "pair_scope", None)
+    if isinstance(dyn, dict):
+        h = dyn.get("history") or dyn.get("History") or dyn
+        libs = None
+
+        if isinstance(h, dict):
+            libs_map = h.get("libraries")
+            if isinstance(libs_map, dict):
+                libs = libs_map.get("EMBY") or libs_map.get("emby")
+            libs = libs or h.get("LibraryIds") or h.get("LibraryId") or h.get("ParentId")
+
+        if libs:
+            libs_list = libs if isinstance(libs, (list, tuple)) else [libs]
+            libs_list = [str(x) for x in libs_list if x]
+            if libs_list:
+                return _emby_scope_from_list(libs_list)
+
+    # Server-level scope fallback
+    libs = getattr(cfg, "history_libraries", None) or getattr(cfg, "libraries", None) or []
+    if libs:
+        libs_list = libs if isinstance(libs, (list, tuple)) else [libs]
+        libs_list = [str(x) for x in libs_list if x]
+        if libs_list:
+            return _emby_scope_from_list(libs_list)
+    return {}
 
 def emby_scope_ratings(cfg: CfgLike) -> Dict[str, Any]:
     return emby_library_scope(cfg, "ratings")
@@ -155,27 +179,71 @@ def _ids_from_provider_ids(pids: Optional[Mapping[str, Any]]) -> Dict[str, str]:
 
 def normalize(obj: Mapping[str, Any]) -> Dict[str, Any]:
     if isinstance(obj, Mapping) and "ids" in obj and "type" in obj:
-        return id_minimal(obj)
+        base = dict(obj)
+        res = id_minimal(base)
+        if "library_id" in base:
+            res["library_id"] = base["library_id"]
+        return res
+
     t = _norm_type(obj.get("Type") or obj.get("BaseItemKind") or obj.get("type"))
     title = (obj.get("Name") or obj.get("title") or "").strip() or None
     year = obj.get("ProductionYear") if isinstance(obj.get("ProductionYear"), int) else obj.get("year")
-    pids = obj.get("ProviderIds") if isinstance(obj.get("ProviderIds"), Mapping) else (obj.get("ids") or {})
+    pids = obj.get("ProviderIds") if isinstance(pids := obj.get("ProviderIds"), Mapping) else (obj.get("ids") or {})
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     em_id = obj.get("Id") or (pids.get("emby") if isinstance(pids, Mapping) else None)
-    if em_id: ids["emby"] = str(em_id)
+    if em_id:
+        ids["emby"] = str(em_id)
+
     row: Dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
+    lib_id = obj.get("LibraryId")
+    if not lib_id:
+        anc = obj.get("AncestorIds")
+        if isinstance(anc, list) and anc:
+            lib_id = anc[0]
+        if not lib_id:
+            pid = obj.get("ParentId")
+            if isinstance(pid, str):
+                lib_id = pid
+    if lib_id:
+        row["library_id"] = str(lib_id).strip() or None
+
     if t == "episode":
-        series_title = (obj.get("SeriesName") or obj.get("Series") or obj.get("SeriesTitle") or obj.get("series_title") or "").strip() or None
-        if series_title: row["series_title"] = series_title
-        s = (obj.get("ParentIndexNumber") or obj.get("SeasonIndexNumber") or obj.get("season") or obj.get("season_number"))
-        e = (obj.get("IndexNumber") or obj.get("EpisodeIndexNumber") or obj.get("episode") or obj.get("episode_number"))
+        series_title = (
+            obj.get("SeriesName")
+            or obj.get("Series")
+            or obj.get("SeriesTitle")
+            or obj.get("series_title")
+            or ""
+        ).strip() or None
+        if series_title:
+            row["series_title"] = series_title
+        s = (
+            obj.get("ParentIndexNumber")
+            or obj.get("SeasonIndexNumber")
+            or obj.get("season")
+            or obj.get("season_number")
+        )
+        e = (
+            obj.get("IndexNumber")
+            or obj.get("EpisodeIndexNumber")
+            or obj.get("episode")
+            or obj.get("episode_number")
+        )
         try:
-            if s is not None: row["season"] = int(s)
-        except Exception: pass
+            if s is not None:
+                row["season"] = int(s)
+        except Exception:
+            pass
         try:
-            if e is not None: row["episode"] = int(e)
-        except Exception: pass
-    return id_minimal(row)
+            if e is not None:
+                row["episode"] = int(e)
+        except Exception:
+            pass
+
+    res = id_minimal(row)
+    if "library_id" in row and row.get("library_id"):
+        res["library_id"] = row["library_id"]
+    return res
 
 def key_of(item: Mapping[str, Any]) -> str:
     return canonical_key(normalize(item))
@@ -286,8 +354,48 @@ def provider_index(adapter, *, ttl_sec: int = 300, force_refresh: bool = False) 
 
 def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, Any]]:
     idx = provider_index(adapter)
+
+    # Prefer resolving within configured Emby history libraries when whitelisting is active.
+    scope_hist: Dict[str, Any] = {}
+    try:
+        scope_hist = emby_scope_history(adapter.cfg) or {}
+    except Exception:
+        scope_hist = {}
+
+    allowed_libs: List[str] = []
+    if isinstance(scope_hist, Mapping):
+        pid = scope_hist.get("ParentId")
+        if pid:
+            allowed_libs = [str(pid)]
+        else:
+            anc = scope_hist.get("AncestorIds")
+            if isinstance(anc, (list, tuple)):
+                allowed_libs = [str(x) for x in anc if x]
+
+    def _row_lib_candidates(row: Mapping[str, Any]) -> List[str]:
+        c: List[str] = []
+        try:
+            for k in ("LibraryId", "ParentId"):
+                v = row.get(k)
+                if v is not None:
+                    c.append(str(v))
+            anc2 = row.get("AncestorIds") or []
+            if isinstance(anc2, (list, tuple)):
+                c.extend([str(a) for a in anc2 if a is not None])
+        except Exception:
+            pass
+        return c
+
+    def _prefer_allowed(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not rows or not allowed_libs:
+            return rows
+        aset = set(allowed_libs)
+        m = [r for r in rows if any(x in aset for x in _row_lib_candidates(r))]
+        return m or rows
+
     for pref in pairs or []:
         rows = idx.get(pref) or []
+        rows = _prefer_allowed(rows)
         for row in rows:
             if (row.get("Type") or "").strip() == "Series":
                 return row
@@ -704,12 +812,66 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     prio = _merged_guid_priority(adapter)
     ep_pairs = all_ext_pairs(ids, prio)
     series_pairs = all_ext_pairs(series_ids, prio) if series_ids else []
-    scope = emby_scope_any(adapter.cfg)
+    
+    # Prefer resolving within configured Emby history libraries to avoid cross-library drift.
+    scope_hist = {}
+    try:
+        scope_hist = emby_scope_history(adapter.cfg) or {}
+    except Exception:
+        scope_hist = {}
+
+    allowed_libs: List[str] = []
+    if isinstance(scope_hist, Mapping):
+        pid = scope_hist.get("ParentId")
+        if pid:
+            allowed_libs = [str(pid)]
+        else:
+            anc = scope_hist.get("AncestorIds")
+            if isinstance(anc, (list, tuple)):
+                allowed_libs = [str(x) for x in anc if x]
+
+    hint_lib = str(it.get("library_id") or it.get("libraryId") or it.get("source_library_id") or "").strip()
+
+    def _row_lib_candidates(row: Mapping[str, Any]) -> List[str]:
+        c: List[str] = []
+        try:
+            for k in ("LibraryId", "ParentId"):
+                v = row.get(k)
+                if v is not None:
+                    c.append(str(v))
+            anc2 = row.get("AncestorIds") or []
+            if isinstance(anc2, (list, tuple)):
+                c.extend([str(a) for a in anc2 if a is not None])
+        except Exception:
+            pass
+        return c
+
+    def _prefer_library(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not rows:
+            return rows
+        if hint_lib:
+            m = [r for r in rows if hint_lib in _row_lib_candidates(r)]
+            if m:
+                return m
+        if allowed_libs:
+            aset = set(allowed_libs)
+            m = [r for r in rows if any(x in aset for x in _row_lib_candidates(r))]
+            if m:
+                return m
+        return rows
+
+    if hint_lib and hint_lib in allowed_libs:
+        scope = _emby_scope_from_list([hint_lib])
+    elif allowed_libs:
+        scope = _emby_scope_from_list(allowed_libs)
+    else:
+        scope = emby_scope_any(adapter.cfg)
 
     # ---- 1) Direct hit via AnyProviderIdEquals (Emby-native) -----------------
     if t == "movie":
         rows = _direct_query_by_pairs(http, uid, ep_pairs, "Movie", scope)
         if rows:
+            rows = _prefer_library(rows)
             iid = _pick_from_candidates([r for r in rows if (r.get("Type") or "") == "Movie"], want_type="movie", want_year=year)
             if iid:
                 _log_detail(f"resolve (movie) direct AnyProviderIdEquals -> {iid}")
@@ -719,6 +881,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     elif t in ("show", "series"):
         rows = _direct_query_by_pairs(http, uid, ep_pairs or series_pairs, "Series", scope)
         if rows:
+            rows = _prefer_library(rows)
             iid = _pick_from_candidates([r for r in rows if (r.get("Type") or "") == "Series"], want_type="show", want_year=year)
             if iid:
                 _log_detail(f"resolve (series) direct AnyProviderIdEquals -> {iid}")
@@ -760,6 +923,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     if t == "movie":
         for pref in ep_pairs:
             cands = idx.get(pref) or []
+            cands = _prefer_library(cands)
             iid = _pick_from_candidates(cands, want_type="movie", want_year=year)
             if iid:
                 _log_detail(f"resolve hit (movie index) pref={pref} -> item_id={iid}")
@@ -769,6 +933,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     if t in ("show", "series"):
         for pref in ep_pairs:
             cands = [row for row in (idx.get(pref) or []) if (row.get("Type") or "").strip() == "Series"]
+            cands = _prefer_library(cands)
             iid = _pick_from_candidates(cands, want_type="show", want_year=year)
             if iid:
                 _log_detail(f"resolve series (index) pref={pref} -> {iid}")
@@ -811,7 +976,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         try:
             q = {"UserId": uid, "Recursive": True, "IncludeItemTypes": "Movie",
                  "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50}
-            q.update(emby_scope_any(adapter.cfg))
+            q.update(scope or {})
             r = http.get("/Items", params=q)
             t_l = title.lower()
             cand: List[Mapping[str, Any]] = []
@@ -836,7 +1001,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         try:
             q = {"UserId": uid, "Recursive": True, "IncludeItemTypes": "Series",
                  "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50}
-            q.update(emby_scope_any(adapter.cfg))
+            q.update(scope or {})
             r = http.get("/Items", params=q)
             title_lc = title.lower()
             cand: List[Mapping[str, Any]] = []
@@ -862,7 +1027,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
             q = {"UserId": uid, "Recursive": True, "IncludeItemTypes": "Episode",
                  "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId",
                  "Limit": 50}
-            q.update(emby_scope_any(adapter.cfg))
+            q.update(scope or {})
             r = http.get("/Items", params=q)
             t_l = title.lower()
             for row in _items(r):

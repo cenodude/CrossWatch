@@ -1,4 +1,6 @@
 # _inightAPI.py
+# CrossWatch - Insights API for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import json, time
 from typing import Any, Dict, List, Tuple, Optional, Callable

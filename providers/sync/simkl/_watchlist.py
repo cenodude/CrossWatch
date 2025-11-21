@@ -33,6 +33,8 @@ STATE_DIR       = Path("/config/.cw_state")
 UNRESOLVED_PATH = STATE_DIR / "simkl.watchlist.unresolved.json"
 SHADOW_PATH     = STATE_DIR / "simkl.watchlist.shadow.json"
 
+WATCHLIST_BUCKETS = ("movies", "shows")
+
 _ENRICH_MEMO: Dict[str, Dict[str, Any]] = {}
 
 def _log(msg: str):
@@ -101,7 +103,7 @@ def _shadow_ttl_seconds() -> float:
 
 # ---------- helpers
 
-_ALLOWED_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "mal", "anidb", "anilist", "kitsu")
+_ALLOWED_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
 
 def _ids_filter(ids_in: Mapping[str, Any]) -> Dict[str, Any]:
     return {k: ids_in.get(k) for k in _ALLOWED_ID_KEYS if ids_in.get(k)}
@@ -133,19 +135,24 @@ def _sum_processed_from_body(body: Any) -> int:
         return 0
 
 def _rows_from_data(data: Any, bucket: str) -> List[Any]:
-    if data is None: return []
-    if isinstance(data, dict) and data.get("type") == "null" and data.get("body") is None: return []
-    if isinstance(data, list): return data
+    if data is None:
+        return []
+    if isinstance(data, dict) and data.get("type") == "null" and data.get("body") is None:
+        return []
+    if isinstance(data, list):
+        return data
     if isinstance(data, dict):
-        if isinstance(data.get("items"), list): return data["items"]
-        key = "movies" if bucket == "movies" else ("shows" if bucket == "shows" else "anime")
+        if isinstance(data.get("items"), list):
+            return data["items"]
+        key = "movies" if bucket == "movies" else "shows"
         arr = data.get(key)
-        if isinstance(arr, list): return arr
+        if isinstance(arr, list):
+            return arr
     return []
 
 def _normalize_row(bucket: str, row: Any) -> Dict[str, Any]:
     if isinstance(row, Mapping):
-        node = (row.get("movie") or row.get("show") or row.get("anime") or row or {})
+        node = (row.get("movie") or row.get("show") or row or {})
         ids_src = node.get("ids") if isinstance(node.get("ids"), Mapping) else row
         ids = _ids_filter(dict(ids_src or {}))
         title = node.get("title")
@@ -158,6 +165,7 @@ def _normalize_row(bucket: str, row: Any) -> Dict[str, Any]:
         ids = {}
         title = None
         year = None
+
     media_type = "movie" if bucket == "movies" else "show"
     return {"type": media_type, "title": title, "year": year, "ids": ids, "simkl_bucket": bucket}
 
@@ -174,40 +182,31 @@ def _first(*vals: Optional[str]) -> Optional[str]:
     return None
 
 def _bucket_ts(acts: Mapping[str, Any]) -> Dict[str, Dict[str, Optional[str]]]:
-    out = {"movies": {"ptw": None, "rm": None},
-           "shows":  {"ptw": None, "rm": None},
-           "anime":  {"ptw": None, "rm": None}}
-
-    out["movies"]["ptw"] = _first(_acts_get(acts, "movies", "plantowatch"), _acts_get(acts, "movies", "all"))
-    out["movies"]["rm"]  = _first(_acts_get(acts, "movies", "removed_from_list"), _acts_get(acts, "movies", "removed"))
-
-    shows_ptw = _first(
+    out = {
+        "movies": {"ptw": None, "rm": None},
+        "shows":  {"ptw": None, "rm": None},
+    }
+    out["movies"]["ptw"] = _first(
+        _acts_get(acts, "movies", "plantowatch"),
+        _acts_get(acts, "movies", "all"),
+    )
+    out["movies"]["rm"] = _first(
+        _acts_get(acts, "movies", "removed_from_list"),
+        _acts_get(acts, "movies", "removed"),
+    )
+    out["shows"]["ptw"] = _first(
         _acts_get(acts, "shows", "plantowatch"),
         _acts_get(acts, "shows", "all"),
         _acts_get(acts, "tv_shows", "plantowatch"),
         _acts_get(acts, "watchlist", "shows"),
     )
-    shows_rm = _first(
+    out["shows"]["rm"] = _first(
         _acts_get(acts, "shows", "removed_from_list"),
         _acts_get(acts, "shows", "removed"),
         _acts_get(acts, "tv_shows", "removed_from_list"),
         _acts_get(acts, "tv_shows", "removed"),
     )
-    out["shows"]["ptw"] = shows_ptw
-    out["shows"]["rm"]  = shows_rm
-
-    out["anime"]["ptw"] = _first(_acts_get(acts, "anime", "plantowatch"), _acts_get(acts, "anime", "all"), _acts_get(acts, "watchlist", "anime"))
-    out["anime"]["rm"]  = _first(_acts_get(acts, "anime", "removed_from_list"), _acts_get(acts, "anime", "removed"))
-
     return out
-
-def _composite_ts(tsm: Mapping[str, Mapping[str, Optional[str]]]) -> str:
-    def v(x): return x or "-"
-    return "|".join([
-        f"m:{v(tsm['movies']['ptw'])}/{v(tsm['movies']['rm'])}",
-        f"s:{v(tsm['shows']['ptw'])}/{v(tsm['shows']['rm'])}",
-        f"a:{v(tsm['anime']['ptw'])}/{v(tsm['anime']['rm'])}",
-    ])
 
 def _bucket_present(items: Mapping[str, Dict[str, Any]], bucket: str) -> bool:
     for v in (items or {}).values():
@@ -215,8 +214,8 @@ def _bucket_present(items: Mapping[str, Dict[str, Any]], bucket: str) -> bool:
             return True
     return False
 
-def _has_all_buckets(items: Mapping[str, Dict[str, Any]]) -> bool:
-    return all(_bucket_present(items, b) for b in ("movies", "shows", "anime"))
+def _has_all_buckets(items) -> bool:
+    return all(_bucket_present(items, b) for b in WATCHLIST_BUCKETS)
 
 # ---------- JIT enrichment
 
@@ -228,10 +227,11 @@ def _headers(adapter, *, force_refresh: bool = False) -> Dict[str, str]:
     return h
 
 def _best_id_q(ids: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    order = ("imdb", "tmdb", "tvdb", "simkl", "mal", "anidb", "anilist", "kitsu")
+    order = ("imdb", "tmdb", "tvdb", "simkl")
     for k in order:
         v = ids.get(k)
-        if v: return {k: str(v)}
+        if v:
+            return {k: str(v)}
     return None
 
 def _lookup_by_id(adapter, ids: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
@@ -281,13 +281,17 @@ def _jit_enrich_missing(adapter, items: Dict[str, Dict[str, Any]], *, cap: int =
     limit = int(os.getenv("CW_SIMKL_ENRICH_LIMIT") or 6) if cap is None else int(cap)
     if limit <= 0:
         return 0
+
     enriched = 0
     for k, v in list(items.items()):
         if enriched >= limit:
             break
-        if v.get("title") and v.get("year") and (v.get("ids") or {}).get("imdb") or (v.get("ids") or {}).get("tmdb") or (v.get("ids") or {}).get("tvdb"):
+
+        ids = v.get("ids") or {}
+        if v.get("title") and v.get("year") and any(ids.get(x) for x in ("imdb", "tmdb", "tvdb")):
             continue
-        out = _lookup_by_id(adapter, v.get("ids") or {})
+
+        out = _lookup_by_id(adapter, ids)
         if out:
             v2 = dict(v)
             v2["title"] = v2.get("title") or out.get("title")
@@ -298,6 +302,7 @@ def _jit_enrich_missing(adapter, items: Dict[str, Dict[str, Any]], *, cap: int =
                 v2["ids"] = {**ids_a, **{kk: vv for kk, vv in ids_b.items() if vv}}
             items[k] = v2
             enriched += 1
+
     if enriched:
         _log(f"jit-enriched items: {enriched}")
     return enriched
@@ -354,54 +359,85 @@ def _shadow_remove_keys(keys: Iterable[str]) -> None:
     if changed: _shadow_save(sh.get("ts"), cur)
 
 # ---------- fetchers
-
-def _pull_bucket(adapter, bucket: str, *, date_from: Optional[str], ids_only: bool, limit: Optional[int], force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+def _pull_bucket(
+    adapter,
+    bucket: str,
+    *,
+    date_from: Optional[str],
+    ids_only: bool,
+    limit: Optional[int],
+    force_refresh: bool = False,
+) -> Dict[str, Dict[str, Any]]:
     sess = adapter.client.session
-    hdrs = _headers(adapter, force_refresh=force_refresh)
     out: Dict[str, Dict[str, Any]] = {}
 
-    url = (URL_INDEX_IDS if ids_only else URL_INDEX_BUCKET).format(bucket=bucket)
-    params: Dict[str, Any] = {"extended": ("ids_only" if ids_only else "full")}
-    if not ids_only and bucket in ("shows", "anime"): params["episode_watched_at"] = "yes"
-    if date_from: params["date_from"] = date_from
+    url_ids = URL_INDEX_IDS.format(bucket=bucket)
+    url_full = URL_INDEX_BUCKET.format(bucket=bucket)
 
-    def _do_fetch(_ids_only: bool, _force: bool, _params: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    base_params: Dict[str, Any] = {"extended": ("ids_only" if ids_only else "full")}
+    if not ids_only and bucket == "shows":
+        base_params["episode_watched_at"] = "yes"
+    if date_from:
+        base_params["date_from"] = date_from
+
+    def _do_fetch(_url: str, _params: Dict[str, Any], _force: bool) -> Dict[str, Dict[str, Any]]:
         try:
-            r = sess.get(url, headers=_headers(adapter, force_refresh=_force), params=_params, timeout=adapter.cfg.timeout)
+            r = sess.get(
+                _url,
+                headers=_headers(adapter, force_refresh=_force),
+                params=_params,
+                timeout=adapter.cfg.timeout,
+            )
             if r.status_code != 200:
-                _log(f"GET {url} -> {r.status_code}")
+                _log(f"GET {_url} -> {r.status_code}")
                 return {}
-            try: data = r.json()
-            except Exception: data = None
+
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+
             rows = _rows_from_data(data, bucket)
-            if not rows: return {}
+            if not rows:
+                return {}
+
             count = 0
             out_local: Dict[str, Dict[str, Any]] = {}
             for row in rows:
                 try:
                     m = _normalize_row(bucket, row)
-                    if not (m.get("ids") or m.get("title")): continue
-                    out_local[simkl_key_of(m)] = m; count += 1
-                    if limit and count >= int(limit): break
+                    if not (m.get("ids") or m.get("title")):
+                        continue
+                    out_local[simkl_key_of(m)] = m
+                    count += 1
+                    if limit and count >= int(limit):
+                        break
                 except Exception:
                     continue
+
             return out_local
         except Exception as e:
             _log(f"bucket pull error {bucket}: {e}")
             return {}
 
-    out = _do_fetch(ids_only, force_refresh, dict(params))
+    # First pass
+    first_url = url_ids if ids_only else url_full
+    out = _do_fetch(first_url, dict(base_params), force_refresh)
+
+    # Fallback:
     if not out:
-        alt_params = dict(params)
+        alt_params = dict(base_params)
         alt_params.pop("date_from", None)
         if ids_only:
-            out = _do_fetch(False, True, alt_params)
+            alt_params["extended"] = "full"
+            alt_url = url_full
         else:
-            out = _do_fetch(False, True, alt_params)
+            alt_url = first_url
+        out = _do_fetch(alt_url, alt_params, True)
+
     return out
 
 # ---------- index (with progress-helper)
-
 def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("watchlist") if callable(prog_mk) else None
@@ -413,14 +449,27 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
 
     acts, _rate = fetch_activities(sess, hdrs, timeout=adapter.cfg.timeout)
     ts_map = _bucket_ts(acts or {})
+
+    def _composite_ts(tsm):
+        def v(x): return x or "-"
+        return "|".join([
+            f"m:{v(tsm['movies']['ptw'])}/{v(tsm['movies']['rm'])}",
+            f"s:{v(tsm['shows']['ptw'])}/{v(tsm['shows']['rm'])}",
+        ])
+
     comp_ts = _composite_ts(ts_map)
 
     if os.getenv("CW_SIMKL_WATCHLIST_CLEAR") == "1":
-        try: SHADOW_PATH.unlink(missing_ok=True)
-        except Exception: pass
+        try:
+            SHADOW_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     shadow = _shadow_load()
     items: Dict[str, Dict[str, Any]] = dict(shadow.get("items") or {})
+    # purge unexpected buckets
+    items = {k: v for k, v in items.items()
+            if (v.get("simkl_bucket") in WATCHLIST_BUCKETS)}
 
     if comp_ts and shadow.get("ts") == comp_ts and _has_all_buckets(items):
         age, ttl = _shadow_age_seconds(), _shadow_ttl_seconds()
@@ -430,13 +479,15 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
                     total = len(items)
                     prog.tick(0, total=total, force=True)
                     prog.tick(total, total=total)
-                except Exception: pass
+                except Exception:
+                    pass
             _log(f"unchanged via activities (reuse shadow) size={len(items)} age={int(age)}s")
             return items
+
         _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) → ids_only verify")
-        for b in ("movies", "shows", "anime"):
-            df = coalesce_date_from(f"watchlist:{b}", cfg_date_from="1970-01-01T00:00:00Z")
-            snap = _pull_bucket(adapter, b, date_from=df, ids_only=True, limit=limit, force_refresh=True)
+        for bucket in WATCHLIST_BUCKETS:
+            df = coalesce_date_from(f"watchlist:{bucket}", cfg_date_from="1970-01-01T00:00:00Z")
+            snap = _pull_bucket(adapter, bucket, date_from=df, ids_only=True, limit=limit, force_refresh=True)
             _merge_upsert(items, snap)
             cnt = len(snap)
             if cnt and prog:
@@ -444,25 +495,29 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
                     total_known += cnt
                     done += cnt
                     prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception: pass
+                except Exception:
+                    pass
+
         _shadow_save(comp_ts, items)
         if prog:
             try:
                 final_total = len(items)
                 prog.tick(done, total=final_total, force=True)
-            except Exception: pass
+            except Exception:
+                pass
         return items
 
     force_present = (os.getenv("CW_SIMKL_FORCE_PRESENT") or "").strip().lower()
     force_all = force_present in ("1", "true", "all")
 
-    for bucket in ("movies", "shows", "anime"):
+    for bucket in WATCHLIST_BUCKETS:
         have_bucket = _bucket_present(items, bucket)
         ptw_ts = ts_map[bucket]["ptw"]
-        rm_ts  = ts_map[bucket]["rm"]
+        rm_ts = ts_map[bucket]["rm"]
 
         rm_key = f"watchlist_removed:{bucket}"
         prev_rm = get_watermark(rm_key)
+
         if force_all or force_present == bucket:
             _log(f"{bucket}: forced present ids_only reconcile")
             df_force = coalesce_date_from(f"watchlist:{bucket}", cfg_date_from="1970-01-01T00:00:00Z")
@@ -474,44 +529,55 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
                     total_known += cnt
                     done += cnt
                     prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception: pass
+                except Exception:
+                    pass
             have_bucket = _bucket_present(items, bucket)
+
         elif rm_ts and rm_ts != prev_rm:
             if have_bucket:
-                drop = [k for k, v in items.items() if isinstance(v, Mapping) and v.get("simkl_bucket") == bucket]
-                for k in drop: items.pop(k, None)
+                drop = [k for k, v in items.items()
+                        if isinstance(v, Mapping) and v.get("simkl_bucket") == bucket]
+                for k in drop:
+                    items.pop(k, None)
+
             df_full = coalesce_date_from(f"watchlist:{bucket}", cfg_date_from="1970-01-01T00:00:00Z")
             fresh = _pull_bucket(adapter, bucket, date_from=df_full, ids_only=True, limit=limit, force_refresh=True)
             _merge_upsert(items, fresh)
             save_watermark(rm_key, rm_ts)
             _log(f"{bucket}: rebuilt via ids_only ({len(fresh)})")
+
             cnt = len(fresh)
             if cnt and prog:
                 try:
                     total_known += cnt
                     done += cnt
                     prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception: pass
+                except Exception:
+                    pass
             have_bucket = _bucket_present(items, bucket)
 
         df_key = f"watchlist:{bucket}"
         date_from = coalesce_date_from(df_key)
+
         if ptw_ts and ptw_ts != get_watermark(df_key):
             inc = _pull_bucket(adapter, bucket, date_from=date_from, ids_only=False, limit=limit, force_refresh=False)
             if not inc:
                 _log(f"{bucket}: incremental returned 0; fallback to present ids_only")
                 df_full = coalesce_date_from(df_key, cfg_date_from="1970-01-01T00:00:00Z")
                 inc = _pull_bucket(adapter, bucket, date_from=df_full, ids_only=True, limit=limit, force_refresh=True)
+
             _merge_upsert(items, inc)
             save_watermark(df_key, ptw_ts)
             _log(f"{bucket}: incremental {len(inc)} from {date_from or 'baseline'}")
+
             cnt = len(inc)
             if cnt and prog:
                 try:
                     total_known += cnt
                     done += cnt
                     prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception: pass
+                except Exception:
+                    pass
             have_bucket = _bucket_present(items, bucket)
 
         if not have_bucket:
@@ -520,22 +586,31 @@ def build_index(adapter, limit: Optional[int] = None) -> Dict[str, Dict[str, Any
             snap = _pull_bucket(adapter, bucket, date_from=df_full, ids_only=False, limit=limit, force_refresh=True)
             if not snap:
                 snap = _pull_bucket(adapter, bucket, date_from=None, ids_only=False, limit=limit, force_refresh=True)
+
             _merge_upsert(items, snap)
+
             cnt = len(snap)
             if cnt and prog:
                 try:
                     total_known += cnt
                     done += cnt
                     prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception: pass
-            if ts_map[bucket]["ptw"]: save_watermark(df_key, ts_map[bucket]["ptw"])
+                except Exception:
+                    pass
+
+            if ts_map[bucket]["ptw"]:
+                save_watermark(df_key, ts_map[bucket]["ptw"])
 
     _jit_enrich_missing(adapter, items)
     _unfreeze_if_present(items.keys())
     _shadow_save(comp_ts, items)
 
-    latest_any = max([t for t in [ts_map["movies"]["ptw"], ts_map["shows"]["ptw"], ts_map["anime"]["ptw"]] if t] or ["2000-01-01T00:00:00Z"])
-    if latest_any: save_watermark("watchlist", latest_any)
+    latest_any = max(
+        [t for t in [ts_map["movies"]["ptw"], ts_map["shows"]["ptw"]] if t]
+        or ["2000-01-01T00:00:00Z"]
+    )
+    if latest_any:
+        save_watermark("watchlist", latest_any)
 
     if prog:
         try:

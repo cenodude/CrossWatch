@@ -20,8 +20,7 @@ UNRESOLVED_PATH = "/config/.cw_state/emby_history.unresolved.json"
 SHADOW_PATH     = "/config/.cw_state/emby_history.shadow.json"
 BLACKBOX_PATH   = "/config/.cw_state/emby_history.emby.blackbox.json"
 
-# === Small helpers: timing, logging, caches ===
-
+# Helpers for played timestamp extraction
 def _played_ts_from_row(row: Mapping[str, Any]) -> int:
     ud = (row.get("UserData") or {}) if isinstance(row, Mapping) else {}
     for v in (
@@ -42,25 +41,18 @@ def _played_ts_backfill(http, uid: str, row: Mapping[str, Any]) -> int:
     if not iid:
         return 0
     try:
-        r = http.get(f"/Users/{uid}/Items/{iid}", params={"Fields": "UserData,DatePlayed,ProviderIds,ProductionYear"})
+        r = http.get(
+            f"/Users/{uid}/Items/{iid}",
+            params={"Fields": "UserData", "EnableUserData": True},
+        )
         if getattr(r, "status_code", 0) != 200:
             return 0
         body = r.json() or {}
         ud = body.get("UserData") or {}
-        for v in (
-            ud.get("DatePlayed"),
-            ud.get("LastPlayedDate"),
-            ud.get("LastPlayedAt"),
-            body.get("DatePlayed"),
-            body.get("DateLastPlayed"),
-            body.get("LastPlayedDate"),
-        ):
-            ts = _parse_iso_to_epoch(v)
-            if ts:
-                return ts
+        ts = _parse_iso_to_epoch(ud.get("LastPlayedDate"))
+        return ts or 0
     except Exception:
-        pass
-    return 0
+        return 0
 
 def sleep_ms(ms: int) -> None:
     try:
@@ -166,8 +158,7 @@ def _history_delay_ms(adapter) -> int:
     try: return max(0, int(v))
     except Exception: return 0
 
-# === Time parsing: robust ISO→epoch and epoch→ISO ===
-
+# Timestamp parsing and formatting
 def _parse_iso_to_epoch(s: Optional[str]) -> Optional[int]:
     if not s:
         return None
@@ -209,8 +200,7 @@ def _epoch_to_emby_dateparam(ts: int) -> str:
 def _now_iso_z() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# === ID helpers: series/movie ids and optional series year ===
-
+# Emby ID fetchers
 def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
     sid = (str(series_id or "").strip()) or ""
     if not sid: return {}
@@ -284,8 +274,67 @@ def _resp_snip(r) -> str:
         except Exception:
             return "<no-body>"
 
-# === Destination writes (Emby) ===
+def _emby_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
+    # Returns: { library_id_str: { "type": "movie"|"show"|... , "raw": <view row> } }
+    http = adapter.client
+    uid = getattr(getattr(adapter, "cfg", None), "user_id", None) or ""
+    roots: Dict[str, Dict[str, Any]] = {}
+    try:
+        if uid:
+            r = http.get(f"/Users/{uid}/Views")
+        else:
+            r = http.get("/Library/MediaFolders")
+    except Exception:
+        r = None
+    try:
+        if r is not None and getattr(r, "status_code", 0) == 200:
+            j = r.json() or {}
+            items = j.get("Items") or j.get("ItemsList") or j.get("Items") or []
+            for it in items:
+                lid = it.get("Id") or it.get("Key") or it.get("Id")
+                if not lid:
+                    continue
+                lid_s = str(lid)
+                ctyp = (it.get("CollectionType") or it.get("Type") or "").lower()
+                if "movie" in ctyp:
+                    typ = "movie"
+                elif "series" in ctyp or "tv" in ctyp:
+                    typ = "show"
+                else:
+                    typ = ctyp or "lib"
+                roots[lid_s] = {"type": typ, "raw": it}
+    except Exception:
+        pass
 
+    if (os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG")) and roots:
+        _log(f"library_roots: {sorted(roots.keys())}")
+
+    return roots
+
+# Deep lookup: Emby items often have LibraryId/AncestorIds that are NOT view ids.
+_lib_anc_cache: Dict[str, Optional[str]] = {}
+
+def _lib_id_via_ancestors(http, uid: str, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
+    if not iid:
+        return None
+    if iid in _lib_anc_cache:
+        return _lib_anc_cache[iid]
+    try:
+        # IMPORTANT: UserId makes Ancestors return USER VIEWS (libraries), not media folders
+        r = http.get(f"/Items/{iid}/Ancestors", params={"Fields": "Id", "UserId": uid})
+        if getattr(r, "status_code", 0) == 200:
+            root_keys = set(str(k) for k in (roots or {}).keys())
+            for a in (r.json() or []):
+                aid = str((a or {}).get("Id") or "")
+                if aid in root_keys:
+                    _lib_anc_cache[iid] = aid
+                    return aid
+    except Exception:
+        pass
+    _lib_anc_cache[iid] = None
+    return None
+
+# Destination write
 def _write_userdata(http, uid: str, item_id: str, *, date_iso: Optional[str]) -> bool:
     payload: Dict[str, Any] = {"Played": True, "PlayCount": 1}
     if date_iso:
@@ -340,23 +389,40 @@ def _unmark_played(http, uid: str, item_id: str) -> bool:
         _log(f"unmark_played exception id={item_id} err={e}")
         return False
 
-def _dst_user_state(http, uid: str, iid: str) -> Tuple[bool, int]:
+def _dst_user_state(http, uid: str, iid: str):
     try:
-        r = http.get(f"/Users/{uid}/Items/{iid}", params={"Fields": "UserData"})
+        r = http.get(
+            f"/Users/{uid}/Items/{iid}",
+            params={
+                "Fields": "UserData,UserDataPlayCount,UserDataLastPlayedDate",
+                "EnableUserData": True,
+            },
+        )
         if getattr(r, "status_code", 0) != 200:
+            _log(f"dst_user_state: GET /Users/{uid}/Items/{iid} -> {getattr(r, 'status_code', None)}")
             return False, 0
+
         data = r.json() or {}
         ud = data.get("UserData") or {}
-        played = bool(ud.get("Played") or ud.get("IsPlayed") or (ud.get("PlayCount") or 0) > 0)
-        ts = _parse_iso_to_epoch(
-            ud.get("DatePlayed") or ud.get("LastPlayedDate") or ud.get("LastPlayedAt")
-        ) or 0
+
+        play_count = int(ud.get("PlayCount") or 0)
+        played_flag = bool(ud.get("Played") is True)
+
+        # Only timestamp we should trust per Emby docs
+        raw_ts = ud.get("LastPlayedDate")
+        ts = _parse_iso_to_epoch(raw_ts) or 0
+
+        played = bool(played_flag or play_count > 0)
+
+        if os.environ.get("CW_EMBY_DEBUG"):
+            _log(f"dst_user_state: iid={iid} played={played} ts={ts} raw={ud}")
+
         return played, ts
-    except Exception:
+    except Exception as e:
+        _log(f"dst_user_state exception id={iid} err={e}")
         return False, 0
 
-# === Source index: build events (movies + episodes) ===
-
+# Build history index
 def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
@@ -364,12 +430,46 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     http = adapter.client
     uid = adapter.cfg.user_id
     page_size = _history_limit(adapter)
+    roots = _emby_library_roots(adapter)
+    
+    # Classify roots by type (movie/show)
+    movie_roots: List[str] = []
+    show_roots: List[str] = []
+
+    for lid, meta in (roots or {}).items():
+        t = str((meta or {}).get("type") or "").lower()
+        if t == "movie":
+            movie_roots.append(str(lid))
+        elif t == "show":
+            show_roots.append(str(lid))
 
     since_epoch = 0
     if isinstance(since, (int, float)):
         since_epoch = int(since)
     elif isinstance(since, str):
         since_epoch = int(_parse_iso_to_epoch(since) or 0)
+
+    scope = {}
+    try:
+        scope = emby_scope_history(adapter.cfg) or {}
+    except Exception:
+        scope = {}
+
+    scope_libs: List[str] = []
+    if isinstance(scope, Mapping):
+        pid = scope.get("ParentId")
+        if pid:
+            scope_libs = [str(pid)]
+        else:
+            lib_ids = scope.get("LibraryIds") or scope.get("LibraryId")
+            if isinstance(lib_ids, (list, tuple)):
+                scope_libs = [str(x) for x in lib_ids if x]
+            elif lib_ids:
+                scope_libs = [str(lib_ids)]
+            if not scope_libs:
+                anc = scope.get("AncestorIds")
+                if isinstance(anc, (list, tuple)):
+                    scope_libs = [str(x) for x in anc if x]
 
     events: List[Tuple[int, Dict[str, Any], Dict[str, Any]]] = []
     presence_keys: set[str] = set()
@@ -382,7 +482,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             vt = str(row.get("VideoType") or "").strip().lower()
             if vt == "movie":
                 return True
-            # Heuristic: has movie ids and no series parent
             pids = (row.get("ProviderIds") or {}) if isinstance(row, Mapping) else {}
             if (pids.get("Imdb") or pids.get("imdb") or pids.get("Tmdb") or pids.get("tmdb")) and not row.get("SeriesId"):
                 return True
@@ -401,7 +500,8 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 "EnableUserData": True,
                 "Fields": (
                     "ProviderIds,ProductionYear,UserData,Type,MediaType,VideoType,IndexNumber,"
-                    "ParentIndexNumber,SeriesName,SeriesId,Name,ParentId,DatePlayed,Path"
+                    "ParentIndexNumber,SeriesName,SeriesId,Name,ParentId,DatePlayed,Path,"
+                    "LibraryId,AncestorIds"
                 ),
                 "Filters": "IsPlayed",
                 "SortBy": "DatePlayed",
@@ -411,7 +511,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 "EnableTotalRecordCount": True,
                 "UserId": uid,
             }
-
             scope = {}
             try:
                 scope = emby_scope_history(adapter.cfg) or {}
@@ -425,7 +524,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                     if drop_parentid and k == "ParentId":
                         continue
                     params[k] = v
-                # union IncludeItemTypes if scope provided its own
+       
                 if "IncludeItemTypes" in scope:
                     want = {x.strip() for x in include_types.split(",") if x.strip()}
                     got  = {x.strip() for x in str(scope["IncludeItemTypes"]).split(",") if x.strip()}
@@ -450,20 +549,16 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             for row in rows:
                 if callable(filter_row) and not filter_row(row):
                     continue
-
-                # Try to get a trustworthy played timestamp
                 ts = _played_ts_from_row(row)
                 if not ts:
                     ts = _played_ts_backfill(http, uid, row)
 
-                # Respect "since" cut-off
                 if ts and since_epoch and ts <= since_epoch:
                     stop = True
                     break
 
                 ud = row.get("UserData") or {}
                 if not ts:
-                    # Played but untimed → skip for sync (record presence only)
                     if ud.get("Played") or ud.get("IsPlayed") or (ud.get("PlayCount") or 0) > 0:
                         try:
                             m0 = emby_normalize(row)
@@ -474,7 +569,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                             pass
                     continue
 
-                # Build normalized metadata
+                # Build event entry
                 m = emby_normalize(row)
                 watched_at = _epoch_to_iso_z(ts)
                 typ = (row.get("Type") or "").strip()
@@ -547,6 +642,48 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 else:
                     continue
 
+                lib_id = None
+                if scope_libs:
+                    lib_id = scope_libs[0]
+                else:
+                    candidates: List[str] = []
+                    mlid = (m or {}).get("library_id") if isinstance(m, dict) else None
+                    if mlid:
+                        candidates.append(str(mlid))
+
+                    lid = row.get("LibraryId")
+                    if lid is not None:
+                        candidates.append(str(lid))
+
+                    anc = row.get("AncestorIds") or []
+                    if isinstance(anc, (list, tuple)):
+                        for a in anc:
+                            if a is not None:
+                                candidates.append(str(a))
+
+                    pid = row.get("ParentId")
+                    if pid is not None:
+                        candidates.append(str(pid))
+
+                    root_keys = set((roots or {}).keys())
+                    for cid in candidates:
+                        if cid in root_keys:
+                            lib_id = cid
+                            break
+                    if not lib_id and row.get("Id"):
+                        lib_id = _lib_id_via_ancestors(http, uid, str(row["Id"]), roots)
+
+                    # Fallback:
+                    if not lib_id:
+                        etype = event.get("type")
+                        if etype == "movie" and movie_roots:
+                            lib_id = movie_roots[0]
+                        elif etype == "episode" and show_roots:
+                            lib_id = show_roots[0]
+
+                if lib_id:
+                    event["library_id"] = str(lib_id)
+                    
                 ev_key = f"{canonical_key(m)}@{ts}"
                 events.append((ts, {"key": ev_key, "base": m}, event))
                 added_events += 1
@@ -559,13 +696,13 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             _log(f"history: skipped untimed played items (no date): {skipped_untimed}")
         return added_events, added_presence, skipped_untimed
 
-    # Pass 1: MOVIES (globally) — ignore ParentId/library scope; also include Video to catch movie-ish videos.
+    # Pass 1: MOVIES
     _scan("Movie,Video", allow_scope=True, drop_parentid=True, filter_row=_is_movieish)
 
-    # Pass 2: EPISODES (honor scope)
+    # Pass 2: EPISODES
     _scan("Episode", allow_scope=True, drop_parentid=False, filter_row=None)
 
-    # Finalize & cap
+    # Build final index
     events.sort(key=lambda x: x[0], reverse=True)
     if isinstance(limit, int) and limit > 0:
         events = events[: int(limit)]
@@ -587,15 +724,21 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 prog.tick(done, total=total)
             except Exception:
                 pass
-
-    # Merge local presence (for echoing) + shadow + blackbox presence
+            
+    # Base keys that already have a real event (key@ts)
+    event_bases = set()
+    for ek in out.keys():
+        event_bases.add(ek.split("@", 1)[0])
+    
+    # Merge in shadow and blackbox presence entries
     shadow = _shadow_load()
     if shadow:
         added = 0
         for k in list(shadow.keys()):
-            if k not in out:
-                out.setdefault(k, {"watched": True})
-                added += 1
+            if k in event_bases or k in out:
+                continue
+            out.setdefault(k, {"watched": True})
+            added += 1
         if added:
             _log(f"shadow merged: +{added}")
 
@@ -603,35 +746,56 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     if bb:
         added = 0
         for k, meta in bb.items():
-            if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
-                if k not in out:
-                    out.setdefault(k, {"watched": True})
-                    added += 1
+            if k in event_bases or k in out:
+                continue
+            if isinstance(meta, dict) and str(meta.get("reason","")).startswith("presence:"):
+                out.setdefault(k, {"watched": True})
+                added += 1
         if added:
             _log(f"blackbox presence merged: +{added}")
 
     if presence_keys:
         added = 0
         for k in presence_keys:
-            if k not in out:
-                out.setdefault(k, {"watched": True})
-                added += 1
+            if k in event_bases or k in out:
+                continue
+            out.setdefault(k, {"watched": True})
+            added += 1
         if added:
             _log(f"presence merged: +{added}")
+            
+    # Debug: show library_id distribution versus configured libraries
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
+        try:
+            cfg_libs = list(
+                getattr(adapter.cfg, "history_libraries", None)
+                or getattr(adapter.cfg, "libraries", None)
+                or []
+            )
+        except Exception:
+            cfg_libs = []
+
+        lib_counts: Dict[str, int] = {}
+        for ev in out.values():
+            lid = ev.get("library_id") or "NONE"
+            s = str(lid)
+            lib_counts[s] = lib_counts.get(s, 0) + 1
+
+        _log(f"history index libs cfg={cfg_libs} distribution={lib_counts}")
 
     _log(f"index size: {len(out)} (events+presence)")
     return out
 
-# === Apply (Emby destination): mark/unmark played with sensible backdating ===
-
+# Apply history entries
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    http = adapter.client; uid = adapter.cfg.user_id
+    http = adapter.client
+    uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
     do_force = bool(getattr(getattr(adapter, "cfg", None), "history_force_overwrite", False))
-    do_back  = bool(getattr(getattr(adapter, "cfg", None), "history_backdate", False))
-    tol      = int(getattr(getattr(adapter, "cfg", None), "history_backdate_tolerance_s", 300))
+    do_back = bool(getattr(getattr(adapter, "cfg", None), "history_backdate", False))
+    tol = int(getattr(getattr(adapter, "cfg", None), "history_backdate_tolerance_s", 300))
 
     try:
         from ._common import provider_index
@@ -641,7 +805,8 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
     wants: Dict[str, Mapping[str, Any]] = {}
     for it in (items or []):
-        m = id_minimal(it); wants[canonical_key(m)] = m
+        m = emby_normalize(it)  # keeps library_id if present
+        wants[canonical_key(m)] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []
@@ -649,22 +814,31 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _log(f"resolve exception: {e}"); iid = None
-        if iid: mids.append((k, iid))
+            _log(f"resolve exception: {e}")
+            iid = None
+        if iid:
+            mids.append((k, iid))
         else:
-            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"}); _freeze(m, reason="resolve_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
+            _freeze(m, reason="resolve_failed")
 
-    shadow = _shadow_load(); bb = _bb_load()
+    shadow = _shadow_load()
+    bb = _bb_load()
     ok = 0
 
     stats = {
-        "wrote": 0, "forced": 0, "backdated": 0,
-        "skip_newer": 0, "skip_played_untimed": 0,
-        "skip_missing_date": 0, "fail_mark": 0,
+        "wrote": 0,
+        "forced": 0,
+        "backdated": 0,
+        "skip_newer": 0,
+        "skip_played_untimed": 0,
+        "skip_missing_date": 0,
+        "fail_mark": 0,
     }
 
     total = len(mids)
-    if total: _log(f"apply:add:start dst=EMBY feature=history count={total}")
+    if total:
+        _log(f"apply:add:start dst=EMBY feature=history count={total}")
 
     processed = 0
     for chunk in chunked(mids, qlim):
@@ -673,44 +847,69 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             src_ts = _parse_iso_to_epoch(it.get("watched_at")) or 0
             if not src_ts:
                 unresolved.append({"item": id_minimal(it), "hint": "missing_watched_at"})
-                _freeze(it, reason="missing_watched_at"); stats["skip_missing_date"] += 1; continue
+                _freeze(it, reason="missing_watched_at")
+                stats["skip_missing_date"] += 1
+                continue
 
             src_iso = _epoch_to_iso_z(src_ts)
 
             if do_force:
                 _unmark_played(http, uid, iid)
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
-                    ok += 1; shadow[k] = int(shadow.get(k, 0)) + 1
+                    ok += 1
+                    shadow[k] = int(shadow.get(k, 0)) + 1
                     bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
-                    stats["wrote"] += 1; stats["forced"] += 1
+                    stats["wrote"] += 1
+                    stats["forced"] += 1
                 else:
                     unresolved.append({"item": id_minimal(it), "hint": "mark_played_failed"})
-                    _freeze(it, reason="write_failed"); stats["fail_mark"] += 1
+                    _freeze(it, reason="write_failed")
+                    stats["fail_mark"] += 1
+
                 processed += 1
-                if (processed % 25) == 0: _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
-                sleep_ms(delay); continue
+                if (processed % 25) == 0:
+                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                sleep_ms(delay)
+                continue
 
             played, dst_ts = _dst_user_state(http, uid, iid)
 
+            # Skip if destination is newer or equal within tolerance
             if played and dst_ts and dst_ts >= (src_ts - tol):
-                shadow[k] = int(shadow.get(k, 0)) + 1
-                bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
-                stats["skip_newer"] += 1
-                continue
+                prev_meta = bb.get(k) or {}
+                if prev_meta.get("reason") == "presence:shadow":
+                    shadow[k] = int(shadow.get(k, 0)) + 1
+                    bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
+                    stats["skip_newer"] += 1
+                    continue
+                else:
+                    _log(
+                        f"skip_newer bypassed (first time) for key={k} iid={iid} "
+                        f"dst_ts={dst_ts} src_ts={src_ts} tol={tol}"
+                    )
 
             if played and not dst_ts:
+                # Played but untimed at destination
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
-                    ok += 1; shadow[k] = int(shadow.get(k, 0)) + 1
+                    ok += 1
+                    shadow[k] = int(shadow.get(k, 0)) + 1
                     bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
-                    stats["wrote"] += 1; stats["backdated"] += 1
-                    sleep_ms(delay); continue
+                    stats["wrote"] += 1
+                    stats["backdated"] += 1
+                    sleep_ms(delay)
+                    continue
+
                 if do_back:
                     _unmark_played(http, uid, iid)
                     if _mark_played(http, uid, iid, date_played_iso=src_iso):
-                        ok += 1; shadow[k] = int(shadow.get(k, 0)) + 1
+                        ok += 1
+                        shadow[k] = int(shadow.get(k, 0)) + 1
                         bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
-                        stats["wrote"] += 1; stats["backdated"] += 1
-                        sleep_ms(delay); continue
+                        stats["wrote"] += 1
+                        stats["backdated"] += 1
+                        sleep_ms(delay)
+                        continue
+
                 shadow[k] = int(shadow.get(k, 0)) + 1
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z()}
                 stats["skip_played_untimed"] += 1
@@ -719,30 +918,41 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             if do_back and (not dst_ts or dst_ts >= (src_ts + tol)):
                 _unmark_played(http, uid, iid)
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
-                    ok += 1; shadow[k] = int(shadow.get(k, 0)) + 1
+                    ok += 1
+                    shadow[k] = int(shadow.get(k, 0)) + 1
                     bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
-                    stats["wrote"] += 1; stats["backdated"] += 1
+                    stats["wrote"] += 1
+                    stats["backdated"] += 1
                 else:
                     unresolved.append({"item": id_minimal(it), "hint": "mark_played_failed"})
-                    _freeze(it, reason="write_failed"); stats["fail_mark"] += 1
+                    _freeze(it, reason="write_failed")
+                    stats["fail_mark"] += 1
+
                 processed += 1
-                if (processed % 25) == 0: _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
-                sleep_ms(delay); continue
+                if (processed % 25) == 0:
+                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                sleep_ms(delay)
+                continue
 
             if _mark_played(http, uid, iid, date_played_iso=src_iso):
-                ok += 1; shadow[k] = int(shadow.get(k, 0)) + 1
+                ok += 1
+                shadow[k] = int(shadow.get(k, 0)) + 1
                 bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
                 stats["wrote"] += 1
             else:
                 unresolved.append({"item": id_minimal(it), "hint": "mark_played_failed"})
-                _freeze(it, reason="write_failed"); stats["fail_mark"] += 1
+                _freeze(it, reason="write_failed")
+                stats["fail_mark"] += 1
 
             processed += 1
-            if (processed % 25) == 0: _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+            if (processed % 25) == 0:
+                _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
             sleep_ms(delay)
 
-    _shadow_save(shadow); _bb_save(bb)
-    if ok: _thaw_if_present([k for k, _ in mids])
+    _shadow_save(shadow)
+    _bb_save(bb)
+    if ok:
+        _thaw_if_present([k for k, _ in mids])
 
     _log(
         "add done: "
@@ -753,6 +963,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     )
     return ok, unresolved
 
+# Remove history entries
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     http = adapter.client; uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
@@ -760,7 +971,8 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
     wants: Dict[str, Mapping[str, Any]] = {}
     for it in items or []:
-        m = id_minimal(it); wants[canonical_key(m)] = m
+        m = emby_normalize(it)
+        wants[canonical_key(m)] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []

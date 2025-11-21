@@ -1,6 +1,6 @@
 # /providers/sync/_mod_PLEX.py
-# Plex adapter: manifest + client + shared utils + feature registry + wrapper
-
+# CrossWatch - Plex Sync Module
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 __VERSION__ = "2.0.0"
 __all__ = ["get_manifest","PLEXModule","PLEXClient","PLEXError","PLEXAuthError","PLEXNotFound","OPS"]
@@ -10,7 +10,6 @@ import os, time, json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-# deps
 try:
     from plexapi.myplex import MyPlexAccount
     from plexapi.server import PlexServer
@@ -19,7 +18,6 @@ except Exception as e:
 
 from .plex._common import configure_plex_context
 
-# ids (minimal fallback use)
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 except Exception:
@@ -60,35 +58,24 @@ except Exception as e:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX] failed to import playlists: {e}")
 
-# new utils (centralized user/server resolve + persistence)
 from .plex._utils import (
     resolve_user_scope,
     patch_history_with_account_id,
-    discover_server_url_from_server,
-    persist_user_scope_if_empty,
-    persist_server_url_if_empty,
 )
 
-# instrumentation + progress
 from ._mod_common import (
     build_session,
     request_with_retries,
     parse_rate_limit,
     label_plex,
-    make_snapshot_progress,   # ← progress factory (human-friendly ticks)
+    make_snapshot_progress,
 )
-
-# orchestrator ctx (fallback if not injected)
 try:  # type: ignore[name-defined]
     ctx  # type: ignore
 except Exception:
     ctx = None  # type: ignore
 
-CONFIG_PATH = "/config/config.json"
-
-# ──────────────────────────────────────────────────────────────────────────────
 # errors
-
 class PLEXError(RuntimeError): pass
 class PLEXAuthError(PLEXError): pass
 class PLEXNotFound(PLEXError): pass
@@ -97,9 +84,7 @@ def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX] {msg}")
 
-# ──────────────────────────────────────────────────────────────────────────────
 # manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "PLEX",
@@ -107,7 +92,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": {  # wired via providers/sync/plex/*
+        "features": { 
             "watchlist": True,
             "history":   True,
             "ratings":   True,
@@ -126,9 +111,7 @@ def get_manifest() -> Mapping[str, Any]:
         },
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # config + client
-
 @dataclass
 class PLEXConfig:
     token: Optional[str] = None
@@ -145,12 +128,6 @@ class PLEXConfig:
     watchlist_page_size: int = 100
 
 class PLEXClient:
-    """
-    Thin wrapper around PlexServer + MyPlexAccount.
-    - Single instrumented Session for all HTTP.
-    - User scoping: prefer cfg.username, else owner. account_id resolved via utils.
-    - History is transparently filtered by accountID via a patched srv.history().
-    """
     def __init__(self, cfg: PLEXConfig):
         self.cfg = cfg
         self.server: Optional[PlexServer] = None
@@ -174,25 +151,25 @@ class PLEXClient:
 
             token = self.cfg.token or self._account.authenticationToken
 
-            # PMS via explicit baseurl (optional)
+            # PMS via explicit baseurl
             if self.cfg.baseurl:
                 try:
                     self.server = PlexServer(self.cfg.baseurl, token, timeout=self.cfg.timeout)
                     try: self.server._session = self.session
                     except Exception: pass
-                    _log(f"Connected via baseurl to {self.server.friendlyName}")
+                    # _log(f"Connected via baseurl to {self.server.friendlyName}")
                 except Exception as e:
                     _log(f"PMS baseurl connect failed: {e}; continuing account-only")
                 self._post_connect_user_scope(token)
                 return self
 
-            # PMS via account resources (optional)
+            # PMS via account resources
             try:
                 res = self._pick_resource(self._account)
                 self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore
                 try: self.server._session = self.session
                 except Exception: pass
-                _log(f"Connected via account to {self.server.friendlyName}")
+                # _log(f"Connected via account to {self.server.friendlyName}")
             except Exception as e:
                 _log(f"No PMS resource bound: {e}; running account-only")
                 self._post_connect_user_scope(token)
@@ -222,24 +199,20 @@ class PLEXClient:
         if servers: return servers[0]
         raise PLEXNotFound("No Plex Media Server resource found")
 
-    # --- user / server scope & persistence via utils --------------------------
+    # --- user / server scope  -------------------------
     def _post_connect_user_scope(self, token: str):
         try:
             self.user_username, self.user_account_id = resolve_user_scope(
                 self._account, self.server, token, self.cfg.username, self.cfg.account_id
             )
-            # Only patch history default when account_id is missing in config
             if self.cfg.account_id is None:
                 patch_history_with_account_id(self.server, self.user_account_id)
 
-            persist_user_scope_if_empty(CONFIG_PATH, self.user_username, self.user_account_id)
-            baseurl = discover_server_url_from_server(self.server) if self.server else None
-            persist_server_url_if_empty(CONFIG_PATH, baseurl)
-            _log(f"user scope → username={self.user_username} account_id={self.user_account_id}")
+            #_log(f"user scope → username={self.user_username} account_id={self.user_account_id}")
         except Exception as e:
             _log(f"user scope init failed: {e}")
-
-    # --- shared helpers -------------------------------------------------------
+            
+    # --- shared helpers ------------------------------
     def account(self) -> MyPlexAccount:
         if not self._account:
             raise PLEXAuthError("MyPlexAccount not available (need account token or login).")
@@ -271,7 +244,7 @@ class PLEXClient:
             return None
 
     def _retry(self, fn, *a, **kw):
-        # legacy helper (not used by new HTTP path)
+        # legacy helper
         tries = self.cfg.max_retries
         for i in range(tries):
             try:
@@ -285,9 +258,7 @@ class PLEXClient:
     @staticmethod
     def key_of(obj) -> str: return plex_key_of(obj)
 
-# ──────────────────────────────────────────────────────────────────────────────
 # feature registry
-
 _FEATURES = {
     "watchlist": feat_watchlist,
     "history":   feat_history,
@@ -303,11 +274,8 @@ def _features_flags() -> Dict[str, bool]:
         "playlists": "playlists" in _FEATURES and _FEATURES["playlists"] is not None,
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # module wrapper
-
 class PLEXModule:
-    """Adapter used by the orchestrator and feature modules."""
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg
         plex_cfg = dict(cfg.get("plex") or {})
@@ -344,12 +312,11 @@ class PLEXModule:
 
         self.client = PLEXClient(self.cfg).connect()
 
-        # Progress factory (lightweight, throttled; features call adapter.progress_factory("ratings"/...))
         self.progress_factory = lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
             ctx, dst="PLEX", feature=str(feature), total=total, throttle_ms=int(throttle_ms)
         )
 
-    # ---- feature toggles (SIMKL-style) ---------------------------------------
+    # ---- feature toggles
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {
@@ -534,9 +501,7 @@ class PLEXModule:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-# ──────────────────────────────────────────────────────────────────────────────
 # orchestrator bridge (OPS)
-
 class _PlexOPS:
     def name(self) -> str: return "PLEX"
     def label(self) -> str: return "Plex"
@@ -556,7 +521,6 @@ class _PlexOPS:
         }
         
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        """No I/O: consider Plex configured with either account token OR PMS url+token."""
         c  = cfg or {}
         pl = c.get("plex") or {}
         au = (c.get("auth") or {}).get("plex") or {}
@@ -568,7 +532,7 @@ class _PlexOPS:
         pms          = pl.get("pms") or {}
         pms_url      = (pms.get("url") or "").strip()
         pms_token    = (pms.get("token") or "").strip()
-        # Some configs use x_plex_token naming—be tolerant:
+        
         if not pms_token:
             pms_token = (pms.get("x_plex_token") or "").strip()
 
@@ -576,17 +540,12 @@ class _PlexOPS:
 
     def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
         return PLEXModule(cfg)
-
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
-
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
-
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
-
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
-
 OPS = _PlexOPS()

@@ -224,7 +224,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "enable_remove": False,                         # Safer default: do not remove items unless explicitly enabled
 
         # Execution behavior:
-        "verify_after_write": True,                     # When supported, re-check destination after writes
+        "verify_after_write": False,                    # When supported, re-check destination after writes
         "dry_run": False,                               # Plan and log only; do not perform writes
         "drop_guard": False,                            # Guard against sudden inventory shrink (protects from bad/suspect snapshots)
         "allow_mass_delete": True,                      # If False, block large delete plans (e.g., >~10% of baseline)
@@ -322,6 +322,11 @@ DEFAULT_CFG: Dict[str, Any] = {
         "mode": "hourly",                               # "hourly" or "daily"
         "every_n_hours": 2,                             # When mode=hourly, run every N hours (1–12)
         "daily_time": "03:30",                          # When mode=daily, run at this time (HH:MM, 24h)
+    },
+    
+    # --- User Interface ------------------------------------------------------
+    "ui": {
+        "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
     },
 
     # --- Pairs (UI-driven) ---------------------------------------------------

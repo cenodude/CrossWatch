@@ -1,16 +1,16 @@
 # providers/scrobble/emby/watch.py
+# CrossWatch - Emby Watcher Service
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-
 import json, time, threading, requests, re
 from pathlib import Path
 from typing import Any, Iterable, Dict, Tuple, Set
-
 try:
     from _logging import log as BASE_LOG  # not used; print-only logging below
 except Exception:
     BASE_LOG = None
-
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent
+from providers.scrobble.currently_watching import update_from_event as _cw_update
 
 def _cfg() -> dict[str, Any]:
     p = Path("/config/config.json")
@@ -105,11 +105,27 @@ def _server_id(base: str, tok: str) -> str | None:
 
 def _cfg_for_dispatch(server_id: str | None) -> dict[str, Any]:
     cfg = _cfg()
-    if server_id:
-        px = dict((cfg.get("plex") or {}))
-        px["server_uuid"] = server_id
-        cfg = dict(cfg)
-        cfg["plex"] = px
+    if not server_id:
+        return cfg
+    cfg = dict(cfg)
+
+    px = dict(cfg.get("plex") or {})
+    px["server_uuid"] = server_id
+    cfg["plex"] = px
+
+    s = dict((cfg.get("scrobble") or {}))
+    w = dict((s.get("watch") or {}))
+    f = dict((w.get("filters") or {}))
+
+    if "server_uuid" in f:
+        val = str(f.get("server_uuid") or "").strip()
+        if not val or val != str(server_id):
+            f["server_uuid"] = ""
+
+    w["filters"] = f
+    s["watch"] = w
+    cfg["scrobble"] = s
+
     return cfg
 
 def _ids_desc(ids: dict[str, Any] | None) -> str:
@@ -139,7 +155,10 @@ class EmbyWatchService:
             self._server_id = None
         else:
             self._server_id = _server_id(self._base, self._tok)
-        self._dispatch = Dispatcher(list(sinks or []), cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
+
+        self._sinks = list(sinks or [])
+        self._dispatch = Dispatcher(self._sinks, cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
+
         self._poll = max(0.3, float(poll_secs))
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
@@ -150,36 +169,55 @@ class EmbyWatchService:
         self._dbg_last_total = None
         self._dbg_last_playing = None
         self._dbg_last_ts = 0.0
+        self._log(f"Ensuring Watcher is running; wired sinks: {len(self._sinks)}", "INFO")
+
 
     def _log(self, msg: str, level: str = "INFO") -> None:
-        if str(level).upper() == "DEBUG" and not _is_debug():
+        lvl = (str(level) or "INFO").upper()
+
+        if lvl == "DEBUG" and not _is_debug():
             return
-        print(f"{level} [EMBYWATCH] {msg}")
+
+        if BASE_LOG is not None:
+            try:
+                BASE_LOG(msg, level=lvl, module="EMBY ")
+                return
+            except Exception:
+                pass
+
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        print(f"[{ts}] [EMBY ] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
-        if _is_debug():
-            print(f"DEBUG [EMBYWATCH] {msg}")
+        self._log(msg, "DEBUG")
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         if ev.session_key and ev.session_key in self._allowed_sessions:
             return True
+
         cfg = _cfg() or {}
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         wl = filt.get("username_whitelist")
-        want = (filt.get("server_uuid") or self._server_id or None)
-        if want and ev.server_uuid and str(ev.server_uuid) != str(want):
-            return False
+
         def _allow() -> bool:
             if ev.session_key:
                 self._allowed_sessions.add(str(ev.session_key))
             return True
         if not wl:
             return _allow()
+
         def norm(s: str) -> str:
             return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
         wl_list = wl if isinstance(wl, list) else [wl]
-        if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
+
+        if any(
+            not str(x).lower().startswith(("id:", "uuid:"))
+            and norm(str(x)) == norm(ev.account or "")
+            for x in wl_list
+        ):
             return _allow()
+
         raw = ev.raw or {}
         uid = str(raw.get("UserId") or "").strip().lower()
         for e in wl_list:
@@ -188,6 +226,7 @@ class EmbyWatchService:
                 return _allow()
             if s.startswith("uuid:") and uid and s.split(":", 1)[1].strip().lower() == uid:
                 return _allow()
+
         return False
 
     def _build_event(self, sess: dict[str, Any], action: str, progress: int) -> ScrobbleEvent | None:
@@ -256,16 +295,31 @@ class EmbyWatchService:
                 self._filtered_sessions.remove(sk)
             except Exception:
                 pass
+
+        if sk:
+            last = self._last_emit.get(sk)
+            if last and last[0] == ev.action and last[1] == ev.progress:
+                self._dbg(f"suppress duplicate {ev.action} sess={sk} p={ev.progress}")
+                return
+        try:
+            _cw_update("emby", ev)
+        except Exception:
+            pass
+
         act = "playing" if ev.action == "start" else ("paused" if ev.action == "pause" else "stop")
-        self._log(f"incoming '{act}' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'", "DEBUG")
+        self._log(
+            f"incoming '{act}' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
+            "DEBUG",
+        )
         self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
         self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={sk}")
         self._dispatch.dispatch(ev)
+
         if sk:
             last = self._last.get(sk) or {}
             last["meta"] = self._meta_from_event(ev)
             self._last[sk] = last
-            self._last_emit[sk] = (ev.action, str(last.get("key") or ""))
+            self._last_emit[sk] = (ev.action, ev.progress)
 
     def _tick(self) -> None:
         now = time.time()
@@ -381,14 +435,16 @@ class EmbyWatchService:
         if self._disabled:
             self._log("Missing emby.server or emby.access_token in config.json", "ERROR")
             return
-        self._log(f"Emby watcher starting → {self._base}", "DEBUG")
+
+        self._log("Watcher connected", "INFO")
         while not self._stop.is_set():
             self._tick()
             time.sleep(self._poll)
 
+
     def stop(self) -> None:
         self._stop.set()
-        self._log("Emby watcher stopping", "DEBUG")
+        self._log("Emby watcher stopping", "INFO")
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():

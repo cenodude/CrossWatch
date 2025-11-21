@@ -1,8 +1,16 @@
 #/providers/scrobble/plextrakt.py
+# CrossWatch - Plex Trakt Scrobble Webhook Module
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import base64, hashlib, hmac, json, re, time, requests, threading
 from typing import Any, Dict, Mapping, Optional, Callable, Iterable
 import xml.etree.ElementTree as ET
+try:
+    from _logging import log as BASE_LOG
+except Exception:
+    BASE_LOG = None
+    
+from providers.scrobble.currently_watching import update_from_payload as _cw_update
 
 TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: Dict[str, Dict[str, Any]] = {}
@@ -76,14 +84,52 @@ def _is_debug() -> bool:
     except Exception:
         return False
 
-def _emit(logger: Optional[Callable[..., None]], msg: str, level: str = "INFO"):
+def _emit(logger: Optional[object], msg: str, level: str = "INFO"):
+    lvl_raw = str(level or "INFO")
+    lvl_up = lvl_raw.upper()
     try:
-        if level == "DEBUG" and not _is_debug(): return
-        if logger: logger(msg, level=level, module="SCROBBLE"); return
+        if lvl_up == "DEBUG" and not _is_debug():
+            return
     except Exception:
         pass
-    if level == "DEBUG" and not _is_debug(): return
-    print(f"[SCROBBLE] {level} {msg}")
+    try:
+        if logger is not None:
+            if callable(logger):
+                logger(msg, level=lvl_raw, module="SCROBBLE")
+                return
+
+            logmeth = getattr(logger, "log", None)
+            if callable(logmeth):
+                lvlno = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}.get(lvl_up, 20)
+                logmeth(lvlno, msg)
+                return
+
+            levmeth = getattr(logger, lvl_raw.lower(), None)
+            if callable(levmeth):
+                levmeth(msg)
+                return
+    except Exception:
+        pass
+    try:
+        if BASE_LOG:
+            logr = BASE_LOG.child("SCROBBLE")
+            if lvl_up == "DEBUG":
+                logr.debug(msg)
+            elif lvl_up == "INFO":
+                logr.info(msg)
+            elif lvl_up == "WARN":
+                logr.warn(msg)
+            elif lvl_up == "ERROR":
+                logr.error(msg)
+            else:
+                logr(msg, level=lvl_raw)
+            return
+    except Exception:
+        pass
+    try:
+        print(f"[SCROBBLE] {lvl_up} {msg}")
+    except Exception:
+        pass
 
 def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     changed = False
@@ -800,6 +846,58 @@ def process_webhook(
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
+
+    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
+        _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
+
+    # Update currently_watching.json from Plex webhook
+    try:
+        stop_flag = (intended == "/scrobble/stop")
+        title = (md.get("title") or md.get("grandparentTitle") or "").strip()
+        year = md.get("year")
+
+        season_val = None
+        episode_val = None
+        if (media_type or "").lower() == "episode":
+            try:
+                season_val = int(md.get("parentIndex") or 0) or None
+            except Exception:
+                season_val = None
+            try:
+                episode_val = int(md.get("index") or 0) or None
+            except Exception:
+                episode_val = None
+
+        duration_ms = None
+        try:
+            dur = md.get("duration")
+            if dur is not None:
+                duration_ms = int(dur)
+        except Exception:
+            duration_ms = None
+
+        state_val = "playing"
+        if stop_flag:
+            state_val = "stopped"
+        elif intended == "/scrobble/pause":
+            state_val = "paused"
+
+        _cw_update(
+            source="plextrakt",
+            media_type=(media_type or ""),
+            title=title,
+            year=year,
+            season=season_val,
+            episode=episode_val,
+            progress=prog,
+            stop=stop_flag,
+            duration_ms=duration_ms,
+            cover=None,
+            state=state_val,
+            clear_on_stop=True,
+        )
+    except Exception:
+        pass
 
     body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
     if not body:

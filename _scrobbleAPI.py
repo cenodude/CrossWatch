@@ -1,4 +1,6 @@
-# _scrobbleAPI.py  — Scrobbler
+# _scrobbleAPI.py
+# CrossWatch - Scrobble API for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Dict, Any, List, Optional, Tuple
 from fastapi import APIRouter, Query, Request
@@ -6,6 +8,12 @@ from fastapi.responses import JSONResponse
 from cw_platform.config_base import load_config
 from urllib.parse import parse_qs
 import urllib.parse, json, threading
+
+from providers.scrobble.currently_watching import _state_file as _cw_state_file
+try:
+    from _logging import log as BASE_LOG
+except Exception:
+    BASE_LOG = None
 
 try:
     from plexapi.myplex import MyPlexAccount
@@ -258,7 +266,31 @@ def api_plex_pms() -> JSONResponse:
     servers = _list_pms_servers(cfg)
     return JSONResponse({"servers": servers, "count": len(servers)}, headers={"Cache-Control": "no-store"})
 
-@router.get("/debug/watch/logs")
+@router.get("/api/watch/currently_watching")
+def api_currently_watching() -> JSONResponse:
+    data: Any = None
+    try:
+        path = _cw_state_file()
+    except Exception:
+        path = None
+
+    if path is not None and path.exists():
+        try:
+            raw = path.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else None
+        except Exception as e:
+            if BASE_LOG:
+                try:
+                    BASE_LOG(f"currently_watching read failed: {e}", level="ERROR", module="SCROBBLE")
+                except Exception:
+                    pass
+
+    return JSONResponse(
+        {"ok": True, "currently_watching": data},
+        headers={"Cache-Control": "no-store"},
+    )
+    
+@router.get("/api/watch/logs")
 def debug_watch_logs(
     request: Request,
     tail: int = Query(50, ge=1, le=3000),
@@ -275,7 +307,7 @@ def debug_watch_logs(
         merged.extend(LOG_BUFFERS.get(t, []))
     return JSONResponse({"tags": sel, "tail": tail, "lines": merged[-tail:]}, headers={"Cache-Control": "no-store"})
 
-@router.get("/debug/watch/status")
+@router.get("/api/watch/status")
 def debug_watch_status(request: Request):
     w = getattr(request.app.state, "watch", None)
     return {
@@ -356,7 +388,7 @@ def _ensure_watch_started(request: Request, provider: str | None = None):
     request.app.state.watch = w
     return w
 
-@router.post("/debug/watch/start")
+@router.post("/api/watch/start")
 def debug_watch_start(request: Request, provider: str | None = Query(None)):
     w = _ensure_watch_started(request, provider)
     return {
@@ -365,7 +397,7 @@ def debug_watch_start(request: Request, provider: str | None = Query(None)):
         "provider": _watch_kind(w),
     }
 
-@router.post("/debug/watch/stop")
+@router.post("/api/watch/stop")
 def debug_watch_stop(request: Request):
     w = getattr(request.app.state, "watch", None)
     if w:
@@ -389,17 +421,34 @@ async def webhook_jellyfintrakt(request: Request):
 
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
-    def log(msg, level="INFO"):
+    def log(msg, level: str = "INFO"):
+        lvl_raw = str(level or "INFO")
+        lvl_up = lvl_raw.upper()
+
+        if lvl_up == "DEBUG" and not _debug_on():
+            return
         try:
-            if level.upper() == "DEBUG" and not _debug_on():
-                return
-            logger(msg, level=level, module="SCROBBLE")
+            logger(msg, level=lvl_raw, module="SCROBBLE")
         except Exception:
             pass
         try:
-            if level.upper() == "DEBUG" and not _debug_on():
+            if BASE_LOG:
+                logr = BASE_LOG.child("SCROBBLE")
+                if lvl_up == "DEBUG":
+                    logr.debug(msg)
+                elif lvl_up == "INFO":
+                    logr.info(msg)
+                elif lvl_up == "WARN":
+                    logr.warn(msg)
+                elif lvl_up == "ERROR":
+                    logr.error(msg)
+                else:
+                    logr(msg, level=lvl_raw)
                 return
-            print(f"[SCROBBLE] {level} {msg}")
+        except Exception:
+            pass
+        try:
+            print(f"[SCROBBLE] {lvl_up} {msg}")
         except Exception:
             pass
 
@@ -484,23 +533,40 @@ async def webhook_trakt(request: Request):
 
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
-    def log(msg, level="INFO"):
+    def log(msg, level: str = "INFO"):
+        lvl_raw = str(level or "INFO")
+        lvl_up = lvl_raw.upper()
+
+        if lvl_up == "DEBUG" and not _debug_on():
+            return
         try:
-            if level.upper() == "DEBUG" and not _debug_on():
-                return
-            logger(msg, level=level, module="SCROBBLE")
+            logger(msg, level=lvl_raw, module="SCROBBLE")
         except Exception:
             pass
         try:
-            if level.upper() == "DEBUG" and not _debug_on():
+            if BASE_LOG:
+                logr = BASE_LOG.child("SCROBBLE")
+                if lvl_up == "DEBUG":
+                    logr.debug(msg)
+                elif lvl_up == "INFO":
+                    logr.info(msg)
+                elif lvl_up == "WARN":
+                    logr.warn(msg)
+                elif lvl_up == "ERROR":
+                    logr.error(msg)
+                else:
+                    logr(msg, level=lvl_raw)
                 return
-            print(f"[SCROBBLE] {level} {msg}")
+        except Exception:
+            pass
+        try:
+            print(f"[SCROBBLE] {lvl_up} {msg}")
         except Exception:
             pass
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
-    log(f"webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
+    log(f"plex-webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
 
     payload = None
     try:
@@ -516,26 +582,26 @@ async def webhook_trakt(request: Request):
                 payload = json.loads(data.decode("utf-8", errors="replace"))
             else:
                 payload = json.loads(str(part))
-            log("webhook: parsed multipart payload", "DEBUG")
+            log("plex-webhook: parsed multipart payload", "DEBUG")
         elif "application/x-www-form-urlencoded" in ct:
             d = parse_qs(raw.decode("utf-8", errors="replace"))
             if not d.get("payload"):
                 raise ValueError("urlencoded: no 'payload' key")
             payload = json.loads(d["payload"][0])
-            log("webhook: parsed urlencoded payload", "DEBUG")
+            log("plex-webhook: parsed urlencoded payload", "DEBUG")
         else:
             payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
-            log("webhook: parsed json payload", "DEBUG")
+            log("plex-webhook: parsed json payload", "DEBUG")
     except Exception as e:
         snippet = (raw[:200].decode("utf-8", errors="replace") if raw else "<no body>")
-        log(f"webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
+        log(f"plex-webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
         return JSONResponse({"ok": True}, status_code=200)
 
     acc = ((payload.get("Account") or {}).get("title") or "").strip()
     srv = ((payload.get("Server") or {}).get("uuid") or "").strip()
     md = payload.get("Metadata") or {}
     title = md.get("title") or md.get("grandparentTitle") or "?"
-    log(f"webhook: payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
+    log(f"plex-webhook: payload summary user='{acc}' server='{srv}' media='{title}'", "DEBUG")
 
     try:
         res = process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
@@ -544,15 +610,15 @@ async def webhook_trakt(request: Request):
         return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
 
     if res.get("error"):
-        log(f"webhook: result error={res['error']}", "WARN")
+        log(f"plex-webhook: result error={res['error']}", "WARN")
     elif res.get("ignored"):
-        log("webhook: ignored by filters/rules", "DEBUG")
+        log("plex-webhook: ignored by filters/rules", "DEBUG")
     elif res.get("debounced"):
-        log("webhook: debounced pause", "DEBUG")
+        log("plex-webhook: debounced pause", "DEBUG")
     elif res.get("suppressed"):
-        log("webhook: suppressed late start", "DEBUG")
+        log("plex-webhook: suppressed late start", "DEBUG")
     elif res.get("dedup"):
-        log("webhook: duplicate event suppressed", "DEBUG")
+        log("plex-webhook: duplicate event suppressed", "DEBUG")
 
-    log(f"webhook: done action={res.get('action')} status={res.get('status')}", "DEBUG")
+    log(f"plex-webhook: done action={res.get('action')} status={res.get('status')}", "DEBUG")
     return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)

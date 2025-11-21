@@ -1,4 +1,6 @@
-# providers/main.py - refactored: 21-09-2025
+# providers/main.py
+# CrossWatch - Plex scrobbler to multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.plex.watch import make_default_watch
 from time import sleep

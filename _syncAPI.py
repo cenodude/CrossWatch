@@ -1,7 +1,7 @@
 # _syncAPI.py
+# CrossWatch - Synchronization API for multiple services
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-
-# --- stdlib ---
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 from datetime import datetime, timezone, date
@@ -220,7 +220,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 t["errors"]     += int(o.get("errors", 0))
                 t["removed"]    += int(o.get("removed", o.get("count", 0)) or 0)
         return t
-
     try:
         orch_mod = importlib.import_module("cw_platform.orchestrator")
         try: orch_mod = importlib.reload(orch_mod)
@@ -228,7 +227,29 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         OrchestratorClass = getattr(orch_mod, "Orchestrator")
         _sync_progress_ui(f"[i] Orchestrator module: {getattr(orch_mod, '__file__', '?')}")
         load_config, _save = _env()
-        cfg = load_config(); mgr = OrchestratorClass(config=cfg)
+        cfg = load_config()
+        # warn about pairs with no enabled features
+        def _pair_has_enabled_features(p: dict) -> bool:
+            fmap = p.get("features") or {}
+            for _, fcfg in (fmap.items() or []):
+                if isinstance(fcfg, bool) and fcfg:
+                    return True
+                if isinstance(fcfg, dict) and fcfg.get("enable"):
+                    return True
+            return False
+
+        for pair in (cfg.get("pairs") or []):
+            if not pair.get("enabled", True):
+                continue
+            if "features" in pair and not _pair_has_enabled_features(pair):
+                src = pair.get("source") or "?"
+                dst = pair.get("target") or "?"
+                pid = pair.get("id") or ""
+                _sync_progress_ui(
+                    f"[!] Pair {src} → {dst} ({pid}) has no enabled features; "
+                    f"it will not transfer any data."
+                )
+        mgr = OrchestratorClass(config=cfg)
         dry = bool(((cfg.get("sync") or {}).get("dry_run") or False)) or bool((overrides or {}).get("dry_run"))
         result = mgr.run_pairs(
             dry_run=dry,
@@ -260,11 +281,17 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             _append_log("SYNC", f"[!] Stats update failed: {e}")
 
         totals = _totals_from_log(list(LOG_BUFFERS.get("SYNC") or []))
-        added      = int(result.get("added", totals.get("added", 0)))
-        removed    = int(result.get("removed", totals.get("removed", 0)))
-        skipped    = int(result.get("skipped", totals.get("skipped", 0)))
-        unresolved = int(result.get("unresolved", totals.get("unresolved", 0)))
-        errors     = int(result.get("errors", totals.get("errors", 0)))
+
+        def _merge_total(key: str) -> int:
+            v_result = int((result.get(key) or 0))
+            v_log    = int((totals.get(key) or 0))
+            return max(v_result, v_log)
+
+        added      = _merge_total("added")
+        removed    = _merge_total("removed")
+        skipped    = _merge_total("skipped")
+        unresolved = _merge_total("unresolved")
+        errors     = _merge_total("errors")
 
         _sync_progress_ui(f"[i] Done. Total added: {added}, Total removed: {removed}, "
                           f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}")
@@ -945,13 +972,6 @@ def _provider_counts_fast(cfg: dict, *, max_age: int = 30, force: bool = False) 
 def api_provider_counts(max_age: int = 30,
                         force: bool = False,
                         source: str = "auto") -> dict:
-    """
-    Fast counts.
-    - source=state → only read the last sync state (no network)
-    - source=auto  → state, else orchestrator
-    - force=true   → ignore TTL cache
-    - max_age=sec  → TTL for the in-process cache
-    """
     load_config, _ = _env()
     cfg = load_config()
 
@@ -959,7 +979,6 @@ def api_provider_counts(max_age: int = 30,
     if src == "state":
         counts = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
         return counts
-
     return _provider_counts_fast(cfg, max_age=max_age, force=bool(force))
 
 # ----- Run orchestration -----

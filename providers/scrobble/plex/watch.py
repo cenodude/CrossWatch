@@ -1,4 +1,6 @@
 # providers/scrobble/plex/watch.py
+# CrossWatch - Plex Watch Service
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import json, time, threading
@@ -17,6 +19,8 @@ from providers.scrobble.scrobble import (
     Dispatcher, ScrobbleSink, ScrobbleEvent,
     from_plex_pssn, from_plex_flat_playing,
 )
+
+from providers.scrobble.currently_watching import update_from_event as _cw_update
 
 def _cfg() -> dict[str, Any]:
     p = Path("/config/config.json")
@@ -101,13 +105,23 @@ class WatchService:
         self._filtered_ts: dict[str, float] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
-        if str(level).upper() == "DEBUG" and not _is_debug():
+        lvl = (str(level) or "INFO").upper()
+
+        if lvl == "DEBUG" and not _is_debug():
             return
-        print(f"{level} [WATCH] {msg}")
+
+        if BASE_LOG is not None:
+            try:
+                BASE_LOG(msg, level=lvl, module="PLEX ")
+                return
+            except Exception:
+                pass
+
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        print(f"[{ts}] [PLEX ] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
-        if _is_debug():
-            print(f"DEBUG [WATCH] {msg}")
+        self._log(msg, "DEBUG")
 
     def sinks_count(self) -> int:
         try:
@@ -329,18 +343,24 @@ class WatchService:
                 ev = from_plex_flat_playing(flat, defaults=defaults)
                 if ev and ev.session_key:
                     self._psn_sessions.add(str(ev.session_key))
+
             if not ev:
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
 
             ev = self._enrich_event_with_plex(ev)
-            self._log(f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'", "DEBUG")
-            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
+
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
                 return
 
+            self._log(
+                f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
+                "DEBUG",
+            )
+            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
             sk = str(ev.session_key) if ev.session_key else None
+
             if sk and sk not in self._first_seen:
                 self._first_seen[sk] = time.time()
 
@@ -401,19 +421,34 @@ class WatchService:
 
             if sk:
                 last = self._last_emit.get(sk)
-                if last and ev.action == "stop" and last[0] == "stop" and abs(ev.progress - last[1]) <= 1:
-                    self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
-                    return
-                self._last_emit[sk] = (ev.action, ev.progress)
+                if last:
+                    last_action, last_prog = last
 
-            self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
+                    if ev.action == "stop" and last_action == "stop" and abs(ev.progress - last_prog) <= 1:
+                        self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
+                        return
+
+                    if ev.action == last_action and ev.progress == last_prog:
+                        self._dbg(f"suppress duplicate {ev.action} sess={sk} p={ev.progress}")
+                        return
+
+                self._last_emit[sk] = (ev.action, ev.progress)
+            try:
+                _cw_update("plex", ev)
+            except Exception:
+                pass
+
+            self._log(
+                f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}"
+            )
             self._dispatch.dispatch(ev)
+
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")
 
     def start(self) -> None:
         self._stop.clear()
-        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "DEBUG")
+        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
         while not self._stop.is_set():
             try:
                 base, token = _plex_btok(_cfg())
@@ -426,7 +461,7 @@ class WatchService:
                     callbackError=lambda e: self._log(f"Watcher error: {e}", "ERROR"),
                 )
                 self._attempt = 0
-                self._log("Watcher connected", "DEBUG")
+                self._log("Watcher connected", "INFO")
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
                     time.sleep(0.5)
             except Exception as e:
@@ -446,7 +481,7 @@ class WatchService:
                 self._listener.stop()
         except Exception:
             pass
-        self._log("Watch service stopping", "DEBUG")
+        self._log("Watch service stopping", "INFO")
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():

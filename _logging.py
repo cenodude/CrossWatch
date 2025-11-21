@@ -1,5 +1,6 @@
 # _logging.py
-# A simple structured logger with colored console output and optional JSON file output.
+# CrossWatch - Logging module
+# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import sys, datetime, json, threading, time
 from typing import Any, Optional, TextIO, Mapping, Dict
@@ -21,12 +22,22 @@ def _debug_enabled() -> bool:
     global _CFG_CACHE, _CFG_TS
     now = time.time()
     if _CFG_CACHE is None or (now - _CFG_TS) > 5.0:
+        cfg: Dict[str, Any] = {}
+        # 1) Try CrossWatch / cw_platform config
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                _CFG_CACHE = json.load(f)
+            from cw_platform.config_base import load_config  # type: ignore
+            cfg = load_config()
         except Exception:
-            _CFG_CACHE = {}
+            for path in ("/config/config.json", "config.json"):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        break
+                except Exception:
+                    continue
+        _CFG_CACHE = cfg
         _CFG_TS = now
+
     rt = (_CFG_CACHE.get("runtime") or {})
     return bool(rt.get("debug") or rt.get("debug_mods"))
 
