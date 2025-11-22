@@ -8,13 +8,30 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Please avoid pasting secrets** (tokens, cookies, X-Plex-Token, API keys).
+        ## Before you hit “Submit”
+        Please do this first — it saves both of us time:
+
+        1. **Simplify your setup first.**  
+           Enable **only the pair that’s causing trouble** and disable/remove the rest.  
+           Less noise in the logs = faster diagnosis.
+        2. Go to **Settings → Maintenance**  
+           Enable **Debug** and **MOD Debug**.
+        3. **Reproduce the issue again** after enabling debug.
+        4. Collect logs from **both places**:
+           - **Docker console logs**
+           - **CrossWatch Sync Output**
+        5. If the issue is “some items don’t sync”:  
+           run the **Analyzer** first. It often tells you what’s missing and why.
+
+        **No logs = no diagnosis.**
+
+  - type: markdown
+    attributes:
+      value: |
+        **Please don't paste secrets** (tokens, usernames, API keys, etc.).
         
         Redaction rule:
         - If the field was filled in → replace with `<REDACTED>`
-        - If the field was empty → replace with `<REDACTED EMPTY>`
-        
-        **For sync issues we need `config.json` at minimum** (redacted as above).
 
   - type: input
     id: version
@@ -60,7 +77,6 @@ body:
         - label: Synchronization → Watchlist
         - label: Synchronization → Ratings
         - label: Synchronization → History
-        - label: Synchronization → Playlists
         - label: Scheduler
         - label: Web UI (modals, pairs, progress)
         - label: Metadata / IDs
@@ -156,14 +172,6 @@ body:
       required: true
 
   - type: textarea
-    id: expected
-    attributes:
-      label: Expected
-      placeholder: What you expected to happen.
-    validations:
-      required: true
-
-  - type: textarea
     id: actual
     attributes:
       label: Actual
@@ -199,22 +207,18 @@ body:
         Redact important fields for you before sharing publicly:
         server_url, account_token, client_id, client_secret, username, access_token, refresh_token,
         api_key, user, username_whitelist, server_uuid
-        Use <REDACTED> / <REDACTED EMPTY> as described above.
       render: json
 
   - type: checkboxes
     id: tried
     attributes:
       label: Troubleshooting already tried
+      description: |
+        Start simple: **Clear Cache**, then retry.
+        Still broken? Do **Clear State + Clear Cache**. That resets CrossWatch’s brain and rebuilds from scratch.
       options:
-        - label: Settings → Troubleshoot → Clear cache
-        - label: Settings → Troubleshoot → Reset stats
+        - label: Settings → Maintenance → Clear cache (then retried)
+        - label: Settings → Maintenance → Clear state (only if cache didn’t help)
         - label: Retried on latest CrossWatch version
         - label: Re-ran the same pair one-way
-        - label: Restarted container/app
-
-  - type: textarea
-    id: extra
-    attributes:
-      label: Additional context
-      placeholder: Network quirks, rate limits, unusual library content (season packs), etc.
+        - label: Restarted container  (to rule out transient issues)
