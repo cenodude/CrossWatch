@@ -8,7 +8,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Do NOT paste secrets** (tokens, cookies, X-Plex-Token, API keys). Redact anything sensitive.
+        **Please avoid pasting secrets** (tokens, cookies, X-Plex-Token, API keys).
+        
+        If you share `config.json`, you may paste it raw — **we will redact it for you before making anything public**.
+        Redact these fields:
+        `server_url`, `account_token`, `client_id`, `client_secret`, `username`, `access_token`, `refresh_token`, `api_key`, `user`,
+        `username_whitelist`, `server_uuid`
+        
+        Redaction rule:
+        - If the field was filled in → replace with `<REDACTED>`
+        - If the field was empty → replace with `<REDACTED EMPTY>`
+        
+        **For sync issues we need `config.json` at minimum** (redacted as above).
 
   - type: input
     id: version
@@ -18,23 +29,6 @@ body:
       placeholder: v0.x.y or 8-char SHA
     validations:
       required: true
-
-  - type: dropdown
-    id: install
-    attributes:
-      label: Install method
-      options:
-        - Docker
-        - Source (local)
-        - Other
-    validations:
-      required: true
-
-  - type: input
-    id: os
-    attributes:
-      label: OS/Arch
-      placeholder: "e.g., Ubuntu 22.04 x86_64 / Synology / Unraid"
 
   - type: dropdown
     id: run_mode
@@ -51,7 +45,9 @@ body:
       label: Connected providers involved
       options:
         - label: Plex
+        - label: Emby
         - label: Jellyfin
+        - label: MDBlist
         - label: Trakt
         - label: SIMKL
 
@@ -59,7 +55,7 @@ body:
     id: server_version
     attributes:
       label: Media server version (if applicable)
-      placeholder: "Plex 1.41.x / Jellyfin 10.9.x"
+      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x"
 
   - type: checkboxes
     id: areas
@@ -70,7 +66,6 @@ body:
         - label: Synchronization → Ratings
         - label: Synchronization → History
         - label: Synchronization → Playlists
-        - label: Scrobble watcher (Plex → Trakt)
         - label: Scheduler
         - label: Web UI (modals, pairs, progress)
         - label: Metadata / IDs
@@ -96,11 +91,59 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: pairs
+  - type: markdown
     attributes:
-      label: Pair(s) and direction
-      description: List relevant pair(s) and direction.
+      value: |
+        **Primary pair (if relevant)**  
+        Pick source/target + direction + feature(s).  
+        If multiple pairs are involved, add them in “Additional pairs”.
+
+  - type: dropdown
+    id: pair_source
+    attributes:
+      label: Source provider
+      options:
+        - Plex
+        - Emby
+        - Jellyfin
+        - MDBlist
+        - Trakt
+        - SIMKL
+
+  - type: dropdown
+    id: pair_target
+    attributes:
+      label: Target provider
+      options:
+        - Plex
+        - Emby
+        - Jellyfin
+        - MDBlist
+        - Trakt
+        - SIMKL
+
+  - type: dropdown
+    id: pair_direction
+    attributes:
+      label: Direction
+      options:
+        - Source → Target
+        - Source ⇄ Target
+
+  - type: checkboxes
+    id: pair_features
+    attributes:
+      label: Feature(s)
+      options:
+        - label: Watchlist
+        - label: History
+        - label: Ratings
+
+  - type: textarea
+    id: additional_pairs
+    attributes:
+      label: Additional pairs (optional)
+      description: List any other pairs/directions/features involved.
       placeholder: |
         PLEX → SIMKL (Watchlist)
         SIMKL ⇄ TRAKT (Ratings)
@@ -153,10 +196,15 @@ body:
       render: bash
 
   - type: textarea
-    id: config
+    id: config_json
     attributes:
-      label: Config snippet (redacted)
-      description: Only relevant pair/feature portions of config.json. Redact tokens, usernames, URLs.
+      label: config.json (redacted or raw)
+      description: |
+        Paste only relevant portions or the full file.
+        We will redact these fields for you before sharing publicly:
+        server_url, account_token, client_id, client_secret, username, access_token, refresh_token,
+        api_key, user, username_whitelist, server_uuid
+        Use <REDACTED> / <REDACTED EMPTY> as described above.
       render: json
 
   - type: checkboxes
@@ -175,4 +223,4 @@ body:
     id: extra
     attributes:
       label: Additional context
-      placeholder: Network quirks, rate limits, unusual library content (anime/season packs), etc.
+      placeholder: Network quirks, rate limits, unusual library content (season packs), etc.
