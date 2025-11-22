@@ -73,7 +73,7 @@
   - Watchlists only, your libraries stay untouched.
   - Type-aware: movies by default; shows/episodes optional.
 - **Analyzer**
-  - Finds items **stuck** between providers (Plex, Jellyfin, Trakt, SIMKL, Mdblist).
+  - Finds items **stuck** between providers.
   - Shows **Issues: N** per your sync pairs with concrete fix hints.
 
 <h2 align="center">🚀 Features</h2>
