@@ -10,11 +10,6 @@ body:
       value: |
         **Please avoid pasting secrets** (tokens, cookies, X-Plex-Token, API keys).
         
-        If you share `config.json`, you may paste it raw — **we will redact it for you before making anything public**.
-        Redact these fields:
-        `server_url`, `account_token`, `client_id`, `client_secret`, `username`, `access_token`, `refresh_token`, `api_key`, `user`,
-        `username_whitelist`, `server_uuid`
-        
         Redaction rule:
         - If the field was filled in → replace with `<REDACTED>`
         - If the field was empty → replace with `<REDACTED EMPTY>`
@@ -201,7 +196,7 @@ body:
       label: config.json (redacted or raw)
       description: |
         Paste only relevant portions or the full file.
-        We will redact these fields for you before sharing publicly:
+        Redact important fields for you before sharing publicly:
         server_url, account_token, client_id, client_secret, username, access_token, refresh_token,
         api_key, user, username_whitelist, server_uuid
         Use <REDACTED> / <REDACTED EMPTY> as described above.
@@ -214,7 +209,6 @@ body:
       options:
         - label: Settings → Troubleshoot → Clear cache
         - label: Settings → Troubleshoot → Reset stats
-        - label: Settings → Troubleshoot → Reset state
         - label: Retried on latest CrossWatch version
         - label: Re-ran the same pair one-way
         - label: Restarted container/app
