@@ -27,7 +27,7 @@
   <img width="788" height="236" alt="image" src="https://github.com/user-attachments/assets/a678ebee-d750-45d2-8dab-a8550f913670" />
 </p>
 
-<!-- Download + Wiki + Best Practices (badge-style, GitHub-friendly) -->
+<!-- Download + Wiki + Best Practices -->
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img
@@ -43,12 +43,11 @@
   </a>
 </p>
 
-<!-- Nudge -->
 <p align="center">
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
 </p>
 
-**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby, Simkl, Trakt and Mdblist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history.
+**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby, Simkl, Trakt and Mdblist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It supports **movies** and **shows/episodes**. Currently no Anime support, perhaps in the future.
 
 ## Why is CrossWatch different? (in a nutshell)
 - One brain for all your media syncs.
@@ -73,7 +72,7 @@
   - Watchlists only, your libraries stay untouched.
   - Type-aware: movies by default; shows/episodes optional.
 - **Analyzer**
-  - Finds items **stuck** between providers (Plex, Jellyfin, Trakt, SIMKL, Mdblist).
+  - Finds items **stuck** between providers.
   - Shows **Issues: N** per your sync pairs with concrete fix hints.
 
 <h2 align="center">🚀 Features</h2>
@@ -98,11 +97,11 @@
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
             <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
-            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?logo=trakt&logoColor=white&labelColor=1f2328" />
+            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
             &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
           </li>
           <li><strong>Media servers:</strong>
-            <img alt="Plex" src="https://img.shields.io/badge/Plex-FFA620?logo=plex&logoColor=black&labelColor=1f2328" />
+            <img alt="Plex" src="https://img.shields.io/badge/Plex-E08A00?logo=plex&logoColor=white&labelColor=1f2328" />
             &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
             &nbsp;<img alt="Emby" src="https://img.shields.io/badge/Emby-52B54B?logo=emby&logoColor=white&labelColor=1f2328" />
           </li>
