@@ -521,7 +521,114 @@ async def webhook_jellyfintrakt(request: Request):
 
 @router.post("/webhook/embytrakt")
 async def webhook_embytrakt(request: Request):
-    return await webhook_jellyfintrakt(request)
+    from crosswatch import _UIHostLogger
+    try:
+        from providers.webhooks.embytrakt import process_webhook as emby_process_webhook
+    except Exception:
+        try:
+            from crosswatch import process_webhook_emby as emby_process_webhook  # optional future export
+        except Exception:
+            from embytrakt import process_webhook as emby_process_webhook
+
+    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+
+    def log(msg, level: str = "INFO"):
+        lvl_raw = str(level or "INFO")
+        lvl_up = lvl_raw.upper()
+
+        if lvl_up == "DEBUG" and not _debug_on():
+            return
+        try:
+            logger(msg, level=lvl_raw, module="SCROBBLE")
+        except Exception:
+            pass
+        try:
+            if BASE_LOG:
+                logr = BASE_LOG.child("SCROBBLE")
+                if lvl_up == "DEBUG":
+                    logr.debug(msg)
+                elif lvl_up == "INFO":
+                    logr.info(msg)
+                elif lvl_up == "WARN":
+                    logr.warn(msg)
+                elif lvl_up == "ERROR":
+                    logr.error(msg)
+                else:
+                    logr(msg, level=lvl_raw)
+                return
+        except Exception:
+            pass
+        try:
+            print(f"[SCROBBLE] {lvl_up} {msg}")
+        except Exception:
+            pass
+
+    raw = await request.body()
+    ct = (request.headers.get("content-type") or "").lower()
+    log(f"emby-webhook: received | content-type='{ct}' bytes={len(raw)}", "DEBUG")
+
+    payload = {}
+    try:
+        if "application/x-www-form-urlencoded" in ct:
+            d = parse_qs(raw.decode("utf-8", errors="replace"))
+            blob = d.get("payload") or d.get("data") or d.get("json")
+            payload = json.loads((blob[0] if isinstance(blob, list) else blob) or "{}") if blob else {}
+            log("emby-webhook: parsed urlencoded payload", "DEBUG")
+        else:
+            payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+            log("emby-webhook: parsed json payload", "DEBUG")
+    except Exception as e:
+        snippet = (raw[:200].decode("utf-8", errors="replace") if raw else "<no body>")
+        log(f"emby-webhook: failed to parse payload: {e} | body[:200]={snippet}", "ERROR")
+        return JSONResponse({"ok": True}, status_code=200)
+
+    md = (payload.get("Item") or payload.get("item") or payload.get("Metadata") or {}) or {}
+    event = (payload.get("NotificationType") or payload.get("Event") or "").strip() or "?"
+    user = (
+        ((payload.get("User") or {}).get("Name"))
+        or payload.get("UserName")
+        or ((payload.get("Server") or {}).get("UserName"))
+        or ""
+    ).strip()
+
+    mtype = (md.get("Type") or md.get("type") or "").strip().lower()
+    if mtype == "episode":
+        series = (md.get("SeriesName") or md.get("SeriesTitle") or "").strip()
+        ep_name = (md.get("Name") or md.get("EpisodeTitle") or "").strip()
+        season = md.get("ParentIndexNumber") or md.get("SeasonIndexNumber")
+        number = md.get("IndexNumber")
+        if isinstance(season, int) and isinstance(number, int):
+            title = f"{series} S{season:02}E{number:02}" + (f" — {ep_name}" if ep_name else "")
+        else:
+            title = ep_name or series or "?"
+    elif mtype == "movie":
+        name = (md.get("Name") or md.get("title") or "").strip()
+        year = md.get("ProductionYear") or md.get("year")
+        title = f"{name} ({year})" if (name and year) else (name or "?")
+    else:
+        title = (md.get("Name") or md.get("title") or md.get("SeriesName") or "?")
+
+    log(f"emby-webhook: payload summary event='{event}' user='{user}' media='{title}'", "DEBUG")
+
+    try:
+        res = emby_process_webhook(payload=payload, headers=dict(request.headers), raw=raw, logger=log)
+    except Exception as e:
+        log(f"emby-webhook: process_webhook raised: {e}", "ERROR")
+        return JSONResponse({"ok": True, "error": "internal"}, status_code=200)
+
+    if res.get("error"):
+        log(f"emby-webhook: result error={res['error']}", "WARN")
+    elif res.get("ignored"):
+        log("emby-webhook: ignored by filters/rules", "DEBUG")
+    elif res.get("debounced"):
+        log("emby-webhook: debounced pause", "DEBUG")
+    elif res.get("suppressed"):
+        log("emby-webhook: suppressed late start", "DEBUG")
+    elif res.get("dedup"):
+        log("emby-webhook: duplicate event suppressed", "DEBUG")
+
+    log(f"emby-webhook: done action={res.get('action')} status={res.get('status')}", "DEBUG")
+    return JSONResponse({"ok": True, **{k: v for k, v in res.items() if k != 'error'}}, status_code=200)
 
 @router.post("/webhook/plextrakt")
 async def webhook_trakt(request: Request):

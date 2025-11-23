@@ -884,7 +884,7 @@ def process_webhook(
             except Exception:
                 action_name = intended.rsplit("/", 1)[-1]
             try:
-                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "WebHook")
+                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
             except Exception:
                 pass
             return {"ok": True, "status": 200, "action": intended, "trakt": rj}
