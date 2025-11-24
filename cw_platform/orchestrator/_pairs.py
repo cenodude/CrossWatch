@@ -176,12 +176,16 @@ def run_pairs(ctx) -> Dict[str, Any]:
         if used_defaults:
             emit_info(f"No per-feature map set for {src}→{dst}; running defaults: {features}")
 
-        emit("run:pair", i=i, n=len(pairs), src=src,
-             dst=dst, mode=mode, features=features)
-        if used_defaults:
-            emit_info(f"No per-feature map set for {src}→{dst}; running defaults: {features}")
+        emit(
+            "run:pair",
+            i=i,
+            n=len(pairs),
+            src=src,
+            dst=dst,
+            mode=mode,
+            features=features,
+        )
 
-        emit("run:pair", i=i, n=len(pairs), src=src, dst=dst, mode=mode, features=features)
         sops = provs.get(src)
         dops = provs.get(dst)
         if not sops or not dops:

@@ -94,12 +94,20 @@ def get_index_html() -> str:
     margin-left:auto;      /* push to far right */
     margin-right:16px;     /* align with your red line */
   }
+  .auth-dot{
+    width:14px;height:14px;border-radius:999px;
+    display:inline-block;flex:0 0 auto;
+    background:rgba(255,255,255,.22);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+    margin-left:auto;
+    margin-right:16px;
+  }
   .auth-dot.on{
     background:#30ff8a;
     box-shadow:
-      0 0 8px rgba(48,255,138,.95),
-      0 0 18px rgba(48,255,138,.75),
-      0 0 34px rgba(48,255,138,.55);
+      0 0 6px rgba(48,255,138,.95),
+      0 0 14px rgba(48,255,138,.75),
+      0 0 26px rgba(48,255,138,.55);
     animation:cw-auth-pulse 4s ease-in-out infinite;
   }
 
@@ -108,17 +116,17 @@ def get_index_html() -> str:
       transform:scale(1);
       opacity:.95;
       box-shadow:
-        0 0 8px rgba(48,255,138,.95),
-        0 0 18px rgba(48,255,138,.75),
-        0 0 34px rgba(48,255,138,.55);
+        0 0 6px rgba(48,255,138,.95),
+        0 0 14px rgba(48,255,138,.75),
+        0 0 26px rgba(48,255,138,.55);
     }
     50%{
-      transform:scale(1.28);
+      transform:scale(1.22);
       opacity:1;
       box-shadow:
-        0 0 12px rgba(48,255,138,1),
-        0 0 26px rgba(48,255,138,.9),
-        0 0 44px rgba(48,255,138,.7);
+        0 0 9px rgba(48,255,138,1),
+        0 0 20px rgba(48,255,138,.9),
+        0 0 34px rgba(48,255,138,.7);
     }
   }
 

@@ -405,21 +405,72 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     return out
 
 # --- writes (event → present in Jellyfin) ------------------------------------
-
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     http = adapter.client; uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
+    pre_unresolved: List[Dict[str, Any]] = []
     wants: Dict[str, Mapping[str, Any]] = {}
-    for it in items or []:
-        m = jelly_normalize(it)
-        wants[canonical_key(m)] = m
+
+    for it in (items or []):
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        if has_ids:
+            nm = jelly_normalize(base)
+            m: Dict[str, Any] = dict(nm)
+
+            for key in (
+                "type",
+                "title",
+                "year",
+                "watch_type",
+                "watched_at",
+                "library_id",
+                "season",
+                "episode",
+                "series_title",
+                "show_ids",
+                "series_year",
+            ):
+                if base.get(key) not in (None, ""):
+                    m[key] = base[key]
+
+            ids = dict(nm.get("ids") or {})
+            for k_id, v_id in base_ids.items():
+                if v_id not in (None, "", 0):
+                    ids[k_id] = v_id
+            if ids:
+                m["ids"] = ids
+        else:
+            m = jelly_normalize(base)
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+
+        if not k:
+            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        wants[k] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []
+    if pre_unresolved:
+        unresolved.extend(pre_unresolved)
+
     for k, m in wants.items():
-        iid = resolve_item_id(adapter, m)
+        try:
+            iid = resolve_item_id(adapter, m)
+        except Exception as e:
+            _log(f"resolve exception: {e}")
+            iid = None
+
         if iid:
             mids.append((k, iid))
         else:
@@ -444,7 +495,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
         _log(f"apply:add:start dst=JELLYFIN feature=history count={total}")
 
     processed = 0
-
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
             src_ts = _parse_iso_to_epoch(wants[k].get("watched_at")) or 0
@@ -507,15 +557,67 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
+    pre_unresolved: List[Dict[str, Any]] = []
     wants: Dict[str, Mapping[str, Any]] = {}
-    for it in items or []:
-        m = jelly_normalize(it)
-        wants[canonical_key(m)] = m
+
+    for it in (items or []):
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        if has_ids:
+            nm = jelly_normalize(base)
+            m: Dict[str, Any] = dict(nm)
+
+            for key in (
+                "type",
+                "title",
+                "year",
+                "watch_type",
+                "watched_at",
+                "library_id",
+                "season",
+                "episode",
+                "series_title",
+                "show_ids",
+                "series_year",
+            ):
+                if base.get(key) not in (None, ""):
+                    m[key] = base[key]
+
+            ids = dict(nm.get("ids") or {})
+            for k_id, v_id in base_ids.items():
+                if v_id not in (None, "", 0):
+                    ids[k_id] = v_id
+            if ids:
+                m["ids"] = ids
+        else:
+            m = jelly_normalize(base)
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+
+        if not k:
+            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        wants[k] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []
+    if pre_unresolved:
+        unresolved.extend(pre_unresolved)
+
     for k, m in wants.items():
-        iid = resolve_item_id(adapter, m)
+        try:
+            iid = resolve_item_id(adapter, m)
+        except Exception as e:
+            _log(f"resolve exception: {e}")
+            iid = None
+
         if iid:
             mids.append((k, iid))
         else:
@@ -533,7 +635,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
                 if _unmark_played(http, uid, iid):
                     ok += 1
                 else:
-                    unresolved.append({"item": wants[k], "hint": "unmark_played_failed"})
+                    unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
                     _freeze(wants[k], reason="write_failed")
             sleep_ms(delay)
 

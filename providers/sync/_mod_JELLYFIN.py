@@ -2,7 +2,7 @@
 # Jellyfin adapter: manifest + client + feature registry + OPS wrapper.
 
 from __future__ import annotations
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0.1"
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 
 import os, time, json, requests

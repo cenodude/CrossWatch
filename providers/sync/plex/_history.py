@@ -125,7 +125,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
 
 def _event_key(it: Mapping[str, Any]) -> str:
     m = id_minimal(it)
-    k = canonical_key(m)
+    k = canonical_key(m) or canonical_key(it) or ""
     ts = _as_epoch(it.get("watched_at"))
     return f"{k}@{ts}" if ts else k
 

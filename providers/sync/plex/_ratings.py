@@ -126,7 +126,8 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         _log(f"unresolved.save failed: {e}")
 
 def _event_key(it: Mapping[str, Any]) -> str:
-    return canonical_key(id_minimal(it))
+    k = canonical_key(id_minimal(it))
+    return k or canonical_key(it) or ""
 
 def _freeze_item(it: Mapping[str, Any], *, action: str, reasons: List[str]) -> None:
     key = _event_key(it)

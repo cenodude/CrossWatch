@@ -1010,7 +1010,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                     continue
                 nm = (row.get("Name") or "").strip().lower()
                 yr = row.get("ProductionYear")
-                if nm == title_lc and ((year is None) or (isinstance(yr, int) and abs(yr - year) <= 1)):
+                if (nm == title_lc or nm.startswith(title_lc)) and (
+                    (year is None) or (isinstance(yr, int) and abs(yr - year) <= 1)
+                ):
                     cand.append(row)
             cand.sort(key=lambda x: 0 if (x.get("ProviderIds") or {}) else 1)
             for row in cand:

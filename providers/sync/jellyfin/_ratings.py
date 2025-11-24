@@ -272,29 +272,45 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     shadow = _shadow_load()
 
     from ._common import resolve_item_id
+
     for it in items or []:
-        rating = it.get("rating")
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        rating = base.get("rating")
         try:
             rf = float(rating)
         except Exception:
-            unresolved.append({"item": id_minimal(it), "hint": "invalid_rating"})
-            _freeze(it, reason="invalid_rating")
+            unresolved.append({"item": id_minimal(base), "hint": "invalid_rating"})
+            _freeze(base, reason="invalid_rating")
             continue
 
-        iid = resolve_item_id(adapter, it)
+        # If ids are weak, normalize to try to fill them.
+        m = jelly_normalize(base) if not has_ids else base
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+        if not k:
+            unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        iid = resolve_item_id(adapter, m)
         if not iid:
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            _freeze(it, reason="resolve_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "not_in_library"})
+            _freeze(m, reason="resolve_failed")
             continue
 
-        k = canonical_key(id_minimal(it))
         if _rate(http, uid, iid, rf):
             ok += 1
             shadow[k] = int(shadow.get(k, 0)) + 1
             _thaw_if_present([k])
         else:
-            unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
-            _freeze(it, reason="write_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "rate_failed"})
+            _freeze(m, reason="write_failed")
 
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
@@ -310,14 +326,29 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     shadow = _shadow_load()
 
     from ._common import resolve_item_id
+
     for it in items or []:
-        iid = resolve_item_id(adapter, it)
-        if not iid:
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            _freeze(it, reason="resolve_failed")
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        m = jelly_normalize(base) if not has_ids else base
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+        if not k:
+            unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
             continue
 
-        k = canonical_key(id_minimal(it))
+        iid = resolve_item_id(adapter, m)
+        if not iid:
+            unresolved.append({"item": id_minimal(m), "hint": "not_in_library"})
+            _freeze(m, reason="resolve_failed")
+            continue
+
         if _rate(http, uid, iid, None):
             ok += 1
             cur = int(shadow.get(k, 0))
@@ -328,8 +359,8 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
                 shadow.pop(k, None)
             _thaw_if_present([k])
         else:
-            unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
-            _freeze(it, reason="write_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "clear_failed"})
+            _freeze(m, reason="write_failed")
 
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)

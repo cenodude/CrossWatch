@@ -3,7 +3,6 @@ from __future__ import annotations
 import os, json, time
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-# ===== ID helpers =====
 try:
     from cw_platform.id_map import minimal as id_minimal, canonical_key
 except Exception:
@@ -197,19 +196,36 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
         "numeric_set": 0, "numeric_cleared": 0,
         "thumbs_set": 0, "thumbs_cleared": 0,
         "invalid_rating": 0, "resolve_failed": 0, "write_failed": 0,
+        "missing_ids_for_key": 0,
     }
 
     for it in items or []:
-        liked_flag = it.get("liked")
-        rating_val = it.get("rating")
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        m = emby_normalize(base) if not has_ids else base
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+        if not k:
+            unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            stats["missing_ids_for_key"] += 1
+            continue
+
+        liked_flag = base.get("liked")
+        rating_val = base.get("rating")
 
         rf = None
         if rating_val is not None:
             try:
                 rf = float(rating_val)
             except Exception:
-                unresolved.append({"item": id_minimal(it), "hint": "invalid_rating"})
-                _freeze(it, reason="invalid_rating")
+                unresolved.append({"item": id_minimal(base), "hint": "invalid_rating"})
+                _freeze(base, reason="invalid_rating")
                 stats["invalid_rating"] += 1
                 continue
 
@@ -220,10 +236,10 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
         else:
             likes = None
 
-        iid = resolve_item_id(adapter, it)
+        iid = resolve_item_id(adapter, m)
         if not iid:
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            _freeze(it, reason="resolve_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "not_in_library"})
+            _freeze(m, reason="resolve_failed")
             stats["resolve_failed"] += 1
             continue
 
@@ -239,37 +255,53 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                 wrote = True
                 stats["thumbs_set"] += 1
         elif do_like and likes is None:
-            # clear thumbs
             if _set_like(http, uid, iid, likes=None):
                 wrote = True
                 stats["thumbs_cleared"] += 1
+
         if wrote:
             ok += 1
-            _thaw_if_present([canonical_key(id_minimal(it))])
+            _thaw_if_present([k])
         else:
-            unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
-            _freeze(it, reason="write_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "rate_failed"})
+            _freeze(m, reason="write_failed")
             stats["write_failed"] += 1
+
         if delay:
             time.sleep(delay / 1000.0)
+
     _log(
         f"add done: +{ok} / unresolved {len(unresolved)} | "
         f"numeric_set={stats['numeric_set']} thumbs_set={stats['thumbs_set']} "
     )
-
     return ok, unresolved
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     http = adapter.client
     uid  = adapter.cfg.user_id
     ok = 0
-    unresolved = []
+    unresolved: List[Dict[str, Any]] = []
 
     for it in items or []:
-        iid = resolve_item_id(adapter, it)
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        m = emby_normalize(base) if not has_ids else base
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+        if not k:
+            unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        iid = resolve_item_id(adapter, m)
         if not iid:
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            _freeze(it, reason="resolve_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "not_in_library"})
+            _freeze(m, reason="resolve_failed")
             continue
 
         like_ok = _set_like(http, uid, iid, likes=None)
@@ -277,10 +309,10 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
         if like_ok or num_ok:
             ok += 1
-            _thaw_if_present([canonical_key(id_minimal(it))])
+            _thaw_if_present([k])
         else:
-            unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
-            _freeze(it, reason="write_failed")
+            unresolved.append({"item": id_minimal(m), "hint": "clear_failed"})
+            _freeze(m, reason="write_failed")
 
     _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
     return ok, unresolved

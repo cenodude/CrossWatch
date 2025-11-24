@@ -109,7 +109,6 @@ def jf_scope_ratings(cfg: CfgLike) -> Dict[str, Any]:
     return jf_library_scope(cfg, "ratings")
 
 def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
-    # Try mapping style: cfg['jellyfin'][feature]['libraries']
     jf_map = _pluck(cfg, "jellyfin") or cfg
     libs_h = _as_list_str(_pluck(jf_map, "history", "libraries"))
     libs_r = _as_list_str(_pluck(jf_map, "ratings", "libraries"))
@@ -118,14 +117,14 @@ def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
     for x in (libs_h + libs_r):
         if x and x not in seen:
             seen.add(x); libs.append(x)
-    # Try dataclass/object attributes too (e.g., cfg.history_libraries / cfg.ratings_libraries)
+
     if not libs and not isinstance(cfg, Mapping):
         libs_h2 = _as_list_str(getattr(cfg, "history_libraries", None))
         libs_r2 = _as_list_str(getattr(cfg, "ratings_libraries", None))
         for x in (libs_h2 + libs_r2):
             if x and x not in seen:
                 seen.add(x); libs.append(x)
-        # Or nested objects: cfg.history.libraries / cfg.ratings.libraries
+
         hist_obj = getattr(cfg, "history", None)
         rate_obj = getattr(cfg, "ratings", None)
         if hasattr(hist_obj, "libraries"):
@@ -140,8 +139,8 @@ def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
     if not libs:
         return {}
     if len(libs) == 1:
-        return {"parentId": libs[0], "recursive": True}
-    return {"ancestorIds": libs, "recursive": True}
+        return {"ParentId": libs[0], "Recursive": True}
+    return {"AncestorIds": libs, "Recursive": True}
 
 # --- library roots / mapping --------------------------------------------------
 def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
@@ -621,6 +620,7 @@ def _pick_from_candidates(cands: List[Dict[str, Any]], *, want_type: Optional[st
 def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     http, uid = adapter.client, adapter.cfg.user_id
     ids = dict((it.get("ids") or {}))
+    show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
 
     jf = ids.get("jellyfin")
     if jf and not looks_like_bad_id(jf):
@@ -636,6 +636,12 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
 
     prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
     pairs = all_ext_pairs(ids, prio)
+
+    if show_ids:
+        spairs = all_ext_pairs(show_ids, prio)
+        for p in spairs:
+            if p not in pairs:
+                pairs.append(p)
     idx = build_provider_index(adapter)
 
     # Movies
@@ -689,7 +695,9 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                     if (row.get("Type") or "") != "Series": continue
                     nm = (row.get("Name") or "").strip().lower()
                     yr = row.get("ProductionYear")
-                    if nm == title_lc and ((year is None) or (isinstance(yr, int) and abs(yr - year) <= 1)):
+                    if (nm == title_lc or nm.startswith(title_lc)) and (
+                        (year is None) or (isinstance(yr, int) and abs(yr - year) <= 1)
+                    ):
                         cand.append(row)
                 cand.sort(key=lambda x: 0 if (x.get("ProviderIds") or {}) else 1)
                 for row in cand:

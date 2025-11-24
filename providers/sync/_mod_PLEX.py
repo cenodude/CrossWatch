@@ -2,7 +2,7 @@
 # CrossWatch - Plex Sync Module
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-__VERSION__ = "2.0.0"
+__VERSION__ = "2.0.1"
 __all__ = ["get_manifest","PLEXModule","PLEXClient","PLEXError","PLEXAuthError","PLEXNotFound","OPS"]
 
 # stdlib

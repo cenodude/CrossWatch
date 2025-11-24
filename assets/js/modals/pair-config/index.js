@@ -530,7 +530,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add","#cx-tr-hs-numfb","#cx-tr-hs-col","#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
@@ -929,26 +929,45 @@ function renderFeaturePanel(state){
     const hs = getOpts(state, "history");
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
+
     const trColRow = hasTrakt(state)
       ? `<div class="opt-row">
-            <label for="cx-tr-hs-col">Add collections to Trakt</label>
-            <label class="switch"><input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}><span class="slider"></span></label>
-          </div>`
+          <label for="cx-tr-hs-col">Add collections to Trakt</label>
+          <label class="switch">
+            <input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>`
       : "";
 
-    left.innerHTML = `<div class="panel-title">History — basics</div>
-      <div class="opt-row"><label for="cx-hs-enable">Enable</label><label class="switch"><input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}><span class="slider"></span></label></div>
+    left.innerHTML = `
+      <div class="panel-title">History — basics</div>
+      <div class="opt-row">
+        <label for="cx-hs-enable">Enable</label>
+        <label class="switch">
+          <input id="cx-hs-enable" type="checkbox" ${hs.enable ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>
       <div class="grid2">
-        <div class="opt-row"><label for="cx-hs-add">Add</label><label class="switch"><input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label class="muted">Remove (disabled)</label>
-          <label class="switch" style="opacity:.5;pointer-events:none">
-            <input id="cx-hs-remove" type="checkbox" disabled>
+        <div class="opt-row">
+          <label for="cx-hs-add">Add</label>
+          <label class="switch">
+            <input id="cx-hs-add" type="checkbox" ${hs.add ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="opt-row">
+          <label for="cx-hs-remove">Remove</label>
+          <label class="switch">
+            <input id="cx-hs-remove" type="checkbox" ${hs.remove ? "checked" : ""}>
             <span class="slider"></span>
           </label>
         </div>
         ${trColRow}
       </div>
-      <div class="muted">Synchronize plays between providers. Deletions are disabled.</div>`;
+      <div class="muted">Synchronize plays between providers. “Remove” is not recommended and should only be enabled for specific cases like mirroring.</div>
+    `;
 
     const parts = [`<div class="panel-title">Advanced</div>`];
 
@@ -1136,9 +1155,13 @@ function bindChangeHandlers(state,root){
       applyRatingsTypeRules(state);
     }
 
-    if(id.startsWith("cx-hs-")){
-      const prev=state.options.history||{};
-      state.options.history=Object.assign({},prev,{enable:!!ID("cx-hs-enable")?.checked,add:!!ID("cx-hs-add")?.checked,remove:false});
+    if (id.startsWith("cx-hs-")) {
+      const prev = state.options.history || {};
+      state.options.history = Object.assign({}, prev, {
+        enable: !!ID("cx-hs-enable")?.checked,
+        add:    !!ID("cx-hs-add")?.checked,
+        remove: !!ID("cx-hs-remove")?.checked,
+      });
       state.visited.add("history");
     }
 

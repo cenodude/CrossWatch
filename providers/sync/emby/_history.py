@@ -803,13 +803,58 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     except Exception:
         pass
 
+    pre_unresolved: List[Dict[str, Any]] = []
     wants: Dict[str, Mapping[str, Any]] = {}
     for it in (items or []):
-        m = emby_normalize(it)  # keeps library_id if present
-        wants[canonical_key(m)] = m
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        if has_ids:
+            nm = emby_normalize(base)  # may add emby-specific fields
+            m: Dict[str, Any] = dict(nm)
+
+            # Keep source fields if present
+            for key in (
+                "type",
+                "title",
+                "year",
+                "watch_type",
+                "watched_at",
+                "library_id",
+                "season",
+                "episode",
+            ):
+                if base.get(key) not in (None, ""):
+                    m[key] = base[key]
+
+            # Prefer incoming ids over normalize output
+            ids = dict(nm.get("ids") or {})
+            for k_id, v_id in base_ids.items():
+                if v_id not in (None, "", 0):
+                    ids[k_id] = v_id
+            if ids:
+                m["ids"] = ids
+        else:
+            m = emby_normalize(base)
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+
+        if not k:
+            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        wants[k] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []
+    if pre_unresolved:
+        unresolved.extend(pre_unresolved)
+
     for k, m in wants.items():
         try:
             iid = resolve_item_id(adapter, m)
@@ -965,40 +1010,97 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
 # Remove history entries
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    http = adapter.client; uid = adapter.cfg.user_id
+    http = adapter.client
+    uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
+    pre_unresolved: List[Dict[str, Any]] = []
     wants: Dict[str, Mapping[str, Any]] = {}
-    for it in items or []:
-        m = emby_normalize(it)
-        wants[canonical_key(m)] = m
+
+    for it in (items or []):
+        base: Dict[str, Any] = dict(it or {})
+        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+        if has_ids:
+            nm = emby_normalize(base)
+            m: Dict[str, Any] = dict(nm)
+
+            for key in (
+                "type",
+                "title",
+                "year",
+                "watch_type",
+                "watched_at",
+                "library_id",
+                "season",
+                "episode",
+            ):
+                if base.get(key) not in (None, ""):
+                    m[key] = base[key]
+
+            ids = dict(nm.get("ids") or {})
+            for k_id, v_id in base_ids.items():
+                if v_id not in (None, "", 0):
+                    ids[k_id] = v_id
+            if ids:
+                m["ids"] = ids
+        else:
+            m = emby_normalize(base)
+
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+
+        if not k:
+            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        wants[k] = m
 
     mids: List[Tuple[str, str]] = []
     unresolved: List[Dict[str, Any]] = []
+    if pre_unresolved:
+        unresolved.extend(pre_unresolved)
+
     for k, m in wants.items():
-        iid = resolve_item_id(adapter, m)
-        if iid: mids.append((k, iid))
+        try:
+            iid = resolve_item_id(adapter, m)
+        except Exception as e:
+            _log(f"resolve exception: {e}")
+            iid = None
+
+        if iid:
+            mids.append((k, iid))
         else:
             unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
 
     shadow = _shadow_load()
     ok = 0
+
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
-            cur = int(shadow.get(k, 0)); nxt = max(0, cur - 1)
+            cur = int(shadow.get(k, 0))
+            nxt = max(0, cur - 1)
             shadow[k] = nxt
+
             if nxt == 0:
                 if _unmark_played(http, uid, iid):
                     ok += 1
                 else:
-                    unresolved.append({"item": wants[k], "hint": "unmark_played_failed"})
+                    unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
                     _freeze(wants[k], reason="write_failed")
+
             sleep_ms(delay)
 
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
-    if ok: _thaw_if_present([k for k, _ in mids])
+    if ok:
+        _thaw_if_present([k for k, _ in mids])
+
     _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
