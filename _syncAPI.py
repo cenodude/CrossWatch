@@ -174,6 +174,28 @@ def _item_sig_key(v: dict) -> str:
         y = str(v.get("year") or v.get("release_year") or "")
         typ = (v.get("type") or "").lower()
         return f"{typ}|title:{t}|year:{y}"
+    
+# ----- Live lane cache (to keep UI stable during a running sync) -----
+_LIVE_RUN_KEY: Any = None
+_LIVE_LANES: Dict[str, Dict[str, Any]] = {}
+
+def _live_reset_if_needed(snap: dict) -> None:
+    global _LIVE_RUN_KEY, _LIVE_LANES
+    running = bool(snap.get("running"))
+    run_key = snap.get("raw_started_ts") or snap.get("started_at")
+    if (not running) or (run_key != _LIVE_RUN_KEY):
+        _LIVE_RUN_KEY = run_key if running else None
+        _LIVE_LANES = {}
+
+def _spot_sig(it: dict) -> str:
+    try:
+        return _item_sig_key(it)
+    except Exception:
+        t = (str(it.get("title") or it.get("name") or it.get("key") or "")).strip().lower()
+        y = str(it.get("year") or it.get("release_year") or "")
+        typ = (it.get("type") or "").lower()
+        return f"{typ}|title:{t}|year:{y}"
+#------------------------------------------------------------------------
 
 def _persist_state_via_orc(orc, *, feature: str = "watchlist") -> dict:
     rt=_rt(); minimal = rt[9]
@@ -332,6 +354,78 @@ def _lanes_defaults() -> Dict[str, Dict[str, Any]]:
 def _lanes_enabled_defaults() -> Dict[str, bool]:
     return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
 
+def _apply_live_stats_to_snap(snap: dict, stats_feats: dict, enabled: dict) -> dict:
+    out = dict(snap or {})
+    out.setdefault("features", {})
+    feats = out["features"]
+
+    running = bool(out.get("running"))
+    _live_reset_if_needed(out)
+
+    for k, v in (stats_feats or {}).items():
+        dst = feats.setdefault(k, {
+            "added": 0, "removed": 0, "updated": 0,
+            "spotlight_add": [], "spotlight_remove": [], "spotlight_update": []
+        })
+
+        va = int((v or {}).get("added") or 0)
+        vr = int((v or {}).get("removed") or 0)
+        vu = int((v or {}).get("updated") or 0)
+
+        add_list = list((v or {}).get("spotlight_add") or [])[:25]
+        rem_list = list((v or {}).get("spotlight_remove") or [])[:25]
+        upd_list = list((v or {}).get("spotlight_update") or [])[:25]
+
+        if running:
+            prev = _LIVE_LANES.get(k) or _lane_init()
+
+            dst["added"]   = max(int(prev.get("added") or 0), va)
+            dst["removed"] = max(int(prev.get("removed") or 0), vr)
+            dst["updated"] = max(int(prev.get("updated") or 0), vu)
+
+            seen_all = set()
+            for bucket in ("spotlight_add", "spotlight_remove", "spotlight_update"):
+                for it in (prev.get(bucket) or []):
+                    try:
+                        seen_all.add(_spot_sig(it))
+                    except Exception:
+                        pass
+
+            def _merge(prev_bucket: list, new_bucket: list) -> list:
+                out_bucket = list(prev_bucket or [])
+                for it in (new_bucket or []):
+                    sig = _spot_sig(it)
+                    if sig in seen_all:
+                        continue
+                    out_bucket.append(it)
+                    seen_all.add(sig)
+                return out_bucket[-25:]
+
+            dst["spotlight_add"]    = _merge(prev.get("spotlight_add") or [], add_list)
+            dst["spotlight_remove"] = _merge(prev.get("spotlight_remove") or [], rem_list)
+            dst["spotlight_update"] = _merge(prev.get("spotlight_update") or [], upd_list)
+
+            _LIVE_LANES[k] = {
+                "added": dst["added"], "removed": dst["removed"], "updated": dst["updated"],
+                "spotlight_add": dst["spotlight_add"],
+                "spotlight_remove": dst["spotlight_remove"],
+                "spotlight_update": dst["spotlight_update"],
+            }
+        else:
+            dst["added"]   = max(int(dst.get("added") or 0), va)
+            dst["removed"] = max(int(dst.get("removed") or 0), vr)
+            dst["updated"] = max(int(dst.get("updated") or 0), vu)
+            if not dst["spotlight_add"]:
+                dst["spotlight_add"] = add_list
+            if not dst["spotlight_remove"]:
+                dst["spotlight_remove"] = rem_list
+            if not dst["spotlight_update"]:
+                dst["spotlight_update"] = upd_list
+
+    out["features"] = feats
+    out["enabled"] = enabled or _lanes_enabled_defaults()
+    return out
+
 def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     _STATS = _rt()[5]
     feats = _lanes_defaults(); enabled = _lanes_enabled_defaults()
@@ -357,12 +451,20 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         k = str(e.get("key") or "")
         if k.startswith("agg:"):
             return False
-        t = (e.get("title") or "").strip()
+
+        act = str(e.get("action") or e.get("op") or e.get("change") or "").lower()
+        ids = e.get("ids") or {}
+        title = (e.get("title") or e.get("name") or "").strip()
         feat = str(e.get("feature") or e.get("feat") or "").lower()
+
+        if act.startswith("apply:") and not title and not ids:
+            return False
+
         if feat == "watchlist":
-            return bool(t)
-        if feat in ("ratings", "history"):
-            return True
+            return bool(title)
+        if feat in ("ratings", "history", "playlists"):
+            return bool(title or ids)
+
         return True
 
     rows = [e for e in events if s <= _evt_epoch(e) <= u and _is_real_item_event(e)]
@@ -378,6 +480,7 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         "history":   {"add": set(), "remove": set(), "update": set()},
         "playlists": {"add": set(), "remove": set(), "update": set()},
     }
+
     def _sig_for_event(e: dict) -> str:
         k = str(e.get("key") or "").strip().lower()
         if k:
@@ -396,96 +499,110 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         action = str(e.get("action") or e.get("op") or e.get("change") or "").lower().replace(":", "_").replace("-", "_")
         feat   = str(e.get("feature") or e.get("feat") or "").lower().replace(":", "_").replace("-", "_")
         title  = (e.get("title") or e.get("key") or "item")
-        slim   = {k: e.get(k) for k in ("title", "key", "type", "source", "ts") if k in e}
-        sig    = _sig_for_event(e)
+        slim = {
+            k: e.get(k) for k in (
+                "title","series_title","name","key","type","source","year","season","episode",
+                "added_at","listed_at","watched_at","rated_at","last_watched_at","user_rated_at",
+                "ts","seen_ts","sync_ts","ingested_ts"
+            )
+            if k in e and e.get(k) is not None
+        }
+        if "title" not in slim:
+            slim["title"] = title
 
+        sig = _sig_for_event(e)
+
+        # --- Watchlist lane ---
         if ("watchlist" in action) or (feat == "watchlist"):
             lane = "watchlist"
             if anyin(action, ("remove", "unwatchlist", "delete", "del", "rm", "clear")):
                 if sig not in seen[lane]["remove"]:
                     seen[lane]["remove"].add(sig)
                     feats[lane]["removed"] += 1
-                    feats[lane]["spotlight_remove"].append(title)
+                    feats[lane]["spotlight_remove"].append(slim)
             elif anyin(action, ("update", "rename", "edit", "move", "reorder", "relist")):
+                if sig in seen[lane]["add"] or sig in seen[lane]["remove"]:
+                    continue
                 if sig not in seen[lane]["update"]:
                     seen[lane]["update"].add(sig)
                     feats[lane]["updated"] += 1
-                    feats[lane]["spotlight_update"].append(title)
+                    feats[lane]["spotlight_update"].append(slim)
             else:
                 if sig not in seen[lane]["add"]:
                     seen[lane]["add"].add(sig)
                     feats[lane]["added"] += 1
-                    feats[lane]["spotlight_add"].append(title)
+                    feats[lane]["spotlight_add"].append(slim)
             continue
 
+        # --- Ratings lane ---
         if (action in ("rate", "rating", "update_rating", "unrate")) or ("rating" in action) or ("rating" in feat):
             lane = "ratings"
             if anyin(action, ("unrate", "remove", "clear", "delete", "unset", "erase")):
                 if sig not in seen[lane]["remove"]:
                     seen[lane]["remove"].add(sig)
                     feats[lane]["removed"] += 1
-                    feats[lane]["spotlight_remove"].append(title)
+                    feats[lane]["spotlight_remove"].append(slim)
             elif anyin(action, ("rate", "add", "set", "set_rating", "update_rating")):
                 if sig not in seen[lane]["add"]:
                     seen[lane]["add"].add(sig)
                     feats[lane]["added"] += 1
-                    feats[lane]["spotlight_add"].append(title)
+                    feats[lane]["spotlight_add"].append(slim)
             else:
+                if sig in seen[lane]["add"] or sig in seen[lane]["remove"]:
+                    continue
                 if sig not in seen[lane]["update"]:
                     seen[lane]["update"].add(sig)
                     feats[lane]["updated"] += 1
-                    feats[lane]["spotlight_update"].append(title)
+                    feats[lane]["spotlight_update"].append(slim)
             continue
 
+        # --- History lane ---
         is_history_feat = (feat in ("history", "watch", "watched")) or ("history" in action)
         if "watchlist" not in action:
-            is_add_like    = anyin(action, ("watch", "scrobble", "checkin", "mark_watched", "history_add", "add_history"))
-            is_remove_like = anyin(action, ("unwatch", "remove_history", "history_remove", "delete_watch", "del_history"))
+            is_add_like = anyin(action, (
+                "watch", "scrobble", "checkin", "mark_watched",
+                "history_add", "add_history",
+                "apply_add", "apply_add_done",
+            ))
+            is_remove_like = anyin(action, (
+                "unwatch", "remove_history", "history_remove", "delete_watch", "del_history",
+                "apply_remove", "apply_remove_done",
+            ))
         else:
             is_add_like = is_remove_like = False
+
+        is_update_like = anyin(action, ("update", "edit", "fix", "repair", "adjust", "correct"))
+
         if is_history_feat or is_add_like or is_remove_like:
             lane = "history"
             if is_remove_like:
                 if sig not in seen[lane]["remove"]:
                     seen[lane]["remove"].add(sig)
                     feats[lane]["removed"] += 1
-                    feats[lane]["spotlight_remove"].append(title)
+                    feats[lane]["spotlight_remove"].append(slim)
             elif is_add_like:
                 if sig not in seen[lane]["add"]:
                     seen[lane]["add"].add(sig)
                     feats[lane]["added"] += 1
-                    feats[lane]["spotlight_add"].append(title)
-            else:
+                    feats[lane]["spotlight_add"].append(slim)
+            elif is_update_like:
+                if sig in seen[lane]["add"] or sig in seen[lane]["remove"]:
+                    continue
                 if sig not in seen[lane]["update"]:
                     seen[lane]["update"].add(sig)
                     feats[lane]["updated"] += 1
-                    feats[lane]["spotlight_update"].append(title)
-            continue
-
-        if ("playlist" in action) or ("playlist" in feat):
-            lane = "playlists"
-            if anyin(action, ("remove", "delete", "rm", "del", "clear")):
-                if sig not in seen[lane]["remove"]:
-                    seen[lane]["remove"].add(sig)
-                    feats[lane]["removed"] += 1
-                    feats[lane]["spotlight_remove"].append(title)
-            elif anyin(action, ("update", "rename", "move", "reorder", "edit")):
-                if sig not in seen[lane]["update"]:
-                    seen[lane]["update"].add(sig)
-                    feats[lane]["updated"] += 1
-                    feats[lane]["spotlight_update"].append(title)
+                    feats[lane]["spotlight_update"].append(slim)
             else:
                 if sig not in seen[lane]["add"]:
                     seen[lane]["add"].add(sig)
                     feats[lane]["added"] += 1
-                    feats[lane]["spotlight_add"].append(title)
+                    feats[lane]["spotlight_add"].append(slim)
             continue
 
     for lane in feats.values():
-        lane["spotlight_add"]    = (lane["spotlight_add"]    or [])[-3:]
-        lane["spotlight_remove"] = (lane["spotlight_remove"] or [])[-3:]
-        lane["spotlight_update"] = (lane["spotlight_update"] or [])[-3:]
-
+        lane["spotlight_add"]    = list((lane.get("spotlight_add")    or [])[-25:])[::-1]
+        lane["spotlight_remove"] = list((lane.get("spotlight_remove") or [])[-25:])[::-1]
+        lane["spotlight_update"] = list((lane.get("spotlight_update") or [])[-25:])[::-1]
     return feats, enabled
 
 def _parse_sync_line(line: str) -> None:
@@ -570,13 +687,15 @@ def _parse_sync_line(line: str) -> None:
                 va = int((v or {}).get("added") or 0); vr = int((v or {}).get("removed") or 0); vu = int((v or {}).get("updated") or 0)
                 dst["added"]   = max(int(dst.get("added") or 0), va)
                 dst["removed"] = max(int(dst.get("removed") or 0), vr)
-                dst["updated"] = max(int(dst.get("updated") or 0), vu)
-                if not dst["spotlight_add"]:    dst["spotlight_add"]    = list((v or {}).get("spotlight_add")    or [])[-3:]
-                if not dst["spotlight_remove"]: dst["spotlight_remove"] = list((v or {}).get("spotlight_remove") or [])[-3:]
-                if not dst["spotlight_update"]: dst["spotlight_update"] = list((v or {}).get("spotlight_update") or [])[-3:]
+                dst["updated"] = max(int(dst.get("updated") or 0), vu)  
+                if not dst["spotlight_add"]:
+                    dst["spotlight_add"] = list((v or {}).get("spotlight_add") or [])[:25]
+                if not dst["spotlight_remove"]:
+                    dst["spotlight_remove"] = list((v or {}).get("spotlight_remove") or [])[:25]
+                if not dst["spotlight_update"]:
+                    dst["spotlight_update"] = list((v or {}).get("spotlight_update") or [])[:25]
 
             lanes = snap.get("features") or {}
-
             try:
                 _STATS = _rt()[5]
                 with _STATS.lock: evs = list(_STATS.data.get("events") or [])
@@ -596,9 +715,18 @@ def _parse_sync_line(line: str) -> None:
                                 and not str(e.get("key") or "").startswith("agg:")
                                 and since <= _evt_ts(e) <= until]
                         rows.sort(key=_evt_ts)
-                        for e in rows[-3:]:
+                        for e in reversed(rows[-25:]):
                             act = str(e.get("action") or e.get("op") or e.get("change") or "").lower()
-                            slim = {k: e.get(k) for k in ("title","key","type","source","ts") if k in e}
+                            slim = {
+                                k: e.get(k) for k in (
+                                    "title","series_title","name","key","type","source","year","season","episode",
+                                    "added_at","listed_at","watched_at","rated_at","last_watched_at","user_rated_at",
+                                    "ts","seen_ts","sync_ts","ingested_ts"
+                                )
+                                if k in e and e.get(k) is not None
+                            }
+                            if "title" not in slim:
+                                slim["title"] = (e.get("title") or e.get("key") or "item")
                             if any(t in act for t in ("remove","unrate","delete","clear")):
                                 lane.setdefault("spotlight_remove",[]).append(slim)
                             elif ("update" in act) or ("rate" in act):
@@ -981,7 +1109,7 @@ def api_provider_counts(max_age: int = 30,
         return counts
     return _provider_counts_fast(cfg, max_age=max_age, force=bool(force))
 
-# ----- Run orchestration -----
+# ----- Run orchestration endpoints -----
 @router.post("/run")
 def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
     rt=_rt(); LOG_BUFFERS, RUNNING_PROCS, SYNC_PROC_LOCK = rt[0], rt[1], rt[2]
@@ -999,72 +1127,94 @@ def api_run_sync(payload: dict | None = Body(None)) -> Dict[str, Any]:
 
 @router.get("/run/summary")
 def api_run_summary() -> JSONResponse:
-    snap = _summary_snapshot()
-    since = _parse_epoch(snap.get("raw_started_ts") or snap.get("started_at"))
-    until = _parse_epoch(snap.get("finished_at"))
-    if not until and snap.get("running"): until = int(time.time())
+    snap0 = _summary_snapshot()
+    since = _parse_epoch(snap0.get("raw_started_ts") or snap0.get("started_at"))
+    until = _parse_epoch(snap0.get("finished_at"))
+    if not until and snap0.get("running"):
+        until = int(time.time())
 
     stats_feats, enabled = _compute_lanes_from_stats(since, until)
-
-    snap.setdefault("features", {})
-    feats = snap["features"]
-
-    for k, v in (stats_feats or {}).items():
-        dst = feats.setdefault(k, {"added":0,"removed":0,"updated":0,"spotlight_add":[],"spotlight_remove":[],"spotlight_update":[]})
-        va = int((v or {}).get("added") or 0); vr = int((v or {}).get("removed") or 0); vu = int((v or {}).get("updated") or 0)
-        dst["added"]   = max(int(dst.get("added") or 0), va)
-        dst["removed"] = max(int(dst.get("removed") or 0), vr)
-        dst["updated"] = max(int(dst.get("updated") or 0), vu)
-        if not dst["spotlight_add"]:    dst["spotlight_add"]    = list((v or {}).get("spotlight_add")    or [])[-3:]
-        if not dst["spotlight_remove"]: dst["spotlight_remove"] = list((v or {}).get("spotlight_remove") or [])[-3:]
-        if not dst["spotlight_update"]: dst["spotlight_update"] = list((v or {}).get("spotlight_update") or [])[-3:]
+    snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
 
     try:
+        feats = snap.get("features") or {}
         _STATS = _rt()[5]
-        with _STATS.lock: evs = list(_STATS.data.get("events") or [])
+        with _STATS.lock:
+            evs = list(_STATS.data.get("events") or [])
+
         def _evt_ts(e):
-            for k in ("ts","seen_ts","sync_ts","ingested_ts"):
+            for k in ("ts", "seen_ts", "sync_ts", "ingested_ts"):
                 try:
                     v = int(e.get(k) or 0)
-                    if v: return v
-                except: pass
+                    if v:
+                        return v
+                except Exception:
+                    pass
             return 0
-        for feat in ("ratings","history"):
+
+        for feat in ("ratings", "history"):
             lane = feats.get(feat) or {}
-            if ((lane.get("added",0)+lane.get("removed",0)+lane.get("updated",0))>0 and
-                not (lane.get("spotlight_add") or lane.get("spotlight_remove") or lane.get("spotlight_update"))):
-                rows = [e for e in evs
-                        if str(e.get("feature") or e.get("feat") or "").lower()==feat
-                        and not str(e.get("key") or "").startswith("agg:")
-                        and (since <= _evt_ts(e) <= (until or _evt_ts(e)))]
+            if (
+                (lane.get("added", 0) + lane.get("removed", 0) + lane.get("updated", 0)) > 0
+                and not (lane.get("spotlight_add") or lane.get("spotlight_remove") or lane.get("spotlight_update"))
+            ):
+                rows = [
+                    e for e in evs
+                    if str(e.get("feature") or e.get("feat") or "").lower() == feat
+                    and not str(e.get("key") or "").startswith("agg:")
+                    and (since <= _evt_ts(e) <= (until or _evt_ts(e)))
+                ]
                 rows.sort(key=_evt_ts)
-                for e in rows[-3:]:
+                for e in reversed(rows[-25:]):
                     act = str(e.get("action") or e.get("op") or e.get("change") or "").lower()
-                    slim = {k: e.get(k) for k in ("title","key","type","source","ts") if k in e}
+                    slim = {
+                        k: e.get(k) for k in (
+                            "title","series_title","name","key","type","source","year","season","episode",
+                            "added_at","listed_at","watched_at","rated_at","last_watched_at","user_rated_at",
+                            "ts","seen_ts","sync_ts","ingested_ts"
+                        )
+                        if k in e and e.get(k) is not None
+                    }
+                    if "title" not in slim:
+                        slim["title"] = (e.get("title") or e.get("key") or "item")
+
                     if any(t in act for t in ("remove","unrate","delete","clear")):
-                        lane.setdefault("spotlight_remove",[]).append(slim)
+                        lane.setdefault("spotlight_remove", []).append(slim)
                     elif ("update" in act) or ("rate" in act):
-                        lane.setdefault("spotlight_update",[]).append(slim)
+                        lane.setdefault("spotlight_update", []).append(slim)
                     else:
-                        lane.setdefault("spotlight_add",[]).append(slim)
+                        lane.setdefault("spotlight_add", []).append(slim)
                 feats[feat] = lane
+
+        snap["features"] = feats
     except Exception:
         pass
 
-    snap["features"] = feats
-    snap.setdefault("enabled", enabled or _lanes_enabled_defaults())
     tl = snap.get("timeline") or {}
-    if tl.get("done") and not tl.get("post"): tl["post"] = True; tl["pre"] = True; snap["timeline"] = tl
+    if tl.get("done") and not tl.get("post"):
+        tl["post"] = True
+        tl["pre"] = True
+        snap["timeline"] = tl
+
     return JSONResponse(snap)
 
 @router.get("/run/summary/file")
 def api_run_summary_file() -> Response:
-    js = json.dumps(_summary_snapshot(), indent=2)
-    return Response(content=js, media_type="application/json", headers={"Content-Disposition": 'attachment; filename="last_sync.json"'})
+    snap0 = _summary_snapshot()
+    since = _parse_epoch(snap0.get("raw_started_ts") or snap0.get("started_at"))
+    until = _parse_epoch(snap0.get("finished_at"))
+    if not until and snap0.get("running"):
+        until = int(time.time())
 
-from fastapi import Request
-from fastapi.responses import StreamingResponse
-import asyncio, json, time
+    stats_feats, enabled = _compute_lanes_from_stats(since, until)
+    snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
+
+    js = json.dumps(snap, indent=2)
+    return Response(
+        content=js,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="last_sync.json"'}
+    )
 
 @router.get("/run/summary/stream")
 async def api_run_summary_stream(request: Request) -> StreamingResponse:
@@ -1099,7 +1249,15 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             except Exception:
                 pass
 
-            snap = _summary_snapshot()
+            snap0 = _summary_snapshot()
+            since = _parse_epoch(snap0.get("raw_started_ts") or snap0.get("started_at"))
+            until = _parse_epoch(snap0.get("finished_at"))
+            if not until and snap0.get("running"):
+                until = int(time.time())
+
+            stats_feats, enabled = _compute_lanes_from_stats(since, until)
+            snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
+
             key = (
                 snap.get("running"), snap.get("exit_code"),
                 snap.get("plex_post"), snap.get("simkl_post"), snap.get("trakt_post"),

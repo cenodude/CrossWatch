@@ -164,7 +164,8 @@ def _probe_mdblist_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]; now = time.time()
     if now - ts < max_age_sec:
         return ok, rsn
-    info = mdblist_user_info(cfg, max_age_sec=max_age_sec)
+    info = mdblist_user_info(cfg, max_age_sec=USERINFO_TTL)
+
     if not info:
         ok = False
         rsn = "MDBLIST: user lookup failed"
@@ -176,13 +177,33 @@ def _probe_mdblist_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
 
 def _probe_jellyfin_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["jellyfin"]; now = time.time()
-    if now - ts < max_age_sec: return ok, rsn
+    if now - ts < max_age_sec:
+        return ok, rsn
+
     jf = (cfg.get("jellyfin") or cfg.get("JELLYFIN") or {})
-    if not (jf.get("server") or "").strip():
-        rsn = "Jellyfin: missing server URL"; PROBE_DETAIL_CACHE["jellyfin"] = (now, False, rsn); return False, rsn
-    if not (jf.get("access_token") or jf.get("token") or "").strip():
-        rsn = "Jellyfin: missing access token"; PROBE_DETAIL_CACHE["jellyfin"] = (now, False, rsn); return False, rsn
-    PROBE_DETAIL_CACHE["jellyfin"] = (now, True, ""); return True, ""
+    server = (jf.get("server") or "").strip()
+    token  = (jf.get("access_token") or jf.get("token") or "").strip()
+
+    if not server:
+        rsn = "Jellyfin: missing server URL"
+        PROBE_DETAIL_CACHE["jellyfin"] = (now, False, rsn)
+        return False, rsn
+    if not token:
+        rsn = "Jellyfin: missing access token"
+        PROBE_DETAIL_CACHE["jellyfin"] = (now, False, rsn)
+        return False, rsn
+
+    url = f"{server.rstrip('/')}/System/Info/Public"
+    code, _ = _http_get(url, headers={**UA})
+
+    if code == 404:
+        url2 = f"{server.rstrip('/')}/System/Info"
+        code, _ = _http_get(url2, headers={**UA, "X-Emby-Token": token})
+
+    ok = (code == 200)
+    rsn = "" if ok else _reason_http(code, "Jellyfin")
+    PROBE_DETAIL_CACHE["jellyfin"] = (now, ok, rsn)
+    return ok, rsn
 
 def _probe_emby_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["emby"]; now = time.time()
@@ -404,7 +425,8 @@ def register_probes(app: FastAPI, load_config_fn):
         any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
 
         probe_age = 0 if fresh else PROBE_TTL
-        user_age  = 0 if fresh else USERINFO_TTL
+        user_age  = USERINFO_TTL
+
         with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
             futs = {ex.submit(_safe_probe_detail, fn, cfg, probe_age): name for name, fn in DETAIL_PROBES.items()}
             results: Dict[str, Tuple[bool, str]] = {}
