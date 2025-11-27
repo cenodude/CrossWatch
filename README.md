@@ -57,6 +57,7 @@
   - Also great for backups or to keep your media servers in sync.
 - Beautiful UI, rich debug logs, and lots of sensible toggles.
 - Simple **and** advanced scheduling for real freedom.
+- **soon in v0.4.4** Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
 - Unified, visual Watchlist across providers — filter, search, bulk remove, etc.
 - **Back-to-the-Future (Fallback GUID)**  
   - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
