@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Tuple, Optional, Callable
 from contextlib import nullcontext
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from pathlib import Path
+import datetime as _dt
 
 def _env():
     try:
@@ -57,6 +59,33 @@ def register_insights(app: FastAPI):
             pass
 
         return {"ok": True, **base}
+    
+    @app.post("/api/crosswatch/select-snapshot")
+    def api_select_snapshot(
+        feature: str = Query(..., regex="^(watchlist|history|ratings)$"),
+        snapshot: str = Query(...),
+    ) -> Dict[str, Any]:
+        CW, load_config, _ = _env()
+        try:
+            cfg = load_config() or {}
+        except Exception:
+            cfg = {}
+        cw = (cfg.get("crosswatch") or cfg.get("CrossWatch") or {}) or {}
+        key = f"restore_{feature}"
+        cw[key] = snapshot
+        cfg["crosswatch"] = cw
+        try:
+            config_dir = getattr(CW, "CONFIG_DIR", None)
+            if config_dir is None:
+                config_dir = Path("/config")
+            cfg_path = Path(config_dir) / "config.json"
+            cfg_path.write_text(
+                json.dumps(cfg, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "feature": feature, "snapshot": snapshot}
 
     @app.get("/api/insights", tags=["insight"])
     def api_insights(
@@ -225,6 +254,7 @@ def register_insights(app: FastAPI):
                         "jellyfin_post": d.get("jellyfin_post"),
                         "emby_post":     d.get("emby_post"),
                         "mdblist_post":  d.get("mdblist_post"),
+                        "crosswatch_post": d.get("crosswatch_post"),
                     })
                 except Exception as e:
                     _append_log("INSIGHTS", f"[!] report parse failed {p.name}: {e}")
@@ -243,8 +273,69 @@ def register_insights(app: FastAPI):
             except Exception as e:
                 _append_log("SYNC", f"[!] insights: orchestrator init failed: {e}")
                 wall = []
-
+        
         cfg = load_config() or {}
+        api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
+        use_tmdb = bool(api_key) and bool(int(runtime)) and CACHE_DIR is not None
+
+        def _build_crosswatch_snapshot_info() -> Dict[str, Any]:
+            info: Dict[str, Any] = {}
+            try:
+                cw_cfg = (cfg.get("crosswatch") or cfg.get("CrossWatch") or {}) or {}
+                root_dir = str(cw_cfg.get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
+                snap_dir = Path(root_dir).joinpath("snapshots")
+
+                selected = {
+                    "watchlist": str(cw_cfg.get("restore_watchlist") or "latest").strip() or "latest",
+                    "history":   str(cw_cfg.get("restore_history") or "latest").strip() or "latest",
+                    "ratings":   str(cw_cfg.get("restore_ratings") or "latest").strip() or "latest",
+                }
+
+                files: List[Path] = []
+                if snap_dir.is_dir():
+                    files = list(snap_dir.glob("*.json"))
+
+                by_feat: Dict[str, List[str]] = {"watchlist": [], "history": [], "ratings": []}
+                for p in files:
+                    name = p.name
+                    for feat in by_feat.keys():
+                        if name.endswith(f"-{feat}.json"):
+                            by_feat[feat].append(name)
+
+                for feat, arr in by_feat.items():
+                    arr.sort()
+                    sel = selected.get(feat, "latest")
+                    actual: Optional[str] = None
+                    if arr:
+                        if sel == "latest":
+                            actual = arr[-1]
+                        elif sel in arr:
+                            actual = sel
+                        else:
+                            actual = arr[-1]
+
+                    human: Optional[str] = None
+                    iso_ts: Optional[str] = None
+                    if actual:
+                        try:
+                            stem = actual.split("-", 1)[0]
+                            dt = _dt.datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
+                            iso_ts = dt.isoformat()
+                            human = dt.strftime("%d-%b-%y")
+                        except Exception:
+                            pass
+
+                    info[feat] = {
+                        "selected": sel,
+                        "actual": actual,
+                        "human": human,
+                        "ts": iso_ts,
+                        "has_snapshots": bool(arr),
+                    }
+            except Exception:
+                pass
+            return info
+
         api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
         use_tmdb = bool(api_key) and bool(int(runtime)) and CACHE_DIR is not None
 
@@ -420,6 +511,7 @@ def register_insights(app: FastAPI):
             }
 
         wl = feats_out.get("watchlist", {"now":0,"week":0,"month":0,"added":0,"removed":0})
+        cw_snapshots = _build_crosswatch_snapshot_info()
         payload: Dict[str, Any] = {
             "series":               series_by_feature.get("watchlist", []),
             "series_by_feature":    series_by_feature,
@@ -432,6 +524,7 @@ def register_insights(app: FastAPI):
             "http":                 http_block,
             "generated_at":         generated_at,
             "features":             feats_out,
+            "crosswatch_snapshots": cw_snapshots,
             "now": int(wl["now"]), "week": int(wl["week"]), "month": int(wl["month"]),
             "added": int(wl["added"]), "removed": int(wl["removed"]),
         }

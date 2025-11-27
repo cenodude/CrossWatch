@@ -9,6 +9,7 @@ ModalRegistry.register('pair-config', () => import(ver('./modals/pair-config/ind
 ModalRegistry.register('about',        () => import(ver('./modals/about.js')));
 ModalRegistry.register('analyzer',     () => import(ver('./modals/analyzer/index.js')));
 ModalRegistry.register('exporter',     () => import(ver('./modals/exporter/index.js')));
+ModalRegistry.register('maintenance',  () => import(ver('./modals/maintenance/index.js')));
 
 // Public API + legacy bridges
 export const openModal = ModalRegistry.open;
@@ -18,16 +19,22 @@ window.openPairModal = (pairOrId) => ModalRegistry.open('pair-config', { pairOrI
 window.cxEditPair = (id) => ModalRegistry.open('pair-config', { pairOrId: id });
 window.closePairModal = () => ModalRegistry.close();
 window.cxCloseModal = () => ModalRegistry.close();
-window.openAbout = (props={}) => ModalRegistry.open('about', props);
-window.closeAbout = () => ModalRegistry.close();
-window.openAnalyzer = (props={}) => ModalRegistry.open('analyzer', props);
-window.openExporter = (props={}) => ModalRegistry.open('exporter', props);
 
-window.cxEnsureCfgModal = async (pairOrId=null) => {
+window.openAbout = (props = {}) => ModalRegistry.open('about', props);
+window.closeAbout = () => ModalRegistry.close();
+
+window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
+window.openExporter = (props = {}) => ModalRegistry.open('exporter', props);
+
+// New: maintenance tools modal
+window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);
+
+window.cxEnsureCfgModal = async (pairOrId = null) => {
   await ModalRegistry.open('pair-config', { pairOrId });
   return document.getElementById('cx-modal')?.closest('.cx-card') || document.querySelector('.cx-modal-shell');
 };
-window.cxOpenModalFor = async (pairOrId=null) => {
+
+window.cxOpenModalFor = async (pairOrId = null) => {
   await ModalRegistry.open('pair-config', { pairOrId });
   return true;
 };

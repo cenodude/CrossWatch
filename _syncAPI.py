@@ -126,8 +126,8 @@ def _summary_reset() -> None:
             "running": False, "started_at": None, "finished_at": None, "duration_sec": None,
             "cmd": "", "version": "",
             "emby_pre": None, "emby_post": None,
-            "plex_pre": None, "simkl_pre": None, "trakt_pre": None, "jellyfin_pre": None, "mdblist_pre": None,
-            "plex_post": None, "simkl_post": None, "trakt_post": None, "jellyfin_post": None, "mdblist_post": None,
+            "plex_pre": None, "simkl_pre": None, "trakt_pre": None, "jellyfin_pre": None, "mdblist_pre": None, "crosswatch_pre": None,
+            "plex_post": None, "simkl_post": None, "trakt_post": None, "jellyfin_post": None, "mdblist_post": None, "crosswatch_post": None,
             "result": "", "exit_code": None, "timeline": {"start": False, "pre": False, "post": False, "done": False},
             "raw_started_ts": None,
         })
@@ -645,7 +645,7 @@ def _parse_sync_line(line: str) -> None:
             key = name.lower()
             try: val_i = int(val)
             except Exception: continue
-            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist"): _summary_set(f"{key}_pre", val_i)
+            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist","crosswatch"): _summary_set(f"{key}_pre", val_i)
         _summary_set_timeline("pre", True); return
 
     m = re.search(r"Post-sync:\s*(?P<rest>.+)$", s, re.IGNORECASE)
@@ -656,7 +656,7 @@ def _parse_sync_line(line: str) -> None:
             key = name.lower()
             try: val_i = int(val)
             except Exception: continue
-            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist"): _summary_set(f"{key}_post", val_i)
+            if key in ("plex","simkl","trakt","jellyfin","emby","mdblist","crosswatch"): _summary_set(f"{key}_post", val_i)
         mres = re.search(r"(?:→|->|=>)\s*([A-Za-z]+)", rest)
         if mres: _summary_set("result", mres.group(1).upper())
         _summary_set_timeline("post", True); return
@@ -1019,7 +1019,7 @@ def api_pairs_delete(pair_id: str) -> Dict[str, Any]:
 
 # ----- Provider counts (fast; state + tiny TTL cache) -----
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
-_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST")
+_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "CROSSWATCH")
 
 def _counts_from_state(state: dict | None) -> dict | None:
     if not isinstance(state, dict):
@@ -1261,12 +1261,13 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             key = (
                 snap.get("running"), snap.get("exit_code"),
                 snap.get("plex_post"), snap.get("simkl_post"), snap.get("trakt_post"),
-                snap.get("jellyfin_post"), snap.get("mdblist_post"),
+                snap.get("jellyfin_post"), snap.get("emby_post"), snap.get("mdblist_post"), snap.get("crosswatch_post"),
                 snap.get("result"), snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),
                 json.dumps(snap.get("features", {}), sort_keys=True),
                 json.dumps(snap.get("enabled", {}), sort_keys=True),
             )
+
             if key != last_key:
                 last_key = key
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"

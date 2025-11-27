@@ -4333,3 +4333,115 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   transform: translateX(-100%);
   animation: shimmer 1.6s linear infinite;
 }
+/* Maintenance modal: tracker options layout */
+
+.cw-maint .action-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cw-maint .action-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* two compact lines with checkboxes */
+.cw-maint .action-options {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cw-maint .action-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  /* override global label styling */
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  color: var(--muted);
+}
+
+.cw-maint .action-options label span {
+  white-space: normal;
+}
+
+.cw-maint .action-options input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #ff627e;
+}
+
+/* Snapshot picker overlay */
+.cw-snap-picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+/* hidden state */
+.cw-snap-picker.cw-snap-hidden {
+  display: none;
+}
+
+.cw-snap-dialog {
+  background: #0b0f19;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 14px;
+  padding: 18px 20px;
+  width: 340px;
+  box-shadow: 0 0 28px rgba(124,92,255,.45);
+}
+.cw-snap-head {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 12px;
+  color: #e3ddff;
+  text-align: center;
+}
+.cw-snap-head .hl { color:#7c5cff; }
+.cw-snap-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.snap-btn {
+  all: unset;
+  background: linear-gradient(135deg,#7c5cff,#a48fff);
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  color: #fff;
+  font-weight: 600;
+  transition: filter .15s;
+}
+.snap-btn:hover { filter: brightness(1.15); }
+.snap-btn[data-name="latest"] {
+  background: linear-gradient(135deg,#00e084,#2ea859);
+}
+.cw-snap-foot { margin-top: 10px; text-align: right; }
+.snap-close {
+  all: unset;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.1);
+  color: #ddd;
+  cursor: pointer;
+}
+.snap-close:hover { background: rgba(255,255,255,.2); }

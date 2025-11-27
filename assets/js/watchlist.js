@@ -487,7 +487,8 @@
     TRAKT:"/assets/img/TRAKT.svg",
     JELLYFIN:"/assets/img/JELLYFIN.svg",
     EMBY:"/assets/img/EMBY.svg",
-    MDBLIST:"/assets/img/MDBLIST.svg"
+    MDBLIST:"/assets/img/MDBLIST.svg",
+    CROSSWATCH:"/assets/img/CROSSWATCH.svg"
   };
   const providerChip = (name, ok) => {
     const src = SRC_LOGOS[name], icon = ok ? "check_circle" : "cancel", cls = ok ? "ok" : "miss";
@@ -498,8 +499,8 @@
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
 
   function updateMetrics() {
-    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add", MDBLIST:"grading" };
-    const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
+    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add", MDBLIST:"grading", CROSSWATCH: "save" };
+    const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
     const counts = ORDER.reduce((acc, p) => (acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0), acc), {});
     metricsEl.innerHTML = ORDER.filter(p => activeProviders.has(p)).map(p =>
       `<div class="metric" data-w="${p}"><span class="material-symbol">${ICON[p]}</span><div><div class="m-val">${counts[p]}</div><div class="m-lbl">${p}</div></div></div>`

@@ -110,6 +110,13 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
   if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
 
+  const cw = cfg?.crosswatch || cfg?.CrossWatch || {};
+  const cwEnabled =
+    typeof cw.enabled === "boolean"
+      ? cw.enabled
+      : true;
+
+  if (cwEnabled) S.add("CROSSWATCH");
   return S;
 }
 
@@ -1781,12 +1788,81 @@ window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) 
 window.maskSecret = function maskSecret(elOrId /*, hasValue */) {
   const el = typeof elOrId === "string" ? document.getElementById(elOrId) : elOrId;
   if (!el) return;
-  // don't touch el.value at all
   el.dataset.masked  = "0";
   el.dataset.loaded  = "1";
   el.dataset.touched = "";
   el.dataset.clear   = "";
 };
+
+async function loadCrossWatchSnapshots(cfg) {
+  const cw = (cfg && cfg.crosswatch) || {};
+  const desired = {
+    watchlist: (cw.restore_watchlist || "latest").trim() || "latest",
+    history:   (cw.restore_history   || "latest").trim() || "latest",
+    ratings:   (cw.restore_ratings   || "latest").trim() || "latest",
+  };
+
+  try {
+    const res = await fetch("/api/files?path=/config/.cw_provider/snapshots");
+    if (!res.ok) {
+      console.warn("CrossWatch snapshot list HTTP", res.status);
+      return;
+    }
+
+    const files = await res.json();
+    const list = (Array.isArray(files) ? files : []).filter(
+      (f) => f && typeof f.name === "string" && f.name.endsWith(".json")
+    );
+
+    // Split by feature suffix
+    const groups = {
+      watchlist: [],
+      history:   [],
+      ratings:   [],
+    };
+
+    for (const f of list) {
+      const name = f.name;
+      if (name.endsWith("-watchlist.json")) groups.watchlist.push(name);
+      else if (name.endsWith("-history.json")) groups.history.push(name);
+      else if (name.endsWith("-ratings.json")) groups.ratings.push(name);
+    }
+    Object.keys(groups).forEach((k) => groups[k].sort());
+
+    const idMap = {
+      watchlist: "cw_restore_watchlist",
+      history:   "cw_restore_history",
+      ratings:   "cw_restore_ratings",
+    };
+
+    for (const key of ["watchlist", "history", "ratings"]) {
+      const sel = document.getElementById(idMap[key]);
+      if (!sel) continue;
+
+      const names = groups[key];
+      sel.innerHTML = "";
+
+      // Always include "Latest"
+      const baseOpt = document.createElement("option");
+      baseOpt.value = "latest";
+      baseOpt.textContent = "Latest (default)";
+      sel.appendChild(baseOpt);
+
+      for (const name of names) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        sel.appendChild(o);
+      }
+
+      const wanted = desired[key] || "latest";
+      const hasWanted = names.includes(wanted);
+      sel.value = hasWanted ? wanted : "latest";
+    }
+  } catch (e) {
+    console.warn("CrossWatch snapshot list failed", e);
+  }
+}
 
 async function loadConfig() {
   // Fetch and cache config first; visibility helpers read from _cfgCache
@@ -1813,15 +1889,51 @@ async function loadConfig() {
   _setVal("metadata_locale", cfg.metadata?.locale || "");
   _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
-  // User Interface
+  // User Interface + CrossWatch Tracker
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
+    const cw = cfg.crosswatch || {};
+
+    // Watchlist preview toggle
     const sel = document.getElementById("ui_show_watchlist_preview");
-    if (!sel) return;
-    const on = (typeof ui.show_watchlist_preview === "boolean") ? !!ui.show_watchlist_preview : true;
-    sel.value = on ? "true" : "false";
+    if (sel) {
+      const on = (typeof ui.show_watchlist_preview === "boolean")
+        ? !!ui.show_watchlist_preview
+        : true;
+      sel.value = on ? "true" : "false";
+    }
+
+    // CrossWatch Tracker
+    const cwEnabledEl = document.getElementById("cw_enabled");
+    if (cwEnabledEl) {
+      const enabled = (cw.enabled === false) ? "false" : "true";
+      cwEnabledEl.value = enabled;
+    }
+    const cwRetEl = document.getElementById("cw_retention_days");
+    if (cwRetEl) {
+      const v = Number.isFinite(cw.retention_days) ? cw.retention_days : 30;
+      cwRetEl.value = String(v);
+    }
+    const cwAutoEl = document.getElementById("cw_auto_snapshot");
+    if (cwAutoEl) {
+      const on = (cw.auto_snapshot === false) ? "false" : "true";
+      cwAutoEl.value = on;
+    }
+    const cwMaxEl = document.getElementById("cw_max_snapshots");
+    if (cwMaxEl) {
+      const v = Number.isFinite(cw.max_snapshots) ? cw.max_snapshots : 64;
+      cwMaxEl.value = String(v);
+    }
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val || "latest";
+    };
+    setVal("cw_restore_watchlist", cw.restore_watchlist || "latest");
+    setVal("cw_restore_history", cw.restore_history || "latest");
+    setVal("cw_restore_ratings", cw.restore_ratings || "latest");
   })();
 
+  await loadCrossWatchSnapshots(cfg);
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
 // --- Sensitive fields: inject RAW values from config (do not mark as touched)
@@ -1964,6 +2076,15 @@ async function saveSettings() {
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
     const prevUiShow = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
 
+    const prevCw = serverCfg?.crosswatch || {};
+    const prevCwEnabled  = (prevCw.enabled === false) ? false : true;
+    const prevCwRet      = Number.isFinite(prevCw.retention_days) ? Number(prevCw.retention_days) : 30;
+    const prevCwAuto     = (prevCw.auto_snapshot === false) ? false : true;
+    const prevCwMax      = Number.isFinite(prevCw.max_snapshots) ? Number(prevCw.max_snapshots) : 64;
+    const prevCwRestoreWatch  = (prevCw.restore_watchlist || "latest").trim();
+    const prevCwRestoreHist   = (prevCw.restore_history || "latest").trim();
+    const prevCwRestoreRates  = (prevCw.restore_ratings || "latest").trim();
+
     const uiMode   = _getVal("mode");
     const uiSource = _getVal("source");
     const uiDebugMode = _getVal("debug"); // off|on|mods|full
@@ -2009,15 +2130,79 @@ async function saveSettings() {
       changed = true;
     }
 
-    // User Interface (Watchlist Preview toggle)
+    // User Interface + CrossWatch Tracker
     (function () {
-      const sel = document.getElementById("ui_show_watchlist_preview");
-      if (!sel) return;
-      const raw = String(sel.value || "true").toLowerCase();
-      const uiShow = raw === "false" ? false : true;
-      if (uiShow !== prevUiShow) {
-        cfg.ui = cfg.ui || {};
-        cfg.ui.show_watchlist_preview = uiShow;
+      const norm = (s) => (s ?? "").trim();
+      const truthy = (v) => ["true","1","yes","on","enabled","enable"].includes(String(v).toLowerCase());
+      const intOr = (el, prev) => {
+        if (!el) return prev;
+        const n = parseInt(norm(el.value || ""), 10);
+        return Number.isNaN(n) ? prev : Math.max(0, n);
+      };
+
+      // UI: watchlist preview
+      const uiSel = document.getElementById("ui_show_watchlist_preview");
+      if (uiSel) {
+        const uiShow = !truthy(uiSel.value) ? (uiSel.value === "false" ? false : true) : truthy(uiSel.value);
+        const finalUiShow = uiSel.value === "false" ? false : true;
+        if (finalUiShow !== prevUiShow) {
+          cfg.ui = cfg.ui || {};
+          cfg.ui.show_watchlist_preview = finalUiShow;
+          changed = true;
+        }
+      }
+
+      const cw = cfg.crosswatch || {};
+      let cwChanged = false;
+
+      // Enabled
+      const enabledEl = document.getElementById("cw_enabled");
+      const newEnabled = enabledEl ? truthy(enabledEl.value) : prevCwEnabled;
+      if (newEnabled !== prevCwEnabled) {
+        cw.enabled = newEnabled;
+        cwChanged = true;
+      }
+
+      // Retention days
+      const newRet = intOr(document.getElementById("cw_retention_days"), prevCwRet);
+      if (newRet !== prevCwRet) {
+        cw.retention_days = newRet;
+        cwChanged = true;
+      }
+
+      // Auto snapshot
+      const autoEl = document.getElementById("cw_auto_snapshot");
+      const newAuto = autoEl ? truthy(autoEl.value) : prevCwAuto;
+      if (newAuto !== prevCwAuto) {
+        cw.auto_snapshot = newAuto;
+        cwChanged = true;
+      }
+
+      // Max snapshots
+      const newMax = intOr(document.getElementById("cw_max_snapshots"), prevCwMax);
+      if (newMax !== prevCwMax) {
+        cw.max_snapshots = newMax;
+        cwChanged = true;
+      }
+
+      // Restore snapshots
+      const prevMap = {
+        watchlist: prevCwRestoreWatch,
+        history:   prevCwRestoreHist,
+        ratings:   prevCwRestoreRates,
+      };
+      for (const key of ["watchlist", "history", "ratings"]) {
+        const el = document.getElementById(`cw_restore_${key}`);
+        if (!el) continue;
+        const val = norm(el.value || "") || "latest";
+        if (val !== prevMap[key]) {
+          cw[`restore_${key}`] = val;
+          cwChanged = true;
+        }
+      }
+
+      if (cwChanged) {
+        cfg.crosswatch = cw;
         changed = true;
       }
     })();

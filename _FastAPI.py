@@ -312,9 +312,11 @@ def get_index_html() -> str:
       <div class="section" id="sec-ui">
         <div class="head" onclick="toggleSection('sec-ui')" style="display:flex;align-items:center">
           <span class="chev">▶</span>
-          <strong>User Interface</strong>
+          <strong>Settings (UI and CW Tracker)</strong>
         </div>
         <div class="body">
+          <!-- Sub-section: User Interface -->
+          <div class="sub">User Interface</div>
           <div class="grid2">
             <div>
               <label>Watchlist Preview</label>
@@ -324,6 +326,71 @@ def get_index_html() -> str:
               </select>
             </div>
           </div>
+
+          <!-- Sub-section: CrossWatch Tracker -->
+          <div class="sub" style="margin-top:1.25rem">CrossWatch Tracker</div>
+          <div class="sub">
+            Local backup tracker for Watchlist, Ratings and History snapshots
+            (stored under <code>/config/.cw_provider</code>).
+          </div>
+
+          <div class="grid2">
+            <div>
+              <label>Enabled</label>
+              <select id="cw_enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Retention (days)</label>
+              <input id="cw_retention_days" type="number" min="0" step="1" placeholder="30">
+              <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
+            </div>
+
+            <div>
+              <label>Auto snapshot</label>
+              <select id="cw_auto_snapshot">
+                <option value="true">On (before writes)</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Max snapshots per feature</label>
+              <input id="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
+              <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
+            </div>
+          </div>
+
+          <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
+          <div class="grid2">
+            <div>
+              <label>Watchlist snapshot</label>
+              <select id="cw_restore_watchlist">
+                <!-- options populated by JS, default "latest" -->
+              </select>
+            </div>
+
+            <div>
+              <label>History snapshot</label>
+              <select id="cw_restore_history">
+                <!-- options populated by JS, default "latest" -->
+              </select>
+            </div>
+
+            <div>
+              <label>Ratings snapshot</label>
+              <select id="cw_restore_ratings">
+                <!-- options populated by JS, default "latest" -->
+              </select>
+            </div>
+          </div>
+          <div class="sub" style="margin-top:0.5rem">
+            Select <code>latest</code> to use the most recent snapshot, or choose a specific file name
+            for each feature.
+          </div>
         </div>
       </div>
 
@@ -331,14 +398,19 @@ def get_index_html() -> str:
           <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Maintenance</strong></div>
           <div class="body">
             <div class="sub">Use these actions to reset CrossWatch states. They are safe but cannot be undone.</div>
-            <div><label>Debug</label><select id="debug"><option value="off">off</option><option value="on">on</option><option value="mods">on — including MOD debug</option><option value="full">on — full</option></select></div>
+            <div>
+              <label>Debug</label>
+              <select id="debug">
+                <option value="off">off</option>
+                <option value="on">on</option>
+                <option value="mods">on — including MOD debug</option>
+                <option value="full">on — full</option>
+              </select>
+            </div>
             <div class="chiprow">
-            <button class="btn danger" onclick="clearState()">Clear state</button>
-            <button class="btn danger" onclick="clearCache()">Clear cache</button>
-            <button class="btn danger" onclick="resetStats()">Reset statistics</button>
-            <button class="btn danger" onclick="resetCurrentlyPlaying()">Reset Currently Playing</button>
-            <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
-          </div>
+              <button class="btn danger" onclick="openMaintenanceModal()">Maintenance Tools</button>
+              <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
+            </div>
             <div id="tb_msg" class="msg ok hidden">Done ✓</div>
           </div>
         </div>

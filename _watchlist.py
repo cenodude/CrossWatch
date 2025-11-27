@@ -61,7 +61,15 @@ def _registry_sync_providers() -> list[str]:
     return [k.replace("_mod_", "").upper() for k in (MR_MODULES.get("SYNC") or {}).keys()]
 
 def _normalize_label(pid: str) -> str:
-    m = {"PLEX": "Plex", "SIMKL": "SIMKL", "TRAKT": "Trakt", "JELLYFIN": "Jellyfin", "EMBY": "Emby", "MDBLIST": "MDBList"}
+    m = {
+        "PLEX":       "Plex",
+        "SIMKL":      "SIMKL",
+        "TRAKT":      "Trakt",
+        "JELLYFIN":   "Jellyfin",
+        "EMBY":       "Emby",
+        "MDBLIST":    "MDBList",
+        "CROSSWATCH": "CrossWatch",
+    }
     return m.get(pid.upper(), pid.title())
 
 def _feat_enabled(fmap: dict | None, name: str) -> bool:

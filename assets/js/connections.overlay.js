@@ -23,6 +23,7 @@
     if (key === "JELLYFIN") return { cls: "brand-jellyfin", icon: "/assets/img/JELLYFIN.svg" };
     if (key === "EMBY")     return { cls: "brand-emby",     icon: "/assets/img/EMBY.svg" };
     if (key === "MDBLIST")     return { cls: "brand-mdblist",     icon: "/assets/img/MDBLIST.svg" };
+    if (key === "CROSSWATCH") return { cls: "brand-crosswatch", icon: "/assets/img/CROSSWATCH.svg" };
     return { cls: "", icon: "" };
   }
 
@@ -32,7 +33,7 @@
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
-      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; --jellyfin:#9654f4; --emby:#52b54b; --mdblist:#00a3ff; } 
+      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; --jellyfin:#9654f4; --emby:#52b54b; --mdblist:#00a3ff; --crosswatch:#7c5cff; }
 
       .cx-grid{
         display:grid;
@@ -61,7 +62,7 @@
       .prov-card:focus-visible{ outline:2px solid rgba(124,92,255,.7); }
       .prov-card.selected{ outline:2px solid rgba(124,92,255,.6); box-shadow:0 0 22px rgba(124,92,255,.25) }
 
-      /* Uppercase + same font vibe as pair chips */
+      /* Uppercase */
       .prov-title{
         font-family: inherit;
         font-weight: 800;
@@ -69,17 +70,18 @@
         letter-spacing: .02em;
         color: #fff;
         margin-bottom: 8px;
-        text-transform: uppercase; /* ensure PLEX, SIMKL, TRAKT */
+        text-transform: uppercase;
       }
 
-      /* keep your brand accents */
+      /* Brand accents */
       .prov-card.brand-plex{border-color:rgba(229,160,13,.55); box-shadow:inset 0 0 0 1px rgba(229,160,13,.20), 0 0 24px rgba(229,160,13,.18)}
       .prov-card.brand-simkl{border-color:rgba(0,183,235,.55); box-shadow:inset 0 0 0 1px rgba(0,183,235,.20), 0 0 24px rgba(0,183,235,.18)}
       .prov-card.brand-trakt{border-color:rgba(237,28,36,.55); box-shadow:inset 0 0 0 1px rgba(237,28,36,.20), 0 0 24px rgba(237,28,36,.18)}
       .prov-card.brand-jellyfin{border-color:rgba(150,84,244,.55);box-shadow:inset 0 0 0 1px rgba(150,84,244,.2),0 0 24px rgba(150,84,244,.18);}
       .prov-card.brand-emby{border-color:rgba(82,181,75,.55); box-shadow:inset 0 0 0 1px rgba(82,181,75,.20), 0 0 24px rgba(82,181,75,.18)}
       .prov-card.brand-mdblist{border-color:rgba(0,163,255,.55); box-shadow:inset 0 0 0 1px rgba(0,163,255,.20), 0 0 24px rgba(0,163,255,.18)}
-}
+      .prov-card.brand-crosswatch{border-color: rgba(124,92,255,.55); box-shadow:inset 0 0 0 1px rgba(124,92,255,.25), 0 0 24px rgba(124,92,255,.20);}
+      }
 
       .prov-caps{display:flex;gap:6px;margin:8px 0}
       .prov-caps .dot{width:8px;height:8px;border-radius:50%;background:#444}
@@ -113,6 +115,9 @@
       .brand-mdblist .prov-watermark{ background:
         radial-gradient(80% 60% at 35% 40%, rgba(0,163,255,.18), transparent 60%),
         radial-gradient(80% 60% at 50% 70%, rgba(0,163,255,.10), transparent 70%); }
+      .brand-crosswatch .prov-watermark{ background:
+        radial-gradient(80% 60% at 35% 40%, rgba(124,92,255,.18), transparent 60%),
+        radial-gradient(80% 60% at 50% 70%, rgba(124,92,255,.10), transparent 70%); } 
       .prov-watermark::after{
         content:""; position:absolute; top:50%; right:8%;
         width:120%; aspect-ratio:1/1; transform:translateY(-50%);

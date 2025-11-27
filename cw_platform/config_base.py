@@ -215,7 +215,17 @@ DEFAULT_CFG: Dict[str, Any] = {
             "libraries": []                             # whitelist of library GUIDs; empty = all
         },
     },
-
+    
+    "crosswatch": {
+        "root_dir":         "/config/.cw_provider",    # Root folder for local provider state
+        "enabled":          True,                      # Enable/disable CrossWatch as sync provider
+        "retention_days":   30,                        # Snapshot retention in days; 0 = keep forever
+        "auto_snapshot":    True,                      # Take snapshot before mutating main JSONs
+        "max_snapshots":    64,                        # Max snapshots per feature; 0 = unlimited
+        "restore_watchlist": "latest",                 # "", "latest", or specific snapshot name/stem      
+        "restore_history": "latest",                   # "", "latest", or specific snapshot name/stem  
+        "restore_ratings": "latest"                    # "", "latest", or specific snapshot name/stem
+    },
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {

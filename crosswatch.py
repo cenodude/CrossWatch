@@ -653,6 +653,44 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
+
+# --- File listing API 
+@app.get("/api/files", tags=["files"])
+def api_list_files(
+    path: str = Query(..., description="Directory path (absolute or config-relative)")
+) -> List[Dict[str, Any]]:
+    raw = (path or "").strip()
+    if not raw:
+        return []
+
+    p = Path(raw)
+    if not p.is_absolute():
+        p = (CONFIG / raw).resolve()
+    try:
+      try:
+          cfg_root = CONFIG.resolve()
+          if not str(p).startswith(str(cfg_root)):
+              return []
+      except Exception:
+          pass
+
+      if not p.exists() or not p.is_dir():
+          return []
+      out: List[Dict[str, Any]] = []
+      for child in sorted(p.iterdir()):
+          info: Dict[str, Any] = {
+              "name": child.name,
+              "is_dir": child.is_dir(),
+          }
+          try:
+              info["size"] = child.stat().st_size
+          except Exception:
+              pass
+          out.append(info)
+      return out
+    except Exception:
+      return []
+  
 # --- Logs (with tags for OpenAPI)
 @app.get("/api/logs/dump", tags=["logging"])
 def logs_dump(channel: str = "TRAKT", n: int = 50):

@@ -10,7 +10,7 @@
   // Helpers
   // ────────────────────────────────────────────────────────────────────────────
   const key = (s) => String(s || "").trim().toUpperCase();
-  const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt", JELLYFIN: "jellyfin", EMBY: "emby" }[key(k)] || "x");
+  const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt", JELLYFIN: "jellyfin", CROSSWATCH: "crosswatch", EMBY: "emby" }[key(k)] || "x");
   const truthy = (v) => {
     if (v && typeof v === "object") v = v.enable;
     if (typeof v === "string") v = v.toLowerCase().trim();

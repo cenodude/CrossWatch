@@ -336,7 +336,7 @@ def api_export_options():
 
 @router.get("/export/sample", response_class=JSONResponse)
 def api_export_sample(
-    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
@@ -361,7 +361,7 @@ def api_export_sample(
 
 @router.get("/export/file")
 def api_export_file(
-    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST"),
+    provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     q: str = Query("", description="optional search filter (server-side)"),

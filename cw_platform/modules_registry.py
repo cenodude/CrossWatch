@@ -18,6 +18,7 @@ MODULES = {
         "_mod_JELLYFIN": "providers.sync._mod_JELLYFIN",
         "_mod_EMBY":     "providers.sync._mod_EMBY",
         "_mod_MDBLIST":  "providers.sync._mod_MDBLIST",
+        "_mod_CROSSWATCH": "providers.sync._mod_CROSSWATCH",
     },
 }
 

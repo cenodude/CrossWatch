@@ -21,6 +21,7 @@ const fmtCounts = c => {
     const up = String(p || "").toUpperCase();
     if (up === "JELLYFIN") return "JF";
     if (up === "MDBLIST") return "MDB";
+    if (up === "CROSSWATCH") return "CW";
     return up;
   };
   return entries
@@ -470,25 +471,19 @@ export default {
 
       const where = prov => {
         switch (prov) {
-          case "PLEX":
-            return "Plex";
-          case "JELLYFIN":
-            return "Jellyfin";
-          case "EMBY":
-            return "Emby";
-          case "TRAKT":
-            return "Trakt";
-          case "SIMKL":
-            return "Simkl";
-          case "MDBLIST":
-            return "mdblist";
-          default:
-            return "source";
+          case "PLEX":      return "Plex";
+          case "JELLYFIN":  return "Jellyfin";
+          case "EMBY":      return "Emby";
+          case "TRAKT":     return "Trakt";
+          case "SIMKL":     return "Simkl";
+          case "MDBLIST":   return "mdblist";
+          case "CROSSWATCH":return "CrossWatch";
+          default:          return "source";
         }
       };
 
-      const isServer = ["PLEX", "JELLYFIN", "EMBY"].includes(p);
-      const isTracker = ["TRAKT", "SIMKL", "MDBLIST"].includes(p);
+      const isServer   = ["PLEX", "JELLYFIN", "EMBY"].includes(p);
+      const isTracker  = ["TRAKT", "SIMKL", "MDBLIST", "CROSSWATCH"].includes(p);
 
       if (f === "history") {
         if (isServer) {
