@@ -47,7 +47,7 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
 </p>
 
-**CrossWatch** is a lightweight synchronization engine that keeps your **Plex, Jellyfin, Emby, Simkl, Trakt and Mdblist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. It supports **movies** and **shows/episodes**. Currently no Anime support, perhaps in the future.
+**CrossWatch** is a  synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. CW also includes its own tracker, so you can keep your data safe with snapshots. It supports **movies** and **shows/episodes**. Currently no Anime support, perhaps in the future.
 
 ## Why is CrossWatch different? (in a nutshell)
 - One brain for all your media syncs.
