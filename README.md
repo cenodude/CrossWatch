@@ -58,7 +58,7 @@
 - Beautiful UI, rich debug logs, and lots of sensible toggles.
 - Simple **and** advanced scheduling for real freedom.
 - Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
-- Unified, visual Watchlist across providers — filter, search, bulk remove, etc.
+- Unified, visual Watchlist across providers (filter, search, bulk remove, etc.)
 - **Back-to-the-Future (Fallback GUID)**  
   - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
 - **Intelligent Webhooks** (Plex / Jellyfin / Emby) -> Trakt
