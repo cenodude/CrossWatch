@@ -57,7 +57,7 @@
   - Also great for backups or to keep your media servers in sync.
 - Beautiful UI, rich debug logs, and lots of sensible toggles.
 - Simple **and** advanced scheduling for real freedom.
-- **soon in v0.4.4** Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
+- Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
 - Unified, visual Watchlist across providers — filter, search, bulk remove, etc.
 - **Back-to-the-Future (Fallback GUID)**  
   - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
@@ -86,7 +86,7 @@
           <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
-          <li>Sync playlists (one-/two-way — disabled)</li>
+          <li>Keep snapshots with CrossWatch tracker</li>
           <li>Auto-remove from watchlist after finish</li>
         </ul>
       </td>
@@ -97,7 +97,8 @@
           <li>Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
-            <img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+            <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
+            &nbsp;<img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
             &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
             &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
           </li>
@@ -111,6 +112,7 @@
     </tr>
   </table>
 </div>
+
 
 ## ⬇️ Download
 
