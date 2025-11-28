@@ -264,13 +264,15 @@ function injectCSS() {
     cursor: wait;
     box-shadow: none;
   }
-
   /* Per-action accent colors */
   .cw-maint .action-row[data-op="state"] .action-icon {
     background: radial-gradient(circle at 0 0,#ff5a6b,#7d1e2c);
   }
   .cw-maint .action-row[data-op="cache"] .action-icon {
     background: radial-gradient(circle at 0 0,#b18bff,#3b2778);
+  }
+  .cw-maint .action-row[data-op="meta"] .action-icon {
+    background: radial-gradient(circle at 0 0,#ffc86b,#7c4a21);
   }
   .cw-maint .action-row[data-op="tracker"] .action-icon {
     background: radial-gradient(circle at 0 0,#71c5ff,#1f3a63);
@@ -281,7 +283,6 @@ function injectCSS() {
   .cw-maint .action-row[data-op="playing"] .action-icon {
     background: radial-gradient(circle at 0 0,#c3c8ff,#333a7b);
   }
-
   .cw-maint .status {
     font-size: 12px;
     margin-top: 4px;
@@ -292,6 +293,25 @@ function injectCSS() {
   }
   .cw-maint .status.err {
     color: #ff9a9a;
+  }
+  #cw-clean-all {
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.2);
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    cursor: pointer;
+    background: linear-gradient(135deg,#ff6475,#ff8a7a);
+    color: #fff;
+    box-shadow: 0 0 12px rgba(255,106,126,.6);
+    margin-right: 8px; /* small gap before CLOSE */
+  }
+  #cw-clean-all[disabled] {
+    opacity: .6;
+    cursor: wait;
+    box-shadow: none;
   }
   `;
   document.head.appendChild(el);
@@ -319,7 +339,7 @@ export default {
             </div>
           </div>
           <div class="cx-head-right">
-            <span class="head-badge">Safe but irreversible</span>
+            <button id="cw-clean-all" class="cw-btn danger">Clean Everything</button>
             <button type="button" class="close-btn" id="cxm-close">Close</button>
           </div>
         </div>
@@ -379,6 +399,24 @@ export default {
                 </div>
               </div>
               <button type="button" class="run-btn" data-label="Clear provider cache">Run</button>
+            </div>
+
+            <div class="action-row" data-op="meta">
+              <div class="action-main">
+                <div class="action-icon">
+                  <span class="material-symbols-rounded" aria-hidden="true">image_not_supported</span>
+                </div>
+                <div class="action-copy">
+                  <div class="action-line">
+                    <div class="action-title">Remove metadata cache</div>
+                    <span class="action-tag">/config/cache</span>
+                  </div>
+                  <div class="action-desc">
+                    Deletes cached posters and metadata under <code>/config/cache</code>. Artwork and meta will be refetched when needed.
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="run-btn" data-label="Remove metadata cache">Run</button>
             </div>
 
             <div class="action-row" data-op="tracker">
@@ -505,6 +543,10 @@ export default {
           res = await fjson("/api/maintenance/clear-cache", {
             method: "POST",
           });
+        } else if (kind === "metadata") {
+          res = await fjson("/api/maintenance/clear-metadata-cache", {
+            method: "POST",
+          });
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
@@ -555,6 +597,7 @@ export default {
     const map = {
       state: "state",
       cache: "cache",
+      meta: "metadata",
       tracker: "tracker",
       stats: "stats",
       playing: "playing",
@@ -567,6 +610,67 @@ export default {
         btn.addEventListener("click", () => runOp(kind, btn));
       }
     });
+
+    // Clean Everything button
+    const cleanAllBtn = root.querySelector("#cw-clean-all");
+    if (cleanAllBtn) {
+      cleanAllBtn.addEventListener("click", async (ev) => {
+        const btn = ev.currentTarget;
+        if (!confirm("This will clear all state, caches, tracker data, stats and currently playing. Continue?")) {
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Cleaning...";
+        const ops = [
+          { url: "/api/maintenance/clear-state", opts: { method: "POST" } },
+          { url: "/api/maintenance/clear-cache", opts: { method: "POST" } },
+          { url: "/api/maintenance/clear-metadata-cache", opts: { method: "POST" } },
+          {
+            url: "/api/maintenance/crosswatch-tracker/clear",
+            opts: {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                clear_state: true,
+                clear_snapshots: true,
+              }),
+            },
+          },
+          {
+            url: "/api/maintenance/reset-stats",
+            opts: {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: "{}",
+            },
+          },
+          {
+            url: "/api/maintenance/reset-currently-watching",
+            opts: { method: "POST" },
+          },
+        ];
+
+        try {
+          for (const op of ops) {
+            await fjson(op.url, op.opts);
+          }
+
+          await refreshSummary();
+          setStatus("Done: Clean Everything", "ok");
+
+          btn.textContent = "All Clean!";
+          await new Promise((r) => setTimeout(r, 1200));
+          btn.textContent = "Clean Everything";
+        } catch (err) {
+          console.error(err);
+          btn.textContent = "Error";
+          setStatus("Error while cleaning. See console.", "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
 
     await refreshSummary();
     setStatus("Ready.");

@@ -148,6 +148,7 @@ def get_index_html() -> str:
   <div class="tabs">
     <div id="tab-main" class="tab active" onclick="showTab('main')">Main</div>
     <div id="tab-watchlist" class="tab" onclick="showTab('watchlist')">Watchlist</div>
+    <div id="tab-editor" class="tab" onclick="showTab('editor')">Editor</div>
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
@@ -235,8 +236,11 @@ def get_index_html() -> str:
     </div>
   </section>
 
-  <section id="page-watchlist" class="card hidden"><div class="title">Watchlist</div><div id="watchlist-root"></div></section>
+  <section id="page-watchlist" class="card hidden">
+    <div class="title">Watchlist</div><div id="watchlist-root"></div>
+  </section>
 
+  <section id="page-editor" class="card hidden"></section>
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
     <div id="cw-settings-grid">
@@ -437,6 +441,7 @@ def get_index_html() -> str:
 <script src="/assets/js/insights.js" defer></script>
 <script src="/assets/js/settings-insight.js" defer></script>
 <script src="/assets/js/scrobbler.js" defer></script>
+<script src="/assets/js/editor.js" defer></script>
 
 <script src="/assets/auth/auth.plex.js" defer></script>
 <script src="/assets/auth/auth.simkl.js" defer></script>
@@ -867,6 +872,54 @@ document.readyState==='loading'
   }
 })();
 </script>
+<script>
+(function () {
+  const origShowTab = window.showTab;
 
+  function setVisible(id, show) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("hidden", !show);
+  }
+
+  function setActive(id, on) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("active", !!on);
+  }
+
+  window.showTab = function (name) {
+    // Let the old implementation do its thing first
+    if (typeof origShowTab === "function") {
+      try { origShowTab(name); } catch (e) {}
+    }
+
+    const tab = String(name || "main");
+    const isMain      = tab === "main";
+    const isWatchlist = tab === "watchlist";
+    const isEditor    = tab === "editor";
+    const isSettings  = tab === "settings";
+
+    // Cards
+    setVisible("ops-card",          isMain);
+    setVisible("stats-card",        isMain);
+    setVisible("placeholder-card",  isMain);
+    setVisible("page-watchlist",    isWatchlist);
+    setVisible("page-editor",       isEditor);
+    setVisible("page-settings",     isSettings);
+
+    // Tabs
+    setActive("tab-main",      isMain);
+    setActive("tab-watchlist", isWatchlist);
+    setActive("tab-editor",    isEditor);
+    setActive("tab-settings",  isSettings);
+
+    try {
+      document.dispatchEvent(new CustomEvent("tab-changed", { detail: { tab } }));
+    } catch (e) {}
+  };
+})();
+</script>
 </body></html>
+
 """

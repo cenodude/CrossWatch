@@ -97,6 +97,57 @@ def _scan_provider_cache() -> Dict[str, Any]:
     out["count"] = len(files)
     return out
 
+def _scan_cache_dir(cache_dir: Path) -> Dict[str, Any]:
+    exists = cache_dir.exists()
+    out: Dict[str, Any] = {
+        "exists": exists,
+        "root": str(cache_dir),
+        "entries": [],
+        "count": 0,
+    }
+    if not exists:
+        return out
+
+    entries: List[Dict[str, Any]] = []
+    try:
+        for p in cache_dir.iterdir():
+            if p.is_file() or p.is_dir():
+                entries.append(_file_meta(p))
+    except Exception:
+        pass
+
+    entries.sort(key=lambda x: x.get("name") or "")
+    out["entries"] = entries
+    out["count"] = len(entries)
+    return out
+
+
+def _clear_cache_dir(cache_dir: Path) -> List[str]:
+    removed: List[str] = []
+    if not cache_dir.exists():
+        return removed
+    for p in cache_dir.iterdir():
+        if _safe_remove_path(p):
+            removed.append(p.name)
+    return removed
+
+
+@router.post("/clear-metadata-cache")
+def clear_metadata_cache() -> Dict[str, Any]:
+    CACHE_DIR, *_ = _cw()
+
+    before = _scan_cache_dir(CACHE_DIR)
+    removed = _clear_cache_dir(CACHE_DIR)
+    after = _scan_cache_dir(CACHE_DIR)
+
+    return {
+        "ok": True,
+        "root": str(CACHE_DIR),
+        "removed": removed,
+        "before": before,
+        "after": after,
+    }
+
 def _scan_cw_tracker(root: Path) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "exists": root.exists(),
@@ -121,11 +172,16 @@ def _scan_cw_tracker(root: Path) -> Dict[str, Any]:
 
     state_files.sort(key=lambda x: x.get("name") or "")
     snapshots.sort(key=lambda x: x.get("mtime") or "")
+    core_names = {"history.json", "ratings.json", "watchlist.json"}
+    state_count = sum(
+        1 for f in state_files
+        if (f.get("name") or "") in core_names
+    )
 
     out["state_files"] = state_files
     out["snapshots"] = snapshots
     out["counts"] = {
-        "state_files": len(state_files),
+        "state_files": state_count,
         "snapshots": len(snapshots),
     }
     return out

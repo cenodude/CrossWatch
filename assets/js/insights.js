@@ -553,42 +553,67 @@
     const rootDir = "/config/.cw_provider";
     const snapRoot = `${rootDir}/snapshots`;
 
-    const files = await fetch(`/api/files?path=${encodeURIComponent(snapRoot)}`)
-      .then(r => r.json())
-      .catch(() => []);
+    const formatSnapshotLabel = name => {
+      const base = String(name || "").replace(/\.json$/,"");
+      const stem = base.split("-", 1)[0];
+      const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stem);
+      if (!m) return base;
+      const [, Y, M, D, h, m2] = m;
+      return `${Y}-${M}-${D} - ${h}:${m2}`;
+    };
+
+    let filesRaw;
+    try {
+      filesRaw = await fetch(`/api/files?path=${encodeURIComponent(snapRoot)}`).then(r => r.json());
+    } catch {
+      filesRaw = [];
+    }
+    const files = Array.isArray(filesRaw?.files) ? filesRaw.files : filesRaw;
+
     const filtered = (files || [])
-      .filter(f => !f.is_dir && f.name.endsWith(`-${feature}.json`))
+      .filter(f => !f.is_dir && f.name && f.name.endsWith(`-${feature}.json`))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    const options = [{ name: "latest" }, ...filtered.map(f => ({ name: f.name }))];
+    const latestList = filtered.slice(-10).reverse();
 
-    const modal   = ensureCrosswatchSnapshotModal();
+    const modal = ensureCrosswatchSnapshotModal();
     const headSpan = modal.querySelector(".cw-snap-head .hl");
-    const body    = modal.querySelector(".cw-snap-body");
+    const body = modal.querySelector(".cw-snap-body");
 
     if (headSpan) headSpan.textContent = feature;
 
-    if (!options.length) {
-      body.innerHTML = `<div class="muted">No snapshots found</div>`;
-    } else {
-      body.innerHTML = options.map(o => `
-        <button class="snap-btn" data-name="${o.name}">
-          ${o.name === "latest"
-            ? "🟢 Latest"
-            : o.name.replace(/\\.json$/,"")}  
-        </button>
-      `).join("");
+    if (!latestList.length) {
+      body.innerHTML = `<div class="muted">No snapshots found for this feature yet.</div>`;
+      modal.classList.remove("cw-snap-hidden");
+      return;
     }
+
+    const options = [
+      { name: "latest", label: "🟢 Latest" },
+      ...latestList.map(f => ({
+        name: f.name,
+        label: formatSnapshotLabel(f.name),
+      })),
+    ];
+
+    body.innerHTML = options.map(o => `
+      <button class="snap-btn" data-name="${o.name}">
+        ${o.label}
+      </button>
+    `).join("");
 
     body.querySelectorAll(".snap-btn").forEach(btn => {
       btn.addEventListener("click", async e => {
         const name = e.currentTarget.dataset.name;
         await fetch(
-          `/api/crosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`,
+          `/api/ccrosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`,
           { method: "POST" }
         );
         modal.classList.add("cw-snap-hidden");
-        if (window.cxToast) window.cxToast(`Snapshot set: ${name}`);
+        if (window.cxToast) {
+          const label = name === "latest" ? "latest" : formatSnapshotLabel(name);
+          window.cxToast(`Snapshot set: ${label}`);
+        }
         refreshInsights(true);
       });
     });

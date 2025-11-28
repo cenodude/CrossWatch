@@ -146,10 +146,25 @@ def _fetch_bucket(sess, headers, url: str, typ_hint: str, per_page: int, max_pag
                 m = normalize_watchlist_row({"type": "show", "show": row["show"]})
             elif t == "season" and isinstance(row.get("season"), dict):
                 se = row["season"]; show = row.get("show") or {}
-                m = id_minimal({"type": "season", "ids": se.get("ids") or {}, "show_ids": show.get("ids") or {}, "season": se.get("number"), "series_title": show.get("title")})
+                m = id_minimal({
+                    "type": "season",
+                    "ids": se.get("ids") or {},
+                    "show_ids": show.get("ids") or {},
+                    "season": se.get("number"),
+                    "series_title": show.get("title"),
+                    "title": show.get("title"),
+                })
             elif t == "episode" and isinstance(row.get("episode"), dict):
                 ep = row["episode"]; show = row.get("show") or {}
-                m = id_minimal({"type": "episode", "ids": ep.get("ids") or {}, "show_ids": show.get("ids") or {}, "season": ep.get("season"), "episode": ep.get("number"), "series_title": show.get("title")})
+                m = id_minimal({
+                    "type": "episode",
+                    "ids": ep.get("ids") or {},
+                    "show_ids": show.get("ids") or {},
+                    "season": ep.get("season"),
+                    "episode": ep.get("number"),
+                    "series_title": show.get("title"),
+                    "title": ep.get("title") or show.get("title"),
+                })
             else:
                 continue
 

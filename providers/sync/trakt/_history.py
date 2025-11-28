@@ -209,6 +209,7 @@ def _fetch_history(
                     "season": ep.get("season"),
                     "episode": ep.get("number"),
                     "series_title": show.get("title"),
+                    "title": ep.get("title"),
                 })
                 m["watched_at"] = w
                 out.append(m); added += 1

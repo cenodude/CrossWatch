@@ -4445,3 +4445,12 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   cursor: pointer;
 }
 .snap-close:hover { background: rgba(255,255,255,.2); }
+
+/* Full-width page editor card */
+#page-editor.card{
+  max-width: none;
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  grid-column: 1 / -1;
+}

@@ -1794,6 +1794,20 @@ window.maskSecret = function maskSecret(elOrId /*, hasValue */) {
   el.dataset.clear   = "";
 };
 
+function formatCwSnapshotLabel(name) {
+  if (!name || typeof name !== "string") return name || "";
+  const stem = name.replace(/\.json$/,"").split("-", 1)[0];
+  if (!/^\d{8}T\d{6}Z$/.test(stem)) return name;
+
+  const year  = stem.slice(0, 4);
+  const month = stem.slice(4, 6);
+  const day   = stem.slice(6, 8);
+  const hour  = stem.slice(9, 11);
+  const min   = stem.slice(11, 13);
+
+  return `${year}-${month}-${day} - ${hour}:${min}`;
+}
+
 async function loadCrossWatchSnapshots(cfg) {
   const cw = (cfg && cfg.crosswatch) || {};
   const desired = {
@@ -1851,7 +1865,7 @@ async function loadCrossWatchSnapshots(cfg) {
       for (const name of names) {
         const o = document.createElement("option");
         o.value = name;
-        o.textContent = name;
+        o.textContent = formatCwSnapshotLabel(name);
         sel.appendChild(o);
       }
 

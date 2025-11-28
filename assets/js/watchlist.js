@@ -1,4 +1,4 @@
-// watchlist.js - client-side watchlist management (patched)
+// watchlist.js - client-side watchlist management
 
 (function () {
 
@@ -33,8 +33,8 @@
   .wl-table td.genre{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .wl-table th.sortable{cursor:pointer;user-select:none}
   .wl-table th.sortable::after{content:"";margin-left:6px;opacity:.6}
-  .wl-table th.sort-asc::after{content:"▲"} /* patched */
-  .wl-table th.sort-desc::after{content:"▼"} /* patched */
+  .wl-table th.sort-asc::after{content:"▲"}
+  .wl-table th.sort-desc::after{content:"▼"}
 
   /* Poster thumb in list */
   .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
@@ -91,6 +91,9 @@
   /* Resizers */
   .wl-resize{position:absolute;right:0;top:0;height:100%;width:6px;cursor:col-resize;opacity:.25}
   .wl-resize:hover{opacity:.55}
+
+  .wl-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;font-size:13px}
+  .wl-pagination button{min-width:80px}
   `;
 
   // style inject
@@ -131,6 +134,12 @@
           </table>
         </div>
 
+        <div id="wl-pagination" class="wl-pagination" style="display:none">
+          <button id="wl-page-prev" class="wl-btn">Previous</button>
+          <span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span>
+          <button id="wl-page-next" class="wl-btn">Next</button>
+        </div>
+
         <div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items</div>
       </div>
 
@@ -160,6 +169,7 @@
               <option value="JELLYFIN">JELLYFIN</option>
               <option value="EMBY">EMBY</option>
               <option value="MDBLIST">MDBLIST</option>
+              <option value="CROSSWATCH">CROSSWATCH</option>
             </select>
 
             <label id="wl-size-label">Size</label>
@@ -247,6 +257,10 @@
   const genreSel    = $("wl-genre");
   const trailerModal= $("wl-trailer");
   const trailerClose= $("wl-trailer-close");
+  const pagerEl     = $("wl-pagination");
+  const pagerPrev   = $("wl-page-prev");
+  const pagerNext   = $("wl-page-next");
+  const pagerLabel  = $("wl-page-label");
 
   /* ========= column widths ========= */
   const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
@@ -336,6 +350,10 @@
 
   let TMDB_OK = true;
 
+  const PAGE_SIZE = 50;
+  let currentPage = 1;
+  let pageInfo = { start:0, end:0, total:0, pageCount:1 };
+
   /* ========= utils ========= */
   const esc = s => String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   const toLocale = () => navigator.language || "en-US";
@@ -358,6 +376,32 @@
     }
     return typeof iso === "string" ? iso.trim() : "";
   };
+
+  function computePageInfo() {
+    const total = filtered.length;
+    const pageCount = total ? Math.ceil(total / PAGE_SIZE) : 1;
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > pageCount) currentPage = pageCount;
+    const start = total ? (currentPage - 1) * PAGE_SIZE : 0;
+    const end = total ? Math.min(start + PAGE_SIZE, total) : 0;
+    pageInfo = { start, end, total, pageCount };
+  }
+
+  function updatePaginationUI() {
+    if (!pagerEl) return;
+    const total = pageInfo.total;
+    if (!total) {
+      pagerEl.style.display = "none";
+      return;
+    }
+    const start = pageInfo.start;
+    const end = pageInfo.end;
+    const pageCount = pageInfo.pageCount;
+    pagerEl.style.display = "";
+    pagerLabel.textContent = `Page ${currentPage} of ${pageCount} • Rows ${start + 1}\u2013${end} of ${total}`;
+    pagerPrev.disabled = currentPage <= 1;
+    pagerNext.disabled = currentPage >= pageCount;
+  }
 
   /* ========= hide/show snackbar ========= */
   hideBtn?.addEventListener("click", () => {
@@ -490,21 +534,48 @@
     MDBLIST:"/assets/img/MDBLIST.svg",
     CROSSWATCH:"/assets/img/CROSSWATCH.svg"
   };
-  const providerChip = (name, ok) => {
-    const src = SRC_LOGOS[name], icon = ok ? "check_circle" : "cancel", cls = ok ? "ok" : "miss";
-    return `<span class="wl-mat ${cls}" title="${name}${ok ? " present" : " missing"}">${src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`}<span class="material-symbol">${icon}</span></span>`;
+  const providerChip = name => {
+    const src = SRC_LOGOS[name];
+    return `<span class="wl-mat ok" title="${name} present">${
+      src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`
+    }<span class="material-symbol">check_circle</span></span>`;
   };
-  let providerActive = (p, have) => providerChip(p, have); // replaced after config load
 
+  let providerActive = (p, have) => (have ? providerChip(p) : "");
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
 
   function updateMetrics() {
-    const ICON  = { PLEX:"movie_filter", SIMKL:"playlist_add", TRAKT:"featured_play_list", JELLYFIN:"bookmark_added", EMBY:"library_add", MDBLIST:"grading", CROSSWATCH: "save" };
+    const ICON = {
+      PLEX: "movie",
+      JELLYFIN: "movie",
+      EMBY: "movie",
+      TRAKT: "featured_play_list",
+      SIMKL: "featured_play_list",
+      MDBLIST: "featured_play_list",
+      CROSSWATCH: "save"
+    };
+    const LABEL = {
+      CROSSWATCH: "CW"
+    };
     const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
-    const counts = ORDER.reduce((acc, p) => (acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0), acc), {});
-    metricsEl.innerHTML = ORDER.filter(p => activeProviders.has(p)).map(p =>
-      `<div class="metric" data-w="${p}"><span class="material-symbol">${ICON[p]}</span><div><div class="m-val">${counts[p]}</div><div class="m-lbl">${p}</div></div></div>`
-    ).join("");
+    const counts = ORDER.reduce((acc, p) => {
+      acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
+      return acc;
+    }, {});
+
+    metricsEl.innerHTML = ORDER
+      .filter(p => activeProviders.has(p))
+      .map(p => {
+        const label = LABEL[p] || p;
+        return `<div class="metric" data-w="${p}">
+          <span class="material-symbol">${ICON[p]}</span>
+          <div>
+            <div class="m-val">${counts[p]}</div>
+            <div class="m-lbl">${label}</div>
+          </div>
+        </div>`;
+      })
+      .join("");
   }
 
   /* ========= sorting ========= */
@@ -526,7 +597,7 @@
       genre: (a, b) => {
         const ga = (extractGenres(a)[0] || "").toLowerCase();
         const gb = (extractGenres(b)[0] || "").toLowerCase();
-        const sentinel = "\uFFFF"; /* patched */
+        const sentinel = "\uFFFF";
         const va = ga || (sortDir === "asc" ? sentinel : "");
         const vb = gb || (sortDir === "asc" ? sentinel : "");
         const diff = cmp(va, vb) || byTitle(a, b);
@@ -575,8 +646,9 @@
   const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" : "both");
 
   function applyFilters() {
+    currentPage = 1;
     const q = (qEl.value || "").toLowerCase().trim();
-    const ty = (tEl.value || "").trim(); // "", "movie", "tv"
+    const ty = (tEl.value || "").trim();
     const provider = (providerSel.value || "").toUpperCase();
     const releasedPref = normReleased(releasedSel?.value || prefs.released || "both");
     const genrePref = (genreSel?.value || prefs.genre || "").trim().toLowerCase();
@@ -714,14 +786,19 @@
     _show(postersEl, posters); _show(listWrapEl, !posters); _show(sizeInput, posters); _show(sizeLabel, posters);
     applyOverlayPrefUI();
 
+    computePageInfo();
+
     if (!filtered.length) {
       empty.style.display = ""; selAll.checked = false; listSelectAll.checked = false;
-      postersEl.innerHTML = ""; listBodyEl.innerHTML = ""; selCount.textContent = "0 selected"; metricsEl.innerHTML = ""; return;
+      postersEl.innerHTML = ""; listBodyEl.innerHTML = ""; selCount.textContent = "0 selected"; metricsEl.innerHTML = "";
+      if (pagerEl) pagerEl.style.display = "none";
+      return;
     }
 
     empty.style.display = "none";
     posters ? renderPosters() : renderList();
     selCount.textContent = `${selected.size} selected`;
+    updatePaginationUI();
   }
 
   function renderPosters(){
@@ -729,7 +806,11 @@
     const frag=document.createDocumentFragment();
     const canTMDB=(typeof TMDB_OK==="undefined")?true:!!TMDB_OK;
 
-    filtered.forEach((it,i)=>{
+    const start = pageInfo.start;
+    const end = pageInfo.end;
+    const pageItems = filtered.slice(start, end);
+
+    pageItems.forEach((it,i)=>{
       const key=normKey(it);
       const imgUrl=canTMDB ? artUrl(it,"w342") : "";
       const src=imgUrl || "/assets/img/placeholder_poster.svg";
@@ -758,7 +839,10 @@
   function renderList() {
     listBodyEl.replaceChildren();
     const frag = document.createDocumentFragment();
-    const rows = sortFilteredForList(filtered);
+    const sorted = sortFilteredForList(filtered);
+    const start = pageInfo.start;
+    const end = pageInfo.end;
+    const rows = sorted.slice(start, end);
 
     rows.forEach(it => {
       const key = normKey(it), tr = document.createElement("tr");
@@ -772,9 +856,10 @@
         TRAKT:p.includes("TRAKT"),
         JELLYFIN:p.includes("JELLYFIN"),
         EMBY:p.includes("EMBY"),
-        MDBLIST:p.includes("MDBLIST")
+        MDBLIST:p.includes("MDBLIST"),
+        CROSSWATCH:p.includes("CROSSWATCH")
       };
-      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}</div>`;
+      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}${providerActive("CROSSWATCH",have.CROSSWATCH)}</div>`;
       const d = getDerived(it);
 
       tr.innerHTML = `
@@ -802,7 +887,7 @@
     });
 
     listBodyEl.appendChild(frag);
-    listSelectAll.checked = rows.length > 0 && rows.every(x => selected.has(normKey(x)));
+    listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
     updateSortHeaderUI();
   }
 
@@ -929,6 +1014,23 @@
 
   viewSel.addEventListener("change", () => { viewMode = viewSel.value === "list" ? "list" : "posters"; prefs.view = viewMode; writePrefs(prefs); render(); });
 
+  pagerPrev?.addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage--;
+      render();
+    }
+  }, true);
+
+  pagerNext?.addEventListener("click", () => {
+    const total = filtered.length;
+    if (!total) return;
+    const maxPage = Math.ceil(total / PAGE_SIZE);
+    if (currentPage < maxPage) {
+      currentPage++;
+      render();
+    }
+  }, true);
+
   /* ========= refresh ========= */
   async function hardReloadWatchlist(){
     try{ items=await fetchWatchlist(); populateGenreOptions(buildGenreIndex(items)); applyFilters(); rebuildDeleteProviderOptions(); }
@@ -946,7 +1048,7 @@
     releasedSel.value = prefs.released; overlaysSel.value = prefs.overlays; morePanel.style.display = prefs.moreOpen ? "" : "none";
 
     const cfg = await fetchConfig();
-    const active = new Set();
+    const active = new Set(["CROSSWATCH"]);
     if (cfg?.plex?.account_token) active.add("PLEX");
     if (cfg?.simkl?.access_token) active.add("SIMKL");
     if (cfg?.trakt?.access_token) active.add("TRAKT");
@@ -955,8 +1057,8 @@
     if (cfg?.mdblist?.api_key) active.add("MDBLIST");
 
     activeProviders = active;
-    providerActive = (p, have) => (activeProviders.has(p) ? providerChip(p, have) : "");
-
+    providerActive = (p, have) =>
+      (activeProviders.has(p) && have ? providerChip(p) : "");
     items = await fetchWatchlist();
     populateGenreOptions(buildGenreIndex(items));
     applyOverlayPrefUI(); applyFilters(); rebuildDeleteProviderOptions(); wireSortableHeaders();
