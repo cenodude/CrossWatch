@@ -2,13 +2,10 @@
 # CrossWatch - Tracker editor API for history / ratings / watchlist
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-
 from typing import Any, Dict
 import io
-
 from fastapi import APIRouter, Body, Query, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
-
 from _editor import (
     load_state,
     save_state,
@@ -98,5 +95,4 @@ async def api_editor_import(file: UploadFile = File(...)) -> Dict[str, Any]:
         stats = import_tracker_upload(payload, filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # stats contains: files, overwritten, target, kind, name, states, snapshots, mode
     return {"ok": True, **stats}

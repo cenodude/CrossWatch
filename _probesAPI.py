@@ -11,6 +11,11 @@ from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 try:
+    from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH_PROVIDER
+except Exception:
+    TRAKT_AUTH_PROVIDER = None
+
+try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
 except Exception:
@@ -148,17 +153,47 @@ def _probe_simkl_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tu
 
 def _probe_trakt_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["trakt"]; now = time.time()
-    if now - ts < max_age_sec: return ok, rsn
+    if now - ts < max_age_sec:
+        return ok, rsn
     tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})
     auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
     cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
     tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
+
     if not cid or not tok:
-        rsn = "Trakt: missing token/client id"; PROBE_DETAIL_CACHE["trakt"] = (now, False, rsn); return False, rsn
-    headers = {**UA, "Authorization": f"Bearer {tok}", "trakt-api-key": cid, "trakt-api-version": "2"}
-    code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
-    ok = (code == 200); rsn = "" if ok else _reason_http(code, "Trakt")
-    PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn); return ok, rsn
+        rsn = "Trakt: missing token/client id"
+        PROBE_DETAIL_CACHE["trakt"] = (now, False, rsn)
+        return False, rsn
+
+    def _call(token: str) -> int:
+        headers = {
+            **UA,
+            "Authorization": f"Bearer {token}",
+            "trakt-api-key": cid,
+            "trakt-api-version": "2",
+        }
+        code, _ = _http_get("https://api.trakt.tv/users/settings", headers=headers)
+        return code
+    code = _call(tok)
+
+    # heal on expired token
+    if code in (401, 403) and TRAKT_AUTH_PROVIDER is not None:
+        try:
+            res = TRAKT_AUTH_PROVIDER.refresh(cfg)
+        except Exception:
+            res = {"ok": False, "error": "exception_in_refresh"}
+
+        if isinstance(res, dict) and res.get("ok"):
+            tr = (cfg.get("trakt") or cfg.get("TRAKT") or {})
+            auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
+            new_tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
+            if new_tok:
+                code = _call(new_tok)
+    ok = (code == 200)
+    rsn = "" if ok else _reason_http(code, "Trakt")
+    PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn)
+    return ok, rsn
+
     
 def _probe_mdblist_detail(cfg: Dict[str, Any], max_age_sec: int = PROBE_TTL) -> Tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]; now = time.time()

@@ -68,31 +68,54 @@ def _del(path: str, cfg: dict[str, Any]):  return requests.delete(f"{TRAKT_API}{
 
 def _tok_refresh(cfg: dict[str, Any]) -> bool:
     global _TOKEN_OVERRIDE
-    t = (cfg.get("trakt") or {})
-    client_id  = t.get("client_id") or t.get("api_key")
-    client_sec = t.get("client_secret") or t.get("client_secret_id")
-    rtok = t.get("refresh_token") or (((cfg.get("auth") or {}).get("trakt") or {}).get("refresh_token"))
+
+    trakt = cfg.get("trakt") or {}
+    auth_trakt = (cfg.get("auth") or {}).get("trakt") or {}
+
+    client_id = trakt.get("client_id") or trakt.get("api_key")
+    client_sec = trakt.get("client_secret") or trakt.get("client_secret_id")
+    rtok = trakt.get("refresh_token") or auth_trakt.get("refresh_token")
+
     if not (client_id and client_sec and rtok):
-        _log("Missing credentials for token refresh", "ERROR"); return False
+        _log("Missing credentials for token refresh", "ERROR")
+        return False
     try:
-        r = requests.post(f"{TRAKT_API}/oauth/token",
-                          json={"grant_type":"refresh_token","refresh_token":rtok,"client_id":client_id,"client_secret":client_sec},
-                          headers={"User-Agent":APP_AGENT,"Content-Type":"application/json"}, timeout=10)
+        r = requests.post(
+            f"{TRAKT_API}/oauth/token",
+            json={
+                "grant_type": "refresh_token",
+                "refresh_token": rtok,
+                "client_id": client_id,
+                "client_secret": client_sec,
+            },
+            headers={"User-Agent": APP_AGENT, "Content-Type": "application/json"},
+            timeout=10,
+        )
+        data = r.json() if r.ok else {}
     except Exception as e:
-        _log(f"Token refresh failed (network): {e}", "ERROR"); return False
-    if r.status_code != 200:
-        _log(f"Token refresh failed {r.status_code}: {(r.text or '')[:400]}", "ERROR"); return False
-    try: data = r.json()
-    except Exception: data = {}
+        _log(f"Token refresh failed (network): {e}", "ERROR")
+        return False
+
     acc = data.get("access_token")
-    if not acc:
-        _log("Token refresh: missing access_token", "ERROR"); return False
+    if not r.ok or not acc:
+        _log(f"Token refresh failed {r.status_code}: {(r.text or '')[:400]}", "ERROR")
+        return False
+
     _TOKEN_OVERRIDE = acc
     new_rt = data.get("refresh_token") or rtok
+    exp_in = data.get("expires_in") or 0
+    expires_at = int(time.time()) + int(exp_in) if exp_in else None
+
+    new_cfg = dict(cfg)
+    t2 = dict(new_cfg.get("trakt") or {})
+    t2["access_token"] = acc
+    t2["refresh_token"] = new_rt
+    if expires_at:
+        t2["expires_at"] = expires_at
+    new_cfg["trakt"] = t2
+
     try:
-        new_cfg = dict(cfg); t2 = dict(new_cfg.get("trakt") or {})
-        t2["access_token"], t2["refresh_token"] = acc, new_rt
-        new_cfg["trakt"] = t2; _save_cfg(new_cfg)
+        _save_cfg(new_cfg)
         _log("Trakt token refreshed (persisted)", "DEBUG")
     except Exception:
         _log("Trakt token refreshed (runtime only)", "DEBUG")

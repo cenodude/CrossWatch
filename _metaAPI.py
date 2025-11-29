@@ -215,6 +215,34 @@ def get_poster_file(api_key: str, typ: str, tmdb_id: str | int, size: str, cache
     path, mime = _cache_download(src_url, dest)
     return str(path), mime
 
+def _tmdb_external_ids(entity: str, tmdb_id: str | int) -> Dict[str, str]:
+    try:
+        cfg = load_config() or {}
+        tmdb_cfg = cfg.get("tmdb") or {}
+        api_key = str(tmdb_cfg.get("api_key") or "").strip()
+        if not api_key:
+            return {}
+
+        base = "movie" if str(entity).lower() == "movie" else "tv"
+        url = f"https://api.themoviedb.org/3/{base}/{tmdb_id}/external_ids"
+
+        r = requests.get(url, params={"api_key": api_key}, timeout=8)
+        r.raise_for_status()
+        data = r.json() or {}
+    except Exception:
+        return {}
+
+    out: Dict[str, str] = {}
+    imdb_id = data.get("imdb_id")
+    if imdb_id:
+        out["imdb"] = imdb_id
+
+    tvdb_id = data.get("tvdb_id")
+    if tvdb_id:
+        out["tvdb"] = str(tvdb_id)
+
+    return out
+
 # ----- Artwork proxy -----
 @router.get("/art/tmdb/{typ}/{tmdb_id}", tags=["artwork"])
 def api_tmdb_art(typ: str = FPath(...), tmdb_id: int = FPath(...), size: str = Query("w342")):
@@ -242,17 +270,106 @@ class MetadataResolveIn(BaseModel):
     need: Optional[Dict[str, Any]] = None
     strategy: Optional[str] = None  # e.g., first_success
 
+@router.get("/api/metadata/search", tags=["metadata"])
+def api_metadata_search(
+    q: str = Query(..., min_length=2),
+    typ: str = Query("movie"),
+    year: int | None = Query(None),
+    limit: int = Query(10, ge=1, le=20),
+):
+    cfg = load_config()
+    api_key = ((cfg.get("tmdb") or {}).get("api_key") or "").strip()
+    if not api_key:
+        return JSONResponse({"ok": False, "error": "TMDb key missing"}, status_code=200)
+
+    entity = _norm_media_type(typ)
+    base = "movie" if entity == "movie" else "tv"
+
+    url = f"https://api.themoviedb.org/3/search/{base}"
+    params: dict[str, Any] = {
+        "api_key": api_key,
+        "query": q,
+        "include_adult": False,
+        "language": (cfg.get("ui") or {}).get("locale") or "en-US",
+        "page": 1,
+    }
+    if year:
+        if base == "movie":
+            params["year"] = year
+        else:
+            params["first_air_date_year"] = year
+
+    try:
+        r = requests.get(url, params=params, timeout=8)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"search failed: {e}"}, status_code=200)
+
+    out: list[dict[str, Any]] = []
+    for raw in (data.get("results") or [])[:limit]:
+        tmdb_id = raw.get("id")
+        if not tmdb_id:
+            continue
+        title = raw.get("title") or raw.get("name") or ""
+        date = raw.get("release_date") or raw.get("first_air_date") or ""
+        year_val = int(date.split("-", 1)[0]) if date else None
+
+        out.append({
+            "tmdb": tmdb_id,
+            "type": entity,
+            "title": title,
+            "year": year_val,
+            "overview": _shorten(raw.get("overview") or "", 240),
+            "poster_path": raw.get("poster_path"),
+        })
+
+    return JSONResponse({"ok": True, "results": out})
+
 @router.post("/api/metadata/resolve", tags=["metadata"])
 def api_metadata_resolve(payload: MetadataResolveIn = Body(...)):
     _METADATA, _, _ = _env()
     if _METADATA is None:
-        return JSONResponse({"ok": False, "error": "MetadataManager not available"}, status_code=500)
+        return JSONResponse(
+            {"ok": False, "error": "MetadataManager not available"},
+            status_code=500,
+        )
     try:
         entity = _norm_media_type(payload.entity)
-        res = _METADATA.resolve(entity=entity, ids=payload.ids, locale=payload.locale,
-                                need=payload.need, strategy=payload.strategy or "first_success")
-        if isinstance(res, dict):
-            res.setdefault("type", entity)
+        base_ids: Dict[str, Any] = payload.ids or {}
+        res = _METADATA.resolve(
+            entity=entity,
+            ids=base_ids,
+            locale=payload.locale,
+            need=payload.need,
+            strategy=payload.strategy or "first_success",
+        ) or {}
+
+        if not isinstance(res, dict):
+            res = {}
+        res.setdefault("type", entity)
+
+        # Normalise ids dict
+        ids = res.get("ids") or {}
+        if not isinstance(ids, dict):
+            ids = {}
+        tmdb_id = None
+        if isinstance(base_ids, dict):
+            tmdb_id = base_ids.get("tmdb")
+        if not tmdb_id:
+            tmdb_id = ids.get("tmdb")
+
+        if tmdb_id and not ids.get("imdb"):
+            extra_ids = _tmdb_external_ids(entity, tmdb_id)
+            imdb_id = extra_ids.get("imdb")
+            if imdb_id:
+                ids["imdb"] = imdb_id
+            tvdb_id = extra_ids.get("tvdb")
+            if tvdb_id and not ids.get("tvdb"):
+                ids["tvdb"] = tvdb_id
+
+        res["ids"] = ids
+
         return JSONResponse({"ok": True, "result": res})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

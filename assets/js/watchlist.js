@@ -46,17 +46,99 @@
   .wl-mat.ok{border-color:rgba(120,255,180,.35)} .wl-mat.miss{opacity:.6}
 
   /* Sidebar */
-  .wl-side{display:flex;flex-direction:column;gap:6px}
-  .ins-card{background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:10px 12px}
-  .ins-row{display:flex;align-items:center;gap:12px;padding:8px 6px;border-top:1px solid rgba(255,255,255,.06)}
-  .ins-row:first-child{border-top:none;padding-top:2px}
-  .ins-icon{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#13131b;border:1px solid rgba(255,255,255,.06)}
-  .ins-title{font-weight:700}
-  .ins-kv{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center}
-  .ins-kv label{opacity:.85}
-  .ins-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-  .metric{position:relative;display:flex;align-items:center;gap:8px;background:#12121a;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px}
-  .metric .material-symbol{font-size:18px;opacity:.9}.metric .m-val{font-weight:700}.metric .m-lbl{font-size:12px;opacity:.75}
+  #page-watchlist .wl-side{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+
+  #page-watchlist .ins-card{
+    background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:16px;
+    padding:10px 12px;
+  }
+
+  #page-watchlist .ins-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:8px 6px;
+    border-top:1px solid rgba(255,255,255,.06);
+  }
+  #page-watchlist .ins-row:first-child{
+    border-top:none;
+    padding-top:2px;
+  }
+
+  #page-watchlist .ins-icon{
+    width:32px;
+    height:32px;
+    border-radius:10px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#13131b;
+    border:1px solid rgba(255,255,255,.06);
+  }
+
+  #page-watchlist .ins-title{
+    font-weight:700;
+  }
+
+  #page-watchlist .ins-kv{
+    display:grid;
+    grid-template-columns:110px 1fr;
+    gap:10px;
+    align-items:center;
+  }
+  #page-watchlist .ins-kv label{
+    opacity:.85;
+  }
+
+  #page-watchlist .ins-metrics{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    width:100%;
+  }
+
+  #page-watchlist .metric-row{
+    display:grid;
+    grid-template-columns:repeat(3, minmax(0, 1fr)); /* always 3 per row */
+    gap:10px;
+  }
+
+  #page-watchlist .metric-divider{
+    height:1px;
+    background:rgba(148,163,184,.28);
+    margin:2px 0;
+  }
+
+  #page-watchlist .metric{
+    position:relative;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    background:#12121a;
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:12px;
+    padding:10px;
+  }
+
+  #page-watchlist .metric .material-symbol{
+    font-size:18px;
+    opacity:.9;
+  }
+
+  #page-watchlist .metric .m-val{
+    font-weight:700;
+  }
+
+  #page-watchlist .metric .m-lbl{
+    font-size:12px;
+    opacity:.75;
+  }
 
   /* Snackbar */
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
@@ -558,12 +640,13 @@
       CROSSWATCH: "CW"
     };
     const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
+
     const counts = ORDER.reduce((acc, p) => {
       acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
       return acc;
     }, {});
 
-    metricsEl.innerHTML = ORDER
+    const cards = ORDER
       .filter(p => activeProviders.has(p))
       .map(p => {
         const label = LABEL[p] || p;
@@ -576,6 +659,10 @@
         </div>`;
       })
       .join("");
+
+    metricsEl.innerHTML = cards
+      ? `<div class="metric-row">${cards}</div>`
+      : "";
   }
 
   /* ========= sorting ========= */
