@@ -168,6 +168,21 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 
 ---
 
+## 🔐 Security
+
+⚠️ CrossWatch is NOT meant to be exposed directly to the public internet.
+    During the current development stage there is no authentication built in, so treat it as a LAN/VPN-only tool.
+
+- Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
+- Run CrossWatch on your **local network** only, or access it via:
+  - a **VPN** (WireGuard, Tailscale, etc.)
+- Anyone who can reach the web UI can change sync pairs, tokens and settings, which may:
+  - delete or corrupt watch history / ratings / watchlists,
+  - cause unwanted writes between servers/trackers,
+  - leak information about your media libraries and accounts.
+
+---
+
 ## 🎬 Live Scrobbling (Plex/Jellyfin/Emby → Trakt and/or SIMKL)
 CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b> — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
 Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
