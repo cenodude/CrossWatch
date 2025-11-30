@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ._utils import resolve_user_scope, patch_history_with_account_id
-
 from ._common import (
     normalize as plex_normalize,
     minimal_from_history_row,
@@ -68,6 +66,20 @@ def _plex_cfg(adapter) -> Mapping[str, Any]:
 
 def _plex_cfg_get(adapter, key: str, default: Any = None) -> Any:
     c = _plex_cfg(adapter)
+    v = c.get(key, default) if isinstance(c, dict) else default
+    return default if v is None else v
+
+def _history_cfg(adapter) -> Mapping[str, Any]:
+    try:
+        cfg = getattr(adapter, "config", {}) or {}
+        plex = cfg.get("plex", {}) if isinstance(cfg, dict) else {}
+        hist = plex.get("history") or {}
+        return hist if isinstance(hist, dict) else {}
+    except Exception:
+        return {}
+
+def _history_cfg_get(adapter, key: str, default: Any = None) -> Any:
+    c = _history_cfg(adapter)
     v = c.get(key, default) if isinstance(c, dict) else default
     return default if v is None else v
 
@@ -212,11 +224,115 @@ _FETCH_CACHE: Dict[str, Dict[str, Any]] = {}
 def _fetch_one(srv, rk: str) -> Optional[Dict[str, Any]]:
     try:
         obj = srv.fetchItem(int(rk))
-        if not obj: return None
+        if not obj:
+            return None
         m = plex_normalize(obj) or {}
         return m if m else None
     except Exception:
         return None
+
+def _is_marked_watched(obj) -> bool:
+    # true when Plex library item is 'watched' (flagged in UI)
+    try:
+        if getattr(obj, "isWatched", None):
+            return True
+    except Exception:
+        pass
+    try:
+        vc = getattr(obj, "viewCount", None)
+        if vc is not None and int(vc) > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+def _last_view_ts(obj) -> Optional[int]:
+    for attr in ("lastViewedAt", "viewedAt"):
+        try:
+            v = getattr(obj, attr, None)
+        except Exception:
+            v = None
+        ts = _as_epoch(v)
+        if ts:
+            return ts
+    return None
+
+def _iter_marked_watched_from_library(
+    adapter,
+    allow: Set[str],
+    since: Optional[int],
+) -> List[Tuple[Dict[str, Any], int]]:
+    results: List[Tuple[Dict[str, Any], int]] = []
+    try:
+        sections = adapter.libraries(types=("movie", "show")) or []
+    except Exception:
+        sections = []
+
+    for sec in sections:
+        try:
+            sid = str(getattr(sec, "key", "")).strip()
+        except Exception:
+            sid = ""
+        if allow and sid and sid not in allow:
+            continue
+
+        stype = (getattr(sec, "type", "") or "").lower()
+
+        # Movies
+        if stype == "movie":
+            try:
+                items = sec.all() or []
+            except Exception:
+                items = []
+            for obj in items:
+                try:
+                    if not _is_marked_watched(obj):
+                        continue
+
+                    ts = _last_view_ts(obj)
+                    # require a timestamp
+                    if ts is None:
+                        continue
+                    if since is not None and ts < int(since):
+                        continue
+
+                    m = plex_normalize(obj) or {}
+                    if not m:
+                        continue
+                    results.append((m, int(ts)))
+                except Exception:
+                    continue
+
+        # Shows to episodes
+        elif stype == "show":
+            try:
+                shows = sec.all() or []
+            except Exception:
+                shows = []
+            for show in shows:
+                try:
+                    eps = show.episodes() or []
+                except Exception:
+                    eps = []
+                for ep in eps:
+                    try:
+                        if not _is_marked_watched(ep):
+                            continue
+
+                        ts = _last_view_ts(ep)
+                        # require a timestamp
+                        if ts is None:
+                            continue
+                        if since is not None and ts < int(since):
+                            continue
+
+                        m = plex_normalize(ep) or {}
+                        if not m:
+                            continue
+                        results.append((m, int(ts)))
+                    except Exception:
+                        continue
+    return results
 
 def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
@@ -420,6 +536,7 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
                 try: prog.tick(done, total=total)
                 except Exception: pass
 
+    # Shadow entries
     try:
         sh = _load_shadow()
         if sh:
@@ -436,6 +553,52 @@ def build_index(adapter, since: Optional[int] = None, limit: Optional[int] = Non
                     out[k] = row
     except Exception:
         pass
+
+    # hydrate from Plex library watched state (Mark as watched)
+    include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", False))
+    if include_marked:
+        try:
+            base_keys: Set[str] = set()
+            for row in out.values():
+                try:
+                    bk = canonical_key(row)
+                    if bk:
+                        base_keys.add(bk)
+                except Exception:
+                    continue
+
+            marked = _iter_marked_watched_from_library(adapter, allow, since)
+            for m, ts in marked:
+                if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
+                    _log(f"index truncated at {limit} (including marked-watched)")
+                    break
+
+                # require timestamp from library
+                if ts is None:
+                    continue
+
+                if not _keep_in_snapshot(adapter, m):
+                    continue
+                if allow:
+                    lid = m.get("library_id")
+                    if lid is not None and str(lid) not in allow:
+                        continue
+
+                row = dict(m)
+                row["watched"] = True
+
+                ts_int = int(ts)
+                row["watched_at"] = _iso(ts_int)
+
+                bk = canonical_key(row)
+                if bk and bk in base_keys:
+                    continue
+
+                out[f"{bk}@{ts_int}"] = row
+                if bk:
+                    base_keys.add(bk)
+        except Exception as e:
+            _log(f"marked-watched hydrate failed: {e}")
 
     if prog:
         try: prog.done(ok=True, total=total)

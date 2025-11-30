@@ -48,10 +48,14 @@ DEFAULT_CFG: Dict[str, Any] = {
         "max_retries": 3,                               # Optional retry budget.
         "fallback_GUID": False,                         # Opt-in GUID/Discover fallback for missing library items (history/ratings)
 
-        # per-feature library whitelists (empty = all)
-        "history": { "libraries": [] },
-        "ratings": { "libraries": [] },
-        
+        "history": {
+            "libraries": [],                            # Whitelist of library GUIDs; empty = all
+            "include_marked_watched": True,             # Include items manually marked as watched in Plex
+        },
+        "ratings": {
+            "libraries": [],                            # Whitelist of library GUIDs; empty = all
+        },
+
         # Ratings / History
         "rating_workers": 12,                           # Parallel workers for Plex ratings indexing. 12–16 is ideal on a local NAS.
         "history_workers": 12,                          # Parallel workers for Plex history indexing. 12–16 is ideal on a local NAS.
