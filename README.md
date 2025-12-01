@@ -85,7 +85,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
         <ul style="margin:0;padding-left:1.1em">
           <li>Analyzer - finds broken or missing matches/IDs</li>
           <li>Exporter - CSV files for popular service</li>
-          <li>Stats, history, live logs</li>
+          <li>Now Playing card, Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
             <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
