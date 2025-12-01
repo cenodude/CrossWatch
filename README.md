@@ -47,34 +47,25 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
 </p>
 
-**CrossWatch** is a  synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. CW also includes its own tracker, so you can keep your data safe with snapshots. It supports **movies** and **shows/episodes**. Currently no Anime support, perhaps in the future.
+**CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
+It runs locally with a clean web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
+CrossWatch also includes its own tracker to keep your data safe with snapshots. 
+It supports **movies** and **shows/episodes** Anime is not supported yet....sorry..
 
-## Why is CrossWatch different? (in a nutshell)
-- One brain for all your media syncs.
-- Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, Mdblist) in one tool.
-  - No API? Use the **Exporter** to dump Watchlist/History/Ratings CSVs (TMDb, Letterboxd, etc.).
-- Sync between media servers: Plex, Jellyfin, Emby - Sync between trackers: SIMKL, TRAKT - or Sync from/to media servers and trackers.
-  - Also great for backups or to keep your media servers in sync.
-- Beautiful UI, rich debug logs, and lots of sensible toggles.
-- Simple **and** advanced scheduling for real freedom.
-- Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
-- Unified, visual Watchlist across providers (filter, search, bulk remove, etc.)
-- **Back-to-the-Future (Fallback GUID)**  
-  - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
-- **Intelligent Webhooks** (Plex / Jellyfin / Emby) -> Trakt
-  - Plex autoplay quarantine: skip credits without losing “now playing” on Trakt.
-  - Many (advanced) filters, multi-ID matching, hardened STOP/PAUSE, etc.
-- **Watcher** (Plex / Emby) -> Trakt and/or SIMKL
-  - Plugin-free, subscription-free; just works.
-  - Same guardrails for clean history; smart regress/duplicate suppression.
-  - Multi-ID matching with layered fallbacks.
-- **Watchlist Auto-Remove**
-  - Clears items from your Watchlist after a **verified finish**
-  - Watchlists only, your libraries stay untouched.
-  - Type-aware: movies by default; shows/episodes optional.
-- **Analyzer**
-  - Finds items **stuck** between providers.
-  - Shows **Issues: N** per your sync pairs with concrete fix hints.
+## Why CrossWatch?
+- **One brain for all your media syncs** A single place to configure and understand everything.
+- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
+- **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
+- **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
+- **Internal CrossWatch Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
+- **Unified, visual Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
+- **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
+- **Webhooks** (Plex / Jellyfin / Emby → Trakt)  
+- **Watcher** (Plex / Emby → Trakt and/or SIMKL) Plugin-free and subscription-free.  
+- **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.  
+- **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
+- **Analyzer** Finds items that are **stuck** or inconsistent between providers.
+- _.....and more...._
 
 <h2 align="center">🚀 Features</h2>
 <div align="center">
