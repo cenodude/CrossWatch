@@ -61,10 +61,12 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 - **Unified, visual Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
 - **Webhooks** (Plex / Jellyfin / Emby → Trakt)  
-- **Watcher** (Plex / Emby → Trakt and/or SIMKL) Plugin-free and subscription-free.  
-- **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.  
+- **Watcher** (Plex / Emby → Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
+- **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
+<img width="541" height="142" alt="image" src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920" />
+
 - _.....and more...._
 
 <h2 align="center">🚀 Features</h2>
