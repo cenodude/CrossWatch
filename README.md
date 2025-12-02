@@ -47,34 +47,25 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
 </p>
 
-**CrossWatch** is a  synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync. It runs locally with a clean web UI to link accounts, configure sync pairs, run them manually or on schedule, and track stats/history. CW also includes its own tracker, so you can keep your data safe with snapshots. It supports **movies** and **shows/episodes**. Currently no Anime support, perhaps in the future.
+**CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
+It runs locally with a clean web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
+CrossWatch also includes its own tracker to keep your data safe with snapshots. 
+It supports **movies** and **shows/episodes** Anime is not supported yet....sorry..
 
-## Why is CrossWatch different? (in a nutshell)
-- One brain for all your media syncs.
-- Multi-server (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, Mdblist) in one tool.
-  - No API? Use the **Exporter** to dump Watchlist/History/Ratings CSVs (TMDb, Letterboxd, etc.).
-- Sync between media servers: Plex, Jellyfin, Emby - Sync between trackers: SIMKL, TRAKT - or Sync from/to media servers and trackers.
-  - Also great for backups or to keep your media servers in sync.
-- Beautiful UI, rich debug logs, and lots of sensible toggles.
-- Simple **and** advanced scheduling for real freedom.
-- Internal CrossWatch Tracker to keep snapshots/backups of your Watchlist, History and Ratings from your mediaservers and trackers.
-- Unified, visual Watchlist across providers (filter, search, bulk remove, etc.)
-- **Back-to-the-Future (Fallback GUID)**  
-  - Revives old items that left your library but still hide in your server DB, hello, ancient Plex memories.
-- **Intelligent Webhooks** (Plex / Jellyfin / Emby) -> Trakt
-  - Plex autoplay quarantine: skip credits without losing “now playing” on Trakt.
-  - Many (advanced) filters, multi-ID matching, hardened STOP/PAUSE, etc.
-- **Watcher** (Plex / Emby) -> Trakt and/or SIMKL
-  - Plugin-free, subscription-free; just works.
-  - Same guardrails for clean history; smart regress/duplicate suppression.
-  - Multi-ID matching with layered fallbacks.
-- **Watchlist Auto-Remove**
-  - Clears items from your Watchlist after a **verified finish**
-  - Watchlists only, your libraries stay untouched.
-  - Type-aware: movies by default; shows/episodes optional.
-- **Analyzer**
-  - Finds items **stuck** between providers.
-  - Shows **Issues: N** per your sync pairs with concrete fix hints.
+## Why CrossWatch?
+- **One brain for all your media syncs** A single place to configure and understand everything.
+- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
+- **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
+- **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
+- **Internal CrossWatch Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
+- **Unified, visual Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
+- **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
+- **Webhooks** (Plex / Jellyfin / Emby → Trakt)  
+- **Watcher** (Plex / Emby → Trakt and/or SIMKL) Plugin-free and subscription-free.  
+- **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.  
+- **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
+- **Analyzer** Finds items that are **stuck** or inconsistent between providers.
+- _.....and more...._
 
 <h2 align="center">🚀 Features</h2>
 <div align="center">
@@ -94,7 +85,7 @@
         <ul style="margin:0;padding-left:1.1em">
           <li>Analyzer - finds broken or missing matches/IDs</li>
           <li>Exporter - CSV files for popular service</li>
-          <li>Stats, history, live logs</li>
+          <li>Now Playing card, Stats, history, live logs</li>
           <li>Headless scheduled runs</li>
           <li><strong>Trackers:</strong>
             <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
@@ -174,8 +165,16 @@ Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the
 
 ---
 
-## Architecture
-<p align="center">
-<img width="268" height="408" alt="image" src="https://github.com/user-attachments/assets/c3461874-e1e3-4b3a-b4ed-c4fab0e7bc5b" />
-</p>
+## 🔐 Security
+
+⚠️ CrossWatch is NOT meant to be exposed directly to the public internet.
+    During the current development stage there is no authentication built in, so treat it as a LAN/VPN-only tool.
+
+- Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
+- Run CrossWatch on your **local network** only, or access it via:
+  - a **VPN** (WireGuard, Tailscale, etc.)
+- Anyone who can reach the web UI can change sync pairs, tokens and settings, which may:
+  - delete or corrupt watch history / ratings / watchlists,
+  - cause unwanted writes between servers/trackers,
+  - leak information about your media libraries and accounts.
 
