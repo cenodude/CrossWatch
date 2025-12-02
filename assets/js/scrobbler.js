@@ -154,12 +154,12 @@
 
     if(watcherOn){
       if(prov==="plex"){
-        if(!plexTokenOk){ setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err"); }
+        if(!plexTokenOk){ setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it","err"); }
         else if(!isValidServerUrl(srv)) setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
         else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
         else setNote("sc-pms-note",`Using ${srv}`);
       }else{
-        if(!embyTokenOk){ setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err"); }
+        if(!embyTokenOk){ setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it","err"); }
         else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
         else setNote("sc-pms-note", srv?`Using ${srv}`:"");
       }

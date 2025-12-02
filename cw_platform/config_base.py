@@ -341,6 +341,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     # --- User Interface ------------------------------------------------------
     "ui": {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
+        "show_playingcard": True,                       # Show Now Playing card on Main tab 
     },
 
     # --- Pairs (UI-driven) ---------------------------------------------------

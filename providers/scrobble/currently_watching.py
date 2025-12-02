@@ -46,6 +46,21 @@ def _write_raw(payload: Optional[dict[str, Any]]) -> None:
         tmp.replace(p)
     except Exception as e:
         _log(f"write failed: {e}")
+        
+def _extract_tmdb(ev: ScrobbleEvent) -> Optional[int]:
+    try:
+        ids = ev.ids or {}
+    except Exception:
+        return None
+
+    for key in ("tmdb", "tmdb_show"):
+        v = ids.get(key)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s.isdigit():
+            return int(s)
+    return None
 
 def update_from_event(
     source: str,
@@ -54,7 +69,6 @@ def update_from_event(
     cover: str | None = None,
     clear_on_stop: bool = False,
 ) -> None:
-    """Update file from a watcher ScrobbleEvent."""
     try:
         action = (ev.action or "").lower()
         state_map = {"start": "playing", "pause": "paused", "stop": "stopped"}
@@ -70,6 +84,8 @@ def update_from_event(
 
         season = ev.season if media_type == "episode" else None
         episode = ev.number if media_type == "episode" else None
+        ids = dict(getattr(ev, "ids", {}) or {})
+        tmdb = _extract_tmdb(ev)
 
         payload: dict[str, Any] = {
             "source": str(source),
@@ -81,8 +97,10 @@ def update_from_event(
             "progress": int(ev.progress),
             "duration_ms": int(duration_ms) if isinstance(duration_ms, int) else None,
             "cover": cover,
-            "state": state,          # <-- NEW
+            "state": state,
             "updated": int(time.time()),
+            "ids": ids,
+            "tmdb": tmdb,
         }
         _write_raw(payload)
     except Exception as e:
@@ -101,8 +119,8 @@ def update_from_payload(
     cover: str | None = None,
     state: str | None = None,
     clear_on_stop: bool = False,
+    ids: dict[str, Any] | None = None,
 ) -> None:
-    """Update file from a webhook payload."""
     try:
         mt = (media_type or "").lower()
         if mt not in ("movie", "episode"):
@@ -145,9 +163,22 @@ def update_from_payload(
             "progress": prog_int,
             "duration_ms": _to_int(duration_ms),
             "cover": cover,
-            "state": st_val,          # <-- NEW
+            "state": st_val,
             "updated": int(time.time()),
         }
+        if isinstance(ids, dict) and ids:
+            payload["ids"] = dict(ids)
+            tmdb_val = None
+            try:
+                v = ids.get("tmdb_show") or ids.get("tmdb")
+                if v is not None:
+                    s = str(v).strip()
+                    if s.isdigit():
+                        tmdb_val = int(s)
+            except Exception:
+                tmdb_val = None
+            payload["tmdb"] = tmdb_val
+
         _write_raw(payload)
     except Exception as e:
         _log(f"update_from_payload failed: {e}")

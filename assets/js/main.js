@@ -1,3 +1,11 @@
+// Playing card UI guard
+if (!(window._cfgCache?.ui?.show_playingcard ?? true)) {
+  document.head.insertAdjacentHTML(
+    "beforeend",
+    `<style>#playing-card{display:none!important}</style>`
+  );
+}
+
 // Main UI logic
 (()=> {
   const FEATS=[ {key:"watchlist",icon:"movie",label:"Watchlist"},

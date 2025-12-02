@@ -1917,6 +1917,15 @@ async function loadConfig() {
       sel.value = on ? "true" : "false";
     }
 
+    // Playing Card toggle
+    const playSel = document.getElementById("ui_show_playingcard");
+    if (playSel) {
+      const on = (typeof ui.show_playingcard === "boolean")
+        ? !!ui.show_playingcard
+        : true;
+      playSel.value = on ? "true" : "false";
+    }
+
     // CrossWatch Tracker
     const cwEnabledEl = document.getElementById("cw_enabled");
     if (cwEnabledEl) {
@@ -2088,9 +2097,11 @@ async function saveSettings() {
     const prevMdbl     = norm(serverCfg?.mdblist?.api_key);
     const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
-    const prevUiShow = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
+    const prevUiShow     = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
+    const prevUiPlaying  = (typeof serverCfg?.ui?.show_playingcard === "boolean") ? !!serverCfg.ui.show_playingcard : true;
 
     const prevCw = serverCfg?.crosswatch || {};
+
     const prevCwEnabled  = (prevCw.enabled === false) ? false : true;
     const prevCwRet      = Number.isFinite(prevCw.retention_days) ? Number(prevCw.retention_days) : 30;
     const prevCwAuto     = (prevCw.auto_snapshot === false) ? false : true;
@@ -2166,8 +2177,20 @@ async function saveSettings() {
         }
       }
 
+      // UI: playing card
+      const uiPlaySel = document.getElementById("ui_show_playingcard");
+      if (uiPlaySel) {
+        const finalUiPlay = uiPlaySel.value === "false" ? false : true;
+        if (finalUiPlay !== prevUiPlaying) {
+          cfg.ui = cfg.ui || {};
+          cfg.ui.show_playingcard = finalUiPlay;
+          changed = true;
+        }
+      }
+
       const cw = cfg.crosswatch || {};
       let cwChanged = false;
+
 
       // Enabled
       const enabledEl = document.getElementById("cw_enabled");

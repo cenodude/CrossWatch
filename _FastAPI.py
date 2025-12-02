@@ -329,6 +329,14 @@ def get_index_html() -> str:
                 <option value="false">Hide</option>
               </select>
             </div>
+
+            <div>
+              <label>Playing Card</label>
+              <select id="ui_show_playingcard">
+                <option value="true">Show</option>
+                <option value="false">Hide</option>
+              </select>
+            </div>
           </div>
 
           <!-- Sub-section: CrossWatch Tracker -->
@@ -438,6 +446,7 @@ def get_index_html() -> str:
 <script src="/assets/js/connections.pairs.overlay.js" defer></script>
 <script src="/assets/js/scheduler.js" defer></script>
 <script src="/assets/js/schedulerbanner.js" defer></script>
+<script src="/assets/js/playingcard.js" defer></script>
 <script src="/assets/js/insights.js" defer></script>
 <script src="/assets/js/settings-insight.js" defer></script>
 <script src="/assets/js/scrobbler.js" defer></script>

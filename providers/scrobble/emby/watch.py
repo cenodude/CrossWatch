@@ -4,11 +4,50 @@
 from __future__ import annotations
 import json, time, threading, requests, re
 from pathlib import Path
-from typing import Any, Iterable, Dict, Tuple, Set
+from typing import Any, Iterable, Dict, Tuple, Set, Mapping, Optional
+
 try:
     from _logging import log as BASE_LOG  # not used; print-only logging below
 except Exception:
     BASE_LOG = None
+    
+TRAKT_API = "https://api.trakt.tv"
+_TRAKT_ID_CACHE: Dict[tuple, Any] = {}
+
+def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
+    tr = cfg.get("trakt") or {}
+    au = (cfg.get("auth") or {}).get("trakt") or {}
+    return {
+        "client_id": str(tr.get("client_id") or "").strip(),
+        "access_token": str(au.get("access_token") or tr.get("access_token") or "").strip(),
+    }
+
+def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
+    t = _trakt_tokens(cfg)
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "trakt-api-version": "2",
+        "trakt-api-key": t["client_id"],
+    }
+    if t["access_token"]:
+        headers["Authorization"] = f"Bearer {t['access_token']}"
+    return headers
+
+def _cache_get(key: tuple) -> Optional[Any]:
+    try:
+        return _TRAKT_ID_CACHE.get(key)
+    except Exception:
+        return None
+
+def _cache_put(key: tuple, value: Any) -> None:
+    try:
+        if len(_TRAKT_ID_CACHE) > 2048:
+            _TRAKT_ID_CACHE.clear()
+        _TRAKT_ID_CACHE[key] = value
+    except Exception:
+        pass
+
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 
@@ -91,6 +130,217 @@ def _map_provider_ids(item: dict[str, Any]) -> dict[str, Any]:
             ids["tvdb_show"] = str(sprov.get("Tvdb") or sprov.get("TvdbId"))
     return ids
 
+def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
+    pids = md.get("ProviderIds") or root.get("ProviderIds") or {}
+    out: Dict[str, Any] = {}
+    def put(k: str, v: Any) -> None:
+        if v is None:
+            return
+        sv = str(v).strip()
+        if not sv:
+            return
+        if k == "tmdb" and sv.isdigit():
+            out[k] = int(sv)
+        else:
+            out[k] = sv
+    put("imdb", pids.get("Imdb") or pids.get("IMDb"))
+    put("tmdb", pids.get("Tmdb") or pids.get("TMDB") or pids.get("TheMovieDb"))
+    put("tvdb", pids.get("Tvdb") or pids.get("TVDB") or pids.get("TheTVDB"))
+    return out
+
+
+def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    t_md = str(md.get("Type") or "").strip().lower()
+    t_root = str(root.get("Type") or "").strip().lower()
+    type_val = t_md or t_root
+    sp = (md.get("SeriesProviderIds") or root.get("SeriesProviderIds") or {}) or {}
+
+    def maybe_int(v: Any) -> Any:
+        s = str(v).strip()
+        return int(s) if s.isdigit() else (s if s else None)
+
+    def norm_imdb(v: Any) -> Optional[str]:
+        s = str(v).strip()
+        if not s:
+            return None
+        return s if s.startswith("tt") else f"tt{s}"
+
+    tvdb = (
+        sp.get("Tvdb") or sp.get("tvdb") or sp.get("TVDB") or sp.get("TheTVDB")
+        or root.get("SeriesTvdbId") or root.get("SeriesTvdb")
+    )
+    tmdb = (
+        sp.get("Tmdb") or sp.get("tmdb") or sp.get("TMDB") or sp.get("TheMovieDb")
+        or root.get("SeriesTmdbId") or root.get("SeriesTmdb")
+    )
+    imdb = (
+        sp.get("Imdb") or sp.get("imdb") or sp.get("IMDb")
+        or root.get("SeriesImdbId") or root.get("SeriesImdb")
+    )
+
+    if not (tvdb or tmdb or imdb) and type_val in ("series", "tvshow"):
+        pids = (md.get("ProviderIds") or root.get("ProviderIds") or {}) or {}
+        tvdb = tvdb or (pids.get("Tvdb") or pids.get("tvdb") or pids.get("TVDB") or pids.get("TheTVDB"))
+        tmdb = tmdb or (pids.get("Tmdb") or pids.get("tmdb") or pids.get("TMDB") or pids.get("TheMovieDb"))
+        imdb = imdb or (pids.get("Imdb") or pids.get("imdb") or pids.get("IMDb"))
+
+    v_tvdb = maybe_int(tvdb) if tvdb is not None else None
+    v_tmdb = maybe_int(tmdb) if tmdb is not None else None
+    v_imdb = norm_imdb(imdb) if imdb is not None else None
+
+    if v_tvdb is not None:
+        out["tvdb"] = v_tvdb
+    if v_tmdb is not None:
+        out["tmdb"] = v_tmdb
+    if v_imdb:
+        out["imdb"] = v_imdb
+
+    return out
+
+
+def _guid_search_episode(epi_hint: Dict[str, Any], cfg: dict[str, Any], logger=None) -> Dict[str, Any]:
+    try:
+        q = {k: epi_hint.get(k) for k in ("imdb", "tmdb", "tvdb") if epi_hint.get(k)}
+        if not q:
+            return {}
+        r = requests.get(
+            f"{TRAKT_API}/search/episode",
+            params=q,
+            headers=_trakt_headers(cfg),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return {}
+        arr = r.json() or []
+        for it in arr:
+            ep = (it or {}).get("episode") or {}
+            ids = (ep.get("ids") or {})
+            if ids.get("trakt"):
+                return {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
+    except Exception:
+        pass
+    return {}
+
+
+def _show_ids_from_episode_hint(ids_hint: Dict[str, Any], cfg: dict[str, Any], logger=None) -> Dict[str, Any]:
+    cache_key = (
+        "show_ids_from_episode_hint",
+        ids_hint.get("imdb"),
+        ids_hint.get("tmdb"),
+        ids_hint.get("tvdb"),
+    )
+
+    c = _cache_get(cache_key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+
+    try:
+        out = _guid_search_episode(ids_hint, cfg, logger=logger)
+        if out:
+            _cache_put(cache_key, out)
+            return out
+    except Exception:
+        pass
+
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = ids_hint.get(key)
+        if not val:
+            continue
+        try:
+            r = requests.get(
+                f"{TRAKT_API}/search/{key}/{val}",
+                params={"type": "episode", "limit": 1},
+                headers=_trakt_headers(cfg),
+                timeout=10,
+            )
+            if r.status_code != 200:
+                continue
+            arr = r.json() or []
+        except Exception:
+            continue
+
+        for hit in arr:
+            show_ids = ((hit.get("show") or {}).get("ids") or {})
+            out = {k: show_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
+            if out:
+                if logger and _is_debug():
+                    try:
+                        logger(f"resolved SHOW ids from episode hint: {out}", "DEBUG")
+                    except Exception:
+                        pass
+                _cache_put(cache_key, out)
+                return out
+
+    _cache_put(cache_key, None)
+    return {}
+
+def _enrich_episode_ids(
+    item: dict[str, Any],
+    sess: dict[str, Any],
+    ids_all: Dict[str, Any],
+    logger=None,
+) -> Dict[str, Any]:
+    cw_ids: Dict[str, Any] = dict(ids_all or {})
+    root: Mapping[str, Any] = sess or item
+    cfg = _cfg()
+
+    try:
+        show_ids = _series_ids_from_payload(item, root) or {}
+    except Exception:
+        show_ids = {}
+
+    #  GET /Users/{UserId}/Items/{SeriesId}
+    if not show_ids:
+        base, tok = _emby_bt(cfg)
+        uid = str(root.get("UserId") or "").strip() or str((cfg.get("emby") or {}).get("user_id") or "").strip()
+        series_id = item.get("SeriesId") or item.get("ParentId") or item.get("SeriesItemId")
+
+        if base and tok and uid and series_id:
+            path = f"/Users/{uid}/Items/{series_id}?format=json"
+            try:
+                info = _get_json(base, tok, path)
+                show_ids = _series_ids_from_payload(info, info) or {}
+                if logger and _is_debug():
+                    logger(f"resolved show ids via Emby {path}: {show_ids}", "DEBUG")
+            except Exception as e:
+                if logger and _is_debug():
+                    logger(f"Emby series lookup failed: {e}", "DEBUG")
+
+    for key in ("imdb", "tmdb", "tvdb"):
+        val = show_ids.get(key)
+        if val is not None and f"{key}_show" not in cw_ids:
+            cw_ids[f"{key}_show"] = val
+
+    if "tmdb_show" not in cw_ids:
+        try:
+            hint: Dict[str, Any] = {}
+            try:
+                hint.update(_ids_from_providerids(item, root))
+            except Exception:
+                pass
+            try:
+                base_ids = ids_all or {}
+                for key in ("imdb", "tmdb", "tvdb"):
+                    val = base_ids.get(key)
+                    if val is not None and key not in hint:
+                        hint[key] = val
+            except Exception:
+                pass
+
+            if hint:
+                extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
+                for key in ("imdb", "tmdb", "tvdb"):
+                    val = extra.get(key)
+                    if val is not None and f"{key}_show" not in cw_ids:
+                        cw_ids[f"{key}_show"] = val
+        except Exception:
+            pass
+
+    return cw_ids
+
 def _media_from_session(sess: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     item = (sess.get("NowPlayingItem") or {})
     ps = (sess.get("PlayState") or {})
@@ -147,7 +397,7 @@ def _media_name(ev: ScrobbleEvent) -> str:
     return ev.title or "?"
 
 class EmbyWatchService:
-    def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 0.7) -> None:
+    def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 1.5) -> None:
         self._base, self._tok = _emby_bt(_cfg())
         self._disabled = False
         if not self._base or not self._tok:
@@ -158,19 +408,18 @@ class EmbyWatchService:
 
         self._sinks = list(sinks or [])
         self._dispatch = Dispatcher(self._sinks, cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
-
-        self._poll = max(0.3, float(poll_secs))
+        self._poll = max(0.5, float(poll_secs))
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
         self._last: Dict[str, Dict[str, Any]] = {}
-        self._last_emit: Dict[str, Tuple[str, str]] = {}
+        self._last_emit: Dict[str, Tuple[str, int]] = {}
         self._allowed_sessions: Set[str] = set()
         self._filtered_sessions: Set[str] = set()
         self._dbg_last_total = None
         self._dbg_last_playing = None
         self._dbg_last_ts = 0.0
+        self._cw_last_heartbeat: Dict[str, float] = {}
         self._log(f"Ensuring Watcher is running; wired sinks: {len(self._sinks)}", "INFO")
-
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -235,6 +484,8 @@ class EmbyWatchService:
             return None
         mtype = "episode" if (item.get("Type") or "").lower() == "episode" else "movie"
         ids = _map_provider_ids(item)
+        if mtype == "episode":
+            ids = _enrich_episode_ids(item, sess, ids, logger=self._log)
         title = item.get("SeriesName") if mtype == "episode" else item.get("Name") or item.get("OriginalTitle")
         year = item.get("ProductionYear")
         season = item.get("ParentIndexNumber") if mtype == "episode" else None
@@ -336,7 +587,12 @@ class EmbyWatchService:
         try:
             force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at") or 95))
         except Exception:
-            force_at = 95
+            force_at = 95   
+        try:
+            hb = float((((_cfg().get("scrobble") or {}).get("watch") or {}).get("cw_heartbeat_seconds") or 30))
+        except Exception:
+            hb = 30.0
+        heartbeat_secs = max(5.0, hb)
 
         for s in cur:
             sid = str(s.get("Id") or "")
@@ -345,16 +601,20 @@ class EmbyWatchService:
             item, ps = _media_from_session(s)
             if not item:
                 continue
+
             dur = item.get("RunTimeTicks") or 0
             pos = ps.get("PositionTicks") if isinstance(ps, dict) else None
             state = "paused" if (ps.get("IsPaused") if isinstance(ps, dict) else False) else "playing"
             p = _ticks_to_pct(pos or 0, dur or 0)
+
             key = f"{item.get('Id') or item.get('InternalId') or item.get('Name')}-{mhash(dur)}"
             last = self._last.get(sid) or {}
             last_key = last.get("key")
             last_state = last.get("state")
             state_ts = float(last.get("state_ts") or 0.0)
+
             emit_action: str | None = None
+            did_emit = False
 
             if key != last_key:
                 emit_action = "start"
@@ -367,6 +627,7 @@ class EmbyWatchService:
 
             if emit_action == "start" and p < 1:
                 p = 1
+
             if emit_action == "start" and last_key != key and suppress_start_at and p >= suppress_start_at:
                 emit_action = None
 
@@ -374,9 +635,32 @@ class EmbyWatchService:
                 ev = self._build_event(s, "playing" if emit_action == "start" else "paused", p)
                 if ev:
                     last_em = self._last_emit.get(sid)
-                    if not (last_em and last_em[0] == ev.action and last_em[1] == key):
+                    if not (last_em and last_em[0] == ev.action and last_em[1] == ev.progress):
                         self._emit(ev)
                         state_ts = now
+                        did_emit = True
+
+            elif state == "playing" and sid in self._last_emit:
+                last_em = self._last_emit.get(sid)
+                last_prog: int | None = None
+
+                if last_em:
+                    try:
+                        last_prog = int(last_em[1])
+                    except Exception:
+                        last_prog = None
+
+                if last_prog is None:
+                    try:
+                        last_prog = int(last.get("p") or 0)
+                    except Exception:
+                        last_prog = 0
+
+                if last_prog is not None and abs(int(p) - int(last_prog)) >= 5:
+                    ev = self._build_event(s, "playing", p)
+                    if ev:
+                        self._emit(ev)
+                        did_emit = True
 
             self._last[sid] = {
                 "key": key,
@@ -387,6 +671,25 @@ class EmbyWatchService:
                 "meta": (self._last.get(sid) or {}).get("meta"),
             }
             seen.add(sid)
+
+            if state == "playing":
+                last_hb = float(self._cw_last_heartbeat.get(sid) or 0.0)
+
+                if did_emit:
+                    self._cw_last_heartbeat[sid] = now
+                elif now - last_hb >= heartbeat_secs:
+                    ev_hb = self._build_event(s, "playing", p)
+                    if ev_hb and self._passes_filters(ev_hb):
+                        try:
+                            _cw_update("emby", ev_hb)
+                        except Exception as e:
+                            pass
+                    self._cw_last_heartbeat[sid] = now
+            else:
+                try:
+                    self._cw_last_heartbeat.pop(sid, None)
+                except Exception:
+                    pass
 
         for sid, memo in list(self._last.items()):
             if sid in seen:
@@ -401,6 +704,10 @@ class EmbyWatchService:
                 del self._last[sid]
                 try:
                     self._filtered_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
+                    self._cw_last_heartbeat.pop(sid, None)
                 except Exception:
                     pass
                 continue
@@ -427,6 +734,10 @@ class EmbyWatchService:
                 del self._last[sid]
                 try:
                     self._filtered_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
+                    self._cw_last_heartbeat.pop(sid, None)
                 except Exception:
                     pass
 

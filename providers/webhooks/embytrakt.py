@@ -201,7 +201,20 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
     return h
 
 def _del_trakt(path: str, cfg: Dict[str, Any]) -> requests.Response:
-    return requests.delete(f"{TRAKT_API}{path}", headers=_headers(cfg), timeout=12)
+    url = f"{TRAKT_API}{path}"
+    r = requests.delete(url, headers=_headers(cfg), timeout=12)
+    if r.status_code == 401:
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
+            TRAKT_AUTH.refresh(cfg)
+            _save_config(cfg)
+        except Exception:
+            return r
+        try:
+            r = requests.delete(url, headers=_headers(cfg), timeout=12)
+        except Exception:
+            pass
+    return r
 
 def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
@@ -215,6 +228,20 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
             pass
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
+
+def _cache_get(key: tuple) -> Optional[Any]:
+    try:
+        return _TRAKT_ID_CACHE.get(key)
+    except Exception:
+        return None
+
+def _cache_put(key: tuple, value: Any) -> None:
+    try:
+        if len(_TRAKT_ID_CACHE) > 2048:
+            _TRAKT_ID_CACHE.clear()
+        _TRAKT_ID_CACHE[key] = value
+    except Exception:
+        pass
 
 def _as_bool(v: Any) -> Optional[bool]:
     if isinstance(v, bool): return v
@@ -318,13 +345,6 @@ def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all:
     )
     return base + "|" + _session_media_key(md, ids_all, root=payload)
 
-def _resolve_trakt_ids_cached(key: tuple, fetch_fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
-    if key in _TRAKT_ID_CACHE:
-        return _TRAKT_ID_CACHE[key]
-    ids = fetch_fn() or {}
-    _TRAKT_ID_CACHE[key] = ids
-    return ids
-
 def _guid_search_episode(epi_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
     try:
         q = {k: epi_hint.get(k) for k in ("imdb","tmdb","tvdb") if epi_hint.get(k)}
@@ -343,20 +363,58 @@ def _guid_search_episode(epi_hint: Dict[str, Any], cfg: Dict[str, Any], logger=N
         pass
     return {}
 
-def _show_ids_from_episode_hint(h: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+def _show_ids_from_episode_hint(
+    ids_hint: Dict[str, Any],
+    cfg: Dict[str, Any],
+    logger=None,
+) -> Dict[str, Any]:
+    cache_key = (
+        "show_ids_from_episode_hint",
+        ids_hint.get("imdb"),
+        ids_hint.get("tmdb"),
+        ids_hint.get("tvdb"),
+    )
+
+    c = _cache_get(cache_key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+
     try:
-        q = {k: h.get(k) for k in ("imdb","tmdb","tvdb") if h.get(k)}
-        if not q:
-            return {}
-        r = requests.get(f"{TRAKT_API}/search/show", params=q, headers=_headers(cfg), timeout=10)
-        if r.status_code != 200:
-            return {}
-        arr = r.json() or []
-        if arr:
-            si = ((arr[0] or {}).get("show") or {}).get("ids") or {}
-            return {k: si[k] for k in ("trakt","tmdb","imdb","tvdb") if si.get(k)}
+        out = _guid_search_episode(ids_hint, cfg, logger=logger)
+        if out:
+            _cache_put(cache_key, out)
+            return out
     except Exception:
         pass
+
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = ids_hint.get(key)
+        if not val:
+            continue
+        try:
+            r = requests.get(
+                f"{TRAKT_API}/search/{key}/{val}",
+                params={"type": "episode", "limit": 1},
+                headers=_headers(cfg),
+                timeout=10,
+            )
+            if r.status_code != 200:
+                continue
+            arr = r.json() or []
+        except Exception:
+            continue
+
+        for hit in arr:
+            show_ids = ((hit.get("show") or {}).get("ids") or {})
+            out = {k: show_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
+            if out:
+                _emit(logger, f"resolved SHOW ids from episode hint: {out}", "DEBUG")
+                _cache_put(cache_key, out)
+                return out
+
+    _cache_put(cache_key, None)
     return {}
 
 def _resolve_episode_by_showids(show_ids: Dict[str, Any], s: int, n: int, cfg: Dict[str, Any], logger=None) -> Optional[int]:
@@ -378,19 +436,144 @@ def _resolve_episode_by_showids(show_ids: Dict[str, Any], s: int, n: int, cfg: D
     return None
 
 def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> Dict[str, Any]:
-    p = md.get("SeriesProviderIds") or root.get("SeriesProviderIds") or {}
-    out = {}
-    for k_src, k_norm in [("Tmdb","tmdb"),("Imdb","imdb"),("Tvdb","tvdb"),("Trakt","trakt")]:
-        v = p.get(k_src) or p.get(k_src.upper()) or p.get(k_src.lower())
-        if v:
-            out[k_norm] = int(v) if str(v).isdigit() else str(v)
+    out: Dict[str, Any] = {}
+    t_md = str(md.get("Type") or "").strip().lower()
+    t_root = str(root.get("Type") or "").strip().lower()
+    type_val = t_md or t_root
+    sp = (md.get("SeriesProviderIds") or root.get("SeriesProviderIds") or {}) or {}
+
+    def maybe_int(v: Any) -> Any:
+        s = str(v).strip()
+        return int(s) if s.isdigit() else (s if s else None)
+
+    def norm_imdb(v: Any) -> Optional[str]:
+        s = str(v).strip()
+        if not s:
+            return None
+        return s if s.startswith("tt") else f"tt{s}"
+
+    tvdb = (
+        sp.get("Tvdb") or sp.get("tvdb") or sp.get("TVDB") or sp.get("TheTVDB")
+        or root.get("SeriesTvdbId") or root.get("SeriesTvdb")
+    )
+    tmdb = (
+        sp.get("Tmdb") or sp.get("tmdb") or sp.get("TMDB") or sp.get("TheMovieDb")
+        or root.get("SeriesTmdbId") or root.get("SeriesTmdb")
+    )
+    imdb = (
+        sp.get("Imdb") or sp.get("imdb") or sp.get("IMDb")
+        or root.get("SeriesImdbId") or root.get("SeriesImdb")
+    )
+
+    if not (tvdb or tmdb or imdb) and type_val in ("series", "tvshow"):
+        pids = (md.get("ProviderIds") or root.get("ProviderIds") or {}) or {}
+        tvdb = tvdb or (pids.get("Tvdb") or pids.get("tvdb") or pids.get("TVDB") or pids.get("TheTVDB"))
+        tmdb = tmdb or (pids.get("Tmdb") or pids.get("tmdb") or pids.get("TMDB") or pids.get("TheMovieDb"))
+        imdb = imdb or (pids.get("Imdb") or pids.get("imdb") or pids.get("IMDb"))
+
+    v_tvdb = maybe_int(tvdb) if tvdb is not None else None
+    v_tmdb = maybe_int(tmdb) if tmdb is not None else None
+    v_imdb = norm_imdb(imdb) if imdb is not None else None
+
+    if v_tvdb is not None:
+        out["tvdb"] = v_tvdb
+    if v_tmdb is not None:
+        out["tmdb"] = v_tmdb
+    if v_imdb:
+        out["imdb"] = v_imdb
+
     return out
+
+def _cw_ids_for_payload(
+    media_type: str,
+    md: Mapping[str, Any],
+    ids_all: Dict[str, Any],
+    cfg: Dict[str, Any],
+    root: Optional[Mapping[str, Any]] = None,
+    logger=None,
+) -> Dict[str, Any]:
+
+    cw_ids: Dict[str, Any] = dict(ids_all or {})
+    mt = (media_type or "").strip().lower()
+    if mt != "episode":
+        return cw_ids
+
+    root = root or md
+
+    try:
+        show_ids = _series_ids_from_payload(md, root) or {}
+    except Exception:
+        show_ids = {}
+
+    # GET /Users/{UserId}/Items/{SeriesId}
+    if not show_ids:
+        try:
+            e = cfg.get("emby") or {}
+            base = str(e.get("server", "")).strip().rstrip("/")
+            tok = str(e.get("access_token") or "").strip()
+            uid = (
+                str(root.get("UserId") or "") or
+                str((root.get("User") or {}).get("Id") or "") or
+                str(e.get("user_id") or "")
+            ).strip()
+
+            grand_id = md.get("SeriesId") or md.get("ParentId") or md.get("SeriesItemId")
+
+            if base and "://" not in base:
+                base = "http://" + base
+
+            if base and tok and uid and grand_id:
+                url = f"{base}/Users/{uid}/Items/{grand_id}?format=json"
+                headers = {
+                    "Accept": "application/json",
+                    "X-Emby-Token": tok,
+                    "X-MediaBrowser-Token": tok,
+                }
+                timeout = float(e.get("timeout", 6))
+                verify = bool(e.get("verify_ssl", True))
+
+                r = requests.get(url, headers=headers, timeout=timeout, verify=verify)
+                if r.status_code == 200:
+                    info = r.json() or {}
+                    show_ids = _series_ids_from_payload(info, info) or {}
+                    if logger:
+                        logger(
+                            f"resolved show ids via Emby {url.replace(base, '')}: {show_ids}",
+                            level="DEBUG",
+                            module="SCROBBLE",
+                        )
+        except Exception as e:
+            if logger:
+                logger(f"Emby show metadata fetch failed: {e}", level="DEBUG", module="SCROBBLE")
+
+    for key in ("imdb", "tmdb", "tvdb"):
+        val = show_ids.get(key)
+        if val is not None:
+            cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids:
+        try:
+            try:
+                hint = {**(_ids_from_providerids(md, root) or {}), **(ids_all or {})}
+            except Exception:
+                hint = dict(ids_all or {})
+
+            extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
+            for key in ("imdb", "tmdb", "tvdb"):
+                val = extra.get(key)
+                if val is not None:
+                    cw_ids.setdefault(f"{key}_show", val)
+        except Exception:
+            pass
+
+    return cw_ids
 
 def _build_primary_body(media_type: str, md: Dict[str, Any], ids_all: Dict[str, Any], prog: float, cfg: Dict[str, Any], logger=None, root=None) -> Dict[str, Any]:
     p = float(round(prog, 2))
     if media_type == "movie":
-        ids = {k: ids_all[k] for k in ("trakt","tmdb","imdb") if ids_all.get(k)}
+        ids = {k: ids_all[k] for k in ("trakt", "tmdb", "imdb") if ids_all.get(k)}
         return {"progress": p, "movie": {"ids": ids}} if ids else {}
+
     if media_type == "episode":
         s, n = _episode_numbers(md, root or md)
         show_ids = {}
@@ -398,12 +581,15 @@ def _build_primary_body(media_type: str, md: Dict[str, Any], ids_all: Dict[str, 
             show_ids = _series_ids_from_payload(md, root or md) or {}
         except Exception:
             pass
+
         if not show_ids:
-            try:
-                episode_hint = {**_ids_from_providerids(md, root or md), **(ids_all or {})}
-                show_ids = _show_ids_from_episode_hint(episode_hint, cfg, logger=logger) or {}
-            except Exception:
-                pass
+            mapped = {}
+            for src, dest in (("imdb_show", "imdb"), ("tmdb_show", "tmdb"), ("tvdb_show", "tvdb")):
+                val = ids_all.get(src)
+                if val is not None:
+                    mapped[dest] = val
+            show_ids = mapped
+
         if show_ids and isinstance(s, int) and isinstance(n, int):
             etid = _resolve_episode_by_showids(show_ids, s, n, cfg, logger=logger)
             if isinstance(etid, int):
@@ -476,7 +662,8 @@ def process_webhook(
             event = event.replace(".", "")
         event = event.replace("_", "")
 
-        ses = _make_session_id(payload, md, pids)
+        ids_all = _ids_from_providerids(md, payload) or {}
+        ses = _make_session_id(payload, md, ids_all)
 
         acc_title = (
             ((payload.get("User") or {}).get("Name"))
@@ -570,9 +757,7 @@ def process_webhook(
         if intended != "/scrobble/start" and st_prog and (st_prog - prog) > regress_tol:
             _emit(logger, f"regress {st_prog}->{prog} within tol {regress_tol}", "DEBUG")
             prog = st_prog
-
-        ids_all = _ids_from_providerids(md, payload) or {}
-        sess = ses
+        cw_ids: Dict[str, Any] = dict(ids_all)
 
         try:
             stop_flag = (intended == "/scrobble/stop")
@@ -580,10 +765,12 @@ def process_webhook(
                 title = (md.get("SeriesName") or md.get("Name") or "").strip()
             else:
                 title = (md.get("Name") or md.get("SeriesName") or "").strip()
+
             year = md.get("ProductionYear") or md.get("Year")
             season_val = episode_val = None
             if media_type == "episode":
                 season_val, episode_val = _episode_numbers(md, payload)
+
             duration_ms = None
             try:
                 rticks = md.get("RunTimeTicks") or payload.get("RunTimeTicks")
@@ -591,7 +778,16 @@ def process_webhook(
                     duration_ms = rticks / 10_000
             except Exception:
                 duration_ms = None
-            cw_state = "playing" if intended == "/scrobble/start" else "paused" if intended == "/scrobble/pause" else "stopped" if intended == "/scrobble/stop" else None
+
+            cw_state = (
+                "playing" if intended == "/scrobble/start"
+                else "paused" if intended == "/scrobble/pause"
+                else "stopped" if intended == "/scrobble/stop"
+                else None
+            )
+
+            cw_ids = _cw_ids_for_payload(media_type, md, ids_all, cfg, root=payload, logger=logger)
+
             _cw_update(
                 source="embytrakt",
                 media_type=media_type,
@@ -604,14 +800,24 @@ def process_webhook(
                 duration_ms=duration_ms,
                 cover=None,
                 state=cw_state,
+                ids=cw_ids,
             )
         except Exception:
             pass
 
-        body = _build_primary_body(media_type, dict(md), ids_all, prog, cfg, logger=logger, root=payload)
+        body = _build_primary_body(media_type, dict(md), cw_ids, prog, cfg, logger=logger, root=payload)
+
         if not body:
             _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
-            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "finished": (prog >= complete_at), "paused": st.get("paused")}
+            _SCROBBLE_STATE[ses] = {
+                "ts": now,
+                "last_event": ev_lc,
+                "last_pause_ts": st.get("last_pause_ts", 0),
+                "prog": prog,
+                "finished": (prog >= complete_at),
+                "wl_removed": st.get("wl_removed"),
+                "paused": st.get("paused"),
+            }
             return {"ok": True, "ignored": True}
 
         if intended == "/scrobble/stop" and prog >= complete_at and cancel_checkin_on_stop:
@@ -645,7 +851,7 @@ def process_webhook(
                         st = {**st, "wl_removed": True}
                     except Exception:
                         pass
-                _SCROBBLE_STATE[sess] = {
+                _SCROBBLE_STATE[ses] = {
                     "ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0),
                     "prog": prog, "finished": True,
                     **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
@@ -661,13 +867,16 @@ def process_webhook(
                 except Exception:
                     pass
 
-            _SCROBBLE_STATE[sess] = {
-                "ts": now, "last_event": ev_lc,
+            _SCROBBLE_STATE[ses] = {
+                "ts": now,
+                "last_event": ev_lc,
                 "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
-                "prog": prog, "finished": (intended == "/scrobble/stop" and prog >= complete_at),
+                "prog": prog,
+                "finished": (intended == "/scrobble/stop" and prog >= complete_at),
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
                 "paused": (intended == "/scrobble/pause"),
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
+                **({"last_play_ts": now} if intended == "/scrobble/start" else {}),
             }
 
             try:
@@ -684,7 +893,7 @@ def process_webhook(
             return {"ok": True, "status": 200, "action": intended, "trakt": rj}
 
         _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
-        _SCROBBLE_STATE[sess] = {
+        _SCROBBLE_STATE[ses] = {
             "ts": now, "last_event": ev_lc, "last_pause_ts": st.get("last_pause_ts", 0),
             "prog": prog, "finished": (prog >= complete_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),

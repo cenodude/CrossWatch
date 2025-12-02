@@ -22,20 +22,6 @@
 
 /* label */
 #sched-inline-log .sub{display:flex;align-items:center;line-height:1;font-weight:800;letter-spacing:.1px;opacity:.95;transform:translateY(5px)}
-
-#sched-inline-log .sched-tip{position:absolute;right:0;bottom:110%;min-width:280px;max-width:360px;padding:12px 16px;border-radius:16px;
-  background:linear-gradient(135deg,rgba(124,92,255,.32),rgba(45,161,255,.16)),linear-gradient(180deg,rgba(255,255,255,.04),transparent),#0b0b16;
-  box-shadow:0 18px 40px rgba(0,0,0,.85),0 0 32px rgba(124,92,255,.55);
-  border:1px solid rgba(255,255,255,.16);opacity:0;visibility:hidden;transform:translateY(6px) scale(.97);
-  transition:opacity .18s ease-out,transform .18s ease-out,visibility .18s ease-out;pointer-events:none;z-index:5}
-#sched-inline-log .sched:hover .sched-tip{opacity:1;visibility:visible;transform:translateY(0) scale(1)}
-#sched-inline-log .tip-title{font-size:12px;font-weight:800;color:#e5e7ff;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sched-inline-log .tip-meta{font-size:10px;color:#9ca3af;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sched-inline-log .tip-bar{position:relative;width:100%;height:4px;border-radius:999px;background:linear-gradient(180deg,rgba(5,9,20,1),rgba(5,9,20,.94));
-  overflow:hidden;box-shadow:0 0 0 1px rgba(148,163,255,.65) inset,0 0 14px rgba(79,70,229,.7)}
-#sched-inline-log .tip-bar-inner{position:absolute;inset:0;border-radius:999px;background:linear-gradient(90deg,#2de2ff,#7c5cff,#ff7ae0);
-  width:0%;transform-origin:left center;animation:tipFlow 3s linear infinite}
-@keyframes tipFlow{0%{filter:brightness(1)}50%{filter:brightness(1.27)}100%{filter:brightness(1)}}
 `; document.head.appendChild(st); })();
 
 /* Host */
@@ -44,8 +30,8 @@ const h=[...document.querySelectorAll('h2,h3,h4,div.head,.head')].find(x=>(x.tex
 function ensureBanner(){const host=findBox(); if(!host) return null; const cs=getComputedStyle(host); if(cs.position==='static') host.style.position='relative';
 let wrap=$('#sched-inline-log',host); if(!wrap){ wrap=document.createElement('div'); wrap.id='sched-inline-log';
 wrap.innerHTML=`<div class="sched" id="chip-sched" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="sched-sub">Scheduler: —</span></div>
-<div class="sched" id="chip-watch" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="watch-sub">Watcher: —</span><div class="sched-tip" id="watch-tip"><div class="tip-title" id="watch-tip-title">No active playback</div><div class="tip-meta" id="watch-tip-meta">—</div><div class="tip-bar"><div class="tip-bar-inner" id="watch-tip-bar"></div></div></div></div>
-<div class="sched" id="chip-hook" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="hook-sub">Webhook: —</span><div class="sched-tip" id="hook-tip"><div class="tip-title" id="hook-tip-title">No active playback</div><div class="tip-meta" id="hook-tip-meta">—</div><div class="tip-bar"><div class="tip-bar-inner" id="hook-tip-bar"></div></div></div></div>`; host.appendChild(wrap) } return wrap}
+<div class="sched" id="chip-watch" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="watch-sub">Watcher: —</span></div>
+<div class="sched" id="chip-hook" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="hook-sub">Webhook: —</span></div>`; host.appendChild(wrap) } return wrap}
 
 /* Helpers */
 const tClock=s=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,d=new Date(ms);return isNaN(+d)?'—':d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
@@ -67,6 +53,7 @@ function renderSched(){
   chip.classList.toggle('live',!!S.running);
   sub.textContent=`Scheduler: ${S.running?'running':'scheduled'}${S.next?` (next ${tClock(S.next)})`:''}`;
 }
+
 function renderWatch(){
   const host=ensureBanner(); if(!host) return;
   const sub=$('#watch-sub',host), chip=$('#chip-watch',host);
@@ -78,31 +65,37 @@ function renderWatch(){
   chip.classList.toggle('bad',!live);
   chip.classList.toggle('live',hasPlay);
   sub.textContent=hasPlay?`Watcher: ${W.title}`:`Watcher: ${live?'running':'not running'}`;
-  const tip=$('#watch-tip',host), tTitle=$('#watch-tip-title',host), tMeta=$('#watch-tip-meta',host), tBar=$('#watch-tip-bar',host);
-  if(tTitle&&tMeta&&tBar){
-    if(hasPlay){
-      tTitle.textContent=W.title||'';
-      const parts=[];
-      if(W.media_type){
-        const mt=String(W.media_type).toLowerCase()==='episode'?'Show / Episode':'Movie';
-        if(W.media_type.toLowerCase()==='episode'&&W.season!=null&&W.episode!=null){
-          parts.push(`${mt} S${String(W.season).padStart(2,'0')}E${String(W.episode).padStart(2,'0')}`);
-        }else{
-          parts.push(mt);
+
+  const pct=Math.max(0,Math.min(100,Number(W.progress)||0));
+
+  // Notify UI listeners (playing card)
+  if(hasPlay){
+    try{
+      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
+        detail:{
+          source:'watcher',
+          title:W.title||'',
+          media_type:W.media_type||null,
+          year:W.year||null,
+          season:W.season??null,
+          episode:W.episode??null,
+          progress:pct,
+          state:W.state||'playing'
         }
-      }
-      if(W.year) parts.push(String(W.year));
-      const pct=Math.max(0,Math.min(100,Number(W.progress)||0));
-      parts.push(pct+'%');
-      tMeta.textContent=parts.join(' • ')||'—';
-      tBar.style.width=pct+'%';
-    }else{
-      tTitle.textContent='No active playback';
-      tMeta.textContent='—';
-      tBar.style.width='0%';
-    }
+      }));
+    }catch(e){}
+  }else{
+    try{
+      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
+        detail:{
+          source:'watcher',
+          state:'stopped'
+        }
+      }));
+    }catch(e){}
   }
 }
+
 function renderHook(){
   const host=ensureBanner(); if(!host) return;
   const sub=$('#hook-sub',host), chip=$('#chip-hook',host);
@@ -113,29 +106,34 @@ function renderHook(){
   chip.classList.toggle('bad',false);
   chip.classList.toggle('live',hasPlay);
   sub.textContent=hasPlay?`Webhook: ${H.title}`:'Webhook: enabled';
-  const tip=$('#hook-tip',host), tTitle=$('#hook-tip-title',host), tMeta=$('#hook-tip-meta',host), tBar=$('#hook-tip-bar',host);
-  if(tTitle&&tMeta&&tBar){
-    if(hasPlay){
-      tTitle.textContent=H.title||'';
-      const parts=[];
-      if(H.media_type){
-        const mt=String(H.media_type).toLowerCase()==='episode'?'Show / Episode':'Movie';
-        if(H.media_type.toLowerCase()==='episode'&&H.season!=null&&H.episode!=null){
-          parts.push(`${mt} S${String(H.season).padStart(2,'0')}E${String(H.episode).padStart(2,'0')}`);
-        }else{
-          parts.push(mt);
+
+  const pct=Math.max(0,Math.min(100,Number(H.progress)||0));
+
+  // Notify UI listeners (playing card)
+  if(hasPlay){
+    try{
+      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
+        detail:{
+          source:'webhook',
+          title:H.title||'',
+          media_type:H.media_type||null,
+          year:H.year||null,
+          season:H.season??null,
+          episode:H.episode??null,
+          progress:pct,
+          state:H.state||'playing'
         }
-      }
-      if(H.year) parts.push(String(H.year));
-      const pct=Math.max(0,Math.min(100,Number(H.progress)||0));
-      parts.push(pct+'%');
-      tMeta.textContent=parts.join(' • ')||'—';
-      tBar.style.width=pct+'%';
-    }else{
-      tTitle.textContent='No active playback';
-      tMeta.textContent='—';
-      tBar.style.width='0%';
-    }
+      }));
+    }catch(e){}
+  }else{
+    try{
+      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
+        detail:{
+          source:'webhook',
+          state:'stopped'
+        }
+      }));
+    }catch(e){}
   }
 }
 

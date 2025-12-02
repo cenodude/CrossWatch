@@ -15,7 +15,6 @@ from providers.scrobble.currently_watching import update_from_payload as _cw_upd
 TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: Dict[str, Dict[str, Any]] = {}
 _TRAKT_ID_CACHE: Dict[tuple, Any] = {}
-
 _DEF_WEBHOOK = {
     "pause_debounce_seconds": 5,
     "suppress_start_at": 99,
@@ -145,7 +144,6 @@ def _emit(logger: Optional[object], msg: str, level: str = "INFO"):
         pass
     print(f"[SCROBBLE] {lvl_up} {msg}")
 
-
 def _ensure_scrobble(cfg: Dict[str, Any]) -> Dict[str, Any]:
     changed = False
     sc = cfg.setdefault("scrobble", {})
@@ -200,7 +198,19 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
 
 def _del_trakt(path: str, cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
-    return requests.delete(url, headers=_headers(cfg), timeout=12)
+    r = requests.delete(url, headers=_headers(cfg), timeout=12)
+    if r.status_code == 401:
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
+            TRAKT_AUTH.refresh(cfg)
+            _save_config(cfg)
+        except Exception:
+            return r
+        try:
+            r = requests.delete(url, headers=_headers(cfg), timeout=12)
+        except Exception:
+            pass
+    return r
 
 def _get_trakt_watching(cfg: Dict[str, Any]) -> None:
     try:
@@ -361,6 +371,44 @@ def _resolve_trakt_show_id(ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=
         except Exception as e:
             _emit(logger, f"trakt show id resolve error: {e}", "DEBUG")
     _cache_put(key, None); return None
+    
+def _trakt_show_ids_from_imdb_show(imdb_show: str, cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    imdb_show = str(imdb_show or "").strip()
+    if not imdb_show:
+        return {}
+
+    key = ("show_ids_imdb", imdb_show)
+    c = _cache_get(key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+    try:
+        r = requests.get(
+            f"{TRAKT_API}/search/imdb/{imdb_show}",
+            params={"type": "show", "limit": 1},
+            headers=_headers(cfg),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            _cache_put(key, None)
+            return {}
+        arr = r.json() or []
+        if not arr:
+            _cache_put(key, None)
+            return {}
+
+        ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
+        out = {k: ids[k] for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}
+
+        _cache_put(key, out if out else None)
+        if out:
+            _emit(logger, f"trakt show ids from imdb_show {imdb_show}: {out}", "DEBUG")
+        return out
+    except Exception as e:
+        _emit(logger, f"trakt show ids from imdb_show {imdb_show} error: {e}", "DEBUG")
+        _cache_put(key, None)
+        return {}
 
 def _resolve_trakt_episode_id(md: Dict[str, Any], ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=None, root: Optional[Mapping[str, Any]] = None) -> Optional[int]:
     s, e = _episode_numbers(md, root or md)
@@ -408,27 +456,96 @@ def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> 
         out["imdb"] = s if s.startswith("tt") else (f"tt{s}" if s else "")
     return {k: v for k, v in out.items() if v}
 
-def _show_ids_from_episode_hint(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+def _show_ids_from_episode_hint(
+    ids_hint: Dict[str, Any],
+    cfg: Dict[str, Any],
+    logger=None,
+) -> Dict[str, Any]:
+    cache_key = (
+        "show_ids_from_episode_hint",
+        ids_hint.get("imdb"),
+        ids_hint.get("tmdb"),
+        ids_hint.get("tvdb"),
+    )
+
+    c = _cache_get(cache_key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+
     for key in ("tmdb", "imdb", "tvdb"):
         val = ids_hint.get(key)
         if not val:
             continue
         try:
-            r = requests.get(f"{TRAKT_API}/search/{key}/{val}",
-                             params={"type": "episode", "limit": 1},
-                             headers=_headers(cfg), timeout=10)
+            r = requests.get(
+                f"{TRAKT_API}/search/{key}/{val}",
+                params={"type": "episode", "limit": 1},
+                headers=_headers(cfg),
+                timeout=10,
+            )
             if r.status_code != 200:
                 continue
             arr = r.json() or []
         except Exception:
             continue
+
         for hit in arr:
             show_ids = ((hit.get("show") or {}).get("ids") or {})
-            out = {k: show_ids[k] for k in ("trakt","tmdb","imdb","tvdb") if show_ids.get(k)}
+            out = {k: show_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
             if out:
                 _emit(logger, f"guid search resolved SHOW ids from episode: {out}", "DEBUG")
+                _cache_put(cache_key, out)
                 return out
+
+    _cache_put(cache_key, None)
     return {}
+
+def _cw_ids_for_payload(
+    media_type: str,
+    md: Mapping[str, Any],
+    ids_all: Dict[str, Any],
+    cfg: Dict[str, Any],
+    root: Optional[Mapping[str, Any]] = None,
+    logger=None,
+) -> Dict[str, Any]:
+
+    cw_ids: Dict[str, Any] = dict(ids_all or {})
+    mt = (media_type or "").strip().lower()
+    if mt != "episode":
+        return cw_ids
+    root = root or md
+
+    try:
+        show_ids = _series_ids_from_payload(md, root) or {}
+    except Exception:
+        show_ids = {}
+
+    for key in ("imdb", "tmdb", "tvdb"):
+        val = show_ids.get(key)
+        if val is not None:
+            cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids:
+        try:
+            hint = {**(_ids_from_providerids(md, root) or {}), **(ids_all or {})}
+        except Exception:
+            hint = dict(ids_all or {})
+        extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
+        for key in ("imdb", "tmdb", "tvdb"):
+            val = extra.get(key)
+            if val is not None:
+                cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids and cw_ids.get("imdb_show"):
+        extra2 = _trakt_show_ids_from_imdb_show(cw_ids["imdb_show"], cfg, logger=logger)
+        for key in ("imdb", "tmdb", "tvdb"):
+            val = extra2.get(key)
+            if val is not None:
+                cw_ids.setdefault(f"{key}_show", val)
+
+    return cw_ids
 
 def _resolve_episode_by_showids(show_ids: Dict[str, Any], season: Any, number: Any, cfg: Dict[str, Any], logger=None) -> Optional[int]:
     if not isinstance(season, int) or not isinstance(number, int):
@@ -628,7 +745,6 @@ def process_webhook(
             if payload.get(k_src) and not pids.get(k_norm):
                 pids[k_norm] = payload[k_src]
         if pids: md["ProviderIds"] = pids
-
         media_type_raw = (md.get("Type") or "").strip().lower()
         media_type = "movie" if media_type_raw == "movie" else ("episode" if media_type_raw == "episode" else "")
         event = (_grab(payload, ["NotificationType", "Event", "event"]) or "").strip()
@@ -694,18 +810,20 @@ def process_webhook(
         last_prog = float(st.get("prog", 0.0))
         prog = prog_raw
         tol_pts = max(0.0, regress_tol)
-        last_prog_for_clamp = 0.0 if fresh_start else last_prog
-        if not st and ev_lc == "playbackprogress":
-            last_prog_for_clamp = 0.0
-        is_seek_jump = (ev_lc == "playbackprogress") and (last_prog > 0.0) and (abs(prog_raw - last_prog) >= 20.0)
-        if is_seek_jump:
-            _emit(logger, f"seek jump {last_prog:.2f}% → {prog_raw:.2f}% (no clamp)", "DEBUG")
-            last_prog_for_clamp = 0.0
-        if ev_lc == "playbackprogress" and last_prog >= complete_at and prog_raw + tol_pts < last_prog:
-            last_prog_for_clamp = 0.0
-        if prog + tol_pts < last_prog_for_clamp:
-            _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog_for_clamp:.2f}% (tol={tol_pts}%)", "DEBUG")
-            prog = last_prog_for_clamp
+
+        if ev_lc not in ("playbackstart", "playbackstarted", "playbackresume", "unpause", "play"):
+            last_prog_for_clamp = 0.0 if fresh_start else last_prog
+            if not st and ev_lc == "playbackprogress":
+                last_prog_for_clamp = 0.0
+            is_seek_jump = (ev_lc == "playbackprogress") and (last_prog > 0.0) and (abs(prog_raw - last_prog) >= 5.0)
+            if is_seek_jump:
+                _emit(logger, f"seek jump {last_prog:.2f}% → {prog_raw:.2f}% (no clamp)", "DEBUG")
+                last_prog_for_clamp = 0.0
+            if ev_lc == "playbackprogress" and last_prog >= complete_at and prog_raw + tol_pts < last_prog:
+                last_prog_for_clamp = 0.0
+            if prog + tol_pts < last_prog_for_clamp:
+                _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog_for_clamp:.2f}% (tol={tol_pts}%)", "DEBUG")
+                prog = last_prog_for_clamp
 
         if ev_lc in ("playbackpause", "playbackpaused") and prog >= 99.9 and last_prog > 0.0:
             np = max(last_prog, complete_at); _emit(logger, f"pause@100 clamp {prog:.2f}% -> {np:.2f}%", "DEBUG"); prog = np
@@ -735,8 +853,77 @@ def process_webhook(
         intended = derived or _map_event(event)
 
         if intended is None:
-            _SCROBBLE_STATE[sess] = {"ts": now, "last_event": ev_lc, "prog": prog, "sk": sk_current, "finished": (prog >= complete_at), "paused": st.get("paused") if paused_flag is None else paused_flag}
-            return {"ok": True, "ignored": True}
+            if ev_lc == "playbackprogress":
+                is_seek_jump = (last_prog > 0.0) and (abs(prog - last_prog) >= 5.0)
+                if is_seek_jump and prog < complete_at:
+                    _emit(
+                        logger,
+                        f"seek jump {last_prog:.2f}% → {prog:.2f}% → trakt /scrobble/start",
+                        "DEBUG",
+                    )
+                    intended = "/scrobble/start"
+                else:
+                    try:
+                        stop_flag = False
+
+                        if media_type == "episode":
+                            title = (md.get("SeriesName") or md.get("Name") or "").strip()
+                        else:
+                            title = (md.get("Name") or md.get("SeriesName") or "").strip()
+
+                        year = md.get("ProductionYear") or md.get("Year")
+
+                        season_val = episode_val = None
+                        if media_type == "episode":
+                            try:
+                                season_val, episode_val = _episode_numbers(md, payload)
+                            except Exception:
+                                season_val = episode_val = None
+
+                        duration_ms = None
+                        try:
+                            rticks = md.get("RunTimeTicks") or payload.get("RunTimeTicks")
+                            if rticks:
+                                duration_ms = float(rticks) / 10_000
+                        except Exception:
+                            duration_ms = None
+
+                        if paused_flag is True or st.get("paused") is True:
+                            cw_state = "paused"
+                        else:
+                            cw_state = "playing"
+
+                        cw_ids = _cw_ids_for_payload(
+                            media_type, md, ids_all, cfg, root=payload, logger=logger
+                        )
+
+                        _cw_update(
+                            source="jellyfintrakt",
+                            media_type=media_type,
+                            title=title,
+                            year=year,
+                            season=season_val,
+                            episode=episode_val,
+                            progress=prog,
+                            stop=stop_flag,
+                            duration_ms=duration_ms,
+                            cover=None,
+                            state=cw_state,
+                            ids=cw_ids,
+                        )
+                    except Exception:
+                        pass
+
+            if intended is None:
+                _SCROBBLE_STATE[sess] = {
+                    "ts": now,
+                    "last_event": ev_lc,
+                    "prog": prog,
+                    "sk": sk_current,
+                    "finished": (prog >= complete_at),
+                    "paused": st.get("paused") if paused_flag is None else paused_flag,
+                }
+                return {"ok": True, "ignored": True}
 
         if intended == "/scrobble/start":
             if prog >= suppress_start_at:
@@ -751,11 +938,17 @@ def process_webhook(
                 return {"ok": True, "suppressed": True}
 
         if intended == "/scrobble/stop":
-            if prog < stop_pause_threshold: intended = "/scrobble/pause"
-            elif prog < complete_at: intended = "/scrobble/pause"
+            if prog >= force_stop_at:
+                prog = 100.0
+
+            if prog < stop_pause_threshold:
+                intended = "/scrobble/pause"
+            elif prog < complete_at:
+                intended = "/scrobble/pause"
             elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
                 _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
-                intended = "/scrobble/pause"; prog = last_prog
+                intended = "/scrobble/pause"
+                prog = last_prog
 
         if intended == "/scrobble/start" and prog < 1.0: prog = 1.0
         if intended == "/scrobble/pause" and prog < 0.1: prog = 0.1
@@ -787,7 +980,7 @@ def process_webhook(
             try:
                 rticks = md.get("RunTimeTicks") or payload.get("RunTimeTicks")
                 if rticks:
-                    duration_ms = to_ms(rticks)
+                    duration_ms = float(rticks) / 10_000
             except Exception:
                 duration_ms = None
 
@@ -800,6 +993,7 @@ def process_webhook(
             else:
                 cw_state = None
 
+            cw_ids = _cw_ids_for_payload(media_type, md, ids_all, cfg, root=payload, logger=logger)
             _cw_update(
                 source="jellyfintrakt",
                 media_type=media_type,
@@ -812,7 +1006,9 @@ def process_webhook(
                 duration_ms=duration_ms,
                 cover=None,
                 state=cw_state,
+                ids=cw_ids,
             )
+
         except Exception:
             pass
 
@@ -880,10 +1076,10 @@ def process_webhook(
                 **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
             }
             try:
-                action_name = intended.rsplit("/", 1)[[-1]][0]
-            except Exception:
-                action_name = intended.rsplit("/", 1)[-1]
-            try:
+                try:
+                    action_name = intended.rsplit("/", 1)[-1]
+                except Exception:
+                    action_name = intended
                 _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
             except Exception:
                 pass

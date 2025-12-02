@@ -185,7 +185,19 @@ def _headers(cfg: Dict[str, Any]) -> Dict[str, str]:
 
 def _del_trakt(path: str, cfg: Dict[str, Any]) -> requests.Response:
     url = f"{TRAKT_API}{path}"
-    return requests.delete(url, headers=_headers(cfg), timeout=12)
+    r = requests.delete(url, headers=_headers(cfg), timeout=12)
+    if r.status_code == 401:
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
+            TRAKT_AUTH.refresh(cfg)
+            _save_config(cfg)
+        except Exception:
+            return r
+        try:
+            r = requests.delete(url, headers=_headers(cfg), timeout=12)
+        except Exception:
+            pass
+    return r
 
 def _get_trakt_watching(cfg: Dict[str, Any]) -> None:
     try:
@@ -226,18 +238,6 @@ def _post_trakt(path: str, body: Dict[str, Any], cfg: Dict[str, Any]) -> request
         time.sleep(min(max(ra, 0.5), 3.0))
         r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
     return r
-
-def _ids_from_candidates(candidates: Iterable[Any]) -> Dict[str, Any]:
-    for c in candidates:
-        if not c: continue
-        s = str(c)
-        m = _PAT_TMDB.search(s)
-        if m: return {"tmdb": int(m.group(1))}
-        m = _PAT_IMDB.search(s)
-        if m: return {"imdb": m.group(1)}
-        m = _PAT_TVDB.search(s)
-        if m: return {"tvdb": int(m.group(1))}
-    return {}
 
 def _ids_from_candidates_show_first(candidates: Iterable[Any]) -> Dict[str, Any]:
     for c in candidates:
@@ -316,13 +316,101 @@ def _show_ids_from_md(md: Dict[str, Any]) -> Dict[str, Any]:
         if m and "tvdb" not in ids: ids["tvdb"] = int(m.group(1))
     return ids
 
-def _ids_from_metadata(md: Dict[str, Any], media_type: str) -> Dict[str, Any]:
-    if media_type == "episode":
-        pref = [md.get("grandparentGuid"), md.get("parentGuid")]
-        ids = _ids_from_candidates_show_first(pref)
-        if ids: return ids
-        return _ids_from_candidates_show_first(_gather_guid_candidates(md))
-    return _ids_from_candidates(_gather_guid_candidates(md))
+def _plex_show_ids_from_metadata(cfg: Dict[str, Any], md: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    try:
+        rk_candidates: list[str] = []
+        for key in ("grandparentRatingKey", "parentRatingKey"):
+            val = md.get(key)
+            if val is None:
+                continue
+            s = str(val).strip()
+            if not s:
+                continue
+            if s not in rk_candidates:
+                rk_candidates.append(s)
+
+        if not rk_candidates:
+            return {}
+
+        base, token = _plex_base_token(cfg)
+        if not token:
+            return {}
+
+        for rk in rk_candidates:
+            try:
+                r = requests.get(
+                    f"{base}/library/metadata/{rk}",
+                    headers={"X-Plex-Token": token},
+                    timeout=5,
+                )
+            except Exception as e:
+                _emit(logger, f"plex show-ids lookup error rk={rk}: {e}", "DEBUG")
+                continue
+            if r.status_code != 200:
+                continue
+            try:
+                root = ET.fromstring(r.text or "")
+            except Exception:
+                continue
+
+            guids: list[str] = []
+            for g in root.iter("Guid"):
+                gid = g.get("id") or ""
+                if gid:
+                    guids.append(gid)
+
+            if not guids:
+                continue
+
+            ids = _ids_from_candidates_show_first(guids)
+            if ids:
+                _emit(
+                    logger,
+                    f"plex metadata resolved SHOW ids from rk={rk}: {_describe_ids(ids)}",
+                    "DEBUG",
+                )
+                return ids
+        return {}
+    except Exception:
+        return {}
+    
+def _cw_ids_for_payload(
+    media_type: str,
+    md: Dict[str, Any],
+    ids_all: Dict[str, Any],
+    cfg: Dict[str, Any],
+    logger=None,
+) -> Dict[str, Any]:
+    cw_ids: Dict[str, Any] = dict(ids_all or {})
+
+    mt = (media_type or "").lower()
+    if mt != "episode":
+        return cw_ids
+    try:
+        show_ids = _show_ids_from_md(md)
+    except Exception:
+        show_ids = {}
+
+    for key in ("imdb", "tmdb", "tvdb"):
+        val = show_ids.get(key)
+        if val is not None:
+            cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids:
+        extra = _plex_show_ids_from_metadata(cfg, md, logger=logger)
+        for key in ("imdb", "tmdb", "tvdb"):
+            val = extra.get(key)
+            if val is not None:
+                cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids and cw_ids.get("imdb_show"):
+        extra2 = _trakt_show_ids_from_imdb_show(cw_ids["imdb_show"], cfg, logger=logger)
+        for key in ("imdb", "tmdb", "tvdb"):
+            val = extra2.get(key)
+            if val is not None:
+                cw_ids.setdefault(f"{key}_show", val)
+
+    return cw_ids
 
 def _describe_ids(ids: Dict[str, Any] | str) -> str:
     if isinstance(ids, dict):
@@ -434,6 +522,45 @@ def _resolve_trakt_show_id(ids_all: Dict[str, Any], cfg: Dict[str, Any], logger=
         except Exception as e:
             _emit(logger, f"trakt show id resolve error: {e}", "DEBUG")
     _cache_put(key, None); return None
+    
+def _trakt_show_ids_from_imdb_show(imdb_show: str, cfg: Dict[str, Any], logger=None) -> Dict[str, Any]:
+    imdb_show = str(imdb_show or "").strip()
+    if not imdb_show:
+        return {}
+
+    key = ("show_ids_imdb", imdb_show)
+    c = _cache_get(key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+
+    try:
+        r = requests.get(
+            f"{TRAKT_API}/search/imdb/{imdb_show}",
+            params={"type": "show", "limit": 1},
+            headers=_headers(cfg),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            _cache_put(key, None)
+            return {}
+        arr = r.json() or []
+        if not arr:
+            _cache_put(key, None)
+            return {}
+
+        ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
+        out = {k: ids[k] for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}
+
+        _cache_put(key, out if out else None)
+        if out:
+            _emit(logger, f"trakt show ids from imdb_show {imdb_show}: {out}", "DEBUG")
+        return out
+    except Exception as e:
+        _emit(logger, f"trakt show ids from imdb_show {imdb_show} error: {e}", "DEBUG")
+        _cache_put(key, None)
+        return {}
 
 def _guid_search_episode(ids_hint: Dict[str, Any], cfg: Dict[str, Any], logger=None) -> Dict[str, Any] | None:
     for key in ("tmdb", "imdb", "tvdb"):
@@ -847,10 +974,6 @@ def process_webhook(
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
-    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
-        _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
-
-    # Update currently_watching.json from Plex webhook
     try:
         stop_flag = (intended == "/scrobble/stop")
         title = (md.get("title") or md.get("grandparentTitle") or "").strip()
@@ -882,6 +1005,7 @@ def process_webhook(
         elif intended == "/scrobble/pause":
             state_val = "paused"
 
+        cw_ids = _cw_ids_for_payload(media_type, md, ids_all2, cfg, logger=logger)
         _cw_update(
             source="plextrakt",
             media_type=(media_type or ""),
@@ -895,7 +1019,9 @@ def process_webhook(
             cover=None,
             state=state_val,
             clear_on_stop=True,
+            ids=cw_ids,
         )
+
     except Exception:
         pass
 
