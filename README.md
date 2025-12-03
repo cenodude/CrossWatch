@@ -52,6 +52,20 @@ It runs locally with a clean web UI where you link accounts, define sync pairs, 
 CrossWatch also includes its own tracker to keep your data safe with snapshots. 
 It supports **movies** and **shows/episodes** Anime is not supported yet....sorry..
 
+> **Road to Improvement – starting with 0.5.x**
+>
+> Hi all, 
+> CrossWatch is going through a major internal cleanup to make the project easier to maintain and improve long-term.
+>
+> **What this means for you**
+> - Refactors, file moves and code restructuring
+> - Possible new bugs and regressions while things settle
+> - Updates may come a bit slower than you’re used to
+>
+> This refactor is *necessary* to avoid the codebase into more shit and to make future features, fixes smoother.
+> 
+> Thanks in advance and for your patience while things are under construction.
+
 ## Why CrossWatch?
 - **One brain for all your media syncs** A single place to configure and understand everything.
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
