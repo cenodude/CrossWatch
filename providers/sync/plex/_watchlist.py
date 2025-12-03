@@ -4,13 +4,8 @@ from __future__ import annotations
 import os, json, time, random, uuid, requests, xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List
-
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
-except Exception:
-    from _id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid  # type: ignore
-
-from .._mod_common import request_with_retries  # instrumented (api:hit etc.)
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
+from .._mod_common import request_with_retries
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_watchlist.unresolved.json"
 
@@ -637,14 +632,21 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     done = 0; total: Optional[int] = None; start = 0
     raw = 0; coll = 0; typ: Dict[str,int] = {}
+    
     while True:
         params = dict(base_params)
         params["X-Plex-Container-Start"] = start
         params["X-Plex-Container-Size"] = page_size
-        params["offset"] = start
-        params["limit"] = page_size
-        cont = _get_container(session, f"{DISCOVER}/library/sections/watchlist/all", token,
-                              timeout=timeout, retries=retries, params=params, accept_json=True)
+        cont = _get_container(
+            session,
+            f"{DISCOVER}/library/sections/watchlist/all",
+            token,
+            timeout=timeout,
+            retries=retries,
+            params=params,
+            accept_json=True,
+        )
+        
         mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
         if total is None:
             try:
@@ -671,7 +673,7 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
             if total is not None and done >= total:
                 stop = True; break
         if stop: break
-        if total is None and len(rows) < page_size: break
+        if total is None and start > 0 and len(rows) < page_size: break
         start += len(rows)
     _unfreeze_keys_if_present(out.keys())
     _log(f"index size: {len(out)} raw={raw} coll={coll} types={typ}")
