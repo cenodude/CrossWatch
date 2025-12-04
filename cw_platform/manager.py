@@ -8,14 +8,13 @@ from cw_platform.config_base import CONFIG
 from _logging import log
 
 class PlatformManager:
-    """Unified facade for providers and sync profiles."""
     def __init__(self, load_cfg, save_cfg, profiles_path: Path | None = None) -> None:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
         self.profiles_path = profiles_path or (CONFIG / "profiles.json")
         self._providers = self._discover_providers()
 
-    # ---- discovery ----
+    # discovery
     def _discover_providers(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         try:
@@ -33,7 +32,7 @@ class PlatformManager:
                     out[name.upper()] = prov
         return out
 
-    # ---- providers ----
+    # Providers
     def providers_list(self) -> List[dict]:
         items = []
         for name, prov in self._providers.items():
@@ -52,7 +51,7 @@ class PlatformManager:
             items.append({"name": name, "manifest": man, "capabilities": caps, "status": st})
         return items
 
-    # ---- auth actions ----
+    # auth actions
     def auth_start(self, provider: str, payload: dict) -> dict:
         prov = self._providers.get(provider.upper())
         if not prov: raise ValueError(f"Unknown provider: {provider}")
@@ -73,7 +72,7 @@ class PlatformManager:
         if not prov: raise ValueError(f"Unknown provider: {provider}")
         return prov.disconnect(self.load_cfg(), self.save_cfg)
 
-    # ---- sync options ----
+    # sync options
     def _caps(self, name: str) -> dict:
         prov = self._providers.get(name.upper())
         return prov.capabilities() if prov else {}
@@ -81,11 +80,10 @@ class PlatformManager:
     def sync_options(self, source: str, target: str, direction: str = "mirror") -> dict:
         s = self._caps(source) or {}
         t = self._caps(target) or {}
-        # basic intersection for features
         feats = {k: bool((s.get("features",{}).get(k) or {}).get("read") and (t.get("features",{}).get(k) or {}).get("write")) for k in set((s.get("features") or {}).keys()) | set((t.get("features") or {}).keys())}
         return feats
 
-    # ---- profiles ----
+    # Profiles
     def _read_profiles(self) -> list[dict]:
         try:
             return json.loads(self.profiles_path.read_text(encoding="utf-8"))

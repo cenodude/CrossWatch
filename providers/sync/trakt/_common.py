@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 from typing import Any, Dict, Iterable, Mapping
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 # ── headers ───────────────────────────────────────────────────────────────────
 UA = os.environ.get("CW_UA", "CrossWatch/3.0 (Trakt)")
@@ -30,11 +31,6 @@ def build_headers(arg1: Any, access_token: str | None = None) -> Dict[str, str]:
     return h
 
 # ── ids / keys ────────────────────────────────────────────────────────────────
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
-
 _ALLOWED_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt")
 
 def _fix_imdb(ids: Dict[str, Any]) -> None:

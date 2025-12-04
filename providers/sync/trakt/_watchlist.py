@@ -13,10 +13,7 @@ from ._common import (
     build_watchlist_body,  # kept for callers; local batching is simple
 )
 from .._mod_common import request_with_retries
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.trakt.tv"
 URL_ALL    = f"{BASE}/sync/watchlist"

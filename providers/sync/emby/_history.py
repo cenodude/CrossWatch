@@ -11,16 +11,12 @@ from ._common import (
     emby_scope_history,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/emby_history.unresolved.json"
 SHADOW_PATH     = "/config/.cw_state/emby_history.shadow.json"
 BLACKBOX_PATH   = "/config/.cw_state/emby_history.emby.blackbox.json"
 
-# Helpers for played timestamp extraction
 def _played_ts_from_row(row: Mapping[str, Any]) -> int:
     ud = (row.get("UserData") or {}) if isinstance(row, Mapping) else {}
     for v in (
@@ -311,7 +307,7 @@ def _emby_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
 
     return roots
 
-# Deep lookup: Emby items often have LibraryId/AncestorIds that are NOT view ids.
+# lookup: Emby items
 _lib_anc_cache: Dict[str, Optional[str]] = {}
 
 def _lib_id_via_ancestors(http, uid: str, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
@@ -407,8 +403,6 @@ def _dst_user_state(http, uid: str, iid: str):
 
         play_count = int(ud.get("PlayCount") or 0)
         played_flag = bool(ud.get("Played") is True)
-
-        # Only timestamp we should trust per Emby docs
         raw_ts = ud.get("LastPlayedDate")
         ts = _parse_iso_to_epoch(raw_ts) or 0
 
@@ -431,8 +425,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     uid = adapter.cfg.user_id
     page_size = _history_limit(adapter)
     roots = _emby_library_roots(adapter)
-    
-    # Classify roots by type (movie/show)
     movie_roots: List[str] = []
     show_roots: List[str] = []
 
@@ -725,12 +717,12 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             except Exception:
                 pass
             
-    # Base keys that already have a real event (key@ts)
+    # Base keys
     event_bases = set()
     for ek in out.keys():
         event_bases.add(ek.split("@", 1)[0])
     
-    # Merge in shadow and blackbox presence entries
+    # Merge and blackbox presence entries
     shadow = _shadow_load()
     if shadow:
         added = 0
@@ -764,7 +756,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
         if added:
             _log(f"presence merged: +{added}")
             
-    # Debug: show library_id distribution versus configured libraries
+    # Debug: show library_id distribution
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         try:
             cfg_libs = list(
@@ -919,7 +911,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
             played, dst_ts = _dst_user_state(http, uid, iid)
 
-            # Skip if destination is newer or equal within tolerance
             if played and dst_ts and dst_ts >= (src_ts - tol):
                 prev_meta = bb.get(k) or {}
                 if prev_meta.get("reason") == "presence:shadow":
@@ -934,7 +925,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                     )
 
             if played and not dst_ts:
-                # Played but untimed at destination
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
                     ok += 1
                     shadow[k] = int(shadow.get(k, 0)) + 1

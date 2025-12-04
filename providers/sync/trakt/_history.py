@@ -11,18 +11,14 @@ from ._common import (
     pick_trakt_kind,
 )
 from .._mod_common import request_with_retries
-
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 BASE = "https://api.trakt.tv"
 URL_HIST_MOV = f"{BASE}/sync/history/movies"
 URL_HIST_EPI = f"{BASE}/sync/history/episodes"
 URL_ADD      = f"{BASE}/sync/history"
 URL_REMOVE   = f"{BASE}/sync/history/remove"
-URL_COLL_ADD = f"{BASE}/sync/collection"  # ← add to collection when enabled
+URL_COLL_ADD = f"{BASE}/sync/collection"
 
 UNRESOLVED_PATH = "/config/.cw_state/trakt_history.unresolved.json"
 

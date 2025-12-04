@@ -1,4 +1,6 @@
 # cw_platform/config_base.py
+# CrossWatch - Configuration Base
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import copy
@@ -8,32 +10,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-# ------------------------------------------------------------
-# Base dir resolution
-# ------------------------------------------------------------
 def CONFIG_BASE() -> Path:
-    """
-    Determine the base directory for config files.
-
-    Priority:
-      1) $CONFIG_BASE if set
-      2) /config (when running in container that mounts /config)
-      3) Project root (two levels up from this file)
-    """
     env = os.getenv("CONFIG_BASE")
     if env:
         return Path(env)
 
     if Path("/app").exists():
-        # In container images we mount /config as a writable volume
+        # In container image mount /config as a writable volume
         return Path("/config")
-
     return Path(__file__).resolve().parents[1]
 
 CONFIG: Path = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)
 
-# Default config structure
+# Default config 
 DEFAULT_CFG: Dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
@@ -62,7 +52,7 @@ DEFAULT_CFG: Dict[str, Any] = {
 
         # Watchlist via Discover (with PMS fallback toggle)
         "watchlist_allow_pms_fallback": False,          # Allow PMS watchlist fallback when needed. Keep False for strict Discover-only behavior.
-        "watchlist_page_size": 100,                     # Discover page size (100-200). Higher = faster, but more risk of 504 timeouts.
+        "watchlist_page_size": 250,                     # Discover page size (100-250). Higher = faster, but more risk of 504 timeouts.
         "watchlist_query_limit": 25,                    # Max Discover search results per query (10–25). Lower = faster, 25 = safer.
         "watchlist_write_delay_ms": 0,                  # Optional pacing between Discover writes; set 50–150 if you hit 429/5xx.
         "watchlist_title_query": True,                  # Use title/slug tokens for Discover candidate fetching (Discover is text-only).
@@ -348,10 +338,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     "pairs": [],
 }
 
-
-# ------------------------------------------------------------
 # Helpers: paths, IO, merging, normalization
-# ------------------------------------------------------------
 def _cfg_file() -> Path:
     return CONFIG / "config.json"
 
@@ -364,7 +351,6 @@ def _read_json(p: Path) -> Dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     import os, time, secrets, threading
@@ -376,8 +362,6 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
         f.write("\n")
     tmp.replace(p)
 
-
-
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     out = copy.deepcopy(base)
     for k, v in (override or {}).items():
@@ -387,11 +371,9 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
             out[k] = v
     return out
 
-
-# -------------------- Feature normalization (pairs.*.features) ----------------
+# Feature normalization
 _ALLOWED_RATING_TYPES: List[str] = ["movies", "shows", "seasons", "episodes"]
 _ALLOWED_RATING_MODES: List[str] = ["only_new", "from_date", "all"]
-
 
 def _as_list(value: Any) -> List[str]:
     if value is None:
@@ -402,11 +384,8 @@ def _as_list(value: Any) -> List[str]:
         return [str(x) for x in value if isinstance(x, (str, int, float))]
     return []
 
-
 def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
     v = dict(val or {})
-
-    # basic toggles
     v["enable"] = bool(v.get("enable", False))
     v["add"] = bool(v.get("add", False))
     v["remove"] = bool(v.get("remove", False))
@@ -417,13 +396,10 @@ def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
     if "all" in types:
         types = list(_ALLOWED_RATING_TYPES)
     else:
-        # keep order per allowed list; de-dupe
         types = [t for t in _ALLOWED_RATING_TYPES if t in types]
         if not types:
             types = ["movies", "shows"]
     v["types"] = types
-
-    # mode + from_date
     mode = str(v.get("mode", "only_new")).strip().lower()
     if mode not in _ALLOWED_RATING_MODES:
         mode = "only_new"
@@ -436,7 +412,6 @@ def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
 
     return v
 
-
 def _normalize_features_map(features: dict | None) -> dict:
     f = dict(features or {})
     for name, val in list(f.items()):
@@ -445,31 +420,22 @@ def _normalize_features_map(features: dict | None) -> dict:
             continue
 
         if isinstance(val, dict):
-            # Defaults for toggles
             v = dict(val)
             v.setdefault("enable", True)
             v.setdefault("add", True)
             v.setdefault("remove", False)
 
-            # Ratings has extra fields we should normalize carefully
+            # Ratings has extra fields - normalize carefully
             if name == "ratings":
                 v = _normalize_ratings_feature(v)
-
             f[name] = v
             continue
-
-        # Unknown type -> disabled structure
+        # Unknown 
         f[name] = {"enable": False, "add": False, "remove": False}
     return f
 
-
-# ------------------------------------------------------------
 # Public API
-# ------------------------------------------------------------
 def load_config() -> Dict[str, Any]:
-    """
-    Read config.json 
-    """
     p = _cfg_file()
     user_cfg: Dict[str, Any] = {}
     if p.exists():
@@ -479,21 +445,14 @@ def load_config() -> Dict[str, Any]:
             user_cfg = {}
 
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
-
-    # normalize pair feature flags if any pairs exist
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))
-
     return cfg
 
-
 def save_config(cfg: Dict[str, Any]) -> None:
-    """
-    Write to config.json 
-    """
     data = dict(cfg or {})
     pairs = data.get("pairs")
     if isinstance(pairs, list):

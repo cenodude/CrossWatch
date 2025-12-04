@@ -1,40 +1,27 @@
-# _editor.py
+# services/editor.py
 # CrossWatch - Tracker state helpers for history / ratings / watchlist
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Dict, Any, List, Literal, Tuple, IO
-from pathlib import Path, PurePosixPath
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path, PurePosixPath
+from typing import Any, IO, Literal
 import json
-import zipfile
 import shutil
+import zipfile
 
-from cw_platform.config_base import CONFIG
+from cw_platform.config_base import CONFIG, load_config
 
 Kind = Literal["watchlist", "history", "ratings"]
 
-
-def _config_path() -> Path:
-    return Path(CONFIG) / "config.json"
-
-
-def _load_config() -> Dict[str, Any]:
-    path = _config_path()
+def _cw_cfg() -> dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        cfg = load_config()
     except Exception:
         return {}
-
-
-def _cw_cfg() -> Dict[str, Any]:
-    cfg = _load_config()
     cw = cfg.get("crosswatch") or {}
-    if not isinstance(cw, dict):
-        return {}
-    return cw
-
+    return cw if isinstance(cw, dict) else {}
 
 def _root_dir() -> Path:
     cw = _cw_cfg()
@@ -44,16 +31,13 @@ def _root_dir() -> Path:
         p = Path(CONFIG) / p
     return p
 
-
 def _snapshots_dir() -> Path:
     d = _root_dir() / "snapshots"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-
 def _state_path(kind: Kind) -> Path:
     return _root_dir() / f"{kind}.json"
-
 
 def _parse_ts_from_name(name: str) -> datetime | None:
     try:
@@ -62,10 +46,10 @@ def _parse_ts_from_name(name: str) -> datetime | None:
     except Exception:
         return None
 
-
-def _snapshot_meta_for_file(path: Path, kind: Kind) -> Dict[str, Any]:
+def _snapshot_meta_for_file(path: Path, kind: Kind) -> dict[str, Any]:
     dt = _parse_ts_from_name(path.name) or datetime.fromtimestamp(
-        path.stat().st_mtime, tz=timezone.utc
+        path.stat().st_mtime,
+        tz=timezone.utc,
     )
     return {
         "name": path.name,
@@ -75,11 +59,10 @@ def _snapshot_meta_for_file(path: Path, kind: Kind) -> Dict[str, Any]:
         "size": path.stat().st_size,
     }
 
-
-def list_snapshots(kind: Kind) -> List[Dict[str, Any]]:
+def list_snapshots(kind: Kind) -> list[dict[str, Any]]:
     snaps_dir = _snapshots_dir()
     suffix = f"-{kind}.json"
-    items: List[Tuple[int, Dict[str, Any]]] = []
+    items: list[tuple[int, dict[str, Any]]] = []
     for p in snaps_dir.glob(f"*{suffix}"):
         try:
             meta = _snapshot_meta_for_file(p, kind)
@@ -89,18 +72,15 @@ def list_snapshots(kind: Kind) -> List[Dict[str, Any]]:
     items.sort(key=lambda t: t[0], reverse=True)
     return [m for _, m in items]
 
-
 def _snapshot_enabled() -> bool:
     cw = _cw_cfg()
     return bool(cw.get("auto_snapshot", True))
 
-
-def _snapshot_limits() -> Tuple[int, int]:
+def _snapshot_limits() -> tuple[int, int]:
     cw = _cw_cfg()
     max_snaps = int(cw.get("max_snapshots", 64) or 0)
     retention_days = int(cw.get("retention_days", 30) or 0)
     return max_snaps, retention_days
-
 
 def _make_snapshot(kind: Kind) -> None:
     if not _snapshot_enabled():
@@ -125,11 +105,10 @@ def _make_snapshot(kind: Kind) -> None:
         return
     _enforce_snapshot_retention(kind)
 
-
 def _enforce_snapshot_retention(kind: Kind) -> None:
     max_snaps, retention_days = _snapshot_limits()
     snaps = list_snapshots(kind)
-    keep: List[str] = []
+    keep: list[str] = []
     now = datetime.now(timezone.utc)
     for meta in snaps:
         dt = datetime.fromtimestamp(meta["ts"], tz=timezone.utc)
@@ -151,15 +130,18 @@ def _enforce_snapshot_retention(kind: Kind) -> None:
             except Exception:
                 continue
 
-
-def load_state(kind: Kind, snapshot: str | None = None) -> Dict[str, Any]:
-    kind = kind or "watchlist"  # type: ignore[assignment]
-    if kind not in ("watchlist", "history", "ratings"):
+def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[str, Any]:
+    if kind is None:
+        kind_val: Kind = "watchlist"
+    elif kind in ("watchlist", "history", "ratings"):
+        kind_val = kind
+    else:
         raise ValueError(f"Unsupported kind: {kind!r}")
+
     if snapshot:
         path = _snapshots_dir() / snapshot
     else:
-        path = _state_path(kind)  # type: ignore[arg-type]
+        path = _state_path(kind_val)
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -175,19 +157,21 @@ def load_state(kind: Kind, snapshot: str | None = None) -> Dict[str, Any]:
 
     return {"items": items, "ts": ts}
 
-
-def save_state(kind: Kind, items: Dict[str, Any]) -> Dict[str, Any]:
-    kind = kind or "watchlist"  # type: ignore[assignment]
-    if kind not in ("watchlist", "history", "ratings"):
+def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
+    if kind is None:
+        kind_val: Kind = "watchlist"
+    elif kind in ("watchlist", "history", "ratings"):
+        kind_val = kind
+    else:
         raise ValueError(f"Unsupported kind: {kind!r}")
 
-    _make_snapshot(kind)  # type: ignore[arg-type]
+    _make_snapshot(kind_val)
 
     state = {
         "items": items or {},
         "ts": int(datetime.now(timezone.utc).timestamp()),
     }
-    path = _state_path(kind)  # type: ignore[arg-type]
+    path = _state_path(kind_val)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
@@ -195,9 +179,7 @@ def save_state(kind: Kind, items: Dict[str, Any]) -> Dict[str, Any]:
         pass
     return state
 
-
-TrackerImportStats = Dict[str, Any]
-
+TrackerImportStats = dict[str, Any]
 
 def export_tracker_zip() -> bytes:
     root = _root_dir()
@@ -212,7 +194,6 @@ def export_tracker_zip() -> bytes:
                 continue
             zf.write(path, rel.as_posix())
     return buf.getvalue()
-
 
 def import_tracker_zip(fp: IO[bytes]) -> TrackerImportStats:
     root = _root_dir()
@@ -256,12 +237,11 @@ def import_tracker_zip(fp: IO[bytes]) -> TrackerImportStats:
 
     return stats
 
-
-def _normalize_import_items(data: Any) -> Dict[str, Any]:
+def _normalize_import_items(data: Any) -> dict[str, Any]:
     if isinstance(data, dict):
         return {str(k): v for k, v in data.items()}
     if isinstance(data, list):
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for row in data:
             if not isinstance(row, dict):
                 continue
@@ -272,7 +252,6 @@ def _normalize_import_items(data: Any) -> Dict[str, Any]:
             out[key] = payload
         return out
     return {}
-
 
 def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     try:
@@ -292,7 +271,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     now_ts = int(datetime.now(timezone.utc).timestamp())
     ts_val = raw.get("ts")
     ts = int(ts_val) if isinstance(ts_val, int) else now_ts
-    state: Dict[str, Any] = {"items": items, "ts": ts}
+    state: dict[str, Any] = {"items": items, "ts": ts}
 
     name = (filename or "upload.json").strip()
     lower = name.lower()
@@ -316,7 +295,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
             raise ValueError(
                 "Could not infer target for JSON file. "
                 "Use filenames like 'watchlist.json' or "
-                "'YYYYMMDDTHHMMSSZ-watchlist.json'."
+                "'YYYYMMDDTHHMMSSZ-watchlist.json'.",
             )
         dest = _snapshots_dir() / name
         target = "snapshot"
@@ -340,8 +319,10 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     }
     return stats
 
-
-def import_tracker_upload(payload: bytes, filename: str | None = None) -> TrackerImportStats:
+def import_tracker_upload(
+    payload: bytes,
+    filename: str | None = None,
+) -> TrackerImportStats:
     name = (filename or "").strip() or "upload.bin"
     buf = BytesIO(payload)
 
@@ -360,7 +341,6 @@ def import_tracker_upload(payload: bytes, filename: str | None = None) -> Tracke
     if lower.endswith(".json"):
         return import_tracker_json(payload, name)
 
-    # Fallback: try JSON anyway for unknown extension
     try:
         return import_tracker_json(payload, name)
     except Exception as e:

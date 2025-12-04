@@ -1,12 +1,12 @@
+# /providers/sync/_mod_base.py
 from __future__ import annotations
 from _logging import log
 
-# /providers/sync/_mod_base.py
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, Mapping, Optional, Protocol, Callable
 
-# ---------- Logging
+# Log
 
 class Logger(Protocol):
     def __call__(
@@ -22,7 +22,7 @@ class Logger(Protocol):
     def bind(self, **ctx: Any) -> "Logger": ...
     def child(self, name: str) -> "Logger": ...
 
-# ---------- Status & results
+# Status & results
 
 class SyncStatus(Enum):
     IDLE = auto()
@@ -62,7 +62,7 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-# ---------- Capabilities & meta
+# Capabilities & meta
 
 @dataclass(frozen=True)
 class ModuleCapabilities:
@@ -83,13 +83,13 @@ class ModuleInfo:
     hidden: bool = False
     is_template: bool = False
 
-# ---------- Errors
+# Errors
 
 class ModuleError(RuntimeError): ...
 class RecoverableModuleError(ModuleError): ...
 class ConfigError(ModuleError): ...
 
-# ---------- Module protocol
+# Module protocol
 
 class SyncModule(Protocol):
     info: ModuleInfo
@@ -97,7 +97,6 @@ class SyncModule(Protocol):
     def __init__(self, config: Mapping[str, Any], logger: Logger) -> None: ...
 
     def validate_config(self) -> None:
-        """Raise ConfigError if config is invalid."""
         ...
 
     def run_sync(
@@ -105,34 +104,21 @@ class SyncModule(Protocol):
         ctx: SyncContext,
         progress: Optional[Callable[[ProgressEvent], None]] = None,
     ) -> SyncResult:
-        """
-        Execute the sync. Must be deterministic for the given context and config.
-        Honor ctx.timeout_sec and ctx.cancel_flag when provided.
-        Emit progress() occasionally when available.
-        """
         ...
 
     def get_status(self) -> Mapping[str, Any]:
-        """Fast status snapshot for UIs."""
         ...
 
     def cancel(self) -> None:
-        """Best-effort cancel; safe if not running. Should set ctx.cancel_flag[0] = True."""
         ...
 
     def set_logger(self, logger: Logger) -> None:
-        """Replace or wrap the logger at runtime."""
         ...
 
     def reconfigure(self, config: Mapping[str, Any]) -> None:
-        """Apply new config atomically and call validate_config()."""
         ...
 
-# ======================================================================
-# Extra shared utilities (non-breaking additions)
-# ======================================================================
 
-# Optional statistics hook (safe no-op when afwezig)
 try:
     from _statistics import Stats  # type: ignore
     _STATS = Stats()
@@ -140,7 +126,6 @@ except Exception:
     _STATS = None  # type: ignore
 
 def get_stats():
-    """Return shared Stats instance or None."""
     return _STATS
 
 # ----- Time helpers ----------------------------------------------------
@@ -162,10 +147,9 @@ def iso_to_ts(s: str) -> int:
             return 0
 
 def ts_to_iso(ts: int) -> str:
-    """Format epoch seconden als UTC ISO-8601."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ts or 0)))
 
-# ----- State dir & JSON I/O ---------------------------------------------------
+#  State dir & JSON I/O
 from pathlib import Path
 import os
 import json
@@ -192,7 +176,6 @@ def _ensure_dir(p: Path) -> None:
         pass
 
 def atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
-    """Atomaire write met .tmp + os.replace."""
     _ensure_dir(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -211,7 +194,7 @@ def read_json_or(path: Path, fallback: Any):
     except Exception:
         return fallback
 
-# ----- Backoff & HTTP telemetry -----------------------------------------------
+# Backoff
 from typing import Callable
 
 def with_backoff(

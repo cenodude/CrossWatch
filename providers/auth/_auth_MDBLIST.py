@@ -5,7 +5,7 @@ import requests
 
 from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 from _logging import log
-from cw_platform.config_base import save_config  # persist immediately
+from cw_platform.config_base import save_config
 
 API_BASE = "https://api.mdblist.com"
 UA = "CrossWatch/1.0"

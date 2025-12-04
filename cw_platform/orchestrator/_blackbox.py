@@ -5,9 +5,6 @@ import json, time
 
 STATE_DIR = Path("/config/.cw_state")
 
-
-# ---------- internal json io ----------
-
 def _read_json(p: Path) -> dict:
     try:
         if not p.exists():
@@ -24,7 +21,7 @@ def _write_json(p: Path, obj: dict) -> None:
         pass
 
 
-# ---------- path helpers ----------
+# helpers
 
 def _bb_path(dst: str, feature: str, pair: Optional[str] = None) -> Path:
     dst = str(dst).strip().lower()
@@ -39,9 +36,6 @@ def _flap_path(dst: str, feature: str) -> Path:
     feature = str(feature).strip().lower()
     return STATE_DIR / f"{dst}_{feature}.flap.json"
 
-
-# ---------- config helpers ----------
-
 _DEFAULT_BB = {
     "enabled": True,
     "promote_after": 3,
@@ -53,22 +47,13 @@ _DEFAULT_BB = {
 }
 
 def _load_bb_cfg(cfg: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
-    """
-    Accept either:
-    - full app cfg with cfg["sync"]["blackbox"]
-    - direct blackbox cfg dict
-    - or load from /config/config.json if cfg is None
-    """
     try:
         if cfg and isinstance(cfg, Mapping):
-            # If caller passed full app config
             if "sync" in cfg:
                 bb = ((cfg.get("sync") or {}).get("blackbox") or {})
                 return {**_DEFAULT_BB, **bb}
-            # If caller passed just the blackbox section
             if any(k in cfg for k in ("promote_after", "pair_scoped", "enabled")):
                 return {**_DEFAULT_BB, **cfg}
-        # Fallback: read from disk
         conf_p = Path("/config/config.json")
         if conf_p.exists():
             raw = json.loads(conf_p.read_text("utf-8")) or {}
@@ -78,11 +63,8 @@ def _load_bb_cfg(cfg: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
         pass
     return dict(_DEFAULT_BB)
 
-
-# ---------- public api: loads ----------
-
+# BB loader
 def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> Set[str]:
-    """Union of global and pair-scope blackbox keys."""
     keys: Set[str] = set()
     glob = _read_json(_bb_path(dst, feature))
     keys |= set(glob.keys())
@@ -92,14 +74,10 @@ def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> Se
     return keys
 
 def load_flap_counters(dst: str, feature: str) -> Dict[str, dict]:
-    """Return the counters map for (dst, feature)."""
     return _read_json(_flap_path(dst, feature))
 
-
-# ---------- public api: mutate counters ----------
-
+# Flap protection
 def inc_flap(dst: str, feature: str, key: str, *, reason: str, op: str, ts: Optional[int] = None) -> int:
-    """Increase consecutive failure counter for key."""
     ts = int(ts or time.time())
     path = _flap_path(dst, feature)
     m = _read_json(path)
@@ -112,7 +90,6 @@ def inc_flap(dst: str, feature: str, key: str, *, reason: str, op: str, ts: Opti
     return int(row["consecutive"])
 
 def reset_flap(dst: str, feature: str, key: str, *, ts: Optional[int] = None) -> None:
-    """Reset consecutive on success."""
     ts = int(ts or time.time())
     path = _flap_path(dst, feature)
     m = _read_json(path)
@@ -124,8 +101,7 @@ def reset_flap(dst: str, feature: str, key: str, *, ts: Optional[int] = None) ->
     _write_json(path, m)
 
 
-# ---------- public api: promotion to blackbox ----------
-
+# BB Promotion
 def _promote(dst: str, feature: str, key: str, *, reason: str, ts: int, pair: Optional[str]) -> None:
     path = _bb_path(dst, feature, pair)
     data = _read_json(path)
@@ -143,16 +119,12 @@ def maybe_promote_to_blackbox(
     pair: Optional[str] = None,
     unresolved_map: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """
-    Decide to promote a key to blackbox based on counters and unresolved age.
-    Returns {"promoted": bool, "reason": str|None, "since": int|None}.
-    """
     ts = int(ts or time.time())
     bb = _load_bb_cfg(cfg)
     promote_after = int(bb.get("promote_after", 3) or 3)
     unresolved_days = int(bb.get("unresolved_days", 0) or 0)
     pair_scoped = bool(bb.get("pair_scoped", True))
-    # If pair scoping is disabled, force global
+
     if not pair_scoped:
         pair = None
 
@@ -160,12 +132,12 @@ def maybe_promote_to_blackbox(
     row = counters.get(key) or {}
     cons = int(row.get("consecutive") or 0)
 
-    # Rule 1: consecutive failures
+    # 1: consecutive failures
     if cons >= promote_after:
         _promote(dst, feature, key, reason=f"flapper:consecutive>={promote_after}", ts=ts, pair=pair)
         return {"promoted": True, "reason": "consecutive", "since": ts}
 
-    # Rule 2: unresolved age
+    # 2: unresolved age
     if unresolved_days > 0 and unresolved_map:
         meta = unresolved_map.get(key) or {}
         uts = int(meta.get("ts") or 0)
@@ -177,9 +149,7 @@ def maybe_promote_to_blackbox(
 
     return {"promoted": False, "reason": None, "since": None}
 
-
-# ---------- public api: high-level wrappers used by _pairs_* ----------
-
+# HL Wrappers
 def record_attempts(
     dst: str,
     feature: str,
@@ -191,11 +161,6 @@ def record_attempts(
     cfg: Optional[Mapping[str, Any]] = None,
     unresolved_map: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """
-    Called when a batch had failed candidates.
-    - Increments flap counters.
-    - Maybe promotes to blackbox (global or pair, per config).
-    """
     bb = _load_bb_cfg(cfg)
     ts = int(time.time())
     promoted = 0
@@ -222,11 +187,6 @@ def record_success(
     pair: Optional[str] = None,   # kept for symmetry; no-op here
     cfg: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Called when some keys definitely landed.
-    - Resets consecutive flap counters for those keys.
-    - We deliberately DO NOT auto-unblacklist; cooldown handles that.
-    """
     ts = int(time.time())
     count = 0
     for k in (keys or []):
@@ -238,14 +198,8 @@ def record_success(
             continue
     return {"ok": True, "count": count}
 
-
-# ---------- public api: maintenance ----------
-
+# BB Maintenance
 def prune_blackbox(*, cooldown_days: int = 30) -> Tuple[int, int]:
-    """
-    Drop blackbox entries older than cooldown_days.
-    Returns (scanned_files, removed_entries).
-    """
     scanned = 0
     removed = 0
     now = int(time.time())

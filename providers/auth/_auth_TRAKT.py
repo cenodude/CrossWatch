@@ -12,10 +12,6 @@ VERIFY_URL = "https://trakt.tv/activate"
 
 __VERSION__ = "1.0.0"
 
-
-# in providers/auth/_auth_TRAKT.py
-import requests
-
 _H = {
     "Accept": "application/json",
     "Content-Type": "application/json",
@@ -158,14 +154,14 @@ class _TraktProvider:
         </div>
 
         <script>
-          // Minimal show/hide tied to PIN/token presence
+ 
           (function(){
             const msg=document.getElementById('trakt_msg');
             const pin=document.getElementById('trakt_pin');
             const tok=document.getElementById('trakt_token');
             function show(text){ if(!msg) return; msg.textContent=text||''; msg.classList.remove('hidden'); msg.style.display=''; }
             function hide(){ if(!msg) return; msg.classList.add('hidden'); msg.style.display='none'; }
-            window.traktMsg={show,hide}; // optional external use
+            window.traktMsg={show,hide};
             function tick(){
               const hasPin=!!(pin&&pin.value&&pin.value.trim().length);
               const hasTok=!!(tok&&tok.value&&tok.value.trim().length);

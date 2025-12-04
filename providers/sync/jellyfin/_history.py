@@ -14,10 +14,7 @@ from ._common import (
     jf_resolve_library_id,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_history.unresolved.json"
 SHADOW_PATH     = "/config/.cw_state/jellyfin_history.shadow.json"

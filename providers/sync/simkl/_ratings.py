@@ -17,10 +17,7 @@ from ._common import (
     update_watermark_if_new,
     get_watermark,
 )
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE        = "https://api.simkl.com"
 URL_GET_T   = lambda t, qs="": f"{BASE}/sync/ratings/{t}{qs}"

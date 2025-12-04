@@ -32,10 +32,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore
 
-
-# ──────────────────────────────────────────────────────────────────────────────
 # manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "EMBY",
@@ -61,9 +58,7 @@ def get_manifest() -> Mapping[str, Any]:
         },
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # config + client
-
 @dataclass
 class EMBYConfig:
     server: str
@@ -137,9 +132,7 @@ class EMBYClient:
         p = self.BASE_PATH_USER.format(user_id=self.cfg.user_id)
         return self.get(p)
 
-# ──────────────────────────────────────────────────────────────────────────────
 # module wrapper
-
 _HEALTH_SHADOW = "/config/.cw_state/emby.health.shadow.json"
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
@@ -187,7 +180,6 @@ class EMBYModule:
         def _list_str(v):
             return [str(x).strip() for x in (v or []) if str(x).strip()]
             
-        # ---- read overwrite/backdate flags (support both emby{} and emby.history{})
         def _b(v): 
             if isinstance(v, bool): return v
             if isinstance(v, (int, float)): return v != 0
@@ -234,7 +226,6 @@ class EMBYModule:
                 return _Noop()
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
-    # Shared utils (exposed to features)
     @staticmethod
     def normalize(obj) -> Dict[str, Any]: return emby_normalize(obj)
     @staticmethod
@@ -269,7 +260,6 @@ class EMBYModule:
             api = {"ping": {"status": None}, "info": {"status": None}, "user": {"status": None}}
             return {"ok": True, "status": "ok", "latency_ms": latency_ms, "features": features, "details": details, "api": api}
 
-        # Single-call health: user probe
         try:
             ru = self.client.user_probe()
         except Exception:
@@ -354,7 +344,7 @@ class EMBYModule:
             "api": api,
         }
 
-    # Feature dispatch (present-state)
+    # Feature dispatch
     def feature_names(self) -> Tuple[str, ...]:
         enabled = self.supported_features()
         return tuple(k for k, v in enabled.items() if v)
@@ -404,9 +394,8 @@ class EMBYModule:
         else: return {"ok": False, "count": 0, "unresolved": [], "error": f"unknown_feature:{feature}"}
         return {"ok": True, "count": int(cnt), "unresolved": unres}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# OPS bridge (orchestrator contract)
 
+# OPS bridge
 class _EmbyOPS:
     def name(self) -> str: return "EMBY"
     def label(self) -> str: return "Emby"

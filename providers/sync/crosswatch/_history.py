@@ -3,11 +3,7 @@ from __future__ import annotations
 import os, json, time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
-
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal
-except Exception:  # pragma: no cover
-    from _id_map import canonical_key, minimal as id_minimal  # type: ignore
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_CROSSWATCH_DEBUG"):
@@ -31,7 +27,6 @@ def _restore_state_path(adapter) -> Path:
     return _root(adapter) / "history.restore_state.json"
 
 def _load_state(adapter) -> Dict[str, Any]:
-    """Load current history state from disk."""
     p = _history_path(adapter)
     try:
         raw = json.loads(p.read_text("utf-8"))
@@ -50,7 +45,6 @@ def _load_state(adapter) -> Dict[str, Any]:
             items[key] = id_minimal(obj)
         return {"ts": 0, "items": items}
 
-    # Dict-based formats
     if isinstance(raw, Mapping):
         if "items" in raw and isinstance(raw.get("items"), Mapping):
             ts = int(raw.get("ts", 0) or 0)

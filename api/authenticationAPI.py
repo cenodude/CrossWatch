@@ -1,31 +1,41 @@
 # _authenticationAPI.py
 # CrossWatch - Authentication API for multiple services
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple, Callable
-import time, threading, secrets, importlib, xml.etree.ElementTree as ET, requests
+from typing import Any, Callable, Optional
 
+import importlib
+import secrets
+import threading
+import time
+import xml.etree.ElementTree as ET
+
+import requests
 from fastapi import Body, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from cw_platform.config_base import load_config, save_config
-import providers.sync.plex._utils as plex_utils
-from providers.sync.plex._utils import inspect_and_persist, fetch_libraries_from_cfg, ensure_whitelist_defaults
-from providers.sync.jellyfin._utils import (
-    inspect_and_persist as jf_inspect_and_persist,
-    fetch_libraries_from_cfg as jf_fetch_libraries_from_cfg,
-    ensure_whitelist_defaults as jf_ensure_whitelist_defaults,
-)
 from providers.sync.emby._utils import (
-    inspect_and_persist as emby_inspect_and_persist,
-    fetch_libraries_from_cfg as emby_fetch_libraries_from_cfg,
     ensure_whitelist_defaults as emby_ensure_whitelist_defaults,
+    fetch_libraries_from_cfg as emby_fetch_libraries_from_cfg,
+    inspect_and_persist as emby_inspect_and_persist,
 )
+from providers.sync.jellyfin._utils import (
+    ensure_whitelist_defaults as jf_ensure_whitelist_defaults,
+    fetch_libraries_from_cfg as jf_fetch_libraries_from_cfg,
+    inspect_and_persist as jf_inspect_and_persist,
+)
+from providers.sync.plex._utils import (
+    ensure_whitelist_defaults,
+    fetch_libraries_from_cfg,
+    inspect_and_persist,
+)
+import providers.sync.plex._utils as plex_utils
 
 __all__ = ["register_auth"]
 
-# ---------- helpers ----------
+# Helpers
 def _status_from_msg(msg: str) -> int:
     m = (msg or "").lower()
     if any(x in m for x in ("401", "403", "invalid credential", "unauthor")): return 401
@@ -36,9 +46,9 @@ def _status_from_msg(msg: str) -> int:
 def _import_provider(modname: str, symbol: str = "PROVIDER"):
     try:
         mod = importlib.import_module(modname)
-        return getattr(mod, symbol, None)
-    except Exception:
+    except ImportError:
         return None
+    return getattr(mod, symbol, None)
 
 def _safe_log(fn: Optional[Callable[[str, str], None]], tag: str, msg: str) -> None:
     try:
@@ -46,7 +56,7 @@ def _safe_log(fn: Optional[Callable[[str, str], None]], tag: str, msg: str) -> N
     except Exception:
         pass
 
-def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, probe_cache: Optional[dict] = None) -> None:
+def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, probe_cache: Optional[dict[str, Any]] = None) -> None:
     def _probe_bust(name: str) -> None:
         try:
             if isinstance(probe_cache, dict): probe_cache[name] = (0.0, False)
@@ -56,10 +66,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     # ---------- provider registry ----------
     try:
         from providers.auth.registry import auth_providers_html, auth_providers_manifests
-    except Exception:
+    except ImportError:
         auth_providers_html = lambda: "<div class='sub'>No providers found.</div>"
         auth_providers_manifests = lambda: []
-
+    
     @app.get("/api/auth/providers", tags=["auth"])
     def api_auth_providers():
         return JSONResponse(auth_providers_manifests())
@@ -69,7 +79,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return HTMLResponse(auth_providers_html())
 
     # ---------- PLEX ----------
-    def plex_request_pin() -> dict:
+    def plex_request_pin() -> dict[str, Any]:
         cfg = load_config(); plex = cfg.setdefault("plex", {})
         cid = plex.get("client_id")
         if not cid:
@@ -126,7 +136,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return None
 
     @app.post("/api/plex/pin/new", tags=["auth"])
-    def api_plex_pin_new() -> Dict[str, Any]:
+    def api_plex_pin_new() -> dict[str, Any]:
         try:
             info = plex_request_pin()
             pin_id, code, exp_epoch = info["id"], info["code"], int(info["expires_epoch"])
@@ -162,9 +172,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                             _safe_log(log_fn, "PLEX", f"[PLEX] auto-inspect failed: {e}")
                 else:
                     _safe_log(log_fn, "PLEX", "\x1b[91m[PLEX]\x1b[0m PIN expired or not authorized.")
-
             threading.Thread(target=waiter, args=(pin_id,), daemon=True).start()
-
             remaining = max(0, exp_epoch - int(time.time()))
             return {
                 "ok": True,
@@ -172,31 +180,31 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 "pin_id": pin_id,
                 "id": pin_id,
                 "expiresIn": remaining,
-                "expires_epoch": remaining,
+                "expires_epoch": exp_epoch,
             }
         except Exception as e:
             _safe_log(log_fn, "PLEX", f"[PLEX] ERROR: {e}")
             return {"ok": False, "error": str(e)}
 
-    @app.get("/api/plex/inspect", tags=["plex"])
+    @app.get("/api/plex/inspect", tags=["media providers"])
     def plex_inspect():
         ensure_whitelist_defaults()
         return inspect_and_persist()
     
     @app.post("/api/plex/token/delete", tags=["auth"])
-    def api_plex_token_delete() -> Dict[str, Any]:
+    def api_plex_token_delete() -> dict[str, Any]:
         cfg = load_config(); p = cfg.setdefault("plex", {})
         p["account_token"] = ""
         save_config(cfg)
         return {"ok": True}
 
-    @app.get("/api/plex/libraries", tags=["plex"])
+    @app.get("/api/plex/libraries", tags=["media providers"])
     def plex_libraries():
         ensure_whitelist_defaults()
         return {"libraries": fetch_libraries_from_cfg()}
 
-    @app.get("/api/plex/pickusers", tags=["plex"])
-    def plex_pickusers():
+    @app.get("/api/plex/pickusers", tags=["media providers"])
+    def plex_pickusers() -> dict[str, Any]:
         cfg = load_config()
         plex = (cfg.get("plex") or {})
         token = (plex.get("account_token") or "").strip()
@@ -215,8 +223,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         s = plex_utils._build_session(token, verify)
         r = plex_utils._try_get(s, base, "/accounts", timeout=10.0)
 
-        pms_by_cloud: Dict[int, dict] = {}
-        pms_by_user: Dict[str, dict] = {}
+        pms_by_cloud: dict[int, dict[str, Any]] = {}
+        pms_by_user: dict[str, dict[str, Any]] = {}
         pms_rows = []
         if r and r.ok and (r.text or "").lstrip().startswith("<"):
             try:
@@ -247,7 +255,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                         pms_by_user[norm(username)] = row
             except Exception:
                 pass
-
         cloud_users = []
         try:
             cr = requests.get(
@@ -301,7 +308,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 uname = cu["username"] or cu["title"] or f"user#{cu['cloud_id']}"
                 merged.append({"id": cu["cloud_id"], "username": uname, "type": cu["type"]})
 
-        best: Dict[str, dict] = {}
+        best: dict[str, dict[str, Any]] = {}
         for u in merged:
             key = norm(u["username"]) or f"__id_{u['id']}"
             uid = u["id"]
@@ -325,13 +332,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         )
         return {"users": users, "count": len(users)}
 
-    @app.get("/api/plex/users", tags=["plex"])
+    @app.get("/api/plex/users", tags=["media providers"])
     def plex_users():
         return plex_pickusers()
 
     # ---------- JELLYFIN ----------
     @app.post("/api/jellyfin/login", tags=["auth"])
-    def api_jellyfin_login(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    def api_jellyfin_login(payload: dict[str, Any] = Body(...)) -> JSONResponse:
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
         cfg = load_config(); jf = cfg.setdefault("jellyfin", {})
@@ -356,31 +363,31 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
         
     @app.post("/api/jellyfin/token/delete", tags=["auth"])
-    def api_jellyfin_token_delete() -> Dict[str, Any]:
+    def api_jellyfin_token_delete() -> dict[str, Any]:
         cfg = load_config(); jf = cfg.setdefault("jellyfin", {})
         jf["access_token"] = ""
         save_config(cfg)
         return {"ok": True}
 
     @app.get("/api/jellyfin/status", tags=["auth"])
-    def api_jellyfin_status() -> Dict[str, Any]:
+    def api_jellyfin_status() -> dict[str, Any]:
         cfg = load_config(); jf = (cfg.get("jellyfin") or {})
         return {"connected": bool(jf.get("access_token") and jf.get("server")),
                 "user": jf.get("user") or jf.get("username") or None}
 
-    @app.get("/api/jellyfin/inspect", tags=["jellyfin"])
+    @app.get("/api/jellyfin/inspect", tags=["media providers"])
     def jf_inspect():
         jf_ensure_whitelist_defaults()
         return jf_inspect_and_persist()
 
-    @app.get("/api/jellyfin/libraries", tags=["jellyfin"])
+    @app.get("/api/jellyfin/libraries", tags=["media providers"])
     def jf_libraries():
         jf_ensure_whitelist_defaults()
         return {"libraries": jf_fetch_libraries_from_cfg()}
 
     # ---------- EMBY ----------
     @app.post("/api/emby/login", tags=["auth"])
-    def api_emby_login(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    def api_emby_login(payload: dict[str, Any] = Body(...)) -> JSONResponse:
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
         cfg = load_config(); em = cfg.setdefault("emby", {})
@@ -406,19 +413,19 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
 
     @app.get("/api/emby/status", tags=["auth"])
-    def api_emby_status() -> Dict[str, Any]:
+    def api_emby_status() -> dict[str, Any]:
         cfg = load_config(); em = (cfg.get("emby") or {})
         return {"connected": bool(em.get("access_token") and em.get("server")),
                 "user": em.get("user") or em.get("username") or None}
         
     @app.post("/api/emby/token/delete", tags=["auth"])
-    def api_emby_token_delete() -> Dict[str, Any]:
+    def api_emby_token_delete() -> dict[str, Any]:
         cfg = load_config(); em = cfg.setdefault("emby", {})
         em["access_token"] = ""
         save_config(cfg)
         return {"ok": True}
 
-    @app.get("/api/emby/inspect", tags=["emby"])
+    @app.get("/api/emby/inspect", tags=["media providers"])
     def emby_inspect():
         emby_ensure_whitelist_defaults()
         out = emby_inspect_and_persist()
@@ -438,12 +445,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             pass
         return out
 
-    @app.get("/api/emby/libraries", tags=["emby"])
+    @app.get("/api/emby/libraries", tags=["media providers"])
     def emby_libraries():
         emby_ensure_whitelist_defaults()
         return {"libraries": emby_fetch_libraries_from_cfg()}
 
-    @app.get("/api/emby/users", tags=["emby"])
+    @app.get("/api/emby/users", tags=["media providers"])
     def emby_users():
         cfg = load_config(); em = (cfg.get("emby") or {})
         server = (em.get("server") or "").rstrip("/")
@@ -453,7 +460,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         timeout = float(em.get("timeout", 15) or 15)
         verify = bool(em.get("verify_ssl", False))
         headers = {"X-Emby-Token": token, "Accept": "application/json"}
-        users: list[dict] = []
+        users: list[dict[str, Any]] = []
         try:
             r = requests.get(f"{server}/Users", headers=headers, timeout=timeout, verify=verify)
             if r.ok:
@@ -480,7 +487,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     
     # ---------- MDBLIST ----------
     @app.post("/api/mdblist/save", tags=["auth"])
-    def api_mdblist_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def api_mdblist_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
             key = str((payload or {}).get("api_key") or "").strip()
             cfg = load_config(); cfg.setdefault("mdblist", {})["api_key"] = key
@@ -493,7 +500,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": str(e)}
 
     @app.post("/api/mdblist/disconnect", tags=["auth"])
-    def api_mdblist_disconnect() -> Dict[str, Any]:
+    def api_mdblist_disconnect() -> dict[str, Any]:
         try:
             cfg = load_config(); cfg.setdefault("mdblist", {})["api_key"] = ""
             save_config(cfg)
@@ -505,7 +512,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": str(e)}
 
     # ---------- TRAKT ----------
-    def trakt_request_pin() -> dict:
+    def trakt_request_pin() -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")
         if not prov: raise RuntimeError("Trakt provider not available")
         cfg = load_config(); res = prov.start(cfg, redirect_uri=""); save_config(cfg)
@@ -520,45 +527,30 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     def trakt_wait_for_token(device_code: str, *, timeout_sec: int = 600, interval: float = 2.0) -> Optional[str]:
         prov = _import_provider("providers.auth._auth_TRAKT")
+        if not prov:
+            return None
+
         deadline = time.time() + max(0, int(timeout_sec))
         sleep_s = max(0.5, float(interval))
+
         while time.time() < deadline:
-            cfg = load_config() or {}
-            tok = None
-            if prov:
-                try: tok = prov.read_token_file(cfg, device_code)  # type: ignore[attr-defined]
-                except Exception: tok = None
-            if tok:
-                try:
-                    if prov:
-                        prov.finish(cfg, device_code=device_code); save_config(cfg)
-                    else:
-                        if isinstance(tok, str):
-                            try:
-                                import json as _json; tok = _json.loads(tok)
-                            except Exception:
-                                tok = {}
-                        if isinstance(tok, dict):
-                            tr = cfg.setdefault("trakt", {})
-                            tr["access_token"]  = tok.get("access_token")  or tr.get("access_token", "")
-                            tr["refresh_token"] = tok.get("refresh_token") or tr.get("refresh_token", "")
-                            exp = int(tok.get("created_at") or 0) + int(tok.get("expires_in") or 0)
-                            if not exp: exp = int(time.time()) + 90 * 24 * 3600
-                            tr["expires_at"] = exp
-                            tr["token_type"] = tok.get("token_type") or "bearer"
-                            tr["scope"] = tok.get("scope") or tr.get("scope", "public")
-                            save_config(cfg)
-                except Exception:
-                    pass
-                return "ok"
-            if prov:
-                try: prov.finish(cfg, device_code=device_code); save_config(cfg)
-                except Exception: pass
+            cfg = load_config()
+            try:
+                tok = prov.read_token_file(cfg, device_code)  # type: ignore[attr-defined]
+                if tok:
+                    prov.finish(cfg, device_code=device_code)  # type: ignore[attr-defined]
+                    save_config(cfg)
+                    return "ok"
+                prov.finish(cfg, device_code=device_code)  # type: ignore[attr-defined]
+                save_config(cfg)
+            except Exception:
+                pass
             time.sleep(sleep_s)
+
         return None
 
     @app.post("/api/trakt/pin/new", tags=["auth"])
-    def api_trakt_pin_new(payload: Optional[dict] = Body(None)) -> Dict[str, Any]:
+    def api_trakt_pin_new(payload: Optional[dict[str, Any]] = Body(None)) -> dict[str, Any]:
         try:
             if payload:
                 cid = str(payload.get("client_id") or "").strip()
@@ -586,7 +578,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": str(e)}
         
     @app.post("/api/trakt/token/delete", tags=["auth"])
-    def api_trakt_token_delete() -> Dict[str, Any]:
+    def api_trakt_token_delete() -> dict[str, Any]:
         cfg = load_config(); tr = cfg.setdefault("trakt", {})
         tr["access_token"] = ""
         tr["refresh_token"] = ""
@@ -597,10 +589,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"ok": True}
 
     # ---------- SIMKL ----------
-    SIMKL_STATE: Dict[str, Any] = {}
+    SIMKL_STATE: dict[str, Any] = {}
 
     @app.post("/api/simkl/authorize", tags=["auth"])
-    def api_simkl_authorize(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def api_simkl_authorize(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
             origin = (payload or {}).get("origin") or ""
             if not origin: return {"ok": False, "error": "origin missing"}
@@ -652,7 +644,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return PlainTextResponse(f"Error: {e}", 500)
         
     @app.post("/api/simkl/token/delete", tags=["auth"])
-    def api_simkl_token_delete() -> Dict[str, Any]:
+    def api_simkl_token_delete() -> dict[str, Any]:
         cfg = load_config(); s = cfg.setdefault("simkl", {})
         s["access_token"] = ""
         s["refresh_token"] = ""
@@ -677,7 +669,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             url = f"{url}{sep}state={state}"
         return url
 
-    def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
+    def simkl_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_SIMKL")
         cfg = load_config(); s = cfg.setdefault("simkl", {})
         s["client_id"] = client_id.strip(); s["client_secret"] = client_secret.strip()

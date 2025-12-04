@@ -23,7 +23,6 @@ class Emitter:
         except Exception:
             pass
 
-    # Tolerant debug: supports multiple legacy signatures.
     def dbg(self, *args, **fields):
         if not args:
             return

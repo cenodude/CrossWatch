@@ -1,11 +1,10 @@
-# _analyzer.py
+# services/analyzer.py
 # CrossWatch - Data analyzer for state
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, DefaultDict, Dict, Iterable, List, Tuple
-
+from typing import Any, Iterable
 import json
 import re
 import threading
@@ -14,34 +13,39 @@ import requests
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from cw_platform.config_base import CONFIG as CONFIG_DIR
+from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
-CFG_PATH = CONFIG_DIR / "config.json"
 _LOCK = threading.Lock()
 
-# ── Config helpers
-def _cfg() -> Dict[str, Any]:
+
+def _cfg() -> dict[str, Any]:
     try:
-        return json.loads(CFG_PATH.read_text(encoding="utf-8"))
+        cfg = load_config()
     except Exception:
         return {}
+    return cfg or {}
+
 
 def _tmdb_key() -> str:
     return ((_cfg().get("tmdb") or {}).get("api_key") or "").strip()
 
-def _trakt_headers() -> Dict[str, str]:
-    t = (_cfg().get("trakt") or {})
-    h = {"trakt-api-version": "2", "trakt-api-key": (t.get("client_id") or "").strip()}
+
+def _trakt_headers() -> dict[str, str]:
+    t = _cfg().get("trakt") or {}
+    h: dict[str, str] = {
+        "trakt-api-version": "2",
+        "trakt-api-key": (t.get("client_id") or "").strip(),
+    }
     tok = (t.get("access_token") or "").strip()
     if tok:
         h["Authorization"] = f"Bearer {tok}"
     return h
 
-# ── State I/O
-def _load_state() -> Dict[str, Any]:
+
+def _load_state() -> dict[str, Any]:
     if not STATE_PATH.exists():
         raise HTTPException(404, "state.json not found")
     try:
@@ -49,35 +53,43 @@ def _load_state() -> Dict[str, Any]:
     except Exception:
         raise HTTPException(500, "Failed to parse state.json")
 
-def _save_state(s: Dict[str, Any]) -> None:
+
+def _save_state(s: dict[str, Any]) -> None:
     with _LOCK:
         tmp = STATE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(STATE_PATH)
 
-# ── Item iteration / access
-def _iter_items(s: Dict[str, Any]) -> Iterable[Tuple[str, str, str, Dict[str, Any]]]:
+
+def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, Any]]]:
     for prov, pv in (s.get("providers") or {}).items():
         for feat in ("history", "watchlist", "ratings"):
             items = (((pv or {}).get(feat) or {}).get("baseline") or {}).get("items") or {}
             for k, it in items.items():
                 yield prov, feat, k, (it or {})
 
-def _bucket(s: Dict[str, Any], prov: str, feat: str) -> Dict[str, Any] | None:
+
+def _bucket(s: dict[str, Any], prov: str, feat: str) -> dict[str, Any] | None:
     try:
         return s["providers"][prov][feat]["baseline"]["items"]  # type: ignore[index]
     except KeyError:
         return None
 
-def _find_item(s: Dict[str, Any], prov: str, feat: str, key: str):
+
+def _find_item(
+    s: dict[str, Any],
+    prov: str,
+    feat: str,
+    key: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     b = _bucket(s, prov, feat)
-    if not b or key not in b:
+    if b is None or key not in b:
         return None, None
     return b, b[key]
 
-# ── Counts
-def _counts(s: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
-    out: Dict[str, Dict[str, int]] = {}
+
+def _counts(s: dict[str, Any]) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
     for prov, pv in (s.get("providers") or {}).items():
         cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "total": 0})
         total = 0
@@ -89,8 +101,9 @@ def _counts(s: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
         cur["total"] = total
     return out
 
-def _collect_items(s: Dict[str, Any]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+
+def _collect_items(s: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for prov, feat, k, it in _iter_items(s):
         out.append(
             {
@@ -105,7 +118,8 @@ def _collect_items(s: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     return out
 
-_ID_RX: Dict[str, re.Pattern[str]] = {
+
+_ID_RX: dict[str, re.Pattern[str]] = {
     "imdb": re.compile(r"^tt\d{5,}$"),
     "tmdb": re.compile(r"^\d+$"),
     "tvdb": re.compile(r"^\d+$"),
@@ -116,8 +130,9 @@ _ID_RX: Dict[str, re.Pattern[str]] = {
     "mdblist": re.compile(r"^\d+$"),
 }
 
-def _read_cw_state() -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
+
+def _read_cw_state() -> dict[str, Any]:
+    out: dict[str, Any] = {}
     if not (CWS_DIR.exists() and CWS_DIR.is_dir()):
         return out
     for p in sorted(CWS_DIR.glob("*.json")):
@@ -127,10 +142,11 @@ def _read_cw_state() -> Dict[str, Any]:
             out[p.name] = {"_error": "parse_error"}
     return out
 
-def _alias_keys(obj: Dict[str, Any]) -> List[str]:
+
+def _alias_keys(obj: dict[str, Any]) -> list[str]:
     t = (obj.get("type") or "").lower()
     ids = dict(obj.get("ids") or {})
-    out: List[str] = []
+    out: list[str] = []
     seen: set[str] = set()
 
     if obj.get("_key"):
@@ -149,15 +165,16 @@ def _alias_keys(obj: Dict[str, Any]) -> List[str]:
     if title and year:
         out.append(f"t:{title}|y:{year}|ty:{t}")
 
-    res: List[str] = []
+    res: list[str] = []
     for k in out:
         if k not in seen:
             seen.add(k)
             res.append(k)
     return res
 
-def _alias_index(items: Dict[str, Any]) -> Dict[str, str]:
-    idx: Dict[str, str] = {}
+
+def _alias_index(items: dict[str, Any]) -> dict[str, str]:
+    idx: dict[str, str] = {}
     for k, v in items.items():
         vv = dict(v)
         vv["_key"] = k
@@ -165,12 +182,13 @@ def _alias_index(items: Dict[str, Any]) -> Dict[str, str]:
             idx.setdefault(ak, k)
     return idx
 
-def _class_key(it: Dict[str, Any]) -> Tuple[str, str, int | None]:
+
+def _class_key(it: dict[str, Any]) -> tuple[str, str, int | None]:
     return ((it.get("type") or "").lower(), (it.get("title") or "").strip().lower(), it.get("year"))
 
-# ── Pair awareness
-def _pair_map(cfg: Dict[str, Any], state: Dict[str, Any]) -> DefaultDict[Tuple[str, str], List[str]]:
-    mp: DefaultDict[Tuple[str, str], List[str]] = defaultdict(list)
+
+def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, str], list[str]]:
+    mp: dict[tuple[str, str], list[str]] = defaultdict(list)
     pairs = cfg.get("pairs") or []
 
     def add(src: str, feat: str, dst: str) -> None:
@@ -188,7 +206,7 @@ def _pair_map(cfg: Dict[str, Any], state: Dict[str, Any]) -> DefaultDict[Tuple[s
 
         mode = str(pr.get("mode") or "one-way").lower()
         feats = pr.get("features")
-        feats_list: List[str] = []
+        feats_list: list[str] = []
         if isinstance(feats, (list, tuple)):
             feats_list = [str(f).lower() for f in feats]
         elif isinstance(feats, dict):
@@ -205,11 +223,12 @@ def _pair_map(cfg: Dict[str, Any], state: Dict[str, Any]) -> DefaultDict[Tuple[s
                 add(dst, f, src)
     return mp
 
-# ── Pair-level library whitelisting (Analyzer-side)
+
 def _supports_pair_libs(prov: str) -> bool:
     return str(prov or "").upper() in ("PLEX", "EMBY", "JELLYFIN")
 
-def _item_library_id(it: Dict[str, Any]) -> str | None:
+
+def _item_library_id(it: dict[str, Any]) -> str | None:
     if not isinstance(it, dict):
         return None
 
@@ -237,9 +256,10 @@ def _item_library_id(it: Dict[str, Any]) -> str | None:
 
     return None
 
-def _pair_lib_filters(cfg: Dict[str, Any]) -> Dict[Tuple[str, str, str], set[str]]:
-    out: Dict[Tuple[str, str, str], set[str]] = {}
-    for pr in (cfg.get("pairs") or []):
+
+def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str]]:
+    out: dict[tuple[str, str, str], set[str]] = {}
+    for pr in cfg.get("pairs") or []:
         src = str(pr.get("src") or pr.get("source") or "").upper().strip()
         dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
         if not (src and dst):
@@ -266,7 +286,7 @@ def _pair_lib_filters(cfg: Dict[str, Any]) -> Dict[Tuple[str, str, str], set[str
                     return
                 raw = libs_dict.get(a) or libs_dict.get(a.lower()) or libs_dict.get(a.upper())
                 if isinstance(raw, (list, tuple)) and raw:
-                    allowed = set(str(x).strip() for x in raw if str(x).strip())
+                    allowed = {str(x).strip() for x in raw if str(x).strip()}
                     if allowed:
                         out[(a, feat, b)] = allowed
 
@@ -276,12 +296,13 @@ def _pair_lib_filters(cfg: Dict[str, Any]) -> Dict[Tuple[str, str, str], set[str
 
     return out
 
+
 def _passes_pair_lib_filter(
-    pair_libs: Dict[Tuple[str, str, str], set[str]] | None,
+    pair_libs: dict[tuple[str, str, str], set[str]] | None,
     prov: str,
     feat: str,
     dst: str,
-    item: Dict[str, Any],
+    item: dict[str, Any],
 ) -> bool:
     if not pair_libs:
         return True
@@ -296,23 +317,25 @@ def _passes_pair_lib_filter(
         return True
     return lid in allowed
 
-def _indices_for(s: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, str]]:
-    out: Dict[Tuple[str, str], Dict[str, str]] = {}
+
+def _indices_for(s: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
+    out: dict[tuple[str, str], dict[str, str]] = {}
     for p, f, _, _ in _iter_items(s):
         key = (p, f)
         if key not in out:
             out[key] = _alias_index(_bucket(s, p, f) or {})
     return out
 
+
 def _has_peer_by_pairs(
-    s: Dict[str, Any],
-    pairs: DefaultDict[Tuple[str, str], List[str]],
+    s: dict[str, Any],
+    pairs: dict[tuple[str, str], list[str]],
     prov: str,
     feat: str,
     item_key: str,
-    item: Dict[str, Any],
-    idx_cache: Dict[Tuple[str, str], Dict[str, str]],
-    pair_libs: Dict[Tuple[str, str, str], set[str]] | None = None,
+    item: dict[str, Any],
+    idx_cache: dict[tuple[str, str], dict[str, str]],
+    pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
 ) -> bool:
     if feat not in ("history", "watchlist", "ratings"):
         return True
@@ -320,12 +343,12 @@ def _has_peer_by_pairs(
     if not targets:
         return True
 
-    filtered_targets: List[str] = []
+    filtered_targets: list[str] = []
     for dst in targets:
         if _passes_pair_lib_filter(pair_libs, prov, feat, dst, item):
             filtered_targets.append(dst)
     if not filtered_targets:
-        return True  # out of scope for all pair dirs
+        return True
 
     vv = dict(item)
     vv["_key"] = item_key
@@ -336,11 +359,13 @@ def _has_peer_by_pairs(
             return True
     return False
 
-def _pair_stats(s: Dict[str, Any]) -> List[Dict[str, Any]]:
-    stats: List[Dict[str, Any]] = []
-    pairs = _pair_map(_cfg(), s)
+
+def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
+    stats: list[dict[str, Any]] = []
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
     idx_cache = _indices_for(s)
-    pair_libs = _pair_lib_filters(_cfg())
+    pair_libs = _pair_lib_filters(cfg)
 
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
@@ -374,16 +399,18 @@ def _pair_stats(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             )
     return stats
 
-# ── Problems
-def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
-    probs: List[Dict[str, Any]] = []
-    CORE = ("imdb", "tmdb", "tvdb")
 
-    pairs = _pair_map(_cfg(), s)
+def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    core = ("imdb", "tmdb", "tvdb")
+
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
     idx_cache = _indices_for(s)
-    pair_libs = _pair_lib_filters(_cfg())
+    pair_libs = _pair_lib_filters(cfg)
     cw_state = _read_cw_state()
-    unresolved_index: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
+    unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+
     for name, body in (cw_state or {}).items():
         if not isinstance(body, dict):
             continue
@@ -417,7 +444,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             aks = _alias_keys(vv)
             if not aks:
                 continue
-            meta: Dict[str, Any] = {"file": name, "kind": suffix}
+            meta: dict[str, Any] = {"file": name, "kind": suffix}
             reasons = rec.get("reasons")
             if isinstance(reasons, list):
                 meta["reasons"] = reasons
@@ -434,15 +461,15 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             if v.get("_ignore_missing_peer"):
                 continue
 
-            filtered_targets: List[str] = []
-            union_targets: List[Dict[str, str]] = []
+            filtered_targets: list[str] = []
+            union_targets: list[dict[str, str]] = []
             for t in targets:
                 if _passes_pair_lib_filter(pair_libs, prov, feat, t, v):
                     filtered_targets.append(t)
                     union_targets.append(idx_cache.get((t, feat)) or {})
 
             if not union_targets:
-                continue  # out of scope
+                continue
 
             merged_keys = set().union(*[set(d.keys()) for d in union_targets]) if union_targets else set()
             vv = dict(v)
@@ -450,7 +477,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             alias_keys = _alias_keys(vv)
 
             if not any(ak in merged_keys for ak in alias_keys):
-                prob: Dict[str, Any] = {
+                prob: dict[str, Any] = {
                     "severity": "warn",
                     "type": "missing_peer",
                     "provider": prov,
@@ -461,13 +488,13 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "targets": filtered_targets,
                 }
 
-                hints: List[Dict[str, Any]] = []
+                hints: list[dict[str, Any]] = []
                 for dst in filtered_targets:
                     idx_key = (str(dst).upper(), feat.lower())
                     uidx = unresolved_index.get(idx_key) or {}
                     for ak in alias_keys:
                         for meta in uidx.get(ak, []):
-                            h: Dict[str, Any] = {"provider": dst, "feature": feat}
+                            h: dict[str, Any] = {"provider": dst, "feature": feat}
                             if "reasons" in meta:
                                 h["reasons"] = meta["reasons"]
                             if "file" in meta:
@@ -481,7 +508,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for p, f, k, it in _iter_items(s):
         ids = it.get("ids") or {}
-        for ns in CORE:
+        for ns in core:
             v = ids.get(ns)
             rx = _ID_RX.get(ns)
             if v and rx and not rx.match(str(v)):
@@ -513,7 +540,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "key_base": base,
                     }
                 )
-        missing = [ns for ns in CORE if not ids.get(ns)]
+        missing = [ns for ns in core if not ids.get(ns)]
         if missing and ids:
             probs.append(
                 {
@@ -525,7 +552,7 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "missing": missing,
                 }
             )
-        if ids and not any(ids.get(ns) for ns in CORE):
+        if ids and not any(ids.get(ns) for ns in core):
             probs.append(
                 {
                     "severity": "info",
@@ -539,11 +566,12 @@ def _problems(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     return probs
 
-def _peer_ids(s: Dict[str, Any], cur: Dict[str, Any]) -> Dict[str, str]:
+
+def _peer_ids(s: dict[str, Any], cur: dict[str, Any]) -> dict[str, str]:
     t = (cur.get("title") or "").strip().lower()
     y = cur.get("year")
     ty = (cur.get("type") or "").lower()
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     for _, _, _, it in _iter_items(s):
         if (it.get("title") or "").strip().lower() != t:
             continue
@@ -556,7 +584,8 @@ def _peer_ids(s: Dict[str, Any], cur: Dict[str, Any]) -> Dict[str, str]:
                 out[k] = str(v)
     return out
 
-def _norm(ns: str, v: str) -> str | None:
+
+def _norm(ns: str, v: Any) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
@@ -568,7 +597,8 @@ def _norm(ns: str, v: str) -> str | None:
         return m.group(1) if m else None
     return s or None
 
-def _rekey(b: Dict[str, Any], old_key: str, it: Dict[str, Any]) -> str:
+
+def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     ids = it.get("ids") or {}
     parts = old_key.split(":", 1)
     ns = parts[0]
@@ -596,31 +626,43 @@ def _rekey(b: Dict[str, Any], old_key: str, it: Dict[str, Any]) -> str:
     b.pop(old_key, None)
     return new_key
 
-def _tmdb(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+
+def _tmdb(path: str, params: dict[str, Any]) -> dict[str, Any]:
     k = _tmdb_key()
     if not k:
         raise HTTPException(400, "tmdb.api_key missing in config.json")
-    r = requests.get(f"https://api.themoviedb.org/3{path}", params={**(params or {}), "api_key": k}, timeout=8)
+    r = requests.get(
+        f"https://api.themoviedb.org/3{path}",
+        params={**(params or {}), "api_key": k},
+        timeout=8,
+    )
     r.raise_for_status()
     return r.json()
 
-def _trakt(path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+def _trakt(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     h = _trakt_headers()
     if not h.get("trakt-api-key"):
         raise HTTPException(400, "trakt.client_id missing in config.json")
-    r = requests.get(f"https://api.trakt.tv{path}", params=params, headers=h, timeout=8)
+    r = requests.get(
+        f"https://api.trakt.tv{path}",
+        params=params,
+        headers=h,
+        timeout=8,
+    )
     r.raise_for_status()
     return r.json()
 
-def _tmdb_bulk(ids: List[int]) -> Dict[int, Dict[str, Any]]:
+
+def _tmdb_bulk(ids: list[int]) -> dict[int, dict[str, Any]]:
     if not ids:
         return {}
     key = _tmdb_key()
     if not key:
         return {}
-    out: Dict[int, Dict[str, Any]] = {}
+    out: dict[int, dict[str, Any]] = {}
     for chunk_start in range(0, len(ids), 20):
-        chunk = ids[chunk_start : ids[chunk_start + 20]]
+        chunk = ids[chunk_start : chunk_start + 20]
         url = "https://api.themoviedb.org/3/movie"
         params = {
             "api_key": key,
@@ -636,11 +678,12 @@ def _tmdb_bulk(ids: List[int]) -> Dict[int, Dict[str, Any]]:
                 continue
     return out
 
-def _tmdb_region_dates(meta: Dict[int, Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
-    out: Dict[int, Dict[str, Any]] = {}
+
+def _tmdb_region_dates(meta: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
     for mid, data in (meta or {}).items():
         rels = (data.get("release_dates") or {}).get("results") or []
-        best: Dict[str, Any] | None = None
+        best: dict[str, Any] | None = None
         for entry in rels:
             region = (entry.get("iso_3166_1") or "").upper()
             if region not in ("US", "GB", "NL", "DE", "FR", "CA", "AU", "NZ", "IE", "ES", "IT"):
@@ -658,10 +701,10 @@ def _tmdb_region_dates(meta: Dict[int, Dict[str, Any]]) -> Dict[int, Dict[str, A
             out[mid] = best
     return out
 
-def _ratings_audit(s: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    tmdb_ids: List[int] = []
-    tmdb_map: Dict[int, Dict[str, Any]] = {}
+
+def _ratings_audit(s: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    tmdb_ids: list[int] = []
     for prov, feat, k, it in _iter_items(s):
         if feat != "ratings":
             continue
@@ -699,14 +742,18 @@ def _ratings_audit(s: Dict[str, Any]) -> Dict[str, Any]:
         }
     return out
 
-def _apply_fix(s: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
-    t, prov, feat, key = body.get("type"), body.get("provider"), body.get("feature"), body.get("key")
+
+def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    t = body.get("type")
+    prov = body.get("provider")
+    feat = body.get("feature")
+    key = body.get("key")
     b, it = _find_item(s, prov, feat, key)
-    if not it:
+    if b is None or it is None:
         raise HTTPException(404, "Item not found")
 
     ids = it.setdefault("ids", {})
-    ch: List[str] = []
+    ch: list[str] = []
 
     if t in ("key_missing_ids", "key_ids_mismatch"):
         ns = body.get("id_name")
@@ -739,25 +786,28 @@ def _apply_fix(s: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
     else:
         raise HTTPException(400, "Unsupported fix")
 
-    pairs = _pair_map(_cfg(), s)
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
-    pair_libs = _pair_lib_filters(_cfg())
+    pair_libs = _pair_lib_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, prov, feat, new, it, idx, pair_libs)
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
 
-# ── Suggest
-def _anchor(key: str):
+
+def _anchor(key: str) -> tuple[int, int] | None:
     if "#" not in key:
         return None
     m = re.search(r"#s(\d+)[eE](\d+)", key)
     return (int(m.group(1)), int(m.group(2))) if m else None
 
-def _sig(ids: Dict[str, Any]) -> str:
+
+def _sig(ids: dict[str, Any]) -> str:
     return "|".join([str(ids.get(x, "")) for x in ("imdb", "tmdb", "tvdb", "trakt", "plex", "emby")])
 
-def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any]:
+
+def _suggest(s: dict[str, Any], prov: str, feat: str, key: str) -> dict[str, Any]:
     b, it = _find_item(s, prov, feat, key)
-    if not it:
+    if it is None:
         raise HTTPException(404, "Item not found")
 
     title = (it.get("title") or "").strip()
@@ -766,10 +816,10 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     ids = it.get("ids") or {}
     se = _anchor(key)
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    def push(new_ids: Dict[str, Any], why: str, conf: float, src: str) -> None:
+    def push(new_ids: dict[str, Any], why: str, conf: float, src: str) -> None:
         merged = {
             **ids,
             **{k: v for k, v in (new_ids or {}).items() if v},
@@ -788,7 +838,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
             }
         )
 
-    # from key
     try:
         if ":" in key:
             ns, rest = key.split(":", 1)
@@ -798,7 +847,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # from peers (same title/year/type in state)
     try:
         peer = _peer_ids(s, it)
         if peer:
@@ -806,7 +854,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # TMDB from imdb
     try:
         if ids.get("imdb"):
             f = _tmdb(f"/find/{ids['imdb']}", {"external_source": "imdb_id"})
@@ -835,9 +882,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
                     )
                 if typ == "episode" and base and se:
                     sN, eN = se
-                    ext = _tmdb(
-                        f"/tv/{base}/season/{sN}/episode/{eN}/external_ids", {}
-                    )
+                    ext = _tmdb(f"/tv/{base}/season/{sN}/episode/{eN}/external_ids", {})
                     push(
                         {
                             "tmdb": base,
@@ -851,7 +896,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # TMDB from tmdb id
     try:
         if ids.get("tmdb"):
             if typ == "movie":
@@ -875,9 +919,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
                 )
             elif typ == "episode" and se:
                 sN, eN = se
-                ext = _tmdb(
-                    f"/tv/{ids['tmdb']}/season/{sN}/episode/{eN}/external_ids", {}
-                )
+                ext = _tmdb(f"/tv/{ids['tmdb']}/season/{sN}/episode/{eN}/external_ids", {})
                 push(
                     {
                         "imdb": ext.get("imdb_id"),
@@ -890,7 +932,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # TMDB search by title/year
     try:
         if title:
             if typ == "movie":
@@ -910,7 +951,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
             elif typ in ("show", "episode"):
                 r = _tmdb(
                     "/search/tv",
-                    {"query": title, "first_air_date_year": year or ""}, 
+                    {"query": title, "first_air_date_year": year or ""},
                 )
                 if r.get("results"):
                     base = r["results"][0]["id"]
@@ -928,7 +969,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # Alt/language title hints
     try:
         core_ids = {
             ns: str(ids.get(ns)).strip()
@@ -945,7 +985,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
             }
             allowed_targets = lang_prov_targets.get(prov_up, set())
             if allowed_targets:
-                hint_with: List[Tuple[str, str]] = []
+                hint_with: list[tuple[str, str]] = []
                 for p2, f2, k2, it2 in _iter_items(s):
                     if f2 != feat:
                         continue
@@ -953,10 +993,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
                     if p2_up not in allowed_targets:
                         continue
                     ids2 = it2.get("ids") or {}
-                    if not any(
-                        str(ids2.get(ns) or "").strip() == val
-                        for ns, val in core_ids.items()
-                    ):
+                    if not any(str(ids2.get(ns) or "").strip() == val for ns, val in core_ids.items()):
                         continue
                     t2 = (it2.get("title") or "").strip()
                     if not t2:
@@ -973,7 +1010,6 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    # Trakt search by title/year
     try:
         core_have = any(ids.get(ns) for ns in ("imdb", "tmdb", "tvdb"))
         if title and not core_have:
@@ -981,12 +1017,7 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
             t = tmap.get(typ, "movie,show")
             r = _trakt("/search/" + t, {"query": title, "year": year or ""})
             for e in (r or [])[:3]:
-                ids2 = (
-                    e.get("movie")
-                    or e.get("show")
-                    or e.get("episode")
-                    or {}
-                ).get("ids") or {}
+                ids2 = (e.get("movie") or e.get("show") or e.get("episode") or {}).get("ids") or {}
                 push(
                     {
                         "trakt": ids2.get("trakt"),
@@ -1001,16 +1032,16 @@ def _suggest(s: Dict[str, Any], prov: str, feat: str, key: str) -> Dict[str, Any
     except Exception:
         pass
 
-    miss: List[str] = []
+    miss: list[str] = []
     if not _tmdb_key():
         miss.append("tmdb.api_key")
     if not _trakt_headers().get("trakt-api-key"):
         miss.append("trakt.client_id")
     return {"suggestions": out, "needs": miss}
 
-# ── API
+
 @router.get("/analyzer/state", response_class=JSONResponse)
-def api_state():
+def api_state() -> dict[str, Any]:
     try:
         s = _load_state()
     except HTTPException as e:
@@ -1020,29 +1051,34 @@ def api_state():
             raise
     return {"counts": _counts(s), "items": _collect_items(s)}
 
+
 @router.get("/analyzer/problems", response_class=JSONResponse)
-def api_problems():
+def api_problems() -> dict[str, Any]:
     s = _load_state()
     return {"problems": _problems(s), "pair_stats": _pair_stats(s)}
 
+
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
-def api_ratings_audit():
+def api_ratings_audit() -> dict[str, Any]:
     s = _load_state()
     return _ratings_audit(s)
 
+
 @router.get("/analyzer/cw-state", response_class=JSONResponse)
-def api_cw_state():
+def api_cw_state() -> dict[str, Any]:
     return _read_cw_state()
 
+
 @router.post("/analyzer/patch", response_class=JSONResponse)
-def api_patch(payload: Dict[str, Any]):
+def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
     for f in ("provider", "feature", "key", "ids"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
     s = _load_state()
     b, it = _find_item(s, payload["provider"], payload["feature"], payload["key"])
-    if not b or not it:
+    if b is None or it is None:
         raise HTTPException(404, "Item not found")
+
     ids = dict(it.get("ids") or {})
     for k, v in (payload.get("ids") or {}).items():
         nv = _norm(k, v)
@@ -1050,41 +1086,61 @@ def api_patch(payload: Dict[str, Any]):
             ids.pop(k, None)
         else:
             ids[k] = nv
+
     it["ids"] = ids
-    new = payload["key"]
-    if payload.get("rekey"):
-        new = _rekey(b, payload["key"], it)
+
     if payload.get("merge_peer_ids"):
         peer_ids = _peer_ids(s, it)
         for k, v in peer_ids.items():
             if k not in ids and v:
                 ids[k] = v
-    it["ids"] = ids
-    new = _rekey(b, payload["key"], it)
-    pairs = _pair_map(_cfg(), s)
+        it["ids"] = ids
+
+    old_key = payload["key"]
+    new_key = old_key
+    if payload.get("rekey"):
+        new_key = _rekey(b, old_key, it)
+
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
-    pair_libs = _pair_lib_filters(_cfg())
+    pair_libs = _pair_lib_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(
-        s, pairs, payload["provider"], payload["feature"], new, it, idx, pair_libs
+        s,
+        pairs,
+        payload["provider"],
+        payload["feature"],
+        new_key,
+        it,
+        idx,
+        pair_libs,
     )
     _save_state(s)
-    return {"ok": True, "new_key": new}
+    return {"ok": True, "new_key": new_key}
+
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
-def api_suggest(payload: Dict[str, Any]):
+def api_suggest(payload: dict[str, Any]) -> dict[str, Any]:
+    for f in ("provider", "feature", "key"):
+        if f not in payload:
+            raise HTTPException(400, f"Missing {f}")
     s = _load_state()
-    p = payload or {}
-    return _suggest(s, p.get("provider"), p.get("feature"), p.get("key"))
+    return _suggest(s, payload["provider"], payload["feature"], payload["key"])
+
 
 @router.post("/analyzer/fix", response_class=JSONResponse)
-def api_fix(payload: Dict[str, Any]):
+def api_fix(payload: dict[str, Any]) -> dict[str, Any]:
+    for f in ("type", "provider", "feature", "key"):
+        if f not in payload:
+            raise HTTPException(400, f"Missing {f}")
     s = _load_state()
     r = _apply_fix(s, payload)
     _save_state(s)
     return r
 
+
 @router.patch("/analyzer/item", response_class=JSONResponse)
-def api_edit(payload: Dict[str, Any]):
+def api_edit(payload: dict[str, Any]) -> dict[str, Any]:
     for f in ("provider", "feature", "key", "updates"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
@@ -1109,17 +1165,26 @@ def api_edit(payload: Dict[str, Any]):
                 ids[k] = v
 
     new = _rekey(b, payload["key"], it)
-    pairs = _pair_map(_cfg(), s)
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
-    pair_libs = _pair_lib_filters(_cfg())
+    pair_libs = _pair_lib_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(
-        s, pairs, payload["provider"], payload["feature"], new, it, idx, pair_libs
+        s,
+        pairs,
+        payload["provider"],
+        payload["feature"],
+        new,
+        it,
+        idx,
+        pair_libs,
     )
     _save_state(s)
     return {"ok": True, "new_key": new}
 
+
 @router.delete("/analyzer/item", response_class=JSONResponse)
-def api_delete(payload: Dict[str, Any]):
+def api_delete(payload: dict[str, Any]) -> dict[str, Any]:
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")

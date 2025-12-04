@@ -3,11 +3,7 @@ from __future__ import annotations
 import os, uuid, time, requests, xml.etree.ElementTree as ET
 import re, unicodedata
 from typing import Any, Dict, List, Mapping, Optional, Iterable, Set
-
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
-except Exception:  # flat tests
-    from _id_map import canonical_key, minimal as id_minimal, ids_from_guid  # type: ignore
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 
 _PLEX_CTX: Dict[str, Optional[str]] = {"baseurl": None, "token": None}
 

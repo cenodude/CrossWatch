@@ -94,7 +94,6 @@ def fetch_libraries_from_cfg() -> List[Dict[str, Any]]:
     server, token, devid = _cfg_triplet()
     if not (server and token): return []
 
-    # Prefer user-specific views when we have user_id
     cfg = load_config(); em = cfg.get("emby") or {}
     uid = (em.get("user_id") or "").strip()
     url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")

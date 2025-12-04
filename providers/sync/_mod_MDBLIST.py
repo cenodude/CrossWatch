@@ -1,6 +1,6 @@
 # /providers/sync/_mod_MDBLIST.py
 from __future__ import annotations
-__VERSION__ = "1.0.1"
+__VERSION__ = "1.0.2"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 import os, time

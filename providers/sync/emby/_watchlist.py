@@ -28,13 +28,9 @@ from ._common import (
     find_seed_item_id,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/emby_watchlist.unresolved.json"
-
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
@@ -555,7 +551,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
         ok, unresolved = _add_favorites(adapter, items)
     _log(f"add done: +{ok} / unresolved {len(unresolved)} (mode={cfg.watchlist_mode})")
     return ok, unresolved
-
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     cfg = adapter.cfg

@@ -99,7 +99,7 @@ def remove_across_providers_by_ids(ids: Dict[str, Any] | None, media_type: str |
         _log(f"auto-remove deduped (TTL) for {dkey}", "DEBUG")
         return {"ok": True, "skipped": "ttl"}
     try:
-        import _watchlistAPI as WLAPI
+        import api.watchlistAPI as WLAPI
         res = WLAPI.remove_across_providers_by_ids(norm, media_type or "")
         ok = bool(res.get("ok")) if isinstance(res, dict) else bool(res)
         if ok:
@@ -111,8 +111,8 @@ def remove_across_providers_by_ids(ids: Dict[str, Any] | None, media_type: str |
         _log(f"auto-remove failed via _watchlistAPI: {e}", "WARN")
         try:
             from cw_platform.config_base import load_config
-            from _syncAPI import _load_state
-            from _watchlist import delete_watchlist_batch
+            from api.syncAPI import _load_state
+            from services.watchlist import delete_watchlist_batch
             cfg = load_config()
             st = _load_state() or {}
             keys: List[str] = []

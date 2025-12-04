@@ -8,10 +8,10 @@ __all__ = [
     "parse_rate_limit",
     "safe_json",
     "request_with_retries",
-    # progress
+    
     "make_snapshot_progress",
     "SnapshotProgress",
-    # Optional provider labelers
+
     "label_simkl",
     "label_trakt",
     "label_plex",
@@ -27,10 +27,9 @@ EmitFn = Callable[[str, Mapping[str, Any]], None]
 FeatureLabelFn = Callable[[str, str, Mapping[str, Any]], str]
 
 
-# ---------- emit helpers ----------
+# helpers
 
 def make_emitter(ctx: Any) -> EmitFn:
-    """Return a emitter; prefers orchestrator style emit(event, **data), falls back to emit(event, data)."""
     emit_fn = None
     try:
         if hasattr(ctx, "emit") and callable(getattr(ctx, "emit")):
@@ -46,26 +45,20 @@ def make_emitter(ctx: Any) -> EmitFn:
         if not emit_fn:
             return
         try:
-            # Prefer kwargs style (event, **payload)
             try:
                 emit_fn(event, **dict(payload))
             except TypeError:
-                # Fallback: legacy (event, payload)
                 emit_fn(event, dict(payload))
         except Exception:
-            # Never blow up provider loops
             pass
 
     return _emit
 
 
-# ---------- minimal snapshot progress ----------
+# snapshot progress 
 
 class SnapshotProgress:
-    """
-    Tiny, throttled emitter for snapshot progress.
-    Emits only: event='snapshot:progress' with {dst, feature, done, total?, ok?, final?}.
-    """
+
     def __init__(self, ctx: Any, *, dst: str, feature: str, total: Optional[int] = None, throttle_ms: int = 300):
         self._emit = make_emitter(ctx)
         self.dst = str(dst)
@@ -123,10 +116,8 @@ class SnapshotProgress:
 
 
 def make_snapshot_progress(ctx: Any, *, dst: str, feature: str, total: Optional[int] = None, throttle_ms: int = 300) -> SnapshotProgress:
-    """Convenience factory."""
     return SnapshotProgress(ctx, dst=dst, feature=feature, total=total, throttle_ms=throttle_ms)
 
-# ---------- feature label (generic + provider-specific) ----------
 def _get_query_value(url: str, params: Mapping[str, Any], name: str) -> Optional[str]:
     qd = parse_qs(urlparse(url).query)
     v = params.get(name) if isinstance(params, Mapping) else None
@@ -168,7 +159,7 @@ def label_emby(method: str, url: str, kw: Mapping[str, Any]) -> str:
         if "PlayedItems" in segs:
             return "history:add" if m == "POST" else ("history:remove" if m == "DELETE" else "history")
 
-    # Playlists
+    # Playlists (not used)
     if segs[:1] == ["Playlists"]:
         if m == "GET": return "playlists:index"
         if m == "POST": return "playlists:write"
@@ -253,9 +244,9 @@ def label_jellyfin(method: str, url: str, kw: Mapping[str, Any]) -> str:
         return "shows:episodes"
     return default_feature_label("JELLYFIN", method, url, kw)
 
-# ---------- instrumented session ----------
+#  Session 
 class HitSession(requests.Session):
-    """Optional api:hit emission (off by default)."""
+
     def __init__(self, provider: str, emit: EmitFn, feature_label: Optional[FeatureLabelFn] = None, emit_hits: Optional[bool] = None):
         super().__init__()
         self._provider = provider
@@ -280,12 +271,10 @@ class HitSession(requests.Session):
                     pass
 
 def build_session(provider: str, ctx: Any, *, feature_label: Optional[FeatureLabelFn] = None, emit_hits: Optional[bool] = None) -> HitSession:
-    """Factory for a shared instrumented session."""
     return HitSession(provider, make_emitter(ctx), feature_label, emit_hits)
 
-# ---------- tiny HTTP utils ----------
+# utils 
 def parse_rate_limit(h: Mapping[str, Any]) -> Dict[str, Optional[int]]:
-    """Normalize common rate headers across providers."""
     def _i(x):
         try:
             return int(x)
@@ -298,7 +287,6 @@ def parse_rate_limit(h: Mapping[str, Any]) -> Dict[str, Optional[int]]:
     }
 
 def safe_json(resp: requests.Response) -> Any:
-    """Lenient JSON parse."""
     try:
         if not (resp.text or "").strip():
             return {}
@@ -320,7 +308,7 @@ def request_with_retries(
     backoff_base: float = 0.5,
     **kwargs: Any,
 ) -> requests.Response:
-    """Small resilient wrapper with 429-aware backoff."""
+
     last: Any = None
     for i in range(max(1, int(max_retries))):
         try:
@@ -348,5 +336,5 @@ def request_with_retries(
         return last
     raise requests.RequestException(f"request failed after retries: {method} {url}")
 
-# Compatibility alias
+# Alias
 request_with_retry = request_with_retries

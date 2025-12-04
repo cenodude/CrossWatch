@@ -1,12 +1,9 @@
 # /crosswatch.py
-# CrossWatch - Web API (FastAPI)
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-#
-# --------------- CrossWatch Web API (FastAPI) ---------------
+# CrossWatch - Media scrobbling and tracking engine
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-# --- Core / stdlib
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from functools import lru_cache
@@ -23,7 +20,6 @@ import re
 import secrets
 import shutil
 import socket
-import sys
 import threading
 import time
 import urllib.error
@@ -35,24 +31,9 @@ import requests
 import uvicorn
 import asyncio
 
-# --- App routers / features
-from _configAPI import router as config_router
-from _maintenanceAPI import router as maintenance_router
-from _metaAPI import router as meta_router
-from _insightAPI import register_insights
-from _watchlistAPI import router as watchlist_router
-from _schedulingAPI import router as scheduling_router
-from _probesAPI import register_probes, PROBE_CACHE as PROBES_CACHE, STATUS_CACHE as PROBES_STATUS_CACHE
-from _scrobbleAPI import router as scrobble_router
-from _authenticationAPI import register_auth
-from _wallAPI import register_wall
-from _versionAPI import router as version_router
-from _analyzer import router as analyzer_router
-from _export import router as export_router
-from _editorAPI import router as editor_router
-
-from _syncAPI import (
-    router as sync_router,
+# Internal imports
+from api import (
+    register as register_api,
     _is_sync_running,
     _load_state,
     _compute_lanes_from_stats,
@@ -61,7 +42,7 @@ from _syncAPI import (
     api_run_sync,
 )
 
-from _watchlist import build_watchlist, _get_provider_items, _load_hide_set, _save_hide_set
+from services import register as register_services
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
 from fastapi.responses import (
@@ -81,9 +62,10 @@ except Exception:
     HAVE_PLEXAPI = False
     
 try:
-    from _wallAPI import _load_wall_snapshot, refresh_wall
+    from api.wallAPI import _load_wall_snapshot, refresh_wall
 except Exception:
-    pass
+    _load_wall_snapshot = lambda: []
+    refresh_wall = lambda: None
 
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
@@ -96,19 +78,20 @@ try:
     from providers.scrobble.emby.watch import autostart_from_config as emby_autostart
 except Exception:
     emby_autostart = None
-# Always keep Plex as fallback
+    
+# Fallback: keep Plex as fallback
 try:
     from providers.scrobble.plex.watch import autostart_from_config as plex_autostart
 except Exception:
     plex_autostart = None
 
-# Plex → Trakt
+# Plex to Trakt
 try:
     from providers.webhooks.plextrakt import process_webhook as process_webhook
 except Exception:
     process_webhook = None
 
-# Jellyfin → Trakt
+# Jellyfin to Trakt
 try:
     from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
 except Exception:
@@ -121,9 +104,9 @@ from _FastAPI import (
     register_assets_and_favicons,
     register_ui_root,
 )
-from _scheduling import SyncScheduler
-from _statistics import Stats
-from _watchlist import build_watchlist, delete_watchlist_item
+from services.scheduling import SyncScheduler
+from services.statistics import Stats
+from services.watchlist import build_watchlist, delete_watchlist_item
 
 from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.modules_registry import MODULES as _MODULES
@@ -136,7 +119,7 @@ try:
 except Exception:
     ZoneInfo = None
 
-# --- Paths & globals
+# Paths and globals
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -168,7 +151,7 @@ _DEBUG_MODS_CACHE = {"ts": 0.0, "val": False}
 RUNNING_PROCS: Dict[str, threading.Thread] = {}
 SYNC_PROC_LOCK = threading.Lock()
 
-# --- Debug flag (reads config, cached)
+# Debug helpers
 def _is_http_debug_enabled() -> bool:
     try:
         now = time.time()
@@ -197,7 +180,7 @@ def _is_static_noise(path: str, status: int) -> bool:
     if path.endswith((".css", ".js", ".mjs", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".svg", ".woff", ".woff2", ".ttf")):
         return True
 
-    # Redirects / caching noise
+    # Redirects
     if status in (301, 302, 303, 304, 307, 308):
         return True
 
@@ -230,14 +213,13 @@ def _is_mods_debug_enabled() -> bool:
         return False
 
 def _apply_debug_env_from_config() -> None:
-    """Mirror runtime.debug_mods to CW_DEBUG env."""
     on = _is_mods_debug_enabled()
     if on and not os.environ.get("CW_DEBUG"):
         os.environ["CW_DEBUG"] = "1"
     elif not on and os.environ.get("CW_DEBUG"):
         os.environ.pop("CW_DEBUG", None)
 
-# --- Sinks builder (reads scrobble.watch.sink)
+# Sink builder
 def _build_sinks_from_config(cfg) -> list:
     watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
     sink_cfg = (watch_cfg.get("sink") or "trakt")
@@ -261,7 +243,7 @@ def _build_sinks_from_config(cfg) -> list:
             sinks = []
     return sinks
         
-# --- Autostart watch service (reads config, returns instance or None)
+# Autostart watch service from config
 def autostart_from_config():
     cfg = load_config()
     sc = (cfg.get("scrobble") or {})
@@ -292,7 +274,7 @@ def autostart_from_config():
     except Exception:
         return None
 
-# --- Next scheduled run helper (reads config, returns epoch)
+# Next run computation
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
 def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
@@ -330,7 +312,7 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
     # fallback
     return now + 3600
 
-# --- App & routers
+# API
 app = FastAPI()
 
 @app.middleware("http")
@@ -367,28 +349,11 @@ async def conditional_access_logger(request: Request, call_next):
         raise err
     return response
 
-app.include_router(config_router)
-app.include_router(meta_router)
-app.include_router(watchlist_router)
-app.include_router(maintenance_router)
-app.include_router(scheduling_router)
-app.include_router(scrobble_router)
-app.include_router(sync_router)
-app.include_router(version_router)
-app.include_router(analyzer_router)
-app.include_router(export_router)
-app.include_router(editor_router)
-
-# --- Static/UI
+# Static files
 register_assets_and_favicons(app, ROOT)
 register_ui_root(app)
 
-# --- Probes / insights / wall
-register_probes(app, load_config)
-register_insights(app)
-register_wall(app)
-
-# --- Misc util
+# Misc utilities
 def get_primary_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -398,7 +363,7 @@ def get_primary_ip() -> str:
     finally:
         s.close()
 
-# --- Log buffers + ANSI helpers (for UI streaming)
+# Log buffers
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {
     "SYNC": [], "PLEX": [], "JELLYFIN": [], "EMBY": [],
@@ -471,16 +436,17 @@ def _append_log(tag: str, raw_line: str) -> None:
     if len(buf) > MAX_LOG_LINES:
         LOG_BUFFERS[tag] = buf[-MAX_LOG_LINES:]
 
-register_auth(app, log_fn=_append_log, probe_cache=PROBES_CACHE)      
+register_api(app, load_config, log_fn=_append_log)
+register_services(app, load_config)
 
-# --- Expose buffers for other modules
+# Expose log buffers to app state
 try:
     app.state.LOG_BUFFERS = LOG_BUFFERS
     app.state.MAX_LOG_LINES = MAX_LOG_LINES
 except Exception:
     pass
 
-# --- Host logger (writes to UI buffers)
+# Host logger
 class _UIHostLogger:
     def __init__(self, tag: str = "SYNC", module_name: str | None = None, base_ctx: dict | None = None):
         self._tag = tag
@@ -506,12 +472,13 @@ class _UIHostLogger:
 
     def bind(self, **ctx):
         c = dict(self._ctx); c.update(ctx)
-        return _UIHostLogger(self._tag, name, c)
+        module_name = ctx.get("module", self._module)
+        return _UIHostLogger(self._tag, module_name, c)
 
     def child(self, name: str):
         return _UIHostLogger(self._tag, name, dict(self._ctx))
 
-# --- Orchestrator helpers
+# Orchestrator getter
 def _get_orchestrator() -> Orchestrator:
     cfg = load_config()
     return Orchestrator(config=cfg)
@@ -525,7 +492,7 @@ def _json_safe(obj: Any) -> Any:
         return obj
     return str(obj)
 
-# --- Startup/Shutdown
+# Startup sequence
 @asynccontextmanager
 async def _lifespan(app):
     app.state.watch = None
@@ -639,7 +606,7 @@ async def _lifespan(app):
 
 app.router.lifespan_context = _lifespan
     
-# --- Basic middleware: no-store for API endpoints and MODALS
+# Middleware to disable caching for API responses
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
@@ -655,8 +622,7 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
-
-# --- File listing API 
+# Files listing API - TODO: move to api/files.py
 @app.get("/api/files", tags=["files"])
 def api_list_files(
     path: str = Query(..., description="Directory path (absolute or config-relative)")
@@ -667,33 +633,33 @@ def api_list_files(
 
     p = Path(raw)
     if not p.is_absolute():
-        p = (CONFIG / raw).resolve()
+        p = (CONFIG_DIR / raw).resolve()
     try:
-      try:
-          cfg_root = CONFIG.resolve()
-          if not str(p).startswith(str(cfg_root)):
-              return []
-      except Exception:
-          pass
+        try:
+            cfg_root = CONFIG_DIR.resolve()
+            if not str(p).startswith(str(cfg_root)):
+                return []
+        except Exception:
+            pass
 
-      if not p.exists() or not p.is_dir():
-          return []
-      out: List[Dict[str, Any]] = []
-      for child in sorted(p.iterdir()):
-          info: Dict[str, Any] = {
-              "name": child.name,
-              "is_dir": child.is_dir(),
-          }
-          try:
-              info["size"] = child.stat().st_size
-          except Exception:
-              pass
-          out.append(info)
-      return out
+        if not p.exists() or not p.is_dir():
+            return []
+        out: List[Dict[str, Any]] = []
+        for child in sorted(p.iterdir()):
+            info: Dict[str, Any] = {
+                "name": child.name,
+                "is_dir": child.is_dir(),
+            }
+            try:
+                info["size"] = child.stat().st_size
+            except Exception:
+                pass
+            out.append(info)
+        return out
     except Exception:
-      return []
+        return []
   
-# --- Logs (with tags for OpenAPI)
+# Logging API - TODO: move to api/logging.py
 @app.get("/api/logs/dump", tags=["logging"])
 def logs_dump(channel: str = "TRAKT", n: int = 50):
     return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
@@ -723,7 +689,7 @@ async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
 
     return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
-# --- Sync runner (called by scheduler)
+# Sync runner (orchestrator)
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     overrides = overrides or {}
 
@@ -782,7 +748,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     finally:
         RUNNING_PROCS.pop("SYNC", None)
         
-# --- Scheduler wiring
+# Scheduler sync starter
 def _start_sync_from_scheduler() -> bool:
     try:
         payload = {"source": "scheduler"}
@@ -805,7 +771,7 @@ scheduler = SyncScheduler(
     is_sync_running_fn=_is_sync_running,
 )
 
-# --- Platform / Metadata managers
+# Platform and metadata managers
 try:
     from cw_platform.manager import PlatformManager as _PlatformMgr
     _PLATFORM = _PlatformMgr(load_config, save_config)
@@ -820,7 +786,7 @@ except Exception as _e:
     _METADATA = None
     print("MetadataManager not available:", _e)
 
-# --- Entrypoint
+# Entry point
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()
     print("\nCrossWatch Engine running:")

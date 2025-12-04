@@ -4,11 +4,7 @@ from __future__ import annotations
 import os, json, time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
-
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal
-except Exception:  # pragma: no cover
-    from _id_map import canonical_key, minimal as id_minimal  # type: ignore
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_CROSSWATCH_DEBUG"):

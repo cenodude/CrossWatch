@@ -2,13 +2,12 @@
 # CrossWatch - Plex Sync Module
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-__VERSION__ = "2.1.0"
-__all__ = ["get_manifest","PLEXModule","PLEXClient","PLEXError","PLEXAuthError","PLEXNotFound","OPS"]
-
-# stdlib
 import os, time, json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+__VERSION__ = "2.1.0"
+__all__ = ["get_manifest","PLEXModule","PLEXClient","PLEXError","PLEXAuthError","PLEXNotFound","OPS"]
 
 try:
     from plexapi.myplex import MyPlexAccount
@@ -17,13 +16,7 @@ except Exception as e:
     raise RuntimeError("plexapi is required for _mod_PLEX") from e
 
 from .plex._common import configure_plex_context
-
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
-except Exception:
-    from _id_map import canonical_key, minimal as id_minimal, ids_from_guid  # type: ignore
-
-# shared plex helpers + features
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 from .plex._common import (
     normalize as plex_normalize,
     key_of as plex_key_of,
@@ -115,12 +108,12 @@ def get_manifest() -> Mapping[str, Any]:
 @dataclass
 class PLEXConfig:
     token: Optional[str] = None
-    baseurl: Optional[str] = None          # alias 'server_url' supported
+    baseurl: Optional[str] = None
     client_id: Optional[str] = None
     server_name: Optional[str] = None
     machine_id: Optional[str] = None
-    username: Optional[str] = None         # preferred user (global PMS scope)
-    account_id: Optional[int] = None       # server-scoped Plex Home account id
+    username: Optional[str] = None
+    account_id: Optional[int] = None
     password: Optional[str] = None
     timeout: float = 10.0
     max_retries: int = 3
@@ -136,7 +129,7 @@ class PLEXClient:
         self.user_username: Optional[str] = None      # chosen Plex user (Home profile or owner)
         self.user_account_id: Optional[int] = None    # server-local accountID (critical for history)
 
-    # --- connect --------------------------------------------------------------
+    # connect
     def connect(self) -> "PLEXClient":
         try:
             # Account (required for Discover/watchlist)
@@ -157,7 +150,7 @@ class PLEXClient:
                     self.server = PlexServer(self.cfg.baseurl, token, timeout=self.cfg.timeout)
                     try: self.server._session = self.session
                     except Exception: pass
-                    # _log(f"Connected via baseurl to {self.server.friendlyName}")
+         
                 except Exception as e:
                     _log(f"PMS baseurl connect failed: {e}; continuing account-only")
                 self._post_connect_user_scope(token)
@@ -169,7 +162,7 @@ class PLEXClient:
                 self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore
                 try: self.server._session = self.session
                 except Exception: pass
-                # _log(f"Connected via account to {self.server.friendlyName}")
+                
             except Exception as e:
                 _log(f"No PMS resource bound: {e}; running account-only")
                 self._post_connect_user_scope(token)
@@ -199,7 +192,7 @@ class PLEXClient:
         if servers: return servers[0]
         raise PLEXNotFound("No Plex Media Server resource found")
 
-    # --- user / server scope  -------------------------
+    # user / server scope
     def _post_connect_user_scope(self, token: str):
         try:
             self.user_username, self.user_account_id = resolve_user_scope(
@@ -207,12 +200,10 @@ class PLEXClient:
             )
             if self.cfg.account_id is None:
                 patch_history_with_account_id(self.server, self.user_account_id)
-
-            #_log(f"user scope → username={self.user_username} account_id={self.user_account_id}")
         except Exception as e:
             _log(f"user scope init failed: {e}")
             
-    # --- shared helpers ------------------------------
+    # helpers 
     def account(self) -> MyPlexAccount:
         if not self._account:
             raise PLEXAuthError("MyPlexAccount not available (need account token or login).")
@@ -316,7 +307,7 @@ class PLEXModule:
             ctx, dst="PLEX", feature=str(feature), total=total, throttle_ms=int(throttle_ms)
         )
 
-    # ---- feature toggles
+    # feature toggles
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {
@@ -501,7 +492,7 @@ class PLEXModule:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-# orchestrator bridge (OPS)
+# OPS bridge
 class _PlexOPS:
     def name(self) -> str: return "PLEX"
     def label(self) -> str: return "Plex"
@@ -524,8 +515,6 @@ class _PlexOPS:
         c  = cfg or {}
         pl = c.get("plex") or {}
         au = (c.get("auth") or {}).get("plex") or {}
-
-        # Preferred: Plex account token (lets us discover PMS)
         account_token = (pl.get("account_token") or au.get("account_token") or "").strip()
 
         # Fallback: direct PMS credentials

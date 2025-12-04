@@ -9,13 +9,11 @@ try:
 except Exception:
     def log(msg: str, *, level: str = "INFO", module: str = "META"): pass  # noop
 
-# Plex GUID → external ids helper (safe fallback if missing)
 try:
     from id_map import ids_from_guid
 except Exception:
     def ids_from_guid(_g: str) -> dict: return {}
 
-# Fill-only ID merge with IMDb-first priority
 try:
     from id_map import merge_ids as _merge_ids, KEY_PRIORITY as _KEY_PRIORITY  # type: ignore
 except Exception:
@@ -31,7 +29,7 @@ except Exception:
             if k not in out or out[k] is None: out[k] = v
         return {k: v for k, v in out.items() if v}
 
-# ------------------------------------------------------------------ helpers
+# helpers
 
 def _norm_ids(ids: dict | None) -> dict:
     out = {}
@@ -61,7 +59,7 @@ def _first_non_empty(*vals):
         if v not in (None, "", [], {}): return v
     return None
 
-# ------------------------------------------------------------------ manager
+# Meta Manager
 
 class MetadataManager:
     def __init__(self, load_cfg, save_cfg):
@@ -69,8 +67,7 @@ class MetadataManager:
         self.save_cfg = save_cfg
         self.providers: dict[str, Any] = self._discover()
 
-    # ------------------------------ Discovery
-
+    # Discovery
     def _discover(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
         try:
@@ -102,11 +99,10 @@ class MetadataManager:
                 out[label.upper()] = inst
         return out
 
-    # ------------------------------ Resolve
+    # Resolve it through providers
 
     def resolve(self, *, entity: str, ids: dict, locale: Optional[str] = None,
                 need: Optional[dict] = None, strategy: str = "first_success") -> dict:
-        """Resolve metadata via configured providers."""
         cfg = self.load_cfg() or {}
         md_cfg = cfg.get("metadata") or {}
         debug = bool((cfg.get("runtime") or {}).get("debug"))
@@ -139,10 +135,8 @@ class MetadataManager:
         if not results: return {}
         return self._merge(results) if strategy == "merge" else (results[0] or {})
 
-    # ------------------------------ Resolve (batch)
-
+    # Resolve in batch
     def resolve_many(self, items: List[dict]) -> List[dict]:
-        """Batch wrapper; prefers ids, upgrades from Plex GUID if present."""
         out: List[dict] = []
         for it in items or []:
             ids = dict(it.get("ids") or {})
@@ -154,7 +148,6 @@ class MetadataManager:
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
             title, year = it.get("title"), it.get("year")
             try:
-                # Ask for ids enrichment explicitly
                 r = self.resolve(entity=ent, ids=ids, need={"ids": True}) if ids \
                     else self.resolve(entity=ent, ids={}, need={"title": True, "year": True, "ids": True})
             except Exception:
@@ -171,10 +164,8 @@ class MetadataManager:
                 it2 = dict(it); it2["ids"] = ids; out.append(it2)
         return out
 
-    # ------------------------------ Reconcile (heal ids)
-
+    # Reconcile
     def reconcile_ids(self, items: List[dict]) -> List[dict]:
-        """Heal ids with fill-only policy. Movies: IMDb↔TMDb; Shows: TMDb↔IMDb; title as fallback."""
         healed: List[dict] = []
         for it in items or []:
             ent = _norm_entity((it.get("type") or it.get("entity") or "movie").rstrip("s"))
@@ -205,15 +196,13 @@ class MetadataManager:
                 r = {}
 
             rid = _norm_ids(dict((r or {}).get("ids") or {}))
-            ids = _merge_ids(ids, rid)  # fill-only; never clobber existing strong ids
+            ids = _merge_ids(ids, rid)
 
             healed.append({"type": ent, "title": title, "year": year, "ids": ids})
         return healed
 
-    # ------------------------------ Merge policy
-
+    # Merge policy
     def _merge(self, results: List[dict]) -> dict:
-        """Merge multiple provider payloads: images concat+dedupe; scalars first non-empty wins."""
         out: dict = {}
         for r in results:
             if not isinstance(r, dict): continue

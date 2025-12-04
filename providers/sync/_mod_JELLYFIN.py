@@ -21,12 +21,10 @@ from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history   as feat_history
 from .jellyfin import _ratings   as feat_ratings
 from .jellyfin import _playlists as feat_playlists
-
-# Instrumentation (session + progress)
 from ._mod_common import (
     build_session,
     request_with_retries,
-    parse_rate_limit,   # kept for parity
+    parse_rate_limit,
     label_jellyfin,
     make_snapshot_progress,
 )
@@ -35,9 +33,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore
 
-# ──────────────────────────────────────────────────────────────────────────────
 # manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "JELLYFIN",
@@ -63,9 +59,7 @@ def get_manifest() -> Mapping[str, Any]:
         },
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # config + client
-
 @dataclass
 class JFConfig:
     server: str
@@ -114,7 +108,6 @@ class JFClient:
     def _url(self, path: str) -> str:
         return self.base + (path if path.startswith("/") else ("/" + path))
 
-    # Central request path (retries centralized)
     def _request(self, method: str, path: str, *, params: Optional[dict] = None, json: Any = None) -> requests.Response:
         return request_with_retries(
             self.session, method, self._url(path),
@@ -122,7 +115,7 @@ class JFClient:
             timeout=self.cfg.timeout, max_retries=self.cfg.max_retries,
         )
 
-    # Thin wrappers for features
+    # wrappers for features
     def get(self, path: str, *, params: Optional[dict] = None) -> requests.Response:
         return self._request("GET", path, params=params)
 
@@ -139,9 +132,8 @@ class JFClient:
         p = self.BASE_PATH_USER.format(user_id=self.cfg.user_id)
         return self.get(p)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# module wrapper
 
+# module wrapper
 _HEALTH_SHADOW = "/config/.cw_state/jellyfin.health.shadow.json"
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
@@ -164,9 +156,7 @@ def _present_flags() -> Dict[str, bool]:
 
 class JELLYFINModule:
     def __init__(self, cfg: Mapping[str, Any]):
-        # Pull provider cfg
         jf = dict((cfg or {}).get("jellyfin") or {})
-        # Legacy nesting support
         auth = dict((cfg or {}).get("auth") or {}).get("jellyfin") or {}
         jf.setdefault("server", auth.get("server"))
         jf.setdefault("access_token", auth.get("access_token"))
@@ -215,7 +205,7 @@ class JELLYFINModule:
         )
         self.client = JFClient(self.cfg)
 
-        # Progress helper used by features
+        # Progress helper
         def _mk_prog(feature: str):
             try: return make_snapshot_progress(ctx, dst="JELLYFIN", feature=feature)
             except Exception:
@@ -225,7 +215,6 @@ class JELLYFINModule:
                 return _Noop()
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
-    # Shared utils (exposed to features)
     @staticmethod
     def normalize(obj) -> Dict[str, Any]: return jelly_normalize(obj)
     @staticmethod
@@ -234,7 +223,6 @@ class JELLYFINModule:
     def manifest(self) -> Mapping[str, Any]:
         return get_manifest()
 
-    # Feature toggles (masked by presence)
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False}
@@ -261,7 +249,6 @@ class JELLYFINModule:
             api = {"ping": {"status": None}, "info": {"status": None}, "user": {"status": None}}
             return {"ok": True, "status": "ok", "latency_ms": latency_ms, "features": features, "details": details, "api": api}
         
-        # Single-call health: user probe
         try:
             ru = self.client.user_probe()
         except Exception:
@@ -346,7 +333,7 @@ class JELLYFINModule:
             "api": api,
         }
 
-    # Feature dispatch (present-state)
+    # Feature dispatch
     def feature_names(self) -> Tuple[str, ...]:
         enabled = self.supported_features()
         return tuple(k for k, v in enabled.items() if v)
@@ -396,10 +383,7 @@ class JELLYFINModule:
         else: return {"ok": False, "count": 0, "unresolved": [], "error": f"unknown_feature:{feature}"}
         return {"ok": True, "count": int(cnt), "unresolved": unres}
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# OPS bridge (orchestrator contract)
-
+# OPS bridge
 class _JellyfinOPS:
     def name(self) -> str: return "JELLYFIN"
     def label(self) -> str: return "Jellyfin"

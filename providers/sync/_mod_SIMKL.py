@@ -6,13 +6,11 @@ from __future__ import annotations
 __VERSION__ = "2.0.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
-# stdlib
 import os, time, json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List
 import requests
 
-# shared instrumentation + helpers
 from ._mod_common import (
     build_session,
     label_simkl,
@@ -21,7 +19,6 @@ from ._mod_common import (
     make_snapshot_progress,
 )
 
-# strict relative imports
 from .simkl._common import build_headers, normalize as simkl_normalize, key_of as simkl_key_of
 
 try:
@@ -53,15 +50,11 @@ except NameError:
         def emit(self, *args, **kwargs) -> None: pass
     ctx = _NullCtx()  # type: ignore[assignment]
 
-# ──────────────────────────────────────────────────────────────────────────────
 # errors
-
 class SIMKLError(RuntimeError): ...
 class SIMKLAuthError(SIMKLError): ...
 
-# ──────────────────────────────────────────────────────────────────────────────
 # debug / logging
-
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
         print(f"[SIMKL] {msg}")
@@ -86,9 +79,7 @@ def _json_save(path: str, data: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
-# ──────────────────────────────────────────────────────────────────────────────
 # feature registry
-
 _FEATURES: Dict[str, Any] = {}
 if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
 if feat_history:   _FEATURES["history"]   = feat_history
@@ -103,7 +94,6 @@ def _features_flags() -> Dict[str, bool]:
     }
 
 def supported_features() -> Dict[str, bool]:
-    # Toggle mask (then gated by presence)
     toggles = {
         "watchlist": True,
         "ratings":   True,
@@ -113,9 +103,7 @@ def supported_features() -> Dict[str, bool]:
     present = _features_flags()
     return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
-# ──────────────────────────────────────────────────────────────────────────────
 # manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "SIMKL",
@@ -128,8 +116,8 @@ def get_manifest() -> Mapping[str, Any]:
         "capabilities": {
             "bidirectional": True,
             "provides_ids": True,
-            "index_semantics": "delta",      # present vs delta
-            "observed_deletes": False,       # do not rely on observed deletions
+            "index_semantics": "delta",
+            "observed_deletes": False,
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True, "unrate": True, "from_date": True,
@@ -144,7 +132,7 @@ def get_manifest() -> Mapping[str, Any]:
 class SIMKLConfig:
     api_key: str
     access_token: str
-    date_from: str = ""          # kept for backward-compat; features use watermarks now
+    date_from: str = ""
     timeout: float = 15.0
     max_retries: int = 3
 
@@ -189,11 +177,9 @@ class SIMKLClient:
     def key_of(obj) -> str:
         return simkl_key_of(obj)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# module wrapper
 
+# module wrapper
 class SIMKLModule:
-    """Adapter used by the orchestrator and feature modules."""
     def __init__(self, cfg: Mapping[str, Any]):
         simkl_cfg = dict(cfg.get("simkl") or {})
         api_key = str(simkl_cfg.get("api_key") or simkl_cfg.get("client_id") or "").strip()
@@ -216,7 +202,6 @@ class SIMKLModule:
         self.client = SIMKLClient(self.cfg, simkl_cfg).connect()
         self.raw_cfg = cfg
         
-        # progress factory to features (adapter.progress_factory(...))
         self.progress_factory = lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
             ctx, dst="SIMKL", feature=str(feature), total=total, throttle_ms=throttle_ms
         )
@@ -225,7 +210,6 @@ class SIMKLModule:
         return get_manifest()
 
     def health(self) -> Mapping[str, Any]:
-        """Single-probe health: rely on /sync/activities for auth + reachability."""
         enabled = supported_features()
         need_core = any(enabled.values())
 
@@ -276,7 +260,7 @@ class SIMKLModule:
         else:
             status = "auth_failed" if (core_code in (401, 403) or core_reason == "unauthorized") else "down"
 
-        ok = status in ("ok", "degraded")  # keep shape consistent with orchestrator
+        ok = status in ("ok", "degraded")
 
         details: Dict[str, Any] = {}
         if need_core and not core_ok:
@@ -308,7 +292,7 @@ class SIMKLModule:
         }
 
     def get_date_from(self) -> str:
-        return self.cfg.date_from  # legacy access; features prefer watermarks via simkl._common
+        return self.cfg.date_from
 
     @staticmethod
     def normalize(obj) -> Dict[str, Any]:
@@ -356,9 +340,8 @@ class SIMKLModule:
         count, unresolved = _FEATURES[feature].remove(self, items)
         return {"ok": True, "count": int(count), "unresolved": unresolved}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# OPS bridge (orchestrator-facing)
 
+# OPS bridge
 class _SIMKLOPS:
     def name(self) -> str:
         return "SIMKL"
@@ -378,7 +361,6 @@ class _SIMKLOPS:
         }
         
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        """No I/O; SIMKL is configured iff we have an access_token."""
         c  = cfg or {}
         sm = c.get("simkl") or {}
         au = (c.get("auth") or {}).get("simkl") or {}

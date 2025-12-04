@@ -9,16 +9,15 @@ _DIR = "/config/.cw_state"
 class PhantomGuard:
     def __init__(self, src: str, dst: str, feature: str, ttl_days: int | None = None, enabled: bool = True):
         base = f"{feature.lower()}.{src.lower()}-{dst.lower()}"
-        self._pf = Path(_DIR) / f"{base}.phantoms.json"      # user-editable blocklist
-        self._lf = Path(_DIR) / f"{base}.last_success.json"  # auto-filled by successful adds
+        self._pf = Path(_DIR) / f"{base}.phantoms.json"
+        self._lf = Path(_DIR) / f"{base}.last_success.json"
         self._ttl = int(ttl_days) if ttl_days else None
         self._enabled = bool(enabled)
 
-    # --- io utils -------------------------------------------------------------
+    # Utils
     def _now(self) -> int: return int(time.time())
 
     def _read_keys(self, p: Path) -> Set[str]:
-        """Accept list, {'keys': [...]}, or {key: epoch}. Applies TTL to timestamps."""
         try:
             obj = json.loads(p.read_text("utf-8"))
             if isinstance(obj, list):
@@ -26,7 +25,7 @@ class PhantomGuard:
             if isinstance(obj, dict):
                 if isinstance(obj.get("keys"), list):
                     return set(obj["keys"])
-                # dict of {key: epoch}
+
                 cutoff = (self._now() - self._ttl * 86400) if self._ttl else None
                 out = set()
                 for k, ts in obj.items():
@@ -38,7 +37,6 @@ class PhantomGuard:
         return set()
 
     def _read_map(self, p: Path) -> Dict[str, int]:
-        """Load {key: epoch}; tolerate list / {'keys': [...]} by stamping now."""
         try:
             obj = json.loads(p.read_text("utf-8"))
             if isinstance(obj, dict) and not isinstance(obj.get("keys"), list):
@@ -63,7 +61,6 @@ class PhantomGuard:
             pass
 
     def _save_minimals(self, items: Iterable[Mapping[str, Any]], minimal) -> None:
-        """Human-readable snapshot of blocked items (delete to retry)."""
         try:
             self._pf.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._pf.with_suffix(".tmp")
@@ -72,9 +69,8 @@ class PhantomGuard:
         except Exception:
             pass
 
-    # --- api ------------------------------------------------------------------
+    # API
     def filter_adds(self, adds: List[Mapping[str, Any]], keyfn, minimal, emit, state_store, pair_key: str):
-        """Block re-planned items (last_success ∪ phantoms file)."""
         if not self._enabled or not adds:
             return adds, 0
         last_ok = self._read_keys(self._lf)
@@ -98,7 +94,6 @@ class PhantomGuard:
         return keep, len(blocked)
 
     def record_success(self, successful_keys: Iterable[str]):
-        """Persist last-ok keys (with timestamps)."""
         if not self._enabled:
             return
         cur = self._read_map(self._lf)

@@ -9,16 +9,15 @@ from pathlib import Path
 from typing import Any, List, Dict, Optional
 
 # Package metadata
-PKG_NAME: str = __package__ or "providers.auth"          # typically "providers.auth"
+PKG_NAME: str = __package__ or "providers.auth"
 try:
-    import providers.auth as _authpkg                     # type: ignore
-    PKG_PATHS = list(getattr(_authpkg, "__path__", []))   # pkgutil-compatible paths
+    import providers.auth as _authpkg
+    PKG_PATHS = list(getattr(_authpkg, "__path__", []))
 except Exception:
     PKG_PATHS = []
 
-# ---------- discovery helpers ----------
+# Disc. helper
 def _filesystem_module_names() -> List[str]:
-    """Also scan the package dirs directly for _auth_*.py files."""
     names: set[str] = set()
     for p in PKG_PATHS:
         try:
@@ -26,14 +25,13 @@ def _filesystem_module_names() -> List[str]:
             for f in base.glob("_auth_*.py"):
                 if f.name == "_auth_base.py":
                     continue
-                names.add(f.stem)  # module name without .py
+                names.add(f.stem)
         except Exception:
             # best-effort
             continue
     return sorted(names)
 
 def _pkgutil_module_names() -> List[str]:
-    """Use pkgutil to list submodules in the package."""
     names: List[str] = []
     for _, name, ispkg in pkgutil.iter_modules(PKG_PATHS):
         if ispkg:
@@ -46,12 +44,10 @@ def _pkgutil_module_names() -> List[str]:
     return sorted(names)
 
 def _discover_module_names() -> List[str]:
-    """Union of pkgutil and filesystem results, de-duplicated."""
     s = set(_pkgutil_module_names()) | set(_filesystem_module_names())
     return sorted(s)
 
 def _safe_import(fullname: str):
-    """Import a module; on failure return None instead of blowing up the whole list."""
     try:
         return importlib.import_module(fullname)
     except Exception:
@@ -64,8 +60,7 @@ def _iter_auth_modules():
         if mod is not None:
             yield mod
 
-# ---------- provider extraction ----------
-
+# Extr.
 def _provider_from_module(mod):
     prov = getattr(mod, "PROVIDER", None)
     if prov is not None:
@@ -84,12 +79,10 @@ def _manifest_to_dict(man: Any) -> Dict[str, Any]:
         return dataclasses.asdict(man)  # type: ignore[arg-type]
     if isinstance(man, dict):
         return dict(man)
-    # generic best-effort
     d = getattr(man, "__dict__", None)
     return dict(d) if isinstance(d, dict) else {"name": str(man)}
 
-# ---------- public API ----------
-
+# API
 def auth_providers_manifests() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for mod in _iter_auth_modules():
@@ -100,12 +93,10 @@ def auth_providers_manifests() -> List[Dict[str, Any]]:
             man = prov.manifest()
             out.append(_manifest_to_dict(man))
         except Exception:
-            # ignore faulty providers (manifest crashed)
             continue
     return out
 
 def _module_html(mod) -> str:
-    # Try provider.html() first
     prov = _provider_from_module(mod)
     if prov is not None and hasattr(prov, "html"):
         try:
@@ -115,7 +106,6 @@ def _module_html(mod) -> str:
         except Exception:
             pass
 
-    # Then module-level html()
     if hasattr(mod, "html"):
         try:
             html = mod.html()  # type: ignore[call-arg]
@@ -124,7 +114,7 @@ def _module_html(mod) -> str:
         except Exception:
             pass
 
-    # Fallback tiny card
+    # Fallback:
     prov_name = getattr(prov, "name", getattr(mod, "__name__", "Auth"))
     label = None
     try:
@@ -147,6 +137,5 @@ def auth_providers_html() -> str:
         try:
             frags.append(_module_html(mod))
         except Exception:
-            # skip broken providers
             continue
     return "".join(frags)

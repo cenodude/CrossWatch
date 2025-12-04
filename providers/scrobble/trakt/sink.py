@@ -211,7 +211,7 @@ try:
 except Exception:
     _rm_across = None
 try:
-    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api  # type: ignore
+    from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
     _rm_across_api = None
 

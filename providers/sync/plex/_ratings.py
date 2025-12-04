@@ -9,10 +9,8 @@ from ._common import (
     normalize as plex_normalize,
     candidate_guids_from_ids, section_find_by_guid, meta_guids, minimal_from_history_row,
 )
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
-except Exception:
-    from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
+
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_ratings.unresolved.json"
 

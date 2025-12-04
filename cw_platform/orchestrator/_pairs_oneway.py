@@ -31,7 +31,7 @@ from ._pairs_utils import (
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
 
-# Blackbox imports (tolerant)
+# Blackbox imports
 try:  # pragma: no cover
     from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
 except Exception:  # pragma: no cover
@@ -135,7 +135,7 @@ def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[
 
     return {k: v for k, v in idx.items() if _keep(v)}
 
-#--- Core one-way sync driver ----------------------------------------------
+# One-way sync core
 def run_one_way_feature(
     ctx,
     src: str,
@@ -298,7 +298,7 @@ def run_one_way_feature(
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
 
-    # --- pair-level library whitelist (PLEX/JELLYFIN/EMBY history/ratings) -----
+    # Pair-level library whitelist history/ratings)
     libs_src: List[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
     libs_dst: List[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
 

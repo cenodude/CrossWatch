@@ -3,7 +3,7 @@ import time, requests, secrets
 from typing import Any, Mapping, MutableMapping
 from ._auth_base import AuthProvider, AuthStatus, AuthManifest
 from _logging import log
-from cw_platform.config_base import save_config  # persist immediately
+from cw_platform.config_base import save_config
 
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
 UA = "Crosswatch/1.0"
@@ -322,7 +322,6 @@ def html() -> str:
     const esc = (s)=>String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
     let __users = null;
 
-    // --- hydrate verify_ssl from config ---
     (async ()=>{
       try{
         const r = await fetch("/api/config",{cache:"no-store"});
@@ -332,7 +331,6 @@ def html() -> str:
       }catch{}
     })();
 
-    // write verify_ssl on any settings-collect (core listens for this)
     document.addEventListener("settings-collect",(ev)=>{
       try{
         const cfg = ev?.detail?.cfg || (window.__cfg ||= {});
@@ -412,15 +410,12 @@ def html() -> str:
     attachOnce();
     document.addEventListener("tab-changed", ()=>attachOnce());
 
-    // ------- REFRESH LIBRARIES (global for onclick) -------
     async function refreshPlexLibraries(){
-      // "loading…" in matrix if present
       try{
         const host = document.getElementById("plex_lib_matrix");
         if (host) host.innerHTML = '<div class="sub">Loading libraries…</div>';
       }catch{}
 
-      // prefer existing helpers if they’re loaded elsewhere
       let usedHelpers = false;
       try{
         if (typeof window.hydratePlexFromConfigRaw === "function") { await window.hydratePlexFromConfigRaw(); usedHelpers = true; }
@@ -434,7 +429,7 @@ def html() -> str:
 
       if (usedHelpers) return;
 
-      // fallback: fill hidden selects directly
+      // fallback:
       try{
         const r = await fetch("/api/plex/libraries?ts="+Date.now(), { cache:"no-store" });
         const j = await r.json();
@@ -457,7 +452,6 @@ def html() -> str:
       }catch{}
     }
 
-    // expose for button onclick
     window.refreshPlexLibraries = refreshPlexLibraries;
 
   })();

@@ -1,18 +1,27 @@
 # _maintenanceAPI.py
 # CrossWatch - Maintenance API for CrossWatch
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-from fastapi import APIRouter, Body
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import threading
 from datetime import datetime
-import os, json, shutil, threading
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Body
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
-def _cw():
-    from _syncAPI import _load_state
+
+def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
+    from .syncAPI import _load_state
     from crosswatch import CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _append_log
+
     return CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log
+
 
 def _safe_remove_path(p: Path) -> bool:
     try:
@@ -24,9 +33,10 @@ def _safe_remove_path(p: Path) -> bool:
     except Exception:
         return False
 
-def _clear_cw_state_files() -> List[str]:
+
+def _clear_cw_state_files() -> list[str]:
     _, _, CW_STATE_DIR, *_ = _cw()
-    removed: List[str] = []
+    removed: list[str] = []
     if not CW_STATE_DIR.exists():
         return removed
     for p in CW_STATE_DIR.iterdir():
@@ -38,11 +48,12 @@ def _clear_cw_state_files() -> List[str]:
                 pass
     return removed
 
-# --- CrossWatch tracker helpers -------------------------------------------------
+
+# --- CrossWatch tracker (.cw_provider) functions ---
 def _cw_tracker_root(config_dir: Path) -> Path:
     """Resolve CrossWatch tracker root dir from config.json or default."""
     cfg_path = config_dir / "config.json"
-    root: Optional[str] = None
+    root: str | None = None
     try:
         cfg = json.loads(cfg_path.read_text("utf-8"))
         cw_cfg = cfg.get("crosswatch") or {}
@@ -63,7 +74,8 @@ def _cw_tracker_root(config_dir: Path) -> Path:
         p = config_dir / p
     return p
 
-def _file_meta(path: Path) -> Dict[str, Any]:
+
+def _file_meta(path: Path) -> dict[str, Any]:
     try:
         st = path.stat()
     except Exception:
@@ -75,10 +87,12 @@ def _file_meta(path: Path) -> Dict[str, Any]:
             "%Y-%m-%dT%H:%M:%SZ"
         ),
     }
-def _scan_provider_cache() -> Dict[str, Any]:
+
+
+def _scan_provider_cache() -> dict[str, Any]:
     _, _, CW_STATE_DIR, *_ = _cw()
     exists = CW_STATE_DIR.exists()
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "exists": exists,
         "root": str(CW_STATE_DIR),
         "files": [],
@@ -87,7 +101,7 @@ def _scan_provider_cache() -> Dict[str, Any]:
     if not exists:
         return out
 
-    files: List[Dict[str, Any]] = []
+    files: list[dict[str, Any]] = []
     for p in CW_STATE_DIR.glob("*.json"):
         if p.is_file():
             files.append(_file_meta(p))
@@ -97,9 +111,10 @@ def _scan_provider_cache() -> Dict[str, Any]:
     out["count"] = len(files)
     return out
 
-def _scan_cache_dir(cache_dir: Path) -> Dict[str, Any]:
+
+def _scan_cache_dir(cache_dir: Path) -> dict[str, Any]:
     exists = cache_dir.exists()
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "exists": exists,
         "root": str(cache_dir),
         "entries": [],
@@ -108,7 +123,7 @@ def _scan_cache_dir(cache_dir: Path) -> Dict[str, Any]:
     if not exists:
         return out
 
-    entries: List[Dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     try:
         for p in cache_dir.iterdir():
             if p.is_file() or p.is_dir():
@@ -122,8 +137,8 @@ def _scan_cache_dir(cache_dir: Path) -> Dict[str, Any]:
     return out
 
 
-def _clear_cache_dir(cache_dir: Path) -> List[str]:
-    removed: List[str] = []
+def _clear_cache_dir(cache_dir: Path) -> list[str]:
+    removed: list[str] = []
     if not cache_dir.exists():
         return removed
     for p in cache_dir.iterdir():
@@ -133,7 +148,7 @@ def _clear_cache_dir(cache_dir: Path) -> List[str]:
 
 
 @router.post("/clear-metadata-cache")
-def clear_metadata_cache() -> Dict[str, Any]:
+def clear_metadata_cache() -> dict[str, Any]:
     CACHE_DIR, *_ = _cw()
 
     before = _scan_cache_dir(CACHE_DIR)
@@ -148,8 +163,9 @@ def clear_metadata_cache() -> Dict[str, Any]:
         "after": after,
     }
 
-def _scan_cw_tracker(root: Path) -> Dict[str, Any]:
-    out: Dict[str, Any] = {
+
+def _scan_cw_tracker(root: Path) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "exists": root.exists(),
         "state_files": [],
         "snapshots": [],
@@ -158,13 +174,13 @@ def _scan_cw_tracker(root: Path) -> Dict[str, Any]:
     if not root.exists():
         return out
 
-    state_files: List[Dict[str, Any]] = []
+    state_files: list[dict[str, Any]] = []
     for p in root.glob("*.json"):
         if p.is_file():
             state_files.append(_file_meta(p))
 
     snaps_dir = root / "snapshots"
-    snapshots: List[Dict[str, Any]] = []
+    snapshots: list[dict[str, Any]] = []
     if snaps_dir.exists():
         for p in snaps_dir.glob("*.json"):
             if p.is_file():
@@ -186,8 +202,9 @@ def _scan_cw_tracker(root: Path) -> Dict[str, Any]:
     }
     return out
 
+
 @router.get("/crosswatch-tracker")
-def crosswatch_tracker_status() -> Dict[str, Any]:
+def crosswatch_tracker_status() -> dict[str, Any]:
     """Inspect CrossWatch tracker folder (.cw_provider)."""
     _, CONFIG_DIR, *_ = _cw()
     root = _cw_tracker_root(CONFIG_DIR)
@@ -198,8 +215,9 @@ def crosswatch_tracker_status() -> Dict[str, Any]:
         **info,
     }
 
+
 @router.post("/clear-state")
-def clear_state_minimal() -> Dict[str, Any]:
+def clear_state_minimal() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     state_path = CONFIG_DIR / "state.json"
     existed = state_path.exists()
@@ -218,17 +236,18 @@ def clear_state_minimal() -> Dict[str, Any]:
             "existed": bool(existed),
         }
 
+
 @router.post("/crosswatch-tracker/clear")
 def crosswatch_tracker_clear(
     clear_state: bool = Body(True),
     clear_snapshots: bool = Body(False),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     root = _cw_tracker_root(CONFIG_DIR)
 
     before = _scan_cw_tracker(root)
-    removed_state: List[str] = []
-    removed_snapshots: List[str] = []
+    removed_state: list[str] = []
+    removed_snapshots: list[str] = []
 
     if clear_state and root.exists():
         for p in root.glob("*.json"):
@@ -255,8 +274,9 @@ def crosswatch_tracker_clear(
         "after": after,
     }
 
+
 @router.post("/clear-cache")
-def clear_cache() -> Dict[str, Any]:
+def clear_cache() -> dict[str, Any]:
     _, _, CW_STATE_DIR, *_ = _cw()
 
     before = _scan_provider_cache()
@@ -270,22 +290,23 @@ def clear_cache() -> Dict[str, Any]:
         "before": before,
         "after": after,
     }
-    
+
+
 @router.get("/provider-cache")
-def provider_cache_status() -> Dict[str, Any]:
+def provider_cache_status() -> dict[str, Any]:
     info = _scan_provider_cache()
     return {"ok": True, **info}
 
-# Reset statistics, state, reports, insights
+
+#--- statistics reset / recalculation ---
 @router.post("/maintenance/reset-stats")
-@router.post("/reset-stats")
 def reset_stats(
     recalc: bool = Body(False),
     purge_file: bool = Body(False),
     purge_state: bool = Body(False),
     purge_reports: bool = Body(False),
     purge_insights: bool = Body(False),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
 
     if not any((recalc, purge_file, purge_state, purge_reports, purge_insights)):
@@ -293,7 +314,7 @@ def reset_stats(
         recalc = False
     try:
         try:
-            from _syncAPI import _summary_reset, _PROVIDER_COUNTS_CACHE, _find_state_path
+            from .syncAPI import _summary_reset, _PROVIDER_COUNTS_CACHE, _find_state_path
         except Exception:
             _summary_reset = None
             _PROVIDER_COUNTS_CACHE = None
@@ -311,7 +332,6 @@ def reset_stats(
             _PROVIDER_COUNTS_CACHE["ts"] = 0.0
             _PROVIDER_COUNTS_CACHE["data"] = None
 
-        # --- statistics object ---
         STATS.reset()
         if purge_file:
             try:
@@ -334,7 +354,7 @@ def reset_stats(
         if purge_reports:
             try:
                 try:
-                    from _statistics import REPORT_DIR
+                    from services.statistics import REPORT_DIR
                 except Exception:
                     from pathlib import Path as _P
 
@@ -347,7 +367,7 @@ def reset_stats(
             except Exception:
                 pass
 
-        # --- insights caches & series (files + in-memory) ---
+        # --- insights *.json files ---
         insights_files_dropped = 0
         if purge_insights:
             from pathlib import Path as _P
@@ -368,7 +388,7 @@ def reset_stats(
                             pass
 
             try:
-                import _insightAPI as IA  # noqa
+                from . import insightAPI as IA  # noqa
 
                 for name, obj in list(vars(IA).items()):
                     key = name.lower()
@@ -391,7 +411,7 @@ def reset_stats(
             except Exception:
                 pass
 
-        # ---  rebuild from current state ---
+        # --- recalc from state.json ---
         if recalc:
             try:
                 state = _load_state()
@@ -414,8 +434,9 @@ def reset_stats(
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
 @router.post("/reset-currently-watching")
-def reset_currently_watching() -> Dict[str, Any]:
+def reset_currently_watching() -> dict[str, Any]:
     _, _, CW_STATE_DIR, _, _, _append_log = _cw()
     path = CW_STATE_DIR / "currently_watching.json"
     existed = path.exists()
@@ -442,8 +463,9 @@ def reset_currently_watching() -> Dict[str, Any]:
             "existed": bool(existed),
         }
 
+
 @router.post("/restart")
-def restart_crosswatch() -> Dict[str, Any]:
+def restart_crosswatch() -> dict[str, Any]:
     _, _, _, _, _, _append_log = _cw()
     try:
         _append_log(
@@ -453,7 +475,7 @@ def restart_crosswatch() -> Dict[str, Any]:
     except Exception:
         pass
 
-    def _kill():
+    def _kill() -> None:
         try:
             _append_log(
                 "TRBL",
@@ -466,14 +488,15 @@ def restart_crosswatch() -> Dict[str, Any]:
     threading.Timer(0.75, _kill).start()
     return {"ok": True, "message": "Restart scheduled"}
 
+
 @router.post("/reset-state")
 def reset_state(
     mode: str = Body("clear_both"),
     # clear_both|clear_state|clear_tombstones|clear_tombstone_entries|clear_cw_state_only|rebuild
     keep_ttl: bool = Body(True),
-    ttl_override: Optional[int] = Body(None),
+    ttl_override: int | None = Body(None),
     feature: str = Body("watchlist"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     _, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _ = _cw()
     try:
         state_path = CONFIG_DIR / "state.json"
@@ -482,17 +505,17 @@ def reset_state(
         hide_path = CONFIG_DIR / "watchlist_hide.json"
         ratings_changes_path = CONFIG_DIR / "ratings_changes.json"
 
-        cleared: List[str] = []
-        cw_state: Dict[str, Any] = {}
+        cleared: list[str] = []
+        cw_state: dict[str, Any] = {}
 
-        def _try_unlink(p: Path, label: str):
+        def _try_unlink(p: Path, label: str) -> None:
             try:
                 p.unlink(missing_ok=True)
                 cleared.append(label)
             except Exception:
                 pass
 
-        def _ls_cw() -> List[str]:
+        def _ls_cw() -> list[str]:
             if not CW_STATE_DIR.exists():
                 return []
             return sorted([x.name for x in CW_STATE_DIR.iterdir() if x.is_file()])
@@ -533,7 +556,7 @@ def reset_state(
         if mode == "rebuild":
             try:
                 from cw_platform.config_base import load_config
-                from _syncAPI import _persist_state_via_orc
+                from .syncAPI import _persist_state_via_orc
                 from cw_platform.orchestrator import Orchestrator
 
                 state = _persist_state_via_orc(Orchestrator(config=load_config()), feature=feature)

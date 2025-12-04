@@ -4,10 +4,7 @@ import os, json, time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from .._mod_common import request_with_retries
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.mdblist.com"
 URL_LIST   = f"{BASE}/watchlist/items"

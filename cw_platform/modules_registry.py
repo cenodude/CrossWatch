@@ -2,6 +2,7 @@
 from importlib import import_module
 from typing import Any, Optional
 
+# Global module registry
 MODULES = {
     "AUTH": {
         "_auth_PLEX":     "providers.auth._auth_PLEX",

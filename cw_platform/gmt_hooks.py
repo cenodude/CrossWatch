@@ -1,23 +1,18 @@
 # providers/gmt_hooks.py
-# Thin glue so providers can consult/record global tombstones without depending
-# directly on orchestrator internals. Keep import surface minimal and stable.
 
 from __future__ import annotations
 from typing import Any, Mapping, Optional
 
-# --- Imports (soft; fall back gracefully) -------------------------------------
 try:
-    # Preferred: shared store + policy
     from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
 except Exception:  # pragma: no cover
     GlobalTombstoneStore = object  # type: ignore
 
-# Policy helpers (TTL + op normalization)
+# Policy helpers
 try:
     from cw_platform.gmt_policy import get_quarantine_ttl_sec, negative_event_key  # type: ignore
 except Exception:  # pragma: no cover
     def get_quarantine_ttl_sec(cfg: Mapping[str, Any] | None, feature: str) -> int:
-        # Safe defaults: WL=7d, Ratings=3d, History=2d
         feat = (feature or "").lower()
         if feat == "watchlist":
             return 7 * 24 * 3600
@@ -30,7 +25,6 @@ except Exception:  # pragma: no cover
     def negative_event_key(feature: str, op: str) -> str:
         feat = (feature or "").lower()
         opn = (op or "").lower()
-        # Normalize to stable dimensions
         if feat == "watchlist":
             return "remove"
         if feat == "ratings":
@@ -45,7 +39,7 @@ try:
 except Exception:  # pragma: no cover
     _ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug")
 
-    def canonical_key(item: Mapping[str, Any]) -> str:  # minimal fallback
+    def canonical_key(item: Mapping[str, Any]) -> str:
         ids = (item.get("ids") or {})
         for k in _ID_KEYS:
             v = ids.get(k)
@@ -56,7 +50,6 @@ except Exception:  # pragma: no cover
         yr = item.get("year") or ""
         return f"{t}|title:{ttl}|year:{yr}"
 
-# Optional helper from store: a single entry point that already applies policy
 try:
     from cw_platform.gmt_policy import should_suppress_write  # type: ignore
 except Exception:  # pragma: no cover
@@ -67,7 +60,6 @@ __all__ = ["suppress_check", "record_negative"]
 
 
 def _cfg_from_store(store: GlobalTombstoneStore | Any) -> Mapping[str, Any] | None:
-    """Best-effort to pull a config mapping from the store."""
     for attr in ("cfg", "config", "get_config"):
         try:
             v = getattr(store, attr, None)
@@ -88,19 +80,6 @@ def suppress_check(
     write_op: str,
     pair_id: Optional[str] = None,
 ) -> bool:
-    """
-    Return True when a write for this (feature, write_op) should be suppressed due to
-    a recent negative event (quarantine window). This prevents immediate re-adds after removes,
-    rating toggles thrash, and history re-scrobbles right after unscrobbles.
-
-    Strategy:
-    - Resolve canonical key for the entity.
-    - Determine TTL via policy for the feature.
-    - Prefer store-native predicate if available:
-        * store.should_suppress_by_key(key, list, dim, ttl_sec, pair_id)
-        * or should_suppress_write(store=..., entity=item, scope=..., pair_id=...)
-    - Fallback: lookup last negative timestamp and compare against TTL.
-    """
     try:
         key = canonical_key(item)
         feat = str(feature or "").lower()
@@ -130,7 +109,6 @@ def suppress_check(
                 return (_t.time() - int(ts)) < ttl_sec
 
     except Exception:
-        # Fail-open: never block writes because of bookkeeping failures.
         return False
 
     return False
@@ -146,16 +124,7 @@ def record_negative(
     pair_id: Optional[str] = None,
     note: Optional[str] = None,
 ) -> None:
-    """
-    Record a negative event (remove / unrate / unscrobble).
-    Providers should call this *after* a successful negative write so future
-    conflicting writes can be quarantined for a short TTL.
 
-    Notes:
-    - Uses canonical key for stable identity.
-    - Operation name is normalized via policy to keep dimensions tidy.
-    - Never raises: bookkeeping must not break provider writes.
-    """
     try:
         key = canonical_key(item)
         feat = str(feature or "").lower()
@@ -181,5 +150,4 @@ def record_negative(
             put(kind="negative", key=key, list=feat, dim=dim, origin=origin_norm, pair_id=pair_id, ts=int(_t.time()), note=note)
 
     except Exception:
-        # Best-effort by design.
         return

@@ -1,7 +1,8 @@
 # _FastAPI.py
-# CrossWatch - FastAPI utilities for UI
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# CrossWatch - FastAPI
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
+
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,7 +11,7 @@ from starlette.staticfiles import StaticFiles
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
-# ── Static favicon (shared by /favicon.svg and /favicon.ico)
+# Static favicon
 FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
 <stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
@@ -37,12 +38,14 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
         )
 
     @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
-    def favicon_svg() -> Response:  # noqa: D401
+    def favicon_svg() -> Response:
         return _svg_resp()
 
     @app.get("/favicon.ico", include_in_schema=False, tags=["ui"])
-    def favicon_ico() -> Response:  # serve SVG for legacy path
+    def favicon_ico() -> Response:
+        # serve SVG for legacy path
         return _svg_resp()
+
 
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
@@ -473,7 +476,7 @@ def get_index_html() -> str:
 </div>
 
 <script>
-// Accordion: one open per container (top-level and nested)
+// Accordion: one open per container
 (() => {
   const isOpen = s => s.classList.contains('open');
   const open  = s => { s.classList.add('open');  s.querySelector('.head')?.setAttribute('aria-expanded','true');  const c=s.querySelector('.chev'); if(c) c.textContent='▼'; };
@@ -526,7 +529,7 @@ function isProviderConfigured(key,cfg){
   }
 }
 
-// ---- Auth provider configured dots  ----
+// Auth provider configured dots
 function ensureAuthDot(secId, on){
   const sec = document.getElementById(secId);
   if(!sec) return false;
@@ -534,7 +537,7 @@ function ensureAuthDot(secId, on){
   const head = sec.querySelector(".head") || sec.firstElementChild;
   if(!head) return false;
 
-  // ensure flex so margin-left:auto works
+  // ensure flex
   const ds = getComputedStyle(head).display;
   if(ds !== "flex"){
     head.style.display = "flex";
@@ -545,7 +548,7 @@ function ensureAuthDot(secId, on){
   if(!dot){
     dot = document.createElement("span");
     dot.className = "auth-dot";
-    head.appendChild(dot); // last child => rightmost
+    head.appendChild(dot); 
   }
 
   dot.classList.toggle("on", !!on);
@@ -604,11 +607,10 @@ function watchAuthMount(){
   __authMo.observe(host, { childList: true, subtree: true });
 }
 
-// run when auth HTML lands / settings change
 document.addEventListener("settings-collect", () => refreshAuthDots(true), true);
 document.addEventListener("tab-changed", () => refreshAuthDots(false), true);
 
-// Connection pill; 'detail' becomes the tooltip
+// Connection pill
 function makeConn({name,connected,vip,detail}){
   const w=document.createElement('div'); w.className='conn-item';
   const p=document.createElement('div'); p.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;
@@ -621,7 +623,7 @@ function makeConn({name,connected,vip,detail}){
 }
 function titleCase(k){k=String(k||'');return k? (k[0]+k.slice(1).toLowerCase()) : k;}
 
-// Keep refresh button in a stable spot
+// refresh button fixup
 function placeRefreshTopRight(){
   const card=document.getElementById('ops-card')||document.querySelector('.ops-header');
   const btn=document.getElementById('btn-status-refresh');
@@ -650,8 +652,8 @@ function render(payload){
 
   host.classList.add('vip-badges');
 
-  // layout: max 5 per row
-  const MAX_PER_ROW = 5;
+  // layout: max 4 per row
+  const MAX_PER_ROW = 4;
   host.style.display = 'grid';
   host.style.gridTemplateColumns = `repeat(${MAX_PER_ROW}, max-content)`;
   host.style.columnGap = '8px';
@@ -723,7 +725,6 @@ function render(payload){
     const row = items.slice(i, i + MAX_PER_ROW);
     const rowIndex = i / MAX_PER_ROW;
 
-    // pad later rows on the left with invisible spacers
     if (rowIndex > 0 && row.length < MAX_PER_ROW) {
       const pad = MAX_PER_ROW - row.length;
       for (let p = 0; p < pad; p++) {
@@ -774,8 +775,6 @@ async function init(){
   if(typeof getConfig==='function') await getConfig();
 
   watchAuthMount();
-
-  // auth providers mount async, so retry longer as fallback
   let tries = 0;
   const retryDots = async () => {
     try {
@@ -795,7 +794,7 @@ document.readyState==='loading'
 </script>
 
 <script>
-// Sticky Save FAB: show when Settings page is visible
+// Sticky Save
 (() => {
   const fab   = document.getElementById('save-fab');
   const frost = document.getElementById('save-frost');
@@ -833,7 +832,8 @@ document.readyState==='loading'
 </script>
 
 <script>
-// Save UX wrapper:
+
+// Save settings wrapper
 (() => {
   const install = () => {
     const orig = window.saveSettings;
@@ -898,7 +898,6 @@ document.readyState==='loading'
   }
 
   window.showTab = function (name) {
-    // Let the old implementation do its thing first
     if (typeof origShowTab === "function") {
       try { origShowTab(name); } catch (e) {}
     }

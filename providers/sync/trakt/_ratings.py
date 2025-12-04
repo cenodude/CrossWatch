@@ -7,15 +7,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from ._common import (
     build_headers,
     normalize_watchlist_row,
-    key_of,                 # canonical key expected by orchestrator
-    pick_trakt_kind,        # movies|shows|seasons|episodes
+    key_of,
+    pick_trakt_kind,
     ids_for_trakt,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.trakt.tv"
 URL_ACT    = f"{BASE}/sync/last_activities"

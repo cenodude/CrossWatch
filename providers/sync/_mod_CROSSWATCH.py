@@ -23,28 +23,21 @@ try:
 except Exception:
     feat_ratings = None
 
-# Progress helper (no HTTP here, just reuse the emitter)
 try:
     from ._mod_common import make_snapshot_progress
 except Exception:
     make_snapshot_progress = None  # type: ignore
 
-# Orchestrator ctx (injected at runtime; safe fallback for direct import)
 try:  # type: ignore[name-defined]
     ctx  # type: ignore
 except Exception:
     ctx = None  # type: ignore
 
-# ---------------------------------------------------------------------------
-# Debug / logging
-
 def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_CROSSWATCH_DEBUG"):
         print(f"[CROSSWATCH] {msg}")
 
-# ---------------------------------------------------------------------------
 # Feature registry
-
 _FEATURES: Dict[str, Any] = {}
 if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
 if feat_history:   _FEATURES["history"]   = feat_history
@@ -58,9 +51,7 @@ def _features_flags() -> Dict[str, bool]:
         "playlists": False,
     }
 
-# ---------------------------------------------------------------------------
 # Manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "CROSSWATCH",
@@ -75,7 +66,7 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "observed_deletes": True,
-            # Ratings are stored as-is; provider does not enforce any scale.
+
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -89,9 +80,8 @@ def get_manifest() -> Mapping[str, Any]:
         },
     }
 
-# ---------------------------------------------------------------------------
-# Config
 
+# Config
 @dataclass
 class CROSSWATCHConfig:
     root_dir: str = "/config/.cw_provider"
@@ -105,9 +95,8 @@ class CROSSWATCHConfig:
     def base_path(self) -> Path:
         return Path(self.root_dir)
 
-# ---------------------------------------------------------------------------
-# Module implementation
 
+# Module implementation
 class CROSSWATCHModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.raw_cfg = cfg
@@ -141,7 +130,6 @@ class CROSSWATCHModule:
             restore_ratings=(cw_cfg.get("restore_ratings") or "latest"),
         )
 
-        # Ensure the base directory exists early.
         try:
             self.cfg.base_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
@@ -165,7 +153,6 @@ class CROSSWATCHModule:
 
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
-    # Shared utils for feature modules
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {
@@ -180,8 +167,7 @@ class CROSSWATCHModule:
     def _is_enabled(self, feature: str) -> bool:
         return bool(self.supported_features().get(feature, False))
 
-    # Index / apply API used by orchestrator
-
+    # Index API used by orchestrator
     def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
             _log(f"build_index skipped: feature disabled or missing: {feature}")
@@ -223,7 +209,7 @@ class CROSSWATCHModule:
             _log(f"remove error for {feature}: {e}")
             return {"ok": False, "error": str(e)}
 
-    # Simple health check: local filesystem only
+    #  Health check: local filesystem only
     def health(self) -> Mapping[str, Any]:
         started = time.time()
         ok = True
@@ -250,9 +236,7 @@ class CROSSWATCHModule:
             "api": {},
         }
 
-# ---------------------------------------------------------------------------
 # OPS bridge
-
 class _CrossWatchOPS:
     def name(self) -> str:
         return "CROSSWATCH"

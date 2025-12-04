@@ -17,10 +17,7 @@ from ._common import (
     normalize as simkl_normalize,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.simkl.com"
 URL_INDEX_BUCKET = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"

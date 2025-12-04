@@ -17,16 +17,13 @@ class TmdbProvider:
     name = "TMDB"
     UA = "Crosswatch/1.0"
     
-    # ────────────────────────────────────────────────────────────────────────────
-    # Manifest for /api/metadata/providers (flat, JSON-safe)
-    # ────────────────────────────────────────────────────────────────────────────
     @staticmethod
     def manifest() -> Dict[str, Any]:
         return {
             "id": "tmdb",
             "name": "TMDB",
-            "enabled": True,   # UI may still gate features by key presence
-            "ready": None,     # UI marks ready when key exists in /api/config
+            "enabled": True,
+            "ready": None,
             "ok": None,
             "version": "1.0",
         }
@@ -36,10 +33,9 @@ class TmdbProvider:
         self.save_cfg = save_cfg
         self._cache: dict[str, tuple[float, Any]] = {}  # sha1 -> (ts, payload)
 
-    # --------------------------- config helpers ---------------------------
+    # Helpers
 
     def _apikey(self) -> str:
-        """Read API key from either tmdb.api_key or metadata.tmdb_api_key."""
         cfg = self.load_cfg() or {}
         tmdb = cfg.get("tmdb") or {}
         md = cfg.get("metadata") or {}
@@ -49,7 +45,6 @@ class TmdbProvider:
         return api_key
 
     def _ttl_seconds(self) -> int:
-        """Metadata TTL; defaults to 6h if not configured."""
         cfg = self.load_cfg() or {}
         md = cfg.get("metadata") or {}
         hours = md.get("ttl_hours", 6)
@@ -60,7 +55,6 @@ class TmdbProvider:
         return max(1, hours) * 3600
 
     def _backoff_params(self) -> tuple[int, float, float]:
-        """Return (max_retries, base_sec, max_sec) for HTTP backoff."""
         cfg = self.load_cfg() or {}
         md = cfg.get("metadata") or {}
         max_retries = int(md.get("backoff_max_retries", 4))
@@ -68,8 +62,7 @@ class TmdbProvider:
         max_ms = int(md.get("backoff_max_ms", 4000))
         return max(0, max_retries), max(0.05, base_ms / 1000.0), max(0.1, max_ms / 1000.0)
 
-    # --------------------------- HTTP + caching ---------------------------
-
+    # HTTP /w caching
     def _retry_delay(self, attempt: int, base_s: float, max_s: float) -> float:
         delay = min(max_s, base_s * (2 ** attempt))
         return delay + random.uniform(0.0, 0.25)
@@ -87,16 +80,11 @@ class TmdbProvider:
             return None
 
     def _log_exc(self, msg: str, exc: Exception) -> None:
-        """Uniform logging; 404 -> INFO, else WARNING."""
         status = getattr(getattr(exc, "response", None), "status_code", None)
         lvl = "INFO" if int(status or 0) == 404 else "WARNING"
         log(f"{msg}: {exc}", level=lvl, module="META")
 
     def _get(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        """
-        GET with TTL cache + respectful retry/backoff.
-        Retries: 429 (honors Retry-After), 5xx, timeouts. No retry for other 4xx.
-        """
         q = dict(params or {})
         q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
@@ -150,8 +138,7 @@ class TmdbProvider:
                 time.sleep(self._retry_delay(attempt, base_s, max_s))
                 attempt += 1
 
-    # --------------------------- normalize helpers ---------------------------
-
+    # Helpers Norml.
     @staticmethod
     def _safe_int_year(s: Optional[str]) -> Optional[int]:
         if not s:
@@ -162,7 +149,6 @@ class TmdbProvider:
 
     @staticmethod
     def _locale_cc(locale: Optional[str]) -> Optional[str]:
-        """Return ISO-3166 country from locale like 'nl-NL' -> 'NL'."""
         if not locale:
             return None
         parts = str(locale).replace("_", "-").split("-")
@@ -175,7 +161,6 @@ class TmdbProvider:
         return arr[0] if isinstance(arr, list) and arr else None
 
     def _images(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> Dict[str, list]:
-        """Fetch posters/backdrops/logos only if requested."""
         want_poster = bool(need.get("poster"))
         want_back = bool(need.get("backdrop"))
         want_logo = bool(need.get("logo"))
@@ -212,7 +197,6 @@ class TmdbProvider:
         return out
 
     def _videos(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> List[Dict[str, Any]]:
-        """Fetch trailers/teasers if requested; normalized shape."""
         if not need.get("videos"):
             return []
         include = f"{lang[:2]},{lang},null" if lang else "en,null"
@@ -238,7 +222,6 @@ class TmdbProvider:
         return out
 
     def _movie_cert_and_release(self, tmdb_id: str, lang: str, locale: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Return (certification, best_release_iso, country_used) for movies."""
         base = "https://api.themoviedb.org/3"
         try:
             data = self._get(f"{base}/movie/{tmdb_id}/release_dates")
@@ -283,7 +266,6 @@ class TmdbProvider:
         return cert, date, used_cc
 
     def _tv_cert(self, tmdb_id: str, locale: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-        """Return (certification, country_used) for TV."""
         base = "https://api.themoviedb.org/3"
         try:
             data = self._get(f"{base}/tv/{tmdb_id}/content_ratings")
@@ -313,7 +295,7 @@ class TmdbProvider:
 
         return None, None
 
-    # --------------------------- provider API ---------------------------
+    # API
     def fetch(
         self,
         *,
@@ -322,7 +304,7 @@ class TmdbProvider:
         locale: Optional[str] = None,
         need: Optional[Dict[str, bool]] = None,
     ) -> dict:
-        """Fetch TMDb metadata; accepts tmdb, imdb, or title/year. Fallbacks are gentle."""
+
         need = need or {"poster": True, "backdrop": True}
         ent_in = (entity or "").lower().strip()
         if ent_in in {"show", "shows"}:
@@ -330,7 +312,6 @@ class TmdbProvider:
         if ent_in not in {"movie", "tv"}:
             return {}
 
-        # Accept tmdb, imdb, or title/year as input
         tmdb_id = str(ids.get("tmdb") or ids.get("id") or "").strip()
         imdb_id = (ids.get("imdb") or "").strip()
         title   = (ids.get("title") or "").strip()
@@ -350,7 +331,6 @@ class TmdbProvider:
                     hit = self._pick_first(found.get("tv_results") or [])
                     tmdb_id = str(hit.get("id")) if hit else ""
                 if not tmdb_id:
-                    # If entity guess was wrong, pick whichever bucket returned first
                     m = self._pick_first(found.get("movie_results") or [])
                     t = self._pick_first(found.get("tv_results") or [])
                     tmdb_id = str((m or t or {}).get("id") or "") if (m or t) else ""
@@ -383,7 +363,7 @@ class TmdbProvider:
         if not tmdb_id:
             return {}
 
-        # ---- Details (with 404 kind-swap) ----
+        # Details
         det = None
         kind = "movie" if ent_in == "movie" else "tv"
 
@@ -409,7 +389,7 @@ class TmdbProvider:
             self._log_exc("TMDb detail fetch failed", e)
             return {}
 
-        # ---- Normalize by kind ----
+        # Normalize by kind
         if kind == "movie":
             title_out = det.get("title") or det.get("original_title")
             year = self._safe_int_year(det.get("release_date"))
@@ -438,21 +418,21 @@ class TmdbProvider:
                 "number_of_seasons": det.get("number_of_seasons"),
             }
 
-        # ---- Images ----
+        #  Images
         images = {}
         try:
             images = self._images(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb images fetch failed", e)
 
-        # ---- Videos ----
+        # Videos
         videos = []
         try:
             videos = self._videos(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb videos fetch failed", e)
 
-        # ---- External IDs ----
+        # External IDs
         extra_ids = {}
         if need.get("ids"):
             try:
@@ -471,7 +451,7 @@ class TmdbProvider:
             except Exception as e:
                 self._log_exc("TMDb external IDs fetch failed", e)
 
-        # ---- Certification / release ----
+        # Certification / release
         certification = None; release_iso = None; release_cc = None
         try:
             if kind == "movie" and (need.get("certification") or need.get("release")):
@@ -481,7 +461,6 @@ class TmdbProvider:
         except Exception as e:
             self._log_exc("TMDb certification/release failed", e)
 
-        # ---- Assemble ----
         out: Dict[str, Any] = {
             "type": "movie" if kind == "movie" else "tv",
             "ids": {"tmdb": str(tmdb_id), **extra_ids} if extra_ids else {"tmdb": str(tmdb_id)},
@@ -501,14 +480,10 @@ class TmdbProvider:
 
         return out
 
-# Discovery hook
 def build(load_cfg, save_cfg):
     return TmdbProvider(load_cfg, save_cfg)
 
-
-# Optional singleton
 PROVIDER = TmdbProvider
-
 
 def html() -> str:
     # Minimal TMDb settings UI: API key + two Advanced fields (locale, ttl_hours)

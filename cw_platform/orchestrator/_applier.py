@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List
 from ._unresolved import record_unresolved
 
-#--- Retry wrapper with exponential backoff -----------------------------------
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5) -> Any:
     last = None
     for i in range(attempts):
@@ -11,7 +10,7 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5)
             last = e; __import__("time").sleep(base_sleep * (2 ** i))
     raise last  # type: ignore
 
-#--- Normalize provider response into standard structure ----------------------
+# Normalize
 def _normalize(res: Dict[str, Any] | None, items: List[Dict[str, Any]], tag: str, *, dst: str, feature: str, emit) -> Dict[str, Any]:
     res = dict(res or {})
     attempted = len(items or ())
@@ -29,7 +28,6 @@ def _normalize(res: Dict[str, Any] | None, items: List[Dict[str, Any]], tag: str
     unresolved_list = res.get("unresolved") or []
     if isinstance(unresolved_list, list) and unresolved_list:
         emit("apply:unresolved", provider=dst, feature=feature, count=len(unresolved_list))
-        # If provider didn't include usable IDs, fall back to the items we attempted.
         def _has_ids(x):
             ids = (x or {}).get("ids") or {}
             return any(ids.get(k) for k in ("imdb","tmdb","tvdb","slug"))
@@ -58,7 +56,7 @@ def _normalize(res: Dict[str, Any] | None, items: List[Dict[str, Any]], tag: str
     out["count"] = out["confirmed"]
     return out
 
-#--- Chunked apply wrapper ----------------------------------------------------
+# Apply wrapper
 def _apply_chunked(tag: str, *, dst: str, feature: str, items: List[Dict[str, Any]],
                    call: Callable[[List[Dict[str, Any]]], Dict[str, Any]], emit, dbg,
                    chunk_size: int, chunk_pause_ms: int) -> Dict[str, Any]:
@@ -93,7 +91,7 @@ def _apply_chunked(tag: str, *, dst: str, feature: str, items: List[Dict[str, An
     agg["count"] = agg["confirmed"]
     return agg
 
-#--- Public apply functions ---------------------------------------------------
+# Apply functions
 def apply_add(*, dst_ops, cfg, dst_name: str, feature: str, items: List[Dict[str, Any]],
               dry_run: bool, emit, dbg, chunk_size: int, chunk_pause_ms: int) -> Dict[str, Any]:
     emit("apply:add:start", dst=dst_name, feature=feature, count=len(items))
@@ -111,7 +109,7 @@ def apply_add(*, dst_ops, cfg, dst_name: str, feature: str, items: List[Dict[str
          result=res)
     return res
 
-#--- Public apply_remove functions ---------------------------------------------
+# Apply remove functions
 def apply_remove(*, dst_ops, cfg, dst_name: str, feature: str, items: List[Dict[str, Any]],
                  dry_run: bool, emit, dbg, chunk_size: int, chunk_pause_ms: int) -> Dict[str, Any]:
     emit("apply:remove:start", dst=dst_name, feature=feature, count=len(items))

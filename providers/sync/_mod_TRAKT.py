@@ -1,16 +1,13 @@
 # /providers/sync/_mod_TRAKT.py
-# Trakt adapter: manifest + client + OPS bridge.
 
 from __future__ import annotations
 __VERSION__ = "2.0.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
-# stdlib
+
 import os, time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List, Callable
-
-# shared trakt helpers + features
 from .trakt._common import build_headers, normalize as trakt_normalize, key_of as trakt_key_of
 
 try:
@@ -32,7 +29,6 @@ try:
 except Exception:
     feat_playlists = None
 
-# ---- common instrumentation (shared) ----------------------------------------
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -40,22 +36,19 @@ from ._mod_common import (
     label_trakt,
     make_snapshot_progress,
 )
-# orchestrator ctx (fallback if not injected)
+
 try:  # type: ignore[name-defined]
     ctx  # type: ignore
 except Exception:
     ctx = None  # type: ignore
 
-# ──────────────────────────────────────────────────────────────────────────────
-# debug
 
+# debug
 def _log(msg: str):
-    #Enable with CW_DEBUG=1 or CW_TRAKT_DEBUG=1
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_TRAKT_DEBUG"):
         print(f"[TRAKT] {msg}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# feature registry (register only what exists)
+# feature registry
 _FEATURES: Dict[str, Any] = {}
 if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
 if feat_history:   _FEATURES["history"]   = feat_history
@@ -63,7 +56,6 @@ if feat_ratings:   _FEATURES["ratings"]   = feat_ratings
 if feat_playlists: _FEATURES["playlists"] = feat_playlists
 
 def _features_flags() -> Dict[str, bool]:
-    # Truth comes from actual modules present
     return {
         "watchlist": "watchlist" in _FEATURES,
         "ratings":   "ratings"   in _FEATURES,
@@ -71,9 +63,7 @@ def _features_flags() -> Dict[str, bool]:
         "playlists": "playlists" in _FEATURES,
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # manifest
-
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "TRAKT",
@@ -94,9 +84,7 @@ def get_manifest() -> Mapping[str, Any]:
         },
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
 # config + client
-
 @dataclass
 class TRAKTConfig:
     client_id: str
@@ -115,7 +103,7 @@ class TRAKTClient:
         self.session = build_session("TRAKT", ctx, feature_label=label_trakt)
         self._apply_headers(cfg.access_token)
 
-    # --- internals ------------------------------------------------------------
+    # Int
     def _trakt_dict(self) -> Dict[str, Any]:
         try:
             return dict(self.raw_cfg.get("trakt") or {})
@@ -145,7 +133,6 @@ class TRAKTClient:
             return False
 
     def _try_refresh(self) -> bool:
-        # Calls existing OAuth refresh in providers/auth/_auth_TRAKT.py
         try:
             res = AUTH_TRAKT.refresh(self.raw_cfg)
             ok = bool(isinstance(res, dict) and res.get("ok"))
@@ -174,7 +161,6 @@ class TRAKTClient:
                                          max_retries=self.cfg.max_retries, **kw)
         return r
 
-    # --- public ---------------------------------------------------------------
     def connect(self) -> "TRAKTClient":
         try:
             r = self._do("GET", f"{self.BASE}/sync/last_activities")
@@ -194,15 +180,11 @@ class TRAKTClient:
     def delete(self, url: str, json: Optional[Mapping[str, Any]] = None, **kw):
         return self._do("DELETE", url, json=json, **kw)
 
-# ──────────────────────────────────────────────────────────────────────────────
 # errors
-
 class TRAKTError(RuntimeError): pass
 class TRAKTAuthError(TRAKTError): pass
 
-# ──────────────────────────────────────────────────────────────────────────────
 # adapter wrapper
-
 class TRAKTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         t = dict((cfg.get("trakt") or {}))
@@ -231,7 +213,7 @@ class TRAKTModule:
                 return _Noop()
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
-    # ---- feature toggles ------------------
+    # feature toggles
     @staticmethod
     def supported_features() -> Dict[str, bool]:
         toggles = {
@@ -249,17 +231,13 @@ class TRAKTModule:
     def manifest(self) -> Mapping[str, Any]:
         return get_manifest()
 
-    # shared delegates
     @staticmethod
     def normalize(obj) -> Dict[str, Any]: return trakt_normalize(obj)
     @staticmethod
     def key_of(obj) -> str: return trakt_key_of(obj)
 
-    # health probe (standardized for orchestrator; probes only enabled features)
+    # health probe
     def health(self) -> Mapping[str, Any]:
-        """
-        Uses instrumented session. Activities + watchlist probe if enabled.
-        """
         enabled = self.supported_features()
         need_core = any(enabled.values())
         need_wl = bool(enabled.get("watchlist"))
@@ -269,8 +247,6 @@ class TRAKTModule:
         sess = self.client.session
 
         start = time.perf_counter()
-
-        # ---- Core probe: /sync/last_activities
         core_ok = False
         core_reason: Optional[str] = None
         core_code: Optional[int] = None
@@ -298,7 +274,6 @@ class TRAKTModule:
             except Exception as e:
                 core_reason = f"exception:{e.__class__.__name__}"
 
-        # ---- Watchlist read probe (only if enabled AND core_ok)
         wl_ok = False
         wl_reason: Optional[str] = None
         wl_code: Optional[int] = None
@@ -327,7 +302,7 @@ class TRAKTModule:
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        # ---- Feature readiness (reflect only enabled features)
+        # Feature readiness
         features = {
             "watchlist": (core_ok and wl_ok) if (need_wl and "watchlist" in _FEATURES) else False,
             "ratings":   (core_ok)           if (enabled.get("ratings")   and "ratings"   in _FEATURES) else False,
@@ -343,7 +318,7 @@ class TRAKTModule:
         wl_auth_failed   = need_wl and (wl_code in (401, 403) or wl_reason == "unauthorized")
 
         if not checks:
-            status = "ok"  # nothing enabled → OK
+            status = "ok"
         elif all(checks):
             status = "ok"
         elif any(checks):
@@ -353,7 +328,7 @@ class TRAKTModule:
 
         ok = status in ("ok", "degraded")
 
-        # Reasons / details
+        # Reasons
         details: Dict[str, Any] = {}
         disabled = [k for k, v in enabled.items() if not v]
         if disabled:
@@ -430,9 +405,8 @@ class TRAKTModule:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# orchestrator bridge
 
+# OPS bridge
 class _TraktOPS:
     def name(self) -> str: return "TRAKT"
     def label(self) -> str: return "Trakt"
@@ -451,7 +425,6 @@ class _TraktOPS:
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        """No I/O; Trakt is configured iff we have an access_token."""
         c  = cfg or {}
         tr = c.get("trakt") or {}
         au = (c.get("auth") or {}).get("trakt") or {}

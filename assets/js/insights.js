@@ -1,9 +1,9 @@
-/* Insights module: multi-feature stats (watchlist/ratings/history/playlists). */
+/* assets/js/insights.js */
+/* CrossWatch - Insight Module for watchlist, ratings, history, playlists */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
-  // ────────────────────────────────────────────────────────────────────────────
-  // Helpers & constants
-  // ────────────────────────────────────────────────────────────────────────────
+  // Helpers
   const FEATS = ["watchlist","ratings","history","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
   const clampFeature = (name) => FEATS.includes(String(name)) ? name : "watchlist";
@@ -20,32 +20,38 @@
     || "item");
 
   const subtitleOf = x => (x?.display_subtitle || "");
-
   const $  = (s,r)=> (r||d).querySelector(s);
   const $$ = (s,r)=> Array.from((r||d).querySelectorAll(s));
-  const txt= (el,v)=> el && (el.textContent = v==null ? "—" : String(v));
 
-  const fetchJSON=async(url,fallback=null)=>{
-    try{
-      const r=await fetch(url+(url.includes("?")?"&":"?")+"_ts="+Date.now(),{
-        credentials:"same-origin",
-        cache:"no-store"
-      });
-      return r.ok ? r.json() : fallback;
-    }catch{ return fallback; }
-  };
-  const fetchFirstJSON=async(urls,fallback=null)=>{
-    for(const u of urls){ const j=await fetchJSON(u,null); if(j) return j; }
-    return fallback;
+  const fetchJSON = async (url) => {
+    const full = url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now();
+    const res = await fetch(full, {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} for ${url}`);
+    }
+    return res.json();
   };
 
-  // Configured providers cache (used to gate provider tiles)
-  const _lc = s=>String(s||"").toLowerCase();
-  let _cfgSet = null, _cfgAt = 0; const CFG_TTL=60_000;
-  async function getConfiguredProviders(force=false){
-    if (!force && _cfgSet && (Date.now()-_cfgAt<CFG_TTL)) return _cfgSet;
-    const cfg = await fetchJSON(`/api/config?no_secrets=1&t=${Date.now()}`) || {};
-    const has = v => typeof v==="string" ? v.trim().length>0 : !!v;
+  // Configured providers cache
+  const _lc = s => String(s || "").toLowerCase();
+  let _cfgSet = null, _cfgAt = 0;
+  const CFG_TTL = 60_000;
+
+  async function getConfiguredProviders(force = false) {
+    if (!force && _cfgSet && (Date.now() - _cfgAt < CFG_TTL)) return _cfgSet;
+
+    let cfg = {};
+    try {
+      cfg = await fetchJSON("/api/config?no_secrets=1");
+    } catch (e) {
+      console.error("[Insights] Failed to load /api/config", e);
+      cfg = {};
+    }
+
+    const has = v => typeof v === "string" ? v.trim().length > 0 : !!v;
     const S = new Set();
     if (has(cfg?.plex?.account_token)) S.add("plex");
     if (has(cfg?.trakt?.access_token)) S.add("trakt");
@@ -54,12 +60,13 @@
     if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("emby");
     if (has(cfg?.mdblist?.api_key)) S.add("mdblist");
     S.add("crosswatch");
-    _cfgSet=S; _cfgAt=Date.now(); return S;
+
+    _cfgSet = S;
+    _cfgAt = Date.now();
+    return S;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Micro charts: sparkline + animated counters/bars
-  // ────────────────────────────────────────────────────────────────────────────
+  // Sparkline and animated counters/bars
   function renderSparkline(id, points) {
     const el = d.getElementById(id); if (!el) return;
     if (!points?.length) { el.innerHTML = '<div class="muted">No data</div>'; return; }
@@ -121,9 +128,7 @@
     bars.now  && (bars.now.style.transform  = `scaleY(${h(now)})`);
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Footer host (provides switcher + provider tiles area)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Footer host
   const footWrap = (()=>{ let _padTimer=0;
     function ensureFooter(){
       let foot = d.getElementById("insights-footer");
@@ -140,9 +145,7 @@
     return Object.assign(ensureFooter, { reserve });
   })();
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Feature switcher (tabs for watchlist/ratings/history/playlists)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Feature switcher
   function ensureSwitch() {
     const wrap = footWrap();
     let host = d.getElementById("insights-switch");
@@ -184,9 +187,7 @@
     _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Provider tiles (only show for configured providers)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Provider tiles 
   function renderProviderStats(provTotals, provActive, configuredSet) {
     const wrap = footWrap();
     const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
@@ -200,7 +201,7 @@
       ...Array.from(conf)
     ])).filter(k=> conf.has(_lc(k))).sort();
 
-    // If nothing is configured, hide the grid.
+    // Hide if no providers
     if (!keys.length) {
       host.hidden = true;
       footWrap.reserve();
@@ -219,7 +220,6 @@
         tile.innerHTML=`<div class="n" id="${valId}" data-v="0">0</div>`; host.appendChild(tile);
       } else if (tile.parentNode !== host) host.appendChild(tile);
 
-      // CrossWatch tile click to snapshot picker
       if (_lc(k) === "crosswatch") {
         tile.style.cursor = "pointer";
 
@@ -246,7 +246,7 @@
     const tile = d.querySelector('#stat-providers [data-provider="crosswatch"]');
     if (!tile) return;
 
-    // No playlists support for CrossWatch; hide hint on that tab.
+    // Currently No playlists supported
     if (_feature === "playlists") {
       const old = tile.querySelector(".cw-snapshot");
       if (old) old.remove();
@@ -279,15 +279,12 @@
     label.title = info.actual;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // History tabs (recent runs per feature)
-  // ────────────────────────────────────────────────────────────────────────────
+  // History tabs
   function renderHistoryTabs(hist){
     const LIMIT_HISTORY = +(localStorage.getItem("insights.history.limit") || 4);
     const wrap = $("#sync-history") || $("[data-role='sync-history']") || $(".sync-history");
     if (!wrap) return;
 
-    // One-time scaffold
     if (!wrap.dataset.tabsInit){
       wrap.innerHTML =
         '<div class="sync-tabs" role="tablist" aria-label="Recent syncs">' +
@@ -315,10 +312,13 @@
     const emptyMsg = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>';
     const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); if(isNaN(+dt)) return "—"; const dd=String(dt.getDate()).padStart(2,"0"), mm=String(dt.getMonth()+1).padStart(2,"0"), yy=String(dt.getFullYear()).slice(-2), hh=String(dt.getHours()).padStart(2,"0"), mi=String(dt.getMinutes()).padStart(2,"0"); return `${dd}-${mm}-${yy} ${hh}:${mi}`; };
     const dur  = v => { if(v==null) return "—"; const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return Number.isFinite(n)? n.toFixed(1)+'s':'—'; };
+
     const totalsFor = (row, feat) => {
-      const f=(row?.features?.[feat])||{};
-      const a=+((f.added??f.adds)||0), r=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
-      return { a:a|0, r:r|0, u:u|0, sum:(a|0)+(r|0)+(u|0) };
+      const f = (row?.features?.[feat]) || {};
+      const a = f.added   | 0;
+      const r = f.removed | 0;
+      const u = f.updated | 0;
+      return { a, r, u, sum: a + r + u };
     };
 
     const badgeCls = (row,t) => {
@@ -329,12 +329,7 @@
       return "warn";
     };
 
-    // Compute latest finished timestamp
     const all = Array.isArray(hist) ? hist.slice() : [];
-    const latestTs = all.reduce((mx,row)=>{
-      const t = Date.parse(row?.finished_at || row?.started_at || "");
-      return Number.isFinite(t) ? Math.max(mx, t) : mx;
-    }, 0);
 
     function renderPane(list, feat){
       const paneList = wrap.querySelector(`.pane[data-pane="${feat}"] .list`);
@@ -375,119 +370,229 @@
     FEATS.forEach(n => renderPane(all, n));
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Top counters (now / week / month / added / removed)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Top counters
   function renderTopStats(s) {
-    const now=+(s?.now||0), week=+(s?.week||0), month=+(s?.month||0), added=+(s?.added||0), removed=+(s?.removed||0);
-    const elNow=$("#stat-now"), elW=$("#stat-week"), elM=$("#stat-month"), elA=$("#stat-added"), elR=$("#stat-removed");
-    elNow ? animateNumber(elNow, now|0) : txt(elNow, now|0);
-    elW   ? animateNumber(elW,   week|0): txt(elW,   week|0);
-    elM   ? animateNumber(elM,   month|0):txt(elM,   month|0);
-    elA   ? animateNumber(elA,   added|0):txt(elA,   added|0);
-    elR   ? animateNumber(elR, removed|0):txt(elR, removed|0);
-    const fill=$("#stat-fill"); if (fill){ const max=Math.max(1,now,week,month); fill.style.width=Math.round((now/max)*100)+"%"; }
-    animateChart(now,week,month);
-    const lab=$("#stat-feature-label"); if (lab) lab.textContent = FEAT_LABEL[_feature] || _feature;
-    const chip=$("#trend-week")||$("#stat-delta-chip"); if (chip){ const diff=(now|0)-(week|0); chip.textContent = diff===0 ? "no change" : (diff>0?`+${diff} vs last week`:`${diff} vs last week`); chip.classList.toggle("muted", diff===0); }
+    const now   = +(s?.now || 0);
+    const week  = +(s?.week || 0);
+    const month = +(s?.month || 0);
+    const added = +(s?.added || 0);
+    const removed = +(s?.removed || 0);
+
+    const elNow = $("#stat-now");
+    const elW   = $("#stat-week");
+    const elM   = $("#stat-month");
+    const elA   = $("#stat-added");
+    const elR   = $("#stat-removed");
+
+    if (elNow) animateNumber(elNow, now   | 0);
+    if (elW)   animateNumber(elW,   week  | 0);
+    if (elM)   animateNumber(elM,   month | 0);
+    if (elA)   animateNumber(elA,   added | 0);
+    if (elR)   animateNumber(elR,   removed | 0);
+
+    const fill = $("#stat-fill");
+    if (fill) {
+      const max = Math.max(1, now, week, month);
+      fill.style.width = Math.round((now / max) * 100) + "%";
+    }
+
+    animateChart(now, week, month);
+
+    const lab = $("#stat-feature-label");
+    if (lab) lab.textContent = FEAT_LABEL[_feature] || _feature;
+
+    const chip = $("#trend-week") || $("#stat-delta-chip");
+    if (chip) {
+      const diff = (now | 0) - (week | 0);
+      chip.textContent = diff === 0
+        ? "no change"
+        : (diff > 0 ? `+${diff} vs last week` : `${diff} vs last week`);
+      chip.classList.toggle("muted", diff === 0);
+    }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Fetch & render pipeline
-  // ────────────────────────────────────────────────────────────────────────────
-  async function refreshInsights(force=false) {
-    const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? "&t="+Date.now() : ""}`); if (!data) return;
-    footWrap(); ensureSwitch(); const blk = pickBlock(data, _feature);
-    try{ renderSparkline("sparkline", blk.series||[]); }catch{}
-    renderHistoryTabs(data.history||[]);
-    renderTopStats({ now:blk.now, week:blk.week, month:blk.month, added:blk.added, removed:blk.removed });
+  // Rendering + data refresh
+  async function refreshInsights(force = false) {
+    let data;
+    try {
+      data = await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? "&t=" + Date.now() : ""}`);
+    } catch (e) {
+      console.error("[Insights] Failed to load /api/insights", e);
+      return;
+    }
+
+    let blk;
+    try {
+      blk = pickBlock(data, _feature);
+    } catch (e) {
+      console.error("[Insights] Failed to resolve feature block", e);
+      return;
+    }
+
+    footWrap();
+    ensureSwitch();
+
+    try {
+      renderSparkline("sparkline", blk.series || []);
+    } catch {
+      // ignore
+    }
+
+    renderHistoryTabs(data.history || []);
+    renderTopStats({
+      now: blk.now,
+      week: blk.week,
+      month: blk.month,
+      added: blk.added,
+      removed: blk.removed,
+    });
+
     const configured = await getConfiguredProviders();
     renderProviderStats(blk.providers, blk.active, configured);
     renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
-    const wt = data.watchtime||null;
+
+    const wt = data.watchtime || null;
     if (wt) {
-      const wEl=$("#watchtime"); wEl && (wEl.innerHTML = `<div class="big">≈ ${wt.hours|0}</div><div class="units">hrs <span style="opacity:.6">(${wt.days|0} days)</span><br><span style="opacity:.8">${wt.movies|0} movies • ${wt.shows|0} shows</span></div>`);
-      const note=$("#watchtime-note"); note && (note.textContent = wt.method || "estimate");
+      const wEl = $("#watchtime");
+      if (wEl) {
+        wEl.innerHTML = `<div class="big">≈ ${wt.hours | 0}</div><div class="units">hrs <span style="opacity:.6">(${wt.days | 0} days)</span><br><span style="opacity:.8">${wt.movies | 0} movies • ${wt.shows | 0} shows</span></div>`;
+      }
+      const note = $("#watchtime-note");
+      if (note) note.textContent = wt.method || "estimate";
     }
-    footWrap.reserve(); setTimeout(footWrap.reserve, 0);
+
+    footWrap.reserve();
+    setTimeout(footWrap.reserve, 0);
   }
 
   let _lastStatsFetch = 0;
-  async function refreshStats(force=false) {
-    const nowT=Date.now(); if(!force && nowT - _lastStatsFetch < 900) return; _lastStatsFetch=nowT;
-    const data = await fetchJSON("/api/insights?limit_samples=0&history=60");if (!data) return;
-    const blk = pickBlock(data, _feature);
-    renderTopStats({ now:blk.now, week:blk.week, month:blk.month, added:blk.added, removed:blk.removed });
+  async function refreshStats(force = false) {
+    const nowT = Date.now();
+    if (!force && nowT - _lastStatsFetch < 900) return;
+    _lastStatsFetch = nowT;
+
+    let data;
+    try {
+      data = await fetchJSON("/api/insights?limit_samples=0&history=60");
+    } catch (e) {
+      console.error("[Insights] Failed to load /api/insights (stats)", e);
+      return;
+    }
+
+    let blk;
+    try {
+      blk = pickBlock(data, _feature);
+    } catch (e) {
+      console.error("[Insights] Failed to resolve feature block (stats)", e);
+      return;
+    }
+
+    renderTopStats({
+      now: blk.now,
+      week: blk.week,
+      month: blk.month,
+      added: blk.added,
+      removed: blk.removed,
+    });
+
     const configured = await getConfiguredProviders();
     renderProviderStats(blk.providers, blk.active, configured);
     renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
     footWrap.reserve();
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Shape per feature (normalizes API payloads)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Data picker
   function pickBlock(data, feat) {
-    const featureBlock = (data?.features?.[feat] || data?.stats?.[feat] || data?.[feat]) || null;
-    const block  = featureBlock || data || {};
-    const history = Array.isArray(data?.history) ? data.history : [];
-    const n = (v, fb=0)=> Number.isFinite(+v) ? +v : fb;
-
-    function pickProviderTotals(src, whichFeat){
-      if(!src) return null;
-      if (src.providers_by_feature?.[whichFeat]) return src.providers_by_feature[whichFeat];
-      return src.providers || src.provider_stats || src.providers_totals || null;
+    if (!data || !data.features || !data.features[feat]) {
+      throw new Error(`[Insights] Missing feature block for "${feat}"`);
     }
-    const series    = block.series_by_feature?.[feat] || data?.series_by_feature?.[feat] || block.series || [];
-    const providers = pickProviderTotals(block, feat) || pickProviderTotals(data, feat) || {};
-    const active    = (block.providers_active || data.providers_active || {});
 
-    let { now, week, month, added, removed } = featureBlock ? block : { now: undefined, week: undefined, month: undefined, added: undefined, removed: undefined };
+    const featureBlock = data.features[feat];
+    const history = Array.isArray(data.history) ? data.history : [];
+    const n = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
 
-    const unionNow = Math.max(0, ...Object.values(providers || {}).map(v => +v || 0));
-    if (!Number.isFinite(+now) || (+now === 0 && unionNow > 0)) now = unionNow;
+    const series = Array.isArray(featureBlock.series) ? featureBlock.series : [];
+    const providers = featureBlock.providers || {};
 
-    const MS = { w:7*86400000, m:30*86400000 }, nowMs=Date.now();
-    const rowTs = r => { const t=r?.finished_at||r?.started_at; const ts=t? new Date(t).getTime():NaN; return Number.isFinite(ts)? ts:null; };
-    const totalsFor = r => {
-      const f=(r?.features?.[feat])||{};
-      const a=+((f.added??f.adds)||0), rr=+((f.removed??f.removes)||0), u=+((f.updated??f.updates)||0);
-      return { a:a|0, r:rr|0, u:u|0, sum:(a|0)+(rr|0)+(u|0) };
+    const active =
+      featureBlock.providers_active ||
+      data.providers_active ||
+      {};
+
+    let { now, week, month, added, removed } = featureBlock;
+    now    = n(now);
+    week   = n(week);
+    month  = n(month);
+    added  = n(added);
+    removed = n(removed);
+
+    const MS = { w: 7 * 86400000, m: 30 * 86400000 };
+    const nowMs = Date.now();
+    const rowTs = row => {
+      const t = row?.finished_at || row?.started_at;
+      const ts = t ? new Date(t).getTime() : NaN;
+      return Number.isFinite(ts) ? ts : null;
     };
 
-    const rowsAll = history.map(r=>({r,ts:rowTs(r)})).filter(x=>x.ts!=null).sort((a,b)=>a.ts-b.ts);
+    const totalsFor = row => {
+      const f = (row?.features?.[feat]) || {};
+      const a = f.added   | 0;
+      const r = f.removed | 0;
+      const u = f.updated | 0;
+      return {
+        a,
+        r,
+        u,
+        sum: a + r + u,
+      };
+    };
 
-    if (!Number.isFinite(+now)) now = rowsAll.length ? totalsFor(rowsAll.at(-1).r).sum : 0;
+    const rowsAll = history
+      .map(r => ({ r, ts: rowTs(r) }))
+      .filter(x => x.ts != null)
+      .sort((a, b) => a.ts - b.ts);
 
-    const sumSince = since =>
-      rowsAll.reduce((acc,{r,ts})=>{
-        if (ts < since) return acc;
-        const t = totalsFor(r);
-        acc.A += t.a; acc.R += t.r; acc.S += t.sum; return acc;
-      }, {A:0,R:0,S:0});
-
-    const needRange = v => !Number.isFinite(+v) || (+v===0 && feat!=="watchlist");
-    if (needRange(week))  week  = sumSince(nowMs - MS.w).S;
-    if (needRange(month)) month = sumSince(nowMs - MS.m).S;
-
-    const needAR = v => !Number.isFinite(+v) || (+v===0 && feat!=="watchlist");
-    if (needAR(added) || needAR(removed)) {
-      const m = sumSince(nowMs - MS.m);
-      if (needAR(added))   added   = m.A;
-      if (needAR(removed)) removed = m.R;
-
-      if ((+added===0 && +removed===0)) {
-        const lastNZ = rowsAll.slice().reverse().find(({r}) => { const t=totalsFor(r); return t.a||t.r||t.u; });
-        if (lastNZ) { const t = totalsFor(lastNZ.r); added = t.a; removed = t.r; }
-      }
+    if (!Number.isFinite(now)) {
+      now = rowsAll.length ? totalsFor(rowsAll[rowsAll.length - 1].r).sum : 0;
     }
 
-    return { series, providers, active, now:n(now), week:n(week), month:n(month), added:n(added), removed:n(removed), raw:block };
+    const sumSince = since =>
+      rowsAll.reduce((acc, { r, ts }) => {
+        if (ts < since) return acc;
+        const t = totalsFor(r);
+        acc.A += t.a;
+        acc.R += t.r;
+        acc.S += t.sum;
+        return acc;
+      }, { A: 0, R: 0, S: 0 });
+
+    if (!Number.isFinite(week)) {
+      week = sumSince(nowMs - MS.w).S;
+    }
+    if (!Number.isFinite(month)) {
+      month = sumSince(nowMs - MS.m).S;
+    }
+
+    if (!Number.isFinite(added) || !Number.isFinite(removed)) {
+      const m = sumSince(nowMs - MS.m);
+      if (!Number.isFinite(added)) added = m.A;
+      if (!Number.isFinite(removed)) removed = m.R;
+    }
+
+    return {
+      series,
+      providers,
+      active,
+      now: n(now),
+      week: n(week),
+      month: n(month),
+      added: n(added),
+      removed: n(removed),
+      raw: featureBlock,
+    };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Public API & bootstrapping
-  // ────────────────────────────────────────────────────────────────────────────
+  // Public API
   w.Insights = Object.assign(w.Insights||{}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart,
     titleOf, subtitleOf,
@@ -511,9 +616,7 @@
   d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
   d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // CrossWatch Snapshot Picker
-  // ────────────────────────────────────────────────────────────────────────────
+  // Snapshot Picker
   let _cwSnapModal = null;
 
   function ensureCrosswatchSnapshotModal() {
@@ -534,7 +637,7 @@
     `;
     d.body.appendChild(modal);
 
-    // Close on cancel
+    // Close
     modal.querySelector(".snap-close").addEventListener("click", () => {
       modal.classList.add("cw-snap-hidden");
     });
@@ -552,7 +655,6 @@
   async function openCrosswatchSnapshotPicker(feature) {
     const rootDir = "/config/.cw_provider";
     const snapRoot = `${rootDir}/snapshots`;
-
     const formatSnapshotLabel = name => {
       const base = String(name || "").replace(/\.json$/,"");
       const stem = base.split("-", 1)[0];
@@ -562,18 +664,38 @@
       return `${Y}-${M}-${D} - ${h}:${m2}`;
     };
 
-    let filesRaw;
-    try {
-      filesRaw = await fetch(`/api/files?path=${encodeURIComponent(snapRoot)}`).then(r => r.json());
-    } catch {
-      filesRaw = [];
-    }
-    const files = Array.isArray(filesRaw?.files) ? filesRaw.files : filesRaw;
+    let filesRaw = null;
+    let loadError = null;
 
-    const filtered = (files || [])
+    try {
+      const res = await fetch(
+        `/api/files?path=${encodeURIComponent(snapRoot)}`,
+        { credentials: "same-origin", cache: "no-store" }
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} for /api/files`);
+      }
+      filesRaw = await res.json();
+    } catch (e) {
+      console.error("[Insights] Failed to load snapshot files", e);
+      loadError = e;
+    }
+
+    const files = Array.isArray(filesRaw?.files) ? filesRaw.files : (filesRaw || []);
+    const filtered = files
       .filter(f => !f.is_dir && f.name && f.name.endsWith(`-${feature}.json`))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    if (loadError) {
+      const modal = ensureCrosswatchSnapshotModal();
+      const headSpan = modal.querySelector(".cw-snap-head .hl");
+      const body = modal.querySelector(".cw-snap-body");
+
+      if (headSpan) headSpan.textContent = feature;
+      body.innerHTML = `<div class="muted">Failed to load snapshots. Check server logs or configuration.</div>`;
+      modal.classList.remove("cw-snap-hidden");
+      return;
+    }
     const latestList = filtered.slice(-10).reverse();
 
     const modal = ensureCrosswatchSnapshotModal();
@@ -605,10 +727,27 @@
     body.querySelectorAll(".snap-btn").forEach(btn => {
       btn.addEventListener("click", async e => {
         const name = e.currentTarget.dataset.name;
-        await fetch(
-          `/api/ccrosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`,
-          { method: "POST" }
-        );
+
+        try {
+          const res = await fetch(
+            `/api/crosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`,
+            { method: "POST" }
+          );
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status} for /api/crosswatch/select-snapshot`);
+          }
+          const bodyJson = await res.json().catch(() => ({}));
+          if (bodyJson && bodyJson.ok === false) {
+            throw new Error(bodyJson.error || "Backend reported failure");
+          }
+        } catch (err) {
+          console.error("[Insights] Failed to select snapshot", err);
+          if (window.cxToast) {
+            window.cxToast("Failed to set snapshot. Check server logs.");
+          }
+          return;
+        }
+
         modal.classList.add("cw-snap-hidden");
         if (window.cxToast) {
           const label = name === "latest" ? "latest" : formatSnapshotLabel(name);
@@ -663,37 +802,47 @@
 })();
 
 (() => {
-  const old=document.getElementById('insights-provider-styles'); if(old) old.remove();
-  const id='insights-provider-styles-v6'; if(document.getElementById(id)) return;
-  const s=document.createElement('style'); s.id=id;
+  const id = 'insights-provider-styles-v6';
+  if (document.getElementById(id)) return;
+
+  const s = document.createElement('style');
+  s.id = id;
   s.textContent = `
-  #insights-footer{position:absolute;left:12px;right:12px;bottom:12px;z-index:2}
-  #insights-footer .ins-foot-wrap{
+  #insights-footer {
+    position:absolute;left:12px;right:12px;bottom:12px;z-index:2;
+  }
+  #insights-footer .ins-foot-wrap {
     display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-radius:14px;
     background:linear-gradient(180deg,rgba(8,8,14,.28),rgba(8,8,14,.48));
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 8px 22px rgba(0,0,0,.28);
-    backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%)
+    backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%);
   }
-  @media(max-width:820px){#insights-footer{position:static;margin-top:10px}}
-  #insights-switch{display:flex;justify-content:center}
-  #insights-switch .seg{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center}
+  @media(max-width:820px){
+    #insights-footer{position:static;margin-top:10px;}
+  }
+
+  #insights-switch{display:flex;justify-content:center;}
+  #insights-switch .seg{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center;}
   #insights-switch .seg-btn{
     appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.2px;
     padding:.38rem .72rem;border-radius:.8rem;color:rgba(255,255,255,.85);
     background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));
     border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
-    transition:transform .12s,box-shadow .12s,background .12s,border-color .12s;opacity:.95
+    transition:transform .12s,box-shadow .12s,background .12s,border-color .12s;opacity:.95;
   }
-  #insights-switch .seg-btn:hover{transform:translateY(-1px);opacity:1}
+  #insights-switch .seg-btn:hover{
+    transform:translateY(-1px);opacity:1;
+  }
   #insights-switch .seg-btn.active{
     background:linear-gradient(180deg,rgba(22,22,30,.24),rgba(130,150,255,.10));
-    border-color:rgba(128,140,255,.30);box-shadow:0 0 0 1px rgba(128,140,255,.35),0 8px 22px rgba(0,0,0,.18)
+    border-color:rgba(128,140,255,.30);
+    box-shadow:0 0 0 1px rgba(128,140,255,.35),0 8px 22px rgba(0,0,0,.18);
   }
 
   #stats-card #stat-providers{
     --prov-cols:4;--tile-h:96px;
     display:grid!important;grid-template-columns:repeat(var(--prov-cols),minmax(0,1fr))!important;
-    grid-auto-rows:var(--tile-h)!important;gap:12px!important;width:100%!important;align-items:stretch!important
+    grid-auto-rows:var(--tile-h)!important;gap:12px!important;width:100%!important;align-items:stretch!important;
   }
   #stats-card #stat-providers .tile{
     --brand:255,255,255;--wm:none;
@@ -701,74 +850,85 @@
     height:var(--tile-h)!important;min-height:var(--tile-h)!important;max-height:var(--tile-h)!important;
     border-radius:12px!important;background:rgba(255,255,255,.045)!important;overflow:hidden!important;isolation:isolate!important;
     margin:0!important;padding:0!important;border:0!important;
-    box-shadow:inset 0 0 0 1px rgba(var(--brand),.25),0 0 24px rgba(var(--brand),.16)
+    box-shadow:inset 0 0 0 1px rgba(var(--brand),.25),0 0 24px rgba(var(--brand),.16);
   }
-  #stats-card #stat-providers .tile .k{display:none!important}
   #stats-card #stat-providers .tile::before{
     content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
-    background:radial-gradient(80% 60% at 35% 40%,rgba(var(--brand),.24),transparent 60%),
-               radial-gradient(80% 60% at 55% 75%,rgba(var(--brand),.12),transparent 70%)
+    background:
+      radial-gradient(80% 60% at 35% 40%,rgba(var(--brand),.24),transparent 60%),
+      radial-gradient(80% 60% at 55% 75%,rgba(var(--brand),.12),transparent 70%);
   }
   #stats-card #stat-providers .tile::after{
     content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-8deg);
     width:220%;height:220%;background-repeat:no-repeat;background-position:center;background-size:contain;
     background-image:var(--wm);mix-blend-mode:screen;opacity:.28;
-    filter:saturate(1.5) brightness(1.22) contrast(1.05)
+    filter:saturate(1.5) brightness(1.22) contrast(1.05);
   }
   #stats-card #stat-providers .tile.inactive{
-    box-shadow:inset 0 0 0 1px rgba(var(--brand),.18),0 0 16px rgba(var(--brand),.10)
+    box-shadow:inset 0 0 0 1px rgba(var(--brand),.18),0 0 16px rgba(var(--brand),.10);
   }
   #stats-card #stat-providers .tile.inactive::after{
-    opacity:.18;filter:saturate(1.1) brightness(1)
+    opacity:.18;filter:saturate(1.1) brightness(1);
   }
 
   #stats-card #stat-providers .tile .n{
     position:absolute;top:50%;left:50%;
     transform:translate(-50%,-50%) scale(var(--ins-font-scale,1));
     transform-origin:center;margin:0;font-weight:900;letter-spacing:.25px;font-variant-numeric:tabular-nums;
-    font-size:clamp(26px,calc(var(--tile-h)*.48),56px);line-height:1;color:rgba(255,255,255,.36)
+    font-size:clamp(26px,calc(var(--tile-h)*.48),56px);line-height:1;color:rgba(255,255,255,.36);
   }
 
   @supports(-webkit-background-clip:text){
     #stats-card #stat-providers .tile .n{
       background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));
-      -webkit-background-clip:text;-webkit-text-fill-color:transparent;color:transparent
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;color:transparent;
     }
   }
   @supports(background-clip:text){
     #stats-card #stat-providers .tile .n{
       background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));
-      background-clip:text;color:transparent
+      background-clip:text;color:transparent;
     }
   }
 
-  #stats-card #stat-providers [data-provider=plex]{--brand:229,160,13;--wm:url("/assets/img/PLEX.svg")}
-  #stats-card #stat-providers [data-provider=simkl]{--brand:0,183,235;--wm:url("/assets/img/SIMKL.svg")}
-  #stats-card #stat-providers [data-provider=trakt]{--brand:237,28,36;--wm:url("/assets/img/TRAKT.svg")}
-  #stats-card #stat-providers [data-provider=jellyfin]{--brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg")}
-  #stats-card #stat-providers [data-provider=emby]{--brand:82,181,75;--wm:url("/assets/img/EMBY.svg")}
-  #stats-card #stat-providers [data-provider=mdblist]{--brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg")}
-  #stats-card #stat-providers [data-provider=crosswatch]{--brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg")}
+  #stats-card #stat-providers [data-provider=plex]{
+    --brand:229,160,13;--wm:url("/assets/img/PLEX.svg");
+  }
+  #stats-card #stat-providers [data-provider=simkl]{
+    --brand:0,183,235;--wm:url("/assets/img/SIMKL.svg");
+  }
+  #stats-card #stat-providers [data-provider=trakt]{
+    --brand:237,28,36;--wm:url("/assets/img/TRAKT.svg");
+  }
+  #stats-card #stat-providers [data-provider=jellyfin]{
+    --brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg");
+  }
+  #stats-card #stat-providers [data-provider=emby]{
+    --brand:82,181,75;--wm:url("/assets/img/EMBY.svg");
+  }
+  #stats-card #stat-providers [data-provider=mdblist]{
+    --brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg");
+  }
+  #stats-card #stat-providers [data-provider=crosswatch]{
+    --brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg");
+  }
 
   #stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{
     position:absolute;left:0;right:0;bottom:6px;padding:0 8px;
     font-size:10px;line-height:1.2;font-weight:700;text-align:center;
     color:rgba(255,255,255,.55);text-shadow:0 1px 2px rgba(0,0,0,.6);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis
-  }
-
-  #stats-card #stat-providers .provider-empty{
-    grid-column:1/-1;display:flex;align-items:center;justify-content:center;
-    min-height:80px;padding:12px;border-radius:12px;
-    background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.18);
-    color:rgba(255,255,255,.75);font-weight:700;letter-spacing:.2px
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
 
   @media(max-width:560px){
-    #stats-card #stat-providers{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+    #stats-card #stat-providers{
+      grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    }
   }
   @media(max-width:380px){
-    #stats-card #stat-providers{grid-template-columns:repeat(1,minmax(0,1fr))!important}
+    #stats-card #stat-providers{
+      grid-template-columns:repeat(1,minmax(0,1fr))!important;
+    }
   }
   `;
   document.head.appendChild(s);

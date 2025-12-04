@@ -2,25 +2,15 @@
 from __future__ import annotations
 import os, json
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
-
-# from ._common import normalize as emby_normalize
-
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/emby_playlists.unresolved.json"
-
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         print(f"[EMBY:playlists] {msg}")
 
-
-# ──────────────────────────────────────────────────────────────────────────────
 # unresolved store
-
 def _load() -> Dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8"):
@@ -61,25 +51,18 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
     if changed: _save(data)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # helpers
-
 def _resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
-    # Reuse the resolver from the Emby watchlist module
     from . import _watchlist as wl  # type: ignore
     return wl._resolve_item_id(adapter, it)  # type: ignore
 
 
 def _ensure_playlist(adapter, name: str) -> Optional[str]:
-    """Find or create a playlist for the current user; return playlist Id."""
     http = adapter.client
     uid = adapter.cfg.user_id
     norm = (name or "").strip() or "Watchlist"
-
-    # 1) Try to locate an existing playlist (Emby prefers PascalCase query keys)
     r = http.get(f"/Users/{uid}/Items", params={"IncludeItemTypes": "Playlist", "Recursive": False})
     if not getattr(r, "ok", False):
-        # fallback with jellyfin-style keys for servers that accept it
         r = http.get(f"/Users/{uid}/Items", params={"includeItemTypes": "Playlist", "recursive": False})
     try:
         for it in (r.json() or {}).get("Items", []):
@@ -90,8 +73,6 @@ def _ensure_playlist(adapter, name: str) -> Optional[str]:
     except Exception:
         pass
 
-    # 2) Create playlist (Emby supports query params or JSON)
-    # 2a) JSON body first
     r2 = http.post("/Playlists", json={"Name": norm, "UserId": uid, "MediaType": "Video"})
     if r2.status_code in (200, 201):
         try:
@@ -101,7 +82,6 @@ def _ensure_playlist(adapter, name: str) -> Optional[str]:
         except Exception:
             pass
 
-    # 2b) Query param fallback
     r3 = http.post("/Playlists", params={"name": norm, "userId": uid})
     if r3.status_code in (200, 201, 204):
         rr = http.get(f"/Users/{uid}/Items", params={"IncludeItemTypes": "Playlist", "Recursive": False})
@@ -120,13 +100,11 @@ def _ensure_playlist(adapter, name: str) -> Optional[str]:
 
 
 def _playlist_add(adapter, playlist_id: str, item_ids: List[str]) -> bool:
-    """Add media items to a playlist."""
     http = adapter.client
     uid = adapter.cfg.user_id
     if not item_ids:
         return True
 
-    # Prefer query params (Emby style, PascalCase), then lowercase, then JSON
     r = http.post(f"/Playlists/{playlist_id}/Items", params={"UserId": uid, "Ids": ",".join(item_ids)})
     if r.status_code in (200, 204):
         return True
@@ -140,13 +118,12 @@ def _playlist_add(adapter, playlist_id: str, item_ids: List[str]) -> bool:
 
 
 def _playlist_remove(adapter, playlist_id: str, item_ids: List[str]) -> bool:
-    """Remove media items from a playlist. Prefer EntryIds path, fallback to Ids."""
     http = adapter.client
     uid = adapter.cfg.user_id
     if not item_ids:
         return True
 
-    # Build mid -> entryIds map
+    # Build mid to entryIds map
     rev: Dict[str, List[str]] = {}
     r = http.get(f"/Playlists/{playlist_id}/Items", params={"UserId": uid})
     if not getattr(r, "ok", False):
@@ -180,15 +157,9 @@ def _playlist_remove(adapter, playlist_id: str, item_ids: List[str]) -> bool:
     return r3.status_code in (200, 204)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# index (progress-aware)
 
+# index
 def build_index(adapter) -> Dict[str, Dict[str, Any]]:
-    """
-    Emby playlists are user-defined groupings. We expose writes and keep index empty
-    to avoid treating playlists as a global present-state.
-    Still emit a progress completion for consistent UX.
-    """
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("playlists") if callable(prog_mk) else None
     if prog:
@@ -199,10 +170,7 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     _log("index size: 0 (playlists index is intentionally empty)")
     return {}
 
-
-# ──────────────────────────────────────────────────────────────────────────────
 # writes
-
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     ok_total = 0
     unresolved: List[Dict[str, Any]] = []

@@ -16,7 +16,7 @@ from ._applier import apply_add as _apply_add, apply_remove as _apply_remove
 
 __all__ = ["Orchestrator"]
 
-#--- Config base import (for state store) -------------------------------------
+# config
 try:
     from .. import config_base
 except Exception:
@@ -24,7 +24,7 @@ except Exception:
         @staticmethod
         def CONFIG_BASE() -> str: return "./"
 
-#--- Orchestrator class (legacy-friendly) --------------------------------------
+# Orchestrator class
 @dataclass
 class Orchestrator:
     config: Mapping[str, Any]
@@ -36,10 +36,9 @@ class Orchestrator:
     write_state_json: bool = True
     state_path: Optional[Path] = None
 
-    # Back-compat alias
     files: StateStore | None = field(init=False, default=None)
 
-    # Internal fields
+    # Int fields
     def __post_init__(self):
         self.cfg = dict(self.config or {})
         rt = dict(self.cfg.get("runtime") or {})
@@ -72,7 +71,7 @@ class Orchestrator:
         self.apply_chunk_pause_ms = int(rt.get("apply_chunk_pause_ms") or 0)
         self.emitter.info("[i] Orchestrator v3 ready (full compat shims)")
 
-    # Context property
+    # Context
     @property
     def context(self):
         from types import SimpleNamespace
@@ -98,8 +97,7 @@ class Orchestrator:
             apply_chunk_pause_ms=self.apply_chunk_pause_ms,
         )
 
-    #--- Main run method ----------------------------------------------------------
-    
+    # Main run  
     def run(self, *, dry_run: bool=False, only_feature: Optional[str]=None, write_state_json: bool=True, state_path: Optional[str]=None, progress: Optional[object]=None, **kwargs) -> Dict[str, Any]:
         prev_cb = self.emitter.cb
         prev_on = self.on_progress
@@ -168,7 +166,7 @@ class Orchestrator:
         finally:
             self.cfg = saved
 
-    #--- Snapshot / provider helpers ----------------------------------------------
+    # Snapsht helper
     def build_snapshots(self, feature: str) -> Dict[str, Dict[str, Any]]:
         return _build_snaps(feature=feature, config=self.cfg, providers=self.providers, snap_cache=self.snap_cache, snap_ttl_sec=self.snap_ttl_sec, dbg=self.dbg, emit_info=self.emit_info)
     def allowed_providers_for_feature(self, feature: str) -> set[str]:
@@ -195,7 +193,7 @@ class Orchestrator:
         if not ops: return {"ok": False, "count": 0, "error": f"unknown provider {dst_name}"}
         return _apply_remove(dst_ops=ops, cfg=self.cfg, dst_name=dst_name, feature=feature, items=items, dry_run=self.dry_run if dry_run is None else bool(dry_run), emit=self.emit, dbg=self.dbg, chunk_size=self.apply_chunk_size, chunk_pause_ms=self.apply_chunk_pause_ms)
 
-    #--- Persist enabled features helper -----------------------------------------
+    # Feat. 
     def _enabled_features(self) -> List[str]:
         feats: set[str] = set()
         pairs = list((self.cfg.get("pairs") or []))
@@ -215,7 +213,7 @@ class Orchestrator:
             feats.add("watchlist")
         return sorted(feats)
 
-    #--- Persist provider feature baselines --------------------------------------
+    # Feat. baseline
     def _persist_feature_baselines(self, *, features: Sequence[str] = ("watchlist",)) -> dict:
         import time as _t
         try:
@@ -243,7 +241,7 @@ class Orchestrator:
         self.dbg("state.persisted", providers=len(providers), wall=len((state.get("wall") or [])))
         return state
 
-    #--- Persist watchlist wall ---------------------------------------------------
+    # Watclist wall
     def _persist_state_wall(self, *, feature: str = "watchlist") -> dict:
         state = self.state_store.load_state() or {}
         providers = dict(state.get("providers") or {})
@@ -278,7 +276,7 @@ class Orchestrator:
         self.dbg("state.persisted", providers=len(providers), wall=len(uniq))
         return state
 
-    #--- Telemetry helpers ---------------------------------------------------------
+    # Telemetry
     def emit_rate_warnings(self):
         return maybe_emit_rate_warnings(self.stats, self.emitter.emit, self.warn_thresholds)
     def prune_tombstones(self, older_than_secs: int) -> int:

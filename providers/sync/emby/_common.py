@@ -3,11 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional, Iterable, List, Tuple, Union
 from datetime import datetime
 import os, re, time, json
-
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 _IMDB_PAT  = re.compile(r"(?:tt)?(\d{5,9})$")
 _NUM_PAT   = re.compile(r"(\d{1,10})$")
@@ -18,7 +14,6 @@ CfgLike = Union[Mapping[str, Any], object]
 # Adapter-scoped provider-index cache
 _PROVIDER_INDEX_CACHE: dict[int, tuple[float, dict[str, list[dict[str, Any]]]]] = {}
 
-# --- logging (quiet by default)
 def _debug_level() -> str:
     env = (os.environ.get("CW_EMBY_DEBUG_LEVEL") or "").strip().lower()
     if env in ("2", "v", "verbose"): return "verbose"
@@ -37,7 +32,7 @@ def _log_detail(msg: str) -> None:
 def _log(msg: str) -> None:
     _log_summary(msg)
 
-# --- cfg helpers
+# Config. helpers
 def _as_list_str(v: Any) -> List[str]:
     if v is None: return []
     it = v if isinstance(v, (list, tuple, set)) else [v]
@@ -354,8 +349,6 @@ def provider_index(adapter, *, ttl_sec: int = 300, force_refresh: bool = False) 
 
 def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, Any]]:
     idx = provider_index(adapter)
-
-    # Prefer resolving within configured Emby history libraries when whitelisting is active.
     scope_hist: Dict[str, Any] = {}
     try:
         scope_hist = emby_scope_history(adapter.cfg) or {}
@@ -401,7 +394,7 @@ def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, An
                 return row
     return None
 
-# --- series/episodes
+# Shows/episodes
 def get_series_episodes(http, user_id: str, series_id: str, start: int = 0, limit: int = 500) -> Dict[str, Any]:
     q = {
         "UserId": user_id,
@@ -470,7 +463,7 @@ def playlist_as_watchlist_index(http, user_id: str, playlist_id: str, *, limit: 
             except Exception: pass
     return out
 
-# --- playlists
+# playlists (for future use)
 def find_playlist_id_by_name(http, user_id: str, name: str) -> Optional[str]:
     q = {"UserId": user_id, "IncludeItemTypes": "Playlist", "Recursive": True, "SearchTerm": name}
     r = http.get(f"/Users/{user_id}/Items", params=q)
@@ -528,7 +521,7 @@ def playlist_remove_entries(http, playlist_id: str, entry_ids: Iterable[str]) ->
     r = http.delete(f"/Playlists/{playlist_id}/Items", params={"EntryIds": eids})
     return getattr(r, "status_code", 0) in (200, 204)
 
-# --- collections (BoxSets)
+#  collections (BoxSets)
 def find_seed_item_id(http, user_id: str) -> Optional[str]:
     for t in ("Movie", "Series"):
         r = http.get(f"/Users/{user_id}/Items", params={"IncludeItemTypes": t, "Recursive": True, "Limit": 1})
@@ -670,7 +663,7 @@ def collection_remove_items(http, collection_id: str, item_ids: Iterable[str]) -
         pass
     return False
 
-# --- misc writes
+# misc writes
 def mark_favorite(http, user_id: str, item_id: str, flag: bool) -> bool:
     path = f"/Users/{user_id}/FavoriteItems/{item_id}"
     r = http.post(path) if flag else http.delete(path)
@@ -688,17 +681,8 @@ def mark_favorite(http, user_id: str, item_id: str, flag: bool) -> bool:
         _log_summary(f"favorite write failed user={user_id} item={item_id} status={getattr(r,'status_code',None)} body={body_snip}")
     return ok
 
-# ---- FLEX update_userdata: supports BOTH old and new callsites ----------------
 def update_userdata(*args, **kwargs) -> bool:
-    """
-    Compatible wrapper:
-    1) update_userdata(adapter, item_id_or_minimal, **fields)
-    2) update_userdata(adapter, item_id_or_minimal, payload=<Mapping>)
-    3) update_userdata(http, user_id, item_id, payload=<Mapping>)
-    4) update_userdata(http, user_id, item_id, **fields)
-    """
     try:
-        # Case 1/2: first arg is adapter
         if args and hasattr(args[0], "client") and hasattr(getattr(args[0], "cfg", None), "user_id"):
             adapter = args[0]
             http, uid = adapter.client, adapter.cfg.user_id
@@ -706,13 +690,12 @@ def update_userdata(*args, **kwargs) -> bool:
             if target is None: return False
             iid = str(target) if isinstance(target, str) else resolve_item_id(adapter, target)
             if not iid: return False
-            # payload can be provided via kwargs or as explicit 'payload' kw
+
             payload = dict(kwargs.pop("payload", {}) or {})
             payload.update({k: v for k, v in kwargs.items() if v is not None})
             r = http.post(f"/Users/{uid}/Items/{iid}/UserData", json=payload)
             return getattr(r, "status_code", 0) in (200, 204)
 
-        # Case 3/4: (http, user_id, item_id, payload|**fields)
         if len(args) >= 3:
             http, uid, iid = args[0], str(args[1]), str(args[2])
             payload = {}
@@ -726,12 +709,11 @@ def update_userdata(*args, **kwargs) -> bool:
         return False
     return False
 
-# Backwards alias if something imports the alt name
+# Backwards alias
 def update_user_data(*args, **kwargs) -> bool:
     return update_userdata(*args, **kwargs)
 
-# --- resolver (movie/show/episode) with direct AnyProviderIdEquals first ------
-
+# resolver (movie/show/episode)-
 def _pick_from_candidates(cands: List[Dict[str, Any]], *, want_type: Optional[str], want_year: Optional[int]) -> Optional[str]:
     def score_val(row: Dict[str, Any]) -> Tuple[int, int, str]:
         t = (row.get("Type") or "").strip()
@@ -775,7 +757,6 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     http, uid = adapter.client, adapter.cfg.user_id
     ids = dict((it.get("ids") or {}))
 
-    # Per-run memo (cheap)
     try:
         memo: Dict[str, Optional[str]] = getattr(adapter, "_emby_resolve_cache")
     except Exception:
@@ -807,13 +788,11 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     season = it.get("season")
     episode = it.get("episode")
     series_title = (it.get("series_title") or "").strip()
-    series_ids = dict(it.get("show_ids") or {})  # prefer series IDs for episodes
+    series_ids = dict(it.get("show_ids") or {})
 
     prio = _merged_guid_priority(adapter)
     ep_pairs = all_ext_pairs(ids, prio)
     series_pairs = all_ext_pairs(series_ids, prio) if series_ids else []
-    
-    # Prefer resolving within configured Emby history libraries to avoid cross-library drift.
     scope_hist = {}
     try:
         scope_hist = emby_scope_history(adapter.cfg) or {}
@@ -867,7 +846,6 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     else:
         scope = emby_scope_any(adapter.cfg)
 
-    # ---- 1) Direct hit via AnyProviderIdEquals (Emby-native) -----------------
     if t == "movie":
         rows = _direct_query_by_pairs(http, uid, ep_pairs, "Movie", scope)
         if rows:
@@ -917,9 +895,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                             _log_detail(f"resolve (episode) via series->S/E -> {iid}")
                             return iid
 
-    # ---- 2) provider_index fallback ------------------------------------------
     idx = provider_index(adapter)
-
     if t == "movie":
         for pref in ep_pairs:
             cands = idx.get(pref) or []
@@ -963,7 +939,6 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                             memo[mk] = str(iid)
                             return str(iid)
 
-    # ---- 3) text search fallback ---------------------------------------------
     def _items(resp) -> List[Mapping[str, Any]]:
         try:
             body = resp.json() or {}
@@ -1048,7 +1023,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     _log_detail(f"resolve miss: type={t} title='{title}' year={year} S{season}E{episode} series='{series_title}'")
     return None
 
-# --- utils
+# utils
 def chunked(it: Iterable[Any], n: int) -> Iterable[List[Any]]:
     n = max(1, int(n)); buf: List[Any] = []
     for x in it:

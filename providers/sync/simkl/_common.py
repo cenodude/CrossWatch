@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 from datetime import datetime, timezone
 
+from cw_platform.id_map import minimal as id_minimal, canonical_key
+
 START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
 UA = os.getenv("CW_UA", "CrossWatch/3.0 (SIMKL)")
@@ -162,12 +164,6 @@ def extract_latest_ts(activities: Mapping[str, Any], paths: Iterable[Sequence[st
     return latest
 
 # ---------- ids + normalization
-
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
-
 def _fix_imdb(ids: Mapping[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = dict(ids or {})
     imdb = out.get("imdb")

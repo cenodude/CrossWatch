@@ -23,18 +23,13 @@ from ._common import (
     resolve_item_id,
 )
 
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_watchlist.unresolved.json"
-
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
         print(f"[JELLYFIN:watchlist] {msg}")
-
 
 def _load() -> Dict[str, Any]:
     try:
@@ -42,7 +37,6 @@ def _load() -> Dict[str, Any]:
             return json.load(f) or {}
     except Exception:
         return {}
-
 
 def _save(obj: Mapping[str, Any]) -> None:
     try:

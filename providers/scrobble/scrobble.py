@@ -12,7 +12,7 @@ from typing import Any, Iterable, Literal, Protocol
 try:
     from _logging import log as BASE_LOG
 except Exception:
-    BASE_LOG = None  # Fallback to print
+    BASE_LOG = None
 
 def _log(msg: str, lvl: str = "INFO") -> None:
     if BASE_LOG:
@@ -81,7 +81,7 @@ def _event_from_meta(meta: dict[str, Any], raw: dict[str, Any]) -> ScrobbleEvent
         raw=raw,
     )
 
-# --- types ---------------------------------------------------------------------
+# Types
 ScrobbleAction = Literal["start", "pause", "stop"]
 MediaType      = Literal["movie", "episode"]
 
@@ -103,7 +103,7 @@ class ScrobbleEvent:
 class ScrobbleSink(Protocol):
     def send(self, event: ScrobbleEvent) -> None: ...
 
-# --- webhook (compat) ----------------------------------------------------------
+# Webhooks
 def from_plex_webhook(payload: Any, defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
     try:
@@ -121,7 +121,7 @@ def from_plex_webhook(payload: Any, defaults: dict[str, Any] | None = None) -> S
         return from_plex_pssn(obj, defaults)
     return None
 
-# --- parsers -------------------------------------------------------------------
+# Parse
 def from_plex_pssn(payload: dict[str, Any], defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
     arr = payload.get("PlaySessionStateNotification")
@@ -155,9 +155,8 @@ def from_plex_flat_playing(payload: dict[str, Any], defaults: dict[str, Any] | N
     }
     return _event_from_meta(meta, payload)
 
-# --- dispatcher ----------------------------------------------------------------
+# Dispatch
 class Dispatcher:
-    """Filters + forwards events to sinks (username/server filters, pause debounce)."""
 
     def __init__(self, sinks: Iterable[ScrobbleSink], cfg_provider=None) -> None:
         self._sinks = list(sinks or [])
@@ -184,11 +183,9 @@ class Dispatcher:
         def norm(s: str) -> str: return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
         wl_list = wl if isinstance(wl, list) else [wl]
 
-        # Plain username match
         if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
             return _allow()
 
-        # Extract id/uuid from raw PSN if present
         def find_psn(o: Any) -> list[dict[str, Any]] | None:
             if isinstance(o, dict):
                 for k, v in o.items():

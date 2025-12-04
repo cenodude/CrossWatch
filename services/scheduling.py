@@ -1,20 +1,20 @@
-# _scheduling.py
+# services/scheduling.py
 # CrossWatch - Scheduling module for automated sync tasks
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import random
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable
 
 try:
     from zoneinfo import ZoneInfo  # py39+
 except Exception:
-    ZoneInfo = None
+    ZoneInfo = None  # type: ignore[assignment]
 
-DEFAULT_SCHEDULING: Dict[str, Any] = {
+DEFAULT_SCHEDULING: dict[str, Any] = {
     "enabled": False,
     "mode": "disabled",          # disabled | hourly | every_n_hours | daily_time
     "every_n_hours": 2,
@@ -23,12 +23,10 @@ DEFAULT_SCHEDULING: Dict[str, Any] = {
     "jitter_seconds": 0,
 }
 
-# ---- helpers -------------------------------------------------------------
-
 def _now_local_naive() -> datetime:
     return datetime.now()
 
-def _tz_from_cfg(sch: Dict[str, Any]) -> Optional[Any]:
+def _tz_from_cfg(sch: dict[str, Any]) -> Any | None:
     name = (sch.get("timezone") or "").strip()
     if not name or ZoneInfo is None:
         return None
@@ -37,7 +35,7 @@ def _tz_from_cfg(sch: Dict[str, Any]) -> Optional[Any]:
     except Exception:
         return None
 
-def _apply_jitter(dt_local: datetime, sch: Dict[str, Any]) -> datetime:
+def _apply_jitter(dt_local: datetime, sch: dict[str, Any]) -> datetime:
     try:
         js = int(sch.get("jitter_seconds") or 0)
     except Exception:
@@ -46,7 +44,7 @@ def _apply_jitter(dt_local: datetime, sch: Dict[str, Any]) -> datetime:
         return dt_local
     return dt_local + timedelta(seconds=random.randint(0, js))
 
-def _parse_hhmm(val: str) -> Optional[tuple[int, int]]:
+def _parse_hhmm(val: str) -> tuple[int, int] | None:
     try:
         hh, mm = map(int, (val or "").strip().split(":"))
         if 0 <= hh <= 23 and 0 <= mm <= 59:
@@ -55,7 +53,7 @@ def _parse_hhmm(val: str) -> Optional[tuple[int, int]]:
         pass
     return None
 
-def merge_defaults(s: Dict[str, Any]) -> Dict[str, Any]:
+def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
     out = dict(DEFAULT_SCHEDULING)
     if isinstance(s, dict):
         out.update({k: v for k, v in s.items() if v is not None})
@@ -68,7 +66,7 @@ def _align_next_hour_in_tz(now_tz: datetime) -> datetime:
 def _to_local_naive(dt_tzaware: datetime) -> datetime:
     return dt_tzaware.astimezone().replace(tzinfo=None)
 
-def compute_next_run(now: datetime, sch: Dict[str, Any]) -> datetime:
+def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
     mode = (sch.get("mode") or "disabled").lower()
     if not sch.get("enabled") or mode == "disabled":
         return _now_local_naive() + timedelta(days=365 * 100)
@@ -104,26 +102,24 @@ def compute_next_run(now: datetime, sch: Dict[str, Any]) -> datetime:
 
     return _now_local_naive() + timedelta(days=365 * 100)
 
-# ---- scheduler -----------------------------------------------------------
-
 class SyncScheduler:
     def __init__(
         self,
-        load_config: Callable[[], Dict[str, Any]],
-        save_config: Callable[[Dict[str, Any]], None],
+        load_config: Callable[[], dict[str, Any]],
+        save_config: Callable[[dict[str, Any]], None],
         run_sync_fn: Callable[[], bool],
-        is_sync_running_fn: Optional[Callable[[], bool]] = None,
+        is_sync_running_fn: Callable[[], bool] | None = None,
     ) -> None:
         self.load_config_cb = load_config
         self.save_config_cb = save_config
         self.run_sync_fn = run_sync_fn
         self.is_sync_running_fn = is_sync_running_fn or (lambda: False)
 
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._poke = threading.Event()
         self._lock = threading.Lock()
-        self._status: Dict[str, Any] = {
+        self._status: dict[str, Any] = {
             "running": False,
             "last_tick": 0,
             "last_run_ok": None,
@@ -133,18 +129,16 @@ class SyncScheduler:
             "last_error": "",
         }
 
-    # config
-
-    def _get_sched_cfg(self) -> Dict[str, Any]:
+    def _get_sched_cfg(self) -> dict[str, Any]:
         cfg = self.load_config_cb() or {}
         return merge_defaults(cfg.get("scheduling") or {})
 
-    def _set_sched_cfg(self, s: Dict[str, Any]) -> None:
+    def _set_sched_cfg(self, s: dict[str, Any]) -> None:
         cfg = self.load_config_cb() or {}
         cfg["scheduling"] = merge_defaults(s or {})
         self.save_config_cb(cfg)
 
-    def ensure_defaults(self) -> Dict[str, Any]:
+    def ensure_defaults(self) -> dict[str, Any]:
         cfg = self.load_config_cb() or {}
         cfg["scheduling"] = merge_defaults(cfg.get("scheduling") or {})
         self.save_config_cb(cfg)
@@ -156,7 +150,13 @@ class SyncScheduler:
         self._set_sched_cfg(s)
         self.refresh()
 
-    def set_mode(self, *, mode: str, every_n_hours: Optional[int] = None, daily_time: Optional[str] = None) -> None:
+    def set_mode(
+        self,
+        *,
+        mode: str,
+        every_n_hours: int | None = None,
+        daily_time: str | None = None,
+    ) -> None:
         s = self._get_sched_cfg()
         s["mode"] = str(mode or "disabled").lower()
         if every_n_hours is not None:
@@ -169,13 +169,11 @@ class SyncScheduler:
         self._set_sched_cfg(s)
         self.refresh()
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             st = dict(self._status)
         st["config"] = self._get_sched_cfg()
         return st
-
-    # control
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -210,8 +208,6 @@ class SyncScheduler:
                 self._status["last_run_ok"] = ok
                 self._status["last_run_at"] = int(time.time())
                 self._status["last_error"] = err
-
-    # internals
 
     def _update_next(self, nxt: datetime) -> None:
         with self._lock:

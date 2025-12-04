@@ -1,44 +1,29 @@
 # /providers/sync/plex/_playlists.py
-# Plex Playlists. Present-state index + guarded add/remove. Keep it boring.
-# Emits snapshot:progress with a fixed total while building the index.
 
 from __future__ import annotations
 import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ._common import normalize as plex_normalize
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
-except Exception:
-    from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
-
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:playlists] {msg}")
 
-
 # ── index ─────────────────────────────────────────────────────────────────────
 
 def build_index(adapter, include_names: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, Any]]:
-    """
-    Present-state as {membership_key: minimal}, where:
-      membership_key = f"playlist:{playlist_id}|{item_key}"
-    Emits snapshot:progress with a fixed grand total (sum of all selected playlist items).
-    """
     srv = getattr(adapter.client, "server", None)
     if not srv:
         _log("no PMS bound (account-only) → empty playlists index")
         return {}
 
-    # progress hook (optional; provided by PLEXModule.progress_factory)
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("playlists") if callable(prog_mk) else None
 
     names = {n.strip().lower() for n in (include_names or [])}
     out: Dict[str, Dict[str, Any]] = {}
-
-    # Pre-scan: collect selected playlists and their items to compute a stable total.
     work: List[Tuple[Any, List[Any]]] = []
     total = 0
     try:
@@ -101,11 +86,6 @@ def build_index(adapter, include_names: Optional[Iterable[str]] = None) -> Dict[
 # ── add/remove ────────────────────────────────────────────────────────────────
 
 def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """
-    Add items to a playlist. Input must include:
-      it['playlist'] = {'id': '1234'} or {'name': 'My List'}
-    Creates the playlist if missing (video type).
-    """
     srv = getattr(adapter.client, "server", None)
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
@@ -138,7 +118,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
 
 def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
-    """Remove items from a playlist. Same input contract as add()."""
     srv = getattr(adapter.client, "server", None)
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
@@ -211,15 +190,6 @@ def _find_or_create_playlist(srv, pinfo: Optional[Mapping[str, Any]]):
 
 
 def _resolve_obj(adapter, it: Mapping[str, Any]):
-    """
-    Library object resolution:
-      1) ids.plex → direct fetch
-      2) Section search (movie or show) with scoring:
-         - ID overlap (imdb/tmdb/tvdb) [+4]
-         - exact title/series_title [+3]
-         - exact year (movies) [+2]
-         - season/episode match (episodes) [+2]
-    """
     ids = ids_from(it)
     rk = ids.get("plex")
     if rk:

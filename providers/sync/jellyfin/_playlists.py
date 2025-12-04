@@ -4,13 +4,9 @@ import os, json
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ._common import normalize as jelly_normalize
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_playlists.unresolved.json"
-
 
 def _log(msg: str):
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):

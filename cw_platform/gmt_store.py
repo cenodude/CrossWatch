@@ -1,4 +1,4 @@
-# --------------- Global Tombstone Store (versioned, JSON on /config/tombstones.json) ---------------
+# Global Tombstone
 from __future__ import annotations
 import json, time, os, tempfile
 from dataclasses import dataclass
@@ -17,8 +17,8 @@ DEFAULT_TTL_SEC = 7 * 24 * 3600
 @dataclass
 class TombstoneEntry:
     keys: List[str]
-    scope: Dict[str, str]      # {"list": "...", "dim": "..."}
-    origin: str                # "PLEX" | "SIMKL" | "TRAKT" | etc.
+    scope: Dict[str, str]
+    origin: str
     ts_iso: str
     propagate_until_iso: str
     note: Optional[str] = None
@@ -28,10 +28,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 class GlobalTombstoneStore:
-    """
-    Versioned, atomic JSON store under /config/tombstones.json
-    Back-compat: keeps a lightweight "keys" dict for tooling that expects it.
-    """
     def __init__(self, ttl_sec: Optional[int] = None, file_path: Optional[Path] = None) -> None:
         self.base = Path(CONFIG_DIR)
         self.path = file_path or (self.base / "tombstones.json")
@@ -46,15 +42,11 @@ class GlobalTombstoneStore:
     def ensure_model(self) -> None:
         j = self._read()
         if j.get("model") != MODEL or int(j.get("version") or 0) < VERSION:
-            # Fresh start per your instruction: drop legacy content
             self._write(self._empty_doc())
 
     def record_negative_event(self, *, entity: Mapping[str, Any], scope: Scope, origin: str, pair_id: Optional[str] = None, note: Optional[str] = None) -> None:
-        """
-        Create/refresh a negative tombstone (remove/unrate/unscrobble) so later opposing writes are suppressed.
-        """
         if scope.dim not in ("remove", "unrate", "unscrobble"):
-            return  # only negative events create tombstones
+            return
 
         keys = sorted(id_map.keys_for_item(entity))
         now = _utc_now_iso()
@@ -71,9 +63,6 @@ class GlobalTombstoneStore:
         self._upsert_entry(rec)
 
     def should_suppress(self, *, entity: Mapping[str, Any], scope: Scope, write_op: str) -> bool:
-        """
-        True if there is an active tombstone for the same list where the tombstone dim opposes write_op.
-        """
         if not entity:
             return False
         active = self._active_entries_for_entity(entity, scope)
@@ -114,16 +103,14 @@ class GlobalTombstoneStore:
             "ttl_sec": self.ttl_sec,
             "updated_at": _utc_now_iso(),
             "entries": [],
-            # Back-compat for admin tools that expect a flat map:
-            "keys": {},           # computed from entries; do not hand-edit
-            "pruned_at": None,    # kept for older UIs
+            "keys": {},
+            "pruned_at": None,
         }
 
     def _ensure_file(self) -> None:
         if not self.path.exists():
             self._write(self._empty_doc())
             return
-        # If existing but legacy, force-reinit:
         try:
             j = self._read()
             if j.get("model") != MODEL or int(j.get("version") or 0) < VERSION:
@@ -138,14 +125,12 @@ class GlobalTombstoneStore:
             return self._empty_doc()
 
     def _write(self, data: Mapping[str, Any]) -> None:
-        # atomic write compatible with volumes
         tmp = Path(tempfile.gettempdir()) / f".tomb.{os.getpid()}.{int(time.time()*1000)}.json"
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
         tmp.replace(self.path)
 
     def _upsert_entry(self, rec: TombstoneEntry) -> None:
         j = self._read()
-        # de-dup by (scope.list, scope.dim, key) with newest ts taking precedence
         entries: List[dict] = list(j.get("entries") or [])
         scope_list = rec.scope["list"]; scope_dim = rec.scope["dim"]
         keys_set = set(rec.keys or [])
@@ -154,7 +139,6 @@ class GlobalTombstoneStore:
             if (old.get("scope", {}).get("list") == scope_list and
                 old.get("scope", {}).get("dim")  == scope_dim and
                 set(old.get("keys") or []).intersection(keys_set)):
-                # drop older overlapping record
                 continue
             out.append(old)
         out.append({
@@ -168,7 +152,7 @@ class GlobalTombstoneStore:
         })
         j["entries"] = out
         j["updated_at"] = _utc_now_iso()
-        j["keys"] = self._flatten_keys_view(out)  # keep flat map in sync
+        j["keys"] = self._flatten_keys_view(out)
         self._write(j)
 
     def _active_entries_for_entity(self, entity: Mapping[str, Any], scope: Scope) -> List[dict]:
@@ -191,10 +175,6 @@ class GlobalTombstoneStore:
         return active
 
     def _flatten_keys_view(self, entries: Iterable[Mapping[str, Any]]) -> Dict[str, int]:
-        """
-        Back-compat map for admin tools: {"<feature>|<key>": epoch}
-        We use the record ts for value; scoped per list.
-        """
         flat: Dict[str, int] = {}
         for rec in entries or []:
             try:

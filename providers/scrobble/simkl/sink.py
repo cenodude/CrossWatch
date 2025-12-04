@@ -107,7 +107,7 @@ def _watch_pause_debounce(cfg: dict[str, Any]) -> int:
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
-    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api
+    from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
     _rm_across_api = None
 

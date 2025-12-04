@@ -2,11 +2,7 @@
 from __future__ import annotations
 import os, json, time
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
-
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 from ._common import (
     normalize as emby_normalize,
@@ -25,7 +21,7 @@ def _log(msg: str) -> None:
         print(f"[EMBY:ratings] {msg}")
 
 
-# Unresolved items persistence
+# Unresolved items
 def _load() -> Dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:

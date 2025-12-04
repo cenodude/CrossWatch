@@ -14,7 +14,7 @@ except Exception:
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
-    from _watchlistAPI import remove_across_providers_by_ids as _rm_across_api
+    from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
     _rm_across_api = None
 

@@ -284,7 +284,7 @@ def _two_way_sync(
         prevB = _filter_index_by_libraries(prevB, libs_B)
         B_cur = _filter_index_by_libraries(B_cur, libs_B)
         B_eff = _filter_index_by_libraries(B_eff, libs_B)
-    # -------------------------------------------------------------------------
+        
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600

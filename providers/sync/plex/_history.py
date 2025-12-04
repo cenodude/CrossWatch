@@ -13,10 +13,7 @@ from ._common import (
     server_find_rating_key_by_guid,
 )
 
-try:
-    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
-except Exception:
-    from _id_map import canonical_key, minimal as id_minimal, ids_from  # type: ignore
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
 SHADOW_PATH = "/config/.cw_state/plex_history.shadow.json"

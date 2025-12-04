@@ -22,7 +22,7 @@ def plex_headers(token: str) -> Dict[str, str]:
     return {
         "X-Plex-Product": "CrossWatch",
         "X-Plex-Platform": "CrossWatch",
-        "X-Plex-Version": "3.1.0",
+        "X-Plex-Version": "2.1.0",
         "X-Plex-Client-Identifier": CLIENT_ID,
         "X-Plex-Token": token,
         "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",

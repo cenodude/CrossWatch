@@ -1,6 +1,4 @@
-"""
-Metadata provider registry: discovers modules named _meta_*.py and aggregates their manifests and HTML snippets.
-"""
+# Metadata provider registry
 from __future__ import annotations
 import importlib, pkgutil, inspect
 from typing import Any, List, Dict
@@ -10,18 +8,13 @@ import providers.metadata as _metapkg
 PKG_NAME = __package__  # "providers.metadata"
 PKG_PATHS = list(getattr(_metapkg, '__path__', []))  # type: ignore
 
-# ────────────────────────────────────────────────────────────────────────────
-# Discover providers (modules with _meta_* prefix)
-# ────────────────────────────────────────────────────────────────────────────
+# Discover providers
 def _iter_meta_modules():
     for finder, name, ispkg in pkgutil.iter_modules(PKG_PATHS):
         if not name.startswith("_meta_"):
             continue
         yield importlib.import_module(f"{PKG_NAME}.{name}")
 
-# ────────────────────────────────────────────────────────────────────────────
-# Get a provider instance from a module (PROVIDER or class with manifest())
-# ────────────────────────────────────────────────────────────────────────────
 def _provider_from_module(mod):
     prov = getattr(mod, "PROVIDER", None)
     if prov is not None:
@@ -34,26 +27,23 @@ def _provider_from_module(mod):
                 pass
     return None
 
-# ────────────────────────────────────────────────────────────────────────────
-# Normalize manifest to a plain JSON-safe dict 
-# ────────────────────────────────────────────────────────────────────────────
+# Manifest to JSON 
 def _coerce_manifest(man):
-    if isinstance(man, dict):                          # plain dict
+    if isinstance(man, dict): 
         src = man
-    elif man is None:                                  # nothing to show
+    elif man is None:
         src = {}
-    elif is_dataclass(man):                            # dataclass
+    elif is_dataclass(man):
         src = asdict(man)
-    elif hasattr(man, "model_dump"):                   # pydantic v2
+    elif hasattr(man, "model_dump"):
         src = man.model_dump()
-    elif hasattr(man, "dict"):                         # pydantic v1
+    elif hasattr(man, "dict"):
         src = man.dict()
-    elif hasattr(man, "_asdict"):                      # namedtuple-ish
+    elif hasattr(man, "_asdict"):
         src = dict(man._asdict())
-    else:                                              # object with @property
+    else:
         src = {k: getattr(man, k) for k in ("id","name","enabled","ready","ok","version") if hasattr(man, k)}
 
-    # keep only JSON-safe primitives
     out = {}
     for k, v in (src or {}).items():
         if isinstance(v, (str, int, float, bool)) or v is None:
@@ -62,10 +52,7 @@ def _coerce_manifest(man):
             out[k] = str(v)
     return out
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# Aggregate provider manifests (JSON-safe)
-# ────────────────────────────────────────────────────────────────────────────
+# Aggregate provider manifests 
 def metadata_providers_manifests() -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for mod in _iter_meta_modules():
@@ -74,17 +61,14 @@ def metadata_providers_manifests() -> List[Dict[str, Any]]:
             continue
         try:
             man = prov.manifest() if hasattr(prov, "manifest") else {}
-            out.append(_coerce_manifest(man))  # ← instead of __dict__
+            out.append(_coerce_manifest(man))
         except Exception:
             continue
     return out
 
-# ────────────────────────────────────────────────────────────────────────────
-# Render provider HTML (module/instance html() or minimal card)
-# ────────────────────────────────────────────────────────────────────────────
+# Render
 def _module_html(mod) -> str:
     prov = _provider_from_module(mod)
-    # Provider instance method
     if prov is not None and hasattr(prov, "html"):
         try:
             html = prov.html()
@@ -92,7 +76,6 @@ def _module_html(mod) -> str:
                 return html
         except Exception:
             pass
-    # Module-level html()
     if hasattr(mod, "html"):
         try:
             html = mod.html()  # type: ignore[call-arg]
@@ -100,13 +83,9 @@ def _module_html(mod) -> str:
                 return html
         except Exception:
             pass
-    # Fallback minimal card
     label = getattr(prov, "name", "Metadata")
     return f"""<div class="section"><div class="head"><span class="chev"></span><strong>{label}</strong></div><div class="body"><div class="sub">No UI provided for {label}.</div></div></div>"""
 
-# ────────────────────────────────────────────────────────────────────────────
-# Concatenate provider HTML fragments
-# ────────────────────────────────────────────────────────────────────────────
 def metadata_providers_html() -> str:
     frags: List[str] = []
     for mod in _iter_meta_modules():

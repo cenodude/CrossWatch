@@ -37,7 +37,7 @@ def provider_configured(config: Mapping[str, Any], name: str) -> bool:
             return bool(ops.is_configured(config))
         except Exception:
             return False
-    return False  # explicit fallback; no heuristics/fallbacks per provider
+    return False
     
 def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str) -> str | None:
     acts_fn = getattr(ops, "activities", None)

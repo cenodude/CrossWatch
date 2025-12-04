@@ -8,17 +8,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Callable
 
 from ._common import (
     build_headers,
-    normalize_watchlist_row,  # good enough to normalize list items
+    normalize_watchlist_row,
     key_of,
     ids_for_trakt,
     pick_trakt_kind,
 )
 from .._mod_common import request_with_retries
-
-try:
-    from cw_platform.id_map import minimal as id_minimal
-except Exception:
-    from _id_map import minimal as id_minimal  # type: ignore
+from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.trakt.tv"
 URL_LISTS_ME       = f"{BASE}/users/me/lists"

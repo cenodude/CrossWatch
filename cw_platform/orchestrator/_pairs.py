@@ -1,7 +1,5 @@
 from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional, Set
-
-# --- compact helpers / drivers ----------------------------------------------
 from ._pairs_utils import (
     inject_ctx_into_provider,
     health_status,
@@ -12,7 +10,6 @@ from ._pairs_metrics import ApiMetrics, persist_api_totals
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 
-# blackbox maintenance (safe fallbacks if module shape differs)
 try:
     from ._blackbox import prune_once as _bb_prune_once  # type: ignore
 except Exception:
@@ -30,12 +27,10 @@ except Exception:
         def _bb_prune_once(cfg: Mapping[str, Any]) -> None:
             return
 
-
+# Jealth check
 def _collect_health_for_run(ctx) -> Dict[str, Any]:
-    """Ask each provider for health once; make their modules see ctx."""
     emit = ctx.emit
     provs = ctx.providers or {}
-    # providers present in configured pairs (enabled only)
     needed: set[str] = set()
     for p in (ctx.config.get("pairs") or []):
         if not p.get("enabled", True):
@@ -53,10 +48,7 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
         if not ops:
             continue
 
-        # Make provider packages (and their commons) see orchestrator context.
         inject_ctx_into_provider(ops, ctx)
-
-        # Health: try signature with emit first; fall back to simpler one.
         try:
             h = ops.health(ctx.config, emit=emit) or {}
         except TypeError:
@@ -65,8 +57,6 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
             h = {"ok": False, "status": "down", "details": f"health exception: {e}"}
 
         health_map[name] = h
-
-        # Human-friendly health event for the UI.
         emit(
             "health",
             provider=name,
@@ -78,7 +68,6 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
             api=(h.get("api") or {}),
         )
 
-        # If health includes API statuses, synthesize hits so totals aren’t zero.
         try:
             api_map = (h.get("api") or {})
             for ep, meta in (api_map.items() if isinstance(api_map, Mapping) else []):
@@ -92,12 +81,6 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
 
 
 def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
-    """
-    Resolve which features to run:
-    - If pair.feature is set and != 'multi' → run just that.
-    - Else if pair.features map is present → run the enabled ones.
-    - Else → fall back to common defaults.
-    """
     selector = str(pair.get("feature") or "").strip().lower()
     fmap = dict(pair.get("features") or {})
     if selector and selector != "multi":
@@ -162,7 +145,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
 
         features = _feature_list_for_pair(pair)
         
-        # skip pairs with no enabled features
         if not features:
             emit(
                 "run:pair:skip",

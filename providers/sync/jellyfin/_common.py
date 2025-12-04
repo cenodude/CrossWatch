@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional, Iterable, List, Tuple, Union
 import os, re, time, json
 
-try:
-    from cw_platform.id_map import minimal as id_minimal, canonical_key
-except Exception:
-    from _id_map import minimal as id_minimal, canonical_key  # type: ignore
+from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 _DEF_TYPES = {"movie", "show", "episode"}
 _IMDB_PAT  = re.compile(r"(?:tt)?(\d{5,9})$")

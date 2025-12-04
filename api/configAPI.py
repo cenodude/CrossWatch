@@ -1,36 +1,38 @@
 # _configAPI.py
 # CrossWatch - Configuration API for multiple services
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict
+
+from typing import Any
 
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
-def _env():
+def _env() -> dict[str, Any]:
     try:
         import crosswatch as CW
         from cw_platform import config_base
         from cw_platform.config_base import load_config, save_config
-        return {
-            "CW": CW,
-            "cfg_base": config_base,
-            "load": load_config,
-            "save": save_config,
-            "prune": getattr(CW, "_prune_legacy_ratings", lambda *_: None),
-            "ensure": getattr(CW, "_ensure_pair_ratings_defaults", lambda *_: None),
-            "norm_pair": getattr(CW, "_normalize_pair_ratings", lambda *_: None),
-            "probes_cache": getattr(CW, "PROBES_CACHE", None),
-            "probes_status_cache": getattr(CW, "PROBES_STATUS_CACHE", None),
-            "scheduler": getattr(CW, "scheduler", None),
-        }
-    except Exception:
+    except ImportError:
         return {
             "CW": None, "cfg_base": None,
             "load": lambda: {}, "save": lambda *_: None,
             "prune": lambda *_: None, "ensure": lambda *_: None, "norm_pair": lambda *_: None,
             "probes_cache": None, "probes_status_cache": None, "scheduler": None,
         }
+
+    return {
+        "CW": CW,
+        "cfg_base": config_base,
+        "load": load_config,
+        "save": save_config,
+        "prune": getattr(CW, "_prune_legacy_ratings", lambda *_: None),
+        "ensure": getattr(CW, "_ensure_pair_ratings_defaults", lambda *_: None),
+        "norm_pair": getattr(CW, "_normalize_pair_ratings", lambda *_: None),
+        "probes_cache": getattr(CW, "PROBES_CACHE", None),
+        "probes_status_cache": getattr(CW, "PROBES_STATUS_CACHE", None),
+        "scheduler": getattr(CW, "scheduler", None),
+    }
 
 def _nostore(res: JSONResponse) -> JSONResponse:
     res.headers["Cache-Control"] = "no-store"
@@ -49,7 +51,7 @@ def api_config() -> JSONResponse:
     return _nostore(JSONResponse(cfg))
 
 @router.post("/config")
-def api_config_save(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     env = _env()
     incoming = dict(payload or {})
     current  = dict(env["load"]() or {})
