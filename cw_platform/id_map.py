@@ -167,7 +167,7 @@ def _best_id_key(idmap: Mapping[str, str]) -> Optional[str]:
             return f"{k}:{v}".lower()
     return None
 
-def _show_id_from(item: Mapping[str, Any]) -> Optional[str]:.
+def _show_id_from(item: Mapping[str, Any]) -> Optional[str]:
     show_ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else None
     if show_ids:
         kid = _best_id_key(coalesce_ids(show_ids))
