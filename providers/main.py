@@ -1,20 +1,23 @@
 # providers/main.py
 # CrossWatch - Plex scrobbler to multiple services
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-from providers.scrobble.trakt.sink import TraktSink
-from providers.scrobble.plex.watch import make_default_watch
-from time import sleep
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
+from __future__ import annotations
 
-def main():
-    w = make_default_watch([TraktSink()])
+import time
+
+from providers.scrobble.plex.watch import make_default_watch
+from providers.scrobble.trakt.sink import TraktSink
+
+def main() -> None:
+    watcher = make_default_watch([TraktSink()])
     try:
-        w.start()
+        watcher.start()
         while True:
-            sleep(1)
+            time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
-        w.stop()
+        watcher.stop()
 
 if __name__ == "__main__":
     main()
