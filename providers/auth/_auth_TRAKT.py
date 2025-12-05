@@ -1,8 +1,29 @@
 # providers/auth/_auth_TRAKT.py
+# CrossWatch - Trakt Authentication Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import time, json
-from typing import Any, Dict, Optional
+
+import json
+import time
+from typing import Any
+
 import requests
+
+from cw_platform.config_base import load_config, save_config
+
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
 
 API = "https://api.trakt.tv"
 OAUTH_DEVICE_CODE = f"{API}/oauth/device/code"
@@ -12,56 +33,73 @@ VERIFY_URL = "https://trakt.tv/activate"
 
 __VERSION__ = "1.0.0"
 
-_H = {
+_H: dict[str, str] = {
     "Accept": "application/json",
     "Content-Type": "application/json",
     "trakt-api-version": "2",
 }
 
-def _post(url: str, json_payload: dict, client_id: str, timeout=20):
-    h = dict(_H); h["trakt-api-key"] = client_id
+def _post(url: str, json_payload: dict[str, Any], client_id: str, timeout: int = 20) -> dict[str, Any]:
+    h = dict(_H)
+    h["trakt-api-key"] = client_id
     try:
         r = requests.post(url, headers=h, json=json_payload, timeout=timeout)
     except Exception as e:
         return {"ok": False, "error": "network_error", "detail": str(e)}
     if not r.ok:
         text = ""
-        try: text = r.text[:500]
-        except Exception: pass
+        try:
+            text = r.text[:500]
+        except Exception:
+            pass
         return {"ok": False, "error": "http_error", "status": r.status_code, "body": text}
     try:
         return {"ok": True, "json": r.json()}
     except Exception:
         return {"ok": False, "error": "bad_json", "status": r.status_code, "body": r.text[:500]}
 
+
 def _now() -> int:
     return int(time.time())
 
-def _load_config() -> Dict[str, Any]:
-    try:
-        from crosswatch import load_config
-        return load_config()
-    except Exception:
-        with open("config.json", "r", encoding="utf-8") as f:
-            return json.load(f)
 
-def _save_config(cfg: Dict[str, Any]) -> None:
+def _load_config() -> dict[str, Any]:
+    # Keep legacy helper but delegate to central config handling
     try:
-        from crosswatch import save_config as _save
-        _save(cfg)
+        cfg = load_config()
+        if isinstance(cfg, dict):
+            return cfg
+        return dict(cfg)
     except Exception:
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
-def _client(cfg: Dict[str, Any]) -> Dict[str, str]:
-    tr = (cfg.get("trakt") or {})
+
+def _save_config(cfg: dict[str, Any]) -> None:
+    # Keep legacy helper but delegate to central config handling
+    try:
+        save_config(cfg)
+    except Exception:
+        try:
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+def _client(cfg: dict[str, Any]) -> dict[str, str]:
+    tr = cfg.get("trakt") or {}
     return {
         "client_id": (tr.get("client_id") or "").strip(),
         "client_secret": (tr.get("client_secret") or "").strip(),
     }
 
-def _headers(token: Optional[str] = None) -> Dict[str, str]:
-    h = {
+
+def _headers(token: str | None = None) -> dict[str, str]:
+    h: dict[str, str] = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "trakt-api-version": "2",
@@ -70,25 +108,36 @@ def _headers(token: Optional[str] = None) -> Dict[str, str]:
         h["Authorization"] = f"Bearer {token}"
     return h
 
+
 class _TraktProvider:
     name = "TRAKT"
     label = "Trakt"
 
-    def manifest(self) -> Dict[str, Any]:
+    def manifest(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "label": self.label,
             "flow": "device_pin",
             "fields": [
-                {"key": "trakt.client_id", "label": "Client ID", "type": "text", "required": True},
-                {"key": "trakt.client_secret", "label": "Client Secret", "type": "password", "required": True},
+                {
+                    "key": "trakt.client_id",
+                    "label": "Client ID",
+                    "type": "text",
+                    "required": True,
+                },
+                {
+                    "key": "trakt.client_secret",
+                    "label": "Client Secret",
+                    "type": "password",
+                    "required": True,
+                },
             ],
             "actions": {"start": True, "finish": True, "refresh": True, "disconnect": True},
             "verify_url": VERIFY_URL,
             "notes": "Open Trakt, enter the code, then return here. Client ID/Secret are required.",
         }
 
-    def html(self, cfg: Optional[Dict[str, Any]] = None) -> str:
+    def html(self, cfg: dict[str, Any] | None = None) -> str:
         return r'''<div class="section" id="sec-trakt">
     <style>
       #sec-trakt .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -178,7 +227,7 @@ class _TraktProvider:
     </div>
     '''
 
-    def start(self, cfg: Optional[Dict[str, Any]] = None, *, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
+    def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)
 
@@ -190,12 +239,17 @@ class _TraktProvider:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "trakt-api-version": "2",
-            "User-Agent": "CrossWatch/TraktAuth"
+            "User-Agent": "CrossWatch/TraktAuth",
         }
 
-        def _call(headers):
+        def _call(headers: dict[str, str]) -> tuple[requests.Response | None, int, str, dict[str, str]]:
             try:
-                r = requests.post(OAUTH_DEVICE_CODE, json={"client_id": cid}, headers=headers, timeout=20)
+                r = requests.post(
+                    OAUTH_DEVICE_CODE,
+                    json={"client_id": cid},
+                    headers=headers,
+                    timeout=20,
+                )
                 return r, r.status_code, (r.text or ""), dict(r.headers or {})
             except requests.RequestException as e:
                 return None, 0, str(e), {}
@@ -203,28 +257,30 @@ class _TraktProvider:
         r, status, text, hdrs = _call(headers_primary)
 
         if status != 200 or not r:
+            body = text if isinstance(text, str) else str(text)
             return {
                 "ok": False,
                 "error": "http_error",
                 "status": int(status),
-                "body": (text[:400] if isinstance(text, str) else str(text))[:400],
+                "body": body[:400],
                 "cf_ray": hdrs.get("CF-RAY"),
                 "content_type": hdrs.get("Content-Type"),
             }
 
         try:
-            data = r.json() or {}
+            data: dict[str, Any] = r.json() or {}
         except ValueError:
             return {"ok": False, "error": "invalid_json", "body": (text[:400] if text else "")}
 
-        user_code       = data.get("user_code") or ""
-        device_code     = data.get("device_code") or ""
-        verification_url= data.get("verification_url") or VERIFY_URL
-        interval        = int(data.get("interval", 5) or 5)
-        expires_at      = _now() + int(data.get("expires_in", 600) or 600)
+        user_code = data.get("user_code") or ""
+        device_code = data.get("device_code") or ""
+        verification_url = data.get("verification_url") or VERIFY_URL
+        interval = int(data.get("interval", 5) or 5)
+        expires_at = _now() + int(data.get("expires_in", 600) or 600)
 
         if not user_code or not device_code:
-            return {"ok": False, "error": "invalid_response", "body": (text[:400] if text else str(data))[:400]}
+            body = text if text else str(data)
+            return {"ok": False, "error": "invalid_response", "body": body[:400]}
 
         pend = {
             "user_code": user_code,
@@ -241,13 +297,13 @@ class _TraktProvider:
         out["ok"] = True
         return out
 
-    def finish(self, cfg: Optional[Dict[str, Any]] = None, *, device_code: Optional[str] = None) -> Dict[str, Any]:
+    def finish(self, cfg: dict[str, Any] | None = None, *, device_code: str | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)
         if not c["client_id"] or not c["client_secret"]:
             return {"ok": False, "status": "missing_client"}
 
-        pend = ((cfg.get("trakt") or {}).get("_pending_device") or {})
+        pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
         dc = device_code or pend.get("device_code")
         if not dc:
             return {"ok": False, "status": "no_device_code"}
@@ -268,15 +324,17 @@ class _TraktProvider:
             return {"ok": False, "status": err}
 
         r.raise_for_status()
-        tok = r.json() or {}
+        tok: dict[str, Any] = r.json() or {}
         tr = cfg.setdefault("trakt", {})
-        tr.update({
-            "access_token": tok.get("access_token"),
-            "refresh_token": tok.get("refresh_token"),
-            "scope": tok.get("scope") or "public",
-            "token_type": tok.get("token_type") or "bearer",
-            "expires_at": _now() + int(tok.get("expires_in", 0)),
-        })
+        tr.update(
+            {
+                "access_token": tok.get("access_token"),
+                "refresh_token": tok.get("refresh_token"),
+                "scope": tok.get("scope") or "public",
+                "token_type": tok.get("token_type") or "bearer",
+                "expires_at": _now() + int(tok.get("expires_in", 0)),
+            }
+        )
         try:
             tr.pop("_pending_device", None)
         except Exception:
@@ -289,10 +347,10 @@ class _TraktProvider:
         _save_config(cfg)
         return {"ok": True, "status": "ok"}
 
-    def refresh(self, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def refresh(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)
-        tr = (cfg.get("trakt") or {})
+        tr = cfg.get("trakt") or {}
         rt = tr.get("refresh_token")
         if not (c["client_id"] and c["client_secret"] and rt):
             return {"ok": False, "status": "missing_refresh"}
@@ -311,22 +369,31 @@ class _TraktProvider:
         if r.status_code >= 400:
             return {"ok": False, "status": f"refresh_failed:{r.status_code}"}
 
-        tok = r.json() or {}
-        tr.update({
-            "access_token": tok.get("access_token"),
-            "refresh_token": tok.get("refresh_token") or rt,
-            "scope": tok.get("scope") or "public",
-            "token_type": tok.get("token_type") or "bearer",
-            "expires_at": _now() + int(tok.get("expires_in", 0)),
-        })
+        tok: dict[str, Any] = r.json() or {}
+        tr.update(
+            {
+                "access_token": tok.get("access_token"),
+                "refresh_token": tok.get("refresh_token") or rt,
+                "scope": tok.get("scope") or "public",
+                "token_type": tok.get("token_type") or "bearer",
+                "expires_at": _now() + int(tok.get("expires_in", 0)),
+            }
+        )
         _save_config(cfg)
         return {"ok": True, "status": "ok"}
 
-    def disconnect(self, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def disconnect(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         tr = cfg.get("trakt")
         if isinstance(tr, dict):
-            for k in ("access_token","refresh_token","scope","token_type","expires_at","_pending_device"):
+            for k in (
+                "access_token",
+                "refresh_token",
+                "scope",
+                "token_type",
+                "expires_at",
+                "_pending_device",
+            ):
                 tr.pop(k, None)
         try:
             ((cfg.get("auth") or {}).get("trakt") or {}).clear()
@@ -337,6 +404,8 @@ class _TraktProvider:
 
 
 PROVIDER = _TraktProvider()
+__all__ = ["PROVIDER", "_TraktProvider", "html", "__VERSION__"]
+
 
 def html() -> str:
     try:

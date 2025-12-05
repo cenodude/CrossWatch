@@ -1,57 +1,73 @@
 # providers/auth/_auth_EMBY.py
+# CrossWatch - Emby Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import secrets
-from typing import Any, Mapping, MutableMapping, Optional, Dict
+from collections.abc import Mapping, MutableMapping
+from typing import Any
 from urllib.parse import urljoin
 
 try:
-    from _logging import log
-except Exception:
-    def log(msg: str, level: str = "INFO", module: str = "AUTH", **_):
-        try: print(f"[{module}] {level}: {msg}")
-        except Exception: pass
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
 
-from ._auth_base import AuthProvider, AuthStatus, AuthManifest
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
+
+from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
 UA = "CrossWatch/1.0"
 __VERSION__ = "1.0.0"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
 
-
 def _clean_base(url: str) -> str:
     u = (url or "").strip()
-    if not u: return ""
-    if not (u.startswith("http://") or u.startswith("https://")): u = "http://" + u
+    if not u:
+        return ""
+    if not (u.startswith("http://") or u.startswith("https://")):
+        u = "http://" + u
     return u if u.endswith("/") else u + "/"
 
 
-def _mb_auth_value(token: Optional[str], device_id: str) -> str:
-    base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0"'
+def _mb_auth_value(token: str | None, device_id: str) -> str:
+    base = (
+        f'MediaBrowser Client="CrossWatch", Device="Web", '
+        f'DeviceId="{device_id}", Version="1.0"'
+    )
     return f'{base}, Token="{token}"' if token else base
 
 
-def _headers(token: Optional[str], device_id: str) -> Dict[str, str]:
+def _headers(token: str | None, device_id: str) -> dict[str, str]:
     auth_val = _mb_auth_value(token, device_id)
-    h: Dict[str, str] = {
+    h: dict[str, str] = {
         "Accept": "application/json",
         "User-Agent": UA,
         "Authorization": auth_val,
         "X-Emby-Authorization": auth_val,
     }
-    if token: h["X-Emby-Token"] = token
+    if token:
+        h["X-Emby-Token"] = token
     return h
 
 
-def _raise_with_details(resp, default: str) -> None:
+def _raise_with_details(resp: Any, default: str) -> None:
     msg = default
     try:
         j = resp.json() or {}
-        msg = (j.get("ErrorMessage") or j.get("Message") or msg)
+        msg = j.get("ErrorMessage") or j.get("Message") or msg
     except Exception:
         t = (getattr(resp, "text", "") or "").strip()
-        if t: msg = f"{default}: {t[:200]}"
+        if t:
+            msg = f"{default}: {t[:200]}"
     try:
         resp.raise_for_status()
     except Exception as e:
@@ -68,20 +84,35 @@ class EmbyAuth(AuthProvider):
             label="Emby",
             flow="token",
             fields=[
-                {"key": "emby.server",   "label": "Server URL", "type": "text",     "required": True},
-                {"key": "emby.username", "label": "Username",   "type": "text",     "required": True},
-                {"key": "emby.password", "label": "Password",   "type": "password", "required": True},
+                {
+                    "key": "emby.server",
+                    "label": "Server URL",
+                    "type": "text",
+                    "required": True,
+                },
+                {
+                    "key": "emby.username",
+                    "label": "Username",
+                    "type": "text",
+                    "required": True,
+                },
+                {
+                    "key": "emby.password",
+                    "label": "Password",
+                    "type": "password",
+                    "required": True,
+                },
             ],
             actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
             notes="Sign in with your Emby account to obtain a user access token.",
         )
 
-    def capabilities(self) -> dict:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "features": {
                 "watchlist": {"read": True, "write": True},
-                "ratings":   {"read": True, "write": True},
-                "watched":   {"read": True, "write": True},
+                "ratings": {"read": True, "write": True},
+                "watched": {"read": True, "write": True},
                 "playlists": {"read": True, "write": True},
             },
             "entity_types": ["movie", "show", "episode"],
@@ -90,20 +121,22 @@ class EmbyAuth(AuthProvider):
     def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
         em = cfg.get("emby") or {}
         server = (em.get("server") or "").strip()
-        token  = (em.get("access_token") or "").strip()
-        user   = (em.get("user") or em.get("username") or "").strip() or None
+        token = (em.get("access_token") or "").strip()
+        user = (em.get("user") or em.get("username") or "").strip() or None
         return AuthStatus(connected=bool(server and token), label="Emby", user=user)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> Dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
         import requests
         from requests import exceptions as rx
 
         em = cfg.setdefault("emby", {})
         base = _clean_base(em.get("server", ""))
         user = (em.get("username") or "").strip()
-        pw   = (em.get("password") or "").strip()
-        if not base: raise RuntimeError("Malformed request: missing server")
-        if not user or not pw: raise RuntimeError("Malformed request: missing username/password")
+        pw = (em.get("password") or "").strip()
+        if not base:
+            raise RuntimeError("Malformed request: missing server")
+        if not user or not pw:
+            raise RuntimeError("Malformed request: missing username/password")
 
         dev_id = (em.get("device_id") or "").strip() or secrets.token_hex(16)
         em["device_id"] = dev_id
@@ -111,13 +144,11 @@ class EmbyAuth(AuthProvider):
 
         url = urljoin(base, "Users/AuthenticateByName")
         headers = _headers(token=None, device_id=dev_id)
-        
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         payload = {"Username": user, "Pw": pw}
 
         log("Emby: authenticating...", level="INFO", module="AUTH")
         try:
-
             r = requests.post(url, data=payload, headers=headers, timeout=(5, 10))
         except rx.ConnectTimeout:
             raise RuntimeError("Server not reachable: timeout")
@@ -132,20 +163,28 @@ class EmbyAuth(AuthProvider):
         except rx.RequestException as e:
             raise RuntimeError(f"Server not reachable: {e.__class__.__name__}")
 
-        if r.status_code in (401, 403): raise RuntimeError("Invalid credentials")
-        if r.status_code >= 500:        raise RuntimeError(f"Server error ({r.status_code})")
-        if not r.ok:                    _raise_with_details(r, "Login failed")
+        if r.status_code in (401, 403):
+            raise RuntimeError("Invalid credentials")
+        if r.status_code >= 500:
+            raise RuntimeError(f"Server error ({r.status_code})")
+        if not r.ok:
+            _raise_with_details(r, "Login failed")
 
         data = r.json() or {}
         token = (data.get("AccessToken") or "").strip()
-        if not token: raise RuntimeError("Login failed: no access token returned")
+        if not token:
+            raise RuntimeError("Login failed: no access token returned")
 
         user_obj = data.get("User") or {}
-        user_id  = (user_obj.get("Id") or "").strip()
-        display  = (user_obj.get("Name") or user).strip()
+        user_id = (user_obj.get("Id") or "").strip()
+        display = (user_obj.get("Name") or user).strip()
 
         try:
-            me = requests.get(urljoin(base, "Users/Me"), headers=_headers(token, dev_id), timeout=10)
+            me = requests.get(
+                urljoin(base, "Users/Me"),
+                headers=_headers(token, dev_id),
+                timeout=10,
+            )
             if me.ok:
                 info = me.json() or {}
                 display = (info.get("Name") or display).strip()
@@ -160,8 +199,7 @@ class EmbyAuth(AuthProvider):
         log("Emby: access token stored", level="SUCCESS", module="AUTH")
         return {"ok": True, "mode": "user_token", "user_id": em.get("user_id") or ""}
 
-
-    def finish(self, cfg: MutableMapping[str, Any], **payload) -> AuthStatus:
+    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
         return self.get_status(cfg)
 
     def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:

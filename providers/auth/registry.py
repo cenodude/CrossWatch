@@ -1,23 +1,26 @@
 # providers/auth/registry.py
+# CrossWatch - Auth Providers Registry
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import importlib
-import pkgutil
-import inspect
 import dataclasses
+import importlib
+import inspect
+import pkgutil
 from pathlib import Path
-from typing import Any, List, Dict, Optional
+from types import ModuleType
+from typing import Any
 
-# Package metadata
+
 PKG_NAME: str = __package__ or "providers.auth"
 try:
     import providers.auth as _authpkg
     PKG_PATHS = list(getattr(_authpkg, "__path__", []))
 except Exception:
-    PKG_PATHS = []
+    PKG_PATHS: list[str] = []
 
-# Disc. helper
-def _filesystem_module_names() -> List[str]:
+
+def _filesystem_module_names() -> list[str]:
     names: set[str] = set()
     for p in PKG_PATHS:
         try:
@@ -27,12 +30,12 @@ def _filesystem_module_names() -> List[str]:
                     continue
                 names.add(f.stem)
         except Exception:
-            # best-effort
             continue
     return sorted(names)
 
-def _pkgutil_module_names() -> List[str]:
-    names: List[str] = []
+
+def _pkgutil_module_names() -> list[str]:
+    names: list[str] = []
     for _, name, ispkg in pkgutil.iter_modules(PKG_PATHS):
         if ispkg:
             continue
@@ -43,38 +46,43 @@ def _pkgutil_module_names() -> List[str]:
         names.append(name)
     return sorted(names)
 
-def _discover_module_names() -> List[str]:
+
+def _discover_module_names() -> list[str]:
     s = set(_pkgutil_module_names()) | set(_filesystem_module_names())
     return sorted(s)
 
-def _safe_import(fullname: str):
+
+def _safe_import(fullname: str) -> ModuleType | None:
     try:
         return importlib.import_module(fullname)
     except Exception:
         return None
 
-def _iter_auth_modules():
+
+def _iter_auth_modules() -> list[ModuleType]:
     importlib.invalidate_caches()
+    mods: list[ModuleType] = []
     for modname in _discover_module_names():
         mod = _safe_import(f"{PKG_NAME}.{modname}")
         if mod is not None:
-            yield mod
+            mods.append(mod)
+    return mods
 
-# Extr.
-def _provider_from_module(mod):
+
+def _provider_from_module(mod: ModuleType) -> Any | None:
     prov = getattr(mod, "PROVIDER", None)
     if prov is not None:
         return prov
-
     for _, obj in inspect.getmembers(mod, inspect.isclass):
         if hasattr(obj, "manifest"):
             try:
-                return obj()  # type: ignore[call-arg]
+                return obj()  # type: ignore[misc]
             except Exception:
                 pass
     return None
 
-def _manifest_to_dict(man: Any) -> Dict[str, Any]:
+
+def _manifest_to_dict(man: Any) -> dict[str, Any]:
     if dataclasses.is_dataclass(man):
         return dataclasses.asdict(man)  # type: ignore[arg-type]
     if isinstance(man, dict):
@@ -82,9 +90,9 @@ def _manifest_to_dict(man: Any) -> Dict[str, Any]:
     d = getattr(man, "__dict__", None)
     return dict(d) if isinstance(d, dict) else {"name": str(man)}
 
-# API
-def auth_providers_manifests() -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+
+def auth_providers_manifests() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for mod in _iter_auth_modules():
         prov = _provider_from_module(mod)
         if prov is None:
@@ -96,7 +104,8 @@ def auth_providers_manifests() -> List[Dict[str, Any]]:
             continue
     return out
 
-def _module_html(mod) -> str:
+
+def _module_html(mod: ModuleType) -> str:
     prov = _provider_from_module(mod)
     if prov is not None and hasattr(prov, "html"):
         try:
@@ -105,18 +114,16 @@ def _module_html(mod) -> str:
                 return html
         except Exception:
             pass
-
     if hasattr(mod, "html"):
         try:
-            html = mod.html()  # type: ignore[call-arg]
+            html = mod.html()  # type: ignore[misc]
             if isinstance(html, str) and html.strip():
                 return html
         except Exception:
             pass
 
-    # Fallback:
     prov_name = getattr(prov, "name", getattr(mod, "__name__", "Auth"))
-    label = None
+    label: str | None
     try:
         m = prov.manifest() if prov else None
         label = getattr(m, "label", None) if m else None
@@ -131,8 +138,9 @@ def _module_html(mod) -> str:
         f'</div>'
     )
 
+
 def auth_providers_html() -> str:
-    frags: List[str] = []
+    frags: list[str] = []
     for mod in _iter_auth_modules():
         try:
             frags.append(_module_html(mod))

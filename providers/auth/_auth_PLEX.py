@@ -1,13 +1,35 @@
+# providers/auth/_auth_PLEX.py
+# CrossWatch - PLEX Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import time, requests, secrets
-from typing import Any, Mapping, MutableMapping
-from ._auth_base import AuthProvider, AuthStatus, AuthManifest
-from _logging import log
+
+import secrets
+import time
+from collections.abc import Mapping, MutableMapping
+from typing import Any
+
+import requests
+
+from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import save_config
 
-PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
-UA = "Crosswatch/1.0"
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
 
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
+
+PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
+UA = "CrossWatch/1.0"
+HTTP_TIMEOUT = 10
 __VERSION__ = "1.1.0"
 
 class PlexAuth(AuthProvider):
@@ -24,7 +46,7 @@ class PlexAuth(AuthProvider):
             notes="Open Plex, enter the PIN, then click 'Check PIN'.",
         )
 
-    def capabilities(self) -> dict:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "features": {
                 "watchlist": {"read": True, "write": True},
@@ -40,16 +62,15 @@ class PlexAuth(AuthProvider):
         token = (cfg.get("plex") or {}).get("account_token") or ""
         return AuthStatus(connected=bool(token), label="Plex")
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, str]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
         log("Plex: request PIN", level="INFO", module="AUTH")
         plex = cfg.setdefault("plex", {})
 
-        # ensure client_id exists and is persisted
         cid = plex.get("client_id")
         if not cid:
             cid = secrets.token_hex(12)
             plex["client_id"] = cid
-            save_config(cfg)
+            save_config(dict(cfg))
 
         headers = {
             "Accept": "application/json",
@@ -60,17 +81,21 @@ class PlexAuth(AuthProvider):
             "X-Plex-Platform": "Web",
         }
 
-        r = requests.post(PLEX_PIN_URL, headers=headers, timeout=10)
+        r = requests.post(PLEX_PIN_URL, headers=headers, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         j = r.json()
 
-        plex["_pending_pin"] = {"id": j["id"], "code": j["code"], "created": int(time.time())}
-        save_config(cfg)
+        plex["_pending_pin"] = {
+            "id": j["id"],
+            "code": j["code"],
+            "created": int(time.time()),
+        }
+        save_config(dict(cfg))
 
         log("Plex: PIN issued", level="SUCCESS", module="AUTH", extra={"pin_id": j["id"]})
         return {"pin": j["code"], "verify_url": "https://plex.tv/pin"}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload) -> AuthStatus:
+    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
         plex = cfg.setdefault("plex", {})
         pend = plex.get("_pending_pin") or {}
         if not pend:
@@ -88,14 +113,14 @@ class PlexAuth(AuthProvider):
                 "X-Plex-Client-Identifier": cfg.get("plex", {}).get("client_id", ""),
                 "X-Plex-Platform": "Web",
             },
-            timeout=10,
+            timeout=HTTP_TIMEOUT,
         )
         r.raise_for_status()
         j = r.json()
         if j.get("authToken"):
             plex["account_token"] = j["authToken"]
             plex.pop("_pending_pin", None)
-            save_config(cfg)
+            save_config(dict(cfg))
             log("Plex: token stored", level="SUCCESS", module="AUTH")
         else:
             log("Plex: token not ready", level="INFO", module="AUTH")
@@ -106,13 +131,17 @@ class PlexAuth(AuthProvider):
         return self.get_status(cfg)
 
     def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        cfg.setdefault("plex", {}).pop("account_token", None)
-        cfg["plex"].pop("_pending_pin", None)
-        save_config(cfg)
+        plex = cfg.setdefault("plex", {})
+        plex.pop("account_token", None)
+        plex.pop("_pending_pin", None)
+        save_config(dict(cfg))
         log("Plex: disconnected", level="INFO", module="AUTH")
         return self.get_status(cfg)
 
+
 PROVIDER = PlexAuth()
+__all__ = ["PROVIDER", "PlexAuth", "html", "__VERSION__"]
+
 
 def html() -> str:
     return r'''<div class="section" id="sec-plex">
@@ -429,7 +458,6 @@ def html() -> str:
 
       if (usedHelpers) return;
 
-      // fallback:
       try{
         const r = await fetch("/api/plex/libraries?ts="+Date.now(), { cache:"no-store" });
         const j = await r.json();

@@ -1,18 +1,37 @@
 # providers/auth/_auth_MDBLIST.py
+# CrossWatch - MDBList Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Mapping, MutableMapping
+
+from collections.abc import Mapping, MutableMapping
+from typing import Any
+
 import requests
 
-from ._auth_base import AuthProvider, AuthStatus, AuthManifest
-from _logging import log
+from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import save_config
+
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
 
 API_BASE = "https://api.mdblist.com"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
 __VERSION__ = "1.0.0"
 
-def _get(cfg: Mapping[str, Any], path: str, timeout: int = HTTP_TIMEOUT) -> tuple[int, dict]:
+
+def _get(cfg: Mapping[str, Any], path: str, timeout: int = HTTP_TIMEOUT) -> tuple[int, dict[str, Any]]:
     key = ((cfg.get("mdblist") or {}).get("api_key") or "").strip()
     if not key:
         return 0, {}
@@ -22,10 +41,11 @@ def _get(cfg: Mapping[str, Any], path: str, timeout: int = HTTP_TIMEOUT) -> tupl
     except Exception:
         return 0, {}
     try:
-        j = r.json()
+        j: dict[str, Any] = r.json()
     except Exception:
         j = {}
     return r.status_code, j
+
 
 class MDBListAuth(AuthProvider):
     name = "MDBLIST"
@@ -35,12 +55,20 @@ class MDBListAuth(AuthProvider):
             name="MDBLIST",
             label="MDBList",
             flow="api_keys",
-            fields=[{"key": "mdblist.api_key", "label": "API Key", "type": "password", "required": True, "placeholder": "••••••••"}],
+            fields=[
+                {
+                    "key": "mdblist.api_key",
+                    "label": "API Key",
+                    "type": "password",
+                    "required": True,
+                    "placeholder": "••••••••",
+                }
+            ],
             actions={"start": False, "finish": True, "refresh": False, "disconnect": True},
             notes="Generate your API key in mdblist.com > Preferences.",
         )
 
-    def capabilities(self) -> dict:
+    def capabilities(self) -> dict[str, Any]:
         return {"watchlist": True, "ratings": True, "history": True}
 
     def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
@@ -50,10 +78,10 @@ class MDBListAuth(AuthProvider):
     def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
         return {}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload) -> AuthStatus:
+    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
         key = (payload.get("api_key") or payload.get("mdblist.api_key") or "").strip()
         cfg.setdefault("mdblist", {})["api_key"] = key
-        save_config(cfg)
+        save_config(dict(cfg))
         log("MDBList API key saved.", module="AUTH")
         return self.get_status(cfg)
 
@@ -62,9 +90,10 @@ class MDBListAuth(AuthProvider):
 
     def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
         cfg.setdefault("mdblist", {})["api_key"] = ""
-        save_config(cfg)
+        save_config(dict(cfg))
         log("MDBList disconnected.", module="AUTH")
         return self.get_status(cfg)
+
 
 def html() -> str:
     return r"""<div class="section" id="sec-mdblist">

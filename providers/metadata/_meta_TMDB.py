@@ -1,24 +1,39 @@
 # providers/metadata/_meta_TMDB.py
+# CrossWatch - TMDb Metadata Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Mapping, List, Tuple
 import hashlib
-import time
 import random
-import requests
+import time
+from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
+from typing import Any, Callable
 
-from _logging import log
+import requests
+
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
+def log(msg: str, level: str = "INFO", module: str = "META", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
 
 IMG_BASE = "https://image.tmdb.org/t/p"
 
-
 class TmdbProvider:
     name = "TMDB"
-    UA = "Crosswatch/1.0"
-    
+    UA = "CrossWatch/1.0"
+
     @staticmethod
-    def manifest() -> Dict[str, Any]:
+    def manifest() -> dict[str, Any]:
         return {
             "id": "tmdb",
             "name": "TMDB",
@@ -28,12 +43,14 @@ class TmdbProvider:
             "version": "1.0",
         }
 
-    def __init__(self, load_cfg, save_cfg) -> None:
+    def __init__(
+        self,
+        load_cfg: Callable[[], dict[str, Any]],
+        save_cfg: Callable[[dict[str, Any]], None],
+    ) -> None:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
-        self._cache: dict[str, tuple[float, Any]] = {}  # sha1 -> (ts, payload)
-
-    # Helpers
+        self._cache: dict[str, tuple[float, Any]] = {}
 
     def _apikey(self) -> str:
         cfg = self.load_cfg() or {}
@@ -62,12 +79,11 @@ class TmdbProvider:
         max_ms = int(md.get("backoff_max_ms", 4000))
         return max(0, max_retries), max(0.05, base_ms / 1000.0), max(0.1, max_ms / 1000.0)
 
-    # HTTP /w caching
     def _retry_delay(self, attempt: int, base_s: float, max_s: float) -> float:
-        delay = min(max_s, base_s * (2 ** attempt))
+        delay = min(max_s, base_s * (2**attempt))
         return delay + random.uniform(0.0, 0.25)
 
-    def _seconds_from_retry_after(self, header: str) -> Optional[float]:
+    def _seconds_from_retry_after(self, header: str | None) -> float | None:
         if not header:
             return None
         header = header.strip()
@@ -75,7 +91,7 @@ class TmdbProvider:
             return float(header)
         try:
             dt = parsedate_to_datetime(header)
-            return max(0.0, (dt.timestamp() - time.time()))
+            return max(0.0, dt.timestamp() - time.time())
         except Exception:
             return None
 
@@ -84,7 +100,7 @@ class TmdbProvider:
         lvl = "INFO" if int(status or 0) == 404 else "WARNING"
         log(f"{msg}: {exc}", level=lvl, module="META")
 
-    def _get(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
         q = dict(params or {})
         q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
@@ -111,7 +127,7 @@ class TmdbProvider:
                     if attempt >= max_retries:
                         r.raise_for_status()
                     retry_after = self._seconds_from_retry_after(r.headers.get("Retry-After", ""))
-                    delay = retry_after if (retry_after is not None) else self._retry_delay(attempt, base_s, max_s)
+                    delay = retry_after if retry_after is not None else self._retry_delay(attempt, base_s, max_s)
                     time.sleep(delay)
                     attempt += 1
                     continue
@@ -138,9 +154,8 @@ class TmdbProvider:
                 time.sleep(self._retry_delay(attempt, base_s, max_s))
                 attempt += 1
 
-    # Helpers Norml.
     @staticmethod
-    def _safe_int_year(s: Optional[str]) -> Optional[int]:
+    def _safe_int_year(s: str | None) -> int | None:
         if not s:
             return None
         if len(s) >= 4 and s[:4].isdigit():
@@ -148,7 +163,7 @@ class TmdbProvider:
         return None
 
     @staticmethod
-    def _locale_cc(locale: Optional[str]) -> Optional[str]:
+    def _locale_cc(locale: str | None) -> str | None:
         if not locale:
             return None
         parts = str(locale).replace("_", "-").split("-")
@@ -157,10 +172,10 @@ class TmdbProvider:
         return None
 
     @staticmethod
-    def _pick_first(arr):
+    def _pick_first(arr: list[Any] | None) -> Any | None:
         return arr[0] if isinstance(arr, list) and arr else None
 
-    def _images(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> Dict[str, list]:
+    def _images(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> dict[str, list[dict[str, Any]]]:
         want_poster = bool(need.get("poster"))
         want_back = bool(need.get("backdrop"))
         want_logo = bool(need.get("logo"))
@@ -178,25 +193,43 @@ class TmdbProvider:
         backs = imgs.get("backdrops") or []
         logos = imgs.get("logos") or []
 
-        out: Dict[str, list] = {}
+        out: dict[str, list[dict[str, Any]]] = {}
         if want_poster:
             out["poster"] = [
-                {"url": f"{IMG_BASE}/w780{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                for p in posters if p.get("file_path")
+                {
+                    "url": f"{IMG_BASE}/w780{p['file_path']}",
+                    "w": p.get("width"),
+                    "h": p.get("height"),
+                    "lang": p.get("iso_639_1"),
+                }
+                for p in posters
+                if p.get("file_path")
             ]
         if want_back:
             out["backdrop"] = [
-                {"url": f"{IMG_BASE}/w1280{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                for p in backs if p.get("file_path")
+                {
+                    "url": f"{IMG_BASE}/w1280{p['file_path']}",
+                    "w": p.get("width"),
+                    "h": p.get("height"),
+                    "lang": p.get("iso_639_1"),
+                }
+                for p in backs
+                if p.get("file_path")
             ]
         if want_logo:
             out["logo"] = [
-                {"url": f"{IMG_BASE}/w500{p['file_path']}", "w": p.get("width"), "h": p.get("height"), "lang": p.get("iso_639_1")}
-                for p in logos if p.get("file_path")
+                {
+                    "url": f"{IMG_BASE}/w500{p['file_path']}",
+                    "w": p.get("width"),
+                    "h": p.get("height"),
+                    "lang": p.get("iso_639_1"),
+                }
+                for p in logos
+                if p.get("file_path")
             ]
         return out
 
-    def _videos(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> List[Dict[str, Any]]:
+    def _videos(self, tmdb_id: str, kind: str, lang: str, need: Mapping[str, bool]) -> list[dict[str, Any]]:
         if not need.get("videos"):
             return []
         include = f"{lang[:2]},{lang},null" if lang else "en,null"
@@ -205,23 +238,30 @@ class TmdbProvider:
             data = self._get(f"{base}/movie/{tmdb_id}/videos", {"include_video_language": include})
         else:
             data = self._get(f"{base}/tv/{tmdb_id}/videos", {"include_video_language": include})
-        out = []
+        out: list[dict[str, Any]] = []
         for v in data.get("results", []) or []:
             site = (v.get("site") or "").strip()
             key = (v.get("key") or "").strip()
             if not site or not key:
                 continue
-            out.append({
-                "site": site,
-                "key": key,
-                "type": v.get("type"),
-                "official": bool(v.get("official")),
-                "name": v.get("name"),
-                "published_at": v.get("published_at"),
-            })
+            out.append(
+                {
+                    "site": site,
+                    "key": key,
+                    "type": v.get("type"),
+                    "official": bool(v.get("official")),
+                    "name": v.get("name"),
+                    "published_at": v.get("published_at"),
+                }
+            )
         return out
 
-    def _movie_cert_and_release(self, tmdb_id: str, lang: str, locale: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _movie_cert_and_release(
+        self,
+        tmdb_id: str,
+        lang: str,
+        locale: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
         base = "https://api.themoviedb.org/3"
         try:
             data = self._get(f"{base}/movie/{tmdb_id}/release_dates")
@@ -229,8 +269,8 @@ class TmdbProvider:
             self._log_exc("TMDb release_dates failed", e)
             return None, None, None
 
-        def pick(results, cc) -> Tuple[Optional[str], Optional[str]]:
-            rows = [r for r in results if (r.get("iso_3166_1") == cc)]
+        def pick(results: list[dict[str, Any]], cc: str | None) -> tuple[str | None, str | None]:
+            rows = [r for r in results if r.get("iso_3166_1") == cc]
             if not rows:
                 return None, None
             rels = rows[0].get("release_dates") or []
@@ -244,8 +284,9 @@ class TmdbProvider:
             return None, None
 
         cc_pref = self._locale_cc(locale)
-        cert, date = (None, None)
-        used_cc = None
+        cert: str | None = None
+        date: str | None = None
+        used_cc: str | None = None
 
         for cc in [cc_pref, "US", None]:
             if cc is None:
@@ -265,7 +306,7 @@ class TmdbProvider:
 
         return cert, date, used_cc
 
-    def _tv_cert(self, tmdb_id: str, locale: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    def _tv_cert(self, tmdb_id: str, locale: str | None) -> tuple[str | None, str | None]:
         base = "https://api.themoviedb.org/3"
         try:
             data = self._get(f"{base}/tv/{tmdb_id}/content_ratings")
@@ -276,7 +317,7 @@ class TmdbProvider:
         cc_pref = self._locale_cc(locale)
         results = data.get("results") or []
 
-        def pick(cc):
+        def pick(cc: str | None) -> tuple[str | None, str | None]:
             for r in results:
                 if r.get("iso_3166_1") == cc and r.get("rating"):
                     return r.get("rating"), cc
@@ -295,16 +336,14 @@ class TmdbProvider:
 
         return None, None
 
-    # API
     def fetch(
         self,
         *,
         entity: str,
-        ids: Dict[str, str],
-        locale: Optional[str] = None,
-        need: Optional[Dict[str, bool]] = None,
-    ) -> dict:
-
+        ids: dict[str, str],
+        locale: str | None = None,
+        need: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
         need = need or {"poster": True, "backdrop": True}
         ent_in = (entity or "").lower().strip()
         if ent_in in {"show", "shows"}:
@@ -314,13 +353,12 @@ class TmdbProvider:
 
         tmdb_id = str(ids.get("tmdb") or ids.get("id") or "").strip()
         imdb_id = (ids.get("imdb") or "").strip()
-        title   = (ids.get("title") or "").strip()
+        title = (ids.get("title") or "").strip()
         year_in = (ids.get("year") or "").strip()
 
-        lang = (locale or "en-US")
+        lang = locale or "en-US"
         base = "https://api.themoviedb.org/3"
 
-        # Resolve TMDb id if missing
         if not tmdb_id and imdb_id:
             try:
                 found = self._get(f"{base}/find/{imdb_id}", {"external_source": "imdb_id"})
@@ -344,7 +382,7 @@ class TmdbProvider:
         if not tmdb_id and title:
             try:
                 if ent_in == "movie":
-                    q = {"query": title, "language": lang}
+                    q: dict[str, Any] = {"query": title, "language": lang}
                     if year_in:
                         q["year"] = year_in
                     res = self._get(f"{base}/search/movie", q)
@@ -363,11 +401,10 @@ class TmdbProvider:
         if not tmdb_id:
             return {}
 
-        # Details
-        det = None
+        det: dict[str, Any] | None = None
         kind = "movie" if ent_in == "movie" else "tv"
 
-        def _get_details(k: str):
+        def _get_details(k: str) -> dict[str, Any]:
             return self._get(f"{base}/{k}/{tmdb_id}", {"language": lang})
 
         try:
@@ -389,7 +426,6 @@ class TmdbProvider:
             self._log_exc("TMDb detail fetch failed", e)
             return {}
 
-        # Normalize by kind
         if kind == "movie":
             title_out = det.get("title") or det.get("original_title")
             year = self._safe_int_year(det.get("release_date"))
@@ -397,10 +433,14 @@ class TmdbProvider:
             runtime_minutes = runtime if isinstance(runtime, int) and runtime > 0 else None
             overview = det.get("overview") if need.get("overview") else None
             tagline = det.get("tagline") if need.get("tagline") else None
-            genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
+            genres = (
+                [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")]
+                if need.get("genres")
+                else None
+            )
             vote_avg = det.get("vote_average")
             score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
-            detail = {"release_date": det.get("release_date")}
+            detail: dict[str, Any] = {"release_date": det.get("release_date")}
         else:
             title_out = det.get("name") or det.get("original_name")
             year = self._safe_int_year(det.get("first_air_date"))
@@ -409,7 +449,11 @@ class TmdbProvider:
             runtime_minutes = ep_runtime
             overview = det.get("overview") if need.get("overview") else None
             tagline = det.get("tagline") if need.get("tagline") else None
-            genres = [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")] if need.get("genres") else None
+            genres = (
+                [g["name"] for g in (det.get("genres") or []) if isinstance(g, dict) and g.get("name")]
+                if need.get("genres")
+                else None
+            )
             vote_avg = det.get("vote_average")
             score = round(float(vote_avg) * 10) if isinstance(vote_avg, (int, float)) else None
             detail = {
@@ -418,22 +462,19 @@ class TmdbProvider:
                 "number_of_seasons": det.get("number_of_seasons"),
             }
 
-        #  Images
-        images = {}
+        images: dict[str, list[dict[str, Any]]] = {}
         try:
             images = self._images(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb images fetch failed", e)
 
-        # Videos
-        videos = []
+        videos: list[dict[str, Any]] = []
         try:
             videos = self._videos(tmdb_id, kind, lang, need)
         except Exception as e:
             self._log_exc("TMDb videos fetch failed", e)
 
-        # External IDs
-        extra_ids = {}
+        extra_ids: dict[str, Any] = {}
         if need.get("ids"):
             try:
                 if kind == "movie":
@@ -443,7 +484,8 @@ class TmdbProvider:
                         extra_ids["imdb"] = imdb_out
                 else:
                     data = self._get(f"{base}/tv/{tmdb_id}/external_ids")
-                    imdb_out = data.get("imdb_id"); tvdb_out = data.get("tvdb_id")
+                    imdb_out = data.get("imdb_id")
+                    tvdb_out = data.get("tvdb_id")
                     if imdb_out:
                         extra_ids["imdb"] = imdb_out
                     if tvdb_out:
@@ -451,8 +493,9 @@ class TmdbProvider:
             except Exception as e:
                 self._log_exc("TMDb external IDs fetch failed", e)
 
-        # Certification / release
-        certification = None; release_iso = None; release_cc = None
+        certification: str | None = None
+        release_iso: str | None = None
+        release_cc: str | None = None
         try:
             if kind == "movie" and (need.get("certification") or need.get("release")):
                 certification, release_iso, release_cc = self._movie_cert_and_release(tmdb_id, lang, locale)
@@ -461,7 +504,7 @@ class TmdbProvider:
         except Exception as e:
             self._log_exc("TMDb certification/release failed", e)
 
-        out: Dict[str, Any] = {
+        out: dict[str, Any] = {
             "type": "movie" if kind == "movie" else "tv",
             "ids": {"tmdb": str(tmdb_id), **extra_ids} if extra_ids else {"tmdb": str(tmdb_id)},
             "title": title_out,
@@ -470,23 +513,35 @@ class TmdbProvider:
             "images": images or {},
             "detail": detail,
         }
-        if overview: out["overview"] = overview
-        if tagline: out["tagline"] = tagline
-        if genres is not None: out["genres"] = genres
-        if score is not None: out["score"] = score
-        if videos: out["videos"] = videos
-        if certification: out["certification"] = certification
-        if release_iso: out["release"] = {"date": release_iso, "country": release_cc}
+        if overview:
+            out["overview"] = overview
+        if tagline:
+            out["tagline"] = tagline
+        if genres is not None:
+            out["genres"] = genres
+        if score is not None:
+            out["score"] = score
+        if videos:
+            out["videos"] = videos
+        if certification:
+            out["certification"] = certification
+        if release_iso:
+            out["release"] = {"date": release_iso, "country": release_cc}
 
         return out
 
-def build(load_cfg, save_cfg):
+
+def build(
+    load_cfg: Callable[[], dict[str, Any]],
+    save_cfg: Callable[[dict[str, Any]], None],
+) -> TmdbProvider:
     return TmdbProvider(load_cfg, save_cfg)
+
 
 PROVIDER = TmdbProvider
 
+
 def html() -> str:
-    # Minimal TMDb settings UI: API key + two Advanced fields (locale, ttl_hours)
     return r'''<div class="section" id="sec-tmdb">
   <style>
     #sec-tmdb details.advanced { border: 1px dashed var(--border); border-radius: 12px; background: #0b0d12; padding: 8px 10px; margin-top: 4px; }

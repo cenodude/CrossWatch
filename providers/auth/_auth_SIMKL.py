@@ -1,14 +1,34 @@
+# providers/auth/_auth_SIMKL.py
+# CrossWatch - SIMKL Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import time, requests
-from typing import Any, Mapping, MutableMapping
+
+import time
+from collections.abc import Mapping, MutableMapping
+from typing import Any
 from urllib.parse import urlencode
-from ._auth_base import AuthProvider, AuthStatus, AuthManifest
-from _logging import log
+
+import requests
+
+from ._auth_base import AuthManifest, AuthProvider, AuthStatus
+
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
 
 SIMKL_AUTH = "https://simkl.com/oauth/authorize"
 SIMKL_TOKEN = "https://api.simkl.com/oauth/token"
-UA = "Crosswatch/1.0"
-
+UA = "CrossWatch/1.0"
 __VERSION__ = "1.0.0"
 
 class SimklAuth(AuthProvider):
@@ -20,14 +40,24 @@ class SimklAuth(AuthProvider):
             label="SIMKL",
             flow="oauth",
             fields=[
-                {"key": "simkl.client_id", "label": "Client ID", "type": "text", "required": True},
-                {"key": "simkl.client_secret", "label": "Client Secret", "type": "password", "required": True},
+                {
+                    "key": "simkl.client_id",
+                    "label": "Client ID",
+                    "type": "text",
+                    "required": True,
+                },
+                {
+                    "key": "simkl.client_secret",
+                    "label": "Client Secret",
+                    "type": "password",
+                    "required": True,
+                },
             ],
             actions={"start": True, "finish": False, "refresh": True, "disconnect": True},
             notes="Authorize with SIMKL; you'll be redirected back to the app.",
         )
 
-    def capabilities(self) -> dict:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "features": {
                 "watchlist": {"read": True, "write": True},
@@ -50,7 +80,7 @@ class SimklAuth(AuthProvider):
             scopes=s.get("scopes") or None,
         )
 
-    def _apply_token_response(self, cfg: MutableMapping[str, Any], j: dict) -> None:
+    def _apply_token_response(self, cfg: MutableMapping[str, Any], j: dict[str, Any]) -> None:
         s = cfg.setdefault("simkl", {})
         if j.get("access_token"):
             s["access_token"] = j["access_token"]
@@ -73,8 +103,9 @@ class SimklAuth(AuthProvider):
         if j.get("scope"):
             s["scopes"] = j["scope"]
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, str]:
-        client_id = (cfg.get("simkl") or {}).get("client_id") or ""
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
+        s = cfg.get("simkl") or {}
+        client_id = s.get("client_id") or ""
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -85,7 +116,7 @@ class SimklAuth(AuthProvider):
         log("SIMKL: start OAuth", level="INFO", module="AUTH", extra={"redirect_uri": redirect_uri})
         return {"url": url}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload) -> AuthStatus:
+    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
         s = cfg.setdefault("simkl", {})
         data = {
             "grant_type": "authorization_code",
@@ -140,7 +171,10 @@ class SimklAuth(AuthProvider):
         log("SIMKL: disconnected", level="INFO", module="AUTH")
         return self.get_status(cfg)
 
+
 PROVIDER = SimklAuth()
+__all__ = ["PROVIDER", "SimklAuth", "html", "__VERSION__"]
+
 
 def html() -> str:
     return r'''<div class="section" id="sec-simkl">
