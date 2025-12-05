@@ -1,14 +1,15 @@
 # cw_platform/config_base.py
-# CrossWatch - Configuration Base
+# configuration management base.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import copy
 import json
 import os
-import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any
+
 
 def CONFIG_BASE() -> Path:
     env = os.getenv("CONFIG_BASE")
@@ -20,11 +21,12 @@ def CONFIG_BASE() -> Path:
         return Path("/config")
     return Path(__file__).resolve().parents[1]
 
+
 CONFIG: Path = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)
 
-# Default config 
-DEFAULT_CFG: Dict[str, Any] = {
+# Default config
+DEFAULT_CFG: dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
         "server_url": "",                               # http(s)://host:32400 (required for sync & watcher). If empty, we discover & persist.
@@ -71,8 +73,8 @@ DEFAULT_CFG: Dict[str, Any] = {
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
     },
-    
-     "mdblist": {
+
+    "mdblist": {
         "api_key": "",                                  # Your MDBList API key
         "timeout": 10,                                  # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget
@@ -82,11 +84,11 @@ DEFAULT_CFG: Dict[str, Any] = {
         "ratings_max_pages": 50,                        # Max pages per type
         "ratings_chunk_size": 25,                       # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
-        "ratings_max_backoff_ms": 8000                  # Max backoff time for retries     
+        "ratings_max_backoff_ms": 8000                  # Max backoff time for retries
     },
 
     "trakt": {
-        "client_id": "",                                # From your Trakt app  
+        "client_id": "",                                # From your Trakt app
         "client_secret": "",                            # From your Trakt app
         "access_token": "",                             # OAuth2 access token
         "refresh_token": "",                            # OAuth2 refresh token
@@ -117,7 +119,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "history_collection": False,                    # mirroring history adds into your Trakt Collection
 
         "_pending_device": {
-            "user_code": "",                            # Temporary device code state for PIN login 
+            "user_code": "",                            # Temporary device code state for PIN login
             "device_code": "",                          # Temporary device code state for PIN login
             "verification_url": "https://trakt.tv/activate",
             "interval": 5,                              # Polling interval (seconds)
@@ -168,7 +170,7 @@ DEFAULT_CFG: Dict[str, Any] = {
             "libraries": []                             # whitelist of library GUIDs; empty = all
         },
     },
-    
+
     "emby": {
         "server": "",                                   # http(s)://host:port (required)
         "access_token": "",                             # Emby access token (required)
@@ -209,15 +211,15 @@ DEFAULT_CFG: Dict[str, Any] = {
             "libraries": []                             # whitelist of library GUIDs; empty = all
         },
     },
-    
+
     "crosswatch": {
         "root_dir":         "/config/.cw_provider",    # Root folder for local provider state
         "enabled":          True,                      # Enable/disable CrossWatch as sync provider
         "retention_days":   30,                        # Snapshot retention in days; 0 = keep forever
         "auto_snapshot":    True,                      # Take snapshot before mutating main JSONs
         "max_snapshots":    64,                        # Max snapshots per feature; 0 = unlimited
-        "restore_watchlist": "latest",                 # "", "latest", or specific snapshot name/stem      
-        "restore_history": "latest",                   # "", "latest", or specific snapshot name/stem  
+        "restore_watchlist": "latest",                 # "", "latest", or specific snapshot name/stem
+        "restore_history": "latest",                   # "", "latest", or specific snapshot name/stem
         "restore_ratings": "latest"                    # "", "latest", or specific snapshot name/stem
     },
 
@@ -327,34 +329,37 @@ DEFAULT_CFG: Dict[str, Any] = {
         "every_n_hours": 2,                             # When mode=hourly, run every N hours (1–12)
         "daily_time": "03:30",                          # When mode=daily, run at this time (HH:MM, 24h)
     },
-    
+
     # --- User Interface ------------------------------------------------------
     "ui": {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
-        "show_playingcard": True,                       # Show Now Playing card on Main tab 
+        "show_playingcard": True,                       # Show Now Playing card on Main tab
     },
 
     # --- Pairs (UI-driven) ---------------------------------------------------
     "pairs": [],
 }
 
+
 # Helpers: paths, IO, merging, normalization
 def _cfg_file() -> Path:
     return CONFIG / "config.json"
 
+
 def config_path() -> Path:
-    """Public accessor kept for compatibility."""
     return _cfg_file()
 
 
-def _read_json(p: Path) -> Dict[str, Any]:
+def _read_json(p: Path) -> dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
-def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
+
+def _write_json_atomic(p: Path, data: dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
-    import os, time, secrets, threading
-    suffix = f".{time.time_ns()}.{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
+    import os as _os, time as _time, secrets, threading
+
+    suffix = f".{_time.time_ns()}.{_os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
     tmp = p.with_suffix(suffix)
 
     with tmp.open("w", encoding="utf-8", newline="\n") as f:
@@ -362,8 +367,9 @@ def _write_json_atomic(p: Path, data: Dict[str, Any]) -> None:
         f.write("\n")
     tmp.replace(p)
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    out = copy.deepcopy(base)
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = copy.deepcopy(base)
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _deep_merge(out[k], v)  # type: ignore[assignment]
@@ -371,11 +377,13 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
             out[k] = v
     return out
 
-# Feature normalization
-_ALLOWED_RATING_TYPES: List[str] = ["movies", "shows", "seasons", "episodes"]
-_ALLOWED_RATING_MODES: List[str] = ["only_new", "from_date", "all"]
 
-def _as_list(value: Any) -> List[str]:
+# Feature normalization
+_ALLOWED_RATING_TYPES: list[str] = ["movies", "shows", "seasons", "episodes"]
+_ALLOWED_RATING_MODES: list[str] = ["only_new", "from_date", "all"]
+
+
+def _as_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
@@ -384,8 +392,9 @@ def _as_list(value: Any) -> List[str]:
         return [str(x) for x in value if isinstance(x, (str, int, float))]
     return []
 
-def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
-    v = dict(val or {})
+
+def _normalize_ratings_feature(val: dict[str, Any]) -> dict[str, Any]:
+    v: dict[str, Any] = dict(val or {})
     v["enable"] = bool(v.get("enable", False))
     v["add"] = bool(v.get("add", False))
     v["remove"] = bool(v.get("remove", False))
@@ -400,6 +409,7 @@ def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
         if not types:
             types = ["movies", "shows"]
     v["types"] = types
+
     mode = str(v.get("mode", "only_new")).strip().lower()
     if mode not in _ALLOWED_RATING_MODES:
         mode = "only_new"
@@ -412,15 +422,16 @@ def _normalize_ratings_feature(val: Dict[str, Any]) -> Dict[str, Any]:
 
     return v
 
-def _normalize_features_map(features: dict | None) -> dict:
-    f = dict(features or {})
+
+def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
+    f: dict[str, Any] = dict(features or {})
     for name, val in list(f.items()):
         if isinstance(val, bool):
             f[name] = {"enable": bool(val), "add": bool(val), "remove": False}
             continue
 
         if isinstance(val, dict):
-            v = dict(val)
+            v: dict[str, Any] = dict(val)
             v.setdefault("enable", True)
             v.setdefault("add", True)
             v.setdefault("remove", False)
@@ -430,14 +441,16 @@ def _normalize_features_map(features: dict | None) -> dict:
                 v = _normalize_ratings_feature(v)
             f[name] = v
             continue
-        # Unknown 
+
+        # Unknown
         f[name] = {"enable": False, "add": False, "remove": False}
     return f
 
+
 # Public API
-def load_config() -> Dict[str, Any]:
+def load_config() -> dict[str, Any]:
     p = _cfg_file()
-    user_cfg: Dict[str, Any] = {}
+    user_cfg: dict[str, Any] = {}
     if p.exists():
         try:
             user_cfg = _read_json(p)
@@ -449,15 +462,16 @@ def load_config() -> Dict[str, Any]:
     if isinstance(pairs, list):
         for it in pairs:
             if isinstance(it, dict):
-                it["features"] = _normalize_features_map(it.get("features"))
+                it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
     return cfg
 
-def save_config(cfg: Dict[str, Any]) -> None:
-    data = dict(cfg or {})
+
+def save_config(cfg: dict[str, Any]) -> None:
+    data: dict[str, Any] = dict(cfg or {})
     pairs = data.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
             if isinstance(it, dict):
-                it["features"] = _normalize_features_map(it.get("features"))
+                it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
 
     _write_json_atomic(_cfg_file(), data)

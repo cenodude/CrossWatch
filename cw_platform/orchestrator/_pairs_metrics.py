@@ -1,15 +1,18 @@
+# cw_platform/orchestration/_pairs_metrics.py
+# Pairs metrics handling for the orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional, Callable
+from collections.abc import Mapping, Callable
+from typing import Any
 import time
 
-# API telemetry used by _pairs.py.
 class ApiMetrics:
     def __init__(self, emit: Callable[..., Any]) -> None:
         self._orig_emit = emit
-        self._hits: Dict[str, Dict[str, Any]] = {}  # provider -> buckets
+        self._hits: dict[str, dict[str, Any]] = {}
 
     @property
-    def hits(self) -> Dict[str, Dict[str, Any]]:
+    def hits(self) -> dict[str, dict[str, Any]]:
         return self._hits
 
     def emit(self, event: str, **kwargs):
@@ -22,8 +25,8 @@ class ApiMetrics:
             pass
         return self._orig_emit(event, **kwargs)
 
-    def totals(self) -> Dict[str, Any]:
-        out = {"total": 0, "providers": {}}
+    def totals(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"total": 0, "providers": {}}
         for prov, data in self._hits.items():
             total = int(data.get("total") or 0)
             samples = int(data.get("latency_ms_samples") or 0)
@@ -41,8 +44,7 @@ class ApiMetrics:
             out["total"] += total
         return out
 
-    # Int
-    def _prov_entry(self, p: str) -> Dict[str, Any]:
+    def _prov_entry(self, p: str) -> dict[str, Any]:
         p = str(p or "UNKNOWN").upper()
         ent = self._hits.setdefault(
             p,
@@ -59,12 +61,7 @@ class ApiMetrics:
         return ent
 
     def _on_api_hit(self, kw: Mapping[str, Any]) -> None:
-        provider = (
-            kw.get("provider")
-            or kw.get("dst")
-            or kw.get("src")
-            or "UNKNOWN"
-        )
+        provider = kw.get("provider") or kw.get("dst") or kw.get("src") or "UNKNOWN"
         ent = self._prov_entry(provider)
         ent["total"] += 1
 
@@ -102,7 +99,7 @@ class ApiMetrics:
         except Exception:
             pass
 
-    def _on_api_totals(self, totals: Optional[Mapping[str, Any]]) -> None:
+    def _on_api_totals(self, totals: Mapping[str, Any] | None) -> None:
         if not isinstance(totals, Mapping):
             return
         providers = totals.get("providers") or {}
@@ -123,8 +120,9 @@ class ApiMetrics:
             sub = pdata.get(key) or {}
             if isinstance(sub, Mapping):
                 for k, v in sub.items():
-                    ent[key][str(k)] = int(ent[key].get(str(k), 0)) + int(v or 0)
-  
+                    sk = str(k)
+                    ent[key][sk] = int(ent[key].get(sk, 0)) + int(v or 0)
+
         sum_ms = pdata.get("latency_ms_sum")
         samples = pdata.get("latency_ms_samples")
         try:
@@ -134,7 +132,7 @@ class ApiMetrics:
         except Exception:
             pass
 
-def persist_api_totals(ctx, totals: Mapping[str, Any], *, ts: Optional[int] = None) -> None:
+def persist_api_totals(ctx, totals: Mapping[str, Any], *, ts: int | None = None) -> None:
     try:
         st = ctx.state_store.load_state() or {}
         st.setdefault("metrics", {}).setdefault("api", {})

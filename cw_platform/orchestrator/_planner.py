@@ -1,21 +1,32 @@
+# cw_platform/orchestrator/_planner.py
+# planner helpers for orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, List, Mapping, Tuple, Optional
+from collections.abc import Mapping
+from typing import Any
+
 from ..id_map import minimal
 
-# Presence diff (generic)
-def diff(src_idx: Mapping[str, Any], dst_idx: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    add, rem = [], []
+# Presence helpers
+def diff(
+    src_idx: Mapping[str, Any],
+    dst_idx: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    add: list[dict[str, Any]] = []
+    rem: list[dict[str, Any]] = []
+
     for k, v in src_idx.items():
         if k not in dst_idx:
             add.append(minimal(v))
+
     for k, v in dst_idx.items():
         if k not in src_idx:
             rem.append(minimal(v))
+
     return add, rem
 
-
 # Ratings helpers
-def _norm_rating(v: Any) -> Optional[int]:
+def _norm_rating(v: Any) -> int | None:
     if v is None:
         return None
     try:
@@ -33,8 +44,7 @@ def _norm_rating(v: Any) -> Optional[int]:
     n = int(round(f))
     return n if 1 <= n <= 10 else None
 
-
-def _pick_rating(d: Any) -> Optional[int]:
+def _pick_rating(d: Any) -> int | None:
     if not isinstance(d, dict):
         return None
     return _norm_rating(
@@ -44,14 +54,15 @@ def _pick_rating(d: Any) -> Optional[int]:
         or d.get("value")
     )
 
-def _pick_rated_at(d: Any) -> Optional[str]:
+
+def _pick_rated_at(d: Any) -> str | None:
     if not isinstance(d, dict):
         return None
     v = (d.get("rated_at") or d.get("ratedAt") or d.get("user_rated_at") or "").strip()
     return v or None
 
 
-def _ts_epoch(s: Optional[str]) -> Optional[int]:
+def _ts_epoch(s: str | None) -> int | None:
     if not s:
         return None
     s = str(s).strip()
@@ -63,12 +74,16 @@ def _ts_epoch(s: Optional[str]) -> Optional[int]:
             return None
     try:
         from datetime import datetime, timezone
-        return int(datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp())
+        return int(
+            datetime.fromisoformat(s.replace("Z", "+00:00"))
+            .astimezone(timezone.utc)
+            .timestamp()
+        )
     except Exception:
         return None
 
 
-def _pack_minimal_with_rating(item: Dict[str, Any], rating: int) -> Dict[str, Any]:
+def _pack_minimal_with_rating(item: Mapping[str, Any], rating: int) -> dict[str, Any]:
     it = minimal(item)
     it["rating"] = rating
     ra = _pick_rated_at(item)
@@ -76,14 +91,15 @@ def _pack_minimal_with_rating(item: Dict[str, Any], rating: int) -> Dict[str, An
         it["rated_at"] = ra
     return it
 
+
 def diff_ratings(
     src_idx: Mapping[str, Any],
     dst_idx: Mapping[str, Any],
     *,
     propagate_timestamp_updates: bool = False,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    upserts: List[Dict[str, Any]] = []
-    unrates: List[Dict[str, Any]] = []
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    upserts: list[dict[str, Any]] = []
+    unrates: list[dict[str, Any]] = []
 
     for k, sv in (src_idx or {}).items():
         rs = _pick_rating(sv)

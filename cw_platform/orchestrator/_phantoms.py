@@ -1,10 +1,14 @@
-# Feature-agnostic phantom guard (compact, TTL-aware, blackbox-ready)
+# cw_platform/orchestrator/_phantoms.py
+# phantom item management for orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from pathlib import Path
-from typing import Iterable, Mapping, Any, List, Set, Dict
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, TypeVar
 import json, os, time
 
 _DIR = "/config/.cw_state"
+T = TypeVar("T", bound=Mapping[str, Any])
 
 class PhantomGuard:
     def __init__(self, src: str, dst: str, feature: str, ttl_days: int | None = None, enabled: bool = True):
@@ -14,10 +18,9 @@ class PhantomGuard:
         self._ttl = int(ttl_days) if ttl_days else None
         self._enabled = bool(enabled)
 
-    # Utils
     def _now(self) -> int: return int(time.time())
 
-    def _read_keys(self, p: Path) -> Set[str]:
+    def _read_keys(self, p: Path) -> set[str]:
         try:
             obj = json.loads(p.read_text("utf-8"))
             if isinstance(obj, list):
@@ -25,9 +28,8 @@ class PhantomGuard:
             if isinstance(obj, dict):
                 if isinstance(obj.get("keys"), list):
                     return set(obj["keys"])
-
                 cutoff = (self._now() - self._ttl * 86400) if self._ttl else None
-                out = set()
+                out: set[str] = set()
                 for k, ts in obj.items():
                     if cutoff is None or int(ts or 0) >= cutoff:
                         out.add(k)
@@ -36,7 +38,7 @@ class PhantomGuard:
             pass
         return set()
 
-    def _read_map(self, p: Path) -> Dict[str, int]:
+    def _read_map(self, p: Path) -> dict[str, int]:
         try:
             obj = json.loads(p.read_text("utf-8"))
             if isinstance(obj, dict) and not isinstance(obj.get("keys"), list):
@@ -70,30 +72,45 @@ class PhantomGuard:
             pass
 
     # API
-    def filter_adds(self, adds: List[Mapping[str, Any]], keyfn, minimal, emit, state_store, pair_key: str):
+    def filter_adds(
+        self,
+        adds: Sequence[T],
+        keyfn,
+        minimal,
+        emit,
+        state_store,
+        pair_key: str,
+    ) -> tuple[list[T], int]:
         if not self._enabled or not adds:
-            return adds, 0
+            return list(adds), 0
         last_ok = self._read_keys(self._lf)
         ph_file = self._read_keys(self._pf)
         planned = [keyfn(it) for it in adds]
         phantoms = (set(planned) & last_ok) | ph_file
         if not phantoms:
-            return adds, 0
-
-        blocked = [it for it in adds if keyfn(it) in phantoms]
-        keep    = [it for it in adds if keyfn(it) not in phantoms]
+            return list(adds), 0
+        blocked: list[T] = [it for it in adds if keyfn(it) in phantoms]
+        keep: list[T] = [it for it in adds if keyfn(it) not in phantoms]
         self._save_minimals(blocked, minimal)
         try:
             for k in {keyfn(it) for it in blocked}:
                 state_store.blackbox_put(pair_key, k, reason="phantom-replan")
         except Exception:
             pass
-        emit("blocked.counts", feature="*", dst=pair_key.split("-")[-1], pair=pair_key,
-             blocked_global_tomb=0, blocked_pair_tomb=0, blocked_unresolved=0,
-             blocked_blackbox=len(blocked), blocked_total=len(blocked))
+        emit(
+            "blocked.counts",
+            feature="*",
+            dst=pair_key.split("-")[-1],
+            pair=pair_key,
+            blocked_global_tomb=0,
+            blocked_pair_tomb=0,
+            blocked_unresolved=0,
+            blocked_blackbox=len(blocked),
+            blocked_total=len(blocked),
+        )
         return keep, len(blocked)
 
-    def record_success(self, successful_keys: Iterable[str]):
+    def record_success(self, successful_keys: Iterable[str]) -> None:
         if not self._enabled:
             return
         cur = self._read_map(self._lf)

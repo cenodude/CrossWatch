@@ -1,5 +1,9 @@
+# cw_platform/orchestration/_pairs_utils.py
+# Utility functions for data pair synchronization.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional
+from collections.abc import Mapping, Callable
+from typing import Any
 import importlib
 
 def supports_feature(ops, feature: str) -> bool:
@@ -10,14 +14,15 @@ def supports_feature(ops, feature: str) -> bool:
     except Exception:
         return True
 
-def resolve_flags(fcfg: Any, sync_cfg: Dict[str, Any]) -> Dict[str, bool]:
+def resolve_flags(fcfg: Any, sync_cfg: Mapping[str, Any] | None) -> dict[str, bool]:
     fcfg = fcfg if isinstance(fcfg, dict) else {}
+    cfg = sync_cfg or {}
     allow_adds = fcfg.get("add")
     if allow_adds is None:
-        allow_adds = bool((sync_cfg or {}).get("enable_add", True))
+        allow_adds = bool(cfg.get("enable_add", True))
     allow_removals = fcfg.get("remove")
     if allow_removals is None:
-        allow_removals = bool((sync_cfg or {}).get("enable_remove", False))
+        allow_removals = bool(cfg.get("enable_remove", False))
     return {"allow_adds": bool(allow_adds), "allow_removals": bool(allow_removals)}
 
 def apply_verify_supported(ops) -> bool:
@@ -30,14 +35,13 @@ def apply_verify_supported(ops) -> bool:
 def apply_verify_after_write_supported(ops) -> bool:
     return apply_verify_supported(ops)
 
-
-def health_status(h: Optional[Mapping[str, Any]]) -> str:
+def health_status(h: Mapping[str, Any] | None) -> str:
     try:
         return str((h or {}).get("status") or "").lower()
     except Exception:
         return ""
 
-def health_feature_ok(h: Optional[Mapping[str, Any]], feature: str) -> bool:
+def health_feature_ok(h: Mapping[str, Any] | None, feature: str) -> bool:
     try:
         feats = (h or {}).get("features") or {}
         val = feats.get(feature)
@@ -45,20 +49,25 @@ def health_feature_ok(h: Optional[Mapping[str, Any]], feature: str) -> bool:
     except Exception:
         return True
 
-
-def rate_remaining(h: Optional[Mapping[str, Any]]) -> Optional[int]:
+def rate_remaining(h: Mapping[str, Any] | None) -> int | None:
     try:
         api = (h or {}).get("api") or {}
+        if not isinstance(api, Mapping):
+            return None
         rate = api.get("rate_limit") or {}
-        return int(rate.get("remaining"))
+        if not isinstance(rate, Mapping):
+            return None
+        val = rate.get("remaining")
+        if val is None:
+            return None
+        return int(val)
     except Exception:
         return None
-
 
 def inject_ctx_into_provider(ops, ctx) -> None:
     try:
         try:
-            setattr(ops, "ctx", ctx)  # instance attribute hook
+            setattr(ops, "ctx", ctx)
         except Exception:
             pass
 
@@ -79,7 +88,7 @@ def inject_ctx_into_provider(ops, ctx) -> None:
                 modname.replace("_mod_PLEX", "_mod_common")
                       .replace("_mod_TRAKT", "_mod_common")
                       .replace("_mod_SIMKL", "_mod_common")
-                      .replace("_mod_JELLYFIN", "_mod_common")
+                      .replace("_mod_JELLYFIN", "_mod_common"),
             }
             for cname in candidates:
                 try:
@@ -91,7 +100,6 @@ def inject_ctx_into_provider(ops, ctx) -> None:
             pass
     except Exception:
         pass
-
 
 def pair_key(a: str, b: str, *, mode: str = "two-way", src: str | None = None, dst: str | None = None) -> str:
     try:
@@ -105,7 +113,6 @@ def pair_key(a: str, b: str, *, mode: str = "two-way", src: str | None = None, d
     A, B = str(a).upper(), str(b).upper()
     return "-".join(sorted([A, B]))
 
-# ---------------------------------------------------------------------------
 _supports_feature = supports_feature
 _resolve_flags = resolve_flags
 _apply_verify_after_write_supported = apply_verify_after_write_supported

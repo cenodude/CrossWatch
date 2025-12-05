@@ -1,4 +1,4 @@
-# _editorAPI.py
+# api/editorAPI.py
 # CrossWatch - Tracker editor API for history / ratings / watchlist
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations

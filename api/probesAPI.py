@@ -626,9 +626,8 @@ def _pair_ready(cfg: dict[str, Any], pair: dict[str, Any]) -> bool:
     b = _name(pair.get("target") or pair.get("b") or pair.get("dst") or pair.get("to"))
     return bool(_prov_configured(cfg, a) and _prov_configured(cfg, b))
 
-
 def _safe_probe_detail(
-    fn: Callable[[dict[str, Any], int], tuple[bool, str]],
+    fn: Callable[..., tuple[bool, str]],
     cfg: dict[str, Any],
     max_age_sec: int = 0,
 ) -> tuple[bool, str]:
@@ -637,9 +636,8 @@ def _safe_probe_detail(
     except Exception as e:
         return False, f"probe failed: {e}"
 
-
 def _safe_userinfo(
-    fn: Callable[[dict[str, Any], int], dict[str, Any]],
+    fn: Callable[..., dict[str, Any]],
     cfg: dict[str, Any],
     max_age_sec: int = 0,
 ) -> dict[str, Any]:
@@ -647,7 +645,6 @@ def _safe_userinfo(
         return fn(cfg, max_age_sec=max_age_sec) or {}
     except Exception:
         return {}
-
 
 # Connection status
 def connected_status(cfg: dict[str, Any]) -> tuple[bool, bool, bool, bool, bool, bool, bool]:
@@ -662,7 +659,7 @@ def connected_status(cfg: dict[str, Any]) -> tuple[bool, bool, bool, bool, bool,
 
 
 # Mappings
-DETAIL_PROBES: dict[str, Callable[[dict[str, Any], int], tuple[bool, str]]] = {
+DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "PLEX": _probe_plex_detail,
     "SIMKL": _probe_simkl_detail,
     "TRAKT": _probe_trakt_detail,
@@ -670,7 +667,7 @@ DETAIL_PROBES: dict[str, Callable[[dict[str, Any], int], tuple[bool, str]]] = {
     "EMBY": _probe_emby_detail,
     "MDBLIST": _probe_mdblist_detail,
 }
-USERINFO_FNS: dict[str, Callable[[dict[str, Any], int], dict[str, Any]]] = {
+USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
     "TRAKT": trakt_user_info,
     "EMBY": emby_user_info,

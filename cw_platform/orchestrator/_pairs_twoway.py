@@ -1,15 +1,15 @@
-#  cw_platform/orchestration/_pairs_twoway.py
-#  Two-way synchronization logic for data pairs.
-#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-
+# cw_platform/orchestration/_pairs_twoway.py
+# Two-way synchronization logic for data pairs.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, List, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from ._planner import diff, diff_ratings
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
-    def _rate_filter(x, _): return x
+    def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]: return idx
 
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
@@ -21,7 +21,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove
 from ._tombstones import keys_for_feature, cascade_removals
 from ._unresolved import load_unresolved_keys, record_unresolved
-from ._phantoms import PhantomGuard
+from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_massdelete
@@ -37,13 +37,13 @@ from ._pairs_utils import (
 try:
     from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
 except Exception:
-    def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> set[str]:
+    def load_blackbox_keys(dst: str, feature: str, pair: str | None = None) -> set[str]:
         return set()
-    def record_attempts(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
+    def record_attempts(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
         return {"ok": True, "count": 0}
-    def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
+    def record_success(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
         return {"ok": True, "count": 0}
-    
+
 _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
@@ -55,11 +55,11 @@ def _effective_library_whitelist(
     provider_name: str,
     feature: str,
     fcfg: Mapping[str, Any],
-) -> List[str]:
+) -> list[str]:
     if feature not in ("history", "ratings"):
         return []
 
-    libs: List[str] = []
+    libs: list[str] = []
     lib_cfg = fcfg.get("libraries")
     if isinstance(lib_cfg, dict):
         per = lib_cfg.get(provider_name.upper()) or lib_cfg.get(provider_name.lower())
@@ -83,7 +83,7 @@ def _effective_library_whitelist(
 
     return []
 
-def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str, Any]:
+def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str, Any]:
     if not libs or not idx:
         return dict(idx)
 
@@ -91,7 +91,7 @@ def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str
     if not allowed:
         return dict(idx)
 
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for ck, item in idx.items():
         v = item or {}
         lid = (
@@ -122,10 +122,9 @@ def _two_way_sync(
     feature: str,
     fcfg: Mapping[str, Any],
     health_map: Mapping[str, Any],
-    include_observed_override: Optional[bool] = None,
-) -> Dict[str, Any]:
+    include_observed_override: bool | None = None,
+) -> dict[str, Any]:
     import time as _t
-    from typing import Any as _Any, Dict as _Dict, List as _List, Mapping as _Mapping
 
     cfg, emit, info, dbg = ctx.config, ctx.emit, ctx.emit_info, ctx.dbg
     sync_cfg = (cfg.get("sync") or {})
@@ -169,7 +168,7 @@ def _two_way_sync(
         include_obs_A = False
         include_obs_B = False
 
-    def _cap_obsdel(ops) -> Optional[bool]:
+    def _cap_obsdel(ops) -> bool | None:
         try:
             v = (ops.capabilities() or {}).get("observed_deletes")
             return None if v is None else bool(v)
@@ -270,8 +269,7 @@ def _two_way_sync(
 
     A_eff = (dict(prevA) | dict(A_cur)) if a_sem == "delta" else dict(A_eff_guard)
     B_eff = (dict(prevB) | dict(B_cur)) if b_sem == "delta" else dict(B_eff_guard)
-    
-    # --- pair-level library whitelist for media servers (history/ratings) -----
+
     libs_A = _effective_library_whitelist(cfg, a, feature, fcfg)
     libs_B = _effective_library_whitelist(cfg, b, feature, fcfg)
 
@@ -284,7 +282,7 @@ def _two_way_sync(
         prevB = _filter_index_by_libraries(prevB, libs_B)
         B_cur = _filter_index_by_libraries(B_cur, libs_B)
         B_eff = _filter_index_by_libraries(B_eff, libs_B)
-        
+
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600
@@ -342,8 +340,8 @@ def _two_way_sync(
     for k in list(obsA): A_eff.pop(k, None)
     for k in list(obsB): B_eff.pop(k, None)
 
-    def _alias_index(idx: _Dict[str, _Dict[str, _Any]]) -> _Dict[str, str]:
-        m: _Dict[str, str] = {}
+    def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
+        m: dict[str, str] = {}
         for ck, it in (idx or {}).items():
             ids = (it.get("ids") or {})
             for k, v in (ids or {}).items():
@@ -351,7 +349,7 @@ def _two_way_sync(
                 m[f"{k}:{str(v).lower()}"] = ck
         return m
 
-    def _present(idx: Dict[str, Any], alias: Dict[str, str], it: Mapping[str, Any]) -> bool:
+    def _present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
         if ck in idx: return True
         ids = (it.get("ids") or {})
@@ -393,7 +391,7 @@ def _two_way_sync(
     except Exception:
         tombX = set(tomb)
 
-    def _prev_had(prev_idx: Dict[str, Any], prev_alias: Dict[str, str], it: Mapping[str, Any]) -> bool:
+    def _prev_had(prev_idx: dict[str, Any], prev_alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
         if ck in prev_idx: return True
         try:
@@ -404,10 +402,10 @@ def _two_way_sync(
             pass
         return False
 
-    add_to_A: List[Dict[str, Any]] = []
-    add_to_B: List[Dict[str, Any]] = []
-    rem_from_A: List[Dict[str, Any]] = []
-    rem_from_B: List[Dict[str, Any]] = []
+    add_to_A: list[dict[str, Any]] = []
+    add_to_B: list[dict[str, Any]] = []
+    rem_from_A: list[dict[str, Any]] = []
+    rem_from_B: list[dict[str, Any]] = []
 
     if feature == "ratings":
         A_f = _rate_filter(A_eff, fcfg)
@@ -499,12 +497,12 @@ def _two_way_sync(
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
 
-    resA_rem = {"ok": True, "count": 0}
-    resB_rem = {"ok": True, "count": 0}
+    resA_rem: dict[str, Any] = {"ok": True, "count": 0}
+    resB_rem: dict[str, Any] = {"ok": True, "count": 0}
     remA_keys = [_ck(_minimal(it)) for it in (rem_from_A or []) if _ck(_minimal(it))]
     remB_keys = [_ck(_minimal(it)) for it in (rem_from_B or []) if _ck(_minimal(it))]
 
-    def _mark_tombs(items: List[Dict[str, Any]]) -> None:
+    def _mark_tombs(items: list[dict[str, Any]]) -> None:
         try:
             now_ts = int(_t.time())
             tomb = ctx.state_store.load_tomb() or {}
@@ -597,8 +595,8 @@ def _two_way_sync(
                  errors=int(resB_rem.get("errors", 0)),
                  result=resB_rem)
 
-    resA_add = {"ok": True, "count": 0}
-    resB_add = {"ok": True, "count": 0}
+    resA_add: dict[str, Any] = {"ok": True, "count": 0}
+    resB_add: dict[str, Any] = {"ok": True, "count": 0}
     eff_add_A = 0
     eff_add_B = 0
     unresolved_new_A_total = 0
@@ -648,8 +646,10 @@ def _two_way_sync(
                     record_attempts(a, feature, failed_A,
                                     reason="two:apply:add:failed", op="add",
                                     pair=pair_key, cfg=cfg)
-                    failed_items_A = [k2i_A.get(k) for k in failed_A if k2i_A.get(k)]
-                    if failed_items_A: record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
+                    failed_items_A = [k2i_A[k] for k in failed_A if k in k2i_A]
+                    if failed_items_A:
+                        record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
+
                 if confirmed_A:
                     record_success(a, feature, confirmed_A, pair=pair_key, cfg=cfg)
                 if use_phantoms and 'guardA' in locals() and guardA and eff_add_A and confirmed_A:
@@ -716,8 +716,10 @@ def _two_way_sync(
                     record_attempts(b, feature, failed_B,
                                     reason="two:apply:add:failed", op="add",
                                     pair=pair_key, cfg=cfg)
-                    failed_items_B = [k2i_B.get(k) for k in failed_B if k2i_B.get(k)]
-                    if failed_items_B: record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
+                    failed_items_B = [k2i_B[k] for k in failed_B if k in k2i_B]
+                    if failed_items_B:
+                        record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
+
                 if confirmed_B:
                     record_success(b, feature, confirmed_B, pair=pair_key, cfg=cfg)
                 if use_phantoms and 'guardB' in locals() and guardB and eff_add_B and confirmed_B:
@@ -808,7 +810,7 @@ def run_two_way_feature(
     feature: str,
     fcfg: Mapping[str, Any],
     health_map: Mapping[str, Any],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     emit = ctx.emit
 

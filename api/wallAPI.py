@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 from typing import Any
-
 from fastapi import FastAPI, Query
 
 from cw_platform.config_base import load_config
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
 from .syncAPI import _load_state
-
 
 def _load_wall_snapshot() -> list[dict[str, Any]]:
     try:

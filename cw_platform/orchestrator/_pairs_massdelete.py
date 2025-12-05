@@ -1,8 +1,11 @@
+# cw_platform/orchestration/_massdelete.py
+# Mass delete protection for the orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, List
+from typing import Any
 
 def maybe_block_mass_delete(
-    rem_list: List[Dict[str, Any]],
+    rem_list: list[dict[str, Any]],
     baseline_size: int,
     *,
     allow_mass_delete: bool,
@@ -11,8 +14,7 @@ def maybe_block_mass_delete(
     dbg,
     dst_name: str,
     feature: str,
-) -> List[Dict[str, Any]]:
-
+) -> list[dict[str, Any]]:
     try:
         if allow_mass_delete or not rem_list:
             return rem_list
@@ -22,15 +24,25 @@ def maybe_block_mass_delete(
 
         if len(rem_list) > max(threshold, 0):
             try:
-                emit("mass_delete:blocked",
-                     dst=dst_name, feature=feature,
-                     attempted=len(rem_list), baseline=baseline_size, threshold=threshold)
+                emit(
+                    "mass_delete:blocked",
+                    dst=dst_name,
+                    feature=feature,
+                    attempted=len(rem_list),
+                    baseline=baseline_size,
+                    threshold=threshold,
+                )
             except Exception:
                 pass
             try:
-                dbg("mass_delete.block",
-                    dst=dst_name, feature=feature,
-                    attempted=len(rem_list), baseline=baseline_size, threshold=threshold)
+                dbg(
+                    "mass_delete.block",
+                    dst=dst_name,
+                    feature=feature,
+                    attempted=len(rem_list),
+                    baseline=baseline_size,
+                    threshold=threshold,
+                )
             except Exception:
                 pass
             return []
@@ -39,5 +51,4 @@ def maybe_block_mass_delete(
 
     return rem_list
 
-# Backwards-compat alias
 _maybe_block_mass_delete = maybe_block_mass_delete

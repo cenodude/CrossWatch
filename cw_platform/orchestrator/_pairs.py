@@ -1,5 +1,10 @@
+# cw_platform/orchestration/_pairs.py
+# Main orchestration logic for data pair synchronization.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional, Set
+from collections.abc import Mapping
+from typing import Any
+
 from ._pairs_utils import (
     inject_ctx_into_provider,
     health_status,
@@ -11,10 +16,10 @@ from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 
 try:
-    from ._blackbox import prune_once as _bb_prune_once  # type: ignore
+    from ._blackbox import prune_once as _bb_prune_once  # type: ignore[attr-defined]
 except Exception:
     try:
-        from ._blackbox import prune_blackbox as _bb_prune  # type: ignore
+        from ._blackbox import prune_blackbox as _bb_prune  # type: ignore[attr-defined]
 
         def _bb_prune_once(cfg: Mapping[str, Any]) -> None:
             try:
@@ -24,14 +29,15 @@ except Exception:
             except Exception:
                 pass
     except Exception:  # last resort: no-op
-        def _bb_prune_once(cfg: Mapping[str, Any]) -> None:
+        def _bb_prune_once(cfg: Mapping[str, Any]) -> None:  # type: ignore[unused-arg]
             return
 
-# Jealth check
-def _collect_health_for_run(ctx) -> Dict[str, Any]:
+
+def _collect_health_for_run(ctx) -> dict[str, Any]:
     emit = ctx.emit
     provs = ctx.providers or {}
     needed: set[str] = set()
+
     for p in (ctx.config.get("pairs") or []):
         if not p.get("enabled", True):
             continue
@@ -42,8 +48,8 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
         if t:
             needed.add(t)
 
-    health_map: Dict[str, Any] = {}
-    for name in sorted(N for N in needed):
+    health_map: dict[str, Any] = {}
+    for name in sorted(n for n in needed):
         ops = provs.get(name)
         if not ops:
             continue
@@ -70,10 +76,11 @@ def _collect_health_for_run(ctx) -> Dict[str, Any]:
 
         try:
             api_map = (h.get("api") or {})
-            for ep, meta in (api_map.items() if isinstance(api_map, Mapping) else []):
-                st = (meta or {}).get("status")
-                if st is not None:
-                    emit("api:hit", provider=name, endpoint=f"health:{ep}", status=st)
+            if isinstance(api_map, Mapping):
+                for ep, meta in api_map.items():
+                    st = (meta or {}).get("status")
+                    if st is not None:
+                        emit("api:hit", provider=name, endpoint=f"health:{ep}", status=st)
         except Exception:
             pass
 
@@ -86,7 +93,7 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
     if selector and selector != "multi":
         return [selector]
     if fmap:
-        out = []
+        out: list[str] = []
         for fname, fcfg in fmap.items():
             if isinstance(fcfg, dict):
                 if bool(fcfg.get("enable", True)):
@@ -99,8 +106,9 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
         return out
     return ["watchlist", "ratings", "history", "playlists"]
 
-def run_pairs(ctx) -> Dict[str, Any]:
-    cfg = ctx.config or {}
+
+def run_pairs(ctx) -> dict[str, Any]:
+    cfg: dict[str, Any] = ctx.config or {}
     sync_cfg = (cfg.get("sync") or {})
     emit_info = ctx.emit_info
     emit_dbg = ctx.dbg
@@ -132,7 +140,7 @@ def run_pairs(ctx) -> Dict[str, Any]:
     pairs = [p for p in (cfg.get("pairs") or []) if p.get("enabled", True)]
     provs = ctx.providers or {}
 
-    features_ran: Set[str] = set()
+    features_ran: set[str] = set()
 
     for i, pair in enumerate(pairs, 1):
         src = str(pair.get("source") or "").upper().strip()
@@ -144,7 +152,6 @@ def run_pairs(ctx) -> Dict[str, Any]:
         used_defaults = (not selector_raw or selector_raw == "multi") and not feat_map
 
         features = _feature_list_for_pair(pair)
-        
         if not features:
             emit(
                 "run:pair:skip",
@@ -196,8 +203,10 @@ def run_pairs(ctx) -> Dict[str, Any]:
                     src=src,
                     dst=dst,
                     feature=feature,
-                    src_supported=supports_feature(sops, feature) and health_feature_ok(health_map.get(src), feature),
-                    dst_supported=supports_feature(dops, feature) and health_feature_ok(health_map.get(dst), feature),
+                    src_supported=supports_feature(sops, feature)
+                    and health_feature_ok(health_map.get(src), feature),
+                    dst_supported=supports_feature(dops, feature)
+                    and health_feature_ok(health_map.get(dst), feature),
                 )
                 continue
 
@@ -205,7 +214,7 @@ def run_pairs(ctx) -> Dict[str, Any]:
 
             if mode == "two-way":
                 res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                added_total   += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
+                added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
                 removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
                 unresolved_total += (
                     int(res.get("unresolved", 0))
@@ -224,11 +233,11 @@ def run_pairs(ctx) -> Dict[str, Any]:
                 )
             else:
                 res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                added_total   += int(res.get("added", 0))
+                added_total += int(res.get("added", 0))
                 removed_total += int(res.get("removed", 0))
                 unresolved_total += int(res.get("unresolved", 0))
-                skipped_total    += int(res.get("skipped", 0))
-                errors_total     += int(res.get("errors", 0))
+                skipped_total += int(res.get("skipped", 0))
+                errors_total += int(res.get("errors", 0))
 
     if "watchlist" in features_ran:
         try:
@@ -308,8 +317,9 @@ def run_pairs(ctx) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # restore original emitter
     try:
-        ctx.emit = metrics._emit_original
+        ctx.emit = metrics._orig_emit  # type: ignore[attr-defined]
     except Exception:
         pass
 

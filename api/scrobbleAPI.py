@@ -530,7 +530,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
         try:
             from crosswatch import process_webhook_jellyfin as jf_process_webhook
         except Exception:
-            from jellyfintrakt import process_webhook as jf_process_webhook
+            from jellyfintrakt import process_webhook as jf_process_webhook  # type: ignore[import]
 
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
@@ -677,9 +677,9 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
         from providers.webhooks.embytrakt import process_webhook as emby_process_webhook
     except Exception:
         try:
-            from crosswatch import process_webhook_emby as emby_process_webhook
+            from crosswatch import process_webhook_emby as emby_process_webhook  # type: ignore[attr-defined]
         except Exception:
-            from embytrakt import process_webhook as emby_process_webhook
+            from embytrakt import process_webhook as emby_process_webhook  # type: ignore[import]
 
     logger = _UIHostLogger("TRAKT", "SCROBBLE")
 
@@ -823,7 +823,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
     from crosswatch import _UIHostLogger
 
     try:
-        from providers.scrobble.trakt.webhook import process_webhook
+        from providers.scrobble.trakt.webhook import process_webhook  # type: ignore[import]
     except Exception:
         from crosswatch import process_webhook
 
@@ -873,7 +873,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
             if isinstance(part, (bytes, bytearray)):
                 payload = json.loads(part.decode("utf-8", errors="replace"))
             elif hasattr(part, "read"):
-                data = await part.read()
+                data = await part.read()  # type: ignore[attr-defined]
                 payload = json.loads(data.decode("utf-8", errors="replace"))
             else:
                 payload = json.loads(str(part))

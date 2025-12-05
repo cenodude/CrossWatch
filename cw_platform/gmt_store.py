@@ -1,41 +1,51 @@
-# Global Tombstone
+# cw_platform/gmt_store.py
+# Global Tombstone Store
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import json, time, os, tempfile
+
+import json
+import os
+import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from .config_base import CONFIG as CONFIG_DIR  # resolves to /config
 from . import id_map
-from .gmt_policy import Scope, should_suppress_write, opposing
+from .gmt_policy import Scope, opposing
 
 MODEL = "global"
 VERSION = 2
 DEFAULT_TTL_SEC = 7 * 24 * 3600
 
+
 @dataclass
 class TombstoneEntry:
-    keys: List[str]
-    scope: Dict[str, str]
+    keys: list[str]
+    scope: dict[str, str]
     origin: str
     ts_iso: str
     propagate_until_iso: str
-    note: Optional[str] = None
-    pair_ids: Optional[List[str]] = None
+    note: str | None = None
+    pair_ids: list[str] | None = None
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
 class GlobalTombstoneStore:
-    def __init__(self, ttl_sec: Optional[int] = None, file_path: Optional[Path] = None) -> None:
+    def __init__(self, ttl_sec: int | None = None, file_path: Path | None = None) -> None:
         self.base = Path(CONFIG_DIR)
         self.path = file_path or (self.base / "tombstones.json")
         self.ttl_sec = int(ttl_sec or DEFAULT_TTL_SEC)
         self._ensure_file()
 
     # ----- public API ---------------------------------------------------------
-    def model_header(self) -> Dict[str, Any]:
+    def model_header(self) -> dict[str, Any]:
         j = self._read()
         return {k: j.get(k) for k in ("model", "version", "ttl_sec", "updated_at")}
 
@@ -44,7 +54,15 @@ class GlobalTombstoneStore:
         if j.get("model") != MODEL or int(j.get("version") or 0) < VERSION:
             self._write(self._empty_doc())
 
-    def record_negative_event(self, *, entity: Mapping[str, Any], scope: Scope, origin: str, pair_id: Optional[str] = None, note: Optional[str] = None) -> None:
+    def record_negative_event(
+        self,
+        *,
+        entity: Mapping[str, Any],
+        scope: Scope,
+        origin: str,
+        pair_id: str | None = None,
+        note: str | None = None,
+    ) -> None:
         if scope.dim not in ("remove", "unrate", "unscrobble"):
             return
 
@@ -65,21 +83,30 @@ class GlobalTombstoneStore:
     def should_suppress(self, *, entity: Mapping[str, Any], scope: Scope, write_op: str) -> bool:
         if not entity:
             return False
+
         active = self._active_entries_for_entity(entity, scope)
+        if not active:
+            return False
+        wanted_dim = opposing(write_op)
+
         for rec in active:
-            if should_suppress_write(write_op, rec["scope"]["dim"]):
+            if rec.get("scope", {}).get("dim") == wanted_dim:
                 return True
+
         return False
 
     def purge_expired(self) -> int:
         j = self._read()
         entries = j.get("entries") or []
         now = datetime.now(timezone.utc)
-        keep: List[dict] = []
+        keep: list[dict[str, Any]] = []
         removed = 0
         for rec in entries:
             try:
-                until = datetime.strptime(rec.get("propagate_until_iso",""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                until = datetime.strptime(
+                    rec.get("propagate_until_iso", ""),
+                    "%Y-%m-%dT%H:%M:%SZ",
+                ).replace(tzinfo=timezone.utc)
             except Exception:
                 # remove broken records
                 removed += 1
@@ -96,7 +123,7 @@ class GlobalTombstoneStore:
         return removed
 
     # ----- private helpers ----------------------------------------------------
-    def _empty_doc(self) -> Dict[str, Any]:
+    def _empty_doc(self) -> dict[str, Any]:
         return {
             "model": MODEL,
             "version": VERSION,
@@ -118,54 +145,62 @@ class GlobalTombstoneStore:
         except Exception:
             self._write(self._empty_doc())
 
-    def _read(self) -> Dict[str, Any]:
+    def _read(self) -> dict[str, Any]:
         try:
             return json.loads(self.path.read_text("utf-8"))
         except Exception:
             return self._empty_doc()
 
     def _write(self, data: Mapping[str, Any]) -> None:
-        tmp = Path(tempfile.gettempdir()) / f".tomb.{os.getpid()}.{int(time.time()*1000)}.json"
+        tmp = Path(tempfile.gettempdir()) / f".tomb.{os.getpid()}.{int(time.time() * 1000)}.json"
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
         tmp.replace(self.path)
 
     def _upsert_entry(self, rec: TombstoneEntry) -> None:
         j = self._read()
-        entries: List[dict] = list(j.get("entries") or [])
-        scope_list = rec.scope["list"]; scope_dim = rec.scope["dim"]
+        entries: list[dict[str, Any]] = list(j.get("entries") or [])
+        scope_list = rec.scope["list"]
+        scope_dim = rec.scope["dim"]
         keys_set = set(rec.keys or [])
-        out: List[dict] = []
+        out: list[dict[str, Any]] = []
         for old in entries:
-            if (old.get("scope", {}).get("list") == scope_list and
-                old.get("scope", {}).get("dim")  == scope_dim and
-                set(old.get("keys") or []).intersection(keys_set)):
+            if (
+                old.get("scope", {}).get("list") == scope_list
+                and old.get("scope", {}).get("dim") == scope_dim
+                and set(old.get("keys") or []).intersection(keys_set)
+            ):
                 continue
             out.append(old)
-        out.append({
-            "keys": rec.keys,
-            "scope": rec.scope,
-            "origin": rec.origin,
-            "ts_iso": rec.ts_iso,
-            "propagate_until_iso": rec.propagate_until_iso,
-            "note": rec.note,
-            "pair_ids": rec.pair_ids,
-        })
+        out.append(
+            {
+                "keys": rec.keys,
+                "scope": rec.scope,
+                "origin": rec.origin,
+                "ts_iso": rec.ts_iso,
+                "propagate_until_iso": rec.propagate_until_iso,
+                "note": rec.note,
+                "pair_ids": rec.pair_ids,
+            }
+        )
         j["entries"] = out
         j["updated_at"] = _utc_now_iso()
         j["keys"] = self._flatten_keys_view(out)
         self._write(j)
 
-    def _active_entries_for_entity(self, entity: Mapping[str, Any], scope: Scope) -> List[dict]:
+    def _active_entries_for_entity(self, entity: Mapping[str, Any], scope: Scope) -> list[dict[str, Any]]:
         j = self._read()
         entries = j.get("entries") or []
         now = datetime.now(timezone.utc)
         e_keys = id_map.keys_for_item(entity)
-        active: List[dict] = []
+        active: list[dict[str, Any]] = []
         for rec in entries:
             try:
                 if rec.get("scope", {}).get("list") != scope.list:
                     continue
-                until = datetime.strptime(rec.get("propagate_until_iso",""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                until = datetime.strptime(
+                    rec.get("propagate_until_iso", ""),
+                    "%Y-%m-%dT%H:%M:%SZ",
+                ).replace(tzinfo=timezone.utc)
                 if until <= now:
                     continue
                 if id_map.any_key_overlap(e_keys, rec.get("keys") or []):
@@ -174,13 +209,23 @@ class GlobalTombstoneStore:
                 continue
         return active
 
-    def _flatten_keys_view(self, entries: Iterable[Mapping[str, Any]]) -> Dict[str, int]:
-        flat: Dict[str, int] = {}
+    def _flatten_keys_view(self, entries: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+        flat: dict[str, int] = {}
         for rec in entries or []:
             try:
                 feat = str(rec.get("scope", {}).get("list") or "").lower()
                 ts_iso = str(rec.get("ts_iso") or "")
-                epoch = int(datetime.strptime(ts_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()) if ts_iso else int(time.time())
+                if ts_iso:
+                    epoch = int(
+                        datetime.strptime(
+                            ts_iso,
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        )
+                        .replace(tzinfo=timezone.utc)
+                        .timestamp()
+                    )
+                else:
+                    epoch = int(time.time())
                 for k in rec.get("keys") or []:
                     flat[f"{feat}|{k}"] = epoch
             except Exception:

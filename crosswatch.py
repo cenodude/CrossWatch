@@ -74,14 +74,18 @@ from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.simkl.sink import SimklSink
 from providers.scrobble.plex.watch import WatchService as PlexWatchService
+
+# Emby autostart helper
 try:
-    from providers.scrobble.emby.watch import autostart_from_config as emby_autostart
+    from providers.scrobble.emby import watch as _emby_watch_mod
+    emby_autostart = getattr(_emby_watch_mod, "autostart_from_config", None)
 except Exception:
     emby_autostart = None
-    
-# Fallback: keep Plex as fallback
+
+# keep Plex as fallback
 try:
-    from providers.scrobble.plex.watch import autostart_from_config as plex_autostart
+    from providers.scrobble.plex import watch as _plex_watch_mod
+    plex_autostart = getattr(_plex_watch_mod, "autostart_from_config", None)
 except Exception:
     plex_autostart = None
 
@@ -138,7 +142,7 @@ HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
 CW_STATE_DIR = (CONFIG_DIR / ".cw_state"); CW_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 _METADATA: Any = None
-WATCH: Optional[WatchService] = None
+WATCH: Optional[Any] = None
 DISPATCHER: Optional[Dispatcher] = None
 scheduler: Optional[SyncScheduler] = None
 
@@ -264,8 +268,11 @@ def autostart_from_config():
 
     try:
         w = _mk(sinks=sinks)
-        if hasattr(w, "set_filters") and isinstance(filters, dict):
-            w.set_filters(filters)
+        if isinstance(filters, dict) and hasattr(w, "set_filters"):
+            try:
+                getattr(w, "set_filters")(filters)
+            except Exception:
+                pass
         if hasattr(w, "start_async"):
             w.start_async()
         else:
@@ -544,8 +551,8 @@ async def _lifespan(app):
                 w2 = make_default_watch(sinks=sinks_fb)
                 try:
                     filters = ((sc.get("watch") or {}).get("filters") or {})
-                    if hasattr(w2, "set_filters") and isinstance(filters, dict):
-                        w2.set_filters(filters)
+                    if isinstance(filters, dict) and hasattr(w2, "set_filters"):
+                        getattr(w2, "set_filters")(filters)
                 except Exception:
                     pass
 

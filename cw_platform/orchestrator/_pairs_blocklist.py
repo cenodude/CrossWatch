@@ -1,39 +1,49 @@
+# cw_platform/orchestration/_pairs_blocklist.py
+# Pairs blocklist handling for the orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Iterable, Mapping, Optional, Set, Dict, Any, Tuple
+from collections.abc import Iterable, Mapping
+from typing import Any
 from ._tombstones import keys_for_feature, filter_with
 
 try:
     from ._unresolved import load_unresolved_keys  # type: ignore
 except Exception:  # pragma: no cover
-    def load_unresolved_keys(dst: str, feature: Optional[str] = None, *, cross_features: bool = True) -> Set[str]:
+    def load_unresolved_keys(
+        dst: str,
+        feature: str | None = None,
+        *,
+        cross_features: bool = True,
+    ) -> set[str]:
         return set()
 
 try:
     from ._blackbox import load_blackbox_keys  # type: ignore
 except Exception:  # pragma: no cover
-    def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> Set[str]:
+    def load_blackbox_keys(
+        dst: str,
+        feature: str,
+        pair: str | None = None,
+    ) -> set[str]:
         return set()
 
-
-# Int. 
 def _breakdown(
     state_store,
     dst: str,
     feature: str,
     *,
-    pair_key: Optional[str],
+    pair_key: str | None,
     cross_feature_unresolved: bool,
-) -> Tuple[Set[str], Set[str], Set[str], Set[str]]:
-
+) -> tuple[set[str], set[str], set[str], set[str]]:
     try:
         gmap = keys_for_feature(state_store, feature, pair=None) or {}
-        global_tomb: Set[str] = set(gmap.keys()) if isinstance(gmap, Mapping) else set()
+        global_tomb: set[str] = set(gmap.keys()) if isinstance(gmap, Mapping) else set()
     except Exception:
         global_tomb = set()
 
     try:
         pmap = keys_for_feature(state_store, feature, pair=pair_key) or {}
-        pair_tomb: Set[str] = set(pmap.keys()) if isinstance(pmap, Mapping) else set()
+        pair_tomb: set[str] = set(pmap.keys()) if isinstance(pmap, Mapping) else set()
     except Exception:
         pair_tomb = set()
 
@@ -49,16 +59,14 @@ def _breakdown(
 
     return global_tomb, pair_tomb, unresolved, blackbox
 
-
-# Helpers
 def blocked_keys_for_destination(
     state_store,
     dst: str,
     feature: str,
     *,
-    pair_key: Optional[str] = None,
+    pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
-) -> Set[str]:
+) -> set[str]:
     g_tomb, p_tomb, unr, bb = _breakdown(
         state_store, dst, feature,
         pair_key=pair_key,
@@ -68,16 +76,18 @@ def blocked_keys_for_destination(
 
 def apply_blocklist(
     state_store,
-    items: Iterable[Dict[str, Any]],
+    items: Iterable[dict[str, Any]],
     *,
     dst: str,
     feature: str,
-    pair_key: Optional[str] = None,
+    pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
     emit=None,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     g_tomb, p_tomb, unr, bb = _breakdown(
-        state_store, dst, feature,
+        state_store,
+        dst,
+        feature,
         pair_key=pair_key,
         cross_feature_unresolved=cross_feature_unresolved,
     )

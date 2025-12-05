@@ -1,40 +1,78 @@
-# /cw_platform/id_map.py
+# cw_platform/id_map.py
+# ID Mapping and Canonical Keys
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 import re
-from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple
+from collections.abc import Iterable, Mapping
 from itertools import chain
+from typing import Any
 
 # Policy
-ID_KEYS: Tuple[str, ...]       = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "plex", "jellyfin", "guid", "slug")
-KEY_PRIORITY: Tuple[str, ...]  = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "plex", "guid", "slug")
+ID_KEYS: tuple[str, ...] = (
+    "imdb",
+    "tmdb",
+    "tvdb",
+    "trakt",
+    "simkl",
+    "plex",
+    "jellyfin",
+    "guid",
+    "slug",
+)
+KEY_PRIORITY: tuple[str, ...] = (
+    "imdb",
+    "tmdb",
+    "tvdb",
+    "trakt",
+    "simkl",
+    "plex",
+    "guid",
+    "slug",
+)
 
 __all__ = [
-    "ID_KEYS", "KEY_PRIORITY",
-    "ids_from", "ids_from_guid", "ids_from_jellyfin_providerids",
-    "merge_ids", "coalesce_ids",
-    "canonical_key", "keys_for_item", "unified_keys_from_ids", "any_key_overlap",
+    "ID_KEYS",
+    "KEY_PRIORITY",
+    "ids_from",
+    "ids_from_guid",
+    "ids_from_jellyfin_providerids",
+    "merge_ids",
+    "coalesce_ids",
+    "canonical_key",
+    "keys_for_item",
+    "unified_keys_from_ids",
+    "any_key_overlap",
     "minimal",
-    "has_external_ids", "preferred_id_key",
+    "has_external_ids",
+    "preferred_id_key",
 ]
 
 # utils
 _CLEAN_SENTINELS = {"none", "null", "nan", "undefined", "unknown", "0", ""}
 
-def _norm_str(v: Any) -> Optional[str]:
+
+def _norm_str(v: Any) -> str | None:
     if v is None:
         return None
     s = str(v).strip()
     return s or None
 
+
 def _norm_type(t: Any) -> str:
     x = (str(t or "")).strip().lower()
-    if x in ("movies", "movie"): return "movie"
-    if x in ("shows", "show", "series", "tv"): return "show"
-    if x in ("seasons", "season"): return "season"
-    if x in ("episodes", "episode"): return "episode"
+    if x in ("movies", "movie"):
+        return "movie"
+    if x in ("shows", "show", "series", "tv"):
+        return "show"
+    if x in ("seasons", "season"):
+        return "season"
+    if x in ("episodes", "episode"):
+        return "episode"
     return x or "movie"
 
-def _normalize_id(key: str, val: Any) -> Optional[str]:
+
+def _normalize_id(key: str, val: Any) -> str | None:
     k = (key or "").lower().strip()
     s = _norm_str(val)
     if not s:
@@ -62,13 +100,13 @@ def _normalize_id(key: str, val: Any) -> Optional[str]:
 
     return s
 
+
 # --- GUID to ID
-_GUID_PATTERNS: Tuple[Tuple[re.Pattern, str], ...] = (
+_GUID_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     # com.plexapp agents
     (re.compile(r"com\.plexapp\.agents\.imdb://(?P<imdb>tt\d+)", re.I), "imdb"),
     (re.compile(r"com\.plexapp\.agents\.themoviedb://(?P<tmdb>\d+)", re.I), "tmdb"),
     (re.compile(r"com\.plexapp\.agents\.thetvdb://(?P<tvdb>\d+)", re.I), "tvdb"),
-
     # generic schemes
     (re.compile(r"imdb://(?:title/)?(?P<imdb>tt\d+)", re.I), "imdb"),
     (re.compile(r"tmdb://(?:(?:movie|show|tv)/)?(?P<tmdb>\d+)", re.I), "tmdb"),
@@ -76,8 +114,9 @@ _GUID_PATTERNS: Tuple[Tuple[re.Pattern, str], ...] = (
     (re.compile(r"^plex://", re.I), "guid"),
 )
 
-def ids_from_guid(guid: Optional[str]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+
+def ids_from_guid(guid: str | None) -> dict[str, str]:
+    out: dict[str, str] = {}
     g = _norm_str(guid)
     if not g:
         return out
@@ -94,8 +133,9 @@ def ids_from_guid(guid: Optional[str]) -> Dict[str, str]:
             out["guid"] = g
     return out
 
+
 # Jellyfin ProviderIds to ids
-_JF_MAP = {
+_JF_MAP: dict[str, str] = {
     "Imdb": "imdb",
     "Tmdb": "tmdb",
     "Tvdb": "tvdb",
@@ -103,8 +143,9 @@ _JF_MAP = {
     "Simkl": "simkl",
 }
 
-def ids_from_jellyfin_providerids(pids: Mapping[str, Any] | None) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+
+def ids_from_jellyfin_providerids(pids: Mapping[str, Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
     if not isinstance(pids, Mapping):
         return out
     for k, v in pids.items():
@@ -116,9 +157,10 @@ def ids_from_jellyfin_providerids(pids: Mapping[str, Any] | None) -> Dict[str, s
             out[dst] = n
     return out
 
+
 # Collect and merge
-def coalesce_ids(*many: Mapping[str, Any]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def coalesce_ids(*many: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
     for ids in many:
         if not isinstance(ids, Mapping):
             continue
@@ -128,20 +170,24 @@ def coalesce_ids(*many: Mapping[str, Any]) -> Dict[str, str]:
                 out[k] = n
     return out
 
-def ids_from(item: Mapping[str, Any]) -> Dict[str, str]:
+
+def ids_from(item: Mapping[str, Any]) -> dict[str, str]:
     base = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
     top = {k: item.get(k) for k in ID_KEYS if item.get(k) is not None}
     guid_val = item.get("guid") or (base.get("guid") if isinstance(base, Mapping) else None)
     from_guid = ids_from_guid(str(guid_val)) if guid_val else {}
     return coalesce_ids(top, base or {}, from_guid)
 
-def merge_ids(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+
+def merge_ids(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
     old = dict(old or {})
     new = dict(new or {})
 
     for k in KEY_PRIORITY:
-        out[k] = _normalize_id(k, old.get(k)) or _normalize_id(k, new.get(k)) or out.get(k)
+        v = _normalize_id(k, old.get(k)) or _normalize_id(k, new.get(k))
+        if v:
+            out[k] = v
 
     for k, v in chain(old.items(), new.items()):
         if k not in out or not out[k]:
@@ -151,8 +197,9 @@ def merge_ids(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None) -> D
 
     return {k: v for k, v in out.items() if v}
 
+
 # C-keys
-def _title_year_key(item: Mapping[str, Any]) -> Optional[str]:
+def _title_year_key(item: Mapping[str, Any]) -> str | None:
     t = _norm_str(item.get("title"))
     y = _norm_str(item.get("year")) or ""
     typ = _norm_type(item.get("type"))
@@ -160,14 +207,16 @@ def _title_year_key(item: Mapping[str, Any]) -> Optional[str]:
         return None
     return f"{typ}|title:{t.lower()}|year:{y}"
 
-def _best_id_key(idmap: Mapping[str, str]) -> Optional[str]:
+
+def _best_id_key(idmap: Mapping[str, str]) -> str | None:
     for k in KEY_PRIORITY:
         v = idmap.get(k)
         if v:
             return f"{k}:{v}".lower()
     return None
 
-def _show_id_from(item: Mapping[str, Any]) -> Optional[str]:
+
+def _show_id_from(item: Mapping[str, Any]) -> str | None:
     show_ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else None
     if show_ids:
         kid = _best_id_key(coalesce_ids(show_ids))
@@ -175,7 +224,8 @@ def _show_id_from(item: Mapping[str, Any]) -> Optional[str]:
             return kid
     return _best_id_key(ids_from(item))
 
-def _se_fragment(item: Mapping[str, Any]) -> Optional[str]:
+
+def _se_fragment(item: Mapping[str, Any]) -> str | None:
     s = item.get("season") or item.get("season_number")
     e = item.get("episode") or item.get("episode_number")
     try:
@@ -191,6 +241,7 @@ def _se_fragment(item: Mapping[str, Any]) -> Optional[str]:
         return None
     return f"#s{str(s).zfill(2)}e{str(e).zfill(2)}"
 
+
 def canonical_key(item: Mapping[str, Any]) -> str:
     typ = _norm_type(item.get("type"))
     if typ in ("season", "episode"):
@@ -204,15 +255,17 @@ def canonical_key(item: Mapping[str, Any]) -> str:
     ty = _title_year_key(item)
     return ty or "unknown:"
 
-def unified_keys_from_ids(idmap: Mapping[str, Any]) -> Set[str]:
-    out: Set[str] = set()
+
+def unified_keys_from_ids(idmap: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
     for k in ID_KEYS:
         n = _normalize_id(k, idmap.get(k))
         if n:
             out.add(f"{k}:{n}".lower())
     return out
 
-def keys_for_item(item: Mapping[str, Any]) -> Set[str]:
+
+def keys_for_item(item: Mapping[str, Any]) -> set[str]:
     out = unified_keys_from_ids(ids_from(item))
     ty = _title_year_key(item)
     if ty:
@@ -225,14 +278,16 @@ def keys_for_item(item: Mapping[str, Any]) -> Set[str]:
             out.add(f"{sid}{frag}".lower())
     return out
 
+
 def any_key_overlap(a: Iterable[str], b: Iterable[str]) -> bool:
     sa, sb = set(a or []), set(b or [])
     return bool(sa and sb and not sa.isdisjoint(sb))
 
-def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
+
+def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
     ids = ids_from(item)
     typ = _norm_type(item.get("type"))
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "type": typ,
         "title": item.get("title"),
         "year": item.get("year"),
@@ -250,12 +305,13 @@ def minimal(item: Mapping[str, Any]) -> Dict[str, Any]:
                 out["show_ids"] = {k: sids[k] for k in ID_KEYS if k in sids}
     return out
 
-# Helpers
 
+# Helpers
 def has_external_ids(obj: Mapping[str, Any]) -> bool:
     ids = ids_from(obj) if "ids" in obj or "guid" in obj else obj
     return any(ids.get(k) for k in ("imdb", "tmdb", "tvdb"))
 
-def preferred_id_key(obj: Mapping[str, Any]) -> Optional[str]:
+
+def preferred_id_key(obj: Mapping[str, Any]) -> str | None:
     ids = ids_from(obj) if "ids" in obj or "guid" in obj else obj
-    return _best_id_key(ids)
+    return _best_id_key(ids)  # type: ignore[arg-type]

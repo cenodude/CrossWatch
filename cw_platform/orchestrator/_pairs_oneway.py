@@ -1,9 +1,9 @@
-#  cw_platform/orchestration/_pairs_oneway.py
-#  One-way synchronization logic for data pairs.
-#  Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-
+# cw_platform/orchestration/_pairs_oneway.py
+# One-way synchronization logic for data pairs.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, List, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 # Core imports
 from ..id_map import minimal as _minimal, canonical_key as _ck
@@ -37,11 +37,11 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     def load_blackbox_keys(dst: str, feature: str) -> set[str]:
         return set()
-    def record_attempts(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
+    def record_attempts(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
         return {"ok": True, "count": 0}
-    def record_success(dst: str, feature: str, keys, **kwargs) -> Dict[str, Any]:
+    def record_success(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
         return {"ok": True, "count": 0}
-    
+
 _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
@@ -53,14 +53,12 @@ def _effective_library_whitelist(
     provider_name: str,
     feature: str,
     fcfg: Mapping[str, Any],
-) -> List[str]:
-
+) -> list[str]:
     if feature not in ("history", "ratings"):
         return []
 
-    libs: List[str] = []
+    libs: list[str] = []
 
-    # Pair-level override
     lib_cfg = fcfg.get("libraries")
     if isinstance(lib_cfg, dict):
         per = lib_cfg.get(provider_name.upper()) or lib_cfg.get(provider_name.lower())
@@ -84,7 +82,7 @@ def _effective_library_whitelist(
 
     return []
 
-def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str, Any]:
+def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str, Any]:
     if not libs or not idx:
         return dict(idx)
 
@@ -92,7 +90,7 @@ def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str
     if not allowed:
         return dict(idx)
 
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for ck, item in idx.items():
         v = item or {}
         lid = (
@@ -113,7 +111,7 @@ def _filter_index_by_libraries(idx: Dict[str, Any], libs: List[str]) -> Dict[str
     return out
 
 # Feature-specific filters
-def _ratings_filter_index(idx: Dict[str, Any], fcfg: Mapping[str, Any]) -> Dict[str, Any]:
+def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
     alias = {"movies":"movie","movie":"movie","shows":"show","show":"show",
              "episodes":"episode","episode":"episode","ep":"episode","eps":"episode"}
     types_raw = [str(t).strip().lower() for t in (fcfg.get("types") or []) if isinstance(t, (str, bytes))]
@@ -144,7 +142,7 @@ def run_one_way_feature(
     feature: str,
     fcfg: Mapping[str, Any],
     health_map: Mapping[str, Any],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     cfg, emit, dbg = ctx.config, ctx.emit, ctx.dbg
     sync_cfg = (cfg.get("sync") or {})
     provs = ctx.providers
@@ -193,7 +191,7 @@ def run_one_way_feature(
     if src_down or dst_down:
         include_observed = False
 
-    def _cap_obsdel(ops) -> Optional[bool]:
+    def _cap_obsdel(ops) -> bool | None:
         try:
             v = (ops.capabilities() or {}).get("observed_deletes")
             return None if v is None else bool(v)
@@ -226,8 +224,8 @@ def run_one_way_feature(
         except Exception:
             pass
 
-    def _alias_index(idx: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
-        m: Dict[str, str] = {}
+    def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
+        m: dict[str, str] = {}
         for ck, it in (idx or {}).items():
             ids = (it.get("ids") or {})
             for k, v in (ids or {}).items():
@@ -235,7 +233,7 @@ def run_one_way_feature(
                 m[f"{k}:{str(v).lower()}"] = ck
         return m
 
-    def _present(idx: Dict[str, Any], alias: Dict[str, str], it: Mapping[str, Any]) -> bool:
+    def _present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
         if ck in idx: return True
         ids = (it.get("ids") or {})
@@ -298,9 +296,8 @@ def run_one_way_feature(
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
 
-    # Pair-level library whitelist history/ratings)
-    libs_src: List[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
-    libs_dst: List[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
+    libs_src: list[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
+    libs_dst: list[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
 
     if libs_src:
         prev_src = _filter_index_by_libraries(prev_src, libs_src)
@@ -391,7 +388,7 @@ def run_one_way_feature(
     key2item = {_ck(it): _minimal(it) for it in adds}
 
     added_effective = 0
-    res_add: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+    res_add: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
     unresolved_new_total = 0
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
@@ -403,6 +400,7 @@ def run_one_way_feature(
             unresolved_new_total += len(adds)
         else:
             unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            _ = set(load_blackbox_keys(dst, feature) or [])
             add_res = apply_add(
                 dst_ops=dst_ops,
                 cfg=cfg,
@@ -462,9 +460,10 @@ def run_one_way_feature(
                 if failed_keys:
                     record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
                                     pair=pair_key, cfg=cfg)
-                    failed_items = [key2item.get(k) for k in failed_keys if key2item.get(k)]
+                    failed_items = [key2item[k] for k in failed_keys if k in key2item]
                     if failed_items:
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
+
                 if confirmed_keys:
                     record_success(dst, feature, confirmed_keys, pair=pair_key, cfg=cfg)
                 if use_phantoms and guard and added_effective and confirmed_keys:
@@ -480,8 +479,8 @@ def run_one_way_feature(
                 _bust_snapshot(dst)
 
     removed_count = 0
-    rem_keys_attempted: List[str] = []
-    res_remove: Dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+    rem_keys_attempted: list[str] = []
+    res_remove: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
     if removes:
         try:
             rem_keys_attempted = [
@@ -590,7 +589,7 @@ def run_one_way_feature(
         pass
 
     emit("feature:done", src=src, dst=dst, feature=feature)
-    
+
     return {
         "ok": True,
         "added": int(added_effective),

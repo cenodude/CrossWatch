@@ -182,10 +182,8 @@ def _alias_index(items: dict[str, Any]) -> dict[str, str]:
             idx.setdefault(ak, k)
     return idx
 
-
 def _class_key(it: dict[str, Any]) -> tuple[str, str, int | None]:
     return ((it.get("type") or "").lower(), (it.get("title") or "").strip().lower(), it.get("year"))
-
 
 def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, str], list[str]]:
     mp: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -256,7 +254,6 @@ def _item_library_id(it: dict[str, Any]) -> str | None:
 
     return None
 
-
 def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str]]:
     out: dict[tuple[str, str, str], set[str]] = {}
     for pr in cfg.get("pairs") or []:
@@ -296,7 +293,6 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
 
     return out
 
-
 def _passes_pair_lib_filter(
     pair_libs: dict[tuple[str, str, str], set[str]] | None,
     prov: str,
@@ -317,7 +313,6 @@ def _passes_pair_lib_filter(
         return True
     return lid in allowed
 
-
 def _indices_for(s: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
     out: dict[tuple[str, str], dict[str, str]] = {}
     for p, f, _, _ in _iter_items(s):
@@ -325,7 +320,6 @@ def _indices_for(s: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
         if key not in out:
             out[key] = _alias_index(_bucket(s, p, f) or {})
     return out
-
 
 def _has_peer_by_pairs(
     s: dict[str, Any],
@@ -339,7 +333,10 @@ def _has_peer_by_pairs(
 ) -> bool:
     if feat not in ("history", "watchlist", "ratings"):
         return True
-    targets = pairs.get((prov, feat.lower()), [])
+
+    prov_key = str(prov or "").upper()
+    feat_key = str(feat or "").lower()
+    targets = pairs.get((prov_key, feat_key), [])
     if not targets:
         return True
 
@@ -358,7 +355,6 @@ def _has_peer_by_pairs(
         if any(k in idx for k in keys):
             return True
     return False
-
 
 def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
     stats: list[dict[str, Any]] = []
@@ -398,7 +394,6 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return stats
-
 
 def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
@@ -566,7 +561,6 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
 
     return probs
 
-
 def _peer_ids(s: dict[str, Any], cur: dict[str, Any]) -> dict[str, str]:
     t = (cur.get("title") or "").strip().lower()
     y = cur.get("year")
@@ -584,7 +578,6 @@ def _peer_ids(s: dict[str, Any], cur: dict[str, Any]) -> dict[str, str]:
                 out[k] = str(v)
     return out
 
-
 def _norm(ns: str, v: Any) -> str | None:
     if v is None:
         return None
@@ -596,7 +589,6 @@ def _norm(ns: str, v: Any) -> str | None:
         m = re.search(r"(\d+)", s)
         return m.group(1) if m else None
     return s or None
-
 
 def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     ids = it.get("ids") or {}
@@ -626,19 +618,22 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     b.pop(old_key, None)
     return new_key
 
-
-def _tmdb(path: str, params: dict[str, Any]) -> dict[str, Any]:
+def _tmdb(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     k = _tmdb_key()
     if not k:
         raise HTTPException(400, "tmdb.api_key missing in config.json")
+
+    query: dict[str, Any] = {}
+    if params:
+        query.update(params)
+    query["api_key"] = k
     r = requests.get(
         f"https://api.themoviedb.org/3{path}",
-        params={**(params or {}), "api_key": k},
+        params=query,
         timeout=8,
     )
     r.raise_for_status()
     return r.json()
-
 
 def _trakt(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     h = _trakt_headers()
@@ -652,7 +647,6 @@ def _trakt(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     )
     r.raise_for_status()
     return r.json()
-
 
 def _tmdb_bulk(ids: list[int]) -> dict[int, dict[str, Any]]:
     if not ids:
@@ -678,7 +672,6 @@ def _tmdb_bulk(ids: list[int]) -> dict[int, dict[str, Any]]:
                 continue
     return out
 
-
 def _tmdb_region_dates(meta: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for mid, data in (meta or {}).items():
@@ -700,7 +693,6 @@ def _tmdb_region_dates(meta: dict[int, dict[str, Any]]) -> dict[int, dict[str, A
         if best:
             out[mid] = best
     return out
-
 
 def _ratings_audit(s: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
@@ -742,12 +734,20 @@ def _ratings_audit(s: dict[str, Any]) -> dict[str, Any]:
         }
     return out
 
-
 def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     t = body.get("type")
-    prov = body.get("provider")
-    feat = body.get("feature")
-    key = body.get("key")
+
+    prov_raw = body.get("provider")
+    feat_raw = body.get("feature")
+    key_raw = body.get("key")
+
+    if not isinstance(prov_raw, str) or not isinstance(feat_raw, str) or not isinstance(key_raw, str):
+        raise HTTPException(400, "provider/feature/key must be strings")
+
+    prov = prov_raw
+    feat = feat_raw
+    key = key_raw
+
     b, it = _find_item(s, prov, feat, key)
     if b is None or it is None:
         raise HTTPException(404, "Item not found")
@@ -756,22 +756,32 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     ch: list[str] = []
 
     if t in ("key_missing_ids", "key_ids_mismatch"):
-        ns = body.get("id_name")
+        ns_raw = body.get("id_name")
         exp = body.get("expected")
-        if not ns or not exp:
+
+        if not isinstance(ns_raw, str) or not isinstance(exp, str):
             raise HTTPException(400, "Missing id_name/expected")
+
+        ns = ns_raw
         ids[ns] = exp
         ch.append(f"ids.{ns}={exp}")
         new = _rekey(b, key, it)
+
     elif t == "invalid_id_format":
-        ns = body.get("id_name")
+        ns_raw = body.get("id_name")
         val = body.get("id_value")
+
+        if not isinstance(ns_raw, str):
+            raise HTTPException(400, "Missing id_name")
+
+        ns = ns_raw
         nv = _norm(ns, val)
         if not nv:
             raise HTTPException(400, "Cannot normalize")
         ids[ns] = nv
         ch.append(f"ids.{ns}={nv}")
         new = _rekey(b, key, it)
+
     elif t in ("missing_ids", "missing_peer"):
         if ":" in key:
             nsb, kid = key.split(":", 1)
@@ -783,6 +793,7 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
             if not ids.get(ns):
                 ids[ns] = v
         new = _rekey(b, key, it)
+
     else:
         raise HTTPException(400, "Unsupported fix")
 
@@ -790,9 +801,17 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(s, pairs, prov, feat, new, it, idx, pair_libs)
+    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+        s,
+        pairs,
+        prov,
+        feat,
+        new,
+        it,
+        idx,
+        pair_libs,
+    )
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
-
 
 def _anchor(key: str) -> tuple[int, int] | None:
     if "#" not in key:
@@ -1063,11 +1082,9 @@ def api_ratings_audit() -> dict[str, Any]:
     s = _load_state()
     return _ratings_audit(s)
 
-
 @router.get("/analyzer/cw-state", response_class=JSONResponse)
 def api_cw_state() -> dict[str, Any]:
     return _read_cw_state()
-
 
 @router.post("/analyzer/patch", response_class=JSONResponse)
 def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1080,7 +1097,8 @@ def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(404, "Item not found")
 
     ids = dict(it.get("ids") or {})
-    for k, v in (payload.get("ids") or {}).items():
+    for k_any, v in (payload.get("ids") or {}).items():
+        k = str(k_any)
         nv = _norm(k, v)
         if nv is None:
             ids.pop(k, None)
@@ -1117,7 +1135,6 @@ def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
     )
     _save_state(s)
     return {"ok": True, "new_key": new_key}
-
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
 def api_suggest(payload: dict[str, Any]) -> dict[str, Any]:

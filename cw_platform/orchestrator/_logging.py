@@ -1,5 +1,8 @@
+# cw_platform/orchestration/_logging.py
+# Logging and event emission for the orchestrator.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Callable
+from collections.abc import Callable
 
 class Emitter:
     def __init__(self, cb: Callable[[str], None] | None):

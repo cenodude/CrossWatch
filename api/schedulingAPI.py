@@ -12,11 +12,11 @@ router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
 
 
 def _env() -> tuple[
-    Callable[[], dict[str, Any]],
-    Callable[[dict[str, Any]], None],
+    Callable[..., dict[str, Any]],
+    Callable[..., None],
     Any,
     dict[str, Any],
-    Callable[[dict[str, Any]], int],
+    Callable[..., int],
     Callable[..., Any],
 ]:
     try:
@@ -43,7 +43,7 @@ def _env() -> tuple[
         def _load_cfg() -> dict[str, Any]:
             return {}
 
-        def _save_cfg(_cfg: dict[str, Any]) -> None:
+        def _save_cfg(*args: Any, **kwargs: Any) -> None:
             return None
 
         class _DummyScheduler:
@@ -59,7 +59,7 @@ def _env() -> tuple[
             def refresh(self) -> None:
                 return None
 
-        def _compute_next_run_from_cfg(_cfg: dict[str, Any]) -> int:
+        def _compute_next_run_from_cfg(*args: Any, **kwargs: Any) -> int:
             return 0
 
         def _ui_host_logger(*_args: Any, **_kwargs: Any) -> Callable[..., None]:
@@ -77,7 +77,7 @@ def replan_now() -> dict[str, Any]:
     scfg = (cfg.get("scheduling") or {}) or {}
 
     try:
-        nxt = int(compute_next(scfg))
+        nxt = int(compute_next(scfg) or 0)
     except Exception:
         nxt = 0
 
@@ -127,7 +127,7 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
     scfg = cfg["scheduling"] or {}
     try:
-        nxt = int(compute_next(scfg))
+        nxt = int(compute_next(scfg) or 0)
         hint["next_run_at"] = nxt
         hint["last_saved_at"] = int(time.time())
     except Exception:
@@ -145,7 +145,7 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
         st = scheduler.status()  # type: ignore[union-attr]
         st["config"] = scfg
-        return {"ok": True, "next_run_at": int(st.get("next_run_at") or nxt)}
+        return {"ok": True, "next_run_at": int(st.get("next_run_at") or nxt or 0)}
     except Exception:
         return {"ok": True, "next_run_at": int(nxt) if nxt else 0}
 
@@ -171,12 +171,12 @@ def sched_status() -> dict[str, Any]:
 
 @router.get("/next")
 def sched_next() -> dict[str, Any]:
-    load_config, *_rest = _env()
-    *_, compute_next, _ = _rest
+    load_config, _, _, _, compute_next, _ = _env()
+    
     cfg = load_config() or {}
     scfg = (cfg.get("scheduling") or {}) or {}
     try:
-        nxt = int(compute_next(scfg))
+        nxt = int(compute_next(scfg) or 0)
     except Exception:
         nxt = 0
     return {"ok": True, "next_run_at": nxt, "config": scfg}

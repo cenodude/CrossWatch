@@ -1,4 +1,4 @@
-# _authenticationAPI.py
+# api/authenticationAPI.py
 # CrossWatch - Authentication API for multiple services
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -55,6 +55,12 @@ def _safe_log(fn: Optional[Callable[[str, str], None]], tag: str, msg: str) -> N
         if callable(fn): fn(tag, msg)
     except Exception:
         pass
+    
+def _to_int(val: Any, default: int = 0) -> int:
+    try:
+        return int(val)
+    except Exception:
+        return default
 
 def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, probe_cache: Optional[dict[str, Any]] = None) -> None:
     def _probe_bust(name: str) -> None:
@@ -233,12 +239,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     pid = acc.attrib.get("id") or acc.attrib.get("ID")
                     if not is_local_id(pid):
                         continue
-                    pms_id = int(pid)
+                    pms_id = _to_int(pid)
                     try:
-                        cloud_id = int(
+                        cloud_id = _to_int(
                             acc.attrib.get("accountID")
                             or acc.attrib.get("accountId")
-                            or 0
                         )
                     except Exception:
                         cloud_id = 0
@@ -267,7 +272,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 for u in root.findall(".//User"):
                     cloud_users.append(
                         {
-                            "cloud_id": int(u.attrib.get("id") or 0),
+                            "cloud_id": _to_int(u.attrib.get("id")),
                             "username": u.attrib.get("username") or "",
                             "title": u.attrib.get("title") or u.attrib.get("username") or "",
                             "type": "friend",
@@ -286,7 +291,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 j = me.json()
                 cloud_users.append(
                     {
-                        "cloud_id": int(j.get("id") or 0),
+                        "cloud_id": _to_int(j.get("id")),
                         "username": (j.get("username") or j.get("title") or "") or "",
                         "title": (j.get("title") or j.get("username") or "") or "",
                         "type": "owner",

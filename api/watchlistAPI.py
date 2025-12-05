@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import urllib.parse
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Body, Path as FPath, Query
 from fastapi.responses import JSONResponse
@@ -41,6 +41,11 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
             out.append(pid)
     return out
 
+def _type_from_item_or_guess(item: dict[str, Any], key: str = "") -> str:
+    t = str(item.get("type") or item.get("media_type") or item.get("entity") or "").lower().strip()
+    if t in ("tv", "show", "shows", "series", "episode", "season"):
+        return "tv"
+    return "movie"
 
 def _item_label(state: dict[str, Any], key: str, prov: str) -> tuple[str, str]:
     it = (
@@ -398,7 +403,6 @@ def api_watchlist(
         status_code=200,
     )
 
-
 @router.delete("/{key}")
 def api_watchlist_delete(
     key: str = FPath(...),
@@ -412,15 +416,19 @@ def api_watchlist_delete(
         key = urllib.parse.unquote(key)
 
     prov = (provider or "ALL").upper().strip()
-    res = delete_watchlist_item(
+    raw_res = delete_watchlist_item(
         key=key,
         state_path=STATE_PATH,
         cfg=load_config(),
         provider=prov,
         log=_append_log,
     )
-    if not isinstance(res, dict):
-        res = {"ok": bool(res)}
+
+    res: dict[str, Any]
+    if isinstance(raw_res, dict):
+        res = raw_res
+    else:
+        res = {"ok": bool(raw_res)}
 
     if res.get("ok"):
         try:
@@ -431,8 +439,8 @@ def api_watchlist_delete(
             pass
 
     res.setdefault("provider", prov)
+    
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
-
 
 @router.post("/delete")
 def api_watchlist_delete_multi(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

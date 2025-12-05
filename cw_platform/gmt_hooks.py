@@ -1,12 +1,14 @@
-# providers/gmt_hooks.py
-
+# cw_platform/gmt_hooks.py
+# GMT integration helpers for CrossWatch platform.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any, cast
 
 try:
     from cw_platform.gmt_store import GlobalTombstoneStore  # type: ignore
 except Exception:  # pragma: no cover
-    GlobalTombstoneStore = object  # type: ignore
+    class GlobalTombstoneStore: ...  # type: ignore
 
 # Policy helpers
 try:
@@ -64,9 +66,9 @@ def _cfg_from_store(store: GlobalTombstoneStore | Any) -> Mapping[str, Any] | No
         try:
             v = getattr(store, attr, None)
             if callable(v):
-                return v()
+                return cast(Mapping[str, Any], v())
             if isinstance(v, dict):
-                return v
+                return cast(Mapping[str, Any], v)
         except Exception:
             pass
     return None
@@ -78,7 +80,7 @@ def suppress_check(
     item: Mapping[str, Any],
     feature: str,
     write_op: str,
-    pair_id: Optional[str] = None,
+    pair_id: str | None = None,
 ) -> bool:
     try:
         key = canonical_key(item)
@@ -95,17 +97,35 @@ def suppress_check(
         # 2) Generic policy predicate (entity-based)
         if should_suppress_write is not None:
             try:
-                return bool(should_suppress_write(store=store, entity=item, scope={"list": feat, "dim": dim}, pair_id=pair_id, ttl_sec=ttl_sec))
+                return bool(
+                    should_suppress_write(
+                        store=store,
+                        entity=item,
+                        scope={"list": feat, "dim": dim},
+                        pair_id=pair_id,
+                        ttl_sec=ttl_sec,
+                    )
+                )
             except TypeError:
                 # Older signature without ttl_sec
-                return bool(should_suppress_write(store=store, entity=item, scope={"list": feat, "dim": dim}, pair_id=pair_id))
+                return bool(
+                    should_suppress_write(
+                        store=store,
+                        entity=item,
+                        scope={"list": feat, "dim": dim},
+                        pair_id=pair_id,
+                    )
+                )
 
         # 3) Dumb fallback: inspect store for last negative ts and compare
-        get_ts = getattr(store, "last_negative_ts", None)  # expected signature: (key, list, dim, pair_id) -> int|None
+        get_ts = getattr(
+            store, "last_negative_ts", None
+        )  # expected signature: (key, list, dim, pair_id) -> int|None
         if callable(get_ts):
             ts = get_ts(key=key, list=feat, dim=dim, pair_id=pair_id)
             if ts is not None:
                 import time as _t
+
                 return (_t.time() - int(ts)) < ttl_sec
 
     except Exception:
@@ -121,10 +141,9 @@ def record_negative(
     feature: str,
     op: str,
     origin: str,
-    pair_id: Optional[str] = None,
-    note: Optional[str] = None,
+    pair_id: str | None = None,
+    note: str | None = None,
 ) -> None:
-
     try:
         key = canonical_key(item)
         feat = str(feature or "").lower()
@@ -147,7 +166,17 @@ def record_negative(
         put = getattr(store, "put", None)
         if callable(put):
             import time as _t
-            put(kind="negative", key=key, list=feat, dim=dim, origin=origin_norm, pair_id=pair_id, ts=int(_t.time()), note=note)
+
+            put(
+                kind="negative",
+                key=key,
+                list=feat,
+                dim=dim,
+                origin=origin_norm,
+                pair_id=pair_id,
+                ts=int(_t.time()),
+                note=note,
+            )
 
     except Exception:
         return

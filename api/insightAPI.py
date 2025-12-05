@@ -1,4 +1,4 @@
-# _inightAPI.py
+# api/insightAPI.py
 # CrossWatch - Insights API for multiple services
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -27,6 +27,7 @@ def _env() -> tuple[
         return CW, _load_cfg, _save_cfg, _get_runtime
     except Exception:
         return None, (lambda: {}), (lambda _cfg: None), (lambda *a, **k: None)
+
 
 def register_insights(app: FastAPI) -> None:
     @app.get("/api/stats/raw", tags=["insight"])
@@ -74,7 +75,7 @@ def register_insights(app: FastAPI) -> None:
         feature: str = Query(..., regex="^(watchlist|history|ratings)$"),
         snapshot: str = Query(...),
     ) -> dict[str, Any]:
-        CW, load_config, save_config, _ = _env()
+        _, load_config, save_config, _ = _env()
         try:
             cfg = load_config() or {}
         except Exception:
@@ -141,28 +142,47 @@ def register_insights(app: FastAPI) -> None:
 
             return out
 
-        base_feats = ("watchlist", "ratings", "history", "playlists")
+        base_feats: tuple[str, ...] = ("watchlist", "ratings", "history", "playlists")
 
         def _features_from(obj: Any) -> list[str]:
             keys: list[str] = []
             try:
                 if isinstance(obj, dict):
-                    if isinstance(obj.get("features"), dict):
-                        keys += obj["features"].keys()
-                    if isinstance(obj.get("stats"), dict):
-                        keys += obj["stats"].keys()
+                    feats = obj.get("features")
+                    if isinstance(feats, dict):
+                        keys.extend(str(k) for k in feats.keys())
+                    stats = obj.get("stats")
+                    if isinstance(stats, dict):
+                        keys.extend(str(k) for k in stats.keys())
             except Exception:
                 pass
-            ks = [k for k in dict.fromkeys([*(k for k in keys if k), *base_feats])]
-            if "watchlist" in ks:
-                ks = ["watchlist"] + [k for k in ks if k != "watchlist"]
-            return ks or list(base_feats)
+
+            merged: list[str] = []
+            seen: set[str] = set()
+            for name in [*keys, *base_feats]:
+                if not name:
+                    continue
+                s = str(name)
+                if s not in seen:
+                    seen.add(s)
+                    merged.append(s)
+
+            if "watchlist" in merged:
+                merged = ["watchlist"] + [k for k in merged if k != "watchlist"]
+
+            return merged or list(base_feats)
 
         feature_keys = _features_from(getattr(STATS, "data", {}) or {})
 
         def _safe_parse_epoch(v: Any) -> int:
             try:
                 return int(_parse_epoch(v) or 0)
+            except Exception:
+                return 0
+
+        def _as_int(v: Any) -> int:
+            try:
+                return int(v)
             except Exception:
                 return 0
 
@@ -182,12 +202,23 @@ def register_insights(app: FastAPI) -> None:
         def _empty_enabled() -> dict[str, bool]:
             return {k: False for k in feature_keys}
 
-        def _safe_compute_lanes(since: int, until: int) -> tuple[dict[str, dict[str, Any]], dict[str, bool]]:
+        def _safe_compute_lanes(
+            since: int,
+            until: int,
+        ) -> tuple[dict[str, dict[str, Any]], dict[str, bool]]:
             try:
                 if callable(_compute_lanes_impl):
-                    feats, enabled = _compute_lanes_impl(int(since or 0), int(until or 0))
-                    feats = feats if isinstance(feats, dict) else _empty_feats()
-                    enabled = enabled if isinstance(enabled, dict) else _empty_enabled()
+                    res: Any = _compute_lanes_impl(int(since or 0), int(until or 0))
+                    feats_raw: Any = {}
+                    enabled_raw: Any = {}
+                    if isinstance(res, tuple) and len(res) == 2:
+                        feats_raw, enabled_raw = res
+                    feats: dict[str, dict[str, Any]] = (
+                        feats_raw if isinstance(feats_raw, dict) else _empty_feats()
+                    )
+                    enabled: dict[str, bool] = (
+                        enabled_raw if isinstance(enabled_raw, dict) else _empty_enabled()
+                    )
                     for k in feature_keys:
                         feats.setdefault(k, _zero_lane())
                         enabled.setdefault(k, False)
@@ -206,18 +237,20 @@ def register_insights(app: FastAPI) -> None:
             try:
                 with lock:
                     data = STATS.data or {}
-                samples = list((data or {}).get("samples") or [])
+                samples_raw = list((data or {}).get("samples") or [])
+                events_raw = list((data or {}).get("events") or [])
                 events = [
-                    e
-                    for e in list((data or {}).get("events") or [])
-                    if not str(e.get("key", "")).startswith("agg:")
+                    _format_event_title(e)
+                    for e in events_raw
+                    if isinstance(e, dict) and not str(e.get("key", "")).startswith("agg:")
                 ]
-                events = [_format_event_title(e) for e in events]
                 http_block = dict((data or {}).get("http") or {})
                 generated_at = (data or {}).get("generated_at")
+
+                samples: list[dict[str, Any]] = [r for r in samples_raw if isinstance(r, dict)]
                 samples.sort(key=lambda r: int(r.get("ts") or 0))
                 if int(limit_samples) > 0:
-                    samples = samples[-int(limit_samples) :]
+                    samples = samples[-int(limit_samples):]
                 series = [
                     {"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)}
                     for r in samples
@@ -233,16 +266,29 @@ def register_insights(app: FastAPI) -> None:
         try:
             files: list[Path] = []
             if REPORT_DIR is not None:
-                files = sorted(
-                    REPORT_DIR.glob("sync-*.json"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )[: max(1, int(history))]
+                try:
+                    files = sorted(
+                        REPORT_DIR.glob("sync-*.json"),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    )[: max(1, int(history))]
+                except Exception as e:
+                    _append_log("INSIGHTS", f"[!] report glob failed: {e}")
+                    files = []
+
             for p in files:
                 try:
                     d = json.loads(p.read_text(encoding="utf-8"))
-                    lanes_in = d.get("features") or {}
-                    lanes = {k: (lanes_in.get(k) or _zero_lane()) for k in feature_keys}
+                    if not isinstance(d, dict):
+                        continue
+
+                    lanes_raw = d.get("features")
+                    lanes_in: dict[str, Any] = lanes_raw if isinstance(lanes_raw, dict) else {}
+                    lanes: dict[str, dict[str, Any]] = {}
+                    for name in feature_keys:
+                        lane_val = lanes_in.get(name)
+                        lanes[name] = lane_val if isinstance(lane_val, dict) else _zero_lane()
+
                     since = _safe_parse_epoch(d.get("raw_started_ts") or d.get("started_at"))
                     until = _safe_parse_epoch(d.get("finished_at")) or int(p.stat().st_mtime)
 
@@ -254,9 +300,10 @@ def register_insights(app: FastAPI) -> None:
                         ):
                             lanes[name] = stats_feats.get(name) or _zero_lane()
 
-                    enabled = d.get("features_enabled") or d.get("enabled") or {}
-                    if not isinstance(enabled, dict):
-                        enabled = dict(stats_enabled)
+                    enabled_raw = d.get("features_enabled") or d.get("enabled") or {}
+                    enabled: dict[str, bool] = (
+                        enabled_raw if isinstance(enabled_raw, dict) else dict(stats_enabled)
+                    )
 
                     provider_posts = {
                         k[:-5]: v
@@ -271,11 +318,11 @@ def register_insights(app: FastAPI) -> None:
                             "duration_sec": d.get("duration_sec"),
                             "result": d.get("result") or "",
                             "exit_code": d.get("exit_code"),
-                            "added": int(d.get("added_last") or 0),
-                            "removed": int(d.get("removed_last") or 0),
+                            "added": _as_int(d.get("added_last")),
+                            "removed": _as_int(d.get("removed_last")),
                             "features": lanes,
                             "features_enabled": enabled,
-                            "updated_total": int(d.get("updated_last") or 0),
+                            "updated_total": _as_int(d.get("updated_last")),
                             "provider_posts": provider_posts,
                             "plex_post": d.get("plex_post"),
                             "simkl_post": d.get("simkl_post"),
@@ -291,14 +338,23 @@ def register_insights(app: FastAPI) -> None:
         except Exception as e:
             _append_log("INSIGHTS", f"[!] report scan failed: {e}")
 
-        wall = _load_wall_snapshot()
+        wall_raw = _load_wall_snapshot()
+        wall: list[Any]
+        if isinstance(wall_raw, list):
+            wall = wall_raw
+        else:
+            wall = []
+
         state: dict[str, Any] | None = None
         if not wall and callable(_get_orchestrator):
             try:
                 orc = _get_orchestrator()
-                state = orc.files.load_state()
-                if isinstance(state, dict):
-                    wall = list(state.get("wall") or [])
+                files_obj = getattr(orc, "files", None)
+                if files_obj is not None and hasattr(files_obj, "load_state"):
+                    state_candidate = files_obj.load_state()
+                    if isinstance(state_candidate, dict):
+                        state = state_candidate
+                        wall = list(state.get("wall") or [])
             except Exception as e:
                 _append_log("SYNC", f"[!] insights: orchestrator init failed: {e}")
                 wall = []
@@ -314,7 +370,7 @@ def register_insights(app: FastAPI) -> None:
                 root_dir = str(cw_cfg.get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
                 snap_dir = Path(root_dir).joinpath("snapshots")
 
-                selected = {
+                selected: dict[str, str] = {
                     "watchlist": str(cw_cfg.get("restore_watchlist") or "latest").strip() or "latest",
                     "history": str(cw_cfg.get("restore_history") or "latest").strip() or "latest",
                     "ratings": str(cw_cfg.get("restore_ratings") or "latest").strip() or "latest",
@@ -367,12 +423,12 @@ def register_insights(app: FastAPI) -> None:
                 pass
             return info
 
-        def _try_runtime_both(api_key: str, typ: str, tmdb_id: int) -> int | None:
+        def _try_runtime_both(api_key_val: str, typ: str, tmdb_id: int) -> int | None:
             for t in (typ, ("movie" if typ == "tv" else "tv")):
                 try:
-                    m = get_runtime(api_key, t, int(tmdb_id), CACHE_DIR)
+                    m = get_runtime(api_key_val, t, int(tmdb_id), CACHE_DIR)
                     if m is not None:
-                        return m
+                        return int(m)
                 except Exception:
                     pass
             return None
@@ -393,6 +449,7 @@ def register_insights(app: FastAPI) -> None:
                 movies += 1
             else:
                 shows += 1
+
             minutes: int | None = None
             tmdb_id = (meta.get("ids") or {}).get("tmdb")
             if use_tmdb and tmdb_id and fetched < fetch_cap:
@@ -415,15 +472,17 @@ def register_insights(app: FastAPI) -> None:
             "minutes": total_min,
             "hours": round(total_min / 60, 1),
             "days": round(total_min / 1440, 1),
-            "method": "tmdb"
-            if tmdb_hits and not tmdb_misses
-            else ("mixed" if tmdb_hits else "estimate"),
+            "method": "tmdb" if tmdb_hits and not tmdb_misses else ("mixed" if tmdb_hits else "estimate"),
         }
 
         if state is None and callable(_get_orchestrator):
             try:
                 orc = _get_orchestrator()
-                state = orc.files.load_state()
+                files_obj = getattr(orc, "files", None)
+                if files_obj is not None and hasattr(files_obj, "load_state"):
+                    st2 = files_obj.load_state()
+                    if isinstance(st2, dict):
+                        state = st2
             except Exception:
                 state = None
 
@@ -434,8 +493,11 @@ def register_insights(app: FastAPI) -> None:
 
         active: dict[str, bool] = {k: False for k in providers_set}
         try:
-            cfg_pairs = (cfg.get("pairs") or cfg.get("connections") or []) or []
+            raw_pairs = (cfg.get("pairs") or cfg.get("connections") or [])
+            cfg_pairs: list[Any] = raw_pairs if isinstance(raw_pairs, list) else []
             for p in cfg_pairs:
+                if not isinstance(p, dict):
+                    continue
                 s = str(p.get("source") or "").strip().lower()
                 t = str(p.get("target") or "").strip().lower()
                 if s in active:
@@ -452,9 +514,9 @@ def register_insights(app: FastAPI) -> None:
                     chk = node.get("checkpoint") or {}
                     pres = node.get("present") or {}
                     for cand in (
-                        chk.get("items"),
-                        base.get("items"),
-                        pres.get("items"),
+                        (chk.get("items") if isinstance(chk, dict) else None),
+                        (base.get("items") if isinstance(base, dict) else None),
+                        (pres.get("items") if isinstance(pres, dict) else None),
                         node.get("items"),
                     ):
                         if isinstance(cand, dict):
@@ -496,9 +558,12 @@ def register_insights(app: FastAPI) -> None:
             for row in rows:
                 try:
                     en = row.get("features_enabled") or {}
-                    if en.get(feat) is False:
+                    if isinstance(en, dict) and en.get(feat) is False:
                         continue
-                    lane = (row.get("features") or {}).get(feat) or {}
+                    feats_map = row.get("features") or {}
+                    lane = feats_map.get(feat) if isinstance(feats_map, dict) else {}
+                    if not isinstance(lane, dict):
+                        lane = {}
                     return (
                         int(lane.get("added") or 0),
                         int(lane.get("removed") or 0),
@@ -513,10 +578,13 @@ def register_insights(app: FastAPI) -> None:
             return max(counts.values()) if counts else 0
 
         def _lane_totals(days: int) -> dict[str, tuple[int, int, int]]:
-            feats, _ = _safe_compute_lanes(now_ts - days * 86400, now_ts)
+            feats_any, _enabled_any = _safe_compute_lanes(now_ts - days * 86400, now_ts)
+            feats = feats_any if isinstance(feats_any, dict) else {}
             out: dict[str, tuple[int, int, int]] = {}
             for f in feature_keys:
                 lane = feats.get(f) or {}
+                if not isinstance(lane, dict):
+                    lane = {}
                 out[f] = (
                     int(lane.get("added") or 0),
                     int(lane.get("removed") or 0),
@@ -529,28 +597,34 @@ def register_insights(app: FastAPI) -> None:
 
         ts_grid = [r["ts"] for r in series_by_feature.get("watchlist", [])]
         if len(ts_grid) < 2:
-            base = now_ts - 11 * 3600
-            ts_grid = [base + i * 3600 for i in range(12)]
+            base_ts = now_ts - 11 * 3600
+            ts_grid = [base_ts + i * 3600 for i in range(12)]
         if ts_grid[-1] < now_ts:
             ts_grid = ts_grid + [now_ts]
 
         win: list[dict[str, tuple[int, int]]] = []
         for i in range(len(ts_grid) - 1):
-            feats, _ = _safe_compute_lanes(ts_grid[i], ts_grid[i + 1])
+            feats_any, _enabled_any = _safe_compute_lanes(ts_grid[i], ts_grid[i + 1])
+            feats = feats_any if isinstance(feats_any, dict) else {}
             d: dict[str, tuple[int, int]] = {}
             for f in feature_keys:
                 ln = feats.get(f) or {}
-                d[f] = (int(ln.get("added") or 0), int(ln.get("removed") or 0))
+                if not isinstance(ln, dict):
+                    ln = {}
+                d[f] = (
+                    int(ln.get("added") or 0),
+                    int(ln.get("removed") or 0),
+                )
             win.append(d)
 
         for f in [x for x in feature_keys if x != "watchlist"]:
             v = max(0, _union_now(f))
-            out = [{"ts": ts_grid[-1], "count": v}]
+            out_series: list[dict[str, int]] = [{"ts": ts_grid[-1], "count": v}]
             for i in range(len(ts_grid) - 2, -1, -1):
                 a, r = win[i].get(f, (0, 0))
                 v = max(0, v - (a - r))
-                out.append({"ts": ts_grid[i], "count": v})
-            series_by_feature[f] = list(reversed(out))
+                out_series.append({"ts": ts_grid[i], "count": v})
+            series_by_feature[f] = list(reversed(out_series))
 
         def _val_at(series_list: list[dict[str, int]], floor_ts: int) -> int:
             try:
@@ -571,9 +645,15 @@ def register_insights(app: FastAPI) -> None:
         feats_out: dict[str, dict[str, Any]] = {}
         for feat in feature_keys:
             add_last, rem_last, upd_last = _last_run_lane(feat)
-            wa, wr, wu = week_tot.get(feat, (0, 0, 0))
+            t = week_tot.get(feat)
+            if isinstance(t, tuple) and len(t) == 3:
+                wa, wr, wu = t
+            else:
+                wa, wr, wu = (0, 0, 0)
+
             if not (add_last or rem_last or upd_last):
                 add_last, rem_last, upd_last = wa, wr, wu
+
             s = series_by_feature.get(feat, [])
             feats_out[feat] = {
                 "now": _union_now(feat),
@@ -588,7 +668,8 @@ def register_insights(app: FastAPI) -> None:
             }
 
         wl = feats_out.get(
-            "watchlist", {"now": 0, "week": 0, "month": 0, "added": 0, "removed": 0}
+            "watchlist",
+            {"now": 0, "week": 0, "month": 0, "added": 0, "removed": 0},
         )
         cw_snapshots = _build_crosswatch_snapshot_info()
         payload: dict[str, Any] = {
@@ -604,10 +685,10 @@ def register_insights(app: FastAPI) -> None:
             "generated_at": generated_at,
             "features": feats_out,
             "crosswatch_snapshots": cw_snapshots,
-            "now": int(wl["now"]),
-            "week": int(wl["week"]),
-            "month": int(wl["month"]),
-            "added": int(wl["added"]),
-            "removed": int(wl["removed"]),
+            "now": int(wl.get("now", 0) or 0),
+            "week": int(wl.get("week", 0) or 0),
+            "month": int(wl.get("month", 0) or 0),
+            "added": int(wl.get("added", 0) or 0),
+            "removed": int(wl.get("removed", 0) or 0),
         }
         return JSONResponse(payload)

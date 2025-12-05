@@ -1,11 +1,15 @@
+# cw_platform/orchestration/_blackbox.py
+# Blackbox logic for managing state and flap counters.
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Set, Optional, Mapping, Any, Tuple, Iterable
+from collections.abc import Mapping, Iterable
+from typing import Any
 import json, time
 
 STATE_DIR = Path("/config/.cw_state")
 
-def _read_json(p: Path) -> dict:
+def _read_json(p: Path) -> dict[str, Any]:
     try:
         if not p.exists():
             return {}
@@ -13,17 +17,14 @@ def _read_json(p: Path) -> dict:
     except Exception:
         return {}
 
-def _write_json(p: Path, obj: dict) -> None:
+def _write_json(p: Path, obj: dict[str, Any]) -> None:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
     except Exception:
         pass
 
-
-# helpers
-
-def _bb_path(dst: str, feature: str, pair: Optional[str] = None) -> Path:
+def _bb_path(dst: str, feature: str, pair: str | None = None) -> Path:
     dst = str(dst).strip().lower()
     feature = str(feature).strip().lower()
     if pair:
@@ -36,7 +37,7 @@ def _flap_path(dst: str, feature: str) -> Path:
     feature = str(feature).strip().lower()
     return STATE_DIR / f"{dst}_{feature}.flap.json"
 
-_DEFAULT_BB = {
+_DEFAULT_BB: dict[str, Any] = {
     "enabled": True,
     "promote_after": 3,
     "unresolved_days": 0,
@@ -46,7 +47,7 @@ _DEFAULT_BB = {
     "block_removes": True,
 }
 
-def _load_bb_cfg(cfg: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
+def _load_bb_cfg(cfg: Mapping[str, Any] | None) -> dict[str, Any]:
     try:
         if cfg and isinstance(cfg, Mapping):
             if "sync" in cfg:
@@ -63,9 +64,8 @@ def _load_bb_cfg(cfg: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
         pass
     return dict(_DEFAULT_BB)
 
-# BB loader
-def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> Set[str]:
-    keys: Set[str] = set()
+def load_blackbox_keys(dst: str, feature: str, pair: str | None = None) -> set[str]:
+    keys: set[str] = set()
     glob = _read_json(_bb_path(dst, feature))
     keys |= set(glob.keys())
     if pair:
@@ -73,11 +73,10 @@ def load_blackbox_keys(dst: str, feature: str, pair: Optional[str] = None) -> Se
         keys |= set(prs.keys())
     return keys
 
-def load_flap_counters(dst: str, feature: str) -> Dict[str, dict]:
+def load_flap_counters(dst: str, feature: str) -> dict[str, dict[str, Any]]:
     return _read_json(_flap_path(dst, feature))
 
-# Flap protection
-def inc_flap(dst: str, feature: str, key: str, *, reason: str, op: str, ts: Optional[int] = None) -> int:
+def inc_flap(dst: str, feature: str, key: str, *, reason: str, op: str, ts: int | None = None) -> int:
     ts = int(ts or time.time())
     path = _flap_path(dst, feature)
     m = _read_json(path)
@@ -89,7 +88,7 @@ def inc_flap(dst: str, feature: str, key: str, *, reason: str, op: str, ts: Opti
     _write_json(path, m)
     return int(row["consecutive"])
 
-def reset_flap(dst: str, feature: str, key: str, *, ts: Optional[int] = None) -> None:
+def reset_flap(dst: str, feature: str, key: str, *, ts: int | None = None) -> None:
     ts = int(ts or time.time())
     path = _flap_path(dst, feature)
     m = _read_json(path)
@@ -100,9 +99,7 @@ def reset_flap(dst: str, feature: str, key: str, *, ts: Optional[int] = None) ->
     row["last_success_ts"] = ts
     _write_json(path, m)
 
-
-# BB Promotion
-def _promote(dst: str, feature: str, key: str, *, reason: str, ts: int, pair: Optional[str]) -> None:
+def _promote(dst: str, feature: str, key: str, *, reason: str, ts: int, pair: str | None) -> None:
     path = _bb_path(dst, feature, pair)
     data = _read_json(path)
     if key not in data:
@@ -115,16 +112,15 @@ def maybe_promote_to_blackbox(
     key: str,
     *,
     cfg: Mapping[str, Any],
-    ts: Optional[int] = None,
-    pair: Optional[str] = None,
-    unresolved_map: Optional[Mapping[str, Mapping[str, Any]]] = None,
-) -> Dict[str, Any]:
+    ts: int | None = None,
+    pair: str | None = None,
+    unresolved_map: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     ts = int(ts or time.time())
     bb = _load_bb_cfg(cfg)
     promote_after = int(bb.get("promote_after", 3) or 3)
     unresolved_days = int(bb.get("unresolved_days", 0) or 0)
     pair_scoped = bool(bb.get("pair_scoped", True))
-
     if not pair_scoped:
         pair = None
 
@@ -132,12 +128,10 @@ def maybe_promote_to_blackbox(
     row = counters.get(key) or {}
     cons = int(row.get("consecutive") or 0)
 
-    # 1: consecutive failures
     if cons >= promote_after:
         _promote(dst, feature, key, reason=f"flapper:consecutive>={promote_after}", ts=ts, pair=pair)
         return {"promoted": True, "reason": "consecutive", "since": ts}
 
-    # 2: unresolved age
     if unresolved_days > 0 and unresolved_map:
         meta = unresolved_map.get(key) or {}
         uts = int(meta.get("ts") or 0)
@@ -149,7 +143,6 @@ def maybe_promote_to_blackbox(
 
     return {"promoted": False, "reason": None, "since": None}
 
-# HL Wrappers
 def record_attempts(
     dst: str,
     feature: str,
@@ -157,10 +150,10 @@ def record_attempts(
     *,
     reason: str = "apply:add:failed",
     op: str = "add",
-    pair: Optional[str] = None,
-    cfg: Optional[Mapping[str, Any]] = None,
-    unresolved_map: Optional[Mapping[str, Mapping[str, Any]]] = None,
-) -> Dict[str, Any]:
+    pair: str | None = None,
+    cfg: Mapping[str, Any] | None = None,
+    unresolved_map: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     bb = _load_bb_cfg(cfg)
     ts = int(time.time())
     promoted = 0
@@ -184,9 +177,9 @@ def record_success(
     feature: str,
     keys: Iterable[str],
     *,
-    pair: Optional[str] = None,   # kept for symmetry; no-op here
-    cfg: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, Any]:
+    pair: str | None = None,
+    cfg: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     ts = int(time.time())
     count = 0
     for k in (keys or []):
@@ -198,8 +191,7 @@ def record_success(
             continue
     return {"ok": True, "count": count}
 
-# BB Maintenance
-def prune_blackbox(*, cooldown_days: int = 30) -> Tuple[int, int]:
+def prune_blackbox(*, cooldown_days: int = 30) -> tuple[int, int]:
     scanned = 0
     removed = 0
     now = int(time.time())

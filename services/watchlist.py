@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import requests
 from urllib.parse import urlencode
@@ -27,7 +27,9 @@ except Exception:
 def _state_path() -> Path:
     return CONFIG / "state.json"
 
+
 HIDE_PATH: Path = CONFIG / "watchlist_hide.json"
+
 
 def _load_hide_set() -> set[str]:
     try:
@@ -71,6 +73,7 @@ def _registry_sync_providers() -> list[str]:
         for k in (MR_MODULES.get("SYNC") or {}).keys()
     ]
 
+
 def _normalize_label(pid: str) -> str:
     mapping = {
         "PLEX": "Plex",
@@ -83,6 +86,7 @@ def _normalize_label(pid: str) -> str:
     }
     return mapping.get(pid.upper(), pid.title())
 
+
 def _feat_enabled(fmap: dict[str, Any] | None, name: str) -> bool:
     v = (fmap or {}).get(name)
     if v is True:
@@ -90,6 +94,7 @@ def _feat_enabled(fmap: dict[str, Any] | None, name: str) -> bool:
     if isinstance(v, dict):
         return bool(v.get("enable", True))
     return False
+
 
 def _configured_via_registry(pid: str, cfg: dict[str, Any]) -> bool:
     try:
@@ -103,13 +108,16 @@ def _configured_via_registry(pid: str, cfg: dict[str, Any]) -> bool:
     except Exception:
         return False
 
+
 def _prov(state: dict[str, Any], provider: str) -> dict[str, Any]:
     return (state.get("providers") or {}).get(provider.upper()) or {}
+
 
 def _get_provider_items(state: dict[str, Any], provider: str) -> dict[str, Any]:
     p = _prov(state, provider)
     wl = (((p.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
     return wl or (p.get("items") or {})
+
 
 def _find_item_in_state(state: dict[str, Any], key: str) -> dict[str, Any]:
     for prov in _registry_sync_providers():
@@ -117,6 +125,7 @@ def _find_item_in_state(state: dict[str, Any], key: str) -> dict[str, Any]:
         if it:
             return dict(it)
     return {}
+
 
 def _find_item_in_state_for_provider(
     state: dict[str, Any],
@@ -177,6 +186,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
         if s:
             out[k] = s
     return out
+
 
 def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
     typ = (item.get("type") or "").lower()
@@ -293,6 +303,7 @@ def _jf_base(cfg: dict[str, Any]) -> str:
         raise RuntimeError("Jellyfin/Emby: missing 'server'")
     return base if base.endswith("/") else base + "/"
 
+
 def _jf_headers(cfg: dict[str, Any]) -> dict[str, str]:
     token = (
         cfg.get("access_token") or cfg.get("api_key") or cfg.get("token") or ""
@@ -317,6 +328,7 @@ def _jf_require_user(cfg: dict[str, Any]) -> str:
         raise RuntimeError("Jellyfin/Emby: missing 'user_id'")
     return uid
 
+
 def _extract_jf_id(item: dict[str, Any], key: str) -> str | None:
     ids = (item or {}).get("ids") or {}
     cand = (
@@ -334,6 +346,7 @@ def _extract_jf_id(item: dict[str, Any], key: str) -> str | None:
     if pref.lower().strip() in {"jellyfin", "emby"} and val.strip():
         return val.strip()
     return None
+
 
 def _jf_get(
     base: str,
@@ -357,6 +370,7 @@ def _jf_get(
         j = {}
     return j if isinstance(j, dict) else {}
 
+
 def _jf_delete(
     base: str,
     path: str,
@@ -374,6 +388,7 @@ def _jf_delete(
         raise RuntimeError(
             f"Jellyfin/Emby DELETE {path} -> {st}: {getattr(r, 'text', '')}"
         )
+
 
 def _jf_provider_tokens(ids: dict[str, Any]) -> list[str]:
     out: list[str] = []
@@ -627,12 +642,17 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
 
         epoch_map = {n: _iso_to_epoch(_pick_added(cand_map[n])) for n in sources}
         if epoch_map and any(epoch_map.values()):
-            added_src = max(epoch_map, key=epoch_map.get)
-            added_epoch = epoch_map[added_src]
+            added_src, added_epoch = max(
+                epoch_map.items(),
+                key=lambda kv: kv[1],
+            )
         else:
             added_src, added_epoch = (sources[0], 0) if sources else ("", 0)
 
         status = f"{sources[0]}_only" if len(sources) == 1 else "both"
+
+        tmdb_str = str(tmdb_id)
+        tmdb_value = int(tmdb_str) if tmdb_str.isdigit() else tmdb_id
 
         out.append(
             {
@@ -640,7 +660,7 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
                 "type": typ,
                 "title": title,
                 "year": year,
-                "tmdb": int(tmdb_id) if str(tmdb_id).isdigit() else tmdb_id,
+                "tmdb": tmdb_value,
                 "status": status,
                 "sources": sources,
                 "added_epoch": added_epoch,
@@ -737,7 +757,7 @@ def _delete_on_plex_single(
     token = (cfg.get("plex") or {}).get("account_token", "").strip()
     if not token:
         raise RuntimeError("missing plex token")
-    account = MyPlexAccount(token=token)
+    account = cast(Any, MyPlexAccount)(token=token)
 
     item = _find_item_in_state(state, key) or {}
     guid, rk = _extract_plex_identifiers(item)
@@ -779,7 +799,7 @@ def _delete_on_plex_single(
 
     removed = False
     try:
-        rm = getattr(found, "removeFromWatchlist", None)
+        rm: Any = getattr(found, "removeFromWatchlist", None)
         if callable(rm):
             rm()
             removed = True
@@ -791,8 +811,10 @@ def _delete_on_plex_single(
     if any(matches(m) for m in account.watchlist(maxresults=100000)):
         raise RuntimeError("PlexAPI reported removal but item still present")
 
+
 _SIMKL_HIST = "https://api.simkl.com/sync/history/remove"
 _SIMKL_WL = "https://api.simkl.com/sync/watchlist/remove"
+
 
 def _simkl_headers(cfg: dict[str, Any]) -> dict[str, str]:
     return {
@@ -802,6 +824,7 @@ def _simkl_headers(cfg: dict[str, Any]) -> dict[str, str]:
         "Authorization": f"Bearer {cfg.get('access_token', '')}",
         "simkl-api-key": cfg.get("client_id", ""),
     }
+
 
 def _post_simkl_delete(
     url: str,
@@ -828,6 +851,7 @@ def _simkl_deleted_count(resp: dict[str, Any]) -> int:
         int(deleted.get(k, 0) or 0)
         for k in ("movies", "shows", "episodes", "seasons")
     )
+
 
 def _delete_on_simkl_batch(
     items: list[dict[str, Any]],
@@ -856,7 +880,9 @@ def _delete_on_simkl_batch(
         return
     raise RuntimeError(f"SIMKL delete matched 0 items. Payload={payload}")
 
+
 _TRAKT_REMOVE = "https://api.trakt.tv/sync/watchlist/remove"
+
 
 def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
     tok = (cfg.get("access_token") or cfg.get("token") or "").strip()
@@ -868,6 +894,7 @@ def _trakt_headers(cfg: dict[str, Any]) -> dict[str, str]:
         "trakt-api-key": (cfg.get("client_id") or "").strip(),
         "Authorization": f"Bearer {tok}" if tok else "",
     }
+
 
 def _delete_on_trakt_batch(
     items: list[dict[str, Any]],
@@ -896,6 +923,7 @@ def _delete_on_trakt_batch(
         raise RuntimeError(
             f"TRAKT delete failed: {getattr(r, 'text', 'no response')}"
         )
+
 
 def _delete_on_jellyfin_batch(
     items: list[dict[str, Any]],
@@ -951,10 +979,14 @@ def _delete_on_jellyfin_batch(
         pl_id = _jf_find_playlist_id(cfg, hdr, wl_name)
         if not pl_id:
             raise RuntimeError(f"Jellyfin: playlist '{wl_name}' not found")
-        entries = [entry_by.get(iid) for iid in jf_ids if entry_by.get(iid)]
-        params = {"EntryIds": ",".join(entries)} if entries else {
-            "Ids": ",".join(jf_ids)
-        }
+        entries: list[str] = [
+            str(entry_by[iid]) for iid in jf_ids if entry_by.get(iid)
+        ]
+        params = (
+            {"EntryIds": ",".join(entries)}
+            if entries
+            else {"Ids": ",".join(jf_ids)}
+        )
         _jf_delete(base, f"Playlists/{pl_id}/Items", hdr, params=params)
     elif mode == "collection":
         coll_id = _jf_find_collection_id(cfg, hdr, wl_name)
@@ -969,11 +1001,13 @@ def _delete_on_jellyfin_batch(
     else:
         raise RuntimeError(f"Jellyfin: unknown mode '{mode}'")
 
+
 def _delete_on_emby_batch(
     items: list[dict[str, Any]],
     cfg: dict[str, Any],
 ) -> None:
     _delete_on_jellyfin_batch(items, cfg)
+
 
 def _delete_on_plex_batch(
     items: list[dict[str, Any]],
@@ -983,7 +1017,9 @@ def _delete_on_plex_batch(
     for it in items or []:
         _delete_on_plex_single(it["key"], state, cfg)
 
+
 _MDBLIST_REMOVE = "https://api.mdblist.com/watchlist/items/remove"
+
 
 def _delete_on_mdblist_batch(
     items: list[dict[str, Any]],
@@ -1019,6 +1055,7 @@ def _delete_on_mdblist_batch(
         raise RuntimeError(
             f"MDBLIST delete failed: {getattr(r, 'text', 'no response')}"
         )
+
 
 # Delete watchlist items
 def delete_watchlist_batch(
@@ -1107,6 +1144,7 @@ def delete_watchlist_batch(
 
     return {"ok": True, "deleted": len(keys), "provider": prov, "status": "ok"}
 
+
 def delete_watchlist_item(
     key: str,
     state_path: Path,
@@ -1119,7 +1157,7 @@ def delete_watchlist_item(
 
     def _log(level: str, msg: str) -> None:
         try:
-            if log:
+            if callable(log):
                 log(level, msg)
         except Exception:
             pass

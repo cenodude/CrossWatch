@@ -3,7 +3,7 @@
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from pathlib import Path
 from datetime import datetime, timezone, date
 
@@ -1111,9 +1111,10 @@ def api_sync_providers() -> JSONResponse:
     def _manifest_from_module(mod) -> dict | None:
         if hasattr(mod, "get_manifest") and callable(mod.get_manifest):
             try:
-                mf = dict(mod.get_manifest())
+                mf = dict(cast(Any, mod.get_manifest()))
             except Exception:
                 mf = None
+                
             if mf and not (mf.get("hidden") or mf.get("is_template")):
                 return {
                     "name": (mf.get("name") or "").upper(),

@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any, IO, Literal
+from typing import Any, IO, Literal, cast
 import json
 import shutil
 import zipfile
@@ -283,13 +283,14 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     kind: Kind | None = None
 
     if lower in ("watchlist.json", "history.json", "ratings.json"):
-        kind = lower.split(".")[0]  # type: ignore[assignment]
+        base = lower.split(".")[0]  # "watchlist" / "history" / "ratings"
+        kind = cast(Kind, base)
         dest = _state_path(kind)
         target = "state"
     else:
         for candidate in ("watchlist", "history", "ratings"):
             if lower.endswith(f"-{candidate}.json"):
-                kind = candidate  # type: ignore[assignment]
+                kind = cast(Kind, candidate)
                 break
         if kind is None:
             raise ValueError(

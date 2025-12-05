@@ -629,13 +629,14 @@ def api_metadata_bulk(
         if overview == "short" and out.get("overview"):
             out["overview"] = _shorten(out["overview"], 280)
         if "score" not in out:
-            va = (out.get("detail") or {}).get("vote_average") or meta.get(
+            va: Any = (out.get("detail") or {}).get("vote_average") or meta.get(
                 "vote_average"
             )
             try:
                 out["score"] = int(round(float(va) * 10))
             except Exception:
                 pass
+
         return key, {"ok": True, "meta": out}
 
     results: dict[str, Any] = {}

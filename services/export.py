@@ -243,7 +243,6 @@ def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[s
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"yamtrack_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
-
 def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
     ts = time.strftime("%Y%m%d")
     if feature == "watchlist":
@@ -279,7 +278,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
             url = f"https://www.imdb.com/title/{imdb}/"
             rows.append(
                 [
-                    pos,
+                    str(pos),
                     imdb,
                     "",
                     "",

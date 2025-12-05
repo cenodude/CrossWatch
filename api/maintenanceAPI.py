@@ -1,4 +1,4 @@
-# _maintenanceAPI.py
+# api/maintenanceAPI.py
 # CrossWatch - Maintenance API for CrossWatch
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -396,11 +396,13 @@ def reset_stats(
                         s in key for s in ("cache", "memo", "state")
                     ):
                         try:
-                            obj.clear() if hasattr(obj, "clear") else None
-                            if isinstance(obj, (list, tuple)):
+                            if hasattr(obj, "clear"):
+                                obj.clear()  # type: ignore[call-arg]  # desnoods
+                            if isinstance(obj, list):
                                 obj[:] = []
                         except Exception:
                             pass
+                        
                 for fn_name in ("reset_insights_cache", "clear_cache"):
                     fn = getattr(IA, fn_name, None)
                     if callable(fn):
