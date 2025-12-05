@@ -1,14 +1,18 @@
 # providers/scrobble/currently_watching.py
 # CrossWatch - A cross-platform media scrobbling service
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import json, time
+
+import json
+import time
 from pathlib import Path
 from typing import Any, Optional
+
 try:
     from _logging import log as BASE_LOG
 except Exception:
-    BASE_LOG = None # type: ignore
+    BASE_LOG = None  # type: ignore
+
 from providers.scrobble.scrobble import ScrobbleEvent
 
 def _log(msg: str, lvl: str = "DEBUG") -> None:
