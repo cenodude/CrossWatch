@@ -519,18 +519,39 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     # ---------- TRAKT ----------
     def trakt_request_pin() -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")
-        if not prov: raise RuntimeError("Trakt provider not available")
-        cfg = load_config(); res = prov.start(cfg, redirect_uri=""); save_config(cfg)
+        if not prov:
+            raise RuntimeError("Trakt provider not available")
+
+        cfg = load_config()
+        res = prov.start(cfg, redirect_uri="")  # type: ignore[attr-defined]
+        save_config(cfg)
+
         pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
-        user_code = (pend.get("user_code") or (res or {}).get("user_code"))
-        device_code = (pend.get("device_code") or (res or {}).get("device_code"))
-        verification_url = (pend.get("verification_url") or (res or {}).get("verification_url") or "https://trakt.tv/activate")
+        user_code = pend.get("user_code") or (res or {}).get("user_code")
+        device_code = pend.get("device_code") or (res or {}).get("device_code")
+        verification_url = (
+            pend.get("verification_url")
+            or (res or {}).get("verification_url")
+            or "https://trakt.tv/activate"
+        )
         exp_epoch = int((pend.get("expires_at") or 0) or (time.time() + 600))
+
         if not user_code or not device_code:
             raise RuntimeError("Trakt PIN could not be issued")
-        return {"user_code": user_code, "device_code": device_code, "verification_url": verification_url, "expires_epoch": exp_epoch}
 
-    def trakt_wait_for_token(device_code: str, *, timeout_sec: int = 600, interval: float = 2.0) -> Optional[str]:
+        return {
+            "user_code": user_code,
+            "device_code": device_code,
+            "verification_url": verification_url,
+            "expires_epoch": exp_epoch,
+        }
+
+    def trakt_wait_for_token(
+        device_code: str,
+        *,
+        timeout_sec: int = 600,
+        interval: float = 2.0,
+    ) -> Optional[str]:
         prov = _import_provider("providers.auth._auth_TRAKT")
         if not prov:
             return None
@@ -541,13 +562,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         while time.time() < deadline:
             cfg = load_config()
             try:
-                tok = prov.read_token_file(cfg, device_code)  # type: ignore[attr-defined]
-                if tok:
-                    prov.finish(cfg, device_code=device_code)  # type: ignore[attr-defined]
-                    save_config(cfg)
-                    return "ok"
-                prov.finish(cfg, device_code=device_code)  # type: ignore[attr-defined]
-                save_config(cfg)
+                res = prov.finish(cfg, device_code=device_code)  # type: ignore[attr-defined]
+                if isinstance(res, dict):
+                    status = (res.get("status") or "").lower()
+                    if res.get("ok"):
+                        save_config(cfg)
+                        return "ok"
+                    if status in ("expired_token", "no_device_code", "missing_client"):
+                        return None
             except Exception:
                 pass
             time.sleep(sleep_s)
@@ -561,37 +583,49 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 cid = str(payload.get("client_id") or "").strip()
                 secr = str(payload.get("client_secret") or "").strip()
                 if cid or secr:
-                    cfg = load_config(); tr = cfg.setdefault("trakt", {})
-                    if cid: tr["client_id"] = cid
-                    if secr: tr["client_secret"] = secr
+                    cfg = load_config()
+                    tr = cfg.setdefault("trakt", {})
+                    if cid:
+                        tr["client_id"] = cid
+                    if secr:
+                        tr["client_secret"] = secr
                     save_config(cfg)
 
             info = trakt_request_pin()
-            user_code, verification_url, exp_epoch, device_code = info["user_code"], info["verification_url"], int(info["expires_epoch"]), info["device_code"]
+            user_code = str(info["user_code"])
+            verification_url = str(
+                info.get("verification_url") or "https://trakt.tv/activate"
+            )
+            exp_epoch = int(info.get("expires_epoch") or 0)
+            device_code = str(info["device_code"])
 
-            def waiter(_device_code: str):
+            def waiter(_device_code: str) -> None:
                 token = trakt_wait_for_token(_device_code, timeout_sec=600, interval=2.0)
                 if token:
-                    _safe_log(log_fn, "TRAKT", "\x1b[92m[TRAKT]\x1b[0m Token acquired and saved."); _probe_bust("trakt")
+                    _safe_log(
+                        log_fn,
+                        "TRAKT",
+                        "\x1b[92m[TRAKT]\x1b[0m Token acquired and saved.",
+                    )
+                    _probe_bust("trakt")
                 else:
-                    _safe_log(log_fn, "TRAKT", "\x1b[91m[TRAKT]\x1b[0m Device code expired or not authorized.")
+                    _safe_log(
+                        log_fn,
+                        "TRAKT",
+                        "\x1b[91m[TRAKT]\x1b[0m Device code expired or not authorized.",
+                    )
 
             threading.Thread(target=waiter, args=(device_code,), daemon=True).start()
-            return {"ok": True, "user_code": user_code, "verification_url": verification_url, "expiresIn": max(0, exp_epoch - int(time.time()))}
+            return {
+                "ok": True,
+                "user_code": user_code,
+                "verificationUrl": verification_url,
+                "verification_url": verification_url,
+                "expiresIn": max(0, exp_epoch - int(time.time())),
+            }
         except Exception as e:
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR: {e}")
             return {"ok": False, "error": str(e)}
-        
-    @app.post("/api/trakt/token/delete", tags=["auth"])
-    def api_trakt_token_delete() -> dict[str, Any]:
-        cfg = load_config(); tr = cfg.setdefault("trakt", {})
-        tr["access_token"] = ""
-        tr["refresh_token"] = ""
-        tr["expires_at"] = 0
-        tr["scope"] = ""
-        tr["token_type"] = ""
-        save_config(cfg)
-        return {"ok": True}
 
     # ---------- SIMKL ----------
     SIMKL_STATE: dict[str, Any] = {}
