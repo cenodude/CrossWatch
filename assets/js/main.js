@@ -3,25 +3,20 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 // Playing card UI guard
-const hasTmdbKey = (() => {
-  try {
-    const tmdb = window._cfgCache?.tmdb;
-    if (!tmdb || !Object.prototype.hasOwnProperty.call(tmdb, "api_key")) {
-      return true;
-    }
-    const raw = String(tmdb.api_key || "").trim();
-    return !!raw;
-  } catch {
-    return true;
+(() => {
+  const cfg = (typeof window !== "undefined" && window._cfgCache) || null;
+  if (!cfg) return;
+
+  const key = cfg?.tmdb?.api_key;
+  const hasTmdb = typeof key === "string" ? key.trim().length > 0 : !!key;
+
+  if (cfg.ui?.show_playingcard === false || !hasTmdb) {
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      `<style>#playing-card{display:none!important}</style>`
+    );
   }
 })();
-
-if (!(window._cfgCache?.ui?.show_playingcard ?? true) || !hasTmdbKey) {
-  document.head.insertAdjacentHTML(
-    "beforeend",
-    `<style>#playing-card{display:none!important}</style>`
-  );
-}
 
 // Main UI logic
 (() => {

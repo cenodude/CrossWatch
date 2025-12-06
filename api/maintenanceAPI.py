@@ -88,7 +88,6 @@ def _file_meta(path: Path) -> dict[str, Any]:
         ),
     }
 
-
 def _scan_provider_cache() -> dict[str, Any]:
     _, _, CW_STATE_DIR, *_ = _cw()
     exists = CW_STATE_DIR.exists()
@@ -291,15 +290,60 @@ def clear_cache() -> dict[str, Any]:
         "after": after,
     }
 
-
 @router.get("/provider-cache")
 def provider_cache_status() -> dict[str, Any]:
     info = _scan_provider_cache()
     return {"ok": True, **info}
 
+@router.post("/restart")
+def restart_crosswatch() -> dict[str, Any]:
+    _, _, _, _, _, _append_log = _cw()
+    try:
+        _append_log(
+            "TRBL",
+            "\x1b[91m[TROUBLESHOOT]\x1b[0m Restart requested via /api/maintenance/restart.",
+        )
+    except Exception:
+        pass
 
-#--- statistics reset / recalculation ---
-@router.post("/maintenance/reset-stats")
+    def _kill() -> None:
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Terminating process for restart.",
+            )
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Timer(0.75, _kill).start()
+    return {"ok": True, "message": "Restart scheduled"}
+
+@router.post("/reset-currently-watching")
+def reset_currently_watching() -> dict[str, Any]:
+    _, _, CW_STATE_DIR, _, _, _append_log = _cw()
+    path = CW_STATE_DIR / "currently_watching.json"
+    existed = path.exists()
+    try:
+        path.unlink(missing_ok=True)
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Reset currently_watching.json (currently playing).",
+            )
+        except Exception:
+            pass
+        return {"ok": True, "path": str(path), "existed": bool(existed)}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "path": str(path),
+            "existed": bool(existed),
+        }
+
+# --- statistics reset / recalculation ---
+@router.post("/reset-stats")
 def reset_stats(
     recalc: bool = Body(False),
     purge_file: bool = Body(False),
@@ -312,6 +356,7 @@ def reset_stats(
     if not any((recalc, purge_file, purge_state, purge_reports, purge_insights)):
         purge_file = purge_state = purge_reports = purge_insights = True
         recalc = False
+
     try:
         try:
             from .syncAPI import _summary_reset, _PROVIDER_COUNTS_CACHE, _find_state_path
@@ -319,6 +364,7 @@ def reset_stats(
             _summary_reset = None
             _PROVIDER_COUNTS_CACHE = None
             _find_state_path = None
+
         try:
             from crosswatch import LOG_BUFFERS
         except Exception:
@@ -326,13 +372,17 @@ def reset_stats(
 
         if _summary_reset:
             _summary_reset()
+
         if isinstance(LOG_BUFFERS, dict):
             LOG_BUFFERS["SYNC"] = []
+
         if isinstance(_PROVIDER_COUNTS_CACHE, dict):
             _PROVIDER_COUNTS_CACHE["ts"] = 0.0
             _PROVIDER_COUNTS_CACHE["data"] = None
 
         STATS.reset()
+
+        # --- stats file ---
         if purge_file:
             try:
                 STATS.path.unlink(missing_ok=True)
@@ -357,8 +407,8 @@ def reset_stats(
                     from services.statistics import REPORT_DIR
                 except Exception:
                     from pathlib import Path as _P
-
                     REPORT_DIR = _P("/config/sync_reports")
+
                 for f in REPORT_DIR.glob("sync-*.json"):
                     try:
                         f.unlink()
@@ -397,12 +447,12 @@ def reset_stats(
                     ):
                         try:
                             if hasattr(obj, "clear"):
-                                obj.clear()  # type: ignore[call-arg]  # desnoods
+                                obj.clear()  # type: ignore[call-arg]
                             if isinstance(obj, list):
                                 obj[:] = []
                         except Exception:
                             pass
-                        
+
                 for fn_name in ("reset_insights_cache", "clear_cache"):
                     fn = getattr(IA, fn_name, None)
                     if callable(fn):
@@ -433,149 +483,5 @@ def reset_stats(
             },
             "recalculated": bool(recalc),
         }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@router.post("/reset-currently-watching")
-def reset_currently_watching() -> dict[str, Any]:
-    _, _, CW_STATE_DIR, _, _, _append_log = _cw()
-    path = CW_STATE_DIR / "currently_watching.json"
-    existed = path.exists()
-    try:
-        if existed:
-            try:
-                path.unlink(missing_ok=True)
-            except TypeError:
-                if path.exists():
-                    path.unlink()
-        try:
-            _append_log(
-                "TRBL",
-                "\x1b[91m[TROUBLESHOOT]\x1b[0m Reset currently_watching.json (currently playing).",
-            )
-        except Exception:
-            pass
-        return {"ok": True, "path": str(path), "existed": bool(existed)}
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": str(e),
-            "path": str(path),
-            "existed": bool(existed),
-        }
-
-
-@router.post("/restart")
-def restart_crosswatch() -> dict[str, Any]:
-    _, _, _, _, _, _append_log = _cw()
-    try:
-        _append_log(
-            "TRBL",
-            "\x1b[91m[TROUBLESHOOT]\x1b[0m Restart requested via /api/maintenance/restart.",
-        )
-    except Exception:
-        pass
-
-    def _kill() -> None:
-        try:
-            _append_log(
-                "TRBL",
-                "\x1b[91m[TROUBLESHOOT]\x1b[0m Terminating process for restart.",
-            )
-        except Exception:
-            pass
-        os._exit(0)
-
-    threading.Timer(0.75, _kill).start()
-    return {"ok": True, "message": "Restart scheduled"}
-
-
-@router.post("/reset-state")
-def reset_state(
-    mode: str = Body("clear_both"),
-    # clear_both|clear_state|clear_tombstones|clear_tombstone_entries|clear_cw_state_only|rebuild
-    keep_ttl: bool = Body(True),
-    ttl_override: int | None = Body(None),
-    feature: str = Body("watchlist"),
-) -> dict[str, Any]:
-    _, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _ = _cw()
-    try:
-        state_path = CONFIG_DIR / "state.json"
-        tomb_path = CONFIG_DIR / "tombstones.json"
-        last_path = CONFIG_DIR / "last_sync.json"
-        hide_path = CONFIG_DIR / "watchlist_hide.json"
-        ratings_changes_path = CONFIG_DIR / "ratings_changes.json"
-
-        cleared: list[str] = []
-        cw_state: dict[str, Any] = {}
-
-        def _try_unlink(p: Path, label: str) -> None:
-            try:
-                p.unlink(missing_ok=True)
-                cleared.append(label)
-            except Exception:
-                pass
-
-        def _ls_cw() -> list[str]:
-            if not CW_STATE_DIR.exists():
-                return []
-            return sorted([x.name for x in CW_STATE_DIR.iterdir() if x.is_file()])
-
-        if mode in ("clear_state", "clear_both", "clear_cw_state_only"):
-            pre = _ls_cw()
-            removed = _clear_cw_state_files()
-            post = _ls_cw()
-            cw_state = {
-                "path": str(CW_STATE_DIR),
-                "pre": pre,
-                "removed": removed,
-                "post": post,
-            }
-            if mode != "clear_cw_state_only":
-                _try_unlink(state_path, "state.json")
-                _try_unlink(last_path, "last_sync.json")
-                _try_unlink(ratings_changes_path, "ratings_changes.json")
-                _try_unlink(hide_path, "watchlist_hide.json")
-
-        if mode in ("clear_tombstones", "clear_both"):
-            _try_unlink(tomb_path, "tombstones.json")
-
-        if mode == "clear_tombstone_entries":
-            try:
-                t = json.loads(tomb_path.read_text("utf-8")) if tomb_path.exists() else {}
-            except Exception:
-                t = {}
-            t["keys"] = {}
-            if isinstance(ttl_override, int) and ttl_override > 0:
-                t["ttl_sec"] = ttl_override
-            elif not keep_ttl:
-                t["ttl_sec"] = 2 * 24 * 3600
-            tmp = tomb_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(t, ensure_ascii=False, indent=2), "utf-8")
-            os.replace(tmp, tomb_path)
-
-        if mode == "rebuild":
-            try:
-                from cw_platform.config_base import load_config
-                from .syncAPI import _persist_state_via_orc
-                from cw_platform.orchestrator import Orchestrator
-
-                state = _persist_state_via_orc(Orchestrator(config=load_config()), feature=feature)
-                STATS.refresh_from_state(state)
-            except Exception as e:
-                return {"ok": False, "error": f"rebuild failed: {e}"}
-
-        if mode not in {
-            "clear_both",
-            "clear_state",
-            "clear_tombstones",
-            "clear_tombstone_entries",
-            "clear_cw_state_only",
-            "rebuild",
-        }:
-            return {"ok": False, "error": f"Unknown mode: {mode}"}
-
-        return {"ok": True, "mode": mode, "cleared": cleared, "cw_state": cw_state}
     except Exception as e:
         return {"ok": False, "error": str(e)}
