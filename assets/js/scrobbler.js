@@ -143,13 +143,13 @@
 
     if (wantsTrakt && !traktTokenOk && wantsSimkl && !simklTokenOk) {
       sinkOk=false;
-      sinkErr="SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt.";
+      sinkErr="SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt. Or refresh your browser if you already configured it";
     } else if (wantsTrakt && !traktTokenOk) {
       sinkOk=false;
-      sinkErr="Trakt is not connected. Go to Authentication → Trakt.";
+      sinkErr="Trakt is not connected. Go to Authentication → Trakt. Or refresh your browser if you already configured it";
     } else if (wantsSimkl && !simklTokenOk) {
       sinkOk=false;
-      sinkErr="SIMKL is not connected. Go to Authentication → SIMKL.";
+      sinkErr="SIMKL is not connected. Go to Authentication → SIMKL. Or refresh your browser if you already configured it";
     }
 
     if(watcherOn){
