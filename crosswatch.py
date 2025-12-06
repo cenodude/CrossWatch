@@ -103,7 +103,7 @@ except Exception:
 
 __all__ = ["process_webhook", "process_webhook_jellyfin"]
 
-from _FastAPI import (
+from ui_frontend import (
     get_index_html,
     register_assets_and_favicons,
     register_ui_root,
