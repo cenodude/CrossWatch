@@ -1,5 +1,5 @@
-# _FastAPI.py
-# CrossWatch - FastAPI
+# ui_frontend.py
+# CrossWatch - UI Frontend Registration
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
