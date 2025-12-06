@@ -180,7 +180,8 @@ class WatchService:
         return None
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
-        if ev.session_key and ev.session_key in self._allowed_sessions:
+        sk = str(ev.session_key) if ev.session_key is not None else None
+        if sk and sk in self._allowed_sessions:
             return True
         cfg = _cfg() or {}
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
@@ -190,8 +191,8 @@ class WatchService:
             return False
 
         def _allow() -> bool:
-            if ev.session_key:
-                self._allowed_sessions.add(str(ev.session_key))
+            if sk:
+                self._allowed_sessions.add(sk)
             return True
 
         if not wl:

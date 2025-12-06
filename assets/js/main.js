@@ -3,7 +3,20 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 // Playing card UI guard
-if (!(window._cfgCache?.ui?.show_playingcard ?? true)) {
+const hasTmdbKey = (() => {
+  try {
+    const tmdb = window._cfgCache?.tmdb;
+    if (!tmdb || !Object.prototype.hasOwnProperty.call(tmdb, "api_key")) {
+      return true;
+    }
+    const raw = String(tmdb.api_key || "").trim();
+    return !!raw;
+  } catch {
+    return true;
+  }
+})();
+
+if (!(window._cfgCache?.ui?.show_playingcard ?? true) || !hasTmdbKey) {
   document.head.insertAdjacentHTML(
     "beforeend",
     `<style>#playing-card{display:none!important}</style>`
