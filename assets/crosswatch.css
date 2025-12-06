@@ -399,8 +399,19 @@ header {
   user-select: none
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.brand-text {
+  display: inline-flex;
+  align-items: flex-end;
+}
+
 .brand .version {
-  margin-left: 0.4rem;
+  margin-left: 0.35rem;
   font-size: 0.7rem;
   font-weight: 500;
   background: linear-gradient(90deg, #2de2ff, #8f7eff, #ff7ae0);
@@ -408,6 +419,8 @@ header {
   background-clip: text;
   color: transparent;
   opacity: 0.9;
+  position: relative;
+  top: -1px;
 }
 
 .nav {

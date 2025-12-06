@@ -146,8 +146,10 @@ def _get_index_html_static() -> str:
       <circle cx="8" cy="9" r="1" fill="url(#cw-g)"/><circle cx="12" cy="11" r="1" fill="url(#cw-g)"/><circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
       <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <span class="name">CrossWatch</span>
-    <span class="version">__CW_VERSION__</span>
+    <span class="brand-text">
+      <span class="name">CrossWatch</span>
+      <span class="version">__CW_VERSION__</span>
+    </span>
   </div>
 
   <div class="tabs">

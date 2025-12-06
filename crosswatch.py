@@ -42,6 +42,7 @@ from api import (
     api_run_sync,
 )
 
+from api.versionAPI import CURRENT_VERSION
 from services import register as register_services
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import Body, FastAPI, Query, Request, Path as FPath
@@ -796,7 +797,7 @@ except Exception as _e:
 # Entry point
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()
-    print("\nCrossWatch Engine running:")
+    print(f"\nCrossWatch Engine {CURRENT_VERSION} running:")
     print(f"  Local:   http://127.0.0.1:{port}")
     print(f"  Docker:  http://{ip}:{port}")
     print(f"  Bind:    {host}:{port}")
