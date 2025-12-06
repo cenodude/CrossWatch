@@ -1,30 +1,32 @@
 # /providers/sync/plex/_playlists.py
-
+# Plex Module placeholder for playlist synchronization
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 import os
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping
 
 from ._common import normalize as plex_normalize
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
-def _log(msg: str):
+
+def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         print(f"[PLEX:playlists] {msg}")
 
-# ── index ─────────────────────────────────────────────────────────────────────
 
-def build_index(adapter, include_names: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, Any]]:
+def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
         _log("no PMS bound (account-only) → empty playlists index")
         return {}
 
     prog_mk = getattr(adapter, "progress_factory", None)
-    prog = prog_mk("playlists") if callable(prog_mk) else None
+    prog: Any = prog_mk("playlists") if callable(prog_mk) else None
 
     names = {n.strip().lower() for n in (include_names or [])}
-    out: Dict[str, Dict[str, Any]] = {}
-    work: List[Tuple[Any, List[Any]]] = []
+    out: dict[str, dict[str, Any]] = {}
+    work: list[tuple[Any, list[Any]]] = []
     total = 0
     try:
         playlists = list(srv.playlists() or [])
@@ -44,17 +46,18 @@ def build_index(adapter, include_names: Optional[Iterable[str]] = None) -> Dict[
         _log(f"index error (pre-scan): {e}")
         work, total = [], 0
 
-    # Announce fixed total once
-    if prog:
+    if prog is not None:
         try:
             prog.tick(0, total=total, force=True)
         except Exception:
             pass
 
     if total == 0:
-        if prog:
-            try: prog.done(ok=True, total=0)
-            except Exception: pass
+        if prog is not None:
+            try:
+                prog.done(ok=True, total=0)
+            except Exception:
+                pass
         _log("index size: 0")
         return out
 
@@ -69,31 +72,34 @@ def build_index(adapter, include_names: Optional[Iterable[str]] = None) -> Dict[
                 k = canonical_key(m)
                 out[f"playlist:{pid}|{k}"] = m
                 done += 1
-                if prog:
-                    try: prog.tick(done, total=total)
-                    except Exception: pass
+                if prog is not None:
+                    try:
+                        prog.tick(done, total=total)
+                    except Exception:
+                        pass
     except Exception as e:
         _log(f"index error (ingest): {e}")
 
-    if prog:
-        try: prog.done(ok=True, total=total)
-        except Exception: pass
+    if prog is not None:
+        try:
+            prog.done(ok=True, total=total)
+        except Exception:
+            pass
 
     _log(f"index size: {len(out)}")
     return out
 
 
-# ── add/remove ────────────────────────────────────────────────────────────────
-
-def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+def add(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
-        if unresolved: _log("add skipped: no PMS bound")
+        if unresolved:
+            _log("add skipped: no PMS bound")
         return 0, unresolved
 
     ok = 0
-    unresolved: List[Dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
 
     for it in items:
         pl = _find_or_create_playlist(srv, it.get("playlist"))
@@ -117,15 +123,16 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     return ok, unresolved
 
 
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+def remove(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
-        if unresolved: _log("remove skipped: no PMS bound")
+        if unresolved:
+            _log("remove skipped: no PMS bound")
         return 0, unresolved
 
     ok = 0
-    unresolved: List[Dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
 
     for it in items:
         pl = _find_playlist(srv, it.get("playlist"))
@@ -149,9 +156,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     return ok, unresolved
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def _find_playlist(srv, pinfo: Optional[Mapping[str, Any]]):
+def _find_playlist(srv, pinfo: Mapping[str, Any] | None):
     if not isinstance(pinfo, Mapping):
         return None
     pid = str(pinfo.get("id") or "").strip()
@@ -173,7 +178,7 @@ def _find_playlist(srv, pinfo: Optional[Mapping[str, Any]]):
     return None
 
 
-def _find_or_create_playlist(srv, pinfo: Optional[Mapping[str, Any]]):
+def _find_or_create_playlist(srv, pinfo: Mapping[str, Any] | None):
     pl = _find_playlist(srv, pinfo)
     if pl:
         return pl
@@ -183,7 +188,6 @@ def _find_or_create_playlist(srv, pinfo: Optional[Mapping[str, Any]]):
     if not name:
         return None
     try:
-        # Create empty video playlist
         return srv.createPlaylist(title=name, items=[], playlistType="video")
     except Exception:
         return None
@@ -214,7 +218,7 @@ def _resolve_obj(adapter, it: Mapping[str, Any]):
     episode = it.get("episode") or it.get("episode_number")
 
     sec_types = ("show",) if is_episode else ("movie",)
-    hits: List[Any] = []
+    hits: list[Any] = []
     for sec in adapter.libraries(types=sec_types) or []:
         try:
             found = sec.search(title=query_title) or []
@@ -222,7 +226,7 @@ def _resolve_obj(adapter, it: Mapping[str, Any]):
         except Exception:
             continue
 
-    def _score(obj) -> int:
+    def _score(obj: Any) -> int:
         sc = 0
         try:
             ot = (getattr(obj, "grandparentTitle", None) if is_episode else getattr(obj, "title", None)) or ""
@@ -244,7 +248,7 @@ def _resolve_obj(adapter, it: Mapping[str, Any]):
             pass
         return sc
 
-    best = None
+    best: Any | None = None
     best_score = -1
     for h in hits:
         sc = _score(h)

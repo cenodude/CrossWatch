@@ -1,16 +1,23 @@
 # /providers/sync/crosswatch/_ratings.py
+# CrossWatch tracker Module for Ratings Management
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import os, json, time
+import json
+import os
+import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Iterable, Mapping
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_CROSSWATCH_DEBUG"):
         print(f"[CROSSWATCH:ratings] {msg}")
 
-def _root(adapter) -> Path:
+
+def _root(adapter: Any) -> Path:
     base = getattr(getattr(adapter, "cfg", None), "base_path", None)
     if isinstance(base, Path):
         return base
@@ -18,14 +25,22 @@ def _root(adapter) -> Path:
         return Path(base)
     return Path("/config/.cw_provider")
 
-def _ratings_path(adapter) -> Path:
+
+def _ratings_path(adapter: Any) -> Path:
     return _root(adapter) / "ratings.json"
-def _snapshot_dir(adapter) -> Path:
+
+
+def _snapshot_dir(adapter: Any) -> Path:
     return _root(adapter) / "snapshots"
-def _unresolved_path(adapter) -> Path:
+
+
+def _unresolved_path(adapter: Any) -> Path:
     return _root(adapter) / "ratings.unresolved.json"
-def _restore_state_path(adapter) -> Path:
+
+
+def _restore_state_path(adapter: Any) -> Path:
     return _root(adapter) / "ratings.restore_state.json"
+
 
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     try:
@@ -36,16 +51,16 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     except Exception as e:
         _log(f"atomic_write failed for {path}: {e}")
 
-def _load_state(adapter) -> Dict[str, Any]:
-    p = _ratings_path(adapter)
+
+def _load_state(adapter: Any) -> dict[str, Any]:
+    path = _ratings_path(adapter)
     try:
-        raw = json.loads(p.read_text("utf-8"))
+        raw = json.loads(path.read_text("utf-8"))
     except Exception:
         return {"ts": 0, "items": {}}
 
-    # Legacy: list of items
     if isinstance(raw, list):
-        items: Dict[str, Dict[str, Any]] = {}
+        items: dict[str, dict[str, Any]] = {}
         for obj in raw:
             if not isinstance(obj, Mapping):
                 continue
@@ -55,51 +70,53 @@ def _load_state(adapter) -> Dict[str, Any]:
             items[key] = id_minimal(obj)
         return {"ts": 0, "items": items}
 
-    # Dict-based formats
     if isinstance(raw, Mapping):
         if "items" in raw and isinstance(raw.get("items"), Mapping):
             ts = int(raw.get("ts", 0) or 0)
             items_raw = raw.get("items") or {}
-            items: Dict[str, Dict[str, Any]] = {}
-            for k, v in items_raw.items():
-                if not isinstance(v, Mapping):
+            items2: dict[str, dict[str, Any]] = {}
+            for key, value in items_raw.items():
+                if not isinstance(value, Mapping):
                     continue
-                key = str(k) or canonical_key(v)
-                if not key:
+                ck = str(key) or canonical_key(value)
+                if not ck:
                     continue
-                items[key] = id_minimal(v)
-            return {"ts": ts, "items": items}
+                items2[ck] = id_minimal(value)
+            return {"ts": ts, "items": items2}
 
-        items: Dict[str, Dict[str, Any]] = {}
-        for k, v in raw.items():
-            if not isinstance(v, Mapping):
+        items3: dict[str, dict[str, Any]] = {}
+        for key, value in raw.items():
+            if not isinstance(value, Mapping):
                 continue
-            key = str(k) or canonical_key(v)
-            if not key:
+            ck = str(key) or canonical_key(value)
+            if not ck:
                 continue
-            items[key] = id_minimal(v)
-        return {"ts": 0, "items": items}
+            items3[ck] = id_minimal(value)
+        return {"ts": 0, "items": items3}
 
     return {"ts": 0, "items": {}}
 
-def _save_state(adapter, items: Mapping[str, Mapping[str, Any]]) -> None:
+
+def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
     payload = {"ts": int(time.time()), "items": dict(items or {})}
     _atomic_write(_ratings_path(adapter), payload)
 
-def _list_snapshots(adapter) -> List[Path]:
-    d = _snapshot_dir(adapter)
-    if not d.exists() or not d.is_dir():
+
+def _list_snapshots(adapter: Any) -> list[Path]:
+    directory = _snapshot_dir(adapter)
+    if not directory.exists() or not directory.is_dir():
         return []
     return sorted(
         [
             p
-            for p in d.iterdir()
+            for p in directory.iterdir()
             if p.is_file() and p.suffix == ".json" and p.name.endswith("-ratings.json")
         ],
         key=lambda p: p.stat().st_mtime,
     )
 
-def _apply_retention(adapter) -> None:
+
+def _apply_retention(adapter: Any) -> None:
     cfg = getattr(adapter, "cfg", None)
     retention_days = int(getattr(cfg, "retention_days", 30) or 0)
     max_snapshots = int(getattr(cfg, "max_snapshots", 64) or 0)
@@ -109,88 +126,91 @@ def _apply_retention(adapter) -> None:
         return
 
     now = time.time()
-    keep: List[Path] = []
-    for p in snaps:
+    keep: list[Path] = []
+    for path in snaps:
         try:
-            age_days = (now - p.stat().st_mtime) / 86400.0
+            age_days = (now - path.stat().st_mtime) / 86400.0
         except Exception:
-            keep.append(p)
+            keep.append(path)
             continue
         if retention_days > 0 and age_days > retention_days:
             try:
-                p.unlink()
-                _log(f"snapshot removed by retention: {p.name}")
+                path.unlink()
+                _log(f"snapshot removed by retention: {path.name}")
             except Exception as e:
-                _log(f"snapshot unlink failed: {p} {e}")
+                _log(f"snapshot unlink failed: {path} {e}")
         else:
-            keep.append(p)
+            keep.append(path)
 
     if max_snapshots > 0 and len(keep) > max_snapshots:
         extra = len(keep) - max_snapshots
-        for p in keep[:extra]:
+        for path in keep[:extra]:
             try:
-                p.unlink()
-                _log(f"snapshot removed by max_snapshots: {p.name}")
+                path.unlink()
+                _log(f"snapshot removed by max_snapshots: {path.name}")
             except Exception as e:
-                _log(f"snapshot unlink failed: {p} {e}")
+                _log(f"snapshot unlink failed: {path} {e}")
 
 
-def _snapshot_state(adapter, items: Mapping[str, Mapping[str, Any]]) -> None:
+def _snapshot_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
     cfg = getattr(adapter, "cfg", None)
     auto = getattr(cfg, "auto_snapshot", True)
     if not auto:
         return
-    d = _snapshot_dir(adapter)
+    directory = _snapshot_dir(adapter)
     try:
-        d.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
     ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    name = f"{ts}-ratings.json"
-    path = d / name
+    path = directory / f"{ts}-ratings.json"
     payload = {"ts": int(time.time()), "items": dict(items or {})}
     _atomic_write(path, payload)
     _apply_retention(adapter)
 
 
-def _load_unresolved(adapter) -> Dict[str, Any]:
+def _load_unresolved(adapter: Any) -> dict[str, Any]:
     path = _unresolved_path(adapter)
     try:
         return json.loads(path.read_text("utf-8"))
     except Exception:
         return {}
 
-def _save_unresolved(adapter, data: Mapping[str, Any]) -> None:
+
+def _save_unresolved(adapter: Any, data: Mapping[str, Any]) -> None:
     _atomic_write(_unresolved_path(adapter), dict(data or {}))
 
-def _record_unresolved(adapter, items: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+
+def _record_unresolved(adapter: Any, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     existing = _load_unresolved(adapter)
-    bucket: Dict[str, Any] = dict(existing.get("items") or {})
-    out: List[Dict[str, Any]] = []
+    bucket: dict[str, Any] = dict(existing.get("items") or {})
+    out: list[dict[str, Any]] = []
 
     for obj in items:
         try:
-            m = id_minimal(obj)
+            minimal = id_minimal(obj)
         except Exception:
             continue
-        key = canonical_key(m) or f"obj:{hash(json.dumps(m, sort_keys=True))}"
+        key = canonical_key(minimal) or f"obj:{hash(json.dumps(minimal, sort_keys=True))}"
         if key not in bucket:
-            bucket[key] = m
-        out.append(m)
+            bucket[key] = minimal
+        out.append(minimal)
 
     existing["items"] = bucket
     existing["ts"] = int(time.time())
     _save_unresolved(adapter, existing)
     return out
 
-def _maybe_restore(adapter) -> None:
+
+def _maybe_restore(adapter: Any) -> None:
     cfg = getattr(adapter, "cfg", None)
     restore_id = getattr(cfg, "restore_ratings", None)
     if not restore_id:
         return
 
     marker_path = _restore_state_path(adapter)
-    last_id: str = ""
+    last_id = ""
+
     try:
         raw = json.loads(marker_path.read_text("utf-8"))
         last_id = str(raw.get("last") or "")
@@ -211,14 +231,15 @@ def _maybe_restore(adapter) -> None:
     if restore_id_str.lower() in ("latest", "last"):
         chosen = snaps[-1]
     else:
-        for p in snaps:
-            if p.name == restore_id_str or p.stem == restore_id_str:
-                chosen = p
+        for path in snaps:
+            if path.name == restore_id_str or path.stem == restore_id_str:
+                chosen = path
                 break
 
     if not chosen:
         _log(f"restore requested but snapshot not found: {restore_id_str}")
         return
+
     try:
         payload = json.loads(chosen.read_text("utf-8"))
         items = dict((payload.get("items") or {}) or {})
@@ -229,23 +250,24 @@ def _maybe_restore(adapter) -> None:
     except Exception as e:
         _log(f"restore failed from {chosen}: {e}")
 
-def build_index(adapter) -> Dict[str, Dict[str, Any]]:
+
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     _maybe_restore(adapter)
 
-    prog_mk = getattr(adapter, "progress_factory", None)
-    prog = prog_mk("ratings") if callable(prog_mk) else None
+    prog_factory = getattr(adapter, "progress_factory", None)
+    prog: Any = prog_factory("ratings") if callable(prog_factory) else None
 
     state = _load_state(adapter)
     items = dict(state.get("items") or {})
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
 
-    for k, v in items.items():
-        if not isinstance(v, Mapping):
+    for key, value in items.items():
+        if not isinstance(value, Mapping):
             continue
-        ck = canonical_key(v) or str(k)
+        ck = canonical_key(value) or str(key)
         if not ck:
             continue
-        out[ck] = id_minimal(v)
+        out[ck] = id_minimal(value)
 
     total = len(out)
     if prog:
@@ -254,9 +276,11 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
             prog.done()
         except Exception:
             pass
+
     return out
 
-def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     src = list(items or [])
     if not src:
         return 0, []
@@ -264,25 +288,25 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     _maybe_restore(adapter)
 
     state = _load_state(adapter)
-    cur: Dict[str, Dict[str, Any]] = dict(state.get("items") or {})
-    unresolved_src: List[Mapping[str, Any]] = []
+    cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
+    unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
     for obj in src:
         if not isinstance(obj, Mapping):
             continue
         try:
-            m = id_minimal(obj)
+            minimal = id_minimal(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(m)
+        key = canonical_key(minimal)
         if not key:
             unresolved_src.append(obj)
             continue
         existing = cur.get(key)
-        if existing != m:
-            cur[key] = m
+        if existing != minimal:
+            cur[key] = minimal
             changed += 1
 
     if changed:
@@ -292,7 +316,8 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     unresolved = _record_unresolved(adapter, unresolved_src) if unresolved_src else []
     return changed, unresolved
 
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     src = list(items or [])
     if not src:
         return 0, []
@@ -300,19 +325,19 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
     _maybe_restore(adapter)
 
     state = _load_state(adapter)
-    cur: Dict[str, Dict[str, Any]] = dict(state.get("items") or {})
-    unresolved_src: List[Mapping[str, Any]] = []
+    cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
+    unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
     for obj in src:
         if not isinstance(obj, Mapping):
             continue
         try:
-            m = id_minimal(obj)
+            minimal = id_minimal(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(m)
+        key = canonical_key(minimal)
         if not key:
             unresolved_src.append(obj)
             continue

@@ -1,21 +1,84 @@
 # /providers/sync/emby/_history.py
+# EMBY Module for history synchronization
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import os, json, time, re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+import json
+import os
+import re
+import time
 from datetime import datetime, timezone
+from typing import Any, Iterable, Mapping
 
 from ._common import (
-    normalize as emby_normalize,
-    resolve_item_id,
     chunked,
     emby_scope_history,
+    normalize as emby_normalize,
+    resolve_item_id,
 )
-
-from cw_platform.id_map import minimal as id_minimal, canonical_key
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 UNRESOLVED_PATH = "/config/.cw_state/emby_history.unresolved.json"
-SHADOW_PATH     = "/config/.cw_state/emby_history.shadow.json"
-BLACKBOX_PATH   = "/config/.cw_state/emby_history.emby.blackbox.json"
+SHADOW_PATH = "/config/.cw_state/emby_history.shadow.json"
+BLACKBOX_PATH = "/config/.cw_state/emby_history.emby.blackbox.json"
+
+
+def _log(msg: str) -> None:
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
+        print(f"[EMBY:history] {msg}")
+
+
+def sleep_ms(ms: int) -> None:
+    try:
+        time.sleep(max(0, int(ms)) / 1000.0)
+    except Exception:
+        pass
+
+# timestamp helpers
+def _parse_iso_to_epoch(s: str | None) -> int | None:
+    if not s:
+        return None
+    try:
+        t = s.strip()
+        if "T" in t and "." in t:
+            head, frac = t.split(".", 1)
+            tz_pos = next((i for i, c in enumerate(frac) if c in "Z+-"), None)
+            frac_only, tz_tail = (frac, "") if tz_pos is None else (frac[:tz_pos], frac[tz_pos:])
+            if len(frac_only) > 6:
+                frac_only = frac_only[:6]
+            t = head + "." + frac_only + tz_tail
+        if t.endswith("Z"):
+            dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(t)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        try:
+            t2 = re.sub(r"\.\d+", "", t)
+            if t2.endswith("Z"):
+                dt = datetime.fromisoformat(t2.replace("Z", "+00:00"))
+            else:
+                dt = datetime.fromisoformat(t2)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
+
+def _epoch_to_iso_z(ts: int) -> str:
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _epoch_to_emby_dateparam(ts: int) -> str:
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _now_iso_z() -> str:
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 def _played_ts_from_row(row: Mapping[str, Any]) -> int:
     ud = (row.get("UserData") or {}) if isinstance(row, Mapping) else {}
@@ -32,7 +95,8 @@ def _played_ts_from_row(row: Mapping[str, Any]) -> int:
             return ts
     return 0
 
-def _played_ts_backfill(http, uid: str, row: Mapping[str, Any]) -> int:
+
+def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int:
     iid = str(row.get("Id") or "").strip()
     if not iid:
         return 0
@@ -50,22 +114,14 @@ def _played_ts_backfill(http, uid: str, row: Mapping[str, Any]) -> int:
     except Exception:
         return 0
 
-def sleep_ms(ms: int) -> None:
-    try:
-        time.sleep(max(0, int(ms)) / 1000.0)
-    except Exception:
-        pass
-
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
-        print(f"[EMBY:history] {msg}")
-
-def _unres_load() -> Dict[str, Any]:
+# unresolved tracking
+def _unres_load() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
+
 
 def _unres_save(obj: Mapping[str, Any]) -> None:
     try:
@@ -75,29 +131,38 @@ def _unres_save(obj: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
+
 def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
     key = canonical_key(item)
-    data = _unres_load(); ent = data.get(key) or {"feature": "history", "attempts": 0}
+    data = _unres_load()
+    ent = data.get(key) or {"feature": "history", "attempts": 0}
     ent.update({"hint": id_minimal(item)})
     ent["attempts"] = int(ent.get("attempts", 0)) + 1
     ent["reason"] = reason
     data[key] = ent
     _unres_save(data)
 
+
 def _thaw_if_present(keys: Iterable[str]) -> None:
-    data = _unres_load(); changed = False
+    data = _unres_load()
+    changed = False
     for k in list(keys or []):
         if k in data:
-            data.pop(k, None); changed = True
-    if changed: _unres_save(data)
+            data.pop(k, None)
+            changed = True
+    if changed:
+        _unres_save(data)
 
-def _shadow_load() -> Dict[str, int]:
+
+# shadow + blackbox
+def _shadow_load() -> dict[str, int]:
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return {str(k): int(v) for k, v in raw.items()}
     except Exception:
         return {}
+
 
 def _shadow_save(d: Mapping[str, int]) -> None:
     try:
@@ -107,9 +172,10 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     except Exception:
         pass
 
-def _bb_paths() -> List[str]:
+
+def _bb_paths() -> list[str]:
     base = BLACKBOX_PATH
-    paths = [base]
+    paths: list[str] = [base]
     try:
         d = os.path.dirname(base) or "."
         for fn in os.listdir(d):
@@ -121,8 +187,9 @@ def _bb_paths() -> List[str]:
         pass
     return paths
 
-def _bb_load() -> Dict[str, Any]:
-    merged: Dict[str, Any] = {}
+
+def _bb_load() -> dict[str, Any]:
+    merged: dict[str, Any] = {}
     for p in _bb_paths():
         try:
             with open(p, "r", encoding="utf-8") as f:
@@ -133,6 +200,7 @@ def _bb_load() -> Dict[str, Any]:
             pass
     return merged
 
+
 def _bb_save(d: Mapping[str, Any]) -> None:
     os.makedirs(os.path.dirname(BLACKBOX_PATH), exist_ok=True)
     for p in _bb_paths():
@@ -142,91 +210,77 @@ def _bb_save(d: Mapping[str, Any]) -> None:
         except Exception:
             pass
 
-def _history_limit(adapter) -> int:
-    v = getattr(getattr(adapter, "cfg", None), "history_query_limit", None)
-    if v is None: v = getattr(getattr(adapter, "cfg", None), "watchlist_query_limit", 1000)
-    try: return max(1, int(v))
-    except Exception: return 1000
 
-def _history_delay_ms(adapter) -> int:
-    v = getattr(getattr(adapter, "cfg", None), "history_write_delay_ms", None)
-    if v is None: v = getattr(getattr(adapter, "cfg", None), "watchlist_write_delay_ms", 0)
-    try: return max(0, int(v))
-    except Exception: return 0
-
-# Timestamp parsing and formatting
-def _parse_iso_to_epoch(s: Optional[str]) -> Optional[int]:
-    if not s:
-        return None
+# config helpers
+def _history_limit(adapter: Any) -> int:
+    cfg = getattr(adapter, "cfg", None)
+    v = getattr(cfg, "history_query_limit", None)
+    if v is None:
+        v = getattr(cfg, "watchlist_query_limit", 1000)
     try:
-        t = s.strip()
-        if 'T' in t and '.' in t:
-            head, frac = t.split('.', 1)
-            tz_pos = next((i for i, c in enumerate(frac) if c in 'Z+-'), None)
-            frac_only, tz_tail = (frac, '') if tz_pos is None else (frac[:tz_pos], frac[tz_pos:])
-            if len(frac_only) > 6:
-                frac_only = frac_only[:6]
-            t = head + '.' + frac_only + tz_tail
-        if t.endswith('Z'):
-            dt = datetime.fromisoformat(t.replace('Z', '+00:00'))
-        else:
-            dt = datetime.fromisoformat(t)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp())
+        return max(1, int(v))
     except Exception:
-        try:
-            t2 = re.sub(r'\.\d+', '', t)
-            if t2.endswith('Z'):
-                dt = datetime.fromisoformat(t2.replace('Z', '+00:00'))
-            else:
-                dt = datetime.fromisoformat(t2)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-            return int(dt.timestamp())
-        except Exception:
-            return None
+        return 1000
 
-def _epoch_to_iso_z(ts: int) -> str:
-    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _epoch_to_emby_dateparam(ts: int) -> str:
-    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+def _history_delay_ms(adapter: Any) -> int:
+    cfg = getattr(adapter, "cfg", None)
+    v = getattr(cfg, "history_write_delay_ms", None)
+    if v is None:
+        v = getattr(cfg, "watchlist_write_delay_ms", 0)
+    try:
+        return max(0, int(v))
+    except Exception:
+        return 0
 
-def _now_iso_z() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# Emby ID fetchers
-def _series_ids_for(http, series_id: Optional[str]) -> Dict[str, str]:
+# Emby ID helpers
+def _series_ids_for(http: Any, series_id: str | None) -> dict[str, str]:
     sid = (str(series_id or "").strip()) or ""
-    if not sid: return {}
+    if not sid:
+        return {}
     try:
         r = http.get(f"/Items/{sid}", params={"Fields": "ProviderIds,ProductionYear"})
-        if getattr(r, "status_code", 0) != 200: return {}
+        if getattr(r, "status_code", 0) != 200:
+            return {}
         body = r.json() or {}
         pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
-        out: Dict[str, str] = {}
-        for k, v in (pids.items() if isinstance(pids, Mapping) else []):
-            kl = str(k).lower(); sv = str(v).strip()
-            if not sv: continue
+        out: dict[str, str] = {}
+        items: Iterable[tuple[Any, Any]]
+        if isinstance(pids, Mapping):
+            items = pids.items()
+        else:
+            items = ()
+        for k, v in items:
+            kl = str(k).lower()
+            sv = str(v).strip()
+            if not sv:
+                continue
             if kl == "imdb":
                 out["imdb"] = sv if sv.startswith("tt") else f"tt{sv}"
             elif kl == "tmdb":
-                try: out["tmdb"] = str(int(sv))
-                except Exception: pass
+                try:
+                    out["tmdb"] = str(int(sv))
+                except Exception:
+                    pass
             elif kl == "tvdb":
-                try: out["tvdb"] = str(int(sv))
-                except Exception: pass
+                try:
+                    out["tvdb"] = str(int(sv))
+                except Exception:
+                    pass
         return out
     except Exception:
         return {}
 
-def _series_year(http, series_id: Optional[str]) -> Optional[int]:
+
+def _series_year(http: Any, series_id: str | None) -> int | None:
     sid = (str(series_id or "").strip()) or ""
-    if not sid: return None
+    if not sid:
+        return None
     try:
         r = http.get(f"/Items/{sid}", params={"Fields": "ProductionYear"})
-        if getattr(r, "status_code", 0) != 200: return None
+        if getattr(r, "status_code", 0) != 200:
+            return None
         body = r.json() or {}
         y = body.get("ProductionYear")
         try:
@@ -236,28 +290,41 @@ def _series_year(http, series_id: Optional[str]) -> Optional[int]:
     except Exception:
         return None
 
-def _item_ids_for(http, item_id: Optional[str]) -> Dict[str, str]:
-    iid = (str(item_id or '').strip()) or ''
-    if not iid: return {}
+
+def _item_ids_for(http: Any, item_id: str | None) -> dict[str, str]:
+    iid = (str(item_id or "").strip()) or ""
+    if not iid:
+        return {}
     try:
         r = http.get(f"/Items/{iid}", params={"Fields": "ProviderIds,ProductionYear"})
-        if getattr(r, "status_code", 0) != 200: return {}
+        if getattr(r, "status_code", 0) != 200:
+            return {}
         body = r.json() or {}
         pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
-        out: Dict[str, str] = {}
-        for k, v in (pids.items() if isinstance(pids, Mapping) else []):
-            kl = str(k).lower(); sv = str(v).strip()
-            if not sv: continue
+        out: dict[str, str] = {}
+        items: Iterable[tuple[Any, Any]]
+        if isinstance(pids, Mapping):
+            items = pids.items()
+        else:
+            items = ()
+        for k, v in items:
+            kl = str(k).lower()
+            sv = str(v).strip()
+            if not sv:
+                continue
             if kl == "imdb":
                 out["imdb"] = sv if sv.startswith("tt") else f"tt{sv}"
             elif kl in ("tmdb", "tvdb"):
-                try: out[kl] = str(int(sv))
-                except Exception: pass
+                try:
+                    out[kl] = str(int(sv))
+                except Exception:
+                    pass
         return out
     except Exception:
         return {}
 
-def _resp_snip(r) -> str:
+
+def _resp_snip(r: Any) -> str:
     try:
         j = r.json()
         s = json.dumps(j, ensure_ascii=False)
@@ -270,11 +337,14 @@ def _resp_snip(r) -> str:
         except Exception:
             return "<no-body>"
 
-def _emby_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
-    # Returns: { library_id_str: { "type": "movie"|"show"|... , "raw": <view row> } }
+
+# library roots
+
+
+def _emby_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
     http = adapter.client
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None) or ""
-    roots: Dict[str, Dict[str, Any]] = {}
+    roots: dict[str, dict[str, Any]] = {}
     try:
         if uid:
             r = http.get(f"/Users/{uid}/Views")
@@ -301,25 +371,28 @@ def _emby_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
                 roots[lid_s] = {"type": typ, "raw": it}
     except Exception:
         pass
-
     if (os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG")) and roots:
         _log(f"library_roots: {sorted(roots.keys())}")
-
     return roots
 
-# lookup: Emby items
-_lib_anc_cache: Dict[str, Optional[str]] = {}
 
-def _lib_id_via_ancestors(http, uid: str, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
+_lib_anc_cache: dict[str, str | None] = {}
+
+
+def _lib_id_via_ancestors(
+    http: Any,
+    uid: str,
+    iid: str,
+    roots: Mapping[str, Any],
+) -> str | None:
     if not iid:
         return None
     if iid in _lib_anc_cache:
         return _lib_anc_cache[iid]
     try:
-        # IMPORTANT: UserId makes Ancestors return USER VIEWS (libraries), not media folders
         r = http.get(f"/Items/{iid}/Ancestors", params={"Fields": "Id", "UserId": uid})
         if getattr(r, "status_code", 0) == 200:
-            root_keys = set(str(k) for k in (roots or {}).keys())
+            root_keys = {str(k) for k in (roots or {}).keys()}
             for a in (r.json() or []):
                 aid = str((a or {}).get("Id") or "")
                 if aid in root_keys:
@@ -330,9 +403,10 @@ def _lib_id_via_ancestors(http, uid: str, iid: str, roots: Mapping[str, Any]) ->
     _lib_anc_cache[iid] = None
     return None
 
-# Destination write
-def _write_userdata(http, uid: str, item_id: str, *, date_iso: Optional[str]) -> bool:
-    payload: Dict[str, Any] = {"Played": True, "PlayCount": 1}
+
+# destination writes
+def _write_userdata(http: Any, uid: str, item_id: str, *, date_iso: str | None) -> bool:
+    payload: dict[str, Any] = {"Played": True, "PlayCount": 1}
     if date_iso:
         payload["LastPlayedDate"] = date_iso
         payload["DatePlayed"] = date_iso
@@ -342,39 +416,37 @@ def _write_userdata(http, uid: str, item_id: str, *, date_iso: Optional[str]) ->
         _log(f"userData write failed id={item_id} status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
     return ok
 
-def _mark_played(http, uid: str, item_id: str, *, date_played_iso: Optional[str]) -> bool:
+
+def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
     try:
-        date_param = None
+        date_param: str | None = None
         if date_played_iso:
             ts = _parse_iso_to_epoch(date_played_iso)
             if ts is not None:
                 date_param = _epoch_to_emby_dateparam(ts)
-
         r = http.post(
             f"/Users/{uid}/PlayedItems/{item_id}",
-            params={"DatePlayed": date_param} if date_param else None
+            params={"DatePlayed": date_param} if date_param else None,
         )
         if getattr(r, "status_code", 0) in (200, 204):
             return True
         _log(f"mark_played[A] failed id={item_id} status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
-
         r2 = http.post(
             f"/Users/{uid}/PlayedItems/{item_id}",
-            json={"DatePlayed": date_param} if date_param else {}
+            json={"DatePlayed": date_param} if date_param else {},
         )
         if getattr(r2, "status_code", 0) in (200, 204):
             return True
         _log(f"mark_played[B] failed id={item_id} status={getattr(r2,'status_code',None)} body={_resp_snip(r2)}")
-
         if _write_userdata(http, uid, item_id, date_iso=date_played_iso):
             return True
-
         return False
     except Exception as e:
         _log(f"mark_played exception id={item_id} err={e}")
         return False
 
-def _unmark_played(http, uid: str, item_id: str) -> bool:
+
+def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
     try:
         r = http.delete(f"/Users/{uid}/PlayedItems/{item_id}")
         ok = getattr(r, "status_code", 0) in (200, 204)
@@ -385,7 +457,8 @@ def _unmark_played(http, uid: str, item_id: str) -> bool:
         _log(f"unmark_played exception id={item_id} err={e}")
         return False
 
-def _dst_user_state(http, uid: str, iid: str):
+
+def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
     try:
         r = http.get(
             f"/Users/{uid}/Items/{iid}",
@@ -397,37 +470,32 @@ def _dst_user_state(http, uid: str, iid: str):
         if getattr(r, "status_code", 0) != 200:
             _log(f"dst_user_state: GET /Users/{uid}/Items/{iid} -> {getattr(r, 'status_code', None)}")
             return False, 0
-
         data = r.json() or {}
         ud = data.get("UserData") or {}
-
         play_count = int(ud.get("PlayCount") or 0)
         played_flag = bool(ud.get("Played") is True)
         raw_ts = ud.get("LastPlayedDate")
         ts = _parse_iso_to_epoch(raw_ts) or 0
-
         played = bool(played_flag or play_count > 0)
-
         if os.environ.get("CW_EMBY_DEBUG"):
             _log(f"dst_user_state: iid={iid} played={played} ts={ts} raw={ud}")
-
         return played, ts
     except Exception as e:
         _log(f"dst_user_state exception id={iid} err={e}")
         return False, 0
 
-# Build history index
-def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+
+# history index
+def build_index(adapter: Any, since: Any | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
-    prog = prog_mk("history") if callable(prog_mk) else None
+    prog: Any = prog_mk("history") if callable(prog_mk) else None
 
     http = adapter.client
     uid = adapter.cfg.user_id
     page_size = _history_limit(adapter)
     roots = _emby_library_roots(adapter)
-    movie_roots: List[str] = []
-    show_roots: List[str] = []
-
+    movie_roots: list[str] = []
+    show_roots: list[str] = []
     for lid, meta in (roots or {}).items():
         t = str((meta or {}).get("type") or "").lower()
         if t == "movie":
@@ -441,29 +509,28 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
     elif isinstance(since, str):
         since_epoch = int(_parse_iso_to_epoch(since) or 0)
 
-    scope = {}
     try:
-        scope = emby_scope_history(adapter.cfg) or {}
+        scope_cfg: Mapping[str, Any] | None = emby_scope_history(adapter.cfg) or {}
     except Exception:
-        scope = {}
+        scope_cfg = {}
 
-    scope_libs: List[str] = []
-    if isinstance(scope, Mapping):
-        pid = scope.get("ParentId")
+    scope_libs: list[str] = []
+    if isinstance(scope_cfg, Mapping):
+        pid = scope_cfg.get("ParentId")
         if pid:
             scope_libs = [str(pid)]
         else:
-            lib_ids = scope.get("LibraryIds") or scope.get("LibraryId")
+            lib_ids = scope_cfg.get("LibraryIds") or scope_cfg.get("LibraryId")
             if isinstance(lib_ids, (list, tuple)):
                 scope_libs = [str(x) for x in lib_ids if x]
             elif lib_ids:
                 scope_libs = [str(lib_ids)]
             if not scope_libs:
-                anc = scope.get("AncestorIds")
+                anc = scope_cfg.get("AncestorIds")
                 if isinstance(anc, (list, tuple)):
                     scope_libs = [str(x) for x in anc if x]
 
-    events: List[Tuple[int, Dict[str, Any], Dict[str, Any]]] = []
+    events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     presence_keys: set[str] = set()
 
     def _is_movieish(row: Mapping[str, Any]) -> bool:
@@ -475,18 +542,28 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             if vt == "movie":
                 return True
             pids = (row.get("ProviderIds") or {}) if isinstance(row, Mapping) else {}
-            if (pids.get("Imdb") or pids.get("imdb") or pids.get("Tmdb") or pids.get("tmdb")) and not row.get("SeriesId"):
+            if (
+                isinstance(pids, Mapping)
+                and (pids.get("Imdb") or pids.get("imdb") or pids.get("Tmdb") or pids.get("tmdb"))
+                and not row.get("SeriesId")
+            ):
                 return True
         return False
 
-    def _scan(include_types: str, *, allow_scope: bool, drop_parentid: bool, filter_row: Optional[Any] = None) -> Tuple[int, int, int]:
+    def _scan(
+        include_types: str,
+        *,
+        allow_scope: bool,
+        drop_parentid: bool,
+        filter_row: Any | None = None,
+    ) -> tuple[int, int, int]:
         start = 0
         added_events = 0
         added_presence = 0
         skipped_untimed = 0
 
         while True:
-            params: Dict[str, Any] = {
+            params: dict[str, Any] = {
                 "IncludeItemTypes": include_types,
                 "Recursive": True,
                 "EnableUserData": True,
@@ -503,11 +580,12 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 "EnableTotalRecordCount": True,
                 "UserId": uid,
             }
-            scope = {}
+
+            scope: Mapping[str, Any] | None
             try:
                 scope = emby_scope_history(adapter.cfg) or {}
             except Exception:
-                pass
+                scope = {}
 
             if allow_scope and isinstance(scope, Mapping):
                 for k, v in scope.items():
@@ -516,10 +594,9 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                     if drop_parentid and k == "ParentId":
                         continue
                     params[k] = v
-       
                 if "IncludeItemTypes" in scope:
                     want = {x.strip() for x in include_types.split(",") if x.strip()}
-                    got  = {x.strip() for x in str(scope["IncludeItemTypes"]).split(",") if x.strip()}
+                    got = {x.strip() for x in str(scope["IncludeItemTypes"]).split(",") if x.strip()}
                     params["IncludeItemTypes"] = ",".join(sorted(want | got))
 
             r = http.get(f"/Users/{uid}/Items", params=params)
@@ -544,11 +621,9 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 ts = _played_ts_from_row(row)
                 if not ts:
                     ts = _played_ts_backfill(http, uid, row)
-
                 if ts and since_epoch and ts <= since_epoch:
                     stop = True
                     break
-
                 ud = row.get("UserData") or {}
                 if not ts:
                     if ud.get("Played") or ud.get("IsPlayed") or (ud.get("PlayCount") or 0) > 0:
@@ -561,7 +636,6 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                             pass
                     continue
 
-                # Build event entry
                 m = emby_normalize(row)
                 watched_at = _epoch_to_iso_z(ts)
                 typ = (row.get("Type") or "").strip()
@@ -571,7 +645,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                     if not ids:
                         ids = _item_ids_for(http, row.get("Id"))
                     movie_title = (m.get("title") or row.get("Name") or "").strip()
-                    event: Dict[str, Any] = {
+                    event: dict[str, Any] = {
                         "type": "movie",
                         "ids": ids,
                         "title": movie_title,
@@ -579,27 +653,28 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                         "watched_at": watched_at,
                         "watched": True,
                     }
-
                 elif typ == "Episode":
                     sid = row.get("SeriesId") or row.get("ParentId")
                     show_ids = _series_ids_for(http, sid) or _item_ids_for(http, sid)
                     season = m.get("season")
                     episode = m.get("episode")
                     if season is None:
-                        try: season = int(row.get("ParentIndexNumber"))
-                        except Exception: pass
+                        try:
+                            season = int(row.get("ParentIndexNumber"))
+                        except Exception:
+                            pass
                     if episode is None:
-                        try: episode = int(row.get("IndexNumber"))
-                        except Exception: pass
+                        try:
+                            episode = int(row.get("IndexNumber"))
+                        except Exception:
+                            pass
                     if season is None or episode is None:
                         continue
-
                     series_title = (m.get("series_title") or row.get("SeriesName") or "").strip()
                     try:
                         ep_label = f"{series_title} S{int(season):02d}E{int(episode):02d}" if series_title else None
                     except Exception:
                         ep_label = None
-
                     event = {
                         "type": "episode",
                         "season": season,
@@ -611,14 +686,12 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                     }
                     if show_ids:
                         event["show_ids"] = dict(show_ids)
-
                     sy = _series_year(http, sid)
                     if sy is not None:
                         event["series_year"] = sy
-
                     epi_ids = (m.get("ids") or {}) if isinstance(m.get("ids"), Mapping) else {}
                     if epi_ids:
-                        safe_epi: Dict[str, str] = {}
+                        safe_epi: dict[str, str] = {}
                         v = str(epi_ids.get("imdb") or "").strip()
                         if v:
                             safe_epi["imdb"] = v if v.startswith("tt") else f"tt{v}"
@@ -634,29 +707,25 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 else:
                     continue
 
-                lib_id = None
+                lib_id: str | None = None
                 if scope_libs:
                     lib_id = scope_libs[0]
                 else:
-                    candidates: List[str] = []
-                    mlid = (m or {}).get("library_id") if isinstance(m, dict) else None
+                    candidates: list[str] = []
+                    mlid = m.get("library_id") if isinstance(m, dict) else None
                     if mlid:
                         candidates.append(str(mlid))
-
                     lid = row.get("LibraryId")
                     if lid is not None:
                         candidates.append(str(lid))
-
                     anc = row.get("AncestorIds") or []
                     if isinstance(anc, (list, tuple)):
                         for a in anc:
                             if a is not None:
                                 candidates.append(str(a))
-
                     pid = row.get("ParentId")
                     if pid is not None:
                         candidates.append(str(pid))
-
                     root_keys = set((roots or {}).keys())
                     for cid in candidates:
                         if cid in root_keys:
@@ -664,18 +733,14 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                             break
                     if not lib_id and row.get("Id"):
                         lib_id = _lib_id_via_ancestors(http, uid, str(row["Id"]), roots)
-
-                    # Fallback:
                     if not lib_id:
                         etype = event.get("type")
                         if etype == "movie" and movie_roots:
                             lib_id = movie_roots[0]
                         elif etype == "episode" and show_roots:
                             lib_id = show_roots[0]
-
                 if lib_id:
                     event["library_id"] = str(lib_id)
-                    
                 ev_key = f"{canonical_key(m)}@{ts}"
                 events.append((ts, {"key": ev_key, "base": m}, event))
                 added_events += 1
@@ -688,19 +753,15 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             _log(f"history: skipped untimed played items (no date): {skipped_untimed}")
         return added_events, added_presence, skipped_untimed
 
-    # Pass 1: MOVIES
     _scan("Movie,Video", allow_scope=True, drop_parentid=True, filter_row=_is_movieish)
-
-    # Pass 2: EPISODES
     _scan("Episode", allow_scope=True, drop_parentid=False, filter_row=None)
 
-    # Build final index
     events.sort(key=lambda x: x[0], reverse=True)
     if isinstance(limit, int) and limit > 0:
         events = events[: int(limit)]
 
     total = len(events)
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     if prog:
         try:
             prog.tick(0, total=total, force=True)
@@ -716,13 +777,9 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
                 prog.tick(done, total=total)
             except Exception:
                 pass
-            
-    # Base keys
-    event_bases = set()
-    for ek in out.keys():
-        event_bases.add(ek.split("@", 1)[0])
-    
-    # Merge and blackbox presence entries
+
+    event_bases = {ek.split("@", 1)[0] for ek in out.keys()}
+
     shadow = _shadow_load()
     if shadow:
         added = 0
@@ -740,7 +797,7 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
         for k, meta in bb.items():
             if k in event_bases or k in out:
                 continue
-            if isinstance(meta, dict) and str(meta.get("reason","")).startswith("presence:"):
+            if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
                 out.setdefault(k, {"watched": True})
                 added += 1
         if added:
@@ -755,58 +812,59 @@ def build_index(adapter, since: Optional[Any] = None, limit: Optional[int] = Non
             added += 1
         if added:
             _log(f"presence merged: +{added}")
-            
-    # Debug: show library_id distribution
+
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         try:
             cfg_libs = list(
                 getattr(adapter.cfg, "history_libraries", None)
                 or getattr(adapter.cfg, "libraries", None)
-                or []
+                or [],
             )
         except Exception:
             cfg_libs = []
-
-        lib_counts: Dict[str, int] = {}
+        lib_counts: dict[str, int] = {}
         for ev in out.values():
             lid = ev.get("library_id") or "NONE"
             s = str(lid)
             lib_counts[s] = lib_counts.get(s, 0) + 1
-
         _log(f"history index libs cfg={cfg_libs} distribution={lib_counts}")
 
     _log(f"index size: {len(out)} (events+presence)")
     return out
 
-# Apply history entries
-def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+# apply history
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
     uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
-    do_force = bool(getattr(getattr(adapter, "cfg", None), "history_force_overwrite", False))
-    do_back = bool(getattr(getattr(adapter, "cfg", None), "history_backdate", False))
-    tol = int(getattr(getattr(adapter, "cfg", None), "history_backdate_tolerance_s", 300))
+    cfg = getattr(adapter, "cfg", None)
+    do_force = bool(getattr(cfg, "history_force_overwrite", False))
+    do_back = bool(getattr(cfg, "history_backdate", False))
+    tol = int(getattr(cfg, "history_backdate_tolerance_s", 300))
 
     try:
         from ._common import provider_index
+
         provider_index(adapter)
     except Exception:
         pass
 
-    pre_unresolved: List[Dict[str, Any]] = []
-    wants: Dict[str, Mapping[str, Any]] = {}
+    pre_unresolved: list[dict[str, Any]] = []
+    wants: dict[str, dict[str, Any]] = {}
     for it in (items or []):
-        base: Dict[str, Any] = dict(it or {})
-        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        base: dict[str, Any] = dict(it or {})
+        base_ids_raw = base.get("ids")
+        if isinstance(base_ids_raw, Mapping):
+            base_ids: dict[str, Any] = dict(base_ids_raw)
+        else:
+            base_ids = {}
         has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
-
         if has_ids:
-            nm = emby_normalize(base)  # may add emby-specific fields
-            m: Dict[str, Any] = dict(nm)
-
-            # Keep source fields if present
+            nm = emby_normalize(base)
+            m: dict[str, Any] = dict(nm)
             for key in (
                 "type",
                 "title",
@@ -819,8 +877,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             ):
                 if base.get(key) not in (None, ""):
                     m[key] = base[key]
-
-            # Prefer incoming ids over normalize output
             ids = dict(nm.get("ids") or {})
             for k_id, v_id in base_ids.items():
                 if v_id not in (None, "", 0):
@@ -828,22 +884,19 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             if ids:
                 m["ids"] = ids
         else:
-            m = emby_normalize(base)
-
+            m = dict(emby_normalize(base))
         try:
             k = canonical_key(m) or canonical_key(base)
         except Exception:
             k = None
-
         if not k:
             pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
             _freeze(base, reason="missing_ids_for_key")
             continue
-
         wants[k] = m
 
-    mids: List[Tuple[str, str]] = []
-    unresolved: List[Dict[str, Any]] = []
+    mids: list[tuple[str, str]] = []
+    unresolved: list[dict[str, Any]] = []
     if pre_unresolved:
         unresolved.extend(pre_unresolved)
 
@@ -862,8 +915,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     shadow = _shadow_load()
     bb = _bb_load()
     ok = 0
-
-    stats = {
+    stats: dict[str, int] = {
         "wrote": 0,
         "forced": 0,
         "backdated": 0,
@@ -902,7 +954,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                     unresolved.append({"item": id_minimal(it), "hint": "mark_played_failed"})
                     _freeze(it, reason="write_failed")
                     stats["fail_mark"] += 1
-
                 processed += 1
                 if (processed % 25) == 0:
                     _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
@@ -913,7 +964,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
             if played and dst_ts and dst_ts >= (src_ts - tol):
                 prev_meta = bb.get(k) or {}
-                if prev_meta.get("reason") == "presence:shadow":
+                if isinstance(prev_meta, Mapping) and prev_meta.get("reason") == "presence:shadow":
                     shadow[k] = int(shadow.get(k, 0)) + 1
                     bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
                     stats["skip_newer"] += 1
@@ -933,7 +984,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                     stats["backdated"] += 1
                     sleep_ms(delay)
                     continue
-
                 if do_back:
                     _unmark_played(http, uid, iid)
                     if _mark_played(http, uid, iid, date_played_iso=src_iso):
@@ -944,7 +994,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                         stats["backdated"] += 1
                         sleep_ms(delay)
                         continue
-
                 shadow[k] = int(shadow.get(k, 0)) + 1
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z()}
                 stats["skip_played_untimed"] += 1
@@ -962,7 +1011,6 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
                     unresolved.append({"item": id_minimal(it), "hint": "mark_played_failed"})
                     _freeze(it, reason="write_failed")
                     stats["fail_mark"] += 1
-
                 processed += 1
                 if (processed % 25) == 0:
                     _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
@@ -998,25 +1046,28 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     )
     return ok, unresolved
 
-# Remove history entries
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
     uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
-    pre_unresolved: List[Dict[str, Any]] = []
-    wants: Dict[str, Mapping[str, Any]] = {}
+    pre_unresolved: list[dict[str, Any]] = []
+    wants: dict[str, dict[str, Any]] = {}
 
     for it in (items or []):
-        base: Dict[str, Any] = dict(it or {})
-        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        base: dict[str, Any] = dict(it or {})
+        base_ids_raw = base.get("ids")
+        if isinstance(base_ids_raw, Mapping):
+            base_ids: dict[str, Any] = dict(base_ids_raw)
+        else:
+            base_ids = {}
         has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
 
         if has_ids:
             nm = emby_normalize(base)
-            m: Dict[str, Any] = dict(nm)
-
+            m: dict[str, Any] = dict(nm)
             for key in (
                 "type",
                 "title",
@@ -1029,7 +1080,6 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             ):
                 if base.get(key) not in (None, ""):
                     m[key] = base[key]
-
             ids = dict(nm.get("ids") or {})
             for k_id, v_id in base_ids.items():
                 if v_id not in (None, "", 0):
@@ -1037,22 +1087,19 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             if ids:
                 m["ids"] = ids
         else:
-            m = emby_normalize(base)
-
+            m = dict(emby_normalize(base))
         try:
             k = canonical_key(m) or canonical_key(base)
         except Exception:
             k = None
-
         if not k:
             pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
             _freeze(base, reason="missing_ids_for_key")
             continue
-
         wants[k] = m
 
-    mids: List[Tuple[str, str]] = []
-    unresolved: List[Dict[str, Any]] = []
+    mids: list[tuple[str, str]] = []
+    unresolved: list[dict[str, Any]] = []
     if pre_unresolved:
         unresolved.extend(pre_unresolved)
 
@@ -1062,7 +1109,6 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
         except Exception as e:
             _log(f"resolve exception: {e}")
             iid = None
-
         if iid:
             mids.append((k, iid))
         else:
@@ -1077,14 +1123,12 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             cur = int(shadow.get(k, 0))
             nxt = max(0, cur - 1)
             shadow[k] = nxt
-
             if nxt == 0:
                 if _unmark_played(http, uid, iid):
                     ok += 1
                 else:
                     unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
                     _freeze(wants[k], reason="write_failed")
-
             sleep_ms(delay)
 
     shadow = {k: v for k, v in shadow.items() if v > 0}

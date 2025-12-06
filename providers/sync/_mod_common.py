@@ -1,5 +1,16 @@
 # /providers/sync/_mod_common.py
+# CrossWatch common sync module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs, urlparse
+
+import requests
+
 __VERSION__ = "0.2.0"
 __all__ = [
     "HitSession",
@@ -8,10 +19,8 @@ __all__ = [
     "parse_rate_limit",
     "safe_json",
     "request_with_retries",
-    
     "make_snapshot_progress",
     "SnapshotProgress",
-
     "label_simkl",
     "label_trakt",
     "label_plex",
@@ -19,18 +28,12 @@ __all__ = [
     "label_emby",
 ]
 
-from typing import Any, Callable, Mapping, Optional, Tuple
-from urllib.parse import urlparse, parse_qs
-import os, json, time, requests
-
 EmitFn = Callable[[str, Mapping[str, Any]], None]
 FeatureLabelFn = Callable[[str, str, Mapping[str, Any]], str]
 
 
-# helpers
-
 def make_emitter(ctx: Any) -> EmitFn:
-    emit_fn = None
+    emit_fn: Callable[..., Any] | None = None
     try:
         if hasattr(ctx, "emit") and callable(getattr(ctx, "emit")):
             emit_fn = getattr(ctx, "emit")
@@ -55,20 +58,32 @@ def make_emitter(ctx: Any) -> EmitFn:
     return _emit
 
 
-# snapshot progress 
-
 class SnapshotProgress:
-
-    def __init__(self, ctx: Any, *, dst: str, feature: str, total: Optional[int] = None, throttle_ms: int = 300):
+    def __init__(
+        self,
+        ctx: Any,
+        *,
+        dst: str,
+        feature: str,
+        total: int | None = None,
+        throttle_ms: int = 300,
+    ):
         self._emit = make_emitter(ctx)
         self.dst = str(dst)
         self.feature = str(feature)
-        self.total = (int(total) if total is not None else None)
+        self.total = int(total) if total is not None else None
         self._last_ts = 0.0
         self._throttle = max(100, int(throttle_ms))
         self._last_done = 0
 
-    def tick(self, done: int, *, total: Optional[int] = None, ok: Optional[bool] = None, force: bool = False) -> None:
+    def tick(
+        self,
+        done: int,
+        *,
+        total: int | None = None,
+        ok: bool | None = None,
+        force: bool = False,
+    ) -> None:
         t = self.total if total is None else total
         if not force:
             try:
@@ -83,7 +98,7 @@ class SnapshotProgress:
             return
         self._last_ts = now
         self._last_done = max(self._last_done, int(done))
-        payload = {
+        payload: dict[str, Any] = {
             "dst": self.dst,
             "feature": self.feature,
             "done": int(done),
@@ -97,8 +112,8 @@ class SnapshotProgress:
             payload["ok"] = bool(ok)
         self._emit("snapshot:progress", payload)
 
-    def done(self, *, ok: Optional[bool] = True, total: Optional[int] = None) -> None:
-        payload = {
+    def done(self, *, ok: bool | None = True, total: int | None = None) -> None:
+        payload: dict[str, Any] = {
             "dst": self.dst,
             "feature": self.feature,
             "done": int(self._last_done),
@@ -115,71 +130,84 @@ class SnapshotProgress:
         self._emit("snapshot:progress", payload)
 
 
-def make_snapshot_progress(ctx: Any, *, dst: str, feature: str, total: Optional[int] = None, throttle_ms: int = 300) -> SnapshotProgress:
+def make_snapshot_progress(
+    ctx: Any,
+    *,
+    dst: str,
+    feature: str,
+    total: int | None = None,
+    throttle_ms: int = 300,
+) -> SnapshotProgress:
     return SnapshotProgress(ctx, dst=dst, feature=feature, total=total, throttle_ms=throttle_ms)
 
-def _get_query_value(url: str, params: Mapping[str, Any], name: str) -> Optional[str]:
+
+def _get_query_value(url: str, params: Mapping[str, Any], name: str) -> str | None:
     qd = parse_qs(urlparse(url).query)
     v = params.get(name) if isinstance(params, Mapping) else None
     if isinstance(v, (list, tuple)):
         v = v[0] if v else None
     return (str(v) if v else None) or (qd.get(name, [None])[0])
 
-def default_feature_label(provider: str, method: str, url: str, kw: Mapping[str, Any]) -> str:
+
+def default_feature_label(
+    provider: str,
+    method: str,
+    url: str,
+    kw: Mapping[str, Any],
+) -> str:
     p = urlparse(url)
     segs = [s for s in (p.path or "/").split("/") if s]
     head = "/".join(segs[:3]) or "unknown"
     return head.lower()
+
 
 def label_emby(method: str, url: str, kw: Mapping[str, Any]) -> str:
     p = urlparse(url)
     segs = [s for s in (p.path or "/").split("/") if s]
     m = method.upper()
 
-    # System
     if segs[:2] == ["System", "Ping"]:
         return "system:ping"
     if segs[:2] == ["System", "Info"]:
         return "system:info"
 
-    # Users-scoped
     if len(segs) >= 2 and segs[0] == "Users":
-        # /Users/{UserId}/Views
         if len(segs) >= 3 and segs[2] == "Views":
             return "library:views"
-        # /Users/{UserId}/Items
         if len(segs) >= 3 and segs[2] == "Items":
-            # /Users/{UserId}/Items/{ItemId}/UserData
             if len(segs) >= 5 and segs[4] == "UserData":
                 return "userdata"
             return "library:items"
-        # Favorites and Played
         if "FavoriteItems" in segs:
             return "ratings:favorite"
         if "PlayedItems" in segs:
             return "history:add" if m == "POST" else ("history:remove" if m == "DELETE" else "history")
 
-    # Playlists (not used)
     if segs[:1] == ["Playlists"]:
-        if m == "GET": return "playlists:index"
-        if m == "POST": return "playlists:write"
-        if m == "DELETE": return "playlists:delete"
+        if m == "GET":
+            return "playlists:index"
+        if m == "POST":
+            return "playlists:write"
+        if m == "DELETE":
+            return "playlists:delete"
         return "playlists"
 
-    # Collections (BoxSets)
     if segs[:1] == ["Collections"]:
-        if m == "POST": return "collections:write"
-        if m == "DELETE": return "collections:delete"
+        if m == "POST":
+            return "collections:write"
+        if m == "DELETE":
+            return "collections:delete"
         return "collections"
 
     return default_feature_label("EMBY", method, url, kw)
+
 
 def label_simkl(method: str, url: str, kw: Mapping[str, Any]) -> str:
     p = urlparse(url)
     segs = [s for s in (p.path or "/").split("/") if s]
     params = kw.get("params") or {}
     q_type = _get_query_value(url, params, "type")
-    has_eps_watched = str(_get_query_value(url, params, "episode_watched_at") or "").lower() in ("1","true","yes","y")
+    has_eps_watched = str(_get_query_value(url, params, "episode_watched_at") or "").lower() in ("1", "true", "yes", "y")
 
     if segs[:2] == ["sync", "activities"]:
         return "activities"
@@ -202,21 +230,24 @@ def label_simkl(method: str, url: str, kw: Mapping[str, Any]) -> str:
 
 
 def label_trakt(method: str, url: str, kw: Mapping[str, Any]) -> str:
-    p = urlparse(url); segs = [s for s in (p.path or "/").split("/") if s]
+    p = urlparse(url)
+    segs = [s for s in (p.path or "/").split("/") if s]
     if segs[:2] == ["sync", "last_activities"]:
         return "activities"
     if segs[:2] == ["sync", "watchlist"]:
         if len(segs) >= 3 and segs[2] in ("movies", "shows", "seasons", "episodes"):
             return f"watchlist:index:{segs[2]}"
-        return "watchlist:add" if method == "POST" and len(segs) == 2 else "watchlist:index"
+        return "watchlist:add" if method.upper() == "POST" and len(segs) == 2 else "watchlist:index"
     if segs[:2] == ["sync", "history"]:
         return "history:remove" if (len(segs) == 3 and segs[2] == "remove") else "history:add"
     if segs[:2] == ["sync", "ratings"]:
         return "ratings:index"
     return default_feature_label("TRAKT", method, url, kw)
 
+
 def label_plex(method: str, url: str, kw: Mapping[str, Any]) -> str:
-    p = urlparse(url); segs = [s for s in (p.path or "/").split("/") if s]
+    p = urlparse(url)
+    segs = [s for s in (p.path or "/").split("/") if s]
     if segs[:2] == ["status", "sessions"]:
         return "sessions"
     if segs[:2] == ["library", "sections"]:
@@ -224,14 +255,21 @@ def label_plex(method: str, url: str, kw: Mapping[str, Any]) -> str:
     if segs[:1] == [":"] and len(segs) >= 2 and segs[1] in ("scrobble", "unscrobble"):
         return "history:write"
     if segs[:1] == ["playlists"]:
-        if method == "GET": return "playlists:index"
-        if method == "POST": return "playlists:create"
-        if method == "DELETE": return "playlists:delete"
-        if method == "PUT": return "playlists:update"
+        m = method.upper()
+        if m == "GET":
+            return "playlists:index"
+        if m == "POST":
+            return "playlists:create"
+        if m == "DELETE":
+            return "playlists:delete"
+        if m == "PUT":
+            return "playlists:update"
     return default_feature_label("PLEX", method, url, kw)
 
+
 def label_jellyfin(method: str, url: str, kw: Mapping[str, Any]) -> str:
-    p = urlparse(url); segs = [s for s in (p.path or "/").split("/") if s]
+    p = urlparse(url)
+    segs = [s for s in (p.path or "/").split("/") if s]
     if len(segs) >= 3 and segs[:2] == ["Users", segs[1]] and segs[2] == "Views":
         return "library:views"
     if len(segs) >= 3 and segs[:2] == ["Users", segs[1]] and segs[2] == "Items":
@@ -239,23 +277,32 @@ def label_jellyfin(method: str, url: str, kw: Mapping[str, Any]) -> str:
     if "FavoriteItems" in segs:
         return "ratings:favorite"
     if "PlayedItems" in segs:
-        return "history:add" if method == "POST" else ("history:remove" if method == "DELETE" else "history")
+        m = method.upper()
+        if m == "POST":
+            return "history:add"
+        if m == "DELETE":
+            return "history:remove"
+        return "history"
     if "Episodes" in segs:
         return "shows:episodes"
     return default_feature_label("JELLYFIN", method, url, kw)
 
-#  Session 
-class HitSession(requests.Session):
 
-    def __init__(self, provider: str, emit: EmitFn, feature_label: Optional[FeatureLabelFn] = None, emit_hits: Optional[bool] = None):
+class HitSession(requests.Session):
+    def __init__(
+        self,
+        provider: str,
+        emit: EmitFn,
+        feature_label: FeatureLabelFn | None = None,
+        emit_hits: bool | None = None,
+    ):
         super().__init__()
         self._provider = provider
         self._emit = emit
         self._label = feature_label or (lambda m, u, kw: default_feature_label(provider, m, u, kw))
         self._emit_hits = bool(os.getenv("CW_API_HITS")) if emit_hits is None else bool(emit_hits)
 
-
-    def request(self, method: str, url: str, **kwargs):
+    def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         try:
             resp = super().request(method, url, **kwargs)
             return resp
@@ -270,21 +317,30 @@ class HitSession(requests.Session):
                 except Exception:
                     pass
 
-def build_session(provider: str, ctx: Any, *, feature_label: Optional[FeatureLabelFn] = None, emit_hits: Optional[bool] = None) -> HitSession:
+
+def build_session(
+    provider: str,
+    ctx: Any,
+    *,
+    feature_label: FeatureLabelFn | None = None,
+    emit_hits: bool | None = None,
+) -> HitSession:
     return HitSession(provider, make_emitter(ctx), feature_label, emit_hits)
 
-# utils 
-def parse_rate_limit(h: Mapping[str, Any]) -> Dict[str, Optional[int]]:
-    def _i(x):
+
+def parse_rate_limit(h: Mapping[str, Any]) -> dict[str, int | None]:
+    def _i(x: Any) -> int | None:
         try:
             return int(x)
         except Exception:
             return None
+
     return {
-        "limit":     _i(h.get("X-RateLimit-Limit") or h.get("RateLimit-Limit") or h.get("Ratelimit-Limit")),
+        "limit": _i(h.get("X-RateLimit-Limit") or h.get("RateLimit-Limit") or h.get("Ratelimit-Limit")),
         "remaining": _i(h.get("X-RateLimit-Remaining") or h.get("RateLimit-Remaining") or h.get("Ratelimit-Remaining")),
-        "reset":     _i(h.get("X-RateLimit-Reset") or h.get("RateLimit-Reset") or h.get("Ratelimit-Reset")),
+        "reset": _i(h.get("X-RateLimit-Reset") or h.get("RateLimit-Reset") or h.get("Ratelimit-Reset")),
     }
+
 
 def safe_json(resp: requests.Response) -> Any:
     try:
@@ -297,6 +353,7 @@ def safe_json(resp: requests.Response) -> Any:
     except Exception:
         return {}
 
+
 def request_with_retries(
     session: requests.Session,
     method: str,
@@ -304,17 +361,16 @@ def request_with_retries(
     *,
     timeout: float = 10.0,
     max_retries: int = 3,
-    retry_on: Tuple[int, ...] = (429, 500, 502, 503, 504),
+    retry_on: tuple[int, ...] = (429, 500, 502, 503, 504),
     backoff_base: float = 0.5,
     **kwargs: Any,
 ) -> requests.Response:
-
     last: Any = None
     for i in range(max(1, int(max_retries))):
         try:
             resp = session.request(method, url, timeout=timeout, **kwargs)
             if resp.status_code in retry_on and i < max_retries - 1:
-                wait = backoff_base * (2 ** i)
+                wait = backoff_base * (2**i)
                 try:
                     if resp.status_code == 429:
                         ra = resp.headers.get("Retry-After")
@@ -329,12 +385,12 @@ def request_with_retries(
         except Exception as e:
             last = e
             if i < max_retries - 1:
-                time.sleep(backoff_base * (2 ** i))
+                time.sleep(backoff_base * (2**i))
             else:
                 break
     if isinstance(last, requests.Response):
         return last
     raise requests.RequestException(f"request failed after retries: {method} {url}")
 
-# Alias
+
 request_with_retry = request_with_retries

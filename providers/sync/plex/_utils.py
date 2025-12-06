@@ -1,27 +1,54 @@
+# /providers/sync/plex/_utils.py
+# Plex Utils for CrossWatch - use across multiple services
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import os, re, json, time, ipaddress, xml.etree.ElementTree as ET, requests
-from requests.exceptions import SSLError, ConnectionError
-from typing import Any, Dict, Mapping, Optional, Tuple, List
 
-CONFIG_PATH = "/config/config.json"
+import os
+import re
+import time
+import ipaddress
+import xml.etree.ElementTree as ET
+from typing import Any, Mapping
+
+import requests
+from requests.exceptions import ConnectionError, SSLError
+
+from cw_platform.config_base import load_config, save_config
+
+def _boolish(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("0", "false", "no", "off", "n"):
+        return False
+    if s in ("1", "true", "yes", "on", "y"):
+        return True
+    return default
+
 
 def _log(msg: str) -> None:
     if _boolish(os.environ.get("CW_DEBUG"), False) or _boolish(os.environ.get("CW_PLEX_DEBUG"), False):
         print(f"[PLEX:utils] {msg}")
 
-_LIB_TTL_S   = int(os.environ.get("CW_PLEX_LIB_TTL_S",   "600"))
-_ACCT_TTL_S  = int(os.environ.get("CW_PLEX_ACCT_TTL_S",  "900"))
-_MIN_HTTP_S  = float(os.environ.get("CW_PLEX_MIN_HTTP_INTERVAL_S", "5"))
 
-_CACHE = {
+_LIB_TTL_S = int(os.environ.get("CW_PLEX_LIB_TTL_S", "600"))
+_ACCT_TTL_S = int(os.environ.get("CW_PLEX_ACCT_TTL_S", "900"))
+_MIN_HTTP_S = float(os.environ.get("CW_PLEX_MIN_HTTP_INTERVAL_S", "5"))
+
+
+_CACHE: dict[str, dict[str, Any]] = {
     "libs": {"key": None, "ts": 0.0, "data": []},
     "owner": {"key": None, "ts": 0.0, "data": (None, None)},
     "aid_by_user": {},
 }
-_LAST_HTTP: Dict[str, float] = {}
+_LAST_HTTP: dict[str, float] = {}
+
 
 def _cache_hit(ts: float, ttl: int) -> bool:
     return (time.time() - float(ts or 0.0)) < max(1, int(ttl))
+
 
 def _throttle(path: str) -> bool:
     now = time.time()
@@ -31,261 +58,370 @@ def _throttle(path: str) -> bool:
     _LAST_HTTP[path] = now
     return False
 
-def _read_json(p: str) -> Dict[str, Any]:
-    try:
-        with open(p, "r", encoding="utf-8") as f: return json.load(f) or {}
-    except Exception: return {}
 
-def _write_json_atomic(p: str, data: Mapping[str, Any]) -> None:
-    try:
-        os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-        t = p + ".tmp"
-        with open(t, "w", encoding="utf-8") as w: json.dump(data, w, ensure_ascii=False, indent=2)
-        os.replace(t, p)
-    except Exception as e: _log(f"config write failed: {e}")
+def _plex(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    plex = cfg.get("plex")
+    if not isinstance(plex, dict):
+        plex = {}
+        if isinstance(cfg, dict):
+            cfg["plex"] = plex  # type: ignore[assignment]
+    return plex
 
-def _is_empty(v: Any) -> bool: return v is None or (isinstance(v, str) and v.strip() == "")
-def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]: return _read_json(path)
-def save_config(cfg: Mapping[str, Any], path: str = CONFIG_PATH) -> None: _write_json_atomic(path, dict(cfg))
 
-def _plex(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    if "plex" not in cfg or not isinstance(cfg["plex"], dict): cfg["plex"] = {}
-    return cfg["plex"]
-
-def _insert_key_first_inplace(d: Dict[str, Any], k: str, v: Any) -> bool:
-    if k in d:
-        if d[k] != v: d[k] = v; return True
+def _insert_key_first_inplace(d: dict[str, Any], key: str, value: Any) -> bool:
+    if key in d:
+        if d[key] != value:
+            d[key] = value
+            return True
         return False
-    nd = {k: v}; nd.update(d); d.clear(); d.update(nd); return True
-
-def _insert_key_after_inplace(d: Dict[str, Any], after: str, k: str, v: Any) -> bool:
-    if k in d:
-        if d[k] != v: d[k] = v; return True
-        return False
-    nd: Dict[str, Any] = {}; ins = False
-    for kk, vv in d.items():
-        nd[kk] = vv
-        if not ins and kk == after: nd[k] = v; ins = True
-    if not ins: nd[k] = v
-    d.clear(); d.update(nd); return True
-
-def _plex_headers(token: str) -> Dict[str, str]:
-    cid = os.environ.get("CW_PLEX_CID") or os.environ.get("PLEX_CLIENT_IDENTIFIER") or "CrossWatch"
-    return {"X-Plex-Product":"CrossWatch","X-Plex-Platform":"Web","X-Plex-Version":"1.0","X-Plex-Client-Identifier":cid,"X-Plex-Token":token or "","Accept":"application/xml, application/json;q=0.9,*/*;q=0.5","User-Agent":"CrossWatch/1.0"}
-
-def _boolish(x: Any, default: bool) -> bool:
-    if isinstance(x, bool): return x
-    if isinstance(x, (int, float)): return bool(x)
-    s = str(x).strip().lower()
-    if s in ("0","false","no","off","n"): return False
-    if s in ("1","true","yes","on","y"): return True
-    return default
-
-def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str) -> bool:
-    if not str(url).lower().startswith("https"): return True
-    plex = (cfg.get("plex") or {}) if isinstance(cfg, dict) else {}
-    env = os.environ.get("CW_PLEX_VERIFY")
-    if env is not None: return _boolish(env, True)
-    if "verify_ssl" in plex: return _boolish(plex.get("verify_ssl"), True)
-    if "verify_ssl" in cfg:  return _boolish(cfg.get("verify_ssl"), True)
+    new_dict: dict[str, Any] = {key: value}
+    new_dict.update(d)
+    d.clear()
+    d.update(new_dict)
     return True
 
+
+def _insert_key_after_inplace(d: dict[str, Any], after: str, key: str, value: Any) -> bool:
+    if key in d:
+        if d[key] != value:
+            d[key] = value
+            return True
+        return False
+    new_dict: dict[str, Any] = {}
+    inserted = False
+    for existing_key, existing_value in d.items():
+        new_dict[existing_key] = existing_value
+        if not inserted and existing_key == after:
+            new_dict[key] = value
+            inserted = True
+    if not inserted:
+        new_dict[key] = value
+    d.clear()
+    d.update(new_dict)
+    return True
+
+
+def _is_empty(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _plex_headers(token: str) -> dict[str, str]:
+    cid = os.environ.get("CW_PLEX_CID") or os.environ.get("PLEX_CLIENT_IDENTIFIER") or "CrossWatch"
+    return {
+        "X-Plex-Product": "CrossWatch",
+        "X-Plex-Platform": "Web",
+        "X-Plex-Version": "1.0",
+        "X-Plex-Client-Identifier": cid,
+        "X-Plex-Token": token or "",
+        "Accept": "application/xml, application/json;q=0.9,*/*;q=0.5",
+        "User-Agent": "CrossWatch/1.0",
+    }
+
+
+def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str) -> bool:
+    if not str(url).lower().startswith("https"):
+        return True
+    plex = (cfg.get("plex") or {}) if isinstance(cfg, dict) else {}
+    env = os.environ.get("CW_PLEX_VERIFY")
+    if env is not None:
+        return _boolish(env, True)
+    if "verify_ssl" in plex:
+        return _boolish(plex.get("verify_ssl"), True)
+    if "verify_ssl" in cfg:
+        return _boolish(cfg.get("verify_ssl"), True)
+    return True
+
+
 def _build_session(token: str, verify: bool) -> requests.Session:
-    s = requests.Session()
-    s.trust_env = False
-    s.verify = verify
-    s.headers.update(_plex_headers(token))
-    return s
+    session = requests.Session()
+    session.trust_env = False
+    session.verify = verify
+    session.headers.update(_plex_headers(token))
+    return session
 
-_ipplex = re.compile(r"^(https?://)(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct(:\d+)?$", re.I)
-def _fallback_bases(base_url: str) -> List[str]:
-    out = []
-    if base_url.startswith("https://"): out.append("http://" + base_url[8:])
-    m = _ipplex.match(base_url)
-    if m:
-        dotted = m.group(2).replace("-", ".")
-        port = m.group(3) or ""
-        out.append(f"https://{dotted}{port}")
-        out.append(f"http://{dotted}{port}")
-    return [b.rstrip("/") for b in out if b]
 
-def _try_get(s: requests.Session, base: str, path: str, timeout: float) -> Optional[requests.Response]:
+_ipplex = re.compile(r"^(https?://)(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct(:\d+)?$", re.IGNORECASE)
+
+
+def _fallback_bases(base_url: str) -> list[str]:
+    bases: list[str] = []
+    if base_url.startswith("https://"):
+        bases.append("http://" + base_url[8:])
+    match = _ipplex.match(base_url)
+    if match:
+        dotted = match.group(2).replace("-", ".")
+        port = match.group(3) or ""
+        bases.append(f"https://{dotted}{port}")
+        bases.append(f"http://{dotted}{port}")
+    return [b.rstrip("/") for b in bases if b]
+
+
+def _try_get(session: requests.Session, base: str, path: str, timeout: float) -> requests.Response | None:
     url = f"{base.rstrip('/')}{path}"
     try:
-        # only log on errors/fallbacks
-        return s.get(url, timeout=timeout)
+        return session.get(url, timeout=timeout)
     except (SSLError, ConnectionError) as e:
         _log(f"primary failed: {e}")
         for fb in _fallback_bases(base):
             try:
-                _log(f"fallback → {fb}{path}")
-                s.verify = fb.startswith("https://") and s.verify
-                r = s.get(f"{fb}{path}", timeout=timeout)
-                if r is not None:
-                    return r
-            except Exception as ee:
+                _log(f"fallback -> {fb}{path}")
+                session.verify = fb.startswith("https://") and session.verify
+                response = session.get(f"{fb}{path}", timeout=timeout)
+                if response is not None:
+                    return response
+            except Exception as ee:  # noqa: BLE001
                 _log(f"fallback failed: {ee}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         _log(f"request error: {e}")
     return None
 
-def discover_server_url_from_server(srv) -> Optional[str]:
-    try:
-        base = getattr(srv, "_baseurl", None) or getattr(srv, "baseurl", None)
-        if isinstance(base, str) and base.strip(): return base.rstrip("/")
-    except Exception: pass
-    return None
 
 def _pick_server_url_from_resources(xml_text: str) -> str:
     try:
         from urllib.parse import urlparse
-        import re, ipaddress
 
-        def host_flags(uri: str):
-            # (is_ip_host, is_private_ip)
-            h = (urlparse(uri).hostname or "").strip()
-            if not h:
+        def host_flags(uri: str) -> tuple[bool, bool]:
+            host = (urlparse(uri).hostname or "").strip()
+            if not host:
                 return False, False
-
-            # plain IP host
             try:
-                ip = ipaddress.ip_address(h)
+                ip = ipaddress.ip_address(host)
                 return True, bool(ip.is_private or ip.is_link_local)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-
-            # hyphenated plex.direct -> treat as IP
-            m = re.match(r"^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$", h, re.I)
+            m = re.match(r"^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$", host, re.IGNORECASE)
             if m:
                 dotted = m.group(1).replace("-", ".")
                 try:
                     ip = ipaddress.ip_address(dotted)
                     return False, bool(ip.is_private or ip.is_link_local)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-
             return False, False
 
-        root = ET.fromstring(xml_text); servers: List[tuple] = []
+        root = ET.fromstring(xml_text)
+        servers: list[tuple[bool, bool, bool, bool, bool, str]] = []
         for dev in root.findall(".//Device"):
             if "server" in (dev.attrib.get("provides") or ""):
-                for c in dev.findall(".//Connection"):
-                    uri = (c.attrib.get("uri") or "").strip()
+                for conn in dev.findall(".//Connection"):
+                    uri = (conn.attrib.get("uri") or "").strip()
                     if not uri:
                         continue
-                    local = (c.attrib.get("local") or "") in ("1", "true", "yes")
-                    relay = (c.attrib.get("relay") or "") in ("1", "true", "yes")
+                    local = (conn.attrib.get("local") or "") in ("1", "true", "yes")
+                    relay = (conn.attrib.get("relay") or "") in ("1", "true", "yes")
                     direct = not relay
                     http = uri.startswith("http://")
-                    is_ip, is_priv = host_flags(uri)
-
-                    # local > direct > private LAN > http > ip-host > everything else
-                    servers.append((local, direct, is_priv, http, is_ip, uri.rstrip("/")))
-
+                    is_ip, is_private = host_flags(uri)
+                    servers.append((local, direct, is_private, http, is_ip, uri.rstrip("/")))
         servers.sort(key=lambda t: (t[0], t[1], t[2], t[3], t[4]), reverse=True)
         return servers[0][5] if servers else ""
-    except Exception:
+    except Exception:  # noqa: BLE001
         return ""
 
-def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> Optional[str]:
+
+def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> str | None:
     try:
-        r = requests.get("https://plex.tv/api/resources?includeHttps=1", headers={"X-Plex-Token": token, "Accept": "application/xml"}, timeout=timeout)
-        if r.ok and (r.text or "").lstrip().startswith("<"): return _pick_server_url_from_resources(r.text) or None
-    except Exception: pass
+        response = requests.get(
+            "https://plex.tv/api/resources?includeHttps=1",
+            headers={"X-Plex-Token": token, "Accept": "application/xml"},
+            timeout=timeout,
+        )
+        if response.ok and (response.text or "").lstrip().startswith("<"):
+            picked = _pick_server_url_from_resources(response.text)
+            return picked or None
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
-def _pms_id_from_attr_map(m: Mapping[str, Any]) -> Optional[int]:
-    try: return int(m.get("id") or m.get("ID"))
-    except Exception: return None
 
-def _looks_cloudish(v: Optional[int]) -> bool:
-    try: return int(v or -1) >= 100000
-    except Exception: return True
+def _pms_id_from_attr_map(attrs: Mapping[str, Any]) -> int | None:
+    value = attrs.get("id") or attrs.get("ID")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:  # noqa: BLE001
+        return None
 
-def _parse_accounts_all(xml_text: str) -> List[Tuple[int, str]]:
-    out: List[Tuple[int, str]] = []
+
+def _looks_cloudish(value: int | None) -> bool:
+    try:
+        return int(value or -1) >= 100000
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _parse_accounts_all(xml_text: str) -> list[tuple[int, str]]:
+    out: list[tuple[int, str]] = []
     try:
         root = ET.fromstring(xml_text)
-        for acc in root.findall(".//Account"):
-            aid = _pms_id_from_attr_map(acc.attrib)
-            if aid is None: continue
-            nm = (acc.attrib.get("name") or acc.attrib.get("username") or "").strip()
-            out.append((aid, nm))
-    except Exception: pass
+        for account in root.findall(".//Account"):
+            aid = _pms_id_from_attr_map(account.attrib)
+            if aid is None:
+                continue
+            name = (account.attrib.get("name") or account.attrib.get("username") or "").strip()
+            out.append((aid, name))
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
-def _pick_owner_id(a_list: List[Tuple[int, str]]) -> Tuple[Optional[str], Optional[int]]:
-    locals_only = [(i, n) for (i, n) in a_list if i > 0 and not _looks_cloudish(i)]
-    if not locals_only: return (a_list[0][1], a_list[0][0]) if a_list else (None, None)
-    locals_only.sort(key=lambda t: t[0])
-    i, n = locals_only[0]
-    if any(x[0] == 1 for x in locals_only): i, n = next((ii, nn) for (ii, nn) in locals_only if ii == 1)
-    return n, i
 
-def _parse_accounts_xml_for_username(xml_text: str, username: str) -> Optional[int]:
-    u = (username or "").strip().lower()
-    for aid, nm in _parse_accounts_all(xml_text):
-        if (nm or "").lower() == u and not _looks_cloudish(aid): return int(aid)
+def _pick_owner_id(accounts: list[tuple[int, str]]) -> tuple[str | None, int | None]:
+    locals_only = [(aid, name) for (aid, name) in accounts if aid > 0 and not _looks_cloudish(aid)]
+    if not locals_only:
+        return (accounts[0][1], accounts[0][0]) if accounts else (None, None)
+    locals_only.sort(key=lambda t: t[0])
+    aid, name = locals_only[0]
+    if any(it[0] == 1 for it in locals_only):
+        aid, name = next((ii, nn) for (ii, nn) in locals_only if ii == 1)
+    return name, aid
+
+
+def _parse_accounts_xml_for_username(xml_text: str, username: str) -> int | None:
+    target = (username or "").strip().lower()
+    for aid, name in _parse_accounts_all(xml_text):
+        if (name or "").lower() == target and not _looks_cloudish(aid):
+            return int(aid)
     return None
 
-def fetch_accounts_owner(base_url: str, token: str, verify: bool, timeout: float = 10.0) -> Tuple[Optional[str], Optional[int]]:
+
+def fetch_accounts_owner(
+    base_url: str,
+    token: str,
+    verify: bool,
+    timeout: float = 10.0,
+) -> tuple[str | None, int | None]:
     key = (base_url.rstrip("/"), token or "", bool(verify))
     ent = _CACHE["owner"]
     if ent["key"] == key and _cache_hit(ent["ts"], _ACCT_TTL_S):
-        return ent["data"]
+        return tuple(ent["data"])  # type: ignore[return-value]
     if _throttle("/accounts"):
-        return ent["data"]
-    out: Tuple[Optional[str], Optional[int]] = (None, None)
+        return tuple(ent["data"])  # type: ignore[return-value]
+    out: tuple[str | None, int | None] = (None, None)
     try:
-        s = _build_session(token, verify)
-        r = _try_get(s, base_url, "/accounts", timeout)
-        if r and r.ok and (r.text or "").lstrip().startswith("<"):
-            out = _pick_owner_id(_parse_accounts_all(r.text))
-    except Exception as e: _log(f"owner fetch failed: {e}")
+        session = _build_session(token, verify)
+        response = _try_get(session, base_url, "/accounts", timeout)
+        if response and response.ok and (response.text or "").lstrip().startswith("<"):
+            out = _pick_owner_id(_parse_accounts_all(response.text))
+    except Exception as e:  # noqa: BLE001
+        _log(f"owner fetch failed: {e}")
     _CACHE["owner"] = {"key": key, "ts": time.time(), "data": out}
     return out
 
-def fetch_account_id_for_username(base_url: str, token: str, username: str, verify: bool, timeout: float = 10.0) -> Optional[int]:
+
+def fetch_account_id_for_username(
+    base_url: str,
+    token: str,
+    username: str,
+    verify: bool,
+    timeout: float = 10.0,
+) -> int | None:
     uname = (username or "").strip()
-    if not uname: return None
-    key = (base_url.rstrip("/"), token or "", uname.lower(), bool(verify))
-    ent = _CACHE["aid_by_user"].get(key)
+    if not uname:
+        return None
+    cache_key = f"{base_url.rstrip('/')}\n{token or ''}\n{uname.lower()}\n{1 if verify else 0}"
+    bucket = _CACHE["aid_by_user"]
+    ent = bucket.get(cache_key)
     if ent and _cache_hit(ent.get("ts", 0.0), _ACCT_TTL_S):
         return ent.get("aid")
     if _throttle("/accounts"):
         return ent.get("aid") if ent else None
-    aid: Optional[int] = None
+    aid: int | None = None
     try:
-        s = _build_session(token, verify)
-        r = _try_get(s, base_url, "/accounts", timeout)
-        if r and r.ok and (r.text or "").lstrip().startswith("<"):
-            aid = _parse_accounts_xml_for_username(r.text, uname)
-    except Exception as e: _log(f"account-id fetch failed: {e}")
-    _CACHE["aid_by_user"][key] = {"ts": time.time(), "aid": aid}
+        session = _build_session(token, verify)
+        response = _try_get(session, base_url, "/accounts", timeout)
+        if response and response.ok and (response.text or "").lstrip().startswith("<"):
+            aid = _parse_accounts_xml_for_username(response.text, uname)
+    except Exception as e:  # noqa: BLE001
+        _log(f"account-id fetch failed: {e}")
+    bucket[cache_key] = {"ts": time.time(), "aid": aid}
     return aid
 
-def inspect_and_persist(cfg_path: str = CONFIG_PATH) -> Dict[str, Any]:
-    cfg = load_config(cfg_path); plex = _plex(cfg)
+
+def _libs_key(base_url: str, token: str, verify: bool) -> tuple[str, str, bool]:
+    return base_url.rstrip("/"), token or "", bool(verify)
+
+
+def fetch_libraries(
+    base_url: str,
+    token: str,
+    verify: bool,
+    timeout: float = 10.0,
+) -> list[dict[str, Any]]:
+    key = _libs_key(base_url, token, verify)
+    ent = _CACHE["libs"]
+    if ent["key"] == key and _cache_hit(ent["ts"], _LIB_TTL_S):
+        return list(ent["data"])
+    if _throttle("/library/sections"):
+        return list(ent["data"])
+    libs: list[dict[str, Any]] = []
+    try:
+        session = _build_session(token, verify)
+        response = _try_get(session, base_url, "/library/sections", timeout)
+        if response and response.ok and (response.text or "").lstrip().startswith("<"):
+            root = ET.fromstring(response.text)
+            for directory in root.findall(".//Directory"):
+                keyv = directory.attrib.get("key")
+                title = directory.attrib.get("title")
+                lib_type = directory.attrib.get("type")
+                if keyv and title:
+                    libs.append({"key": str(keyv), "title": title, "type": lib_type or "lib"})
+    except Exception as e:  # noqa: BLE001
+        _log(f"sections fetch failed: {e}")
+    _CACHE["libs"] = {"key": key, "ts": time.time(), "data": list(libs)}
+    return libs
+
+
+def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
+    cfg = load_config()
+    plex = _plex(cfg)
     token = (plex.get("account_token") or "").strip()
-    base  = (plex.get("server_url") or "").strip()
+    base = (plex.get("server_url") or "").strip()
+    if not token:
+        return []
+    if not base:
+        base_url = discover_server_url_from_cloud(token) or ""
+        if base_url:
+            _insert_key_first_inplace(plex, "server_url", base_url)
+            save_config(cfg)
+        base = base_url
+    if not base:
+        return []
+    verify = _resolve_verify_from_cfg(cfg, base)
+    libs = fetch_libraries(base, token, verify=verify)
+    if not libs and verify:
+        _log("empty libs; re-try with verify=False")
+        libs = fetch_libraries(base, token, verify=False)
+    return libs
+
+
+def inspect_and_persist() -> dict[str, Any]:
+    cfg = load_config()
+    plex = _plex(cfg)
+    token = (plex.get("account_token") or "").strip()
+    base = (plex.get("server_url") or "").strip()
     username = plex.get("username") or ""
     account_id = plex.get("account_id")
 
     if token and not base:
-        base = discover_server_url_from_cloud(token) or ""
-        if base: _insert_key_first_inplace(plex, "server_url", base); save_config(cfg, cfg_path); _log(f"server_url={base}")
+        base_url = discover_server_url_from_cloud(token) or ""
+        if base_url:
+            _insert_key_first_inplace(plex, "server_url", base_url)
+            save_config(cfg)
+            _log(f"server_url={base_url}")
+        base = base_url
 
     if token and base:
         verify = _resolve_verify_from_cfg(cfg, base)
-        server_user: Optional[str] = None
-        server_aid: Optional[int] = None
+        server_user: str | None = None
+        server_aid: int | None = None
 
         if (username or "").strip():
             server_aid = fetch_account_id_for_username(base, token, username, verify=verify)
         if server_aid is None:
             server_user, server_aid = fetch_accounts_owner(base, token, verify=verify)
 
-        if _is_empty(account_id) and (server_aid is not None):
+        if _is_empty(account_id) and server_aid is not None:
             _insert_key_after_inplace(plex, "client_id", "account_id", int(server_aid))
             account_id = int(server_aid)
 
@@ -296,158 +432,129 @@ def inspect_and_persist(cfg_path: str = CONFIG_PATH) -> Dict[str, Any]:
 
     if token and _is_empty(username):
         try:
-            r = requests.get("https://plex.tv/api/v2/user", headers=_plex_headers(token), timeout=8)
-            if r.ok:
-                j = r.json()
-                u = (j.get("username") or j.get("title") or "").strip()
+            response = requests.get("https://plex.tv/api/v2/user", headers=_plex_headers(token), timeout=8)
+            if response.ok:
+                data = response.json()
+                u = (data.get("username") or data.get("title") or "").strip()
                 if u:
                     after = "account_id" if "account_id" in plex else "client_id"
                     _insert_key_after_inplace(plex, after, "username", u)
                     username = u
-                cid = j.get("id")
+                cid = data.get("id")
                 if isinstance(cid, int):
                     plex.setdefault("_cloud", {})["account_id"] = cid
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             _log(f"plex.tv user probe failed: {e}")
 
-    save_config(cfg, cfg_path)
+    save_config(cfg)
     return {"server_url": base, "username": username, "account_id": account_id}
 
-def fetch_libraries(base_url: str, token: str, verify: bool, timeout: float = 10.0) -> List[Dict[str, Any]]:
-    key = (base_url.rstrip("/"), token or "", bool(verify))
-    ent = _CACHE["libs"]
-    if ent["key"] == key and _cache_hit(ent["ts"], _LIB_TTL_S):
-        return list(ent["data"])
-    if _throttle("/library/sections"):
-        return list(ent["data"])
-    libs: List[Dict[str, Any]] = []
-    try:
-        s = _build_session(token, verify)
-        r = _try_get(s, base_url, "/library/sections", timeout)
-        if r and r.ok and (r.text or "").lstrip().startswith("<"):
-            root = ET.fromstring(r.text)
-            for d in root.findall(".//Directory"):
-                keyv = d.attrib.get("key"); title = d.attrib.get("title"); typ = d.attrib.get("type")
-                if keyv and title:
-                    libs.append({"key": str(keyv), "title": title, "type": (typ or "lib")})
-    except Exception as e: _log(f"sections fetch failed: {e}")
-    _CACHE["libs"] = {"key": key, "ts": time.time(), "data": list(libs)}
-    return libs
 
-def fetch_libraries_from_cfg(cfg_path: str = CONFIG_PATH) -> List[Dict[str, Any]]:
-    cfg = load_config(cfg_path); plex = _plex(cfg)
-    token = (plex.get("account_token") or "").strip()
-    base  = (plex.get("server_url") or "").strip()
-    if not token: return []
-    if not base:
-        base = discover_server_url_from_cloud(token) or ""
-        if base: _insert_key_first_inplace(plex, "server_url", base); save_config(cfg, cfg_path)
-    if not base: return []
-    verify = _resolve_verify_from_cfg(cfg, base)
-    libs = fetch_libraries(base, token, verify=verify)
-    if not libs and verify:
-        _log("empty libs; re-try with verify=False")
-        libs = fetch_libraries(base, token, verify=False)
-    return libs
-
-def resolve_owner_account_id(srv, token: str) -> Optional[int]:
+def resolve_owner_account_id(srv: Any, token: str) -> int | None:
     try:
-        accts = (srv.systemAccounts() or [])
-        locals_only = [a.id for a in accts if a.id and a.id > 0 and not _looks_cloudish(a.id)]
+        accounts = srv.systemAccounts() or []
+        locals_only = [a.id for a in accounts if a.id and a.id > 0 and not _looks_cloudish(a.id)]
         if locals_only:
             return 1 if 1 in locals_only else sorted(locals_only)[0]
-    except Exception: pass
+    except Exception:  # noqa: BLE001
+        pass
     try:
         sess = getattr(srv, "_session", None)
-        if not sess: return None
-        r = sess.get(srv.url("/accounts"), headers=_plex_headers(token), timeout=10)
-        if r.ok and (r.text or "").lstrip().startswith("<"):
-            n, i = _pick_owner_id(_parse_accounts_all(r.text))
-            return i
-    except Exception: pass
+        if not sess:
+            return None
+        response = sess.get(srv.url("/accounts"), headers=_plex_headers(token), timeout=10)
+        if response.ok and (response.text or "").lstrip().startswith("<"):
+            _, aid = _pick_owner_id(_parse_accounts_all(response.text))
+            return aid
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
-def resolve_account_id_by_username(srv, token: str, username: str) -> Optional[int]:
+
+def resolve_account_id_by_username(srv: Any, token: str, username: str) -> int | None:
     uname = (username or "").strip()
-    if not uname: return None
+    if not uname:
+        return None
     try:
-        for a in (srv.systemAccounts() or []):
-            if (a.name or "").strip().lower() == uname.lower() and not _looks_cloudish(a.id): return int(a.id)
-    except Exception: pass
+        for account in srv.systemAccounts() or []:
+            if (account.name or "").strip().lower() == uname.lower() and not _looks_cloudish(account.id):
+                return int(account.id)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         sess = getattr(srv, "_session", None)
-        if not sess: return None
-        r = sess.get(srv.url("/accounts"), headers=_plex_headers(token), timeout=10)
-        if r.ok and (r.text or "").lstrip().startswith("<"):
-            return _parse_accounts_xml_for_username(r.text, uname)
-    except Exception: pass
+        if not sess:
+            return None
+        response = sess.get(srv.url("/accounts"), headers=_plex_headers(token), timeout=10)
+        if response.ok and (response.text or "").lstrip().startswith("<"):
+            return _parse_accounts_xml_for_username(response.text, uname)
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
-def resolve_user_scope(account, srv, token: str, cfg_username: Optional[str], cfg_account_id: Optional[int]) -> Tuple[Optional[str], Optional[int]]:
-    if cfg_username and (cfg_account_id is not None): return cfg_username, int(cfg_account_id)
-    try: owner_name = getattr(account, "username", None)
-    except Exception: owner_name = None
-    username = (cfg_username or owner_name or None)
-    if cfg_account_id is not None: return username, int(cfg_account_id)
+
+def resolve_user_scope(
+    account: Any,
+    srv: Any,
+    token: str,
+    cfg_username: str | None,
+    cfg_account_id: int | None,
+) -> tuple[str | None, int | None]:
+    if cfg_username and cfg_account_id is not None:
+        return cfg_username, int(cfg_account_id)
+    try:
+        owner_name = getattr(account, "username", None)
+    except Exception:  # noqa: BLE001
+        owner_name = None
+    username = cfg_username or owner_name or None
+    if cfg_account_id is not None:
+        return username, int(cfg_account_id)
     aid = resolve_account_id_by_username(srv, token, username) if (username and srv) else None
     if aid is None:
         aid = resolve_owner_account_id(srv, token)
     return username, (int(aid) if aid is not None else None)
 
-def persist_server_url_if_empty(path: str, server_url: Optional[str]) -> bool:
-    if not server_url or not str(server_url).strip(): return False
-    cfg = load_config(path); plex = _plex(cfg)
-    if str(plex.get("server_url") or "").strip(): return False
-    val = str(server_url).strip().rstrip("/")
-    ch = _insert_key_first_inplace(plex, "server_url", val)
-    if ch: save_config(cfg, path); _log(f"server_url set -> {val}")
-    return ch
 
-def persist_user_scope_if_empty(path: str, username: Optional[str], account_id: Optional[int]) -> None:
-    cfg = load_config(path); plex = _plex(cfg); ch = False
-    if _is_empty(plex.get("account_id")) and (account_id is not None): ch |= _insert_key_after_inplace(plex, "client_id", "account_id", int(account_id))
-    if _is_empty(plex.get("username")) and username:
-        after = "account_id" if "account_id" in plex else "client_id"
-        ch |= _insert_key_after_inplace(plex, after, "username", username)
-    if ch: save_config(cfg, path); _log(f"user scope username={plex.get('username')} account_id={plex.get('account_id')}")
-
-def ensure_whitelist_defaults(cfg_path: str = CONFIG_PATH) -> bool:
-    cfg = load_config(cfg_path)
+def ensure_whitelist_defaults() -> bool:
+    cfg = load_config()
     plex = cfg.setdefault("plex", {})
     changed = False
-
     if not isinstance(plex.get("history"), dict):
         plex["history"] = {}
         changed = True
     if not isinstance(plex.get("ratings"), dict):
         plex["ratings"] = {}
         changed = True
-
     if not isinstance(plex["history"].get("libraries"), list):
         plex["history"]["libraries"] = []
         changed = True
     if not isinstance(plex["ratings"].get("libraries"), list):
         plex["ratings"]["libraries"] = []
         changed = True
-
     for sec in ("history", "ratings"):
         libs = plex[sec]["libraries"]
         norm = sorted({str(x).strip() for x in libs if str(x).strip()})
         if libs != norm:
             plex[sec]["libraries"] = norm
             changed = True
-
     if changed:
-        save_config(cfg, cfg_path)
+        save_config(cfg)
         _log("whitelist defaults ensured")
     return changed
 
-def patch_history_with_account_id(data: Any, account_id: Optional[int]) -> Any:
-    if not account_id: return data
-    a = int(account_id)
-    def apply(x: Any) -> Any:
-        if isinstance(x, dict):
-            for k in ("account_id","accountID","accountId","user_id","userID","userId"):
-                if not x.get(k): x[k] = a
-        return x
-    return [apply(i) for i in data] if isinstance(data, list) else apply(data)
+
+def patch_history_with_account_id(data: Any, account_id: int | None) -> Any:
+    if account_id is None:
+        return data
+    aid = int(account_id)
+
+    def apply(item: Any) -> Any:
+        if isinstance(item, dict):
+            for key in ("account_id", "accountID", "accountId", "user_id", "userID", "userId"):
+                if not item.get(key):
+                    item[key] = aid
+        return item
+
+    if isinstance(data, list):
+        return [apply(it) for it in data]
+    return apply(data)

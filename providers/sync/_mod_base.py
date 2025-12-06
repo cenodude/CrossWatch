@@ -1,12 +1,24 @@
 # /providers/sync/_mod_base.py
+# CrossWatch base sync module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from _logging import log
 
+import json
+import os
+import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, Mapping, Optional, Protocol, Callable
+from pathlib import Path
+from typing import Any, Callable, Mapping, Protocol
 
-# Log
+try:
+    from _statistics import Stats  # type: ignore
+    _STATS = Stats()
+except Exception:
+    _STATS = None  # type: ignore
+
+
+# Log types
 
 class Logger(Protocol):
     def __call__(
@@ -14,13 +26,18 @@ class Logger(Protocol):
         message: str,
         *,
         level: str = "INFO",
-        module: Optional[str] = None,
-        extra: Optional[Mapping[str, Any]] = None,
+        module: str | None = None,
+        extra: Mapping[str, Any] | None = None,
     ) -> None: ...
+
     def set_context(self, **ctx: Any) -> None: ...
-    def get_context(self) -> Dict[str, Any]: ...
+
+    def get_context(self) -> dict[str, Any]: ...
+
     def bind(self, **ctx: Any) -> "Logger": ...
+
     def child(self, name: str) -> "Logger": ...
+
 
 # Status & results
 
@@ -32,21 +49,24 @@ class SyncStatus(Enum):
     FAILED = auto()
     CANCELLED = auto()
 
+
 @dataclass
 class SyncContext:
     run_id: str
     dry_run: bool = False
-    timeout_sec: Optional[int] = None
-    ui_hints: Dict[str, Any] = field(default_factory=dict)
-    cancel_flag: list[bool] = field(default_factory=lambda: [False])  # cooperative cancel
+    timeout_sec: int | None = None
+    ui_hints: dict[str, Any] = field(default_factory=dict)
+    cancel_flag: list[bool] = field(default_factory=lambda: [False])
+
 
 @dataclass
 class ProgressEvent:
     stage: str
     done: int = 0
     total: int = 0
-    note: Optional[str] = None
-    meta: Dict[str, Any] = field(default_factory=dict)
+    note: str | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class SyncResult:
@@ -60,7 +80,8 @@ class SyncResult:
     items_updated: int = 0
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 # Capabilities & meta
 
@@ -71,7 +92,8 @@ class ModuleCapabilities:
     supports_timeout: bool = True
     bidirectional: bool = False
     status_stream: bool = True
-    config_schema: Optional[Dict[str, Any]] = None
+    config_schema: dict[str, Any] | None = None
+
 
 @dataclass(frozen=True)
 class ModuleInfo:
@@ -83,11 +105,13 @@ class ModuleInfo:
     hidden: bool = False
     is_template: bool = False
 
+
 # Errors
 
 class ModuleError(RuntimeError): ...
 class RecoverableModuleError(ModuleError): ...
 class ConfigError(ModuleError): ...
+
 
 # Module protocol
 
@@ -96,43 +120,30 @@ class SyncModule(Protocol):
 
     def __init__(self, config: Mapping[str, Any], logger: Logger) -> None: ...
 
-    def validate_config(self) -> None:
-        ...
+    def validate_config(self) -> None: ...
 
     def run_sync(
         self,
         ctx: SyncContext,
-        progress: Optional[Callable[[ProgressEvent], None]] = None,
-    ) -> SyncResult:
-        ...
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> SyncResult: ...
 
-    def get_status(self) -> Mapping[str, Any]:
-        ...
+    def get_status(self) -> Mapping[str, Any]: ...
 
-    def cancel(self) -> None:
-        ...
+    def cancel(self) -> None: ...
 
-    def set_logger(self, logger: Logger) -> None:
-        ...
+    def set_logger(self, logger: Logger) -> None: ...
 
-    def reconfigure(self, config: Mapping[str, Any]) -> None:
-        ...
+    def reconfigure(self, config: Mapping[str, Any]) -> None: ...
 
 
-try:
-    from _statistics import Stats  # type: ignore
-    _STATS = Stats()
-except Exception:
-    _STATS = None  # type: ignore
-
-def get_stats():
+def get_stats() -> Any:
     return _STATS
 
-# ----- Time helpers ----------------------------------------------------
-import time
+
+# Time helpers
 
 def iso_to_ts(s: str) -> int:
-
     if not s:
         return 0
     try:
@@ -146,16 +157,14 @@ def iso_to_ts(s: str) -> int:
         except Exception:
             return 0
 
+
 def ts_to_iso(ts: int) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ts or 0)))
 
-#  State dir & JSON I/O
-from pathlib import Path
-import os
-import json
+
+# State dir & JSON I/O
 
 def resolve_state_dir(cfg_root: Mapping[str, Any]) -> Path:
-
     try:
         p = (cfg_root.get("runtime") or {}).get("state_dir")
         if p:
@@ -169,11 +178,13 @@ def resolve_state_dir(cfg_root: Mapping[str, Any]) -> Path:
         return Path("/config")
     return Path.cwd()
 
+
 def _ensure_dir(p: Path) -> None:
     try:
         p.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
 
 def atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
     _ensure_dir(path.parent)
@@ -188,32 +199,32 @@ def atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
         except Exception:
             pass
 
-def read_json_or(path: Path, fallback: Any):
+
+def read_json_or(path: Path, fallback: Any) -> Any:
     try:
         return json.loads(path.read_text("utf-8"))
     except Exception:
         return fallback
 
+
 # Backoff
-from typing import Callable
 
 def with_backoff(
     req_fn: Callable[..., Any],
-    *a,
+    *a: Any,
     retries: int = 5,
     base_delay: float = 1.0,
     max_delay: float = 10.0,
-    **kw
-):
-
+    **kw: Any,
+) -> Any:
     delay = float(base_delay)
-    last = None
+    last: Any = None
     for _ in range(max(1, int(retries))):
         try:
             r = req_fn(*a, **kw)
             last = r
         except Exception:
-            r = None  # type: ignore
+            r = None  # type: ignore[assignment]
 
         if r is not None:
             try:
@@ -249,16 +260,16 @@ def with_backoff(
             delay = min(delay * 2, max_delay)
     return last
 
+
 def record_http(
     *,
     provider: str,
     endpoint: str,
     method: str,
-    response: Optional[Any],
+    response: Any | None,
     payload: Any = None,
     count: bool = True,
 ) -> None:
-
     stats = get_stats()
     if not stats:
         return
@@ -280,14 +291,14 @@ def record_http(
 
         ms = 0
         try:
-            el = getattr(response, "elapsed", None)
-            if el is not None:
-                ms = int(el.total_seconds() * 1000)
+            elapsed = getattr(response, "elapsed", None)
+            if elapsed is not None:
+                ms = int(elapsed.total_seconds() * 1000)
         except Exception:
             ms = 0
 
-        rate_remaining = None
-        rate_reset_iso = None
+        rate_remaining: int | None = None
+        rate_reset_iso: str | None = None
         try:
             hdr = getattr(response, "headers", {}) or {}
             rem = hdr.get("X-RateLimit-Remaining")

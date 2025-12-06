@@ -1,20 +1,20 @@
 # /providers/sync/_mod_TRAKT.py
-
+# CrossWatch SIMKL module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-__VERSION__ = "2.0.0"
-__all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
-
-import os, time
+import os
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List, Callable
+from typing import Any, Callable, Iterable, Mapping
+
 from .trakt._common import build_headers, normalize as trakt_normalize, key_of as trakt_key_of
 
 try:
     from ..auth._auth_TRAKT import PROVIDER as AUTH_TRAKT  # token refresh hook
 except Exception:
     from providers.auth._auth_TRAKT import PROVIDER as AUTH_TRAKT
-    
+
 from .trakt import _watchlist as feat_watchlist
 try:
     from .trakt import _history as feat_history
@@ -38,32 +38,47 @@ from ._mod_common import (
 )
 
 try:  # type: ignore[name-defined]
-    ctx  # type: ignore
+    ctx  # type: ignore[misc]
 except Exception:
-    ctx = None  # type: ignore
+    ctx = None  # type: ignore[assignment]
+
+__VERSION__ = "2.0.0"
+__all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 
-# debug
-def _log(msg: str):
+class TRAKTError(RuntimeError):
+    pass
+
+
+class TRAKTAuthError(TRAKTError):
+    pass
+
+
+def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_TRAKT_DEBUG"):
         print(f"[TRAKT] {msg}")
 
-# feature registry
-_FEATURES: Dict[str, Any] = {}
-if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
-if feat_history:   _FEATURES["history"]   = feat_history
-if feat_ratings:   _FEATURES["ratings"]   = feat_ratings
-if feat_playlists: _FEATURES["playlists"] = feat_playlists
 
-def _features_flags() -> Dict[str, bool]:
+_FEATURES: dict[str, Any] = {}
+if feat_watchlist:
+    _FEATURES["watchlist"] = feat_watchlist
+if feat_history:
+    _FEATURES["history"] = feat_history
+if feat_ratings:
+    _FEATURES["ratings"] = feat_ratings
+if feat_playlists:
+    _FEATURES["playlists"] = feat_playlists
+
+
+def _features_flags() -> dict[str, bool]:
     return {
         "watchlist": "watchlist" in _FEATURES,
-        "ratings":   "ratings"   in _FEATURES,
-        "history":   "history"   in _FEATURES,
+        "ratings": "ratings" in _FEATURES,
+        "history": "history" in _FEATURES,
         "playlists": "playlists" in _FEATURES,
     }
 
-# manifest
+
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "TRAKT",
@@ -79,12 +94,14 @@ def get_manifest() -> Mapping[str, Any]:
             "index_semantics": "present",
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
-                "upsert": True, "unrate": True, "from_date": False
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
             },
         },
     }
 
-# config + client
+
 @dataclass
 class TRAKTConfig:
     client_id: str
@@ -94,27 +111,33 @@ class TRAKTConfig:
     history_number_fallback: bool = False
     history_collection: bool = False
 
+
 class TRAKTClient:
     BASE = "https://api.trakt.tv"
 
-    def __init__(self, cfg: "TRAKTConfig", raw_cfg: Mapping[str, Any]):
+    def __init__(self, cfg: TRAKTConfig, raw_cfg: Mapping[str, Any]):
         self.cfg = cfg
         self.raw_cfg = raw_cfg
         self.session = build_session("TRAKT", ctx, feature_label=label_trakt)
         self._apply_headers(cfg.access_token)
 
-    # Int
-    def _trakt_dict(self) -> Dict[str, Any]:
+    def _trakt_dict(self) -> dict[str, Any]:
         try:
             return dict(self.raw_cfg.get("trakt") or {})
         except Exception:
             return {}
 
-    def _apply_headers(self, access_token: Optional[str]):
-        self.session.headers.update(build_headers({"trakt": {
-            "client_id": self.cfg.client_id,
-            "access_token": (access_token or "")
-        }}))
+    def _apply_headers(self, access_token: str | None) -> None:
+        self.session.headers.update(
+            build_headers(
+                {
+                    "trakt": {
+                        "client_id": self.cfg.client_id,
+                        "access_token": access_token or "",
+                    }
+                }
+            )
+        )
 
     def _reload_token_from_cfg(self) -> str:
         tok = str(self._trakt_dict().get("access_token") or "").strip()
@@ -134,7 +157,7 @@ class TRAKTClient:
 
     def _try_refresh(self) -> bool:
         try:
-            res = AUTH_TRAKT.refresh(self.raw_cfg)
+            res = AUTH_TRAKT.refresh(dict(self.raw_cfg))
             ok = bool(isinstance(res, dict) and res.get("ok"))
             if ok:
                 self._reload_token_from_cfg()
@@ -145,23 +168,33 @@ class TRAKTClient:
             _log(f"TRAKT: token refresh error: {e}")
             return False
 
-    def _preflight(self):
+    def _preflight(self) -> None:
         if self._about_to_expire():
             self._try_refresh()
 
-    def _do(self, method: str, url: str, **kw):
+    def _do(self, method: str, url: str, **kw: Any):
         self._preflight()
-        r = request_with_retries(self.session, method, url,
-                                 timeout=self.cfg.timeout,
-                                 max_retries=self.cfg.max_retries, **kw)
+        r = request_with_retries(
+            self.session,
+            method,
+            url,
+            timeout=self.cfg.timeout,
+            max_retries=self.cfg.max_retries,
+            **kw,
+        )
         if r.status_code in (401, 403):
             if self._try_refresh():
-                r = request_with_retries(self.session, method, url,
-                                         timeout=self.cfg.timeout,
-                                         max_retries=self.cfg.max_retries, **kw)
+                r = request_with_retries(
+                    self.session,
+                    method,
+                    url,
+                    timeout=self.cfg.timeout,
+                    max_retries=self.cfg.max_retries,
+                    **kw,
+                )
         return r
 
-    def connect(self) -> "TRAKTClient":
+    def connect(self) -> TRAKTClient:
         try:
             r = self._do("GET", f"{self.BASE}/sync/last_activities")
             if r.status_code in (401, 403):
@@ -171,28 +204,24 @@ class TRAKTClient:
             raise TRAKTError(f"Trakt connect failed: {e}") from e
         return self
 
-    def get(self, url: str, **kw):
+    def get(self, url: str, **kw: Any):
         return self._do("GET", url, **kw)
 
-    def post(self, url: str, json: Mapping[str, Any], **kw):
+    def post(self, url: str, json: Mapping[str, Any], **kw: Any):
         return self._do("POST", url, json=json, **kw)
 
-    def delete(self, url: str, json: Optional[Mapping[str, Any]] = None, **kw):
+    def delete(self, url: str, json: Mapping[str, Any] | None = None, **kw: Any):
         return self._do("DELETE", url, json=json, **kw)
 
-# errors
-class TRAKTError(RuntimeError): pass
-class TRAKTAuthError(TRAKTError): pass
 
-# adapter wrapper
 class TRAKTModule:
     def __init__(self, cfg: Mapping[str, Any]):
-        t = dict((cfg.get("trakt") or {}))
+        t = dict(cfg.get("trakt") or {})
         self.cfg = TRAKTConfig(
             client_id=str(t.get("client_id") or "").strip(),
             access_token=str(t.get("access_token") or "").strip(),
-            timeout=float((t.get("timeout") or cfg.get("timeout") or 15.0)),
-            max_retries=int((t.get("max_retries") or cfg.get("max_retries") or 3)),
+            timeout=float(t.get("timeout", cfg.get("timeout", 15.0))),
+            max_retries=int(t.get("max_retries", cfg.get("max_retries", 3))),
             history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
         )
@@ -201,25 +230,25 @@ class TRAKTModule:
 
         if t.get("debug") in (True, "1", 1):
             os.environ.setdefault("CW_TRAKT_DEBUG", "1")
+
         self.client = TRAKTClient(self.cfg, cfg).connect()
         self.raw_cfg = cfg
+        self.progress_factory = (
+            lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
+                ctx,
+                dst="TRAKT",
+                feature=str(feature),
+                total=total,
+                throttle_ms=int(throttle_ms),
+            )
+        )
 
-        def _mk_prog(feature: str):
-            try: return make_snapshot_progress(ctx, dst="TRAKT", feature=feature)
-            except Exception:
-                class _Noop:
-                    def tick(self, *a, **k): pass
-                    def done(self, *a, **k): pass
-                return _Noop()
-        self.progress_factory: Callable[[str], Any] = _mk_prog
-
-    # feature toggles
     @staticmethod
-    def supported_features() -> Dict[str, bool]:
+    def supported_features() -> dict[str, bool]:
         toggles = {
             "watchlist": True,
-            "ratings":   True,
-            "history":   True,
+            "ratings": True,
+            "history": True,
             "playlists": False,
         }
         present = _features_flags()
@@ -232,11 +261,13 @@ class TRAKTModule:
         return get_manifest()
 
     @staticmethod
-    def normalize(obj) -> Dict[str, Any]: return trakt_normalize(obj)
-    @staticmethod
-    def key_of(obj) -> str: return trakt_key_of(obj)
+    def normalize(obj: Any) -> dict[str, Any]:
+        return trakt_normalize(obj)
 
-    # health probe
+    @staticmethod
+    def key_of(obj: Any) -> str:
+        return trakt_key_of(obj)
+
     def health(self) -> Mapping[str, Any]:
         enabled = self.supported_features()
         need_core = any(enabled.values())
@@ -247,17 +278,21 @@ class TRAKTModule:
         sess = self.client.session
 
         start = time.perf_counter()
+
         core_ok = False
-        core_reason: Optional[str] = None
-        core_code: Optional[int] = None
-        retry_after: Optional[int] = None
-        rate = {"limit": None, "remaining": None, "reset": None}
+        core_reason: str | None = None
+        core_code: int | None = None
+        retry_after: int | None = None
+        rate: dict[str, int | None] = {"limit": None, "remaining": None, "reset": None}
 
         if need_core:
             try:
                 r = request_with_retries(
-                    sess, "GET", f"{base}/sync/last_activities",
-                    timeout=tmo, max_retries=self.cfg.max_retries,
+                    sess,
+                    "GET",
+                    f"{base}/sync/last_activities",
+                    timeout=tmo,
+                    max_retries=self.cfg.max_retries,
                 )
                 core_code = r.status_code
                 if r.status_code in (401, 403):
@@ -268,21 +303,26 @@ class TRAKTModule:
                     core_reason = f"http:{r.status_code}"
                 ra = r.headers.get("Retry-After")
                 if ra:
-                    try: retry_after = int(ra)
-                    except Exception: pass
+                    try:
+                        retry_after = int(ra)
+                    except Exception:
+                        pass
                 rate = parse_rate_limit(r.headers)
             except Exception as e:
                 core_reason = f"exception:{e.__class__.__name__}"
 
         wl_ok = False
-        wl_reason: Optional[str] = None
-        wl_code: Optional[int] = None
+        wl_reason: str | None = None
+        wl_code: int | None = None
         if need_wl and core_ok:
             try:
                 r2 = request_with_retries(
-                    sess, "GET", f"{base}/sync/watchlist",
+                    sess,
+                    "GET",
+                    f"{base}/sync/watchlist",
                     params={"limit": 1, "page": 1},
-                    timeout=tmo, max_retries=self.cfg.max_retries,
+                    timeout=tmo,
+                    max_retries=self.cfg.max_retries,
                 )
                 wl_code = r2.status_code
                 if 200 <= r2.status_code < 300:
@@ -293,8 +333,10 @@ class TRAKTModule:
                     wl_reason = "rate_limited"
                     ra2 = r2.headers.get("Retry-After")
                     if ra2:
-                        try: retry_after = int(ra2)
-                        except Exception: pass
+                        try:
+                            retry_after = int(ra2)
+                        except Exception:
+                            pass
                 else:
                     wl_reason = f"http:{r2.status_code}"
             except Exception as e:
@@ -302,20 +344,21 @@ class TRAKTModule:
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        # Feature readiness
         features = {
             "watchlist": (core_ok and wl_ok) if (need_wl and "watchlist" in _FEATURES) else False,
-            "ratings":   (core_ok)           if (enabled.get("ratings")   and "ratings"   in _FEATURES) else False,
-            "history":   (core_ok)           if (enabled.get("history")   and "history"   in _FEATURES) else False,
-            "playlists": (core_ok)           if (enabled.get("playlists") and "playlists" in _FEATURES) else False,
+            "ratings": (core_ok if (enabled.get("ratings") and "ratings" in _FEATURES) else False),
+            "history": (core_ok if (enabled.get("history") and "history" in _FEATURES) else False),
+            "playlists": (core_ok if (enabled.get("playlists") and "playlists" in _FEATURES) else False),
         }
 
-        checks: List[bool] = []
-        if need_core: checks.append(core_ok)
-        if need_wl:   checks.append(wl_ok)
+        checks: list[bool] = []
+        if need_core:
+            checks.append(core_ok)
+        if need_wl:
+            checks.append(wl_ok)
 
         core_auth_failed = need_core and (core_code in (401, 403) or core_reason == "unauthorized")
-        wl_auth_failed   = need_wl and (wl_code in (401, 403) or wl_reason == "unauthorized")
+        wl_auth_failed = need_wl and (wl_code in (401, 403) or wl_reason == "unauthorized")
 
         if not checks:
             status = "ok"
@@ -328,13 +371,12 @@ class TRAKTModule:
 
         ok = status in ("ok", "degraded")
 
-        # Reasons
-        details: Dict[str, Any] = {}
+        details: dict[str, Any] = {}
         disabled = [k for k, v in enabled.items() if not v]
         if disabled:
             details["disabled"] = disabled
 
-        reasons = []
+        reasons: list[str] = []
         if need_core and not core_ok:
             reasons.append(f"core:{core_reason or 'down'}")
         if need_wl and not wl_ok:
@@ -346,17 +388,20 @@ class TRAKTModule:
 
         api = {
             "last_activities": {
-                "status": (core_code if need_core else None),
-                "retry_after": (retry_after if need_core else None),
+                "status": core_code if need_core else None,
+                "retry_after": retry_after if need_core else None,
                 "rate": rate if need_core else {"limit": None, "remaining": None, "reset": None},
             },
             "watchlist": {
-                "status": (wl_code if need_wl else None),
-                "retry_after": (retry_after if need_wl else None),
+                "status": wl_code if need_wl else None,
+                "retry_after": retry_after if need_wl else None,
             },
         }
 
-        _log(f"health status={status} ok={ok} latency_ms={latency_ms} reasons={details.get('reason')}")
+        _log(
+            f"health status={status} ok={ok} latency_ms={latency_ms} "
+            f"reasons={details.get('reason')}"
+        )
         return {
             "ok": ok,
             "status": status,
@@ -366,39 +411,60 @@ class TRAKTModule:
             "api": api,
         }
 
-    # dispatch
-    def feature_names(self) -> Tuple[str, ...]:
+    def feature_names(self) -> tuple[str, ...]:
         return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
 
-    def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
+    def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
             _log(f"build_index skipped: feature disabled or missing: {feature}")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
 
-    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+    def add(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         lst = list(items)
-        if not lst: return {"ok": True, "count": 0}
+        if not lst:
+            return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
             _log(f"add skipped: feature disabled or missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
-        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"add skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool=False) -> Dict[str, Any]:
+    def remove(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         lst = list(items)
-        if not lst: return {"ok": True, "count": 0}
+        if not lst:
+            return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
             _log(f"remove skipped: feature disabled or missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
-        if dry_run: return {"ok": True, "count": len(lst), "dry_run": True}
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"remove skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
@@ -406,13 +472,16 @@ class TRAKTModule:
             return {"ok": False, "error": str(e)}
 
 
-# OPS bridge
 class _TraktOPS:
-    def name(self) -> str: return "TRAKT"
-    def label(self) -> str: return "Trakt"
+    def name(self) -> str:
+        return "TRAKT"
+
+    def label(self) -> str:
+        return "Trakt"
+
     def features(self) -> Mapping[str, bool]:
         return TRAKTModule.supported_features()
-        
+
     def capabilities(self) -> Mapping[str, Any]:
         return {
             "bidirectional": True,
@@ -420,12 +489,14 @@ class _TraktOPS:
             "index_semantics": "present",
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
-                "upsert": True, "unrate": True, "from_date": False
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
             },
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        c  = cfg or {}
+        c = cfg or {}
         tr = c.get("trakt") or {}
         au = (c.get("auth") or {}).get("trakt") or {}
 
@@ -439,17 +510,36 @@ class _TraktOPS:
             or ""
         )
         return bool(str(token).strip())
-    
+
     def _adapter(self, cfg: Mapping[str, Any]) -> TRAKTModule:
         return TRAKTModule(cfg)
 
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
+    def build_index(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+    ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
 
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
+    def add(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool=False) -> Dict[str, Any]:
+    def remove(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:

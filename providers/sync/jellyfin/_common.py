@@ -1,49 +1,64 @@
 # /providers/sync/jellyfin/_common.py
+# JELLYFIN Module for common functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional, Iterable, List, Tuple, Union
-import os, re, time, json
+from typing import Any, Mapping, Iterable
+
+import json
+import os
+import re
+import time
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 _DEF_TYPES = {"movie", "show", "episode"}
-_IMDB_PAT  = re.compile(r"(?:tt)?(\d{5,9})$")
-_NUM_PAT   = re.compile(r"(\d{1,10})$")
-_BAD_NUM   = re.compile(r"^\d{13,}$")
+_IMDB_PAT = re.compile(r"(?:tt)?(\d{5,9})$")
+_NUM_PAT = re.compile(r"(\d{1,10})$")
+_BAD_NUM = re.compile(r"^\d{13,}$")
 
-CfgLike = Union[Mapping[str, Any], object]
+CfgLike = Mapping[str, Any] | object
 
-# --- logging (quiet by default) ----------------------------------------------
+
+# logging
 def _debug_level() -> str:
     env = (os.environ.get("CW_JELLYFIN_DEBUG_LEVEL") or "").strip().lower()
-    if env in ("2", "v", "verbose"): return "verbose"
-    if env in ("1", "s", "summary", "true", "on"): return "summary"
-    if os.environ.get("CW_JELLYFIN_DEBUG") or os.environ.get("CW_DEBUG"): return "summary"
+    if env in ("2", "v", "verbose"):
+        return "verbose"
+    if env in ("1", "s", "summary", "true", "on"):
+        return "summary"
+    if os.environ.get("CW_JELLYFIN_DEBUG") or os.environ.get("CW_DEBUG"):
+        return "summary"
     return "off"
+
 
 def _log_summary(msg: str) -> None:
     if _debug_level() in ("summary", "verbose"):
         print(f"[JELLYFIN:common] {msg}")
 
+
 def _log_detail(msg: str) -> None:
     if _debug_level() == "verbose":
         print(f"[JELLYFIN:common] {msg}")
 
-# legacy alias
+
 def _log(msg: str) -> None:
     _log_summary(msg)
-    
-## --- cfg helpers ----Library selection------------------------------------------
-def _as_list_str(v: Any) -> List[str]:
-    if v is None: return []
-    if isinstance(v, (list, tuple, set)): it = v
-    else: it = [v]
-    out: List[str] = []
-    seen = set()
+
+
+# cfg helpers
+def _as_list_str(v: Any) -> list[str]:
+    if v is None:
+        return []
+    it = v if isinstance(v, (list, tuple, set)) else [v]
+    out: list[str] = []
+    seen: set[str] = set()
     for x in it:
         s = str(x).strip()
         if s and s not in seen:
-            seen.add(s); out.append(s)
+            seen.add(s)
+            out.append(s)
     return out
+
 
 def _pluck(cfg: CfgLike, *path: str) -> Any:
     cur: Any = cfg
@@ -56,9 +71,12 @@ def _pluck(cfg: CfgLike, *path: str) -> Any:
             return None
     return cur
 
-# -- library id via ancestors cache -------------------------------------------
-_jf_lib_anc_cache: Dict[str, Optional[str]] = {}
-def _jf_lib_id_via_ancestors(http, iid: str, roots: Mapping[str, Any]) -> Optional[str]:
+
+# library id via ancestors cache
+_jf_lib_anc_cache: dict[str, str | None] = {}
+
+
+def _jf_lib_id_via_ancestors(http: Any, iid: str, roots: Mapping[str, Any]) -> str | None:
     if not iid:
         return None
     if iid in _jf_lib_anc_cache:
@@ -66,7 +84,7 @@ def _jf_lib_id_via_ancestors(http, iid: str, roots: Mapping[str, Any]) -> Option
     try:
         r = http.get(f"/Items/{iid}/Ancestors", params={"Fields": "Id"})
         if getattr(r, "status_code", 0) == 200:
-            root_keys = set(str(k) for k in (roots or {}).keys())
+            root_keys = {str(k) for k in (roots or {}).keys()}
             for a in (r.json() or []):
                 aid = str((a or {}).get("Id") or "")
                 if aid in root_keys:
@@ -77,7 +95,8 @@ def _jf_lib_id_via_ancestors(http, iid: str, roots: Mapping[str, Any]) -> Option
     _jf_lib_anc_cache[iid] = None
     return None
 
-def jf_library_scope(cfg: CfgLike, feature: str) -> Dict[str, Any]:
+
+def jf_library_scope(cfg: CfgLike, feature: str) -> dict[str, Any]:
     jf = _pluck(cfg, "jellyfin") or cfg
     libs = _as_list_str(_pluck(jf, feature, "libraries"))
     if not libs:
@@ -94,44 +113,52 @@ def jf_library_scope(cfg: CfgLike, feature: str) -> Dict[str, Any]:
         return {"ParentId": libs[0], "Recursive": True}
     return {"AncestorIds": libs, "Recursive": True}
 
-def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> Dict[str, Any]:
+
+def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> dict[str, Any]:
     out = dict(params or {})
     out.update(jf_library_scope(cfg, feature))
     return out
 
-def jf_scope_history(cfg: CfgLike) -> Dict[str, Any]:
+
+def jf_scope_history(cfg: CfgLike) -> dict[str, Any]:
     return jf_library_scope(cfg, "history")
 
-def jf_scope_ratings(cfg: CfgLike) -> Dict[str, Any]:
+
+def jf_scope_ratings(cfg: CfgLike) -> dict[str, Any]:
     return jf_library_scope(cfg, "ratings")
 
-def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
+
+def jf_scope_any(cfg: CfgLike) -> dict[str, Any]:
     jf_map = _pluck(cfg, "jellyfin") or cfg
     libs_h = _as_list_str(_pluck(jf_map, "history", "libraries"))
     libs_r = _as_list_str(_pluck(jf_map, "ratings", "libraries"))
-    libs: List[str] = []
-    seen = set()
-    for x in (libs_h + libs_r):
+    libs: list[str] = []
+    seen: set[str] = set()
+    for x in libs_h + libs_r:
         if x and x not in seen:
-            seen.add(x); libs.append(x)
+            seen.add(x)
+            libs.append(x)
 
     if not libs and not isinstance(cfg, Mapping):
         libs_h2 = _as_list_str(getattr(cfg, "history_libraries", None))
         libs_r2 = _as_list_str(getattr(cfg, "ratings_libraries", None))
-        for x in (libs_h2 + libs_r2):
+        for x in libs_h2 + libs_r2:
             if x and x not in seen:
-                seen.add(x); libs.append(x)
+                seen.add(x)
+                libs.append(x)
 
         hist_obj = getattr(cfg, "history", None)
         rate_obj = getattr(cfg, "ratings", None)
         if hasattr(hist_obj, "libraries"):
             for x in _as_list_str(getattr(hist_obj, "libraries", None)):
                 if x and x not in seen:
-                    seen.add(x); libs.append(x)
+                    seen.add(x)
+                    libs.append(x)
         if hasattr(rate_obj, "libraries"):
             for x in _as_list_str(getattr(rate_obj, "libraries", None)):
                 if x and x not in seen:
-                    seen.add(x); libs.append(x)
+                    seen.add(x)
+                    libs.append(x)
 
     if not libs:
         return {}
@@ -139,10 +166,10 @@ def jf_scope_any(cfg: CfgLike) -> Dict[str, Any]:
         return {"ParentId": libs[0], "Recursive": True}
     return {"AncestorIds": libs, "Recursive": True}
 
-# --- library roots / mapping --------------------------------------------------
-def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
-    """Fetch Jellyfin library roots for canonical mapping."""
-    roots: Dict[str, Dict[str, Any]] = {}
+
+# library roots / mapping
+def jf_build_library_roots(http: Any, user_id: str) -> dict[str, dict[str, Any]]:
+    roots: dict[str, dict[str, Any]] = {}
     if not user_id:
         return roots
     try:
@@ -154,12 +181,15 @@ def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
                 lid = str(it.get("Id") or it.get("Key") or "").strip()
                 if not lid:
                     continue
-                meta = roots.setdefault(lid, {
-                    "id": lid,
-                    "name": (it.get("Name") or it.get("Title") or "").strip() or None,
-                    "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
-                    "paths": [],
-                })
+                meta = roots.setdefault(
+            lid,
+                    {
+                        "id": lid,
+                        "name": (it.get("Name") or it.get("Title") or "").strip() or None,
+                        "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
+                        "paths": [],
+                    },
+                )
                 locs = it.get("Locations") or it.get("Path") or []
                 if isinstance(locs, str):
                     locs = [locs]
@@ -175,12 +205,15 @@ def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
                     lid = str(it.get("Id") or it.get("Key") or "").strip()
                     if not lid:
                         continue
-                    meta = roots.setdefault(lid, {
-                        "id": lid,
-                        "name": (it.get("Name") or it.get("Title") or "").strip() or None,
-                        "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
-                        "paths": [],
-                    })
+                    meta = roots.setdefault(
+                        lid,
+                        {
+                            "id": lid,
+                            "name": (it.get("Name") or it.get("Title") or "").strip() or None,
+                            "collection_type": (it.get("CollectionType") or it.get("Type") or "").strip() or None,
+                            "paths": [],
+                        },
+                    )
                     locs = it.get("Locations") or it.get("Path") or []
                     if isinstance(locs, str):
                         locs = [locs]
@@ -192,8 +225,8 @@ def jf_build_library_roots(http, user_id: str) -> Dict[str, Dict[str, Any]]:
         pass
     return roots
 
-def jf_get_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
-    """Return cached library roots or fetch them once per adapter."""
+
+def jf_get_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
     roots = getattr(adapter, "_jf_library_roots", None)
     if isinstance(roots, dict) and roots:
         return roots
@@ -206,17 +239,17 @@ def jf_get_library_roots(adapter) -> Dict[str, Dict[str, Any]]:
     setattr(adapter, "_jf_library_roots", roots)
     return roots
 
+
 def jf_resolve_library_id(
     row: Mapping[str, Any],
     roots: Mapping[str, Mapping[str, Any]],
-    scope_libs: Optional[List[str]] = None,
-    http=None,
-) -> Optional[str]:
-    # Explicit single-library scope always wins
+    scope_libs: list[str] | None = None,
+    http: Any | None = None,
+) -> str | None:
     if scope_libs and len(scope_libs) == 1:
         return str(scope_libs[0])
 
-    candidates: List[str] = []
+    candidates: list[str] = []
 
     lid = row.get("LibraryId")
     if lid:
@@ -231,21 +264,18 @@ def jf_resolve_library_id(
     if isinstance(pid, str) and pid:
         candidates.append(pid)
 
-    # Direct matches against known roots (view ids)
     for cid in candidates:
         if cid in roots:
             return cid
 
-    # Deep lookup: walk ancestors and find the first view-root id
     if http and row.get("Id"):
         deep = _jf_lib_id_via_ancestors(http, str(row["Id"]), roots)
         if deep:
             return deep
 
-    # Path-based match when available
     path = (row.get("Path") or "").strip()
     if path and roots:
-        best: Optional[str] = None
+        best: str | None = None
         best_len = -1
         lp = path.lower()
         for lib_id, meta in roots.items():
@@ -260,8 +290,7 @@ def jf_resolve_library_id(
         if best:
             return best
 
-    # Fallback by collection/type
-    want: Optional[str] = None
+    want: str | None = None
     ctype = (row.get("CollectionType") or "").strip().lower()
     if ctype:
         want = ctype
@@ -280,36 +309,55 @@ def jf_resolve_library_id(
 
     return None
 
-# --- type & id helpers --------------------------------------------------------
+
+# type & id helpers
 def _norm_type(t: Any) -> str:
-    x = (str(t or "").strip().lower())
-    if x in ("movies", "movie"): return "movie"
-    if x in ("shows", "show", "series", "tv"): return "show"
-    if x in ("episode", "episodes"): return "episode"
+    x = str(t or "").strip().lower()
+    if x in ("movies", "movie"):
+        return "movie"
+    if x in ("shows", "show", "series", "tv"):
+        return "show"
+    if x in ("episode", "episodes"):
+        return "episode"
     return "movie"
+
 
 def looks_like_bad_id(iid: Any) -> bool:
     s = str(iid or "")
     return bool(_BAD_NUM.match(s))
 
-def _ids_from_provider_ids(pids: Optional[Mapping[str, Any]]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    if not isinstance(pids, Mapping): return out
-    low = {str(k).lower():(v if v is not None else "") for k, v in pids.items()}
+
+def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not isinstance(pids, Mapping):
+        return out
+    low = {str(k).lower(): (v if v is not None else "") for k, v in pids.items()}
+
     v = low.get("imdb")
     if v is not None:
-        m = _IMDB_PAT.search(str(v).strip());  out["imdb"] = f"tt{m.group(1)}" if m else out.get("imdb")
+        m = _IMDB_PAT.search(str(v).strip())
+        if m:
+            out["imdb"] = f"tt{m.group(1)}"
+
     v = low.get("tmdb")
     if v is not None:
-        m = _NUM_PAT.search(str(v).strip());   out["tmdb"] = m.group(1) if m else out.get("tmdb")
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["tmdb"] = m.group(1)
+
     v = low.get("tvdb")
     if v is not None:
-        m = _NUM_PAT.search(str(v).strip());   out["tvdb"] = m.group(1) if m else out.get("tvdb")
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["tvdb"] = m.group(1)
+
     jf = low.get("jellyfin")
-    if jf: out["jellyfin"] = str(jf)
+    if jf:
+        out["jellyfin"] = str(jf)
     return out
 
-def normalize(obj: Mapping[str, Any]) -> Dict[str, Any]:
+
+def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(obj, Mapping) and "ids" in obj and "type" in obj:
         return id_minimal(obj)
     t = _norm_type(obj.get("Type") or obj.get("BaseItemKind") or obj.get("type"))
@@ -318,83 +366,136 @@ def normalize(obj: Mapping[str, Any]) -> Dict[str, Any]:
     pids = obj.get("ProviderIds") if isinstance(obj.get("ProviderIds"), Mapping) else (obj.get("ids") or {})
     ids = {k: v for k, v in _ids_from_provider_ids(pids).items() if v}
     jf_id = obj.get("Id") or (pids.get("jellyfin") if isinstance(pids, Mapping) else None)
-    if jf_id: ids["jellyfin"] = str(jf_id)
-    row: Dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
+    if jf_id:
+        ids["jellyfin"] = str(jf_id)
+    row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
     if t == "episode":
-        series_title = (obj.get("SeriesName") or obj.get("Series") or obj.get("SeriesTitle") or obj.get("series_title") or "").strip() or None
-        if series_title: row["series_title"] = series_title
-        s = (obj.get("ParentIndexNumber") or obj.get("SeasonIndexNumber") or obj.get("season") or obj.get("season_number"))
-        e = (obj.get("IndexNumber") or obj.get("EpisodeIndexNumber") or obj.get("episode") or obj.get("episode_number"))
+        series_title = (
+            obj.get("SeriesName")
+            or obj.get("Series")
+            or obj.get("SeriesTitle")
+            or obj.get("series_title")
+            or ""
+        )
+        series_title = series_title.strip() or None
+        if series_title:
+            row["series_title"] = series_title
+        s = (
+            obj.get("ParentIndexNumber")
+            or obj.get("SeasonIndexNumber")
+            or obj.get("season")
+            or obj.get("season_number")
+        )
+        e = (
+            obj.get("IndexNumber")
+            or obj.get("EpisodeIndexNumber")
+            or obj.get("episode")
+            or obj.get("episode_number")
+        )
         try:
-            if s is not None: row["season"] = int(s)
-        except Exception: pass
+            if s is not None:
+                row["season"] = int(s)
+        except Exception:
+            pass
         try:
-            if e is not None: row["episode"] = int(e)
-        except Exception: pass
+            if e is not None:
+                row["episode"] = int(e)
+        except Exception:
+            pass
     return id_minimal(row)
+
 
 def key_of(item: Mapping[str, Any]) -> str:
     return canonical_key(normalize(item))
 
-def map_provider_key(k: str) -> Optional[str]:
-    if not k: return None
+
+def map_provider_key(k: str) -> str | None:
+    if not k:
+        return None
     kl = str(k).strip().lower()
-    if kl.startswith("agent:themoviedb"): return "tmdb"
-    if kl.startswith("agent:imdb"): return "imdb"
-    if kl.startswith("agent:tvdb"): return "tvdb"
-    if kl in ("tmdb", "imdb", "tvdb"): return kl
+    if kl.startswith("agent:themoviedb"):
+        return "tmdb"
+    if kl.startswith("agent:imdb"):
+        return "imdb"
+    if kl.startswith("agent:tvdb"):
+        return "tvdb"
+    if kl in ("tmdb", "imdb", "tvdb"):
+        return kl
     return None
 
-def format_provider_pair(k: str, v: Any) -> Optional[str]:
-    kk = map_provider_key(k);  sv = str(v or "").strip()
-    if not kk or not sv: return None
+
+def format_provider_pair(k: str, v: Any) -> str | None:
+    kk = map_provider_key(k)
+    sv = str(v or "").strip()
+    if not kk or not sv:
+        return None
     if kk == "imdb":
-        m = _IMDB_PAT.search(sv);  sv = f"tt{m.group(1)}" if m else None
+        m = _IMDB_PAT.search(sv)
+        sv = f"tt{m.group(1)}" if m else None
     else:
-        m = _NUM_PAT.search(sv);    sv = str(int(m.group(1))) if m else None
+        m = _NUM_PAT.search(sv)
+        sv = str(int(m.group(1))) if m else None
     return f"{kk}.{sv}" if sv else None
 
-def guid_priority_from_cfg(cfg_list: Optional[Iterable[str]]) -> List[str]:
+
+def guid_priority_from_cfg(cfg_list: Iterable[str] | None) -> list[str]:
     default = ["tmdb", "imdb", "tvdb", "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"]
-    if not cfg_list: return default
-    seen, out = set(), []
+    if not cfg_list:
+        return default
+    seen: set[str] = set()
+    out: list[str] = []
     for k in cfg_list:
         k = str(k).strip()
         if k and k not in seen:
-            out.append(k); seen.add(k)
+            out.append(k)
+            seen.add(k)
     for k in default:
-        if k not in seen: out.append(k)
+        if k not in seen:
+            out.append(k)
     return out
 
-def pick_external_id(ids: Mapping[str, Any], priority: Iterable[str]) -> Optional[Tuple[str, str]]:
+
+def pick_external_id(ids: Mapping[str, Any], priority: Iterable[str]) -> tuple[str, str] | None:
     for k in priority:
         v = ids.get(k)
-        if v: return k, str(v)
+        if v:
+            return k, str(v)
     return None
 
-def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> List[str]:
-    out: List[str] = []; seen = set()
+
+def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
     ext = pick_external_id(dict(it_ids or {}), list(priority))
     if ext:
         p = format_provider_pair(ext[0], ext[1])
-        if p and p not in seen: out.append(p); seen.add(p)
+        if p and p not in seen:
+            out.append(p)
+            seen.add(p)
     for k in ("tmdb", "imdb", "tvdb"):
         v = (it_ids or {}).get(k)
         p = format_provider_pair(k, v) if v else None
-        if p and p not in seen: out.append(p); seen.add(p)
+        if p and p not in seen:
+            out.append(p)
+            seen.add(p)
     return out
 
-# --- provider index -----------------------------------------------------------
-def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
+
+# provider index
+def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
     cache = getattr(adapter, "_provider_index_cache", None)
     if isinstance(cache, dict) and cache:
         return cache
 
-    http, uid = adapter.client, adapter.cfg.user_id
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    start, limit, total = 0, 500, None
+    http = adapter.client
+    uid = adapter.cfg.user_id
+    out: dict[str, list[dict[str, Any]]] = {}
+    start = 0
+    limit = 500
+    total: int | None = None
+
     while True:
-        params = {
+        params: dict[str, Any] = {
             "IncludeItemTypes": "Movie,Series",
             "Recursive": True,
             "Fields": "ProviderIds,ProductionYear,Type",
@@ -403,10 +504,7 @@ def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
             "EnableTotalRecordCount": True,
         }
         params.update(jf_scope_any(adapter.cfg))
-        r = http.get(
-            f"/Users/{uid}/Items",
-            params=params,
-        )
+        r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         items = body.get("Items") or []
         if total is None:
@@ -414,25 +512,36 @@ def build_provider_index(adapter) -> Dict[str, List[Dict[str, Any]]]:
             _log_summary(f"provider-index scan total={total}")
         for row in items:
             pids = row.get("ProviderIds") or {}
-            if not pids: continue
+            if not pids:
+                continue
             low = {str(k).lower(): str(v).strip() for k, v in pids.items() if v}
-            if "imdb" in low:
-                m = _IMDB_PAT.search(low["imdb"])
-                if m: out.setdefault(f"imdb.tt{m.group(1)}", []).append(row)
-            if "tmdb" in low and _NUM_PAT.search(low["tmdb"]):
-                out.setdefault(f"tmdb.{int(_NUM_PAT.search(low['tmdb']).group(1))}", []).append(row)
-            if "tvdb" in low and _NUM_PAT.search(low["tvdb"]):
-                out.setdefault(f"tvdb.{int(_NUM_PAT.search(low['tvdb']).group(1))}", []).append(row)
+            imdb_val = low.get("imdb")
+            if imdb_val:
+                m_imdb = _IMDB_PAT.search(imdb_val)
+                if m_imdb:
+                    out.setdefault(f"imdb.tt{m_imdb.group(1)}", []).append(row)
+            tmdb_val = low.get("tmdb")
+            if tmdb_val:
+                m_tmdb = _NUM_PAT.search(tmdb_val)
+                if m_tmdb:
+                    out.setdefault(f"tmdb.{int(m_tmdb.group(1))}", []).append(row)
+            tvdb_val = low.get("tvdb")
+            if tvdb_val:
+                m_tvdb = _NUM_PAT.search(tvdb_val)
+                if m_tvdb:
+                    out.setdefault(f"tvdb.{int(m_tvdb.group(1))}", []).append(row)
         start += len(items)
         if not items or (total is not None and start >= total):
             break
+
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
     _log_summary(f"provider-index built keys={len(out)}")
     setattr(adapter, "_provider_index_cache", out)
     return out
 
-def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, Any]]:
+
+def find_series_in_index(adapter: Any, pairs: Iterable[str]) -> dict[str, Any] | None:
     idx = build_provider_index(adapter)
     for pref in pairs or []:
         rows = idx.get(pref) or []
@@ -441,8 +550,15 @@ def find_series_in_index(adapter, pairs: Iterable[str]) -> Optional[Dict[str, An
                 return row
     return None
 
-# --- series/episodes listing --------------------------------------------------
-def get_series_episodes(http, user_id: str, series_id: str, start: int = 0, limit: int = 500) -> Dict[str, Any]:
+
+# series/episodes listing
+def get_series_episodes(
+    http: Any,
+    user_id: str,
+    series_id: str,
+    start: int = 0,
+    limit: int = 500,
+) -> dict[str, Any]:
     q = {
         "userId": user_id,
         "StartIndex": max(0, int(start)),
@@ -458,11 +574,18 @@ def get_series_episodes(http, user_id: str, series_id: str, start: int = 0, limi
     data.setdefault("TotalRecordCount", len(data["Items"]))
     return data
 
-# --- playlists / collections --------------------------------------------------
-def find_playlist_id_by_name(http, user_id: str, name: str) -> Optional[str]:
-    q = {"userId": user_id, "includeItemTypes": "Playlist", "recursive": True, "SearchTerm": name}
+
+# playlists / collections
+def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
+    q = {
+        "userId": user_id,
+        "includeItemTypes": "Playlist",
+        "recursive": True,
+        "SearchTerm": name,
+    }
     r = http.get(f"/Users/{user_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200: return None
+    if getattr(r, "status_code", 0) != 200:
+        return None
     items = (r.json() or {}).get("Items") or []
     name_l = (name or "").strip().lower()
     for it in items:
@@ -471,61 +594,92 @@ def find_playlist_id_by_name(http, user_id: str, name: str) -> Optional[str]:
     if not items:
         q = {"userId": user_id, "includeItemTypes": "Playlist", "recursive": True}
         r = http.get(f"/Users/{user_id}/Items", params=q)
-        if getattr(r, "status_code", 0) != 200: return None
+        if getattr(r, "status_code", 0) != 200:
+            return None
         for it in (r.json() or {}).get("Items") or []:
             if (it.get("Name") or "").strip().lower() == name_l:
                 return it.get("Id")
     return None
 
-def create_playlist(http, user_id: str, name: str, is_public: bool = False) -> Optional[str]:
+
+def create_playlist(http: Any, user_id: str, name: str, is_public: bool = False) -> str | None:
     body = {"Name": name, "UserId": user_id, "IsPublic": bool(is_public)}
     r = http.post("/Playlists", json=body)
-    if getattr(r, "status_code", 0) not in (200, 204): return None
+    if getattr(r, "status_code", 0) not in (200, 204):
+        return None
     data = r.json() or {}
     return data.get("Id") or data.get("PlaylistId") or data.get("id")
 
-def get_playlist_items(http, playlist_id: str, start: int = 0, limit: int = 100) -> Dict[str, Any]:
-    q = {"startIndex": max(0, int(start)), "limit": max(1, int(limit)), "Fields": "ProviderIds,ProductionYear,Type", "EnableUserData": False}
+
+def get_playlist_items(http: Any, playlist_id: str, start: int = 0, limit: int = 100) -> dict[str, Any]:
+    q = {
+        "startIndex": max(0, int(start)),
+        "limit": max(1, int(limit)),
+        "Fields": "ProviderIds,ProductionYear,Type",
+        "EnableUserData": False,
+    }
     r = http.get(f"/Playlists/{playlist_id}/Items", params=q)
-    if getattr(r, "status_code", 0) != 200: return {"Items": [], "TotalRecordCount": 0}
+    if getattr(r, "status_code", 0) != 200:
+        return {"Items": [], "TotalRecordCount": 0}
     data = r.json() or {}
     data.setdefault("Items", [])
     data.setdefault("TotalRecordCount", len(data["Items"]))
     return data
 
-def playlist_add_items(http, playlist_id: str, user_id: str, item_ids: Iterable[str]) -> bool:
+
+def playlist_add_items(http: Any, playlist_id: str, user_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)
-    if not ids: return True
+    if not ids:
+        return True
     r = http.post(f"/Playlists/{playlist_id}/Items", params={"ids": ids, "userId": user_id})
     return getattr(r, "status_code", 0) in (200, 204)
 
-def playlist_remove_entries(http, playlist_id: str, entry_ids: Iterable[str]) -> bool:
+
+def playlist_remove_entries(http: Any, playlist_id: str, entry_ids: Iterable[str]) -> bool:
     eids = ",".join(str(x) for x in entry_ids if x)
-    if not eids: return True
+    if not eids:
+        return True
     r = http.delete(f"/Playlists/{playlist_id}/Items", params={"entryIds": eids})
     return getattr(r, "status_code", 0) in (200, 204)
 
-def find_collection_id_by_name(http, user_id: str, name: str) -> Optional[str]:
+
+def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None:
     try:
-        r = http.get(f"/Users/{user_id}/Items", params={
-            "IncludeItemTypes": "BoxSet", "Recursive": True, "SearchTerm": name, "Limit": 50
-        })
-        if getattr(r, "status_code", 0) != 200: return None
+        r = http.get(
+            f"/Users/{user_id}/Items",
+            params={
+                "IncludeItemTypes": "BoxSet",
+                "Recursive": True,
+                "SearchTerm": name,
+                "Limit": 50,
+            },
+        )
+        if getattr(r, "status_code", 0) != 200:
+            return None
         items = (r.json() or {}).get("Items") or []
         name_lc = (name or "").strip().lower()
         for row in items:
-            if (row.get("Type") == "BoxSet") and (str(row.get("Name") or "").strip().lower() == name_lc):
+            if (row.get("Type") == "BoxSet") and (
+                str(row.get("Name") or "").strip().lower() == name_lc
+            ):
                 return str(row.get("Id"))
-        r2 = http.get(f"/Users/{user_id}/Items", params={"IncludeItemTypes": "BoxSet", "Recursive": True})
-        if getattr(r2, "status_code", 0) != 200: return None
+        r2 = http.get(
+            f"/Users/{user_id}/Items",
+            params={"IncludeItemTypes": "BoxSet", "Recursive": True},
+        )
+        if getattr(r2, "status_code", 0) != 200:
+            return None
         for row in (r2.json() or {}).get("Items") or []:
-            if (row.get("Type") == "BoxSet") and (str(row.get("Name") or "").strip().lower() == name_lc):
+            if (row.get("Type") == "BoxSet") and (
+                str(row.get("Name") or "").strip().lower() == name_lc
+            ):
                 return str(row.get("Id"))
     except Exception:
         pass
     return None
 
-def create_collection(http, name: str) -> Optional[str]:
+
+def create_collection(http: Any, name: str) -> str | None:
     try:
         r = http.post("/Collections", params={"Name": name})
         if getattr(r, "status_code", 0) in (200, 201, 204):
@@ -536,13 +690,22 @@ def create_collection(http, name: str) -> Optional[str]:
         pass
     return None
 
-def get_collection_items(http, user_id: str, collection_id: str) -> Dict[str, Any]:
+
+def get_collection_items(http: Any, user_id: str, collection_id: str) -> dict[str, Any]:
     try:
-        r = http.get(f"/Users/{user_id}/Items", params={
-            "ParentId": collection_id, "Recursive": True, "IncludeItemTypes": "Movie,Series",
-            "Fields": "ProviderIds,ProductionYear,Type", "EnableTotalRecordCount": True, "Limit": 10000
-        })
-        if getattr(r, "status_code", 0) != 200: return {"Items": [], "TotalRecordCount": 0}
+        r = http.get(
+            f"/Users/{user_id}/Items",
+            params={
+                "ParentId": collection_id,
+                "Recursive": True,
+                "IncludeItemTypes": "Movie,Series",
+                "Fields": "ProviderIds,ProductionYear,Type",
+                "EnableTotalRecordCount": True,
+                "Limit": 10000,
+            },
+        )
+        if getattr(r, "status_code", 0) != 200:
+            return {"Items": [], "TotalRecordCount": 0}
         data = r.json() or {}
         data.setdefault("Items", [])
         data.setdefault("TotalRecordCount", len(data["Items"]))
@@ -550,73 +713,102 @@ def get_collection_items(http, user_id: str, collection_id: str) -> Dict[str, An
     except Exception:
         return {"Items": [], "TotalRecordCount": 0}
 
-def collection_add_items(http, collection_id: str, item_ids: Iterable[str]) -> bool:
+
+def collection_add_items(http: Any, collection_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)
-    if not ids: return True
+    if not ids:
+        return True
     try:
         r = http.post(f"/Collections/{collection_id}/Items", params={"Ids": ids})
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
 
-def collection_remove_items(http, collection_id: str, item_ids: Iterable[str]) -> bool:
+
+def collection_remove_items(http: Any, collection_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)
-    if not ids: return True
+    if not ids:
+        return True
     try:
         r = http.delete(f"/Collections/{collection_id}/Items", params={"Ids": ids})
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
 
-# --- misc writes --------------------------------------------------------------
-def mark_favorite(http, user_id: str, item_id: str, flag: bool) -> bool:
+
+# misc writes
+def mark_favorite(http: Any, user_id: str, item_id: str, flag: bool) -> bool:
     path = f"/Users/{user_id}/FavoriteItems/{item_id}"
     r = http.post(path) if flag else http.delete(path)
     ok = getattr(r, "status_code", 0) in (200, 204)
     if not ok:
         body_snip = "no-body"
         try:
-            bj = r.json(); s = json.dumps(bj, ensure_ascii=False); body_snip = (s[:200] + "…") if len(s) > 200 else s
+            bj = r.json()
+            s = json.dumps(bj, ensure_ascii=False)
+            body_snip = (s[:200] + "…") if len(s) > 200 else s
         except Exception:
             try:
                 t = r.text() if callable(getattr(r, "text", None)) else getattr(r, "text", "")
-                s = str(t or ""); body_snip = (s[:200] + "…") if len(s) > 200 else s
+                s = str(t or "")
+                body_snip = (s[:200] + "…") if len(s) > 200 else s
             except Exception:
                 body_snip = "no-body"
-        _log_summary(f"favorite write failed user={user_id} item={item_id} status={getattr(r,'status_code',None)} body={body_snip}")
+        _log_summary(
+            f"favorite write failed user={user_id} item={item_id} "
+            f"status={getattr(r,'status_code',None)} body={body_snip}"
+        )
     return ok
 
-def update_userdata(http, user_id: str, item_id: str, payload: Mapping[str, Any]) -> bool:
+
+def update_userdata(http: Any, user_id: str, item_id: str, payload: Mapping[str, Any]) -> bool:
     try:
-        r = http.post(f"/Items/{item_id}/UserData", params={"userId": user_id}, json=dict(payload))
+        r = http.post(
+            f"/Items/{item_id}/UserData",
+            params={"userId": user_id},
+            json=dict(payload),
+        )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
 
-# --- resolver (movie/show/episode) -------------------------------------------
-def _pick_from_candidates(cands: List[Dict[str, Any]], *, want_type: Optional[str], want_year: Optional[int]) -> Optional[str]:
-    # Deterministic winner: highest score, then shortest Id, then lexicographically smallest Id.
-    def score_val(row: Dict[str, Any]) -> Tuple[int, int, str]:
+
+# resolver (movie/show/episode)
+def _pick_from_candidates(
+    cands: list[dict[str, Any]],
+    *,
+    want_type: str | None,
+    want_year: int | None,
+) -> str | None:
+    def score_val(row: dict[str, Any]) -> tuple[int, int, str]:
         t = (row.get("Type") or "").strip()
         y = row.get("ProductionYear")
         s = 0
         if want_type:
-            if want_type == "movie" and t == "Movie": s += 3
-            if want_type in ("show", "series") and t == "Series": s += 3
-            if want_type == "episode" and t == "Episode": s += 3
-        if isinstance(want_year, int) and isinstance(y, int) and abs(y - want_year) <= 1: s += 1
-        if (row.get("ProviderIds") or {}): s += 1
+            if want_type == "movie" and t == "Movie":
+                s += 3
+            if want_type in ("show", "series") and t == "Series":
+                s += 3
+            if want_type == "episode" and t == "Episode":
+                s += 3
+        if isinstance(want_year, int) and isinstance(y, int) and abs(y - want_year) <= 1:
+            s += 1
+        if row.get("ProviderIds"):
+            s += 1
         iid = str(row.get("Id") or "")
-        return (-s, len(iid), iid)  # min() picks highest s via -s, then stable Id
+        return -s, len(iid), iid
+
     if not cands:
         return None
     best = min(cands, key=score_val)
     iid = best.get("Id")
     return str(iid) if iid and not looks_like_bad_id(iid) else None
 
-def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
-    http, uid = adapter.client, adapter.cfg.user_id
-    ids = dict((it.get("ids") or {}))
+
+def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
+    http = adapter.client
+    uid = adapter.cfg.user_id
+    ids = dict(it.get("ids") or {})
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
 
     jf = ids.get("jellyfin")
@@ -639,6 +831,7 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         for p in spairs:
             if p not in pairs:
                 pairs.append(p)
+
     idx = build_provider_index(adapter)
 
     # Movies
@@ -651,13 +844,21 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
                 return iid
         if title:
             try:
-                q = { "userId": uid, "recursive": True, "includeItemTypes": "Movie", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+                q: dict[str, Any] = {
+                    "userId": uid,
+                    "recursive": True,
+                    "includeItemTypes": "Movie",
+                    "SearchTerm": title,
+                    "Fields": "ProviderIds,ProductionYear,Type",
+                    "Limit": 50,
+                }
                 q.update(jf_scope_any(adapter.cfg))
                 r = http.get("/Items", params=q)
                 t_l = title.lower()
-                cand: List[Mapping[str, Any]] = []
+                cand: list[Mapping[str, Any]] = []
                 for row in (r.json() or {}).get("Items") or []:
-                    if (row.get("Type") or "") != "Movie": continue
+                    if (row.get("Type") or "") != "Movie":
+                        continue
                     nm = (row.get("Name") or "").strip().lower()
                     yr = row.get("ProductionYear")
                     if nm == t_l and ((year is None) or (isinstance(yr, int) and abs(yr - year) <= 1)):
@@ -673,23 +874,32 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         _log_detail(f"resolve miss (movie): '{title}' ({year})")
         return None
 
-    # Shows (Series)
+    # Shows
     if t in ("show", "series"):
         for pref in pairs:
-            cands = [row for row in (idx.get(pref) or []) if (row.get("Type") or "").strip() == "Series"]
+            rows = idx.get(pref) or []
+            cands = [row for row in rows if (row.get("Type") or "").strip() == "Series"]
             iid = _pick_from_candidates(cands, want_type="show", want_year=year)
             if iid:
                 _log_summary(f"resolve series '{title or pref}' ({year}) -> {iid}")
                 return iid
         if title:
             try:
-                q = { "userId": uid, "recursive": True, "includeItemTypes": "Series", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+                q = {
+                    "userId": uid,
+                    "recursive": True,
+                    "includeItemTypes": "Series",
+                    "SearchTerm": title,
+                    "Fields": "ProviderIds,ProductionYear,Type",
+                    "Limit": 50,
+                }
                 q.update(jf_scope_any(adapter.cfg))
                 r = http.get("/Items", params=q)
                 title_lc = title.lower()
-                cand: List[Mapping[str, Any]] = []
+                cand = []
                 for row in (r.json() or {}).get("Items") or []:
-                    if (row.get("Type") or "") != "Series": continue
+                    if (row.get("Type") or "") != "Series":
+                        continue
                     nm = (row.get("Name") or "").strip().lower()
                     yr = row.get("ProductionYear")
                     if (nm == title_lc or nm.startswith(title_lc)) and (
@@ -708,20 +918,28 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         return None
 
     # Episodes
-    series_row: Optional[Dict[str, Any]] = None
+    series_row: dict[str, Any] | None = None
     if pairs:
         series_row = find_series_in_index(adapter, pairs)
         if series_row:
             _log_detail("series hit via provider index")
     if not series_row and series_title:
         try:
-            q = { "userId": uid, "recursive": True, "includeItemTypes": "Series", "SearchTerm": series_title, "Fields": "ProviderIds,ProductionYear,Type", "Limit": 50 }
+            q = {
+                "userId": uid,
+                "recursive": True,
+                "includeItemTypes": "Series",
+                "SearchTerm": series_title,
+                "Fields": "ProviderIds,ProductionYear,Type",
+                "Limit": 50,
+            }
             q.update(jf_scope_any(adapter.cfg))
             r = http.get("/Items", params=q)
             t_l = series_title.lower()
             cands = []
             for row in (r.json() or {}).get("Items") or []:
-                if (row.get("Type") or "") != "Series": continue
+                if (row.get("Type") or "") != "Series":
+                    continue
                 nm = (row.get("Name") or "").strip().lower()
                 if nm == t_l:
                     cands.append(row)
@@ -737,7 +955,8 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
         if sid:
             eps = get_series_episodes(http, uid, sid, start=0, limit=10000)
             for row in eps.get("Items") or []:
-                s = row.get("ParentIndexNumber"); e = row.get("IndexNumber")
+                s = row.get("ParentIndexNumber")
+                e = row.get("IndexNumber")
                 if isinstance(s, int) and isinstance(e, int) and s == int(season) and e == int(episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
@@ -746,14 +965,23 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
 
     if title:
         try:
-            q = { "userId": uid, "recursive": True, "includeItemTypes": "Episode", "SearchTerm": title, "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId", "Limit": 50 }
+            q = {
+                "userId": uid,
+                "recursive": True,
+                "includeItemTypes": "Episode",
+                "SearchTerm": title,
+                "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId",
+                "Limit": 50,
+            }
             q.update(jf_scope_any(adapter.cfg))
             r = http.get("/Items", params=q)
             t_l = title.lower()
             for row in (r.json() or {}).get("Items") or []:
-                if (row.get("Type") or "") != "Episode": continue
+                if (row.get("Type") or "") != "Episode":
+                    continue
                 nm = (row.get("Name") or "").strip().lower()
-                s = row.get("ParentIndexNumber"); e = row.get("IndexNumber")
+                s = row.get("ParentIndexNumber")
+                e = row.get("IndexNumber")
                 if nm == t_l and ((season is None) or s == season) and ((episode is None) or e == episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
@@ -765,15 +993,21 @@ def resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
     _log_detail(f"resolve miss (episode): title='{title}' series='{series_title}' S{season}E{episode}")
     return None
 
-# --- utilities ----------------------------------------------------------------
-def chunked(it: Iterable[Any], n: int) -> Iterable[List[Any]]:
-    n = max(1, int(n)); buf: List[Any] = []
+
+# utilities
+def chunked(it: Iterable[Any], n: int) -> Iterable[list[Any]]:
+    n = max(1, int(n))
+    buf: list[Any] = []
     for x in it:
         buf.append(x)
         if len(buf) >= n:
-            yield buf; buf = []
-    if buf: yield buf
+            yield buf
+            buf = []
+    if buf:
+        yield buf
+
 
 def sleep_ms(ms: int) -> None:
     m = int(ms or 0)
-    if m > 0: time.sleep(m / 1000.0)
+    if m > 0:
+        time.sleep(m / 1000.0)

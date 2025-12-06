@@ -1,25 +1,28 @@
 # /providers/sync/emby/_playlists.py
+# EMBY Module for playlist synchronization
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import os, json
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
-from cw_platform.id_map import minimal as id_minimal, canonical_key
+
+import json
+import os
+from typing import Any, Iterable, Mapping
+
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 UNRESOLVED_PATH = "/config/.cw_state/emby_playlists.unresolved.json"
 
-def _log(msg: str):
+
+def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         print(f"[EMBY:playlists] {msg}")
 
+
 # unresolved store
-def _load() -> Dict[str, Any]:
-    try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8"):
-            pass
-    except Exception:
-        return {}
+def _load() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
+            obj = json.load(f) or {}
+        return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
 
@@ -35,7 +38,8 @@ def _save(obj: Mapping[str, Any]) -> None:
 
 def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
     key = canonical_key(item)
-    data = _load(); ent = data.get(key) or {"feature": "playlists", "attempts": 0}
+    data = _load()
+    ent = data.get(key) or {"feature": "playlists", "attempts": 0}
     ent.update({"hint": id_minimal(item)})
     ent["attempts"] = int(ent.get("attempts", 0)) + 1
     ent["reason"] = reason
@@ -44,37 +48,59 @@ def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
 
 
 def _thaw_if_present(keys: Iterable[str]) -> None:
-    data = _load(); changed = False
+    data = _load()
+    changed = False
     for k in list(keys or []):
         if k in data:
-            data.pop(k, None); changed = True
-    if changed: _save(data)
+            data.pop(k, None)
+            changed = True
+    if changed:
+        _save(data)
 
 
 # helpers
-def _resolve_item_id(adapter, it: Mapping[str, Any]) -> Optional[str]:
-    from . import _watchlist as wl  # type: ignore
-    return wl._resolve_item_id(adapter, it)  # type: ignore
+def _resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
+    from . import _watchlist as wl  # type: ignore[import]
+
+    return wl._resolve_item_id(adapter, it)  # type: ignore[attr-defined]
 
 
-def _ensure_playlist(adapter, name: str) -> Optional[str]:
+def _ensure_playlist(adapter: Any, name: str) -> str | None:
     http = adapter.client
     uid = adapter.cfg.user_id
     norm = (name or "").strip() or "Watchlist"
-    r = http.get(f"/Users/{uid}/Items", params={"IncludeItemTypes": "Playlist", "Recursive": False})
+
+    r = http.get(
+        f"/Users/{uid}/Items",
+        params={"IncludeItemTypes": "Playlist", "Recursive": False},
+    )
     if not getattr(r, "ok", False):
-        r = http.get(f"/Users/{uid}/Items", params={"includeItemTypes": "Playlist", "recursive": False})
+        r = http.get(
+            f"/Users/{uid}/Items",
+            params={"includeItemTypes": "Playlist", "recursive": False},
+        )
+
     try:
-        for it in (r.json() or {}).get("Items", []):
-            if (it.get("Name") or "").strip().lower() == norm.lower():
+        body = r.json() or {}
+    except Exception:
+        body = {}
+
+    items = body.get("Items") or [] if isinstance(body, Mapping) else []
+    try:
+        for it in items:
+            nm = (it.get("Name") or "").strip()
+            if nm.lower() == norm.lower():
                 pid = it.get("Id")
                 if pid:
                     return str(pid)
     except Exception:
         pass
 
-    r2 = http.post("/Playlists", json={"Name": norm, "UserId": uid, "MediaType": "Video"})
-    if r2.status_code in (200, 201):
+    r2 = http.post(
+        "/Playlists",
+        json={"Name": norm, "UserId": uid, "MediaType": "Video"},
+    )
+    if getattr(r2, "status_code", 0) in (200, 201):
         try:
             pid = (r2.json() or {}).get("Id")
             if pid:
@@ -83,13 +109,25 @@ def _ensure_playlist(adapter, name: str) -> Optional[str]:
             pass
 
     r3 = http.post("/Playlists", params={"name": norm, "userId": uid})
-    if r3.status_code in (200, 201, 204):
-        rr = http.get(f"/Users/{uid}/Items", params={"IncludeItemTypes": "Playlist", "Recursive": False})
+    if getattr(r3, "status_code", 0) in (200, 201, 204):
+        rr = http.get(
+            f"/Users/{uid}/Items",
+            params={"IncludeItemTypes": "Playlist", "Recursive": False},
+        )
         if not getattr(rr, "ok", False):
-            rr = http.get(f"/Users/{uid}/Items", params={"includeItemTypes": "Playlist", "recursive": False})
+            rr = http.get(
+                f"/Users/{uid}/Items",
+                params={"includeItemTypes": "Playlist", "recursive": False},
+            )
         try:
-            for it in (rr.json() or {}).get("Items", []):
-                if (it.get("Name") or "").strip().lower() == norm.lower():
+            body2 = rr.json() or {}
+        except Exception:
+            body2 = {}
+        items2 = body2.get("Items") or [] if isinstance(body2, Mapping) else []
+        try:
+            for it in items2:
+                nm = (it.get("Name") or "").strip()
+                if nm.lower() == norm.lower():
                     pid = it.get("Id")
                     if pid:
                         return str(pid)
@@ -99,69 +137,95 @@ def _ensure_playlist(adapter, name: str) -> Optional[str]:
     return None
 
 
-def _playlist_add(adapter, playlist_id: str, item_ids: List[str]) -> bool:
+def _playlist_add(adapter: Any, playlist_id: str, item_ids: list[str]) -> bool:
     http = adapter.client
     uid = adapter.cfg.user_id
     if not item_ids:
         return True
 
-    r = http.post(f"/Playlists/{playlist_id}/Items", params={"UserId": uid, "Ids": ",".join(item_ids)})
-    if r.status_code in (200, 204):
+    r = http.post(
+        f"/Playlists/{playlist_id}/Items",
+        params={"UserId": uid, "Ids": ",".join(item_ids)},
+    )
+    if getattr(r, "status_code", 0) in (200, 204):
         return True
 
-    r2 = http.post(f"/Playlists/{playlist_id}/Items", params={"userId": uid, "ids": ",".join(item_ids)})
-    if r2.status_code in (200, 204):
+    r2 = http.post(
+        f"/Playlists/{playlist_id}/Items",
+        params={"userId": uid, "ids": ",".join(item_ids)},
+    )
+    if getattr(r2, "status_code", 0) in (200, 204):
         return True
 
-    r3 = http.post(f"/Playlists/{playlist_id}/Items", json={"Ids": item_ids})
-    return r3.status_code in (200, 204)
+    r3 = http.post(
+        f"/Playlists/{playlist_id}/Items",
+        json={"Ids": item_ids},
+    )
+    return getattr(r3, "status_code", 0) in (200, 204)
 
 
-def _playlist_remove(adapter, playlist_id: str, item_ids: List[str]) -> bool:
+def _playlist_remove(adapter: Any, playlist_id: str, item_ids: list[str]) -> bool:
     http = adapter.client
     uid = adapter.cfg.user_id
     if not item_ids:
         return True
 
-    # Build mid to entryIds map
-    rev: Dict[str, List[str]] = {}
+    rev: dict[str, list[str]] = {}
     r = http.get(f"/Playlists/{playlist_id}/Items", params={"UserId": uid})
     if not getattr(r, "ok", False):
         r = http.get(f"/Playlists/{playlist_id}/Items", params={"userId": uid})
+
     try:
-        for it in (r.json() or {}).get("Items", []):
-            mid = str(it.get("Id") or "")
+        body = r.json() or {}
+    except Exception:
+        body = {}
+
+    rows = body.get("Items") or [] if isinstance(body, Mapping) else []
+    try:
+        for it in rows:
+            mid = str(it.get("Id") or "") or ""
             eid = str(it.get("PlaylistItemId") or "") or mid
             if mid:
                 rev.setdefault(mid, []).append(eid)
     except Exception:
         pass
 
-    entry_ids: List[str] = []
+    entry_ids: list[str] = []
     for mid in item_ids:
         entry_ids.extend(rev.get(mid, []))
 
     if entry_ids:
-        re = http.delete(f"/Playlists/{playlist_id}/Items", params={"EntryIds": ",".join(entry_ids)})
-        if re.status_code in (200, 204):
+        re = http.delete(
+            f"/Playlists/{playlist_id}/Items",
+            params={"EntryIds": ",".join(entry_ids)},
+        )
+        if getattr(re, "status_code", 0) in (200, 204):
             return True
-        re2 = http.delete(f"/Playlists/{playlist_id}/Items", params={"entryIds": ",".join(entry_ids)})
-        if re2.status_code in (200, 204):
+        re2 = http.delete(
+            f"/Playlists/{playlist_id}/Items",
+            params={"entryIds": ",".join(entry_ids)},
+        )
+        if getattr(re2, "status_code", 0) in (200, 204):
             return True
 
-    # Fallback by media Ids (less precise)
-    r2 = http.delete(f"/Playlists/{playlist_id}/Items", params={"Ids": ",".join(item_ids)})
-    if r2.status_code in (200, 204):
+    r2 = http.delete(
+        f"/Playlists/{playlist_id}/Items",
+        params={"Ids": ",".join(item_ids)},
+    )
+    if getattr(r2, "status_code", 0) in (200, 204):
         return True
-    r3 = http.delete(f"/Playlists/{playlist_id}/Items", params={"ids": ",".join(item_ids)})
-    return r3.status_code in (200, 204)
 
+    r3 = http.delete(
+        f"/Playlists/{playlist_id}/Items",
+        params={"ids": ",".join(item_ids)},
+    )
+    return getattr(r3, "status_code", 0) in (200, 204)
 
 
 # index
-def build_index(adapter) -> Dict[str, Dict[str, Any]]:
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
-    prog = prog_mk("playlists") if callable(prog_mk) else None
+    prog: Any = prog_mk("playlists") if callable(prog_mk) else None
     if prog:
         try:
             prog.done(ok=True, total=0)
@@ -170,11 +234,13 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     _log("index size: 0 (playlists index is intentionally empty)")
     return {}
 
+
 # writes
-def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     ok_total = 0
-    unresolved: List[Dict[str, Any]] = []
-    for pl in items:
+    unresolved: list[dict[str, Any]] = []
+
+    for pl in items or []:
         name = (pl.get("playlist") or pl.get("title") or "").strip()
         rows = list(pl.get("items") or [])
         if not name:
@@ -188,7 +254,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
             _freeze(pl, reason="write_failed")
             continue
 
-        ids: List[str] = []
+        ids: list[str] = []
         for it in rows:
             iid = _resolve_item_id(adapter, it)
             if iid:
@@ -199,7 +265,8 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
 
         if ids and _playlist_add(adapter, pid, ids):
             ok_total += len(ids)
-            _thaw_if_present([canonical_key(id_minimal(x)) for x in rows])
+            thaw_keys = [canonical_key(id_minimal(x)) for x in rows]
+            _thaw_if_present(thaw_keys)
         else:
             for it in rows:
                 _freeze(it, reason="write_failed")
@@ -209,10 +276,11 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     return ok_total, unresolved
 
 
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     ok_total = 0
-    unresolved: List[Dict[str, Any]] = []
-    for pl in items:
+    unresolved: list[dict[str, Any]] = []
+
+    for pl in items or []:
         name = (pl.get("playlist") or pl.get("title") or "").strip()
         rows = list(pl.get("items") or [])
         if not name:
@@ -226,7 +294,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
             _freeze(pl, reason="write_failed")
             continue
 
-        ids: List[str] = []
+        ids: list[str] = []
         for it in rows:
             iid = _resolve_item_id(adapter, it)
             if iid:
@@ -237,7 +305,8 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[
 
         if ids and _playlist_remove(adapter, pid, ids):
             ok_total += len(ids)
-            _thaw_if_present([canonical_key(id_minimal(x)) for x in rows])
+            thaw_keys = [canonical_key(id_minimal(x)) for x in rows]
+            _thaw_if_present(thaw_keys)
         else:
             for it in rows:
                 _freeze(it, reason="write_failed")

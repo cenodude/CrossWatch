@@ -1,23 +1,29 @@
 # /providers/sync/_mod_CROSSWATCH.py
-# Internal CrossWatch adapter: manifest + local snapshot bridge.
-
+# CrossWatch CROSSWATCH tracker module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-__VERSION__ = "0.1.0"
-__all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
-import os, time
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, List, Callable
+from typing import Any, Callable, Iterable, Mapping
+
+try:  # type: ignore[name-defined]
+    ctx  # type: ignore[misc]
+except Exception:
+    ctx = None  # type: ignore[assignment]
 
 try:
     from .crosswatch import _watchlist as feat_watchlist
 except Exception:
     feat_watchlist = None
+
 try:
     from .crosswatch import _history as feat_history
 except Exception:
     feat_history = None
+
 try:
     from .crosswatch import _ratings as feat_ratings
 except Exception:
@@ -26,32 +32,34 @@ except Exception:
 try:
     from ._mod_common import make_snapshot_progress
 except Exception:
-    make_snapshot_progress = None  # type: ignore
+    make_snapshot_progress = None  # type: ignore[assignment]
 
-try:  # type: ignore[name-defined]
-    ctx  # type: ignore
-except Exception:
-    ctx = None  # type: ignore
+__VERSION__ = "0.1.0"
+__all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
+
+_FEATURES: dict[str, Any] = {}
+if feat_watchlist:
+    _FEATURES["watchlist"] = feat_watchlist
+if feat_history:
+    _FEATURES["history"] = feat_history
+if feat_ratings:
+    _FEATURES["ratings"] = feat_ratings
+
 
 def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_CROSSWATCH_DEBUG"):
         print(f"[CROSSWATCH] {msg}")
 
-# Feature registry
-_FEATURES: Dict[str, Any] = {}
-if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
-if feat_history:   _FEATURES["history"]   = feat_history
-if feat_ratings:   _FEATURES["ratings"]   = feat_ratings
 
-def _features_flags() -> Dict[str, bool]:
+def _features_flags() -> dict[str, bool]:
     return {
         "watchlist": "watchlist" in _FEATURES,
-        "history":   "history"   in _FEATURES,
-        "ratings":   "ratings"   in _FEATURES,
+        "history": "history" in _FEATURES,
+        "ratings": "ratings" in _FEATURES,
         "playlists": False,
     }
 
-# Manifest
+
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "CROSSWATCH",
@@ -66,7 +74,6 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "observed_deletes": True,
-
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -81,22 +88,21 @@ def get_manifest() -> Mapping[str, Any]:
     }
 
 
-# Config
 @dataclass
 class CROSSWATCHConfig:
     root_dir: str = "/config/.cw_provider"
     retention_days: int = 30
     auto_snapshot: bool = True
     max_snapshots: int = 64
-    restore_watchlist: Optional[str] = "latest"
-    restore_history: Optional[str] = "latest"
-    restore_ratings: Optional[str] = "latest"
+    restore_watchlist: str | None = "latest"
+    restore_history: str | None = "latest"
+    restore_ratings: str | None = "latest"
+
     @property
     def base_path(self) -> Path:
         return Path(self.root_dir)
 
 
-# Module implementation
 class CROSSWATCHModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.raw_cfg = cfg
@@ -137,28 +143,28 @@ class CROSSWATCHModule:
 
         self.config = cfg
 
+        class _Noop:
+            def tick(self, *args: Any, **kwargs: Any) -> None:
+                pass
+            def done(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
         def _mk_prog(feature: str):
-            if make_snapshot_progress is None or ctx is None:
-                class _Noop:
-                    def tick(self, *a, **k): pass
-                    def done(self, *a, **k): pass
-                return _Noop()
-            try:
-                return make_snapshot_progress(ctx, dst="CROSSWATCH", feature=feature)
-            except Exception:
-                class _Noop:
-                    def tick(self, *a, **k): pass
-                    def done(self, *a, **k): pass
-                return _Noop()
+            if make_snapshot_progress is not None and ctx is not None:
+                try:
+                    return make_snapshot_progress(ctx, dst="CROSSWATCH", feature=feature)
+                except Exception:
+                    pass
+            return _Noop()
 
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
     @staticmethod
-    def supported_features() -> Dict[str, bool]:
+    def supported_features() -> dict[str, bool]:
         toggles = {
             "watchlist": True,
-            "history":   True,
-            "ratings":   True,
+            "history": True,
+            "ratings": True,
             "playlists": False,
         }
         present = _features_flags()
@@ -167,16 +173,27 @@ class CROSSWATCHModule:
     def _is_enabled(self, feature: str) -> bool:
         return bool(self.supported_features().get(feature, False))
 
-    # Index API used by orchestrator
-    def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
+    def manifest(self) -> Mapping[str, Any]:
+        return get_manifest()
+
+    def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
             _log(f"build_index skipped: feature disabled or missing: {feature}")
             return {}
         mod = _FEATURES.get(feature)
-        return mod.build_index(self, **kwargs) if mod else {}
+        if not mod:
+            _log(f"build_index skipped: feature module missing: {feature}")
+            return {}
+        return mod.build_index(self, **kwargs)
 
-    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> Dict[str, Any]:
-        lst: List[Mapping[str, Any]] = list(items)
+    def add(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items)
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
@@ -185,6 +202,9 @@ class CROSSWATCHModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"add skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
@@ -192,8 +212,14 @@ class CROSSWATCHModule:
             _log(f"add error for {feature}: {e}")
             return {"ok": False, "error": str(e)}
 
-    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> Dict[str, Any]:
-        lst: List[Mapping[str, Any]] = list(items)
+    def remove(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items)
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
@@ -202,6 +228,9 @@ class CROSSWATCHModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"remove skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
@@ -209,11 +238,12 @@ class CROSSWATCHModule:
             _log(f"remove error for {feature}: {e}")
             return {"ok": False, "error": str(e)}
 
-    #  Health check: local filesystem only
     def health(self) -> Mapping[str, Any]:
-        started = time.time()
+        started = time.perf_counter()
+        enabled = self.supported_features()
         ok = True
-        detail: Dict[str, Any] = {}
+        error: str | None = None
+
         try:
             base = self.cfg.base_path
             base.mkdir(parents=True, exist_ok=True)
@@ -225,18 +255,33 @@ class CROSSWATCHModule:
                 pass
         except Exception as e:
             ok = False
-            detail["error"] = str(e)
-        latency_ms = int((time.time() - started) * 1000)
+            error = str(e)
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+
+        if ok:
+            features = dict(enabled)
+            status = "ok"
+        else:
+            features = {k: False for k in enabled.keys()}
+            status = "down"
+
+        details: dict[str, Any] = {}
+        if error:
+            details["error"] = error
+        disabled = [k for k, v in enabled.items() if not v]
+        if disabled:
+            details["disabled"] = disabled
+
         return {
             "ok": ok,
-            "status": "ok" if ok else "error",
+            "status": status,
             "latency_ms": latency_ms,
-            "features": self.supported_features(),
-            "details": detail,
+            "features": features,
+            "details": details or None,
             "api": {},
         }
 
-# OPS bridge
 class _CrossWatchOPS:
     def name(self) -> str:
         return "CROSSWATCH"
@@ -276,7 +321,12 @@ class _CrossWatchOPS:
     def _adapter(self, cfg: Mapping[str, Any]) -> CROSSWATCHModule:
         return CROSSWATCHModule(cfg)
 
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
+    def build_index(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+    ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
 
     def add(
@@ -286,7 +336,7 @@ class _CrossWatchOPS:
         *,
         feature: str,
         dry_run: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
     def remove(
@@ -296,7 +346,7 @@ class _CrossWatchOPS:
         *,
         feature: str,
         dry_run: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:

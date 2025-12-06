@@ -3,23 +3,33 @@
 # Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
 from __future__ import annotations
-__VERSION__ = "2.0.0"
-__all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
-import os, time, json
+import json
+import os
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, List
+from typing import Any, Iterable, Mapping
+
 import requests
 
 from ._mod_common import (
     build_session,
     label_simkl,
-    request_with_retries,
-    parse_rate_limit,
     make_snapshot_progress,
+    parse_rate_limit,
+    request_with_retries,
 )
-
 from .simkl._common import build_headers, normalize as simkl_normalize, key_of as simkl_key_of
+
+__VERSION__ = "2.0.0"
+__all__ = ["get_manifest", "SIMKLModule", "OPS"]
+
+if "ctx" not in globals():
+    class _NullCtx:
+        def emit(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    ctx = _NullCtx()  # type: ignore[assignment]
 
 try:
     from .simkl import _watchlist as feat_watchlist
@@ -41,33 +51,32 @@ except Exception as e:
     feat_ratings = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
         print(f"[SIMKL] failed to import ratings: {e}")
-        
-# orchestrator ctx (fallback)
-try:  # type: ignore[name-defined]
-    ctx  # noqa: F401
-except NameError:
-    class _NullCtx:
-        def emit(self, *args, **kwargs) -> None: pass
-    ctx = _NullCtx()  # type: ignore[assignment]
 
-# errors
-class SIMKLError(RuntimeError): ...
-class SIMKLAuthError(SIMKLError): ...
 
-# debug / logging
-def _log(msg: str):
+class SIMKLError(RuntimeError):
+    pass
+
+
+class SIMKLAuthError(SIMKLError):
+    pass
+
+
+def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
         print(f"[SIMKL] {msg}")
+
 
 STATE_DIR = "/config/.cw_state"
 ACTIVITIES_SHADOW = f"{STATE_DIR}/simkl.activities.shadow.json"
 
-def _json_load(path: str) -> Dict[str, Any]:
+
+def _json_load(path: str) -> dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
+
 
 def _json_save(path: str, data: Mapping[str, Any]) -> None:
     try:
@@ -79,31 +88,36 @@ def _json_save(path: str, data: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
-# feature registry
-_FEATURES: Dict[str, Any] = {}
-if feat_watchlist: _FEATURES["watchlist"] = feat_watchlist
-if feat_history:   _FEATURES["history"]   = feat_history
-if feat_ratings:   _FEATURES["ratings"]   = feat_ratings
 
-def _features_flags() -> Dict[str, bool]:
+_FEATURES: dict[str, Any] = {}
+if feat_watchlist:
+    _FEATURES["watchlist"] = feat_watchlist
+if feat_history:
+    _FEATURES["history"] = feat_history
+if feat_ratings:
+    _FEATURES["ratings"] = feat_ratings
+
+
+def _features_flags() -> dict[str, bool]:
     return {
         "watchlist": "watchlist" in _FEATURES,
-        "ratings":   "ratings"   in _FEATURES,
-        "history":   "history"   in _FEATURES,
+        "ratings": "ratings" in _FEATURES,
+        "history": "history" in _FEATURES,
         "playlists": False,
     }
 
-def supported_features() -> Dict[str, bool]:
+
+def supported_features() -> dict[str, bool]:
     toggles = {
         "watchlist": True,
-        "ratings":   True,
-        "history":   True,
+        "ratings": True,
+        "history": True,
         "playlists": False,
     }
     present = _features_flags()
     return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
-# manifest
+
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "SIMKL",
@@ -120,13 +134,13 @@ def get_manifest() -> Mapping[str, Any]:
             "observed_deletes": False,
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
-                "upsert": True, "unrate": True, "from_date": True,
+                "upsert": True,
+                "unrate": True,
+                "from_date": True,
             },
         },
     }
 
-# ──────────────────────────────────────────────────────────────────────────────
-# config + client
 
 @dataclass
 class SIMKLConfig:
@@ -136,6 +150,7 @@ class SIMKLConfig:
     timeout: float = 15.0
     max_retries: int = 3
 
+
 class SIMKLClient:
     BASE = "https://api.simkl.com"
 
@@ -143,11 +158,11 @@ class SIMKLClient:
         self.cfg = cfg
         self.raw_cfg = raw_cfg
         self.session: requests.Session = build_session("SIMKL", ctx, feature_label=label_simkl)
-        self.session.headers.update(build_headers({
-            "simkl": {"api_key": cfg.api_key, "access_token": cfg.access_token}
-        }))
+        self.session.headers.update(
+            build_headers({"simkl": {"api_key": cfg.api_key, "access_token": cfg.access_token}})
+        )
 
-    def _request(self, method: str, url: str, **kw) -> requests.Response:
+    def _request(self, method: str, url: str, **kw: Any) -> requests.Response:
         return request_with_retries(
             self.session,
             method,
@@ -157,10 +172,10 @@ class SIMKLClient:
             **kw,
         )
 
-    def connect(self) -> "SIMKLClient":
+    def connect(self) -> SIMKLClient:
         return self
 
-    def activities(self) -> Dict[str, Any]:
+    def activities(self) -> dict[str, Any]:
         try:
             r = self._request("POST", f"{self.BASE}/sync/activities")
             if r.ok:
@@ -170,15 +185,14 @@ class SIMKLClient:
             return {"error": str(e)}
 
     @staticmethod
-    def normalize(obj) -> Dict[str, Any]:
+    def normalize(obj: Any) -> dict[str, Any]:
         return simkl_normalize(obj)
 
     @staticmethod
-    def key_of(obj) -> str:
+    def key_of(obj: Any) -> str:
         return simkl_key_of(obj)
 
 
-# module wrapper
 class SIMKLModule:
     def __init__(self, cfg: Mapping[str, Any]):
         simkl_cfg = dict(cfg.get("simkl") or {})
@@ -201,9 +215,14 @@ class SIMKLModule:
 
         self.client = SIMKLClient(self.cfg, simkl_cfg).connect()
         self.raw_cfg = cfg
-        
-        self.progress_factory = lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
-            ctx, dst="SIMKL", feature=str(feature), total=total, throttle_ms=throttle_ms
+        self.progress_factory = (
+            lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
+                ctx,
+                dst="SIMKL",
+                feature=str(feature),
+                total=total,
+                throttle_ms=int(throttle_ms),
+            )
         )
 
     def manifest(self) -> Mapping[str, Any]:
@@ -219,14 +238,20 @@ class SIMKLModule:
         start = time.perf_counter()
 
         core_ok = False
-        core_reason: Optional[str] = None
-        core_code: Optional[int] = None
-        retry_after: Optional[int] = None
-        rate = {"limit": None, "remaining": None, "reset": None}
+        core_reason: str | None = None
+        core_code: int | None = None
+        retry_after: int | None = None
+        rate: dict[str, int | None] = {"limit": None, "remaining": None, "reset": None}
 
         if need_core:
             try:
-                r = sess.post(f"{base}/sync/activities", timeout=tmo)
+                r = request_with_retries(
+                    sess,
+                    "POST",
+                    f"{base}/sync/activities",
+                    timeout=tmo,
+                    max_retries=self.cfg.max_retries,
+                )
                 core_code = r.status_code
                 if r.status_code in (401, 403):
                     core_reason = "unauthorized"
@@ -236,33 +261,37 @@ class SIMKLModule:
                     core_reason = f"http:{r.status_code}"
                 ra = r.headers.get("Retry-After")
                 if ra:
-                    try: retry_after = int(ra)
-                    except Exception: pass
+                    try:
+                        retry_after = int(ra)
+                    except Exception:
+                        pass
                 rate = parse_rate_limit(r.headers)
             except Exception as e:
                 core_reason = f"exception:{e.__class__.__name__}"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        # Feature health
         features = {
             "watchlist": bool(enabled.get("watchlist") and "watchlist" in _FEATURES and core_ok),
-            "ratings":   bool(enabled.get("ratings")   and "ratings"   in _FEATURES and core_ok),
-            "history":   bool(enabled.get("history")   and "history"   in _FEATURES and core_ok),
+            "ratings": bool(enabled.get("ratings") and "ratings" in _FEATURES and core_ok),
+            "history": bool(enabled.get("history") and "history" in _FEATURES and core_ok),
             "playlists": False,
         }
 
-        # Overall status derived only from the core probe.
         if not need_core:
             status = "ok"
         elif core_ok:
             status = "ok"
         else:
-            status = "auth_failed" if (core_code in (401, 403) or core_reason == "unauthorized") else "down"
+            status = (
+                "auth_failed"
+                if (core_code in (401, 403) or core_reason == "unauthorized")
+                else "down"
+            )
 
         ok = status in ("ok", "degraded")
 
-        details: Dict[str, Any] = {}
+        details: dict[str, Any] = {}
         if need_core and not core_ok:
             details["reason"] = f"core:{core_reason or 'down'}"
         if retry_after is not None:
@@ -270,18 +299,24 @@ class SIMKLModule:
 
         api = {
             "activities": {
-                "status": (core_code if need_core else None),
-                "retry_after": (retry_after if need_core else None),
+                "status": core_code if need_core else None,
+                "retry_after": retry_after if need_core else None,
                 "rate": rate if need_core else {"limit": None, "remaining": None, "reset": None},
             },
         }
 
         try:
-            _json_save(ACTIVITIES_SHADOW, {"ts": int(time.time()), "data": {"status": core_code}})
+            _json_save(
+                ACTIVITIES_SHADOW,
+                {"ts": int(time.time()), "data": {"status": core_code}},
+            )
         except Exception:
             pass
 
-        _log(f"health status={status} ok={ok} latency_ms={latency_ms} reason={details.get('reason')}")
+        _log(
+            f"health status={status} ok={ok} latency_ms={latency_ms} "
+            f"reason={details.get('reason')}"
+        )
         return {
             "ok": ok,
             "status": status,
@@ -295,18 +330,18 @@ class SIMKLModule:
         return self.cfg.date_from
 
     @staticmethod
-    def normalize(obj) -> Dict[str, Any]:
+    def normalize(obj: Any) -> dict[str, Any]:
         return simkl_normalize(obj)
 
     @staticmethod
-    def key_of(obj) -> str:
+    def key_of(obj: Any) -> str:
         return simkl_key_of(obj)
 
-    def feature_names(self) -> Tuple[str, ...]:
+    def feature_names(self) -> tuple[str, ...]:
         feats = supported_features()
         return tuple(k for k, v in feats.items() if v and k in _FEATURES)
 
-    def build_index(self, feature: str, **kwargs) -> Dict[str, Dict[str, Any]]:
+    def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
             _log(f"build_index skipped: feature disabled or missing: {feature}")
@@ -314,34 +349,53 @@ class SIMKLModule:
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
 
-    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> Dict[str, Any]:
+    def add(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
             _log(f"add skipped: feature disabled or missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
-        items = list(items or [])
-        if not items:
+        lst = list(items or [])
+        if not lst:
             return {"ok": True, "count": 0}
         if dry_run:
-            return {"ok": True, "count": len(items), "dry_run": True}
-        count, unresolved = _FEATURES[feature].add(self, items)
+            return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"add skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        count, unresolved = mod.add(self, lst)
         return {"ok": True, "count": int(count), "unresolved": unresolved}
 
-    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> Dict[str, Any]:
+    def remove(
+        self,
+        feature: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
             _log(f"remove skipped: feature disabled or missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
-        items = list(items or [])
-        if not items:
+        lst = list(items or [])
+        if not lst:
             return {"ok": True, "count": 0}
         if dry_run:
-            return {"ok": True, "count": len(items), "dry_run": True}
-        count, unresolved = _FEATURES[feature].remove(self, items)
+            return {"ok": True, "count": len(lst), "dry_run": True}
+        mod = _FEATURES.get(feature)
+        if not mod:
+            _log(f"remove skipped: feature module missing: {feature}")
+            return {"ok": True, "count": 0, "unresolved": []}
+        count, unresolved = mod.remove(self, lst)
         return {"ok": True, "count": int(count), "unresolved": unresolved}
 
 
-# OPS bridge
 class _SIMKLOPS:
     def name(self) -> str:
         return "SIMKL"
@@ -359,9 +413,9 @@ class _SIMKLOPS:
             "index_semantics": "delta",
             "observed_deletes": False,
         }
-        
+
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
-        c  = cfg or {}
+        c = cfg or {}
         sm = c.get("simkl") or {}
         au = (c.get("auth") or {}).get("simkl") or {}
 
@@ -374,18 +428,44 @@ class _SIMKLOPS:
             or (au.get("oauth") or {}).get("access_token")
             or ""
         )
-        return bool(str(token).strip())
+        api_key = (
+            sm.get("api_key")
+            or sm.get("client_id")
+            or (au.get("api_key") if isinstance(au, dict) else None)
+            or (au.get("client_id") if isinstance(au, dict) else None)
+            or ""
+        )
+        return bool(str(token).strip() and str(api_key).strip())
 
     def _adapter(self, cfg: Mapping[str, Any]) -> SIMKLModule:
         return SIMKLModule(cfg)
 
-    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, Dict[str, Any]]:
+    def build_index(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+    ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
 
-    def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
+    def add(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
-    def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> Dict[str, Any]:
+    def remove(
+        self,
+        cfg: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+        *,
+        feature: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:

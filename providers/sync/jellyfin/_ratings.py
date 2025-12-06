@@ -1,24 +1,33 @@
 # /providers/sync/jellyfin/_ratings.py
+# JELLYFIN Module for ratings sync functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import os, json
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from cw_platform.id_map import minimal as id_minimal, canonical_key
-from ._common import normalize as jelly_normalize
-from ._common import jf_scope_ratings, jf_get_library_roots, jf_resolve_library_id
+import json
+import os
+from typing import Any, Iterable, Mapping
+
+from cw_platform.id_map import canonical_key, minimal as id_minimal
+from ._common import (
+    jf_get_library_roots,
+    jf_resolve_library_id,
+    jf_scope_ratings,
+    normalize as jelly_normalize,
+)
 
 UNRESOLVED_PATH = "/config/.cw_state/jellyfin_ratings.unresolved.json"
 SHADOW_PATH = "/config/.cw_state/jellyfin_ratings.shadow.json"
 
-# --- shadow (presence echo) ---------------------------------------------------
 
-def _shadow_load() -> Dict[str, int]:
+# shadow 
+def _shadow_load() -> dict[str, int]:
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return {str(k): int(v) for k, v in raw.items()}
     except Exception:
         return {}
+
 
 def _shadow_save(d: Mapping[str, int]) -> None:
     try:
@@ -29,24 +38,24 @@ def _shadow_save(d: Mapping[str, int]) -> None:
         pass
 
 
-# --- logging -----------------------------------------------------------------
-
+# logging
 def _dbg_on() -> bool:
     return bool(os.environ.get("CW_JELLYFIN_DEBUG") or os.environ.get("CW_DEBUG"))
+
 
 def _log(msg: str) -> None:
     if _dbg_on():
         print(f"[JELLYFIN:ratings] {msg}")
 
 
-# --- unresolved store --------------------------------------------------------
-
-def _load() -> Dict[str, Any]:
+# unresolved store
+def _load() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
+
 
 def _save(obj: Mapping[str, Any]) -> None:
     try:
@@ -55,6 +64,7 @@ def _save(obj: Mapping[str, Any]) -> None:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
+
 
 def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
     key = canonical_key(item)
@@ -65,6 +75,7 @@ def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
     ent["reason"] = reason
     data[key] = ent
     _save(data)
+
 
 def _thaw_if_present(keys: Iterable[str]) -> None:
     data = _load()
@@ -77,10 +88,10 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
         _save(data)
 
 
-# --- cfg ---------------------------------------------------------------------
-
-def _limit(adapter) -> int:
-    v = getattr(getattr(adapter, "cfg", None), "ratings_query_page", None)
+# cfg
+def _limit(adapter: Any) -> int:
+    cfg = getattr(adapter, "cfg", None)
+    v = getattr(cfg, "ratings_query_page", None)
     if v is None:
         v = 500
     try:
@@ -89,30 +100,29 @@ def _limit(adapter) -> int:
         return 500
 
 
-# --- http helpers ------------------------------------------------------------
-
-def _body_snip(r, n: int = 240) -> str:
+# http helpers
+def _body_snip(r: Any, n: int = 240) -> str:
     try:
         t = r.text() if callable(getattr(r, "text", None)) else getattr(r, "text", "")
-        return (t[:n] + "…") if t and len(t) > n else (t or "no-body")
+        if not t:
+            return "no-body"
+        return (t[:n] + "…") if len(t) > n else t
     except Exception:
         return "no-body"
 
 
-# --- low-level write ---------------------------------------------------------
-# Numeric rating 0..10; accepts 0..5 upscale.
-
-def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
+# low-level write (numeric rating 0..10; accepts 0..5 upscale)
+def _rate(http: Any, uid: str, item_id: str, rating: float | None) -> bool:
     try:
-        payload: Dict[str, Any] = {}
+        payload: dict[str, Any] = {}
         if rating is None:
             payload["Rating"] = None
         else:
-            r = float(rating)
-            if 0.0 <= r <= 5.0:
-                r *= 2.0
-            r = max(0.0, min(10.0, r))
-            payload["Rating"] = round(r, 1)
+            r_val = float(rating)
+            if 0.0 <= r_val <= 5.0:
+                r_val *= 2.0
+            r_val = max(0.0, min(10.0, r_val))
+            payload["Rating"] = round(r_val, 1)
 
         r1 = http.post(f"/UserItems/{item_id}/UserData", params={"userId": uid}, json=payload)
         ok = getattr(r1, "status_code", 0) in (200, 204)
@@ -135,11 +145,10 @@ def _rate(http, uid: str, item_id: str, rating: Optional[float]) -> bool:
         return False
 
 
-# --- index builder -----------------------------------------------------------
-
-def build_index(adapter) -> Dict[str, Dict[str, Any]]:
+# index builder
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
-    prog = prog_mk("ratings") if callable(prog_mk) else None
+    prog: Any = prog_mk("ratings") if callable(prog_mk) else None
 
     http = adapter.client
     uid = adapter.cfg.user_id
@@ -147,7 +156,7 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     start = 0
 
     scope_params = jf_scope_ratings(adapter.cfg)
-    scope_libs: List[str] = []
+    scope_libs: list[str] = []
     if isinstance(scope_params, Mapping):
         pid = scope_params.get("ParentId")
         if pid:
@@ -159,11 +168,11 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
 
     roots = jf_get_library_roots(adapter)
 
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     total_seen = 0
 
     while True:
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "userId": uid,
             "recursive": True,
             "includeItemTypes": "Movie,Series,Episode",
@@ -192,20 +201,25 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
         for row in rows:
             total_seen += 1
             ud = row.get("UserData") or {}
-            rating = row.get("UserRating")
-            if rating is None:
-                rating = ud.get("Rating")
-            try:
-                rf = float(rating)
-            except (TypeError, ValueError):
+
+            rating_raw = row.get("UserRating")
+            if rating_raw is None:
+                rating_raw = ud.get("Rating")
+            if rating_raw is None:
                 continue
+
+            try:
+                rf = float(rating_raw)
+            except Exception:
+                continue
+
             if rf <= 0.0:
                 continue
 
             try:
-                m = jelly_normalize(row)
+                m_norm = jelly_normalize(row)
                 lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
-                m = dict(m)
+                m = dict(m_norm)
                 m["library_id"] = lib_id
                 m["rating"] = round(rf, 1)
 
@@ -238,7 +252,7 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
             pass
 
     if _dbg_on():
-        seen_libs: Dict[str, int] = {}
+        seen_libs: dict[str, int] = {}
         for m in out.values():
             lid = m.get("library_id") or "NONE"
             lid_s = str(lid)
@@ -259,30 +273,39 @@ def build_index(adapter) -> Dict[str, Dict[str, Any]]:
     _log(f"index size: {len(out)}")
     return out
 
-# --- writes ------------------------------------------------------------------
-def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+# writes
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
     uid = adapter.cfg.user_id
     ok = 0
-    unresolved: List[Dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
     shadow = _shadow_load()
 
     from ._common import resolve_item_id
 
     for it in items or []:
-        base: Dict[str, Any] = dict(it or {})
-        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        base: dict[str, Any] = dict(it or {})
+        base_ids_raw = base.get("ids")
+        if isinstance(base_ids_raw, Mapping):
+            base_ids: dict[str, Any] = dict(base_ids_raw)
+        else:
+            base_ids = {}
         has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
 
-        rating = base.get("rating")
+        rating_raw = base.get("rating")
+        if rating_raw is None:
+            unresolved.append({"item": id_minimal(base), "hint": "invalid_rating"})
+            _freeze(base, reason="invalid_rating")
+            continue
+
         try:
-            rf = float(rating)
+            rf = float(rating_raw)
         except Exception:
             unresolved.append({"item": id_minimal(base), "hint": "invalid_rating"})
             _freeze(base, reason="invalid_rating")
             continue
 
-        # If ids are weak, normalize to try to fill them.
         m = jelly_normalize(base) if not has_ids else base
 
         try:
@@ -314,18 +337,23 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str
     _log(f"add done: +{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-def remove(adapter, items: Iterable[Mapping[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
     uid = adapter.cfg.user_id
     ok = 0
-    unresolved: List[Dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
     shadow = _shadow_load()
 
     from ._common import resolve_item_id
 
     for it in items or []:
-        base: Dict[str, Any] = dict(it or {})
-        base_ids = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+        base: dict[str, Any] = dict(it or {})
+        base_ids_raw = base.get("ids")
+        if isinstance(base_ids_raw, Mapping):
+            base_ids: dict[str, Any] = dict(base_ids_raw)
+        else:
+            base_ids = {}
         has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
 
         m = jelly_normalize(base) if not has_ids else base
