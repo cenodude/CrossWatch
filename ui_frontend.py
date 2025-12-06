@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
+from api.versionAPI import CURRENT_VERSION
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -52,7 +53,7 @@ def register_ui_root(app: FastAPI) -> None:
     def ui_root() -> HTMLResponse:
         return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
 
-def get_index_html() -> str:
+def _get_index_html_static() -> str:
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
@@ -146,6 +147,7 @@ def get_index_html() -> str:
       <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <span class="name">CrossWatch</span>
+    <span class="version">__CW_VERSION__</span>
   </div>
 
   <div class="tabs">
@@ -931,3 +933,6 @@ document.readyState==='loading'
 </body></html>
 
 """
+
+def get_index_html() -> str:
+    return _get_index_html_static().replace("__CW_VERSION__", CURRENT_VERSION)

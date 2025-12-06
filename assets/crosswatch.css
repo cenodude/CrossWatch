@@ -1,16 +1,5 @@
-/* ==================================================================
-  CrossWatch UI Stylesheet
-  Purpose: Visual design for the CrossWatch app (layout, components,
-  badges, overlays, and motion). This file favors clarity and small,
-  isolated sections. Only comments were refined; selectors and rules
-  remain unchanged unless noted for a safe correction.
-  ================================================================== */
+/* CrossWatch UI Stylesheet */
 
-/* ==================================================================
-  Design Tokens & Base
-  - Global colors, gradients, and common primitives
-  - Multiple :root blocks are intentional, grouping related tokens
-  ================================================================== */
 :root {
   --bg: #000;
   --panel: #0b0b0f;
@@ -409,6 +398,18 @@ header {
   filter: drop-shadow(0 1px 6px rgba(124,92,255,.25));
   user-select: none
 }
+
+.brand .version {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: linear-gradient(90deg, #2de2ff, #8f7eff, #ff7ae0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.9;
+}
+
 .nav {
   position: absolute;
   top: 50%;
