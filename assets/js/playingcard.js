@@ -2,10 +2,25 @@
   if (window.__PLAYING_CARD_INIT__) return;
   window.__PLAYING_CARD_INIT__ = 1;
 
+  const hasTmdbKey = () => {
+    try {
+      const tmdb = window._cfgCache && window._cfgCache.tmdb;
+      if (!tmdb || !Object.prototype.hasOwnProperty.call(tmdb, "api_key")) {
+        return true;
+      }
+      const raw = String(tmdb.api_key || "").trim();
+      return !!raw;
+    } catch {
+      return true;
+    }
+  };
+
   const isUiEnabled = () => {
     try {
       const ui = window._cfgCache && window._cfgCache.ui;
-      return ui?.show_playingcard !== false;
+      if (ui?.show_playingcard === false) return false;
+      if (!hasTmdbKey()) return false;
+      return true;
     } catch {
       return true;
     }
