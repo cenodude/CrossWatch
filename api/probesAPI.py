@@ -14,6 +14,8 @@ from typing import Any, Callable
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
+from cw_platform.config_base import load_config as _load_config
+
 try:
     from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH_PROVIDER
 except Exception:  # optional
@@ -248,9 +250,8 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         return ok, rsn
 
     tr = (cfg.get("trakt") or cfg.get("TRAKT") or {}) or {}
-    auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
-    cid = (tr.get("client_id") or auth_tr.get("client_id") or "").strip()
-    tok = (auth_tr.get("access_token") or tr.get("access_token") or tr.get("token") or "").strip()
+    cid = (tr.get("client_id") or "").strip()
+    tok = (tr.get("access_token") or tr.get("token") or "").strip()
 
     if not cid or not tok:
         rsn = "Trakt: missing token/client id"
@@ -269,22 +270,20 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
 
     code = _call(tok)
 
-    # Trakt specific token refresh
     if code in (401, 403) and TRAKT_AUTH_PROVIDER is not None:
         try:
             res = TRAKT_AUTH_PROVIDER.refresh(cfg)  # type: ignore[union-attr]
-        except Exception:
-            res = {"ok": False, "error": "exception_in_refresh"}
+        except Exception as e:
+            res = {"ok": False, "error": f"exception_in_refresh:{e}"}
 
         if isinstance(res, dict) and res.get("ok"):
-            tr = (cfg.get("trakt") or cfg.get("TRAKT") or {}) or {}
-            auth_tr = (cfg.get("auth") or {}).get("trakt") or (cfg.get("auth") or {}).get("TRAKT") or {}
-            new_tok = (
-                auth_tr.get("access_token")
-                or tr.get("access_token")
-                or tr.get("token")
-                or ""
-            ).strip()
+            try:
+                cfg2 = _load_config()
+            except Exception:
+                cfg2 = cfg
+
+            tr2 = (cfg2.get("trakt") or cfg2.get("TRAKT") or {}) or {}
+            new_tok = (tr2.get("access_token") or tr2.get("token") or "").strip()
             if new_tok:
                 code = _call(new_tok)
 
@@ -292,7 +291,6 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     rsn = "" if ok else _reason_http(code, "Trakt")
     PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn)
     return ok, rsn
-
 
 def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]

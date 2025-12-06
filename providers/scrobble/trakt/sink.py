@@ -15,6 +15,11 @@ try:
     from _logging import log as BASE_LOG
 except Exception:
     BASE_LOG = None
+    
+try:
+    from providers.auth._auth_TRAKT import PROVIDER as AUTH_TRAKT
+except Exception:
+    AUTH_TRAKT = None  # type: ignore[misc]
 
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
@@ -109,57 +114,33 @@ def _del(path: str, cfg: dict[str, Any]) -> requests.Response:
 def _tok_refresh(cfg: dict[str, Any]) -> bool:
     global _TOKEN_OVERRIDE
 
-    trakt = cfg.get("trakt") or {}
-    auth_trakt = (cfg.get("auth") or {}).get("trakt") or {}
-
-    client_id = trakt.get("client_id") or trakt.get("api_key")
-    client_sec = trakt.get("client_secret") or trakt.get("client_secret_id")
-    rtok = trakt.get("refresh_token") or auth_trakt.get("refresh_token")
-
-    if not (client_id and client_sec and rtok):
-        _log("Missing credentials for token refresh", "ERROR")
+    if AUTH_TRAKT is None:
+        _log("AUTH_TRAKT provider missing, cannot refresh token", "ERROR")
         return False
 
     try:
-        r = requests.post(
-            f"{TRAKT_API}/oauth/token",
-            json={
-                "grant_type": "refresh_token",
-                "refresh_token": rtok,
-                "client_id": client_id,
-                "client_secret": client_sec,
-            },
-            headers={"User-Agent": APP_AGENT, "Content-Type": "application/json"},
-            timeout=10,
-        )
-        data = r.json() if r.ok else {}
+        res = AUTH_TRAKT.refresh(dict(cfg))
     except Exception as e:
-        _log(f"Token refresh failed (network): {e}", "ERROR")
+        _log(f"Token refresh via AUTH_TRAKT failed: {e}", "ERROR")
         return False
 
-    acc = data.get("access_token")
-    if not r.ok or not acc:
-        _log(f"Token refresh failed {r.status_code}: {(r.text or '')[:400]}", "ERROR")
+    if not isinstance(res, dict) or not res.get("ok"):
+        _log(f"Token refresh via AUTH_TRAKT failed: {res!r}", "ERROR")
         return False
-
-    _TOKEN_OVERRIDE = acc
-    new_rt = data.get("refresh_token") or rtok
-    exp_in = data.get("expires_in") or 0
-    expires_at = int(time.time()) + int(exp_in) if exp_in else None
-
-    new_cfg = dict(cfg)
-    t2 = dict(new_cfg.get("trakt") or {})
-    t2["access_token"] = acc
-    t2["refresh_token"] = new_rt
-    if expires_at:
-        t2["expires_at"] = expires_at
-    new_cfg["trakt"] = t2
 
     try:
-        _save_cfg(new_cfg)
-        _log("Trakt token refreshed (persisted)", "DEBUG")
+        new_cfg = _cfg()
     except Exception:
-        _log("Trakt token refreshed (runtime only)", "DEBUG")
+        new_cfg = cfg
+
+    trakt = (new_cfg.get("trakt") or {}) if isinstance(new_cfg, dict) else {}
+    token = str(trakt.get("access_token") or "").strip()
+    if not token:
+        _log("Token refresh via AUTH_TRAKT succeeded but no access_token in config", "ERROR")
+        return False
+
+    _TOKEN_OVERRIDE = token
+    _log("Trakt token refreshed via AUTH_TRAKT", "DEBUG")
     return True
 
 

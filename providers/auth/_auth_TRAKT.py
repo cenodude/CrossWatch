@@ -350,58 +350,71 @@ class _TraktProvider:
     def refresh(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
         c = _client(cfg)
-        tr = cfg.get("trakt") or {}
-        rt = tr.get("refresh_token")
-        if not (c["client_id"] and c["client_secret"] and rt):
+        tr = (cfg.get("trakt") or {}) or {}
+
+        rt = (tr.get("refresh_token") or "").strip()
+        cid = (c.get("client_id") or "").strip()
+        secr = (c.get("client_secret") or "").strip()
+
+        if not (cid and secr and rt):
+            log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
             return {"ok": False, "status": "missing_refresh"}
 
-        r = requests.post(
-            OAUTH_TOKEN,
-            json={
-                "refresh_token": rt,
-                "client_id": c["client_id"],
-                "client_secret": c["client_secret"],
-                "grant_type": "refresh_token",
-            },
-            headers=_headers(),
-            timeout=30,
-        )
-        if r.status_code >= 400:
-            return {"ok": False, "status": f"refresh_failed:{r.status_code}"}
+        payload: dict[str, Any] = {
+            "refresh_token": rt,
+            "client_id": cid,
+            "client_secret": secr,
+            "grant_type": "refresh_token",
+        }
 
-        tok: dict[str, Any] = r.json() or {}
+        try:
+            r = requests.post(OAUTH_TOKEN, json=payload, headers=_headers(), timeout=30)
+        except Exception as e:
+            log(f"TRAKT: token refresh network error: {e}", "ERROR")
+            return {"ok": False, "status": "network_error", "error": str(e)}
+
+        if r.status_code >= 400:
+            body: dict[str, Any] = {}
+            try:
+                body = r.json() or {}
+            except Exception:
+                body = {}
+            err = (
+                str(body.get("error") or "")
+                or str(body.get("error_description") or "")
+                or (r.text or "")[:400]
+            )
+            log(f"TRAKT: token refresh failed {r.status_code}: {err}", "ERROR")
+            return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err}
+
+        try:
+            tok: dict[str, Any] = r.json() or {}
+        except Exception as e:
+            log(f"TRAKT: token refresh invalid JSON: {e}", "ERROR")
+            return {"ok": False, "status": "bad_json"}
+
+        acc = (tok.get("access_token") or "").strip()
+        if not acc:
+            log("TRAKT: token refresh succeeded but no access_token in response", "ERROR")
+            return {"ok": False, "status": "no_access_token"}
+
+        new_rt = (tok.get("refresh_token") or rt or "").strip()
+        exp_in = int(tok.get("expires_in") or 0)
+        expires_at = _now() + exp_in if exp_in > 0 else 0
+
         tr.update(
             {
-                "access_token": tok.get("access_token"),
-                "refresh_token": tok.get("refresh_token") or rt,
-                "scope": tok.get("scope") or "public",
-                "token_type": tok.get("token_type") or "bearer",
-                "expires_at": _now() + int(tok.get("expires_in", 0)),
+                "access_token": acc,
+                "refresh_token": new_rt,
+                "scope": tok.get("scope") or tr.get("scope") or "public",
+                "token_type": tok.get("token_type") or tr.get("token_type") or "bearer",
+                "expires_at": expires_at,
             }
         )
+        cfg["trakt"] = tr
         _save_config(cfg)
+        log("TRAKT: token refreshed and persisted", "DEBUG")
         return {"ok": True, "status": "ok"}
-
-    def disconnect(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
-        cfg = cfg or _load_config()
-        tr = cfg.get("trakt")
-        if isinstance(tr, dict):
-            for k in (
-                "access_token",
-                "refresh_token",
-                "scope",
-                "token_type",
-                "expires_at",
-                "_pending_device",
-            ):
-                tr.pop(k, None)
-        try:
-            ((cfg.get("auth") or {}).get("trakt") or {}).clear()
-        except Exception:
-            pass
-        _save_config(cfg)
-        return {"ok": True}
-
 
 PROVIDER = _TraktProvider()
 __all__ = ["PROVIDER", "_TraktProvider", "html", "__VERSION__"]
