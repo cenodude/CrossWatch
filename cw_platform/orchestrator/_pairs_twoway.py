@@ -411,19 +411,26 @@ def _two_way_sync(
         A_f = _rate_filter(A_eff, fcfg)
         B_f = _rate_filter(B_eff, fcfg)
 
-        up_B, _un_B = diff_ratings(A_f, B_f)
-        up_A, _un_A = diff_ratings(B_f, A_f)
+        # A → B
+        up_B, unrate_B = diff_ratings(
+            A_f,
+            B_f,
+            propagate_timestamp_updates=True,
+        )
 
-        add_to_A = list(_minimal(it) for it in up_A) if allow_adds else []
-        add_to_B = list(_minimal(it) for it in up_B) if allow_adds else []
+        # B → A
+        up_A, unrate_A = diff_ratings(
+            B_f,
+            A_f,
+            propagate_timestamp_updates=True,
+        )
+
+        add_to_A = [_minimal(it) for it in up_A] if allow_adds else []
+        add_to_B = [_minimal(it) for it in up_B] if allow_adds else []
 
         if allow_removals:
-            for _k, v in A_f.items():
-                if not _present(B_f, B_alias, v) and (_tokens(v) & tombX or _ck(v) in obsB or _ck(v) in shrinkB) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
-                    rem_from_A.append(_minimal(v))
-            for _k, v in B_f.items():
-                if not _present(A_f, A_alias, v) and (_tokens(v) & tombX or _ck(v) in obsA or _ck(v) in shrinkA) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
-                    rem_from_B.append(_minimal(v))
+            rem_from_A.extend(_minimal(it) for it in unrate_A)
+            rem_from_B.extend(_minimal(it) for it in unrate_B)
     else:
         for _k, v in A_eff.items():
             if _present(B_eff, B_alias, v): continue

@@ -330,14 +330,23 @@ def run_one_way_feature(
 
     src_alias = _alias_index(src_idx)
     dst_alias = _alias_index(dst_full)
-    if adds:
-        adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
-    if removes:
-        removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-        try:
-            removes = [it for it in removes if _ck(it) in prev_dst]
-        except Exception:
-            pass
+
+    if feature == "ratings":
+        if removes:
+            removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+            try:
+                removes = [it for it in removes if _ck(it) in prev_dst]
+            except Exception:
+                pass
+    else:
+        if adds:
+            adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
+        if removes:
+            removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+            try:
+                removes = [it for it in removes if _ck(it) in prev_dst]
+            except Exception:
+                pass
 
     if not allow_adds:
         adds = []

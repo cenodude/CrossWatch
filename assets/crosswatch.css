@@ -32,15 +32,15 @@ code {
   border-radius: 8px;
   background: #0a0a17
 }
-/* Brand RGB channel tokens (for translucent borders/shadows) */
+/* Branding) */
 :root {
   --plex-rgb: 229,160,13;
   --simkl-rgb: 0,194,255;
   --emby-rgb: 76, 175, 80;
   --mdblist-rgb: 59, 122, 189;
+  --jellyfin-rgb: 170, 92, 195;
 }
 
-/* Brand solid colors (hex) and accents */
 :root {
   --plex: #e5a00d;
   --simkl: #00b7eb;
@@ -48,17 +48,132 @@ code {
   --tmdb: #01d277;
   --trakt: #ed1c24;
   --mdblist: #3B7ABD;
+  --jellyfin: #AA5CC3;
 }
-/* Switch palette (initial variant) */
-:root {
-  --sw-on: #26b87a;
-  --sw-on2: #1e8f5f;
-  --sw-off: #c84c4c;
-  --sw-off2: #9c3d3d;
-  --sw-rail: #101022;
-  --sw-edge: #2a2a3a
+
+.prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
+.prov-card.brand-simkl  { --brand-color: var(--simkl);  --brand-rgb: var(--simkl-rgb); }
+.prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
+.prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
+.prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
+.prov-card.brand-mdblist { --brand-color: var(--mdblist); --brand-rgb: var(--mdblist-rgb); }
+.prov-card[class*="brand-"] {
+  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
+    0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
+  transition: box-shadow .25s ease, border-color .25s ease;
 }
-/* Switch palette (final override) */
+.prov-card[class*="brand-"]:hover {
+  box-shadow:
+    0 0 0 1px var(--brand-color) inset,
+    0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
+}
+.prov-card[class*="brand-"] .btn:hover {
+  box-shadow: 0 0 16px rgba(var(--brand-rgb), .25);
+}
+.prov-card[class*="brand-"] .prov-brand {
+  border-color: color-mix(in oklab, var(--brand-color) 35%, rgba(255,255,255,.35));
+}
+
+.brand-ico.plex {
+  color: var(--plex);
+  background: rgba(229,160,13,.12);
+  border-color: rgba(229,160,13,.35);
+}
+.brand-ico.simkl {
+  color: var(--simkl);
+  background: rgba(0,183,235,.12);
+  border-color: rgba(0,183,235,.35);
+}
+.brand-ico.tmdb {
+  color: var(--tmdb);
+  background: rgba(1,210,119,.12);
+  border-color: rgba(1,210,119,.35);
+}
+.brand-ico.tmdb .tmdb-box {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 16px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--tmdb);
+  border: 1px solid currentColor;
+  background: rgba(1,210,119,.10);
+}
+.brand-ico.jellyfin {
+  color: var(--jellyfin);
+  background: rgba(var(--jellyfin-rgb), .12);
+  border-color: rgba(var(--jellyfin-rgb), .35);
+}
+.brand-ico.emby{
+  color: var(--emby);
+  background: rgba(var(--emby-rgb), .12);
+  border-color: rgba(var(--emby-rgb), .35);
+}
+.brand-ico.mdblist{
+  color: var(--mdblist);
+  background: rgba(var(--mdblist-rgb), .12);
+  border-color: rgba(var(--mdblist-rgb), .35);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px
+}
+.brand .logo {
+  width: 34px;
+  height: 34px;
+  display: inline-block;
+  cursor: pointer
+}
+.brand .logo,
+.brand .name {
+  transition: filter .2s ease, transform .2s ease, text-shadow .2s ease;
+}
+.brand .logo:hover, .brand .logo:focus,
+.brand .name:hover, .brand .name:focus {
+  filter: drop-shadow(0 0 10px rgba(124, 92, 255, 0.45));
+}
+.brand .name {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 1px 6px rgba(124,92,255,.25));
+  user-select: none
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.brand-text {
+  display: inline-flex;
+  align-items: flex-end;
+}
+
+.brand .version {
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: linear-gradient(90deg, #2de2ff, #8f7eff, #ff7ae0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.9;
+  position: relative;
+  top: -1px;
+}
+
+/* Switch palette */
 :root {
   --sw-on: #22b27e;
   --sw-on2: #1a9466;
@@ -68,9 +183,7 @@ code {
   --sw-edge: #2b2e44
 }
 
-/* ==================================================================
-   Layout
-   ================================================================== */
+/* Layout */
 #ops-card.card {
   padding-block: 20px 38px
 }
@@ -217,9 +330,7 @@ main.single #stats-card {
   filter: brightness(1.02)
 }
 
-/* ==================================================================
-   Utilities
-   ================================================================== */
+/* Utilities */
 .hidden {
   display: none
 }
@@ -324,9 +435,7 @@ main.single #stats-card {
   top: 50% !important
 }
 
-/* ==================================================================
-   Header & Navigation
-   ================================================================== */
+/* Header & Tabs */
 header {
   position: sticky;
   top: 0;
@@ -368,61 +477,8 @@ header {
 .tab.active:hover {
   box-shadow: 0 0 28px #7c5cffaa
 }
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px
-}
-.brand .logo {
-  width: 34px;
-  height: 34px;
-  display: inline-block;
-  cursor: pointer
-}
-.brand .logo,
-.brand .name {
-  transition: filter .2s ease, transform .2s ease, text-shadow .2s ease;
-}
-.brand .logo:hover, .brand .logo:focus,
-.brand .name:hover, .brand .name:focus {
-  filter: drop-shadow(0 0 10px rgba(124, 92, 255, 0.45));
-}
-.brand .name {
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: .2px;
-  background: var(--brand-grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 1px 6px rgba(124,92,255,.25));
-  user-select: none
-}
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.brand-text {
-  display: inline-flex;
-  align-items: flex-end;
-}
-
-.brand .version {
-  margin-left: 0.35rem;
-  font-size: 0.7rem;
-  font-weight: 500;
-  background: linear-gradient(90deg, #2de2ff, #8f7eff, #ff7ae0);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  opacity: 0.9;
-  position: relative;
-  top: -1px;
-}
-
+/* Navigation Arrows & Edges */
 .nav {
   position: absolute;
   top: 50%;
@@ -469,81 +525,6 @@ header {
 .edge.hide {
   opacity: 0
 }
-/* brand vars */
-:root{
-  --jellyfin: #AA5CC3;
-  --jellyfin-rgb: 170, 92, 195;
-}
-
-.prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
-.prov-card.brand-simkl  { --brand-color: var(--simkl);  --brand-rgb: var(--simkl-rgb); }
-.prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
-.prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
-.prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
-.prov-card.brand-mdblist { --brand-color: var(--mdblist); --brand-rgb: var(--mdblist-rgb); }
-
-/* shared styling */
-.prov-card[class*="brand-"] {
-  border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
-  box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--brand-color) 45%, rgba(255,255,255,0.10)) inset,
-    0 0 24px color-mix(in oklab, var(--brand-color) 30%, transparent);
-  transition: box-shadow .25s ease, border-color .25s ease;
-}
-.prov-card[class*="brand-"]:hover {
-  box-shadow:
-    0 0 0 1px var(--brand-color) inset,
-    0 0 30px color-mix(in oklab, var(--brand-color) 55%, transparent);
-}
-.prov-card[class*="brand-"] .btn:hover {
-  box-shadow: 0 0 16px rgba(var(--brand-rgb), .25);
-}
-.prov-card[class*="brand-"] .prov-brand {
-  border-color: color-mix(in oklab, var(--brand-color) 35%, rgba(255,255,255,.35));
-}
-
-/* existing brand icon pills (add Jellyfin) */
-.brand-ico.plex {
-  color: var(--plex);
-  background: rgba(229,160,13,.12);
-  border-color: rgba(229,160,13,.35);
-}
-.brand-ico.simkl {
-  color: var(--simkl);
-  background: rgba(0,183,235,.12);
-  border-color: rgba(0,183,235,.35);
-}
-.brand-ico.tmdb {
-  color: var(--tmdb);
-  background: rgba(1,210,119,.12);
-  border-color: rgba(1,210,119,.35);
-}
-.brand-ico.tmdb .tmdb-box {
-  display: inline-block;
-  padding: 0 4px;
-  border-radius: 4px;
-  line-height: 16px;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--tmdb);
-  border: 1px solid currentColor;
-  background: rgba(1,210,119,.10);
-}
-.brand-ico.jellyfin {
-  color: var(--jellyfin);
-  background: rgba(var(--jellyfin-rgb), .12);
-  border-color: rgba(var(--jellyfin-rgb), .35);
-}
-.brand-ico.emby{
-  color: var(--emby);
-  background: rgba(var(--emby-rgb), .12);
-  border-color: rgba(var(--emby-rgb), .35);
-}
-.brand-ico.mdblist{
-  color: var(--mdblist);
-  background: rgba(var(--mdblist-rgb), .12);
-  border-color: rgba(var(--mdblist-rgb), .35);
-}
 
 /* layout */
 #cfg-conn .brand {
@@ -552,10 +533,7 @@ header {
   gap: 10px;
 }
 
-
-/* ==================================================================
-   Cards & Panels
-   ================================================================== */
+/* Cards */
 .meta-card {
   background: linear-gradient(180deg,rgba(255,255,255,.02),transparent),var(--panel);
   border: 1px solid var(--border);
@@ -635,9 +613,7 @@ header {
   background: #0a0a14
 }
 
-/* ==================================================================
-   Buttons
-   ================================================================== */
+/* Buttons */
 .iconbtn {
   display: inline-flex;
   align-items: center;
@@ -956,9 +932,7 @@ header {
   min-width: auto
 }
 
-/* ==================================================================
-   Badges, Chips & Pills
-   ================================================================== */
+/* Badges & Chips */
 .badges {
   display: flex;
   gap: 8px;
@@ -1185,9 +1159,7 @@ header {
   font-weight: 800
 }
 
-/* ==================================================================
-   Forms & Inputs
-   ================================================================== */
+/* Form Elements */
 label {
   font-weight: 650;
   color: var(--muted);
@@ -1215,9 +1187,7 @@ select {
   margin: 12px 0
 }
 
-/* ==================================================================
-   Sync & Status UI
-   ================================================================== */
+/* Sync Status & Stepper */
 .sync-status {
   display: flex;
   align-items: center;
@@ -1270,9 +1240,7 @@ select {
   top: 0
 }
 
-/* ==================================================================
-   Watchlist & Posters
-   ================================================================== */
+/* Walitelist Grid & Posters */
 .wl-grid {
   --gap: 12px;
   display: grid;
@@ -1486,9 +1454,7 @@ select {
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr))
 }
 
-/* ==================================================================
-   Modals & Providers
-   ================================================================== */
+/* Modal & Provider Cards */
 .section>.head {
   display: flex;
   align-items: center;
@@ -1757,9 +1723,7 @@ select {
   padding: 12px;
 }
 
-/* ==================================================================
-   Logs & Scrubbers
-   ================================================================== */
+/* Log Viewer */
 .log {
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   background: #05060b;
@@ -1931,9 +1895,7 @@ select {
   background: rgba(255,255,255,.22)
 }
 
-/* ==================================================================
-   Statistics
-   ================================================================== */
+/* Statistics Panel */
 .stats-modern {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2074,9 +2036,7 @@ select {
   z-index: 1;
 }
 
-/* ==================================================================
-   Update Banner
-   ================================================================== */
+/* Update Banner */
 #update-banner {
   display: flex;
   gap: 0.25em
@@ -2085,17 +2045,7 @@ select {
   margin-left: auto
 }
 
-/* ==================================================================
-   Generic Media Queries
-   ================================================================== */
-
-/* ==================================================================
-   Animations
-   ================================================================== */
-
-/* ==================================================================
-   Miscellaneous (unclassified by heuristic)
-   ================================================================== */
+/*Misc Styles */
 .pillvalue {
   display: inline-flex;
   align-items: center;
@@ -3660,9 +3610,7 @@ select {
  }
 }
 
-/* ==================================================================
-   Generic Media Queries
-   ================================================================== */
+/* Media Queries */
 @media (max-width: 900px){
  .details-grid{ grid-template-columns: 1fr; }
  .det-right{ position: static; }
@@ -3700,9 +3648,7 @@ select {
 }
 @media (max-width: 980px){ .cx-top.grid{ grid-template-columns: 1fr; } }
 
-/* ==================================================================
-   Animations
-   ================================================================== */
+/* Animations */
 @keyframes spin { to { transform: rotate(360deg) } }
 @keyframes pulseSpin {
  0% { transform: rotate(0deg) scale(1); }
@@ -3769,17 +3715,15 @@ select {
   z-index: 2;             /* stay above progress bar */
 }
 
-/* Keep the refresh icon aligned with the badges */
 #conn-badges .iconbtn { margin-left: 6px; }
 
-/* Responsive: revert to inline flow on smaller screens */
 @media (max-width: 820px) {
   #conn-badges {
     position: static !important;
     margin-left: auto !important;
   }
 }
-/* Push Plex / SIMKL / Trakt stat tiles further down */
+
 #tile-plex,
 #tile-simkl,
 #tile-trakt {
@@ -3788,14 +3732,12 @@ select {
   z-index: 1;
 }
 
-/* Details: hide */
 #details .det-right,
 #details .meta-card,
 #details .meta-actions {
   display: none !important;
 }
 
-/* left log full-width gaan */
 #details .details-grid { grid-template-columns: 1fr !important; }
 #details .det-left { grid-column: 1 / -1; }
 
@@ -3805,7 +3747,7 @@ select {
   cursor: default !important;
   text-decoration: line-through;
 }
-/* Main update pill – inline under actions row */
+
 #st-main-update {
   display: flex;
   align-items: center;
@@ -3832,9 +3774,7 @@ select {
 #st-main-update .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #8a6cff; box-shadow: 0 0 10px #8a6cff; }
 
 
-/* ==========================================================================
-   Scrobbler Card
-   ========================================================================== */
+/* Scrobbler Card Styles */
 #card-scrobbler.card {
   display: flex;
   flex-direction: column;
@@ -3926,7 +3866,7 @@ select {
   padding: 6px 8px;
   white-space: pre-wrap;
 }
-/* --- Scrobbler layout --- */
+/* Scrobbler Section & Card Shared Styles */
 #sec-scrobbler .sc-grid,
 #card-scrobbler .sc-grid {
   display: grid;
@@ -3951,18 +3891,16 @@ select {
   pointer-events: none;
 }
 
-/* Headings / muted text (reuse if already present) */
 #sec-scrobbler .h,
 #card-scrobbler .h { font-size: 13px; font-weight: 600; }
 #sec-scrobbler .muted,
 #card-scrobbler .muted { font-size: 12px; opacity: 0.7; }
 
-/* Status row */
 .sc-status-row { display: flex; align-items: center; gap: 10px; }
 .status-dot {
   width: 10px; height: 10px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,0.25);
-  background: #732727; /* default: red-ish */
+  background: #732727; 
 }
 .status-dot.ok { background: #1e8c5a; border-color: rgba(0,220,130,.4); }
 .status-dot.err { background: #732727; border-color: rgba(255,80,80,.5); }
@@ -3994,7 +3932,7 @@ select {
 .status-dot.on { background:#19c37d; }
 .status-dot.off { background:#ff4d4f; }
 
-/* Recent syncs – fix badge layout and missing status styles */
+/* Recent syncs  */
 .history-badges{
   display:flex;
   align-items:center;
@@ -4012,7 +3950,6 @@ select {
   min-width:unset;
 }
 
-/* Status colors (the list already has .ok and .warn; err was missing) */
 .badge.err{
   border-color: rgba(231, 76, 60, .5);
   color:#ffd2d2;
@@ -4033,7 +3970,7 @@ select {
   border-color: rgba(231,76,60,.35);
 }
 
-/* === Fix history badges layout & colors === */
+/* Fix history badges and meta badges to have consistent styling */
 .history-meta .badge,
 .history-badges .badge {
   display: inline-flex;
@@ -4061,37 +3998,31 @@ select {
 /* small spacer between counters and micro chips */
 .history-badges .sep { display:inline-block; width: 8px; }
 
-/* Keep header clickable; only body looks dimmed.
-  Add a no-op property to avoid empty ruleset warnings without altering visuals. */
+/* Keep header clickable  */
 .section.disabled { pointer-events: auto; }
 .section.disabled .head { opacity: 1; }
 .section.disabled .body { opacity: .55; }
 
 .lane-ico .material-symbol {
   font-family: 'Material Symbols Rounded';
-  font-size: 22px;      /* a bit larger than text */
+  font-size: 22px;
   line-height: 1;
   font-variation-settings: 'FILL' 1;
 }
-/* Accent ONLY on the section header (no bleed in body) */
-#cw-settings-left .section { position: relative; overflow: hidden; }
 
-/* kill previous section-level bars if present */
+/* Accent bars for settings sections */
+#cw-settings-left .section { position: relative; overflow: hidden; }
 #cw-settings-left .section::before,
 #cw-settings-left .section::after { display: none !important; }
-
-/* header anchor */
 #cw-settings-left .section > .head {
   position: relative;
-  padding-left: 22px; /* room for the accent bar */
+  padding-left: 22px;
 }
-
-/* the accent bar */
 #cw-settings-left .section > .head::before{
   content:"";
   position:absolute;
-  left:8px;                /* pulled in from rounded corner */
-  top:8px; bottom:8px;     /* only spans header */
+  left:8px;
+  top:8px; bottom:8px;
   width:4px;
   border-radius:6px;
   background:linear-gradient(180deg,var(--accent,#7c5cff),var(--accent2,#ff7ae0));
@@ -4099,7 +4030,6 @@ select {
   pointer-events:none;
 }
 
-/* soft glow for the bar */
 #cw-settings-left .section > .head::after{
   content:"";
   position:absolute;
@@ -4111,6 +4041,8 @@ select {
   opacity:.35;
   pointer-events:none;
 }
+
+/* Save FAB + Frosted BG */
 #save-frost{
   position:fixed; left:0; right:0; bottom:0; height:84px;
   background:linear-gradient(0deg,rgba(10,10,14,.85) 0%,rgba(10,10,14,.60) 35%,rgba(10,10,14,0) 100%);
@@ -4138,30 +4070,26 @@ select {
   100%{width:0%;  opacity:.7 }
 }
 
+/* Probes pills  */
 :root{
-  /* Theme palette (muted/dark-friendly) */
-  --vip-p1:#361863;         /* purple rail start */
-  --vip-p2:#5a28cd;         /* purple rail end */
-  --ok-b1:#214f86;          /* connected blue 1 */
-  --ok-b2:#2b7eb5;          /* connected blue 2 */
-  --no-1:#7c2f2f;           /* disconnected red 1 */
-  --no-2:#612424;           /* disconnected red 2 */
-
+  --conn-pill-h: 32px;
+  --crown-size: 18px;
+  --vip-p1:#361863;
+  --vip-p2:#5a28cd;
+  --ok-b1:#214f86;
+  --ok-b2:#2b7eb5;
+  --no-1:#7c2f2f;
+  --no-2:#612424;
   --bd:rgba(255,255,255,.12);
   --shadow:0 6px 16px rgba(0,0,0,.30);
-
   --tip-bg:rgba(16,18,24,.96);
   --tip-bd:rgba(255,255,255,.10);
-
-  /* Crown + rail geometry (exact centering) */
   --crown-size:18px;
   --rail-pad:8px;
   --vip-rail:calc(var(--crown-size) + 2*var(--rail-pad));
-
-  /* NEW: “glass” transparency */
-  --pill-alpha:.50;         /* main pill transparency */
-  --rail-alpha:.75;         /* purple rail transparency */
-  --glass-blur:6px;         /* backdrop blur amount */
+  --pill-alpha:.50;
+  --rail-alpha:.75;
+  --glass-blur:6px;
 }
 
 .conn-badges{ display:flex; gap:10px; align-items:flex-start; }
@@ -4170,15 +4098,16 @@ select {
   position:relative; display:flex; flex-direction:column; align-items:center;
 }
 
-/* Compact pill (background is now drawn by ::after so text stays opaque) */
 .conn-pill{
   position:relative;
-  display:inline-flex; align-items:center; gap:8px;
-  padding:6px 12px; min-height:30px;
-  border-radius:10px; overflow:hidden;                /* clip the glass layers */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--conn-pill-h);
+  padding: 0 12px;
+  border-radius: 10px;
   border:1px solid var(--bd); color:#fff; font-weight:800; letter-spacing:.01em;
-
-  background:transparent;                              /* moved to ::after */
+  background:transparent;
   box-shadow:var(--shadow); user-select:none; cursor:default;
   transition:transform .12s ease, filter .12s ease;
   backdrop-filter:blur(var(--glass-blur)) saturate(120%);
@@ -4187,19 +4116,31 @@ select {
 }
 .conn-pill:hover{ transform:translateY(-1px); filter:saturate(1.04); }
 
-/* Glass body layer */
+.conn-brand{
+  display: inline-flex;
+  align-items: center;
+}
+
+.conn-text{ 
+  font-size:12.6px; 
+  white-space:nowrap; 
+  line-height:1;
+}
+
+.conn-logo{
+  height: var(--crown-size);
+}
 .conn-pill::after{
   content:""; position:absolute; inset:0; border-radius:inherit;
   background:linear-gradient(135deg,var(--ok-b1),var(--ok-b2)); /* connected */
   opacity:var(--pill-alpha);
-  z-index:-2;  /* keep below the purple rail (::before) */
+  z-index:-2;
 }
-/* Disconnected = fully red (still transparent via alpha) */
+
 .conn-pill.no::after{
   background:linear-gradient(135deg,var(--no-1),var(--no-2));
 }
 
-/* VIP only: narrow purple rail under the crown */
 .conn-pill.ok.has-vip::before{
   content:""; position:absolute; inset:-1px auto -1px -1px; width:var(--vip-rail);
   background:linear-gradient(135deg,var(--vip-p1),var(--vip-p2));
@@ -4208,25 +4149,18 @@ select {
   z-index:-1; pointer-events:none;
 }
 
-/* Remove left padding when the rail is shown so the crown centers perfectly */
 .conn-pill.has-vip{ padding-left:0; }
 
-/* Crown block = same width as the rail, centered crown */
 .conn-slot{
   display:inline-flex; align-items:center; justify-content:center;
   width:var(--vip-rail); line-height:0; transform-origin:50% 70%;
 }
 .conn-slot svg{ width:var(--crown-size); height:var(--crown-size); }
-
-/* Subtle animation (non-destructive) */
 @keyframes crown-bob{ 0%{margin-top:0} 50%{margin-top:-1px} 100%{margin-top:0} }
 @keyframes crown-tilt{ 0%{transform:rotate(0)} 30%{transform:rotate(18deg)} 60%{transform:rotate(-12deg)} 100%{transform:rotate(0)} }
 .conn-slot{ animation:crown-bob 5s ease-in-out infinite; }
 .conn-pill:hover .conn-slot{ animation:crown-bob 5s ease-in-out infinite, crown-tilt .8s cubic-bezier(.2,.8,.2,1) 1; }
 
-.conn-text{ font-size:12.6px; white-space:nowrap; }
-
-/* Tooltip below the pill (details only) */
 .conn-item .tip{
   position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
   background:var(--tip-bg); color:#fff; border:1px solid var(--tip-bd);
@@ -4241,23 +4175,21 @@ select {
 }
 .conn-item:hover .tip, .conn-item:focus-within .tip{ opacity:1; transform:translateX(-50%) translateY(0); }
 
-/* Manual refresh control inline */
+
 .conn-ctrl{ margin-left:10px; align-self:flex-start; }
 .conn-ctrl.spinning svg{ animation:spin 1s linear infinite; }
 @keyframes spin{ to{ transform:rotate(360deg) } }
 
-/* Reduced motion */
 @media (prefers-reduced-motion:reduce){
   .conn-slot{ animation:none }
   .conn-pill, .conn-item .tip{ transition:none }
   .conn-ctrl.spinning svg{ animation:none }
 }
-/* Pairs board: kill legacy DnD cursor/animations and restore tooltips */
+
+/* Pairs board */
 #pairs_list .pair-card { cursor: default !important; }
 #pairs_list .pair-card.dragging { opacity: 1 !important; transform: none !important; animation: none !important; }
 #pairs_list .ord-badge { cursor: default !important; }
-
-/* Make feature beads feel hoverable and ensure pointer events */
 #pairs_list .feat-beads .bead { cursor: help; pointer-events: auto; }
 
 /* Busy + input error */
@@ -4283,7 +4215,6 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 /* anchor */
 #ops-card { position: relative; }
 
-/* lift the header content down so pills + refresh can live above it */
 .ops-header { padding-top: 44px; } /* tweak to taste */
 
 /* top-right placement (above the progress bar) */
@@ -4306,7 +4237,7 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
   margin-left: 0 !important;
 }
 
-/* neutralize any older rules that push badges left */
+
 .ops-header .badges, #conn-badges.badges { margin-left: 0 !important; }
 
 /* Hide sticky Save while About is open */
@@ -4319,7 +4250,7 @@ main.single #ops-card.card { padding-bottom: 120px !important; }
 /* When a modal is open we already hide the save bar; shrink padding */
 body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important; }
 
-/* --- Sync rail fallback (keeps bar visible even if JS-injected styles are late) --- */
+/* Sync progress bar fallback*/
 #ux-progress { margin-top: 12px; position: relative; z-index: 1; }
 #ux-progress .ux-rail {
   position: relative;
@@ -4347,8 +4278,8 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   transform: translateX(-100%);
   animation: shimmer 1.6s linear infinite;
 }
-/* Maintenance modal: tracker options layout */
 
+/* Maintenance modal: tracker options layout */
 .cw-maint .action-row {
   display: flex;
   align-items: flex-start;
@@ -4361,7 +4292,6 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   min-width: 0;
 }
 
-/* two compact lines with checkboxes */
 .cw-maint .action-options {
   margin-top: 10px;
   display: flex;
@@ -4373,8 +4303,6 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   display: flex;
   align-items: center;
   gap: 8px;
-
-  /* override global label styling */
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
@@ -4406,7 +4334,6 @@ body.cx-modal-open main.single #ops-card.card { padding-bottom: 48px !important;
   z-index: 2000;
 }
 
-/* hidden state */
 .cw-snap-picker.cw-snap-hidden {
   display: none;
 }

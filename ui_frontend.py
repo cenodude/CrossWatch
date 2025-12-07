@@ -615,16 +615,50 @@ document.addEventListener("settings-collect", () => refreshAuthDots(true), true)
 document.addEventListener("tab-changed", () => refreshAuthDots(false), true);
 
 // Connection pill
-function makeConn({name,connected,vip,detail}){
-  const w=document.createElement('div'); w.className='conn-item';
-  const p=document.createElement('div'); p.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;
-  p.role='status'; p.ariaLabel=`${name} ${connected?'Connected':'Disconnected'}`;
-  if(detail) p.title=detail;
-  if(vip){const s=document.createElement('span'); s.className='conn-slot'; s.innerHTML=CROWN; p.appendChild(s);}
-  const t=document.createElement('span'); t.className='conn-text'; t.textContent=`${name} ${connected?'Connected':'Disconnected'}`;
-  p.appendChild(t); w.appendChild(p);
-  return w;
+function makeConn({ name, connected, vip, detail, key }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'conn-item';
+
+  const pill = document.createElement('div');
+  pill.className = `conn-pill ${connected ? 'ok' : 'no'}${vip ? ' has-vip' : ''}`;
+
+  const prov = String(key || name || '').toUpperCase();
+  if (prov) pill.dataset.prov = prov;
+
+  pill.role = 'status';
+  pill.ariaLabel = `${name} ${connected ? 'connected' : 'disconnected'}`;
+  if (detail) pill.title = detail;
+
+  const brand = document.createElement('div');
+  brand.className = 'conn-brand';
+
+  const logo = document.createElement('span');
+  logo.className = 'conn-logo';
+  brand.appendChild(logo);
+
+  if (vip) {
+    const crown = document.createElement('span');
+    crown.className = 'conn-slot';
+    crown.innerHTML = CROWN;
+    brand.appendChild(crown);
+  }
+
+  const label = document.createElement('span');
+  label.className = 'conn-text';
+  label.textContent = name;
+
+  const dot = document.createElement('span');
+  dot.className = `dot ${connected ? 'ok' : 'no'}`;
+  dot.setAttribute('aria-hidden', 'true');
+
+  pill.appendChild(brand);
+  pill.appendChild(label);
+  pill.appendChild(dot);
+
+  wrap.appendChild(pill);
+  return wrap;
 }
+
 function titleCase(k){k=String(k||'');return k? (k[0]+k.slice(1).toLowerCase()) : k;}
 
 // refresh button fixup
@@ -656,8 +690,8 @@ function render(payload){
 
   host.classList.add('vip-badges');
 
-  // layout: max 4 per row
-  const MAX_PER_ROW = 4;
+  // layout: max 5 per row
+  const MAX_PER_ROW = 5;
   host.style.display = 'grid';
   host.style.gridTemplateColumns = `repeat(${MAX_PER_ROW}, max-content)`;
   host.style.columnGap = '8px';

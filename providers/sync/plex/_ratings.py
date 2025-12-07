@@ -111,15 +111,19 @@ def _norm_rating(v: Any) -> int | None:
         f = float(v)
     except Exception:
         return None
-    if 0 <= f <= 5:
-        f = round(f * 2)
+
+    if 0 < f <= 1:
+        f *= 10.0
+
     i = int(round(f))
-    if 1 <= i <= 10:
-        return i
+
+    if i < 0:
+        return None
     if i == 0:
         return 0
-    return None
-
+    if i > 10:
+        i = 10
+    return i
 
 def _has_ext_ids(m: Mapping[str, Any]) -> bool:
     ids = (m.get("ids") if isinstance(m, Mapping) else None) or {}
