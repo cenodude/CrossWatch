@@ -279,6 +279,9 @@ def build_index(
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("ratings") if callable(prog_mk) else None
 
+    out: dict[str, dict[str, Any]] = {}
+    thaw: set[str] = set()
+
     if since_iso is None:
         acts, _rate = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
         if isinstance(acts, Mapping):
@@ -292,18 +295,24 @@ def build_index(
                 acts,
                 (("shows", "rated"), ("ratings", "shows"), ("shows", "all")),
             )
-            if (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s):
-                _log(f"activities unchanged; ratings noop (m={lm} s={ls})")
+            unchanged = (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s)
+            if unchanged:
+                _log(f"activities unchanged; ratings from shadow (m={lm} s={ls})")
+                _rshadow_merge_into(out, thaw)
                 if prog:
                     try:
-                        prog.done(ok=True, total=0)
+                        prog.done(ok=True, total=len(out))
                     except Exception:
                         pass
-                return {}
+                _unfreeze_if_present(thaw)
+                try:
+                    _rshadow_put_all(out.values())
+                except Exception as exc:
+                    _log(f"shadow.put index skipped: {exc}")
+                _log(f"index size: {len(out)} (shadow)")
+                return out
 
     hdrs = _headers(adapter, force_refresh=True)
-    out: dict[str, dict[str, Any]] = {}
-    thaw: set[str] = set()
 
     df_movies = coalesce_date_from("ratings:movies", cfg_date_from=since_iso)
     df_shows = coalesce_date_from("ratings:shows", cfg_date_from=since_iso)
@@ -418,7 +427,6 @@ def build_index(
 
     _log(f"index size: {len(out)}")
     return out
-
 
 def _movie_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = _ids_of(it)
