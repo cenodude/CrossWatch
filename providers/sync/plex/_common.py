@@ -3,494 +3,1169 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 import os
 import re
+import time
+import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import requests
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
-
-__all__ = [
-    "DISCOVER",
-    "METADATA",
-    "CLIENT_ID",
-    "configure_plex_context",
-    "plex_headers",
-    "normalize",
-    "key_of",
-    "candidate_guids_from_ids",
-    "section_find_by_guid",
-    "meta_guids",
-    "minimal_from_history_row",
-    "server_find_rating_key_by_guid",
-]
+try:
+    from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
+except ImportError:  # flat tests
+    from _id_map import canonical_key, minimal as id_minimal, ids_from_guid  # type: ignore
 
 _PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None}
 
 
-def configure_plex_context(baseurl: str, token: str) -> None:
-    _PLEX_CTX["baseurl"] = (baseurl or "").rstrip("/")
+def configure_plex_context(*, baseurl: str | None, token: str | None) -> None:
+    _PLEX_CTX["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
     _PLEX_CTX["token"] = token or None
 
 
 DISCOVER = "https://discover.provider.plex.tv"
+METADATA = "https://metadata.provider.plex.tv"
 
-METADATA: dict[str, dict[str, Any]] = {
-    "plex": {
-        "ids": ("plex",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("plex://",),
-    },
-    "imdb": {
-        "ids": ("imdb",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("imdb://", "com.plexapp.agents.imdb://", "com.plexapp.agents.none://"),
-    },
-    "tmdb": {
-        "ids": ("tmdb",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("tmdb://", "com.plexapp.agents.themoviedb://"),
-    },
-    "tvdb": {
-        "ids": ("tvdb",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("tvdb://", "com.plexapp.agents.thetvdb://"),
-    },
-    "tvmaze": {
-        "ids": ("tvmaze",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("tvmaze://",),
-    },
-    "anidb": {
-        "ids": ("anidb",),
-        "guid_fields": ("guid",),
-        "guid_patterns": ("anidb://",),
-    },
-}
-
-CLIENT_ID = f"crosswatch-{uuid.uuid4().hex[:8]}"
-
-
-def _env(name: str, default: str | None = None) -> str | None:
-    v = os.environ.get(name)
-    return v if v is not None else default
+CLIENT_ID = (
+    os.environ.get("CW_PLEX_CID")
+    or os.environ.get("PLEX_CLIENT_IDENTIFIER")
+    or str(uuid.uuid4())
+)
 
 
 def _log(msg: str) -> None:
-    if _env("CW_DEBUG") or _env("CW_PLEX_DEBUG"):
-        print(f"[PLEX] {msg}")
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        print(f"[PLEX:common] {msg}")
 
 
-def plex_headers(extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    token = _PLEX_CTX.get("token")
-    ua = _env("CW_UA", "CrossWatch/1.0 (Plex)")
-    headers: dict[str, str] = {
-        "Accept": "application/json",
-        "User-Agent": ua or "CrossWatch/1.0 (Plex)",
+def _emit(evt: dict[str, Any]) -> None:
+    try:
+        feature = str(evt.get("feature") or "common")
+        head = []
+        if "event" in evt:
+            head.append(f"event={evt['event']}")
+        if "action" in evt:
+            head.append(f"action={evt['action']}")
+        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
+        line = " ".join(head + tail)
+        print(f"[PLEX:{feature}] {line}", flush=True)
+    except Exception:
+        pass
+
+
+def plex_headers(token: str) -> dict[str, str]:
+    return {
         "X-Plex-Product": "CrossWatch",
-        "X-Plex-Version": "1.0",
+        "X-Plex-Platform": "CrossWatch",
+        "X-Plex-Version": "3.1.0",
         "X-Plex-Client-Identifier": CLIENT_ID,
+        "X-Plex-Token": token,
+        "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",
     }
-    if token:
-        headers["X-Plex-Token"] = token
-    if extra:
-        headers.update({str(k): str(v) for k, v in extra.items()})
-    return headers
 
 
-def _xml_to_container(text: str) -> dict[str, Any]:
-    try:
-        root = ET.fromstring(text or "")
-    except Exception:
-        return {}
-    out: dict[str, Any] = {}
-    out.update(root.attrib or {})
-    children: list[dict[str, Any]] = []
-    for child in root:
-        item: dict[str, Any] = {}
-        item.update(child.attrib or {})
-        item["tag"] = child.tag
-        children.append(item)
-    out["items"] = children
-    return out
-
-
-def _xml_to_dict(resp: requests.Response) -> dict[str, Any]:
-    try:
-        txt = resp.text or ""
-        if not txt.strip():
-            return {}
-        return _xml_to_container(txt)
-    except Exception:
-        return {}
-
-
-def type_of(obj: Mapping[str, Any]) -> str:
-    t = str(obj.get("type") or obj.get("subtype") or "").strip().lower()
-    if t:
-        return t
-    media_type = str(obj.get("MediaType") or "").strip().lower()
-    if media_type in ("episode", "movie", "show", "artist", "track"):
-        return media_type
-    if "grandparentGuid" in obj and "parentGuid" in obj:
-        return "episode"
-    if "parentGuid" in obj and not obj.get("grandparentGuid"):
-        return "season"
-    if "grandparentRatingKey" in obj and "parentRatingKey" in obj:
-        return "episode"
-    if "parentRatingKey" in obj and not obj.get("grandparentRatingKey"):
-        return "season"
-    return "movie"
-
-
-def parse_int_or_none(v: Any) -> int | None:
+def _safe_int(v: Any) -> int | None:
     try:
         if v is None:
             return None
-        if isinstance(v, (int, float)):
-            return int(v)
         s = str(v).strip()
-        if not s:
-            return None
-        return int(s)
+        return int(s) if s else None
     except Exception:
         return None
 
 
-def ids_from_obj(obj: Mapping[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    guid = str(obj.get("guid") or "").strip()
-    if guid.startswith("plex://"):
-        out["plex"] = guid.replace("plex://", "", 1)
-    if "ratingKey" in obj:
-        out["plex_rating_key"] = str(obj.get("ratingKey"))
-    if "imdb://tt" in guid or "com.plexapp.agents.imdb://" in guid:
-        m = re.search(r"(tt\d+)", guid)
-        if m:
-            out["imdb"] = m.group(1)
-    if "tmdb://" in guid or "themoviedb://" in guid or "com.plexapp.agents.themoviedb://" in guid:
-        m = re.search(r"(\d+)", guid)
-        if m:
-            out["tmdb"] = m.group(1)
-    if "tvdb://" in guid or "thetvdb://" in guid or "com.plexapp.agents.thetvdb://" in guid:
-        m = re.search(r"(\d+)", guid)
-        if m:
-            out["tvdb"] = m.group(1)
-    if "tvmaze://" in guid:
-        m = re.search(r"(\d+)", guid)
-        if m:
-            out["tvmaze"] = m.group(1)
-    if "anidb://" in guid:
-        m = re.search(r"(\d+)", guid)
-        if m:
-            out["anidb"] = m.group(1)
-    return out
-
-
-def key_of(obj: Mapping[str, Any]) -> str:
-    ids = ids_from_obj(obj)
-    return canonical_key(ids)
-
-
-def _audio_tag(obj: Mapping[str, Any]) -> str | None:
-    media = obj.get("Media") or []
-    if not isinstance(media, list):
+def _as_base_url(srv: Any) -> str | None:
+    if not srv:
         return None
-    for m in media:
-        if not isinstance(m, Mapping):
-            continue
-        parts = m.get("Part") or []
-        if isinstance(parts, Mapping):
-            parts = [parts]
-        for p in parts:
-            if not isinstance(p, Mapping):
-                continue
-            streams = p.get("Stream") or []
-            if isinstance(streams, Mapping):
-                streams = [streams]
-            for s in streams:
-                if not isinstance(s, Mapping):
-                    continue
-                if s.get("streamType") == 2:
-                    lang = str(s.get("languageCode") or "").strip().lower()
-                    return lang or None
+    v = getattr(srv, "baseurl", None)
+    if isinstance(v, str) and v.startswith(("http://", "https://")):
+        return v.rstrip("/")
+    u = getattr(srv, "url", None)
+    if callable(u):
+        try:
+            u = u()
+        except Exception:
+            u = None
+    if isinstance(u, str) and u.startswith(("http://", "https://")):
+        return u.rstrip("/")
     return None
 
 
-def _normalize_discover_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    item = dict(row.get("metadata") or {})
-    ids = dict(row.get("ids") or {})
-    out: dict[str, Any] = {}
-    out["type"] = str(item.get("type") or "").strip().lower() or "movie"
-    out["title"] = item.get("title") or item.get("name") or row.get("title")
-    out["year"] = parse_int_or_none(item.get("year") or item.get("releaseYear") or row.get("year"))
-    out["guid"] = item.get("guid") or ""
-    out["ratingKey"] = item.get("ratingKey") or None
-    for k in ("imdb", "tmdb", "tvdb", "tvmaze", "anidb"):
-        if k in ids and ids.get(k):
-            out[k] = str(ids[k])
-    return out
+def type_of(obj: Any) -> str:
+    t = (getattr(obj, "type", None) or "").lower()
+    return t if t in ("movie", "show", "season", "episode") else "movie"
 
 
-def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
-    if "metadataType" in obj and "MediaContainer" in obj:
+def ids_from_obj(obj: Any) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    rk = getattr(obj, "ratingKey", None)
+    if rk is not None:
+        ids["plex"] = str(rk)
+    g = getattr(obj, "guid", None)
+    if g:
+        ids.update(ids_from_guid(str(g)))
+    for gg in (getattr(obj, "guids", []) or []):
+        val = getattr(gg, "id", None)
+        if val:
+            ids.update(ids_from_guid(str(val)))
+    return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
+
+
+def show_ids_hint(obj: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
+    gp = getattr(obj, "grandparentGuid", None)
+    if gp:
+        out.update(ids_from_guid(str(gp)))
+    gp_rk = getattr(obj, "grandparentRatingKey", None)
+    if gp_rk:
+        out["plex"] = str(gp_rk)
+    return {k: v for k, v in out.items() if v}
+
+
+def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None:
+    base = _as_base_url(srv)
+    tok = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    ses = getattr(srv, "_session", None)
+    if not (base and ses):
+        return None
+    hdrs = dict(getattr(ses, "headers", {}) or {})
+    hdrs.update(plex_headers(tok))
+    hdrs["Accept"] = "application/json"
+    for g in [x for x in (guids or []) if x]:
         try:
-            items = obj["MediaContainer"].get("Metadata") or []
-            if isinstance(items, Mapping):
-                items = [items]
-            obj = items[0] if items else {}
+            r = ses.get(f"{base}/library/all", params={"guid": g}, headers=hdrs, timeout=8)
+            if not r.ok:
+                continue
+            j = r.json() if r.headers.get("Content-Type", "").startswith("application/json") else {}
+            md = (j.get("MediaContainer", {}) or {}).get("Metadata") or []
+            if md and isinstance(md, list):
+                rk = md[0].get("ratingKey") or md[0].get("ratingkey")
+                if rk:
+                    return str(rk)
         except Exception:
             pass
-    t = type_of(obj)
-    out: dict[str, Any] = {}
-    out["type"] = t
-    out["title"] = obj.get("title") or obj.get("grandparentTitle") or obj.get("parentTitle")
-    out["year"] = parse_int_or_none(obj.get("year"))
-    out["guid"] = obj.get("guid") or obj.get("grandparentGuid") or obj.get("parentGuid")
-    out["ratingKey"] = obj.get("ratingKey") or obj.get("grandparentRatingKey") or obj.get("parentRatingKey")
-    out["audio_language"] = _audio_tag(obj)
-    ids = ids_from_obj(obj)
-    out.update(ids)
-    hydrate_external_ids(out)
-    return out
+    return None
 
 
-def candidate_key(obj: Mapping[str, Any]) -> str:
-    return canonical_key(ids_from_obj(obj))
+_FBGUID_MEMO: dict[str, Any] = {}  # key -> dict (success) or "__NOHIT__"
+_FBGUID_NOHIT = "__NOHIT__"
+_FBGUID_CACHE_PATH = "/config/.cw_state/plex_fallback_memo.json"
 
 
-_GUID_CACHE: dict[str, dict[str, Any]] = {}
+def _fb_key_from_row(row: Any) -> str:
+    def g(obj: Any, *names: str) -> str:
+        for n in names:
+            v = getattr(obj, n, None)
+            if v:
+                return str(v).strip().lower()
+        if isinstance(obj, dict):
+            for n in names:
+                v = obj.get(n)
+                if v:
+                    return str(v).strip().lower()
+        return ""
+
+    t = g(row, "type")
+    g0 = g(row, "guid")
+    gp = g(row, "parentGuid")
+    gg = g(row, "grandparentGuid")
+    gprk = g(row, "grandparentRatingKey")
+    if not t and isinstance(row, dict):
+        t = str(row.get("type", "")).lower()
+    if not g0 and isinstance(row, dict):
+        g0 = str(row.get("guid", "")).lower()
+    if not gp and isinstance(row, dict):
+        gp = str(row.get("parentGuid", "")).lower()
+    if not gg and isinstance(row, dict):
+        gg = str(row.get("grandparentGuid", "")).lower()
+    if isinstance(row, dict):
+        title = str(row.get("grandparentTitle") or row.get("title") or "").strip().lower()
+        year = row.get("year")
+    else:
+        title = (getattr(row, "grandparentTitle", None) or getattr(row, "title", None) or "")
+        title = str(title).strip().lower()
+        year = getattr(row, "year", None)
+    try:
+        yv = _year_from_any(year)
+        ys = str(yv or "")
+    except Exception:
+        ys = ""
+    if t == "episode":
+        s = g(row, "parentIndex")
+        e = g(row, "index")
+        show_id = gprk or gg or gp or g0 or ""
+        parts = ["k2", "ep", show_id, f"s{s}" if s else "", f"e{e}" if e else ""]
+        if not show_id:
+            parts += [title, ys]
+        return "|".join([p for p in parts if p])
+    parts = ["k2", (t or "item"), g0, title, ys]
+    return "|".join([p for p in parts if p])
+
+
+def _fb_cache_load() -> dict[str, Any]:
+    if _FBGUID_MEMO:
+        return _FBGUID_MEMO
+    try:
+        if os.path.exists(_FBGUID_CACHE_PATH):
+            with open(_FBGUID_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+                if isinstance(data, dict):
+                    _FBGUID_MEMO.update(data)
+    except Exception:
+        pass
+    return _FBGUID_MEMO
+
+
+def _fb_cache_save() -> None:
+    try:
+        os.makedirs(os.path.dirname(_FBGUID_CACHE_PATH), exist_ok=True)
+        tmp = _FBGUID_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_FBGUID_MEMO, f, ensure_ascii=False, indent=0, separators=(",", ":"))
+        os.replace(tmp, _FBGUID_CACHE_PATH)
+    except Exception:
+        pass
+
+
+_SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
+    rk = getattr(obj, "grandparentRatingKey", None)
+    if not rk:
+        return {}
+    rk = str(rk)
+    if rk in _SHOW_PMS_GUID_CACHE:
+        return _SHOW_PMS_GUID_CACHE[rk]
+    srv = getattr(obj, "_server", None)
+    base = _as_base_url(srv) or _PLEX_CTX["baseurl"]
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or _PLEX_CTX["token"]
+    if not base or not token:
+        _SHOW_PMS_GUID_CACHE[rk] = {}
+        return {}
+    url = f"{base}/library/metadata/{rk}?includeGuids=1"
+    try:
+        r = requests.get(
+            url,
+            headers={
+                "X-Plex-Token": token,
+                "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",
+            },
+            timeout=8,
+        )
+        ids: dict[str, str] = {}
+        if r.ok:
+            ctype = (r.headers.get("content-type") or "").lower()
+            if "application/json" in ctype:
+                data = r.json()
+                mc = data.get("MediaContainer") or data
+                md = mc.get("Metadata") or []
+                if md and isinstance(md, list):
+                    for gg in md[0].get("Guid") or []:
+                        gid = gg.get("id")
+                        if gid:
+                            ids.update(ids_from_guid(str(gid)))
+            else:
+                cont = _xml_to_container(r.text or "")
+                mc = cont.get("MediaContainer") or {}
+                md = mc.get("Metadata") or []
+                if md and isinstance(md, list):
+                    for gg in md[0].get("Guid") or []:
+                        gid = gg.get("id")
+                        if gid:
+                            ids.update(ids_from_guid(str(gid)))
+        ids = {k: v for k, v in ids.items() if v}
+        _SHOW_PMS_GUID_CACHE[rk] = ids
+        return ids
+    except Exception as e:
+        _log(f"hydrate show via PMS rk={rk} error: {e}")
+        _SHOW_PMS_GUID_CACHE[rk] = {}
+        return {}
+
+
+_GUID_CACHE: dict[str, dict[str, str]] = {}
 _HYDRATE_404: set[str] = set()
 
 
-def hydrate_external_ids(obj: dict[str, Any]) -> None:
-    key = candidate_key(obj)
-    if not key or key in _HYDRATE_404:
-        return
-    cached = _GUID_CACHE.get(key)
-    if cached:
-        obj.update(cached)
-        return
-    guid = obj.get("guid")
-    if not guid:
-        return
-    plex_id = obj.get("plex") or ids_from_guid(str(guid)).get("plex")
-    if not plex_id:
-        return
-    baseurl = _PLEX_CTX.get("baseurl")
-    token = _PLEX_CTX.get("token")
-    if not baseurl or not token:
-        return
-    url = f"{baseurl}/library/metadata/{plex_id}"
+def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
+    root = ET.fromstring(xml_text)
+    mc = root if root.tag.endswith("MediaContainer") else root.find(".//MediaContainer")
+    if mc is None:
+        return {"MediaContainer": {"Metadata": []}}
+    rows: list[Mapping[str, Any]] = []
+    for md in mc.findall("./Metadata"):
+        a = md.attrib
+        row: dict[str, Any] = {
+            "type": a.get("type"),
+            "title": a.get("title"),
+            "year": _safe_int(a.get("year")),
+            "guid": a.get("guid"),
+            "ratingKey": a.get("ratingKey"),
+            "grandparentGuid": a.get("grandparentGuid"),
+            "grandparentRatingKey": a.get("grandparentRatingKey"),
+            "grandparentTitle": a.get("grandparentTitle"),
+            "index": _safe_int(a.get("index")),
+            "parentIndex": _safe_int(a.get("parentIndex")),
+            "librarySectionID": _safe_int(
+                a.get("librarySectionID")
+                or a.get("sectionID")
+                or a.get("librarySectionId")
+                or a.get("sectionId")
+            ),
+            "Guid": [{"id": (g.attrib.get("id") or "")} for g in md.findall("./Guid") if g.attrib.get("id")],
+        }
+        rows.append(row)
+    return {"MediaContainer": {"Metadata": rows}}
+
+
+def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str, str]:
+    if not token or not rating_key:
+        return {}
+    rk = str(rating_key)
+    if rk in _GUID_CACHE:
+        return _GUID_CACHE[rk]
+    if rk in _HYDRATE_404:
+        return {}
+    url = f"{METADATA}/library/metadata/{rk}"
     try:
-        resp = requests.get(url, headers=plex_headers(), timeout=10)
-        if resp.status_code != 200:
-            if resp.status_code == 404:
-                _HYDRATE_404.add(key)
-            return
-        data = _xml_to_dict(resp)
-        items = (data.get("items") or []) if isinstance(data, Mapping) else []
-        if not items:
-            return
-        ids = ids_from_obj(items[0])
-        if not ids:
-            _HYDRATE_404.add(key)
-            return
-        _GUID_CACHE[key] = ids
-        obj.update(ids)
-    except Exception:
-        return
-
-
-def meta_guids(obj: Mapping[str, Any]) -> dict[str, Any]:
-    ids = ids_from_obj(obj)
-    hydrate_external_ids(ids)
-    return ids
-
-
-def _iso8601_any(v: Any) -> int | None:
-    if not v:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    try:
-        import datetime as dt
-
-        s2 = s.replace("Z", "+0000").split(".")[0]
-        return int(dt.datetime.strptime(s2, "%Y-%m-%dT%H:%M:%S%z").timestamp())
-    except Exception:
-        try:
-            import datetime as dt
-
-            return int(dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
-        except Exception:
-            return None
-
-
-def _watched_at_from_row(row: Mapping[str, Any]) -> int | None:
-    for key in ("viewedAt", "lastViewedAt", "lastViewedAtSimkl"):
-        v = row.get(key)
-        ts = _iso8601_any(v)
-        if ts:
-            return ts
-    return None
-
-
-def _build_minimal_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    ids = ids_from_obj(row)
-    hydrate_external_ids(ids)
-    if not ids:
-        return None
-    t = type_of(row)
-    year = parse_int_or_none(row.get("year"))
-    title = row.get("title") or row.get("grandparentTitle") or row.get("parentTitle")
-    watched_at = _watched_at_from_row(row)
-    item: dict[str, Any] = dict(row)
-    existing_ids = item.get("ids")
-    if isinstance(existing_ids, Mapping):
-        merged_ids = dict(existing_ids)
-        merged_ids.update(ids)
-        item["ids"] = merged_ids
-    else:
-        item["ids"] = dict(ids)
-    if t:
-        item["type"] = t
-    if title:
-        item["title"] = title
-    if year is not None:
-        item["year"] = year
-    if watched_at is not None:
-        item["watched_at"] = watched_at
-    return id_minimal(item)
-
-
-def minimal_from_history_row(row: Mapping[str, Any] | None, allow_discover: bool = False) -> dict[str, Any] | None:
-    if not isinstance(row, Mapping):
-        return None
-    try:
-        return _build_minimal_from_row(row)
+        r = requests.get(url, headers=plex_headers(token), timeout=10)
+        if r.status_code == 401:
+            raise RuntimeError("Unauthorized (bad Plex token)")
+        if not r.ok:
+            _log(f"hydrate {rk} -> {r.status_code}")
+            _emit({"feature": "common", "event": "hydrate", "action": "miss", "rk": rk, "status": r.status_code})
+            if r.status_code == 404:
+                _HYDRATE_404.add(rk)
+            _GUID_CACHE[rk] = {}
+            return {}
+        _emit({"feature": "common", "event": "hydrate", "action": "ok", "rk": rk})
+        ctype = (r.headers.get("content-type") or "").lower()
+        ids: dict[str, str] = {}
+        if "application/json" in ctype:
+            data = r.json()
+            mc = data.get("MediaContainer") or data
+            md = mc.get("Metadata") or []
+            if md and isinstance(md, list):
+                for gg in md[0].get("Guid") or []:
+                    gid = gg.get("id")
+                    if gid:
+                        ids.update(ids_from_guid(str(gid)))
+        else:
+            cont = _xml_to_container(r.text or "")
+            mc = cont.get("MediaContainer") or {}
+            md = mc.get("Metadata") or []
+            if md and isinstance(md, list):
+                for gg in md[0].get("Guid") or []:
+                    gid = gg.get("id")
+                    if gid:
+                        ids.update(ids_from_guid(str(gid)))
+        ids = {k: v for k, v in ids.items() if v}
+        _GUID_CACHE[rk] = ids
+        return ids
     except Exception as e:
-        _log(f"minimal_from_history_row: error: {e}")
-        if allow_discover:
-            return None
-        return None
+        _log(f"hydrate error rk={rk}: {e}")
+        _HYDRATE_404.add(rk)
+        _GUID_CACHE[rk] = {}
+        return {}
 
 
-def candidate_guids_from_ids(ids: Mapping[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    plex = ids.get("plex")
-    if plex:
-        out["plex://"] = plex
+def normalize(obj: Any) -> dict[str, Any]:
+    t = type_of(obj)
+    ids = ids_from_obj(obj)
+    base: dict[str, Any] = {
+        "type": t,
+        "title": getattr(obj, "title", None),
+        "year": getattr(obj, "year", None),
+        "ids": ids,
+        "guid": getattr(obj, "guid", None),
+    }
+    lid = _safe_int(
+        getattr(obj, "librarySectionID", None)
+        or getattr(obj, "sectionID", None)
+        or getattr(obj, "librarySectionId", None)
+        or getattr(obj, "sectionId", None)
+    )
+    if lid is not None:
+        base["library_id"] = lid
+    if t in ("season", "episode"):
+        sid = show_ids_hint(obj)
+        if sid:
+            base["show_ids"] = sid
+
+        def has_ext(m: Any) -> bool:
+            return bool(isinstance(m, dict) and any(m.get(k) for k in ("imdb", "tmdb", "tvdb")))
+
+        if not has_ext(base.get("show_ids")):
+            extra = _hydrate_show_ids_from_pms(obj)
+            if extra:
+                base.setdefault("show_ids", {}).update(extra)
+        if not has_ext(base.get("show_ids")):
+            srv = getattr(obj, "_server", None)
+            token = getattr(srv, "_token", None) or getattr(srv, "token", None) or _PLEX_CTX["token"]
+            gp_rk = getattr(obj, "grandparentRatingKey", None)
+            if token and gp_rk:
+                extra2 = hydrate_external_ids(token, str(gp_rk))
+                if extra2:
+                    base.setdefault("show_ids", {}).update(extra2)
+    if t == "season":
+        base["season"] = _safe_int(getattr(obj, "index", None))
+    if t == "episode":
+        base["season"] = _safe_int(
+            getattr(obj, "seasonNumber", None) if hasattr(obj, "seasonNumber") else getattr(obj, "parentIndex", None)
+        )
+        base["episode"] = _safe_int(getattr(obj, "index", None))
+        base["series_title"] = getattr(obj, "grandparentTitle", None)
+    keep_show_ids = base.get("show_ids") if t in ("season", "episode") else None
+    res = id_minimal(base)
+    if keep_show_ids:
+        res["show_ids"] = keep_show_ids
+    if "library_id" in base:
+        res["library_id"] = base["library_id"]
+    return res
+
+
+def key_of(obj: Any) -> str:
+    return canonical_key(normalize(obj))
+
+
+def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    g = row.get("guid")
+    if g:
+        ids.update(ids_from_guid(str(g)))
+    for gg in row.get("Guid") or []:
+        try:
+            gid = gg.get("id") or gg.get("Id") or gg.get("ID")
+            if gid:
+                ids.update(ids_from_guid(str(gid)))
+        except Exception:
+            continue
+    rk = row.get("ratingKey")
+    if rk:
+        ids["plex"] = str(rk)
+    return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
+
+
+def rating_key_from_discover_row(row: Mapping[str, Any]) -> str | None:
+    rk = row.get("ratingKey")
+    return str(rk) if rk is not None else None
+
+
+def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) -> dict[str, Any]:
+    if token is None:
+        token = _PLEX_CTX["token"]
+    t = (row.get("type") or "movie").lower()
+    ids = ids_from_discover_row(row)
+    if not any(k in ids for k in ("imdb", "tmdb", "tvdb")) and token:
+        rk = row.get("ratingKey")
+        ids.update(hydrate_external_ids(token, str(rk) if rk else None))
+        ids = {k: v for k, v in ids.items() if v}
+    base: dict[str, Any] = {
+        "type": t,
+        "title": row.get("title"),
+        "year": row.get("year"),
+        "guid": row.get("guid"),
+        "ids": ids,
+    }
+    lid = (
+        row.get("library_id")
+        or row.get("librarySectionID")
+        or row.get("sectionID")
+        or row.get("librarySectionId")
+        or row.get("sectionId")
+    )
+    if lid is not None:
+        lid_i = _safe_int(lid)
+        if lid_i is not None:
+            base["library_id"] = lid_i
+    if t in ("season", "episode"):
+        gp = row.get("grandparentGuid")
+        gp_rk = row.get("grandparentRatingKey")
+        if gp:
+            base["show_ids"] = {k: v for k, v in ids_from_guid(str(gp)).items() if v}
+        if gp_rk:
+            base.setdefault("show_ids", {})
+            base["show_ids"]["plex"] = str(gp_rk)
+        if token and not any(base.get("show_ids", {}).get(k) for k in ("imdb", "tmdb", "tvdb")):
+            extra2 = hydrate_external_ids(token, str(gp_rk) if gp_rk else None)
+            if extra2:
+                base.setdefault("show_ids", {})
+                base["show_ids"].update(extra2)
+    if t == "season":
+        base["season"] = _safe_int(row.get("index"))
+    if t == "episode":
+        base["season"] = _safe_int(row.get("parentIndex"))
+        base["episode"] = _safe_int(row.get("index"))
+        base["series_title"] = row.get("grandparentTitle")
+    keep_show_ids = base.get("show_ids") if t in ("season", "episode") else None
+    res = id_minimal(base)
+    if keep_show_ids:
+        res["show_ids"] = keep_show_ids
+    if "library_id" in base:
+        res["library_id"] = base["library_id"]
+    return res
+
+
+def sort_guid_candidates(guids: list[str]) -> list[str]:
+    if not guids:
+        return []
+    pri: list[str] = []
+    rest = list(guids)
+
+    def pick(prefix: str, contains: Any | None = None) -> list[str]:
+        out = [g for g in rest if (g.startswith(prefix) if contains is None else contains(g))]
+        for g in out:
+            rest.remove(g)
+        return out
+
+    pri += pick("tmdb://")
+    pri += pick("imdb://")
+    pri += pick("tvdb://")
+    pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.themoviedb://") and "?lang=en" in g)
+    pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.themoviedb://") and "?lang=en-US" in g)
+    pri += pick("com.plexapp.agents.themoviedb://")
+    pri += pick("com.plexapp.agents.imdb://")
+    return pri + rest
+
+
+def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
+    ids = it.get("ids") or {}
+    ids = ids if isinstance(ids, dict) else {}
+    out: list[str] = []
+
+    def add(v: str | None) -> None:
+        if v and v not in out:
+            out.append(v)
+
     imdb = ids.get("imdb")
-    if imdb:
-        out["imdb://"] = imdb
     tmdb = ids.get("tmdb")
-    if tmdb:
-        out["tmdb://"] = tmdb
     tvdb = ids.get("tvdb")
+    if tmdb:
+        add(f"tmdb://{tmdb}")
+        add(f"themoviedb://{tmdb}")
+        add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en")
+        add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en-US")
+        add(f"com.plexapp.agents.themoviedb://{tmdb}")
+    if imdb:
+        add(f"imdb://{imdb}")
+        add(f"com.plexapp.agents.imdb://{imdb}")
     if tvdb:
-        out["tvdb://"] = tvdb
-    tvmaze = ids.get("tvmaze")
-    if tvmaze:
-        out["tvmaze://"] = tvmaze
-    anidb = ids.get("anidb")
-    if anidb:
-        out["anidb://"] = anidb
+        add(f"tvdb://{tvdb}")
+        add(f"com.plexapp.agents.thetvdb://{tvdb}")
+    g = it.get("guid")
+    if g:
+        add(str(g))
     return out
 
 
-def section_find_by_guid(
-    session: requests.Session,
-    *,
-    baseurl: str,
-    section_key: str,
-    ids: Mapping[str, Any],
-    try_discover: bool = True,
-) -> dict[str, Any] | None:
-    candidates = candidate_guids_from_ids(ids)
-    if not candidates:
-        return None
-    base = baseurl.rstrip("/")
-    token = _PLEX_CTX.get("token")
-    params: dict[str, Any] = {}
-    if token:
-        params["X-Plex-Token"] = token
-    for prefix, ident in candidates.items():
-        guid = f"{prefix}{ident}"
-        url = f"{base}/library/sections/{section_key}/all"
+def meta_guids(meta_obj: Any) -> list[str]:
+    vals: list[str] = []
+    try:
+        if getattr(meta_obj, "guid", None):
+            vals.append(str(meta_obj.guid))
+        for gg in getattr(meta_obj, "guids", []) or []:
+            gid = getattr(gg, "id", None)
+            if gid:
+                vals.append(str(gid))
+    except Exception:
+        pass
+    return vals
+
+
+def meta_idset(meta_obj: Any) -> set[tuple[str, str]]:
+    s: set[tuple[str, str]] = set()
+    try:
+        g = getattr(meta_obj, "guid", None)
+        if g:
+            for k, v in ids_from_guid(str(g)).items():
+                if k in ("imdb", "tmdb", "tvdb") and v:
+                    s.add((k, v))
+        for gg in getattr(meta_obj, "guids", []) or []:
+            gid = getattr(gg, "id", None)
+            if gid:
+                for k, v in ids_from_guid(str(gid)).items():
+                    if k in ("imdb", "tmdb", "tvdb") and v:
+                        s.add((k, v))
+    except Exception:
+        pass
+    return s
+
+
+def resolve_discover_metadata(acct: Any, it: Mapping[str, Any]) -> None:
+    return None
+
+
+def section_find_by_guid(sec: Any, candidates: Iterable[str]) -> Any | None:
+    for g in candidates or []:
         try:
-            resp = session.get(url, params={**params, "guid": guid}, timeout=10)
-            if resp.status_code != 200:
-                continue
-            data = _xml_to_dict(resp)
-            items = (data.get("items") or []) if isinstance(data, Mapping) else []
-            if not items:
-                continue
-            return items[0]
+            hits = sec.search(guid=g) or []
+            if hits:
+                return hits[0]
         except Exception:
             continue
-    if not try_discover:
-        return None
+    return None
+
+
+def _iso8601_any(v: Any) -> str | None:
     try:
-        payload = {"ids": dict(ids), "type": "movie"}
-        resp = requests.post(f"{DISCOVER}/library/metadata", json=payload, timeout=10)
-        if resp.status_code != 200:
+        if v is None:
             return None
-        data = resp.json()
-        meta = (data.get("MediaContainer") or {}).get("Metadata") or []
-        if isinstance(meta, Mapping):
-            meta = [meta]
-        if not meta:
+        s = str(v).strip()
+        if not s:
             return None
-        item = meta[0]
-        guid = item.get("guid")
-        if not guid:
-            return None
-        url = f"{base}/library/metadata/{item.get('ratingKey')}"
-        resp2 = session.get(url, params=params, timeout=10)
-        if resp2.status_code != 200:
-            return None
-        data2 = _xml_to_dict(resp2)
-        items2 = (data2.get("items") or []) if isinstance(data2, Mapping) else []
-        if not items2:
-            return None
-        return items2[0]
+        if s.isdigit():
+            ts = int(s)
+            if len(s) >= 13:
+                ts //= 1000
+            return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(ts))
+        if "T" in s:
+            return s if s.endswith("Z") else s + "Z"
+        return None
     except Exception:
         return None
 
 
-def server_find_rating_key_by_guid(
-    session: requests.Session,
-    *,
-    baseurl: str,
-    ids: Mapping[str, Any],
-) -> str | None:
-    base = baseurl.rstrip("/")
-    token = _PLEX_CTX.get("token")
-    params: dict[str, Any] = {}
-    if token:
-        params["X-Plex-Token"] = token
-    candidates = candidate_guids_from_ids(ids)
-    if not candidates:
+def _watched_at_from_row(row: Any) -> str | None:
+    v = _row_get(
+        row,
+        "viewedAt",
+        "viewed_at",
+        "lastViewedAt",
+        "last_viewed_at",
+        "watchedAt",
+        "watched_at",
+        "originallyWatchedAt",
+        "originally_watched_at",
+    )
+    return _iso8601_any(v)
+
+
+def _year_from_any(v: Any) -> int | None:
+    try:
+        if isinstance(v, int):
+            return v
+        s = str(v or "").strip()
+        if not s:
+            return None
+        if s.isdigit() and len(s) in (4, 8):
+            return int(s[:4])
+        return int(s[:4]) if len(s) >= 4 and s[:4].isdigit() else None
+    except Exception:
         return None
-    for prefix, ident in candidates.items():
-        guid = f"{prefix}{ident}"
-        url = f"{base}/library/all"
-        try:
-            resp = session.get(url, params={**params, "guid": guid}, timeout=10)
-            if resp.status_code != 200:
-                continue
-            data = _xml_to_dict(resp)
-            items = (data.get("items") or []) if isinstance(data, Mapping) else []
-            if not items:
-                continue
-            rk = items[0].get("ratingKey")
-            if rk:
-                return str(rk)
-        except Exception:
-            continue
+
+
+def _row_get(row: Any, *names: str) -> Any:
+    for n in names:
+        if isinstance(row, Mapping) and n in row:
+            return row.get(n)
+        if hasattr(row, n):
+            return getattr(row, n)
     return None
+
+
+def ids_from_history_row(row: Any) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    rk = _row_get(row, "ratingKey", "key")
+    if rk is not None:
+        ids["plex"] = str(rk)
+    for n in ("guid", "grandparentGuid", "parentGuid"):
+        g = _row_get(row, n)
+        if g:
+            ids.update(ids_from_guid(str(g)))
+    try:
+        gg = _row_get(row, "Guid") or []
+        if isinstance(gg, list):
+            for it in gg:
+                gid = (it.get("id") if isinstance(it, Mapping) else None) or getattr(it, "id", None)
+                if gid:
+                    ids.update(ids_from_guid(str(gid)))
+    except Exception:
+        pass
+    return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
+
+
+def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
+    try:
+        return any(str(ids.get(k) or "").strip() for k in ("imdb", "tmdb", "tvdb"))
+    except Exception:
+        return False
+
+
+def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> dict[str, Any]:
+    kind = str((_row_get(row, "type") or "movie")).lower()
+    is_ep = kind == "episode"
+    title = _row_get(row, "grandparentTitle") if is_ep else _row_get(row, "title") or _row_get(row, "originalTitle")
+    year = (
+        _row_get(row, "year")
+        or _row_get(row, "originallyAvailableAt")
+        or _row_get(row, "originally_available_at")
+        or _row_get(row, "grandparentYear")
+    )
+    base: dict[str, Any] = {
+        "type": "episode" if is_ep else "movie",
+        "title": title,
+        "year": _year_from_any(year),
+        "guid": _row_get(row, "guid") or _row_get(row, "grandparentGuid") or _row_get(row, "parentGuid"),
+        "ids": dict(ids or {}),
+    }
+    wa = _watched_at_from_row(row)
+    if wa:
+        base["watched_at"] = wa
+    if is_ep:
+        base["series_title"] = (
+            _row_get(row, "grandparentTitle") or _row_get(row, "title") or _row_get(row, "parentTitle")
+        )
+        base["season"] = _safe_int(_row_get(row, "parentIndex") or _row_get(row, "seasonNumber"))
+        base["episode"] = _safe_int(_row_get(row, "index"))
+        gp = _row_get(row, "grandparentGuid")
+        gp_rk = _row_get(row, "grandparentRatingKey")
+        sids: dict[str, Any] = {}
+        if gp:
+            sids.update({k: v for k, v in ids_from_guid(str(gp)).items() if v})
+        if gp_rk:
+            sids["plex"] = str(gp_rk)
+        if not sids and base.get("season") is not None and base.get("episode") is not None:
+            ext = {k: v for k, v in (base.get("ids") or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+            if ext:
+                sids.update(ext)
+        if sids:
+            base["show_ids"] = sids
+    res = id_minimal(base)
+    if "show_ids" in base:
+        res["show_ids"] = base["show_ids"]
+    if "watched_at" in base:
+        res["watched_at"] = base["watched_at"]
+    if is_ep:
+        if base.get("season") is not None:
+            res["season"] = base["season"]
+        if base.get("episode") is not None:
+            res["episode"] = base["episode"]
+        if base.get("series_title"):
+            res["series_title"] = base["series_title"]
+    return res
+
+
+def _discover_search_title(
+    token: str | None,
+    title: str,
+    kind: str,
+    year: int | None,
+    limit: int = 15,
+    season: int | None = None,
+    episode: int | None = None,
+) -> Mapping[str, Any] | None:
+    try:
+        if not title or not token:
+            return None
+        num_to_word = {
+            "1": "one",
+            "2": "two",
+            "3": "three",
+            "4": "four",
+            "5": "five",
+            "6": "six",
+            "7": "seven",
+            "8": "eight",
+            "9": "nine",
+        }
+        word_to_num = {v: k for k, v in num_to_word.items()}
+
+        def _strip_accents(s: str) -> str:
+            return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+        def _remove_parens(s: str) -> str:
+            return re.sub(r"\([^)]*\)", " ", s)
+
+        def _fold(s: str) -> str:
+            s = _remove_parens(s)
+            s = _strip_accents(s)
+            s = re.sub(r"[^\w\s&]", " ", s)
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
+        def _to_words_1_9(s: str) -> str:
+            return re.sub(
+                r"\b([1-9])\b",
+                lambda m: num_to_word.get(m.group(1), m.group(1)),
+                s,
+                flags=re.IGNORECASE,
+            )
+
+        def _to_digits_1_9(s: str) -> str:
+            return re.sub(
+                r"\b(one|two|three|four|five|six|seven|eight|nine)\b",
+                lambda m: word_to_num.get(m.group(0).lower(), m.group(0)),
+                s,
+                flags=re.IGNORECASE,
+            )
+
+        def _and_amp_variants(s: str) -> list[str]:
+            vs = [s]
+            s1 = re.sub(r"\s*&\s*", " and ", s)
+            if s1 != s:
+                vs.append(re.sub(r"\s+", " ", s1).strip())
+            s2 = re.sub(r"\band\b", "&", s, flags=re.IGNORECASE)
+            if s2 != s:
+                vs.append(re.sub(r"\s+", " ", s2).strip())
+            return vs
+
+        def _digit_word_variants(s: str) -> list[str]:
+            vs = [s]
+            sw = _to_words_1_9(s)
+            if sw != s:
+                vs.append(sw)
+            sd = _to_digits_1_9(s)
+            if sd != s:
+                vs.append(sd)
+            return list(dict.fromkeys(vs))
+
+        def _variants(s: str) -> list[str]:
+            base = (s or "").strip()
+            pool = [base]
+            no_parens = _remove_parens(base)
+            if no_parens and no_parens != base:
+                pool.append(re.sub(r"\s+", " ", no_parens).strip())
+            pool = sum([_and_amp_variants(x) for x in pool], [])
+            pool = sum([_digit_word_variants(x) for x in pool], [])
+            folded = [_fold(x) for x in pool]
+            pool += folded
+            cut: list[str] = []
+            for x in pool:
+                p = re.split(r"[:\-–(]", x, 1)[0].strip()
+                if p and p not in pool:
+                    cut.append(p)
+            pool += cut
+            if year:
+                for x in list(pool):
+                    if len(x) < 64:
+                        pool.append(f"{x} {year}")
+            out: list[str] = []
+            seen: set[str] = set()
+            for x in pool:
+                y = re.sub(r"\s+", " ", x).strip()
+                if y and y not in seen:
+                    seen.add(y)
+                    out.append(y)
+            return out
+
+        def _collect_rows(j: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+            rows: list[Mapping[str, Any]] = []
+            mc = j.get("MediaContainer") or {}
+            for bucket in mc.get("SearchResults") or []:
+                for item in bucket.get("SearchResult") or []:
+                    md = item.get("Metadata")
+                    if isinstance(md, Mapping):
+                        rows.append(md)
+                    elif isinstance(md, list):
+                        rows.extend([x for x in md if isinstance(x, Mapping)])
+            for hub in mc.get("Hub") or []:
+                for md in hub.get("Metadata") or []:
+                    if isinstance(md, Mapping):
+                        rows.append(md)
+            mds = mc.get("Metadata")
+            if isinstance(mds, list):
+                rows.extend([x for x in mds if isinstance(x, Mapping)])
+            elif isinstance(mds, Mapping):
+                rows.append(mds)
+            return rows
+
+        def _hdrs() -> dict[str, str]:
+            lang = os.environ.get("CW_PLEX_LANG") or "en-US,en;q=0.9"
+            h = dict(plex_headers(token))
+            h["Accept"] = "application/json"
+            h["Accept-Language"] = lang
+            h.setdefault("X-Plex-Product", "Plex Web")
+            h.setdefault("X-Plex-Platform", "Web")
+            return h
+
+        def _search_v2_all(q: str, types: list[str]) -> list[Mapping[str, Any]]:
+            rows: list[Mapping[str, Any]] = []
+            base_params = {
+                "query": q,
+                "limit": max(50, int(limit)),
+                "searchProviders": "discover",
+                "includeMetadata": 1,
+                "includeExternalMedia": 1,
+            }
+            combos = [t for t in types if t] + [""]
+            for st in combos:
+                params = dict(base_params)
+                if st:
+                    params["searchTypes"] = st
+                try:
+                    r = requests.get(
+                        f"{DISCOVER}/library/search",
+                        headers=_hdrs(),
+                        params=params,
+                        timeout=7,
+                    )
+                    if r.ok and "json" in (r.headers.get("content-type", "").lower()):
+                        rows2 = _collect_rows(r.json())
+                        if rows2:
+                            rows.extend(rows2)
+                except Exception:
+                    continue
+            return rows
+
+        def _search_v1(q: str) -> list[Mapping[str, Any]]:
+            try:
+                params = {"query": q, "limit": max(50, int(limit)), "includeMeta": 1}
+                r = requests.get(
+                    f"{DISCOVER}/hubs/search",
+                    headers=_hdrs(),
+                    params=params,
+                    timeout=7,
+                )
+                if r.ok and "json" in (r.headers.get("content-type", "").lower()):
+                    return _collect_rows(r.json())
+            except Exception:
+                pass
+            return []
+
+        def _search_metadata_provider(q: str) -> list[Mapping[str, Any]]:
+            try:
+                r = requests.get(
+                    f"{METADATA}/library/search",
+                    headers=_hdrs(),
+                    params={"query": q, "limit": max(50, int(limit))},
+                    timeout=7,
+                )
+                if r.ok and "json" in (r.headers.get("content-type", "").lower()):
+                    return _collect_rows(r.json())
+            except Exception:
+                pass
+            return []
+
+        def _search_all(q: str) -> list[Mapping[str, Any]]:
+            if kind == "movie":
+                types = ["movies", "movie"]
+                rows = _search_v2_all(q, types)
+                if rows:
+                    return rows
+                rows = _search_v1(q)
+                if rows:
+                    return rows
+                return _search_metadata_provider(q)
+            types = ["episodes", "episode", "shows", "show", "series", "tv"]
+            rows = _search_v2_all(q, types)
+            if rows:
+                return rows
+            rows = _search_v1(q)
+            if rows:
+                return rows
+            return _search_metadata_provider(q)
+
+        def _titles_key(a: str) -> str:
+            s = _remove_parens(a)
+            s = _fold(s)
+            s = re.sub(r"\s*&\s*", " and ", s, flags=re.IGNORECASE)
+            s = _to_words_1_9(s)
+            s = re.sub(r"\W+", " ", s).strip().lower()
+            return re.sub(r"\s+", " ", s)
+
+        def _titles_equal(a: str, b: str) -> bool:
+            return _titles_key(a) == _titles_key(b)
+
+        def _score(md: Mapping[str, Any]) -> int:
+            s = 0
+            t = (md.get("type") or "").lower()
+            if kind == "episode":
+                if t == "episode":
+                    s += 8
+                elif t in ("show", "series"):
+                    s += 6
+            else:
+                if t == "movie":
+                    s += 8
+            mt = (md.get("grandparentTitle") if t == "episode" else (md.get("title") or "")) or ""
+            if _titles_equal(mt, title):
+                s += 8
+            y = _year_from_any(md.get("year"))
+            if kind == "movie":
+                if year and y and abs(y - year) <= 1:
+                    s += 2
+            elif kind == "episode" and t == "episode":
+                if year and y and abs(y - year) <= 1:
+                    s += 2
+            if kind == "episode" and t == "episode":
+                si = md.get("parentIndex")
+                ei = md.get("index")
+                if season is not None and si == season:
+                    s += 2
+                if episode is not None and ei == episode:
+                    s += 2
+            return s
+
+        best: Mapping[str, Any] | None = None
+        best_sc = -1
+        best_t: str | None = None
+        tried: set[str] = set()
+        for q in _variants(title):
+            if q in tried:
+                continue
+            tried.add(q)
+            rows = _search_all(q)
+            for md in rows:
+                sc = _score(md)
+                if sc > best_sc:
+                    best = md
+                    best_sc = sc
+                    best_t = (md.get("type") or "").lower()
+            if best_sc >= (12 if kind == "movie" else 12):
+                break
+        if not best:
+            return None
+        mt = (best.get("grandparentTitle") if best_t == "episode" else (best.get("title") or "")) or ""
+        if not _titles_equal(mt, title):
+            return None
+        if year is not None:
+            yb = _year_from_any(best.get("year"))
+            if kind == "movie":
+                if yb is not None and abs(yb - year) > 1:
+                    return None
+            elif kind == "episode" and best_t == "episode":
+                if yb is not None and abs(yb - year) > 1:
+                    return None
+        return best
+    except Exception:
+        return None
+
+
+def minimal_from_history_row(
+    row: Any,
+    *,
+    token: str | None = None,
+    allow_discover: bool = False,
+) -> dict[str, Any] | None:
+    key = _fb_key_from_row(row)
+    memo = _fb_cache_load()
+    hit = memo.get(key, None)
+    if hit == _FBGUID_NOHIT:
+        return None
+    if isinstance(hit, dict) and hit:
+        return dict(hit)
+    ids = ids_from_history_row(row)
+    kind = str((_row_get(row, "type") or "movie")).lower()
+    m = _build_minimal_from_row(row, ids)
+    if not _has_ext_ids(m.get("ids", {})):
+        rk = m.get("ids", {}).get("plex")
+        tok = token or _PLEX_CTX["token"]
+        if rk and tok:
+            _emit(
+                {
+                    "feature": "common",
+                    "event": "fallback_guid",
+                    "action": "enrich_by_rk_try",
+                    "rk": str(rk),
+                }
+            )
+            extra = hydrate_external_ids(tok, str(rk))
+            _emit(
+                {
+                    "feature": "common",
+                    "event": "fallback_guid",
+                    "action": "enrich_by_rk_ok" if extra else "enrich_by_rk_miss",
+                    "rk": str(rk),
+                }
+            )
+            if extra:
+                m["ids"].update({k: v for k, v in extra.items() if v})
+    if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})):
+        tok = token or _PLEX_CTX["token"]
+        gp_rk = _row_get(row, "grandparentRatingKey")
+        if tok and gp_rk:
+            _emit(
+                {
+                    "feature": "common",
+                    "event": "fallback_guid",
+                    "action": "enrich_show_by_rk_try",
+                    "rk": str(gp_rk),
+                }
+            )
+            extra2 = hydrate_external_ids(tok, str(gp_rk))
+            _emit(
+                {
+                    "feature": "common",
+                    "event": "fallback_guid",
+                    "action": "enrich_show_by_rk_ok" if extra2 else "enrich_show_by_rk_miss",
+                    "rk": str(gp_rk),
+                }
+            )
+            if extra2:
+                m.setdefault("show_ids", {}).update({k: v for k, v in extra2.items() if v})
+    if not _has_ext_ids(m.get("ids", {})) and allow_discover:
+        tok = token or _PLEX_CTX["token"]
+        title = m.get("series_title") if kind == "episode" else m.get("title")
+        year = m.get("year")
+        _emit(
+            {
+                "feature": "common",
+                "event": "fallback_guid",
+                "action": "discover_try",
+                "title": str(title or ""),
+                "kind": kind,
+                "year": year,
+            }
+        )
+        md = _discover_search_title(
+            tok,
+            str(title or ""),
+            kind,
+            year,
+            season=m.get("season"),
+            episode=m.get("episode"),
+        )
+        _emit(
+            {
+                "feature": "common",
+                "event": "fallback_guid",
+                "action": "discover_ok" if md else "discover_miss",
+                "title": str(title or ""),
+                "kind": kind,
+                "year": year,
+            }
+        )
+        if md:
+            nd = normalize_discover_row(md, token=tok)
+
+            def _pairs(d: Mapping[str, Any] | None) -> set[tuple[str, str]]:
+                return {(k, v) for (k, v) in (d or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+
+            cur_ids = _pairs(m.get("ids"))
+            new_ids = _pairs(nd.get("ids"))
+            overlap_ok = not cur_ids or not new_ids or bool(cur_ids & new_ids)
+            if kind == "episode":
+                cur_sid = _pairs(m.get("show_ids"))
+                new_sid = _pairs(nd.get("show_ids"))
+                if cur_sid and new_sid and not (cur_sid & new_sid):
+                    overlap_ok = False
+            has_ext = _has_ext_ids(nd.get("ids", {})) or (kind == "episode" and _has_ext_ids(nd.get("show_ids", {})))
+            if overlap_ok and has_ext:
+                if _has_ext_ids(nd.get("ids", {})):
+                    m["ids"].update({k: v for k, v in nd["ids"].items() if v})
+                if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
+                    m.setdefault("show_ids", {}).update({k: v for k, v in nd["show_ids"].items() if v})
+                if kind == "episode":
+                    if m.get("season") is None:
+                        m["season"] = nd.get("season")
+                    if m.get("episode") is None:
+                        m["episode"] = nd.get("episode")
+                    if not m.get("series_title"):
+                        m["series_title"] = nd.get("series_title") or nd.get("title")
+                if not m.get("title") and nd.get("title"):
+                    m["title"] = nd["title"]
+    if not (m.get("title") or m.get("series_title")):
+        _FBGUID_MEMO[key] = _FBGUID_NOHIT
+        _fb_cache_save()
+        return None
+    if not _has_ext_ids(m.get("ids", {})) and not _has_ext_ids(m.get("show_ids", {})):
+        _FBGUID_MEMO[key] = _FBGUID_NOHIT
+        _fb_cache_save()
+        return None
+    _FBGUID_MEMO[key] = dict(m)
+    _fb_cache_save()
+    return m

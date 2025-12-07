@@ -57,7 +57,6 @@ def make_emitter(ctx: Any) -> EmitFn:
 
     return _emit
 
-
 class SnapshotProgress:
     def __init__(
         self,
@@ -72,9 +71,10 @@ class SnapshotProgress:
         self.dst = str(dst)
         self.feature = str(feature)
         self.total = int(total) if total is not None else None
-        self._last_ts = 0.0
-        self._throttle = max(100, int(throttle_ms))
         self._last_done = 0
+        self._last_emitted = 0
+        self._step = 100
+        self._throttle_ms = int(throttle_ms)
 
     def tick(
         self,
@@ -85,23 +85,43 @@ class SnapshotProgress:
         force: bool = False,
     ) -> None:
         t = self.total if total is None else total
+
+        try:
+            d = int(done or 0)
+        except Exception:
+            d = 0
+
         if not force:
             try:
-                if int(done or 0) == 0 and int(t or 0) == 0:
+                if int(d or 0) == 0 and int(t or 0) == 0:
                     self._last_done = 0
+                    self._last_emitted = 0
                     return
             except Exception:
                 pass
-        now = time.monotonic()
-        if not force and (now - self._last_ts) * 1000 < self._throttle:
-            self._last_done = max(self._last_done, int(done))
-            return
-        self._last_ts = now
-        self._last_done = max(self._last_done, int(done))
+
+        self._last_done = max(self._last_done, d)
+
+        if not force:
+            if t is not None:
+                try:
+                    t_int = int(t)
+                except Exception:
+                    t_int = None
+                else:
+                    if d < self._last_emitted + self._step and d < t_int:
+                        return
+            else:
+   
+                if d < self._last_emitted + self._step:
+                    return
+
+        self._last_emitted = self._last_done
+
         payload: dict[str, Any] = {
             "dst": self.dst,
             "feature": self.feature,
-            "done": int(done),
+            "done": int(self._last_done),
         }
         if t is not None:
             try:
@@ -113,13 +133,14 @@ class SnapshotProgress:
         self._emit("snapshot:progress", payload)
 
     def done(self, *, ok: bool | None = True, total: int | None = None) -> None:
+        t = self.total if total is None else total
+
         payload: dict[str, Any] = {
             "dst": self.dst,
             "feature": self.feature,
             "done": int(self._last_done),
             "final": True,
         }
-        t = self.total if total is None else total
         if t is not None:
             try:
                 payload["total"] = int(t)
@@ -127,8 +148,8 @@ class SnapshotProgress:
                 pass
         if ok is not None:
             payload["ok"] = bool(ok)
-        self._emit("snapshot:progress", payload)
 
+        self._emit("snapshot:progress", payload)
 
 def make_snapshot_progress(
     ctx: Any,
@@ -139,7 +160,6 @@ def make_snapshot_progress(
     throttle_ms: int = 300,
 ) -> SnapshotProgress:
     return SnapshotProgress(ctx, dst=dst, feature=feature, total=total, throttle_ms=throttle_ms)
-
 
 def _get_query_value(url: str, params: Mapping[str, Any], name: str) -> str | None:
     qd = parse_qs(urlparse(url).query)
