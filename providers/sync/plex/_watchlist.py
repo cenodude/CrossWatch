@@ -40,9 +40,7 @@ def plex_headers(token: str) -> dict[str, str]:
     }
 
 
-# ── small utils ───────────────────────────────────────────────────────────────
-
-
+# Utils
 def _safe_int(v: Any) -> int | None:
     try:
         if v is None:
@@ -101,9 +99,6 @@ def _cfg_list(d: Mapping[str, Any], key: str, default: list[str]) -> list[str]:
     return list(default)
 
 
-# ── XML helpers ───────────────────────────────────────────────────────────────
-
-
 def _xml_meta_attribs(elem: ET.Element) -> dict[str, Any]:
     a = elem.attrib
     row: dict[str, Any] = {
@@ -159,9 +154,7 @@ def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
     return {"MediaContainer": {"Metadata": meta_rows, "SearchResults": sr_list}}
 
 
-# ── Discover/METADATA id helpers ──────────────────────────────────────────────
-
-
+# Discover
 def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
     ids: dict[str, str] = {}
     g = row.get("guid")
@@ -267,9 +260,7 @@ def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) 
     return res
 
 
-# ── GUIDs from item (for matching, not for searching) ─────────────────────────
-
-
+# GUID candidates
 def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
     ids = (it.get("ids") or {}) if isinstance(it.get("ids"), dict) else {}
     out: list[str] = []
@@ -304,10 +295,6 @@ def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
         add(str(g))
     return out
 
-
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
-
-
 def _get_container(
     session: Any,
     url: str,
@@ -323,6 +310,7 @@ def _get_container(
         if accept_json:
             headers = dict(headers)
             headers["Accept"] = "application/json"
+
         r = request_with_retries(
             session,
             "GET",
@@ -332,29 +320,51 @@ def _get_container(
             timeout=timeout,
             max_retries=int(retries),
         )
+
         ctype = (r.headers.get("content-type") or "").lower()
         body = r.text or ""
+
         if r.status_code == 401:
             raise RuntimeError("Unauthorized (bad Plex token)")
+
         if not r.ok:
-            _log(f"GET {url} -> {r.status_code}")
+            try:
+                req_url = getattr(r.request, "url", url)
+                raw_headers = dict(getattr(r.request, "headers", {}) or {})
+                safe_headers: dict[str, str] = {}
+                for k, v in raw_headers.items():
+                    kl = k.lower()
+                    if kl == "x-plex-token":
+                        safe_headers[k] = f"<redacted:{str(v)[:5]}...>"
+                    else:
+                        safe_headers[k] = str(v)
+                snippet = body.replace("\n", " ")[:300]
+                _log(
+                    f"GET {req_url} -> {r.status_code} "
+                    f"ctype={ctype or 'n/a'} headers={json.dumps(safe_headers, sort_keys=True)} "
+                    f"body={snippet!r}"
+                )
+            except Exception:
+                _log(f"GET {url} -> {r.status_code}")
             return None
+
         if "application/json" in ctype:
             try:
                 return r.json()
             except Exception:
                 _log("json parse failed; trying xml")
+
         if "xml" in ctype or body.lstrip().startswith("<"):
             try:
                 return _xml_to_container(body)
             except Exception as e:
                 _log(f"xml parse failed: {e}")
+
         _log(f"unknown payload: ctype={ctype or 'n/a'}")
         return None
     except Exception as e:
         _log(f"GET error: {e}")
         return None
-
 
 def _iter_meta_rows(container: Mapping[str, Any] | None):
     if not container:
@@ -365,7 +375,6 @@ def _iter_meta_rows(container: Mapping[str, Any] | None):
         for row in meta:
             if isinstance(row, Mapping):
                 yield row
-
 
 def _iter_search_rows(container: Mapping[str, Any] | None):
     if not container:
@@ -382,9 +391,7 @@ def _iter_search_rows(container: Mapping[str, Any] | None):
                         yield m
 
 
-# ── GUID priority & query building ────────────────────────────────────────────
-
-
+# GUID proiority and sorting
 def _guid_priority(cfg: Mapping[str, Any]) -> list[str]:
     return _cfg_list(
         cfg,
@@ -446,9 +453,7 @@ def _id_pairs_from_guid(g: str) -> set[tuple[str, str]]:
     return s
 
 
-# ── ID-first resolver via METADATA.matches ────────────────────────────────────
-
-
+# ID resolver via METADATA.matches
 def _metadata_match_by_ids(
     session: Any,
     token: str,
@@ -497,9 +502,7 @@ def _metadata_match_by_ids(
     return None
 
 
-# ── Resolver (ID-first; fallback to Discover text) ────────────────────────────
-
-
+# Fallback resolver via Discover search
 def _discover_resolve_rating_key(
     session: Any,
     token: str,
@@ -596,9 +599,7 @@ def _discover_resolve_rating_key(
     return None
 
 
-# ── Discover write (idempotent) ───────────────────────────────────────────────
-
-
+# Write
 def _discover_write_by_rk(
     session: Any,
     token: str,
@@ -658,9 +659,7 @@ def _discover_write_by_rk(
         return False, 0, str(e), True
 
 
-# ── unresolved (hard freeze) ──────────────────────────────────────────────────
-
-
+# Unresolved items store
 def _load_unresolved() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
@@ -716,9 +715,7 @@ def _is_frozen(item: Mapping[str, Any]) -> bool:
     return canonical_key(item) in _load_unresolved()
 
 
-# ── PMS GUID index (optional fallback) ────────────────────────────────────────
-
-
+# PMS GUID index
 _GUID_INDEX_MOVIE: dict[str, Any] = {}
 _GUID_INDEX_SHOW: dict[str, Any] = {}
 
@@ -766,9 +763,7 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
     return None
 
 
-# ── per-run hydrate cache ─────────────────────────────────────────────────────
-
-
+# Hydration cache
 _HYDRATE_CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -783,9 +778,7 @@ def _hydrate_ids_cached(token: str, rk: str) -> dict[str, Any]:
     return m
 
 
-# ── public API: index ─────────────────────────────────────────────────────────
-
-
+# Index build
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
     if not token:
@@ -874,9 +867,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-# ── public API: add/remove ────────────────────────────────────────────────────
-
-
+# Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
     if not token:
@@ -1016,7 +1007,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     _log(f"add done: +{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-
+# Remove
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
     if not token:

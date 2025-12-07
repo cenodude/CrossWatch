@@ -399,6 +399,9 @@ def _fetch_kind(
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     session = adapter.client.session
     timeout = adapter.cfg.timeout
+    out: dict[str, dict[str, Any]] = {}
+    thaw: set[str] = set()
+
     activities, _rate = fetch_activities(session, _headers(adapter, force_refresh=True), timeout=timeout)
     if isinstance(activities, Mapping) and since is None:
         wm_movies = get_watermark("history:movies") or ""
@@ -415,11 +418,16 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             latest_shows is None or latest_shows <= wm_shows
         )
         if no_change:
-            _log(f"activities unchanged; history noop (movies={latest_movies}, shows={latest_shows})")
-            return {}
+            _shadow_merge_into(out, thaw)
+            _unfreeze(thaw)
+            _log(
+                "activities unchanged; history noop "
+                f"(movies={latest_movies}, shows={latest_shows}); shadow={len(out)}"
+            )
+            _log(f"index size: {len(out)}")
+            return out
+
     headers = _headers(adapter, force_refresh=True)
-    out: dict[str, dict[str, Any]] = {}
-    thaw: set[str] = set()
     added = 0
     latest_ts_movies: int | None = None
     latest_ts_shows: int | None = None
@@ -435,6 +443,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             df_shows_iso = _as_iso(ss)
         except Exception:
             pass
+
     movie_rows = _fetch_kind(session, headers, kind="movies", since_iso=df_movies_iso, timeout=timeout)
     movies_cnt = 0
     for row in movie_rows:
@@ -459,6 +468,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         latest_ts_movies = max(latest_ts_movies or 0, ts)
         if limit and added >= limit:
             break
+
     if not limit or added < limit:
         show_rows = _fetch_kind(session, headers, kind="shows", since_iso=df_shows_iso, timeout=timeout)
         eps_cnt = 0
@@ -512,10 +522,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _log(
             f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso}",
         )
+
     if latest_ts_movies:
         update_watermark_if_new("history:movies", _as_iso(latest_ts_movies))
     if latest_ts_shows:
         update_watermark_if_new("history:shows", _as_iso(latest_ts_shows))
+
     _unfreeze(thaw)
     try:
         _shadow_put_all(out.values())

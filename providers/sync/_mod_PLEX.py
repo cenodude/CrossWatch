@@ -378,7 +378,6 @@ class PLEXModule:
         tmo = max(3.0, min(self.cfg.timeout, 10.0))
 
         import time as _t
-
         started = _t.perf_counter()
 
         wl_needed = bool(enabled.get("watchlist"))
@@ -389,6 +388,7 @@ class PLEXModule:
         retry_after: int | None = None
         disc_code: int | None = None
         disc_rate: dict[str, int | None] = {"limit": None, "remaining": None, "reset": None}
+
         if wl_needed:
             if token:
                 try:
@@ -397,7 +397,7 @@ class PLEXModule:
                         self.client.session,
                         "GET",
                         url,
-                        headers=plex_headers(),
+                        headers=plex_headers(token),  # <-- change is here
                         params={"limit": 1},
                         timeout=tmo,
                         max_retries=self.cfg.max_retries,
