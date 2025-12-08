@@ -16,6 +16,11 @@ from cw_platform.config_base import load_config
 from providers.scrobble.currently_watching import _state_file as _cw_state_file
 
 try:
+    from .maintenanceAPI import reset_currently_watching as _reset_currently_watching  # type: ignore[attr-defined]
+except Exception:
+    _reset_currently_watching = None  # type: ignore[assignment]
+
+try:
     from _logging import log as BASE_LOG
 except Exception:  # optional
     BASE_LOG = None
@@ -500,13 +505,18 @@ def debug_watch_start(
     request: Request,
     provider: str | None = Query(None),
 ) -> dict[str, Any]:
+    if callable(_reset_currently_watching):
+        try:
+            _reset_currently_watching()
+        except Exception:
+            pass
+
     w = _ensure_watch_started(request, provider)
     return {
         "ok": True,
         "alive": bool(getattr(w, "is_alive", lambda: False)()),
         "provider": _watch_kind(w),
     }
-
 
 @router.post("/api/watch/stop")
 def debug_watch_stop(request: Request) -> dict[str, Any]:
@@ -517,7 +527,15 @@ def debug_watch_stop(request: Request) -> dict[str, Any]:
         except Exception:
             pass
     request.app.state.watch = None
+
+    if callable(_reset_currently_watching):
+        try:
+            _reset_currently_watching()
+        except Exception:
+            pass
+
     return {"ok": True, "alive": False}
+
 
 
 @router.post("/webhook/jellyfintrakt")
