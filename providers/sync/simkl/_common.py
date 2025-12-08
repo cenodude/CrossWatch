@@ -77,12 +77,14 @@ def coalesce_date_from(
     return hard_default
 
 
-def shadow_ttl_seconds(default: float = 300.0) -> float:
-    try:
-        return float(os.getenv("CW_SIMKL_SHADOW_TTL", str(default)))
-    except Exception:
-        return default
-
+def shadow_ttl_seconds(default: float = 300.0) -> int:
+    env = (os.getenv("CW_SIMKL_SHADOW_TTL") or "").strip()
+    if env:
+        try:
+            return max(0, int(env))
+        except Exception:
+            pass
+    return int(default)
 
 def want_clear_shadow() -> bool:
     return (os.getenv("CW_SIMKL_WATCHLIST_CLEAR") or "").strip() == "1"

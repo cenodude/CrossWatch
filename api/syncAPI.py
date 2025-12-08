@@ -148,6 +148,10 @@ def _summary_reset() -> None:
                 "exit_code": None,
                 "timeline": {"start": False, "pre": False, "post": False, "done": False},
                 "raw_started_ts": None,
+                "_phase": {
+                    "snapshot": {"total": 0, "done": 0, "final": False},
+                    "apply": {"total": 0, "done": 0, "final": False},
+                },
             }
         )
 
@@ -728,6 +732,29 @@ def _parse_sync_line(line: str) -> None:
         o = json.loads(s)
         if isinstance(o, dict) and o.get("event"):
             ev = str(o.get("event") or "")
+            
+            if ev in ("one:plan", "two:plan"):
+                phase = SUMMARY.setdefault("_phase", {})
+                apply_phase = phase.setdefault(
+                    "apply", {"total": 0, "done": 0, "final": False}
+                )
+
+                if ev == "one:plan":
+                    adds = int(o.get("adds") or 0)
+                    rems = int(o.get("removes") or 0)
+                    delta = max(0, adds) + max(0, rems)
+                else:
+                    delta = 0
+                    for k in ("add_to_A", "add_to_B", "rem_from_A", "rem_from_B"):
+                        try:
+                            delta += max(0, int(o.get(k) or 0))
+                        except Exception:
+                            pass
+
+                apply_phase["total"] = int(apply_phase.get("total") or 0) + delta
+                _summary_set("_phase", phase)
+                return
+            
             feat = str(o.get("feature") or "").lower()
             if feat in ("watchlist", "history", "ratings", "playlists"):
                 F = SUMMARY.setdefault("features", {})
@@ -749,18 +776,24 @@ def _parse_sync_line(line: str) -> None:
                     or obj.get("count")
                     or 0
                 )
-                if ev == "apply:add:done":
-                    F[feat]["added"] += getc(o)
+                if ev in ("apply:add:done", "apply:remove:done", "apply:update:done"):
+                    cnt = getc(o)
+                    if ev == "apply:add:done":
+                        F[feat]["added"] += cnt
+                    elif ev == "apply:remove:done":
+                        F[feat]["removed"] += cnt
+                    else:
+                        F[feat]["updated"] += cnt
                     _summary_set("features", F)
+
+                    phase = SUMMARY.setdefault("_phase", {})
+                    apply_phase = phase.setdefault(
+                        "apply", {"total": 0, "done": 0, "final": False}
+                    )
+                    apply_phase["done"] = int(apply_phase.get("done") or 0) + cnt
+                    _summary_set("_phase", phase)
                     return
-                if ev == "apply:remove:done":
-                    F[feat]["removed"] += getc(o)
-                    _summary_set("features", F)
-                    return
-                if ev == "apply:update:done":
-                    F[feat]["updated"] += getc(o)
-                    _summary_set("features", F)
-                    return
+
                 if ev == "debug" and str(o.get("msg") or "") == "apply:add:corrected":
                     eff = int(o.get("effective") or 0)
                     if eff > int(F[feat].get("added") or 0):
@@ -834,6 +867,29 @@ def _parse_sync_line(line: str) -> None:
         _summary_set("finished_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         _summary_set("running", False)
         _summary_set_timeline("done", True)
+        try:
+            phase = SUMMARY.setdefault("_phase", {})
+            prev_apply = phase.get("apply") or {}
+            snap_phase = phase.setdefault(
+                "snapshot",
+                {"total": 1, "done": 1, "final": True},
+            )
+            apply_phase = phase.setdefault(
+                "apply",
+                {
+                    "total": int(prev_apply.get("total") or 0),
+                    "done": int(prev_apply.get("done") or 0),
+                    "final": True,
+                },
+            )
+            apply_phase["final"] = True
+            snap_phase["final"] = True
+            if not snap_phase.get("total"):
+                snap_phase["total"] = 1
+            snap_phase["done"] = snap_phase.get("total")
+            _summary_set("_phase", phase)
+        except Exception:
+            pass
         try:
             tl = SUMMARY.get("timeline") or {}
             if tl.get("done"):

@@ -370,7 +370,7 @@ def _iter_marked_watched_from_library(
                         continue
     return results
 
-
+# Index
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:

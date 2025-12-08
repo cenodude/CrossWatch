@@ -1048,37 +1048,9 @@
 
       esSummary.onmessage = (ev) => {
         try {
-          const incoming = JSON.parse(ev.data || "{}");
-
-          if (incoming && incoming.running === true && !sync.state().timeline.start) {
-            sync.markInit();
-          }
-
-          if (incoming && incoming.exit_code != null) {
-            const code = Number(incoming.exit_code);
-            if (code === 0 && typeof sync?.success === "function") {
-              sync.success();
-            } else if (typeof sync?.fail === "function") {
-              sync.fail(code);
-            } else if (code === 0) {
-              sync.done();
-            } else {
-              sync.error();
-            }
-            setRunButtonState(false);
-            return;
-          }
-
-          if (incoming && incoming.running === false) {
-            if (!sync.state().timeline.start) {
-              sync.reset();
-              setRunButtonState(false);
-              renderAll();
-            } else {
-              sync.done();
-              setRunButtonState(false);
-            }
-          }
+          const snap = JSON.parse(ev.data || "{}");
+          const { running } = sync.fromSummary(snap);
+          setRunButtonState(!!running);
         } catch {}
       };
 
@@ -1090,6 +1062,15 @@
 
       ["run:start", "run:pair", "feature:start"].forEach((n) =>
         esSummary.addEventListener(n, markInit)
+      );
+
+      ["one:plan", "two:plan"].forEach((evt) =>
+        esSummary.addEventListener(evt, (e) => {
+          try {
+            const obj = JSON.parse(e.data || "{}");
+            sync.setPair(obj);
+          } catch {}
+        })
       );
 
       const onSnap = (ev) => {
@@ -1152,42 +1133,8 @@
       try {
         esLogs?.close?.();
       } catch {}
-      esLogs = new EventSource("/api/logs/stream");
-      window.esLogs = esLogs;
-
-      esLogs.onopen = () => {
-        window.esLogs = esLogs;
-      };
-
-      esLogs.onmessage = (ev) => {
-        try {
-          const txt = String(ev.data || "");
-          const m = txt.match(/\[SYNC\]\s*exit\s*code\s*:\s*(\d+)/i);
-          if (!m) return;
-          if (!sync?.isRunning?.() && !sync?.state?.().timeline.start) return;
-
-          const code = parseInt(m[1], 10);
-          if (code === 0 && typeof sync?.success === "function") {
-            sync.success();
-          } else if (typeof sync?.fail === "function") {
-            sync.fail(code);
-          } else if (code === 0) {
-            sync.done();
-          } else {
-            sync.error();
-          }
-
-          setRunButtonState(false);
-        } catch {}
-      };
-
-      esLogs.onerror = () => {
-        try {
-          esLogs.close();
-        } catch {}
-        window.esLogs = null;
-        setTimeout(openLogStream, 2000);
-      };
+      esLogs = null;
+      window.esLogs = null;
     } catch {}
   };
 

@@ -34,9 +34,7 @@ def _emit(evt: dict[str, Any]) -> None:
         pass
 
 
-# ── config / workers ─────────────────────────────────────────────────────────
-
-
+# Config helpers
 def _get_rating_workers(adapter: Any) -> int:
     try:
         cfg = getattr(adapter, "config", {}) or {}
@@ -73,9 +71,7 @@ def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     return default if v is None else v
 
 
-# ── tiny helpers ─────────────────────────────────────────────────────────────
-
-
+# Helpers for data normalization
 def _as_epoch(v: Any) -> int | None:
     if v is None:
         return None
@@ -112,9 +108,6 @@ def _norm_rating(v: Any) -> int | None:
     except Exception:
         return None
 
-    if 0 < f <= 1:
-        f *= 10.0
-
     i = int(round(f))
 
     if i < 0:
@@ -130,9 +123,7 @@ def _has_ext_ids(m: Mapping[str, Any]) -> bool:
     return bool(ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb"))
 
 
-# ── unresolved store ─────────────────────────────────────────────────────────
-
-
+# Unresolved storage helpers
 def _load_unresolved() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
@@ -185,9 +176,7 @@ def _is_frozen(it: Mapping[str, Any]) -> bool:
     return _event_key(it) in _load_unresolved()
 
 
-# ── ratingKey resolution (title + ids based) ─────────────────────────────────
-
-
+# Rating key resolution
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     ids = ids_from(it)
     srv = getattr(adapter.client, "server", None)
@@ -283,9 +272,7 @@ def _rate(srv: Any, rating_key: Any, rating_1to10: int) -> bool:
         return False
 
 
-# ── per-item fetch (plexapi) ─────────────────────────────────────────────────
-
-
+# Per-item fetch (plexapi)
 def _fetch_one_rating(srv: Any, rk: str) -> dict[str, Any] | None:
     try:
         it = srv.fetchItem(int(rk))
@@ -361,9 +348,7 @@ def _fetch_one_rating(srv: Any, rk: str) -> dict[str, Any] | None:
     return m
 
 
-# ── index (present-state, threaded per-item) ─────────────────────────────────
-
-
+# Index
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
@@ -516,9 +501,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     return out
 
 
-# ── add/remove (guarded) ─────────────────────────────────────────────────────
-
-
+# Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
@@ -559,7 +542,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     _log(f"add done: +{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-
+# Remove
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:

@@ -21,6 +21,7 @@ from ._common import (
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
+    shadow_ttl_seconds as _shadow_ttl_seconds,
 )
 
 BASE = "https://api.simkl.com"
@@ -158,13 +159,6 @@ def _unfreeze(keys: Iterable[str]) -> None:
         _save_unresolved(data)
 
 
-def _shadow_ttl_seconds() -> int:
-    try:
-        return int(os.getenv("CW_SIMKL_HISTORY_SHADOW_TTL", str(7 * 24 * 3600)))
-    except Exception:
-        return 7 * 24 * 3600
-
-
 def _shadow_load() -> dict[str, Any]:
     return _load_json(SHADOW_PATH) or {"events": {}}
 
@@ -197,14 +191,16 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
     if not events:
         return
     now = _now_epoch()
+    ttl = _shadow_ttl_seconds()
     changed = False
     merged = 0
     for event_key, record in list(events.items()):
         exp = int(record.get("exp") or 0)
-        if exp and exp < now:
-            del events[event_key]
-            changed = True
-            continue
+        if exp:
+            if exp < now or (ttl > 0 and exp - now > ttl * 2):
+                del events[event_key]
+                changed = True
+                continue
         if event_key in out:
             del events[event_key]
             changed = True
@@ -220,9 +216,7 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
     if changed or merged:
         _shadow_save({"events": events})
 
-
 _RESOLVE_CACHE: dict[str, dict[str, str]] = {}
-
 
 def _load_show_map() -> dict[str, Any]:
     return _load_json(SHOW_MAP_PATH) or {"map": {}}
