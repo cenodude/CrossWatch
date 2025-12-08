@@ -1,5 +1,5 @@
 # /crosswatch.py
-# CrossWatch - Media scrobbling and tracking engine
+# CrossWatch main application entry point
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -76,27 +76,27 @@ from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.simkl.sink import SimklSink
 from providers.scrobble.plex.watch import WatchService as PlexWatchService
 
-# Emby autostart helper
+# Watcher: Emby autostart helper
 try:
     from providers.scrobble.emby import watch as _emby_watch_mod
     emby_autostart = getattr(_emby_watch_mod, "autostart_from_config", None)
 except Exception:
     emby_autostart = None
 
-# keep Plex as fallback
+# Plex as fallback
 try:
     from providers.scrobble.plex import watch as _plex_watch_mod
     plex_autostart = getattr(_plex_watch_mod, "autostart_from_config", None)
 except Exception:
     plex_autostart = None
 
-# Plex to Trakt
+# Webhook: Plex
 try:
     from providers.webhooks.plextrakt import process_webhook as process_webhook
 except Exception:
     process_webhook = None
 
-# Jellyfin to Trakt
+# JelWEbhook: Jellyfin
 try:
     from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
 except Exception:
@@ -189,7 +189,6 @@ def _is_static_noise(path: str, status: int) -> bool:
     if status in (301, 302, 303, 304, 307, 308):
         return True
 
-    # Benign 404s: artwork lookups and placeholders
     if status == 404 and (
         path.startswith("/art/") or
         path.startswith("/assets/img/") or
@@ -197,7 +196,6 @@ def _is_static_noise(path: str, status: int) -> bool:
     ):
         return True
 
-    # Ignore framework noise
     if request_method := None:
         try:
             pass
@@ -224,7 +222,7 @@ def _apply_debug_env_from_config() -> None:
     elif not on and os.environ.get("CW_DEBUG"):
         os.environ.pop("CW_DEBUG", None)
 
-# Sink builder
+# Watcher: Sink builder
 def _build_sinks_from_config(cfg) -> list:
     watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
     sink_cfg = (watch_cfg.get("sink") or "trakt")
@@ -248,7 +246,7 @@ def _build_sinks_from_config(cfg) -> list:
             sinks = []
     return sinks
         
-# Autostart watch service from config
+# Watcher: Autostart watch service from config
 def autostart_from_config():
     cfg = load_config()
     sc = (cfg.get("scrobble") or {})
@@ -282,7 +280,7 @@ def autostart_from_config():
     except Exception:
         return None
 
-# Next run computation
+# Scheduler: Next run computation
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
 def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
@@ -316,8 +314,6 @@ def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
         if target.timestamp() <= now:
             target = target + timedelta(days=1)
         return int(target.timestamp())
-
-    # fallback
     return now + 3600
 
 # API
@@ -351,7 +347,6 @@ async def conditional_access_logger(request: Request, call_next):
                     path_qs = path + (f"?{request.url.query}" if request.url.query else "")
                     proto = f"HTTP/{request.scope.get('http_version','1.1')}"
                     print(f'{host} - "{request.method} {path_qs} {proto}" {status} ({dt_ms} ms)')
-        # else: full access logs handled by uvicorn when debug_http=true
 
     if err is not None:
         raise err
@@ -614,7 +609,7 @@ async def _lifespan(app):
 
 app.router.lifespan_context = _lifespan
     
-# Middleware to disable caching for API responses
+# Middleware: disable caching for API responses
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
@@ -719,8 +714,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
 
         cfg = load_config()
         mgr = OrchestratorClass(config=cfg)
-
-        # dry-run resolution: config OR override
         dry_cfg = bool(((cfg.get("sync") or {}).get("dry_run") or False))
         dry_ovr = bool(overrides.get("dry_run"))
         dry = dry_cfg or dry_ovr
@@ -730,7 +723,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             progress=_append_log.__get__(None, type(_append_log)) if False else _append_log,
             write_state_json=True,
             state_path=STATE_PATH,
-            use_snapshot=True,  # kept for compatibility, doesnt do anything now
+            use_snapshot=True,
             overrides=overrides,
         )
 
