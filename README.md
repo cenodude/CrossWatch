@@ -193,4 +193,3 @@ Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the
   - delete or corrupt watch history / ratings / watchlists,
   - cause unwanted writes between servers/trackers,
   - leak information about your media libraries and accounts.
-
