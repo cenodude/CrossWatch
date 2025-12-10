@@ -195,12 +195,119 @@ def register_insights(app: FastAPI) -> None:
                 "spotlight_remove": [],
                 "spotlight_update": [],
             }
+            
 
         def _empty_feats() -> dict[str, dict[str, Any]]:
             return {k: _zero_lane() for k in feature_keys}
 
         def _empty_enabled() -> dict[str, bool]:
             return {k: False for k in feature_keys}
+
+        def _compute_history_breakdown(state_obj: dict[str, Any] | None) -> dict[str, int]:
+            movies: set[str] = set()
+            shows: set[str] = set()
+            episodes: set[str] = set()
+
+            try:
+                prov_block = (state_obj or {}).get("providers") or {}
+                for _prov_name, prov_data in prov_block.items():
+                    hist = (prov_data or {}).get("history") or {}
+                    node = hist.get("baseline") or hist
+                    items = node.get("items") or {}
+
+                    if isinstance(items, dict):
+                        it = items.values()
+                    elif isinstance(items, list):
+                        it = items
+                    else:
+                        continue
+
+                    for rec in it:
+                        if not isinstance(rec, dict):
+                            continue
+
+                        typ = str(rec.get("type") or "").strip().lower()
+                        ids = (rec.get("ids") or {}) or {}
+
+                        if typ == "movie":
+                            sig: str | None = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = ids.get(idk)
+                                if v:
+                                    sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if sig is None:
+                                title = str(rec.get("title") or rec.get("name") or "").strip().lower()
+                                y = str(rec.get("year") or "")
+                                sig = f"{title}|year:{y}"
+                            movies.add(sig)
+                            continue
+
+                        if typ == "episode":
+                            s = int(rec.get("season") or 0)
+                            ep = int(rec.get("episode") or 0)
+
+                            sig = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = ids.get(idk)
+                                if v:
+                                    sig = f"{idk}:{str(v).lower()}|s{s}e{ep}"
+                                    break
+                            if sig is None:
+                                t = str(rec.get("title") or rec.get("name") or "").strip().lower()
+                                y = str(rec.get("year") or "")
+                                sig = f"{t}|year:{y}|s{s}e{ep}"
+                            episodes.add(sig)
+
+                            show_ids = (rec.get("show_ids") or {}) or {}
+                            show_sig = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = show_ids.get(idk)
+                                if v:
+                                    show_sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if show_sig is None:
+                                title = (
+                                    rec.get("series_title")
+                                    or rec.get("show_title")
+                                    or rec.get("title")
+                                    or rec.get("name")
+                                )
+                                if title:
+                                    y = rec.get("series_year") or rec.get("year")
+                                    show_sig = f"{str(title).strip().lower()}|year:{y}"
+                            if show_sig:
+                                shows.add(show_sig)
+                            continue
+
+                        if typ == "show":
+                            ids_show = ids
+                            show_sig = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = ids_show.get(idk)
+                                if v:
+                                    show_sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if show_sig is None:
+                                title = (
+                                    rec.get("series_title")
+                                    or rec.get("show_title")
+                                    or rec.get("title")
+                                    or rec.get("name")
+                                )
+                                if title:
+                                    y = rec.get("series_year") or rec.get("year")
+                                    show_sig = f"{str(title).strip().lower()}|year:{y}"
+                            if show_sig:
+                                shows.add(show_sig)
+            except Exception as exc:
+                _append_log("INSIGHTS", f"[!] history breakdown failed: {exc}")
+
+            return {
+                "movies": len(movies),
+                "shows": len(shows),
+                "episodes": len(episodes),
+            }
 
         def _safe_compute_lanes(
             since: int,
@@ -506,6 +613,26 @@ def register_insights(app: FastAPI) -> None:
                     active[t] = True
         except Exception:
             pass
+        
+        def _iter_feature_items(node: Any) -> list[dict[str, Any]]:
+            try:
+                if not isinstance(node, dict):
+                    return []
+                base = node.get("baseline")
+                if isinstance(base, dict):
+                    items = base.get("items")
+                    if isinstance(items, dict):
+                        return [v for v in items.values() if isinstance(v, dict)]
+                    if isinstance(items, list):
+                        return [v for v in items if isinstance(v, dict)]
+                items = node.get("items")
+                if isinstance(items, dict):
+                    return [v for v in items.values() if isinstance(v, dict)]
+                if isinstance(items, list):
+                    return [v for v in items if isinstance(v, dict)]
+            except Exception:
+                pass
+            return []
 
         def _count_items(node: Any) -> int:
             try:
@@ -547,6 +674,69 @@ def register_insights(app: FastAPI) -> None:
                     providers_by_feature[feat][key] = _count_items(
                         (pdata or {}).get(feat) or {}
                     )
+        except Exception:
+            pass
+
+        providers_mse_by_feature: dict[str, dict[str, dict[str, int]]] = {
+            feat: {} for feat in feature_keys
+        }
+        try:
+            for prov_upper, pdata in (prov_block or {}).items():
+                key = str(prov_upper or "").strip().lower()
+                for feat in feature_keys:
+
+                    if feat == "history":
+                        try:
+                            per_counts = _compute_history_breakdown(
+                                {"providers": {prov_upper: pdata}}
+                            ) or {}
+                        except Exception:
+                            per_counts = {}
+                        providers_mse_by_feature[feat][key] = {
+                            "movies": int(per_counts.get("movies") or 0),
+                            "shows": int(per_counts.get("shows") or 0),
+                            "episodes": int(per_counts.get("episodes") or 0),
+                        }
+                        continue
+
+                    node = (pdata or {}).get(feat) or {}
+                    recs = _iter_feature_items(node)
+                    if not recs:
+                        continue
+
+                    m = s = e = 0
+                    for rec in recs:
+                        if not isinstance(rec, dict):
+                            continue
+                        typ = str(rec.get("type") or "").strip().lower()
+                        has_show_meta = bool(
+                            (rec.get("show_ids") or {})
+                            or rec.get("series_title")
+                            or rec.get("show_title")
+                        )
+
+                        if typ == "episode":
+                            e += 1
+                            continue
+
+                        if typ == "show" or (typ == "movie" and has_show_meta):
+                            s += 1
+                            continue
+
+                        if typ == "movie":
+                            m += 1
+                            continue
+
+                        if has_show_meta:
+                            s += 1
+                        else:
+                            m += 1
+
+                    providers_mse_by_feature[feat][key] = {
+                        "movies": m,
+                        "shows": s,
+                        "episodes": e,
+                    }
         except Exception:
             pass
 
@@ -641,6 +831,8 @@ def register_insights(app: FastAPI) -> None:
                 return val
             except Exception:
                 return 0
+            
+        history_counts = _compute_history_breakdown(state)
 
         feats_out: dict[str, dict[str, Any]] = {}
         for feat in feature_keys:
@@ -665,7 +857,11 @@ def register_insights(app: FastAPI) -> None:
                 "series": s,
                 "providers": providers_by_feature.get(feat, {}),
                 "providers_active": active.copy(),
+                "providers_mse": providers_mse_by_feature.get(feat, {}),
             }
+
+            if feat == "history":
+                feats_out[feat]["breakdown"] = history_counts
 
         wl = feats_out.get(
             "watchlist",

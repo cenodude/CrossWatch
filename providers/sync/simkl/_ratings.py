@@ -33,6 +33,51 @@ R_SHADOW_PATH = str(STATE_DIR / "simkl.ratings.shadow.json")
 
 ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
 
+def _dedupe_prefer_plex_id(out: dict[str, dict[str, Any]]) -> None:
+    if not out:
+        return
+
+    by_tvdb: dict[str, list[str]] = {}
+    by_tmdb: dict[str, list[str]] = {}
+    for key, row in out.items():
+        ids = row.get("ids") or {}
+        tvdb = (ids.get("tvdb") or "").strip()
+        tmdb = (ids.get("tmdb") or "").strip()
+        if tvdb:
+            by_tvdb.setdefault(tvdb, []).append(key)
+        if tmdb:
+            by_tmdb.setdefault(tmdb, []).append(key)
+
+    drop: set[str] = set()
+
+    def pick(groups: dict[str, list[str]]) -> None:
+        for _id, keys in groups.items():
+            if len(keys) < 2:
+                continue
+            canonical: str | None = None
+            # Prefer the entry that has a Plex/guid id
+            for k in keys:
+                ids = (out.get(k) or {}).get("ids") or {}
+                if ids.get("plex") or ids.get("guid"):
+                    canonical = k
+                    break
+            if canonical is None:
+                canonical = keys[0]
+            for k in keys:
+                if k != canonical:
+                    drop.add(k)
+
+    pick(by_tvdb)
+    pick(by_tmdb)
+
+    if not drop:
+        return
+
+    for key in drop:
+        out.pop(key, None)
+
+    _log(f"deduped {len(drop)} rating ids (prefer plex imdb)")
+
 
 def _url_get(kind: str, qs: str = "") -> str:
     return f"{BASE}/sync/ratings/{kind}{qs}"
@@ -172,13 +217,6 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
         _save_unresolved(data)
 
 
-def _rshadow_ttl_seconds() -> int:
-    try:
-        return int(os.getenv("CW_SIMKL_RATINGS_SHADOW_TTL", str(7 * 24 * 3600)))
-    except Exception:
-        return 7 * 24 * 3600
-
-
 def _rshadow_load() -> dict[str, Any]:
     return _load_json(R_SHADOW_PATH) or {"items": {}}
 
@@ -194,7 +232,6 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     sh = _rshadow_load()
     store: dict[str, Any] = dict(sh.get("items") or {})
     now = _now()
-    ttl = _rshadow_ttl_seconds()
     for it in rows:
         bk = simkl_key_of(id_minimal(it))
         rt = _norm_rating(it.get("rating"))
@@ -209,29 +246,20 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
                 "item": id_minimal(it),
                 "rating": rt,
                 "rated_at": ra or _as_iso(ts),
-                "exp": now + ttl,
             }
     sh["items"] = store
     _rshadow_save(sh)
-
 
 def _rshadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
     sh = _rshadow_load()
     store: dict[str, Any] = dict(sh.get("items") or {})
     if not store:
         return
-    now = _now()
     changed = False
     merged = 0
     cleaned = 0
     for bk, rec_any in list(store.items()):
         rec = rec_any if isinstance(rec_any, Mapping) else {}
-        exp = int(rec.get("exp") or 0)
-        if exp and exp < now:
-            del store[bk]
-            changed = True
-            cleaned += 1
-            continue
         rec_rt = _norm_rating(rec.get("rating"))
         rec_ra = rec.get("rated_at") or ""
         if rec_rt is None:
@@ -299,6 +327,7 @@ def build_index(
             if unchanged:
                 _log(f"activities unchanged; ratings from shadow (m={lm} s={ls})")
                 _rshadow_merge_into(out, thaw)
+                _dedupe_prefer_plex_id(out)
                 if prog:
                     try:
                         prog.done(ok=True, total=len(out))
@@ -376,6 +405,12 @@ def build_index(
                 continue
             media = (row.get("movie") or row.get("show") or {}) if isinstance(row, Mapping) else {}
             m = simkl_normalize(media)
+
+            if kind == "movies":
+                m["type"] = "movie"
+            elif kind == "shows":
+                m["type"] = "show"
+
             m["rating"] = rt
             m["rated_at"] = row.get("user_rated_at") or row.get("rated_at") or ""
             k = simkl_key_of(m)
@@ -399,6 +434,7 @@ def build_index(
     _ingest("movies", rows_movies)
     _ingest("shows", rows_shows)
     _rshadow_merge_into(out, thaw)
+    _dedupe_prefer_plex_id(out)
 
     if prog:
         try:
@@ -426,6 +462,21 @@ def build_index(
         _log(f"shadow.put index skipped: {exc}")
 
     _log(f"index size: {len(out)}")
+
+    # additional debug snapshot - needs to be enabled manually
+    if os.getenv("CW_SIMKL_SNAPSHOT_DEBUG"):
+        try:
+            snap: dict[str, Any] = {}
+            for _k, v in out.items():
+                base = id_minimal(v)
+                base["rating"] = v.get("rating")
+                base["rated_at"] = v.get("rated_at")
+                snap[simkl_key_of(base)] = base
+            _save_json(str(STATE_DIR / "simkl.ratings.snapshot.json"), snap)
+            _log("ratings snapshot written: simkl.ratings.snapshot.json")
+        except Exception as exc:
+            _log(f"snapshot dump failed: {exc}")
+
     return out
 
 def _movie_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -452,25 +503,6 @@ def _show_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
     return ent
 
 
-def _episode_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
-    sids = _show_ids_of_episode(it)
-    rating = _norm_rating(it.get("rating"))
-    s_num = int(it.get("season") or it.get("season_number") or 0)
-    e_num = int(it.get("episode") or it.get("episode_number") or 0)
-    if not sids or rating is None or not s_num or not e_num:
-        return None
-    ent: dict[str, Any] = {
-        "ids": sids,
-        "season": s_num,
-        "episode": e_num,
-        "rating": rating,
-    }
-    ra = (it.get("rated_at") or it.get("ratedAt") or "").strip()
-    if ra:
-        ent["rated_at"] = ra
-    return ent
-
-
 def add(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
@@ -485,24 +517,35 @@ def add(
     rshadow_events: list[dict[str, Any]] = []
 
     for it in items or []:
-        if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
-            continue
+        key = simkl_key_of(id_minimal(it))
         typ = str(it.get("type") or "movie").lower()
+
+        if _is_frozen(it):
+            _log(f"skip frozen key={key} title={id_minimal(it).get('title')}")
+            continue
+
         if typ == "movie":
             ent = _movie_entry_add(it)
             if ent:
                 movies.append(ent)
-                thaw_keys.append(simkl_key_of(id_minimal(it)))
+                thaw_keys.append(key)
                 ev = dict(id_minimal(it))
                 ev["rating"] = ent["rating"]
                 ev["rated_at"] = ent.get("rated_at", "")
                 rshadow_events.append(ev)
             else:
+                _log(
+                    f"unresolved missing_ids_or_rating key={key} "
+                    f"type={typ} ids={_ids_of(it)} rating={_norm_rating(it.get('rating'))}"
+                )
                 unresolved.append(
                     {"item": id_minimal(it), "hint": "missing_ids_or_rating"},
                 )
         elif typ in ("episode", "season"):
+            _log(
+                f"unresolved unsupported_type key={key} "
+                f"type={typ} ids={_show_ids_of_episode(it)} rating={_norm_rating(it.get('rating'))}"
+            )
             unresolved.append(
                 {"item": id_minimal(it), "hint": "unsupported_type"},
             )
@@ -510,12 +553,16 @@ def add(
             ent = _show_entry_add(it)
             if ent:
                 shows.append(ent)
-                thaw_keys.append(simkl_key_of(id_minimal(it)))
+                thaw_keys.append(key)
                 ev = dict(id_minimal(it))
                 ev["rating"] = ent["rating"]
                 ev["rated_at"] = ent.get("rated_at", "")
                 rshadow_events.append(ev)
             else:
+                _log(
+                    f"unresolved missing_ids_or_rating key={key} "
+                    f"type={typ} ids={_ids_of(it)} rating={_norm_rating(it.get('rating'))}"
+                )
                 unresolved.append(
                     {"item": id_minimal(it), "hint": "missing_ids_or_rating"},
                 )
@@ -557,8 +604,8 @@ def add(
                 ids_sent=ids,
                 rating=rating,
             )
-    return 0, unresolved
 
+    return 0, unresolved
 
 def remove(
     adapter: Any,
@@ -568,7 +615,6 @@ def remove(
     hdrs = _headers(adapter)
     movies: list[dict[str, Any]] = []
     shows: list[dict[str, Any]] = []
-    episodes: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
     thaw_keys: list[str] = []
 
@@ -590,7 +636,7 @@ def remove(
             shows.append({"ids": ids})
         thaw_keys.append(simkl_key_of(id_minimal(it)))
 
-    if not (movies or shows or episodes):
+    if not (movies or shows):
         return 0, unresolved
 
     body: dict[str, Any] = {}
@@ -598,8 +644,6 @@ def remove(
         body["movies"] = movies
     if shows:
         body["shows"] = shows
-    if episodes:
-        body["episodes"] = episodes
 
     try:
         resp = sess.post(
@@ -623,7 +667,7 @@ def remove(
                     _rshadow_save(sh)
             except Exception:
                 pass
-            ok = len(movies) + len(shows) + len(episodes)
+            ok = len(movies) + len(shows)
             _log(f"remove done: -{ok}")
             return ok, unresolved
         _log(f"REMOVE failed {resp.status_code}: {(resp.text or '')[:180]}")

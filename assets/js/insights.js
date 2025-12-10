@@ -81,44 +81,60 @@
   }
 
   const _ease = t => t<.5 ? 2*t*t : -1 + (4-2*t)*t;
-    function fitProviderNumber(el){
-      if (!el || !el.closest) return;
-      const tile = el.closest("#stat-providers .tile");
-      if (!tile) return;
-      el.style.setProperty("--ins-font-scale","1");
-      const tb = tile.getBoundingClientRect();
-      const nb = el.getBoundingClientRect();
-      if (!tb.width || !nb.width) return;
-      const maxW = tb.width * 0.78;
-      const scale = Math.min(1, maxW / nb.width);
-      el.style.setProperty("--ins-font-scale", String(scale.toFixed(3)));
-    }
-    function animateNumber(el, to, duration=650){
-      if (!el) return;
-      const from = parseInt(el.dataset?.v || el.textContent || "0",10)||0;
-      const finish = () => {
-        el.textContent = String(to);
-        el.dataset.v = String(to);
-        fitProviderNumber(el);
-      };
-      if (from===to){ finish(); return; }
-      const t0 = performance.now();
-      const dur = Math.max(180,duration);
-      const step = now => {
-        const p = Math.min(1,(now-t0)/dur);
-        const v = Math.round(from+(to-from)*_ease(p));
-        el.textContent = String(v);
-        if (p<1) requestAnimationFrame(step);
-        else finish();
-      };
-      requestAnimationFrame(step);
-    }
 
-    function refitProviderNumbers(){
-      $$("#stat-providers .tile .n").forEach(fitProviderNumber);
-    }
+  function fitProviderNumber(el){
+    if (!el || !el.closest) return;
+    const tile = el.closest("#stat-providers .tile");
+    if (!tile) return;
+    el.style.setProperty("--ins-font-scale", "1");
+    const tb = tile.getBoundingClientRect();
+    const nb = el.getBoundingClientRect();
+    if (!tb.width || !nb.width) return;
+    const maxW = tb.width * 0.78;
+    const scale = Math.min(1, maxW / nb.width);
+    el.style.setProperty("--ins-font-scale", String(scale.toFixed(3)));
+  }
 
-    window.addEventListener("resize", refitProviderNumbers, { passive:true });
+  function fitProviderMSE(el){
+    if (!el || !el.closest) return;
+    const tile = el.closest("#stat-providers .tile");
+    if (!tile) return;
+    el.style.setProperty("--ins-mse-scale", "1");
+    const tb = tile.getBoundingClientRect();
+    const mb = el.getBoundingClientRect();
+    if (!tb.width || !mb.width) return;
+    const maxW = tb.width - 16;
+    const scale = Math.min(1, maxW / mb.width);
+    el.style.setProperty("--ins-mse-scale", String(scale.toFixed(3)));
+  }
+
+  function animateNumber(el, to, duration = 650){
+    if (!el) return;
+    const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0;
+    const finish = () => {
+      el.textContent = String(to);
+      el.dataset.v = String(to);
+      fitProviderNumber(el);
+    };
+    if (from === to){ finish(); return; }
+    const t0 = performance.now();
+    const dur = Math.max(180, duration);
+    const step = now => {
+      const p = Math.min(1, (now - t0) / dur);
+      const v = Math.round(from + (to - from) * _ease(p));
+      el.textContent = String(v);
+      if (p < 1) requestAnimationFrame(step);
+      else finish();
+    };
+    requestAnimationFrame(step);
+  }
+
+  function refitProviderNumbers(){
+    $$("#stat-providers .tile .n").forEach(fitProviderNumber);
+    $$("#stat-providers .tile .mse").forEach(fitProviderMSE);
+  }
+
+  window.addEventListener("resize", refitProviderNumbers, { passive:true });
 
   function animateChart(now,week,month){
     const bars = { now:$('.bar.now'), week:$('.bar.week'), month:$('.bar.month') };
@@ -188,7 +204,7 @@
   }
 
   // Provider tiles 
-  function renderProviderStats(provTotals, provActive, configuredSet) {
+  function renderProviderStats(provTotals, provActive, configuredSet, breakdownMap) {
     const wrap = footWrap();
     const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
     if (host.parentNode !== wrap) wrap.appendChild(host);
@@ -196,6 +212,8 @@
     const totals = provTotals || {};
     const active = Object.assign({}, provActive || {});
     const conf   = configuredSet || _cfgSet || new Set();
+    const breakdown = breakdownMap || {};
+
     let keys = Array.from(new Set([
       ...Object.keys(Object.assign({}, totals, active)),
       ...Array.from(conf)
@@ -214,18 +232,21 @@
     const seen = new Set();
     keys.forEach(k=>{
       const id=`tile-${k}`, valId=`stat-${k}`;
+      const kLc = _lc(k);
+
       let tile=d.getElementById(id);
       if (!tile) {
-        tile=d.createElement("div"); tile.id=id; tile.dataset.provider=_lc(k); tile.className="tile provider";
-        tile.innerHTML=`<div class="n" id="${valId}" data-v="0">0</div>`; host.appendChild(tile);
+        tile=d.createElement("div"); tile.id=id; tile.dataset.provider=kLc; tile.className="tile provider";
+        tile.innerHTML=`<div class="n" id="${valId}" data-v="0">0</div>`;
+        host.appendChild(tile);
       } else if (tile.parentNode !== host) host.appendChild(tile);
 
-      if (_lc(k) === "crosswatch") {
+      if (kLc === "crosswatch") {
         tile.style.cursor = "pointer";
 
         if (!tile.dataset.cwSnapBound) {
           tile.addEventListener("click", () => {
-            if (_feature === "playlists") return; // skip playlists
+            if (_feature === "playlists") return;
             openCrosswatchSnapshotPicker(_feature);
           });
           tile.dataset.cwSnapBound = "1";
@@ -233,9 +254,46 @@
       }
 
       let valEl=d.getElementById(valId);
-      if (!valEl) { valEl=d.createElement("div"); valEl.className="n"; valEl.id=valId; valEl.dataset.v="0"; valEl.textContent="0"; tile.appendChild(valEl); }
+      if (!valEl) {
+        valEl=d.createElement("div");
+        valEl.className="n";
+        valEl.id=valId;
+        valEl.dataset.v="0";
+        valEl.textContent="0";
+        tile.appendChild(valEl);
+      }
       animateNumber(valEl, (+totals[k]||0), 650);
       tile.classList.toggle("inactive", !active[k]);
+
+      // Per-provider movie/show line
+      let infoEl = tile.querySelector(".mse");
+      if (!infoEl) {
+        infoEl = d.createElement("div");
+        infoEl.className = "mse";
+        tile.appendChild(infoEl);
+      }
+
+      const per = breakdown[kLc] || null;
+      if (!per || kLc === "crosswatch" || _feature === "playlists") {
+        infoEl.textContent = "";
+        infoEl.style.display = "none";
+      } else {
+        const m = +(per.movies || 0);
+        const s = +(per.shows  || 0);
+
+        const parts = [];
+        if (m) parts.push(`M:${m}`);
+        if (s) parts.push(`S:${s}`);
+
+        if (!parts.length) {
+          infoEl.textContent = "";
+          infoEl.style.display = "none";
+        } else {
+          infoEl.textContent = parts.join(" ");
+          infoEl.style.display = "";
+          fitProviderMSE(infoEl); 
+        }
+      }
       seen.add(id);
     });
 
@@ -253,7 +311,7 @@
       return;
     }
 
-    const key = _feature; // "watchlist" | "ratings" | "history"
+    const key = _feature;
     const info = cwSnapshots && cwSnapshots[key] || null;
     let label = tile.querySelector(".cw-snapshot");
 
@@ -360,7 +418,6 @@
       }).join("");
     }
 
-    // Clear panes first
     FEATS.forEach(n=>{
       const pane = wrap.querySelector(`.pane[data-pane="${n}"] .list`);
       if (pane) pane.innerHTML = emptyMsg;
@@ -372,10 +429,10 @@
 
   // Top counters
   function renderTopStats(s) {
-    const now   = +(s?.now || 0);
-    const week  = +(s?.week || 0);
-    const month = +(s?.month || 0);
-    const added = +(s?.added || 0);
+    const now    = +(s?.now || 0);
+    const week   = +(s?.week || 0);
+    const month  = +(s?.month || 0);
+    const added  = +(s?.added || 0);
     const removed = +(s?.removed || 0);
 
     const elNow = $("#stat-now");
@@ -384,8 +441,8 @@
     const elA   = $("#stat-added");
     const elR   = $("#stat-removed");
 
-    if (elNow) animateNumber(elNow, now   | 0);
-    if (elW)   animateNumber(elW,   week  | 0);
+    if (elNow) animateNumber(elNow, now | 0);
+    if (elW)   animateNumber(elW,   week | 0);
     if (elM)   animateNumber(elM,   month | 0);
     if (elA)   animateNumber(elA,   added | 0);
     if (elR)   animateNumber(elR,   removed | 0);
@@ -409,9 +466,12 @@
         : (diff > 0 ? `+${diff} vs last week` : `${diff} vs last week`);
       chip.classList.toggle("muted", diff === 0);
     }
+
+    const bdEl = $("#stat-breakdown");
+    if (bdEl && bdEl.parentElement) bdEl.parentElement.removeChild(bdEl);
   }
 
-  // Rendering + data refresh
+  // Rendering
   async function refreshInsights(force = false) {
     let data;
     try {
@@ -435,7 +495,6 @@
     try {
       renderSparkline("sparkline", blk.series || []);
     } catch {
-      // ignore
     }
 
     renderHistoryTabs(data.history || []);
@@ -445,10 +504,18 @@
       month: blk.month,
       added: blk.added,
       removed: blk.removed,
+      feature: _feature,
+      breakdown: blk.raw && blk.raw.breakdown ? blk.raw.breakdown : null,
     });
 
     const configured = await getConfiguredProviders();
-    renderProviderStats(blk.providers, blk.active, configured);
+    renderProviderStats(
+      blk.providers,
+      blk.active,
+      configured,
+      blk.raw && blk.raw.providers_mse ? blk.raw.providers_mse : null,
+    );
+
     renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
 
     const wt = data.watchtime || null;
@@ -493,10 +560,17 @@
       month: blk.month,
       added: blk.added,
       removed: blk.removed,
+      feature: _feature,
+      breakdown: blk.raw && blk.raw.breakdown ? blk.raw.breakdown : null,
     });
 
     const configured = await getConfiguredProviders();
-    renderProviderStats(blk.providers, blk.active, configured);
+    renderProviderStats(
+      blk.providers,
+      blk.active,
+      configured,
+      blk.raw && blk.raw.providers_mse ? blk.raw.providers_mse : null,
+    )
     renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
     footWrap.reserve();
   }
@@ -918,6 +992,22 @@
     font-size:10px;line-height:1.2;font-weight:700;text-align:center;
     color:rgba(255,255,255,.55);text-shadow:0 1px 2px rgba(0,0,0,.6);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  #stats-card #stat-providers .tile .mse{
+    position:absolute;left:50%;bottom:6px;transform-origin:center bottom;
+    padding:0 6px;font-size:11px;line-height:1.2;font-weight:700;font-variant-numeric:tabular-nums;
+    white-space:nowrap;text-align:center;
+    transform:translateX(-50%) scale(var(--ins-mse-scale,1));
+    color:rgba(255,255,255,.78);text-shadow:0 1px 2px rgba(0,0,0,.85);pointer-events:none;
+  }
+
+  #stats-card #stat-providers .tile .mse .mse-group{
+    display:inline-flex;align-items:center;gap:3px;margin:0 4px;
+  }
+  #stats-card #stat-providers .tile .mse .mse-icon{
+    font-family:"Material Symbols Rounded";font-weight:400;font-style:normal;
+    font-variation-settings:"FILL" 1,"wght" 400,"GRAD" 0,"opsz" 20;
+    font-size:1.1em;line-height:1;
   }
 
   @media(max-width:560px){

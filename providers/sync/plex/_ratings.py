@@ -412,7 +412,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             pass
 
     workers = _get_rating_workers(adapter)
-    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+    fallback_guid = bool(
+        _plex_cfg_get(adapter, "fallback_GUID", False)
+        or _plex_cfg_get(adapter, "fallback_guid", False)
+    )
 
     fb_try = 0
     fb_ok = 0
@@ -495,11 +498,35 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             pass
 
     _log(
-        f"index size: {len(out)} (added={added}, scanned={scanned}, total={grand_total}, workers={workers}, "
-        f"fb_try={fb_try}, fb_ok={fb_ok})"
+        f"index size: {len(out)} (added={added}, scanned={grand_total}, fb_try={fb_try}, fb_ok={fb_ok})"
     )
-    return out
 
+    # additional debug snapshot - needs to be enabled manually
+    if os.getenv("CW_PLEX_SNAPSHOT_DEBUG"):
+        try:
+            from pathlib import Path
+
+            snap: dict[str, Any] = {}
+            for _k, v in out.items():
+                base = id_minimal(v)
+                base["rating"] = v.get("rating")
+                base["rated_at"] = v.get("rated_at")
+                key = canonical_key(base)
+                if not key:
+                    continue
+                snap[key] = base
+
+            p = Path("/config/.cw_state/plex.ratings.snapshot.json")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(
+                json.dumps(snap, ensure_ascii=False, indent=2, sort_keys=True),
+                "utf-8",
+            )
+            _log(f"ratings snapshot written: {p}")
+        except Exception as exc:
+            _log(f"ratings snapshot dump failed: {exc}")
+
+    return out
 
 # Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:

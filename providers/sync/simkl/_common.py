@@ -76,25 +76,6 @@ def coalesce_date_from(
             return _iso_z(candidate)
     return hard_default
 
-
-def shadow_ttl_seconds(default: float = 300.0) -> int:
-    env = (os.getenv("CW_SIMKL_SHADOW_TTL") or "").strip()
-    if env:
-        try:
-            return max(0, int(env))
-        except Exception:
-            pass
-    return int(default)
-
-def want_clear_shadow() -> bool:
-    return (os.getenv("CW_SIMKL_WATCHLIST_CLEAR") or "").strip() == "1"
-
-
-def force_present_bucket() -> str | None:
-    value = (os.getenv("CW_SIMKL_FORCE_PRESENT") or "").strip().lower()
-    return value if value in ("movies", "shows", "anime", "all", "true", "1") else None
-
-
 # time helpers
 def _iso_ok(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():

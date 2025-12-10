@@ -15,13 +15,10 @@ from cw_platform.id_map import minimal as id_minimal
 from ._common import (
     build_headers,
     coalesce_date_from,
-    extract_latest_ts,
-    fetch_activities,
     get_watermark,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
-    shadow_ttl_seconds as _shadow_ttl_seconds,
 )
 
 BASE = "https://api.simkl.com"
@@ -35,6 +32,70 @@ SHADOW_PATH = str(STATE_DIR / "simkl.history.shadow.json")
 SHOW_MAP_PATH = str(STATE_DIR / "simkl.show.map.json")
 
 ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
+
+def _dedupe_history_movies(out: dict[str, dict[str, Any]]) -> None:
+    if not out:
+        return
+
+    bucket_ids: dict[str, dict[str, Any]] = {}
+    by_tvdb: dict[str, list[str]] = {}
+    by_tmdb: dict[str, list[str]] = {}
+
+    for event_key, item in out.items():
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("type") or "").lower() != "movie":
+            continue
+        bucket_key = event_key.split("@", 1)[0]
+        ids = dict(item.get("ids") or {})
+        if not ids:
+            continue
+        if bucket_key in bucket_ids:
+            continue
+        bucket_ids[bucket_key] = ids
+        tvdb = (str(ids.get("tvdb") or "")).strip()
+        tmdb = (str(ids.get("tmdb") or "")).strip()
+        if tvdb:
+            by_tvdb.setdefault(tvdb, []).append(bucket_key)
+        if tmdb:
+            by_tmdb.setdefault(tmdb, []).append(bucket_key)
+
+    if not bucket_ids:
+        return
+
+    drop_buckets: set[str] = set()
+
+    def pick(groups: dict[str, list[str]]) -> None:
+        for _gid, keys in groups.items():
+            if len(keys) < 2:
+                continue
+            canonical: str | None = None
+
+            for k in keys:
+                ids = bucket_ids.get(k) or {}
+                if ids.get("plex") or ids.get("guid"):
+                    canonical = k
+                    break
+            if canonical is None:
+                canonical = keys[0]
+            for k in keys:
+                if k != canonical:
+                    drop_buckets.add(k)
+
+    pick(by_tvdb)
+    pick(by_tmdb)
+
+    if not drop_buckets:
+        return
+
+    to_drop: list[str] = [
+        ek for ek in list(out.keys())
+        if ek.split("@", 1)[0] in drop_buckets
+    ]
+    for ek in to_drop:
+        out.pop(ek, None)
+
+    _log(f"deduped {len(drop_buckets)} movie buckets ({len(to_drop)} events)")
 
 
 def _log(msg: str) -> None:
@@ -173,14 +234,12 @@ def _shadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
         return
     shadow = _shadow_load()
     events: dict[str, Any] = dict(shadow.get("events") or {})
-    now = _now_epoch()
-    ttl = _shadow_ttl_seconds()
     for item in items_list:
         ts = _as_epoch(item.get("watched_at"))
         bucket_key = simkl_key_of(id_minimal(item))
         if not ts or not bucket_key:
             continue
-        events[f"{bucket_key}@{ts}"] = {"item": id_minimal(item), "exp": now + ttl}
+        events[f"{bucket_key}@{ts}"] = {"item": id_minimal(item)}
     shadow["events"] = events
     _shadow_save(shadow)
 
@@ -190,17 +249,9 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
     events: dict[str, Any] = dict(shadow.get("events") or {})
     if not events:
         return
-    now = _now_epoch()
-    ttl = _shadow_ttl_seconds()
     changed = False
     merged = 0
     for event_key, record in list(events.items()):
-        exp = int(record.get("exp") or 0)
-        if exp:
-            if exp < now or (ttl > 0 and exp - now > ttl * 2):
-                del events[event_key]
-                changed = True
-                continue
         if event_key in out:
             del events[event_key]
             changed = True
@@ -215,6 +266,7 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
         _log(f"shadow merged {merged} backfill events")
     if changed or merged:
         _shadow_save({"events": events})
+
 
 _RESOLVE_CACHE: dict[str, dict[str, str]] = {}
 
@@ -396,31 +448,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
 
-    activities, _rate = fetch_activities(session, _headers(adapter, force_refresh=True), timeout=timeout)
-    if isinstance(activities, Mapping) and since is None:
-        wm_movies = get_watermark("history:movies") or ""
-        wm_shows = get_watermark("history:shows") or ""
-        latest_movies = extract_latest_ts(
-            activities,
-            (("movies", "completed"), ("movies", "watched"), ("history", "movies"), ("movies", "all")),
-        )
-        latest_shows = extract_latest_ts(
-            activities,
-            (("shows", "completed"), ("shows", "watched"), ("history", "shows"), ("shows", "all")),
-        )
-        no_change = (latest_movies is None or latest_movies <= wm_movies) and (
-            latest_shows is None or latest_shows <= wm_shows
-        )
-        if no_change:
-            _shadow_merge_into(out, thaw)
-            _unfreeze(thaw)
-            _log(
-                "activities unchanged; history noop "
-                f"(movies={latest_movies}, shows={latest_shows}); shadow={len(out)}"
-            )
-            _log(f"index size: {len(out)}")
-            return out
-
     headers = _headers(adapter, force_refresh=True)
     added = 0
     latest_ts_movies: int | None = None
@@ -508,11 +535,13 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 if limit and added >= limit:
                     break
         _shadow_merge_into(out, thaw)
+        _dedupe_history_movies(out)
         _log(
             f"movies={movies_cnt} episodes={eps_cnt} from_movies={df_movies_iso} from_shows={df_shows_iso}",
         )
     else:
         _shadow_merge_into(out, thaw)
+        _dedupe_history_movies(out)
         _log(
             f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso}",
         )
@@ -529,7 +558,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _log(f"shadow.put index skipped: {exc}")
     _log(f"index size: {len(out)}")
     return out
-
 
 def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = _ids_of(item)
