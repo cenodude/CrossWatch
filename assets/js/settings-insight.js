@@ -129,7 +129,6 @@
 
   function ensureStyle(){ if($("#cw-settings-insight-style")) return; const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
 
-  // DOM structure setup
   function ensureGrid(){
     const page=$("#page-settings"); if(!page) return null;
     let left=page.querySelector("#cw-settings-left, .settings-wrap, .settings, .accordion, .content, .page-inner");
@@ -161,7 +160,7 @@
     return nodes;
   }
 
-  // Data fetching and summarization
+  // Data fetching
   async function readConfig() {
     const cfg = await fetchJSON("/api/config?t=" + Date.now());
     return cfg || {};
@@ -384,7 +383,7 @@
           <div class="h1">No authentication providers configured</div>
           <p class="p">Hey! You don’t have any authentication providers configured yet.<br>
           To start syncing, you need at least two of them.</p>
-          <div class="tip">💡 Tip: configure Plex + SIMKL or Plex + Trakt to enable synchronization features.</div>
+          <div class="tip">💡 Tip: configure at least one provider (e.g. Plex, Trakt, SIMKL or Jellyfin). The local CrossWatch tracker can work on top of that.</div>
         </div>
       </div>
     `;
@@ -451,7 +450,7 @@
     const top=12, maxViewport=Math.max(200,(w.innerHeight-top-16)), maxByLeft=Math.max(200,rect.height);
     scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
   }
-  // Refresh loop
+  // Main loop
   let _loopTimer = null;
 
   async function tick(){

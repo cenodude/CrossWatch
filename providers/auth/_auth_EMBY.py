@@ -276,6 +276,18 @@ def html() -> str:
     #sec-emby .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
     #sec-emby .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
     #sec-emby .inline .msg.hidden{display:none}
+    
+    /* Emby Sign in  */
+    #sec-emby .btn.emby{
+      background: linear-gradient(135deg,#00e084,#2ea859);
+      border-color: rgba(0,224,132,.45);
+      box-shadow: 0 0 14px rgba(0,224,132,.35);
+      color: #fff;
+    }
+    #sec-emby .btn.emby:hover{
+      filter: brightness(1.06);
+      box-shadow: 0 0 18px rgba(0,224,132,.5);
+    }
   </style>
 
   <div class="head" onclick="toggleSection && toggleSection('sec-emby')">

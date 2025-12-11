@@ -277,6 +277,18 @@ def html() -> str:
     #sec-jellyfin .inline .msg.hidden{display:none}
     #sec-jellyfin .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
     #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
+    
+    /* Jellyfin Sign in  */
+    #sec-jellyfin .btn.jellyfin{
+      background: linear-gradient(135deg,#00e084,#2ea859);
+      border-color: rgba(0,224,132,.45);
+      box-shadow: 0 0 14px rgba(0,224,132,.35);
+      color: #fff;
+    }
+    #sec-jellyfin .btn.jellyfin:hover{
+      filter: brightness(1.06);
+      box-shadow: 0 0 18px rgba(0,224,132,.5);
+    }
   </style>
 
   <div class="head" onclick="toggleSection && toggleSection('sec-jellyfin')">

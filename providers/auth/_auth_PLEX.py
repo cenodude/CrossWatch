@@ -247,6 +247,18 @@ def html() -> str:
       padding:6px 12px; border-radius:10px;
     }
     #sec-plex #plex_msg.hidden{ display:none; }
+    
+    /* Connect PLEX  */
+    #sec-plex .pinrow .btn:first-child{
+      background: linear-gradient(135deg,#00e084,#2ea859);
+      border-color: rgba(0,224,132,.45);
+      box-shadow: 0 0 14px rgba(0,224,132,.35);
+      color: #fff;
+    }
+    #sec-plex .pinrow .btn:first-child:hover{
+      filter: brightness(1.06);
+      box-shadow: 0 0 18px rgba(0,224,132,.5);
+    }
 
     /* Link code (PIN)  */
     #sec-plex #plex_pin { max-width: none; }
