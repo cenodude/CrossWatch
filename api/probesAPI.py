@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
@@ -18,13 +18,13 @@ from cw_platform.config_base import load_config as _load_config
 
 try:
     from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH_PROVIDER
-except Exception:  # optional
+except Exception:
     TRAKT_AUTH_PROVIDER = None
 
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
-except Exception:  # optional
+except Exception:
     HAVE_PLEXAPI = False
 
 # env
@@ -50,21 +50,96 @@ UA: dict[str, str] = {
 }
 
 # Helpers
-def _http_get(url: str, headers: dict[str, str], timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
+def _http_get_with_headers(
+    url: str,
+    headers: dict[str, str],
+    timeout: int = HTTP_TIMEOUT,
+) -> tuple[int, bytes, dict[str, str]]:
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-            return r.getcode(), r.read()
+            body = r.read()
+            hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
+            return r.getcode(), body, hdrs
     except urllib.error.HTTPError as e:
-        return e.code, e.read() if getattr(e, "fp", None) else b""
+        body = e.read() if getattr(e, "fp", None) else b""
+        hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
+        return e.code, body, hdrs
     except Exception:
-        return 0, b""
+        return 0, b"", {}
+
+def _http_get(url: str, headers: dict[str, str], timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
+    code, body, _ = _http_get_with_headers(url, headers=headers, timeout=timeout)
+    return code, body
 
 def _json_loads(b: bytes) -> dict[str, Any]:
     try:
         return json.loads(b.decode("utf-8", errors="ignore"))
     except Exception:
         return {}
+
+def _hdr_int(headers: Mapping[str, str], key: str) -> int | None:
+    try:
+        v = headers.get(key.lower()) or headers.get(key)
+        if v is None:
+            return None
+        return int(str(v).strip())
+    except Exception:
+        return None
+
+
+def _load_trakt_last_limit_error(
+    path: str = "/config/.cw_state/trakt_last_limit_error.json",
+) -> dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _trakt_limits_used(
+    client_id: str,
+    token: str,
+    timeout: int = HTTP_TIMEOUT,
+) -> dict[str, int]:
+    out: dict[str, int] = {}
+    if not client_id or not token:
+        return out
+
+    headers = {
+        **UA,
+        "Authorization": f"Bearer {token}",
+        "trakt-api-key": client_id,
+        "trakt-api-version": "2",
+    }
+    base = "https://api.trakt.tv"
+
+    endpoints: dict[str, list[str]] = {
+        "watchlist": [f"{base}/sync/watchlist?page=1&limit=1"],
+        "collection": [
+            f"{base}/sync/collection/movies?page=1&limit=1",
+            f"{base}/sync/collection/shows?page=1&limit=1",
+        ],
+    }
+
+    for feature, urls in endpoints.items():
+        total = 0
+        have = False
+        for url in urls:
+            code, _body, hdrs = _http_get_with_headers(url, headers=headers, timeout=timeout)
+            if code != 200:
+                continue
+            cnt = _hdr_int(hdrs, "x-pagination-item-count")
+            if cnt is None:
+                continue
+            total += cnt
+            have = True
+        if have:
+            out[feature] = total
+
+    return out
 
 def _reason_http(code: int, provider: str) -> str:
     if code == 0:
@@ -497,19 +572,61 @@ def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dic
     code, body = _http_get("https://api.trakt.tv/users/settings", headers=headers)
     out: dict[str, Any] = {}
     if code == 200:
-        j = _json_loads(body)
+        j = _json_loads(body) or {}
         u = j.get("user") or {}
+
         vip = bool(u.get("vip") or u.get("vip_og") or u.get("vip_ep"))
         vip_type = (
             "vip_og"
             if u.get("vip_og")
             else ("vip_ep" if u.get("vip_ep") else ("vip" if vip else ""))
         )
-        out = {"vip": vip, "vip_type": vip_type}
+
+        limits_raw = j.get("limits") or {}
+
+        def _int_or_none(v: Any) -> int | None:
+            try:
+                return int(v)
+            except Exception:
+                return None
+
+        used_counts = _trakt_limits_used(cid, tok)
+        limits_out: dict[str, Any] = {}
+
+        wl_raw = limits_raw.get("watchlist") or {}
+        wl_limit = _int_or_none(wl_raw.get("item_count"))
+        wl_used = used_counts.get("watchlist") if isinstance(used_counts.get("watchlist"), int) else None
+        if wl_limit is not None or wl_used is not None:
+            limits_out["watchlist"] = {
+                "item_count": wl_limit if wl_limit is not None else int(wl_used or 0),
+                "used": int(wl_used or 0),
+            }
+
+        coll_raw = limits_raw.get("collection") or {}
+        coll_limit = _int_or_none(coll_raw.get("item_count"))
+        coll_used = used_counts.get("collection") if isinstance(used_counts.get("collection"), int) else None
+        if coll_limit is not None or coll_used is not None:
+            limits_out["collection"] = {
+                "item_count": coll_limit if coll_limit is not None else int(coll_used or 0),
+                "used": int(coll_used or 0),
+            }
+
+        out = {
+            "vip": vip,
+            "vip_type": vip_type,
+        }
+        if limits_out:
+            out["limits"] = limits_out
+
+        last_err = _load_trakt_last_limit_error()
+        if isinstance(last_err, dict) and last_err.get("feature") and last_err.get("ts"):
+            out["last_limit_error"] = {
+                "feature": str(last_err.get("feature")),
+                "ts": str(last_err.get("ts")),
+            }
 
     _USERINFO_CACHE["trakt"] = (now, out)
     return out
-
 
 def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     ts, info = _USERINFO_CACHE["emby"]
@@ -570,8 +687,6 @@ def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
     _USERINFO_CACHE["emby"] = (now, out)
     return out
 
-
-# some more helpers
 def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
     n = (name or "").strip().lower()
     if n == "plex":
@@ -689,7 +804,6 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         probe_age = 0 if fresh else PROBE_TTL
         user_age = USERINFO_TTL
 
-        # Run detailed probes in parallel
         with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
             futs = {
                 ex.submit(_safe_probe_detail, fn, cfg, probe_age): name
@@ -712,7 +826,6 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
-        # user info only when connected
         info_plex = (
             _safe_userinfo(plex_user_info, cfg, max_age_sec=user_age) if plex_ok else {}
         )
@@ -725,6 +838,37 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         info_mdbl = (
             _safe_userinfo(mdblist_user_info, cfg, max_age_sec=user_age) if mdbl_ok else {}
         )
+        
+        trakt_block: dict[str, Any] = {"connected": trakt_ok}
+        if not trakt_ok:
+            trakt_block["reason"] = trakt_reason
+        if info_trakt:
+            trakt_block["vip"] = bool(info_trakt.get("vip"))
+            trakt_block["vip_type"] = info_trakt.get("vip_type")
+
+            limits_info = info_trakt.get("limits") or {}
+            if isinstance(limits_info, dict) and limits_info:
+                watchlist = limits_info.get("watchlist") or {}
+                collection = limits_info.get("collection") or {}
+                if watchlist or collection:
+                    trakt_block["limits"] = {}
+                    if watchlist:
+                        trakt_block["limits"]["watchlist"] = {
+                            "item_count": int((watchlist.get("item_count") or 0)),
+                            "used": int((watchlist.get("used") or 0)),
+                        }
+                    if collection:
+                        trakt_block["limits"]["collection"] = {
+                            "item_count": int((collection.get("item_count") or 0)),
+                            "used": int((collection.get("used") or 0)),
+                        }
+
+            last_err = info_trakt.get("last_limit_error")
+            if isinstance(last_err, dict) and last_err.get("feature") and last_err.get("ts"):
+                trakt_block["last_limit_error"] = {
+                    "feature": str(last_err.get("feature")),
+                    "ts": str(last_err.get("ts")),
+                }
 
         data: dict[str, Any] = {
             "plex_connected": plex_ok,
@@ -753,18 +897,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "connected": simkl_ok,
                     **({} if simkl_ok else {"reason": simkl_reason}),
                 },
-                "TRAKT": {
-                    "connected": trakt_ok,
-                    **({} if trakt_ok else {"reason": trakt_reason}),
-                    **(
-                        {}
-                        if not info_trakt
-                        else {
-                            "vip": bool(info_trakt.get("vip")),
-                            "vip_type": info_trakt.get("vip_type"),
-                        }
-                    ),
-                },
+                "TRAKT": trakt_block,
+
                 "JELLYFIN": {
                     "connected": jelly_ok,
                     **({} if jelly_ok else {"reason": jelly_reason}),
@@ -823,7 +957,6 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             _USERINFO_CACHE[k] = (0.0, {})
         return {"ok": True}
 
-    # expose caches for diagnostics
     app.state.PROBE_CACHE = PROBE_CACHE
     app.state.PROBE_DETAIL_CACHE = PROBE_DETAIL_CACHE
     app.state.USERINFO_CACHE = _USERINFO_CACHE

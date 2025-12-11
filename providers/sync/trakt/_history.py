@@ -21,7 +21,23 @@ URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_COLL_ADD = f"{BASE}/sync/collection"
 
 UNRESOLVED_PATH = "/config/.cw_state/trakt_history.unresolved.json"
+LAST_LIMIT_PATH = Path("/config/.cw_state/trakt_last_limit_error.json")
 
+def _record_limit_error(feature: str) -> None:
+    try:
+        LAST_LIMIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LAST_LIMIT_PATH.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"feature": feature, "ts": _now_iso()},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "utf-8",
+        )
+        os.replace(tmp, LAST_LIMIT_PATH)
+    except Exception as e:
+        _log(f"limit_error.save failed: {e}")
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
@@ -892,12 +908,27 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             timeout=timeout,
                             max_retries=retries,
                         )
-                        if rc.status_code not in (200, 201):
-                            _log(f"COLLECTION add failed {rc.status_code}: {(rc.text or '')[:200]}")
+                        if rc.status_code == 420:
+                            _log(
+                                "COLLECTION add failed 420: collection limit reached "
+                                "for free Trakt account"
+                            )
+                            _record_limit_error("collection")
+                        elif rc.status_code not in (200, 201):
+                            _log(
+                                f"COLLECTION add failed {rc.status_code}: "
+                                f"{(rc.text or '')[:200]}"
+                            )
                     except Exception as e:
                         _log(f"COLLECTION add exception: {e}")
         elif not unresolved:
             _log("ADD returned 200 but nothing added/existing")
+    elif r.status_code == 420:
+        _log("ADD failed 420: Trakt account limit reached for this user")
+        _record_limit_error("history")
+        for m in accepted_minimals:
+            unresolved.append({"item": m, "hint": "trakt_limit"})
+        return 0, unresolved
     else:
         _log(f"ADD failed {r.status_code}: {(r.text or '')[:200]}")
         for m in accepted_minimals:

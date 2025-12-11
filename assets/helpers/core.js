@@ -2,7 +2,6 @@
 /* This file needs to be refactored and split up over time. - its garbage right now. */
 /* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-/* Global showTab bootstrap (runs first) */
 (function(){
   if (typeof window.showTab !== "function") {
     window.showTab = function(id){
@@ -26,7 +25,8 @@
   }
 })();
 
-// --- Helpers for common DOM tasks --------------------------------------------
+// Helpers
+
 // Treat anything TV-ish as "tv"
 const isTV = v => /^(tv|show|shows|series|season|episode)$/i.test(String(v||""));
 
@@ -77,28 +77,27 @@ function stateAsBool(v) {
   return !!v;
 }
 
-// --- Secret-field helpers: mask tokens and track safe state
+// Server-secret input helpers
 function applyServerSecret(inputId, hasValue) {
   const el = document.getElementById(inputId);
   if (!el) return;
   el.value = hasValue ? "••••••••" : "";
   el.dataset.masked = hasValue ? "1" : "0";
-  el.dataset.loaded = "1";   // ready
-  el.dataset.touched = "";   // untouched
-  el.dataset.clear = "";     // not requested to clear
+  el.dataset.loaded = "1";
+  el.dataset.touched = "";
+  el.dataset.clear = "";
 }
 function startSecretLoad(inputId) {
   const el = document.getElementById(inputId);
   if (!el) return;
-  el.dataset.loaded = "0";   // loading
-  el.dataset.touched = "";   // ignore edits until finished (UI can disable)
+  el.dataset.loaded = "0";
+  el.dataset.touched = "";
 }
 function finishSecretLoad(inputId, hasValue) {
-  // Call when an async token fetch finishes
   applyServerSecret(inputId, !!hasValue);
 }
 
-// --- Determine which authentication providers are configured
+// Determine which authentication providers are configured
 function getConfiguredProviders(cfg = window._cfgCache || {}) {
   const S = new Set();
   const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
@@ -122,11 +121,9 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
 
 // Resolve a provider key from a dynamic card/row element
 function resolveProviderKeyFromNode(node) {
-  // Prefer an explicit attribute when available (e.g. <div data-sync-prov="PLEX">...)</div>
   const attr = (node.getAttribute?.("data-sync-prov") || node.dataset?.syncProv || "").toUpperCase();
   if (attr) return attr;
 
-  // Detect provider via logo alt text or data-logo attributes
   const img = node.querySelector?.('img[alt], .logo img[alt], [data-logo]');
   const alt = (img?.getAttribute?.('alt') || img?.dataset?.logo || "").toUpperCase();
   if (alt.includes("PLEX"))  return "PLEX";
@@ -135,7 +132,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("JELLYFIN")) return "JELLYFIN";
   if (alt.includes("EMBY")) return "EMBY";
 
-  // Fallback: inspect common title/name containers, then full text
+  // Fallback: 
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
   const txt = (tnode?.textContent || node.textContent || "").toUpperCase();
   if (/\bPLEX\b/.test(txt))  return "PLEX";
@@ -152,26 +149,23 @@ function applySyncVisibility() {
   const host = document.getElementById("providers_list");
   if (!host) return;
 
-  // Prefer overlay cards when present: .prov-card[data-prov]
   let cards = host.querySelectorAll(".prov-card");
   if (!cards || cards.length === 0) {
-  // Fallback: older renderer card children
+  // Fallback: 
     cards = host.querySelectorAll(":scope > .card, :scope > *");
   }
 
   cards.forEach((card) => {
-  // 1) Use overlay path (fast and explicit)
     let key = (card.getAttribute?.("data-prov") || card.dataset?.prov || "").toUpperCase();
 
-  // 2) Fallback to heuristics on inner content (legacy renderer)
+  // Fallback:
     if (!key) key = resolveProviderKeyFromNode(card);
 
-    if (!key) return; // unknown container: leave it alone
-    card.dataset.syncProv = key; // remember for next runs
+    if (!key) return;
+    card.dataset.syncProv = key; 
     card.style.display = allowed.has(key) ? "" : "none";
   });
 
-  // Rebuild provider pair selectors using only allowed providers
   const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin", EMBY: "Emby" };
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
@@ -200,7 +194,6 @@ function applySyncVisibility() {
 
 }
 
-// Debounced applySyncVisibility using rAF or setTimeout
 let __syncVisTick = 0;
 function scheduleApplySyncVisibility() {
   if (__syncVisTick) return;
@@ -214,7 +207,7 @@ function scheduleApplySyncVisibility() {
   __syncVisTick = raf(run);
 }
 
-// Observe changes to the providers list and footer (where sync settings may be toggled)
+// Observe changes to the providers list and footer 
 function bindSyncVisibilityObservers() {
   const list = document.getElementById("providers_list");
   if (list && !list.__syncObs) {
@@ -238,7 +231,7 @@ function bindSyncVisibilityObservers() {
   scheduleApplySyncVisibility();
 }
 
-// ---- BEGIN Watchlist Preview visibility based on /api/pairs ----
+// BEGIN Watchlist Preview visibility based on /api/pairs
 const PAIRS_CACHE_KEY = "cw.pairs.v1";
 const PAIRS_TTL_MS    = 15_000;
 
@@ -270,7 +263,6 @@ async function isWatchlistEnabledInPairs(){
   return anyWL(live);
 }
 
-// Expose for other modules to call after settings or sync
 window.updatePreviewVisibility = updatePreviewVisibility;
 
 const AUTO_STATUS = false; // DISABLED by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
@@ -293,7 +285,7 @@ window._ui = { status: null, summary: null };
 
 const STATUS_CACHE_KEY = "cw.status.v1";
 
-// --- status normalizer (zet alles naar {PLEX|SIMKL|TRAKT|JELLYFIN: {connected:boolean}})
+// Status normalizer
 function normalizeProviders(input) {
   const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
   const normOne = (v) => {
@@ -340,7 +332,6 @@ let _pairsFetchAt = 0;
 async function refreshPairedProviders(throttleMs = 5000) {
   const now = Date.now();
   if (now - _pairsFetchAt < throttleMs && window._ui?.pairedProviders) {
-    // still apply current visibility
     toggleProviderBadges(window._ui.pairedProviders);
     return window._ui.pairedProviders;
   }
@@ -379,21 +370,18 @@ function toggleProviderBadges(active){
   }
 }
 
-// Tri-state normalizer: "ok" | "no" | "unknown" (fallback)
+// Tri-state normalizer
 function connState(v) {
   if (v == null) return "unknown";
 
-  // Branch: boolean values
   if (v === true)  return "ok";
   if (v === false) return "no";
 
-  // Branch: numeric values
   if (typeof v === "number") {
     if (v === 1) return "ok";
     if (v === 0) return "no";
   }
 
-  // Branch: string values
   if (typeof v === "string") {
     const s = v.toLowerCase().trim();
     if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
@@ -402,7 +390,7 @@ function connState(v) {
     return "unknown";
   }
 
-  // Branch: objects with common status keys (connected, ok, ready, etc.)
+  // Branch: objects with common status keys
   if (typeof v === "object") {
     if (typeof v.connected === "boolean") return v.connected ? "ok" : "no";
     const b = v.ok ?? v.ready ?? v.active ?? v.online;
@@ -422,7 +410,7 @@ function pickCase(obj, k) {
   return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
 }
 
-// --- tiny inline icons (inherit currentColor) --------------------------------
+// -Inline icons
 function svgCrown() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
 }
@@ -446,10 +434,9 @@ function setBadge(id, providerName, state, stale, provKey, info) {
   el.classList.remove("ok", "no", "unknown", "stale");
   el.classList.add(state);
   if (stale) el.classList.add("stale");
-  // ensure new layout class is present
   el.classList.add("conn");
 
-  // --- left capability tag (optional) ---------------------------------------
+  // left tag for Plex Pass / Trakt VIP
   let tag = "";
   if (provKey === "PLEX" && info && info.plexpass) {
     const plan = String(info?.subscription?.plan || "").toLowerCase();
@@ -461,9 +448,42 @@ function setBadge(id, providerName, state, stale, provKey, info) {
     tag = `<span class="tag vip" title="Trakt ${lbl}">${svgCheck()}${lbl}</span>`;
   }
 
-  // --- main text -------------------------------------------------------------
+  // tooltip / limits for TRAKT 
+  if (provKey === "TRAKT" && info && typeof info === "object") {
+    const lim = info.limits || {};
+    const wl  = lim.watchlist  || {};
+    const col = lim.collection || {};
+
+    const bits = [];
+
+    bits.push(info.vip ? "VIP account" : "Free account");
+
+    const wlUsed = Number(wl.used);
+    const wlMax  = Number(wl.item_count);
+    if (Number.isFinite(wlUsed) && Number.isFinite(wlMax) && wlMax > 0) {
+      bits.push(`Watchlist: ${wlUsed}/${wlMax}`);
+    }
+
+    const colUsed = Number(col.used);
+    const colMax  = Number(col.item_count);
+    if (Number.isFinite(colUsed) && Number.isFinite(colMax) && colMax > 0) {
+      bits.push(`Collection: ${colUsed}/${colMax}`);
+    }
+
+    const last = info.last_limit_error;
+    if (last && last.feature && last.ts) {
+      bits.push(`Last limit: ${last.feature} @ ${last.ts}`);
+    }
+
+    if (bits.length) {
+      el.title = bits.join(" · ");
+    }
+  }
+
+  // Main txt
   const labelState = state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown";
   el.innerHTML =
+
     `${tag}<span class="txt">` +
       `<span class="dot ${state}"></span>` +
       `<span class="name">${providerName}</span>` +
@@ -471,13 +491,10 @@ function setBadge(id, providerName, state, stale, provKey, info) {
     `</span>`;
 }
 
-/**
- * Normalize providers and render all badges.
- * Accepts either booleans or objects: { connected: true, vip: ..., plexpass: ... }
- */
+// normalize and render all connector statuses
 function renderConnectorStatus(providers, { stale = false } = {}) {
   const p = providers || {};
-  const plex    = pickCase(p, "PLEX");   // boolean or {connected,...}
+  const plex    = pickCase(p, "PLEX");
   const simkl   = pickCase(p, "SIMKL");
   const trakt   = pickCase(p, "TRAKT");
   const jelly   = pickCase(p, "JELLYFIN");
@@ -505,11 +522,8 @@ async function refreshStatus(force = false) {
   if (typeof lastStatusMs !== "undefined") lastStatusMs = now;
 
   try {
-    // 1) Update visibility first so badges hide/show instantly if pairs changed
-    await refreshPairedProviders(force ? 0 : 5000);
 
-    // 2) Fetch live status
-    // const r = await fetchWithTimeout("/api/status" + (force ? "?fresh=1" : ""), {}, 15000).then(r => r.json());
+    await refreshPairedProviders(force ? 0 : 5000);
     const r = await fetchWithTimeout("/api/status", {}, 15000);
 
     if (typeof appDebug !== "undefined") appDebug = !!r.debug;
@@ -555,7 +569,7 @@ async function refreshStatus(force = false) {
   }
 }
 
-// ---- bootstrap badges from cached status (runs once on load)
+// Bootstrap: load cached status first
 (function bootstrapStatusFromCache() {
   try {
     const cached = loadStatusCache();
@@ -563,9 +577,7 @@ async function refreshStatus(force = false) {
       renderConnectorStatus(cached.providers, { stale: true });
     }
   } catch {}
-  // Adjust badge visibility based on /api/pairs if that helper is available
   try { refreshPairedProviders?.(0); } catch {}
-  // Then fetch live status to replace stale UI and refresh cache
   try { refreshStatus(true); } catch {}
 })();
 
@@ -578,7 +590,6 @@ async function manualRefreshStatus() {
   setRefreshBusy?.(true);
 
   try {
-    // Update visibility first so badges hide/show instantly if pairs changed
     await refreshPairedProviders(0);
 
     const cached = loadStatusCache?.();
@@ -647,7 +658,7 @@ function recomputeRunDisabled() {
   btn.disabled = busyNow || running || !canRun;
 }
 
-// Bridge only; no UI here.
+// Bridge only
 window.setTimeline = function setTimeline(tl){
   if (window.UX?.updateTimeline) window.UX.updateTimeline(tl || {});
   else window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
@@ -734,7 +745,7 @@ async function hardRefreshMain({ layout, statsCard }) {
   }
 }
 
-/* Tabs & Navigation */
+// Tabs & Navigation
 async function showTab(n) {
   document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: n } }));
 
@@ -768,7 +779,7 @@ async function showTab(n) {
     if (__currentTab === "main") await softRefreshMain();
     else await hardRefreshMain({ layout, statsCard });
     logPanel?.classList.remove("hidden");
-    // Reopen details log stream when returning to Main
+
     queueMicrotask(() => {
       const hasPanel = document.getElementById("det-log");
       if (hasPanel && !window.esDet) { try { openDetailsLog(); } catch {} }
@@ -804,7 +815,6 @@ async function showTab(n) {
 
         window.__watchlistLoaded = true;
       } else {
-        // Subsequent visits
         if (window.Watchlist?.refresh) {
           await window.Watchlist.refresh();
         } else {
@@ -844,13 +854,12 @@ async function showTab(n) {
   __currentTab = n || "main";
 }
 
-// Keep main layout in sync for external triggers
 document.addEventListener("tab-changed", e => {
   if (String(e?.detail?.id).toLowerCase() === "main") enforceMainLayout();
 });
 
 
-// --- Scrobbler UI mount: initialize once when the settings tab is shown and both PLEX + TRAKT are available
+// Scrobbler loader
 let __scrobInit = false;
 function ensureScrobbler() {
   if (__scrobInit) return;
@@ -868,14 +877,12 @@ function ensureScrobbler() {
     } else if (window.Scrobbler?.mount) {
       window.Scrobbler.mount(mount, window._cfgCache || {});
     } else {
-      return; // still not ready
+      return;
     }
     __scrobInit = true;
   };
 
   if (window.Scrobbler) { start(); return; }
-
-  // Otherwise, load the scrobbler script once and start onload
   let s = document.getElementById("scrobbler-js");
   if (!s) {
     s = document.createElement("script");
@@ -890,8 +897,7 @@ function ensureScrobbler() {
   }
 }
 
-// ---- Run + Header progress UI helpers (drop-in) -----------------
-
+// Run and headers
 function toggleSection(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle("open");
@@ -901,7 +907,7 @@ function setBusy(v) {
   recomputeRunDisabled();
 }
 
-/* Run Sync (Trigger + bridge to UI) */
+// Run Sync (Trigger + bridge to UI)
 async function runSync(){
   if (busy) return;
   setBusy?.(true);
@@ -1017,15 +1023,14 @@ async function fetchJSON(){ if (window.Insights && window.Insights.fetchJSON) re
 
 function scheduleInsights(){ if (window.Insights && window.Insights.scheduleInsights) return window.Insights.scheduleInsights.apply(this, arguments); }
 
-/* Insights: Fetch & Render */
+// Insights refresh
 async function refreshInsights(){ if (window.Insights && window.Insights.refreshInsights) return window.Insights.refreshInsights.apply(this, arguments); }
 
 function renderSparkline(){ if (window.Insights && window.Insights.renderSparkline) return window.Insights.renderSparkline.apply(this, arguments); }
 document.addEventListener("DOMContentLoaded", refreshInsights);
 
-// --- once-only bootstrap (no double timers) ---
+// Update check logic
 (() => {
-  // Use existing interval if defined; else 1 hour
   const INTERVAL =
     typeof UPDATE_CHECK_INTERVAL_MS === "number"
       ? UPDATE_CHECK_INTERVAL_MS
@@ -1037,7 +1042,6 @@ document.addEventListener("DOMContentLoaded", refreshInsights);
 
   const run = () => { try { checkForUpdate(); } catch (e) { console.debug("checkForUpdate failed:", e); } };
 
-  // Run on DOM ready (or immediately if already ready)
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", run, { once: true });
   } else {
@@ -1054,7 +1058,6 @@ function ensureMainUpdateSlot() {
   let slot = document.getElementById('st-main-update');
   if (slot) return slot;
 
-  // 1) Prefer the row containing the "Synchronize" button
   const syncBtn = [...document.querySelectorAll('button')].find(b => /synchroni[sz]e/i.test(b.textContent || ''));
   const actionsRow = syncBtn
     ? (syncBtn.closest('.sync-actions, .cx-sync-actions, .actions, .row, .toolbar') || syncBtn.parentElement)
@@ -1068,7 +1071,7 @@ function ensureMainUpdateSlot() {
     return slot;
   }
 
-  // 2) Fallback: place right before “Watchlist preview” header
+  // Fallbacks: 
   const previewHeader = [...document.querySelectorAll('h2, .section-title')].find(h => /watchlist\s*preview/i.test(h.textContent || ''));
   if (previewHeader && previewHeader.parentElement) {
     slot = document.createElement('div');
@@ -1078,7 +1081,6 @@ function ensureMainUpdateSlot() {
     return slot;
   }
 
-  // 3) Last fallback: top of main content
   const main = document.querySelector('#tab-main, [data-tab="main"], .page-main, main') || document.body;
   slot = document.createElement('div');
   slot.id = 'st-main-update';
@@ -1105,7 +1107,7 @@ function renderMainUpdatePill(hasUpdate, latest, url) {
   }
 }
 
-// Hook into your existing version check (keep your current header badge logic)
+// Hook into your existing version check
 async function checkForUpdate() {
   try {
     const r = await fetch('/api/version', { cache: 'no-store' });
@@ -1117,7 +1119,7 @@ async function checkForUpdate() {
     const url = j.html_url || 'https://github.com/cenodude/CrossWatch/releases';
     const hasUpdate = !!j.update_available;
 
-    // Header badge (unchanged – your existing code)
+    // Header badge
     const vEl = document.getElementById('app-version');
     if (vEl) vEl.textContent = `Version ${cur}`;
     const updEl = document.getElementById('st-update');
@@ -1142,7 +1144,7 @@ async function checkForUpdate() {
       }
     }
 
-    // Main pill (new placement)
+    // Main pill
     renderMainUpdatePill(hasUpdate, latest, url);
   } catch (err) {
     console.debug('Version check failed:', err);
@@ -1185,11 +1187,8 @@ function renderSummary(sum) {
   document.getElementById("det-start").textContent  = toLocal(sum.started_at);
   document.getElementById("det-finish").textContent = toLocal(sum.finished_at);
 
-  // Important: timeline/progress and run-button state are handled by main.js now.
-  // No calls to setTimeline(), updateProgressFromTimeline(), or setRunProgress() here.
 }
 
-// After summary updates, keep stats view in step (lightweight hook)
 (() => {
   const prev = window.renderSummary;
   window.renderSummary = function (sum) {
@@ -1197,9 +1196,6 @@ function renderSummary(sum) {
     try { refreshStats(false); } catch {}
   };
 })();
-
-// (Removed) Summary Stream subscriber — main.js owns SSE and progress updates.
-// function openSummaryStream() { ... }  ← intentionally deleted
 
 let _lastStatsFetch = 0;
 
@@ -1239,7 +1235,7 @@ function animateChart(now, week, month) {
 }
 
 
-/* Statistics Dashboard */
+// Statistics dashboard refresh
 async function refreshStats(force = false) {
   const nowT = Date.now();
 
@@ -1465,7 +1461,6 @@ function _initStatsTooltip() {
 
 document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 
-// Small buffer used to assemble Server-Sent Events (SSE) chunks
 let detBuf = "";
 
 function scanForEvents(chunk) {
@@ -1484,7 +1479,7 @@ function scanForEvents(chunk) {
 // Progress mapper: SYNC events -> UI timeline/progress
 window.Progress = (function () {
   let tl = { start: false, pre: false, post: false, done: false };
-  const A = [0, 33, 66, 100]; // anchors used by main.js
+  const A = [0, 33, 66, 100]; 
 
   function emitTL() {
     (window.UX?.updateTimeline || window.setTimeline)?.(tl);
@@ -1767,13 +1762,10 @@ function setRefreshBusy(busy) {
   btn.classList.toggle("loading", !!busy);
 }
 
-//------------------------------------------------------------------
 
-// --- Settings Page -----------------
+// Settings page
 window.openAbout = () => window.ModalRegistry.open('about');
 window.cxEnsureCfgModal = window.cxEnsureCfgModal || function(){};
-
-// Set value of input/select by ID (if visible)
 window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
   const el = document.getElementById(id);
   if (!el || el.__wiredTouch) return;
@@ -1879,19 +1871,15 @@ async function loadCrossWatchSnapshots(cfg) {
 }
 
 async function loadConfig() {
-  // Fetch and cache config first; visibility helpers read from _cfgCache
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
   window._cfgCache = cfg;
 
-  // Bind observers once, then schedule initial visibility pass
   try { bindSyncVisibilityObservers?.(); } catch {}
   try {
-    // Prefer debounced scheduler if present; fallback to direct apply
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else applySyncVisibility?.();
   } catch {}
 
-  // --- Non-sensitive fields
   _setVal("mode",   cfg.sync?.bidirectional?.mode || "two-way");
   _setVal("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
   (function(){
@@ -1903,7 +1891,7 @@ async function loadConfig() {
   _setVal("metadata_locale", cfg.metadata?.locale || "");
   _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
-  // User Interface + CrossWatch Tracker
+  // User Interface 
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
     const cw = cfg.crosswatch || {};
@@ -1959,14 +1947,13 @@ async function loadConfig() {
   await loadCrossWatchSnapshots(cfg);
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
-// --- Sensitive fields: inject RAW values from config (do not mark as touched)
+// Sensitve secrets
 (function hydrateSecretsRaw(cfg){
   const val = (x) => (typeof x === "string" ? x.trim() : "");
   const setRaw = (id, v) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.value = v || "";
-    // make sure saveSettings() won't treat this as user-edit
     el.dataset.masked  = "0";
     el.dataset.loaded  = "1";
     el.dataset.touched = "";
@@ -1994,7 +1981,7 @@ async function loadConfig() {
   setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
 })(cfg);
 
-  // --- Legacy/basic scheduling (advanced UI can extend this)
+  // --- Legacy/basic scheduling
   const s = cfg.scheduling || {};
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
@@ -2006,8 +1993,6 @@ async function loadConfig() {
   try { updateSimklButtonState?.(); } catch {}
   try { updateSimklHint?.();      } catch {}
   try { updateTmdbHint?.();       } catch {}
-
-  // Final visibility pass after the UI and fields re-render
   try {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else applySyncVisibility?.();
@@ -2389,7 +2374,7 @@ async function saveSettings() {
       console.warn("saveSettings: jellyfin merge failed", e);
     }
 
-      // Emby whitelist (driven by matrix state)
+      // Emby whitelist
     try {
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
@@ -2469,7 +2454,7 @@ async function saveSettings() {
       console.warn("saveSettings: emby merge failed", e);
     }
 
-    // Plex root patch + whitelist (driven by matrix state)
+    // Plex root patch + whitelist 
     try {
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
       const uiUser = norm(document.getElementById("plex_username")?.value   || "");
@@ -2500,18 +2485,16 @@ async function saveSettings() {
       }
 
       if (uiAid !== null) {
-        // User explicitly set something in the field (even if it was garbage)
         if (uiAid !== prevAid) {
           (cfg.plex ||= {}).account_id = uiAid;
           changed = true;
         }
       } else if (!Number.isFinite(prevAidRaw) || prevAidRaw <= 0) {
-        // Field empty and previous config had no usable value → force 1
         (cfg.plex ||= {}).account_id = 1;
         changed = true;
       }
 
-      // ---- verify_ssl checkbox ---------------------------------
+      // SSL Verify
       const uiVerify   = !!document.getElementById("plex_verify_ssl")?.checked;
       const prevVerify = !!(serverCfg?.plex?.verify_ssl);
       if (uiVerify !== prevVerify) {
@@ -2519,7 +2502,7 @@ async function saveSettings() {
         changed = true;
       }
 
-      // --- read selections from the matrix' in-memory state -----------
+      // Read selecioned libraries from UI
       const st = (window.__plexState || { hist: new Set(), rate: new Set() });
       const toNums = (xs) =>
         (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
@@ -2768,8 +2751,7 @@ async function restartCrossWatch() {
   }
 }
 
-//----------------------------------------------------------------------
-
+// TMDB API key hint update
 async function updateTmdbHint() {
   const hint = document.getElementById("tmdb_hint");
   const input = document.getElementById("tmdb_api_key");
@@ -2814,12 +2796,9 @@ function setTraktSuccess(show) {
   if (el) el.classList.toggle("hidden", !show);
 }
 
-
-
 function isPlaceholder(v, ph) {
   return (v || "").trim().toUpperCase() === ph.toUpperCase();
 }
-
 
 function isSettingsVisible() {
   const el = document.getElementById("page-settings");
@@ -3016,7 +2995,7 @@ async function loadWall() {
     return (window._deletedKeys && window._deletedKeys.has(item.key)) || false;
   };
 
-  // status → pill mapping
+  // status and pill helpers
   function pillFor(status) {
     switch (String(status || "").toLowerCase()) {
       case "deleted":    return { text: "DELETED", cls: "p-del" };
@@ -3030,7 +3009,6 @@ async function loadWall() {
   }
 
   try {
-    // filtered server call; falls back to client filter if needed
     const data = await fetch("/api/state/wall?both_only=0&active_only=1", { cache: "no-store" }).then(r => r.json());
     if (myReq !== wallReqSeq) return;
 
@@ -3261,7 +3239,6 @@ async function resolvePosterUrl(entity, id, size = "w342") {
   const cb = window._lastSyncEpoch || 0;
 
   try {
-    // Ask the new resolver only for poster presence
     const res = await fetch("/api/metadata/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3345,7 +3322,7 @@ document.addEventListener("DOMContentLoaded", () => {
 try {
   const exportsObj = { showTab, renderConnections };
   if (typeof window.requestPlexPin === "function") {
-    exportsObj.requestPlexPin = window.requestPlexPin; // passthrough from the other file
+    exportsObj.requestPlexPin = window.requestPlexPin;
   }
   Object.assign(window, exportsObj);
 } catch (e) {
@@ -3422,7 +3399,7 @@ async function loadProviders() {
       return;
     }
 
-    // Normalize to a stable provider key used by the visibility filter
+    // Normalize to a stable provider key for known services
     const normKey = (s = "") => {
       s = String(s).toUpperCase();
       if (/\bPLEX\b/.test(s)) return "PLEX";
@@ -3455,12 +3432,9 @@ async function loadProviders() {
       .join("");
 
     div.innerHTML = html;
-
-    // Cache providers for other parts of the UI
     window.cx = window.cx || {};
     window.cx.providers = Array.isArray(arr) ? arr : [];
 
-    // Re-render connections if available
     try {
       if (typeof renderConnections === "function") renderConnections();
     } catch (e) {
@@ -3470,7 +3444,7 @@ async function loadProviders() {
     div.innerHTML = '<div class="muted">Failed to load providers.</div>';
     console.warn("loadProviders error", e);
   } finally {
-    // Always apply visibility filter after (re)render
+
     try {
       if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
       else if (typeof applySyncVisibility === "function") applySyncVisibility();

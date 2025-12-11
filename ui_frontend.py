@@ -738,7 +738,37 @@ function render(payload){
         if (vip) detail = `Plex Pass — ${d.subscription?.plan || 'Active'}`;
       } else if (K.toUpperCase() === 'TRAKT') {
         vip = !!d.vip;
-        detail = vip ? 'VIP status — Enabled' : '';
+
+        const lim = (d && typeof d === 'object' && d.limits && typeof d.limits === 'object') ? d.limits : {};
+        const wl  = lim.watchlist  || {};
+        const col = lim.collection || {};
+
+        const parts = [];
+
+        if (vip) {
+          parts.push('VIP status — Enabled');
+        } else {
+          parts.push('Free account');
+        }
+
+        const wlUsed = Number(wl.used);
+        const wlMax  = Number(wl.item_count);
+        if (Number.isFinite(wlUsed) && Number.isFinite(wlMax) && wlMax > 0) {
+          parts.push(`Watchlist: ${wlUsed}/${wlMax}`);
+        }
+
+        const colUsed = Number(col.used);
+        const colMax  = Number(col.item_count);
+        if (Number.isFinite(colUsed) && Number.isFinite(colMax) && colMax > 0) {
+          parts.push(`Collection: ${colUsed}/${colMax}`);
+        }
+
+        const last = d.last_limit_error;
+        if (last && last.feature && last.ts) {
+          parts.push(`Last limit: ${last.feature} @ ${last.ts}`);
+        }
+
+        detail = parts.join(' · ');
       } else if (K.toUpperCase() === 'EMBY') {
         vip = !!d.premiere;
         if (vip) detail = 'Premiere — Active';

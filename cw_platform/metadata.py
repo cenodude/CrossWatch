@@ -210,8 +210,8 @@ class MetadataManager:
                     r["type"] = entity_norm
 
                 if strategy == "first_success":
-                    if debug:
-                        log(f"Provider {name} hit", level="DEBUG", module="META")
+                    #if debug:
+                    #   log(f"Provider {name} hit", level="DEBUG", module="META")
                     return r
 
                 results.append(r)

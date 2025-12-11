@@ -25,7 +25,23 @@ STATE_DIR = Path("/config/.cw_state")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 SHADOW = STATE_DIR / "trakt_watchlist.shadow.json"
 UNRESOLVED_PATH = STATE_DIR / "trakt_watchlist.unresolved.json"
+LAST_LIMIT_PATH = STATE_DIR / "trakt_last_limit_error.json"
 
+def _record_limit_error(feature: str) -> None:
+    try:
+        LAST_LIMIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LAST_LIMIT_PATH.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"feature": feature, "ts": _now_iso()},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "utf-8",
+        )
+        os.replace(tmp, LAST_LIMIT_PATH)
+    except Exception as e:
+        _log(f"limit_error.save failed: {e}")
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
@@ -66,6 +82,10 @@ def _cfg_bool(d: Mapping[str, Any], key: str, default: bool) -> bool:
         return False
     return default
 
+# Trakt watchlist size (free vs VIP limit helper)
+def _current_watchlist_size() -> int:
+    sh = _shadow_load()
+    return len(sh.get("items") or {})
 
 # Progress helpers
 def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = False) -> None:
@@ -164,7 +184,6 @@ def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
 def _is_frozen(item: Mapping[str, Any]) -> bool:
     return key_of(id_minimal(item)) in _load_unresolved()
 
-
 # Rate limit logging
 def _log_rate_headers(resp: Any) -> None:
     try:
@@ -176,7 +195,6 @@ def _log_rate_headers(resp: Any) -> None:
             _log(f"rate remain={remain or '-'} reset={reset or '-'} retry_after={raf or '-'}")
     except Exception:
         pass
-
 
 # Index
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
@@ -313,6 +331,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     log_rates = _cfg_bool(cfg, "watchlist_log_rate_limits", True)
     freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
 
+    vip = bool(cfg.get("vip"))
+    wl_limit = None if vip else int(cfg.get("watchlist_limit") or 100)
+    current_count = _current_watchlist_size()
+    capacity = None if wl_limit is None else max(0, wl_limit - current_count)
+
     sess = adapter.client.session
     headers = build_headers(
         {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
@@ -322,7 +345,24 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if not accepted:
         return 0, unresolved
 
+    if capacity is not None and capacity <= 0:
+        for x in accepted:
+            m = id_minimal({"type": x["type"], "ids": x["ids"]})
+            unresolved.append({"item": m, "hint": "trakt_limit"})
+        _log(f"watchlist full for free Trakt account (limit={wl_limit}, have={current_count})")
+        return 0, unresolved
+
+    if capacity is not None and capacity < len(accepted):
+        keep = accepted[:capacity]
+        rest = accepted[capacity:]
+        for x in rest:
+            m = id_minimal({"type": x["type"], "ids": x["ids"]})
+            unresolved.append({"item": m, "hint": "trakt_limit"})
+        accepted = keep
+        _log(f"only {capacity} watchlist slots left, {len(rest)} items left unsynced due to limit")
+
     ok = 0
+    
     for sl in _chunk(accepted, batch):
         payload = _payload_from_accepted(sl)
         if not payload:
@@ -349,6 +389,21 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _freeze_not_found(nf, action="add", unresolved=unresolved, add_details=freeze_details)
             if ok == 0 and not unresolved:
                 _log("ADD returned 200 but no items were added or existing")
+        elif r.status_code == 420:
+            upgrade_url = r.headers.get("X-Upgrade-URL")
+            _log("ADD failed 420: Trakt account limit reached")
+            if upgrade_url:
+                _log(f"Upgrade URL: {upgrade_url}")
+            _record_limit_error("watchlist")
+            for x in sl:
+                m = id_minimal({"type": x["type"], "ids": x["ids"]})
+                unresolved.append(
+                    {
+                        "item": m,
+                        "hint": "trakt_limit",
+                    }
+                )
+            break
         else:
             _log(f"ADD failed {r.status_code}: {r.text[:180] if r.text else ''}")
             for x in sl:
@@ -360,9 +415,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     reasons=[f"http:{r.status_code}"],
                     details={"status": r.status_code} if freeze_details else None,
                 )
-
     return ok, unresolved
-
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
