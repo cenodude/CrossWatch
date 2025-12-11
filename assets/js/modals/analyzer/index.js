@@ -237,6 +237,7 @@ export default {
     let PAIR_SCOPE_KEYS = new Set();
     let UNSYNCED = new Set();
     let SCOPE = "issues";
+    let NORMALIZATION = [];
 
     function applySplit(top, total) {
       const bar = 8;
@@ -425,6 +426,81 @@ export default {
       draw();
     }
 
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderHistoryNormalizationBlocks(list) {
+      if (!Array.isArray(list) || !list.length) return "";
+      return list
+        .map(p => {
+          const src = p && p.source ? String(p.source) : "?";
+          const dst = p && p.target ? String(p.target) : "?";
+          const delta = (p && p.show_delta) || {};
+          const srcCount =
+            typeof delta.source === "number" ? delta.source : 0;
+          const dstCount =
+            typeof delta.target === "number" ? delta.target : 0;
+
+          const extraSource =
+            (Array.isArray(p.extra_source_titles) &&
+            p.extra_source_titles.length
+              ? p.extra_source_titles
+              : p.extra_source) || [];
+          const extraTarget =
+            (Array.isArray(p.extra_target_titles) &&
+            p.extra_target_titles.length
+              ? p.extra_target_titles
+              : p.extra_target) || [];
+
+          const renderList = (items, label) => {
+            if (!items.length) {
+              return `<div>
+                <div class="h" style="font-size:12px">${escHtml(
+                  label
+                )}</div>
+                <div class="mono" style="opacity:.7">—</div>
+              </div>`;
+            }
+            const lis = items
+              .slice(0, 50)
+              .map(x => `<li>${escHtml(String(x))}</li>`)
+              .join("");
+            return `<div>
+              <div class="h" style="font-size:12px">${escHtml(
+                label
+              )}</div>
+              <ul class="mono">${lis}</ul>
+            </div>`;
+          };
+
+          return `
+            <div class="issue">
+              <div class="h">History normalization: ${escHtml(
+                src
+              )} ↔ ${escHtml(dst)}</div>
+              <div class="mono" style="margin-bottom:6px">
+                ${escHtml(src)} has ${srcCount} shows, ${escHtml(
+            dst
+          )} has ${dstCount} shows.
+              </div>
+              <div style="font-size:12px;opacity:.8;margin-bottom:6px">
+                These counts can differ because some shows are split or merged differently between providers.
+              </div>
+              <div class="ids-edit-row">
+                ${renderList(extraSource, `Only in ${src}`)}
+                ${renderList(extraTarget, `Only in ${dst}`)}
+              </div>
+            </div>`;
+        })
+        .join("");
+    }
+
     function manualIdsBlock(it) {
       const ids = it.ids || {};
       const inputs = ID_FIELDS.map(name => {
@@ -446,6 +522,44 @@ export default {
             </div>
           </div>
         </div>`;
+    }
+
+    function renderNormalizationPanel(list) {
+      if (!list || !list.length) return "";
+
+      const renderList = arr => {
+        if (!arr || !arr.length) return `<span class="mono">none</span>`;
+        return `<ul>${arr.map(x => `<li>${x}</li>`).join("")}</ul>`;
+      };
+
+      return list
+        .map(p => {
+          const src = String(p.source || "").toUpperCase();
+          const dst = String(p.target || "").toUpperCase();
+          const delta = p.show_delta || {};
+          const srcCount = delta.source ?? "?";
+          const dstCount = delta.target ?? "?";
+
+          const srcTitles = p.extra_source_titles || [];
+          const dstTitles = p.extra_target_titles || [];
+          const srcIds = p.extra_source || [];
+          const dstIds = p.extra_target || [];
+
+          const listSrc = srcTitles.length ? srcTitles : srcIds;
+          const listDst = dstTitles.length ? dstTitles : dstIds;
+
+          return `
+          <div class="issue">
+            <div class="h">History normalization: ${src} ↔ ${dst}</div>
+            <div>${src} has ${srcCount} shows, ${dst} has ${dstCount} shows.</div>
+            <div>These counts differ because some series are split or merged differently between providers.</div>
+            <div style="margin-top:6px">
+              <div><strong>Only in ${src}:</strong> ${renderList(listSrc)}</div>
+              <div><strong>Only in ${dst}:</strong> ${renderList(listDst)}</div>
+            </div>
+          </div>`;
+        })
+        .join("");
     }
 
     function bindManualIds(provider, feature, key, it) {
@@ -545,7 +659,8 @@ export default {
       </div>`;
 
       const manual = manualIdsBlock(it);
-      issues.innerHTML = header + manual;
+      const normalizationBlock = renderNormalizationPanel(NORMALIZATION);
+      issues.innerHTML = header + manual + normalizationBlock;
       issues.scrollTop = 0;
 
       bindManualIds(provider, feature, key, it);
@@ -742,6 +857,11 @@ export default {
       renderPairs();
 
       const all = meta.problems || [];
+      const normalization = all.filter(
+        p => p && p.type === "history_show_normalization"
+      );
+      NORMALIZATION = normalization;
+
       const hasPairFilter = pairMap && pairMap.size > 0;
       const seen = new Set();
       const per = { history: 0, watchlist: 0, ratings: 0 };
@@ -782,11 +902,16 @@ export default {
       filter(search.value || "");
 
       if (!keep.length) {
-        issues.innerHTML =
-          `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+        if (NORMALIZATION && NORMALIZATION.length) {
+          issues.innerHTML = renderNormalizationPanel(NORMALIZATION);
+        } else {
+          issues.innerHTML =
+            `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+        }
         if (!silent) hideWait();
         return;
       }
+
       const first = keep[0];
       const tag = tagOf(first.provider, first.feature, first.key);
       await select(tag);

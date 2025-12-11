@@ -397,6 +397,194 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return stats
 
+def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str, str]]:
+    show_sets: dict[str, set[str]] = {}
+    labels: dict[str, str] = {}
+
+    prov_block = (s.get("providers") or {}) if isinstance(s, dict) else {}
+    for prov_name, prov_data in prov_block.items():
+        prov = str(prov_name or "").upper().strip()
+        if not prov or not isinstance(prov_data, dict):
+            continue
+
+        hist = (prov_data or {}).get("history") or {}
+        node = hist.get("baseline") or hist
+        items = node.get("items") or {}
+
+        if isinstance(items, dict):
+            recs = items.values()
+        elif isinstance(items, list):
+            recs = items
+        else:
+            continue
+
+        p_shows: set[str] = set()
+
+        for rec in recs:
+            if not isinstance(rec, dict):
+                continue
+
+            typ = str(rec.get("type") or "").strip().lower()
+            ids = (rec.get("ids") or {}) or {}
+
+            def ensure_label(sig: str) -> None:
+                if sig in labels:
+                    return
+                title = (
+                    rec.get("series_title")
+                    or rec.get("show_title")
+                    or rec.get("title")
+                    or rec.get("name")
+                )
+                year = rec.get("series_year") or rec.get("year")
+                if title:
+                    base = str(title).strip()
+                    if year not in (None, ""):
+                        lbl = f"{base} ({year}) [{sig}]"
+                    else:
+                        lbl = f"{base} [{sig}]"
+                else:
+                    lbl = sig
+                labels[sig] = lbl
+
+            if typ == "episode":
+                show_ids = (rec.get("show_ids") or {}) or {}
+                show_sig: str | None = None
+                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                    v = show_ids.get(idk)
+                    if v:
+                        show_sig = f"{idk}:{str(v).lower()}"
+                        break
+                if show_sig is None:
+                    series_title = (
+                        rec.get("series_title")
+                        or rec.get("show_title")
+                        or rec.get("title")
+                        or rec.get("name")
+                    )
+                    if series_title:
+                        y = rec.get("series_year") or rec.get("year")
+                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
+                if show_sig:
+                    p_shows.add(show_sig)
+                    ensure_label(show_sig)
+                continue
+
+            if typ == "show":
+                show_ids = ids
+                show_sig = None
+                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                    v = show_ids.get(idk)
+                    if v:
+                        show_sig = f"{idk}:{str(v).lower()}"
+                        break
+                if show_sig is None:
+                    series_title = (
+                        rec.get("series_title")
+                        or rec.get("show_title")
+                        or rec.get("title")
+                        or rec.get("name")
+                    )
+                    if series_title:
+                        y = rec.get("series_year") or rec.get("year")
+                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
+                if show_sig:
+                    p_shows.add(show_sig)
+                    ensure_label(show_sig)
+                continue
+
+            has_show_meta = bool(
+                (rec.get("show_ids") or {})
+                or rec.get("series_title")
+                or rec.get("show_title")
+            )
+            if has_show_meta:
+                show_ids = (rec.get("show_ids") or {}) or {}
+                show_sig = None
+                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                    v = show_ids.get(idk)
+                    if v:
+                        show_sig = f"{idk}:{str(v).lower()}"
+                        break
+                if show_sig is None:
+                    series_title = (
+                        rec.get("series_title")
+                        or rec.get("show_title")
+                        or rec.get("title")
+                        or rec.get("name")
+                    )
+                    if series_title:
+                        y = rec.get("series_year") or rec.get("year")
+                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
+                if show_sig:
+                    p_shows.add(show_sig)
+                    ensure_label(show_sig)
+
+        show_sets[prov] = p_shows
+
+    return show_sets, labels
+
+
+def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
+    show_sets, labels = _history_show_sets(s)
+    tmdb_enabled = bool(_tmdb_key())
+
+    seen: set[tuple[str, str]] = set()
+
+    for (src, feat), targets in pairs.items():
+        if feat != "history":
+            continue
+        a = str(src or "").upper().strip()
+        if not a:
+            continue
+
+        for dst in targets:
+            b = str(dst or "").upper().strip()
+            if not b or a == b:
+                continue
+
+            key = (a, b) if a <= b else (b, a)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            sa = show_sets.get(a) or set()
+            sb = show_sets.get(b) or set()
+            if not sa and not sb:
+                continue
+
+            only_a = sorted(sa - sb)
+            only_b = sorted(sb - sa)
+            if not only_a and not only_b:
+                continue
+
+            issue: dict[str, Any] = {
+                "severity": "info",
+                "type": "history_show_normalization",
+                "feature": "history",
+                "source": a,
+                "target": b,
+                "show_delta": {
+                    "source": len(sa),
+                    "target": len(sb),
+                },
+                "extra_source": only_a,
+                "extra_target": only_b,
+                "tmdb_enabled": tmdb_enabled,
+            }
+
+            if labels:
+                issue["extra_source_titles"] = [labels.get(sig, sig) for sig in only_a]
+                issue["extra_target_titles"] = [labels.get(sig, sig) for sig in only_b]
+
+            issues.append(issue)
+
+    return issues
+
 def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     core = ("imdb", "tmdb", "tvdb")
@@ -560,6 +748,11 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
                     "ids": ids,
                 }
             )
+
+    try:
+        probs.extend(_history_normalization_issues(s))
+    except Exception:
+        pass
 
     return probs
 
