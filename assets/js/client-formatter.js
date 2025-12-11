@@ -1,7 +1,7 @@
 (function (w, d) {
   "use strict";
 
-  // Inject styles once
+  // css styles
   if (!d.getElementById("cf-styles")) {
     d.head.insertAdjacentHTML("beforeend", `<style id="cf-styles">
       .cf-log{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:13px;line-height:1.35}
@@ -60,7 +60,7 @@
     </style>`);
   }
 
-  // Small helpers
+  // helpers
   const esc = (s)=>String(s??"").replace(/[&<>]/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
   const ICON={start:"▶",pair:"🔗",plan:"📝",add:"➕",remove:"➖",done:"✅",complete:"🏁",unresolved:"⚠️"};
   const PROV={PLEX:{cls:"cf-plex",logo:"/assets/img/PLEX-log.svg"},SIMKL:{cls:"cf-simkl",logo:"/assets/img/SIMKL-log.svg"},CROSSWATCH:{cls:"cf-crosswatch",logo:"/assets/img/CROSSWATCH-log.svg"},TRAKT:{cls:"cf-trakt",logo:"/assets/img/TRAKT-log.svg"},JELLYFIN:{cls:"cf-jellyfin",logo:"/assets/img/JELLYFIN-log.svg"},MDBLIST:{cls:"cf-mdblist",logo:"/assets/img/MDBLIST-log.svg"}};
@@ -74,13 +74,56 @@
   const dstNameFrom=(ev)=>ev?.dst?String(ev.dst).toUpperCase():String(ev?.event||"").includes(":A:")?pair.A:pair.B;
   let squelchPlain=0;
 
-  // Progress bookkeeping
+  // Progress tracking
   const progMap=Object.create(null);
   const progPendingTick=Object.create(null);
-  const progKey=(ev)=>{const dst=String(ev.dst||ev.provider||"DST").toUpperCase();const feat=String(ev.feature||"watchlist").toLowerCase();if(ev.event==="snapshot:progress")return `snap|${dst}|${feat}`;if(/^apply:/.test(ev.event||"")){const action=(ev.event.split(":")[1]||"add").toLowerCase();return `apply|${dst}|${feat}|${action}`}return null};
+
+  // Track separate progress rows 
+  const progActiveKeyByBase=Object.create(null);
+  const progRunCounterByBase=Object.create(null);
+
+  const progKey=(ev)=>{
+    const name=String(ev.event||"");
+    const dst=String(ev.dst||ev.provider||"DST").toUpperCase();
+    const feat=String(ev.feature||"watchlist").toLowerCase();
+    let base=null;
+
+    if(name==="snapshot:progress"){
+      base=`snap|${dst}|${feat}`;
+    }else if(/^apply:/.test(name)){
+      const action=(name.split(":")[1]||"add").toLowerCase();
+      base=`apply|${dst}|${feat}|${action}`;
+    }else{
+      return null;
+    }
+
+    let forceNew=false;
+
+    if(name==="snapshot:progress"){
+      const current=progActiveKeyByBase[base];
+      const row=current&&progMap[current];
+      const done=Number(ev.done||0);
+      if(row&&row.classList.contains("cf-prog-done")&&done===0){
+        forceNew=true;
+      }
+    }
+    else if(/:start$/.test(name)){
+      forceNew=true;
+    }
+
+    if(forceNew||!progActiveKeyByBase[base]){
+      const next=(progRunCounterByBase[base]||0)+1;
+      progRunCounterByBase[base]=next;
+      const full=`${base}|${next}`;
+      progActiveKeyByBase[base]=full;
+      return full;
+    }
+
+    return progActiveKeyByBase[base];
+  };
+  
   const slug=(s)=>String(s).replace(/[^a-z0-9|_-]/gi,"_");
 
-  // Create a progress row if missing
   function ensureProgressRow(root,key,ev){
     let el=progMap[key]; if(el&&root.contains(el)) return el;
     const [mode,dst,feat,action]=String(key).split("|");
@@ -90,12 +133,11 @@
     const wrap=d.createElement("div");
     wrap.className="cf-event progress cf-fade-in";
     wrap.setAttribute("data-cf-prog",slug(key));
-    // CHANGED: moved stats container below the head (bar)
     wrap.innerHTML=`<div class="cf-prog-head"><span class="cf-ico"></span>${titleIcon} ${verb} <span class="cf-prog-badge">${dstBadge}</span><span class="cf-prog-sub">· ${esc(cap(feat))}</span><div class="cf-prog-bar"><div class="cf-prog-fill"></div><div class="cf-prog-text">0%</div></div></div><div class="cf-prog-stats"></div>`;
     root.appendChild(wrap); progMap[key]=wrap; return wrap;
   }
 
-  // Update progress row with guardrails
+  // Update progress
   function updateProgressRow(root,ev,opts={}){
     const key=progKey(ev); if(!key) return;
     const row=ensureProgressRow(root,key,ev);
@@ -120,7 +162,6 @@
       row.classList.add("cf-prog-done");
       if(txt) txt.textContent=total>0?`${total}/${total} · 100%`:"100%";
 
-      // render compact stats as pills on their own line (apply rows only)
       const isApply = /^apply:/.test(String(ev.event||"")) || String(key||"").startsWith("apply|");
       if (isApply && statsEl) {
         const action     = (String(ev.event||"").includes(":remove:") ? "remove" : "add");
@@ -149,7 +190,6 @@
     progPendingTick[key]=true;
   }
 
-  // Force-finish any armed bars on the very next line
   function finishArmedBars(root){
     for(const key in progPendingTick){
       if(!progPendingTick[key]) continue;
@@ -169,7 +209,6 @@
     }
   }
 
-  // Friendly JSON → HTML
   function formatFriendlyLog(line){
     if(!line||line[0]!=="{") return null;
     let ev; try{ev=JSON.parse(line);}catch{return null;}
@@ -292,7 +331,6 @@
     return t;
   }
 
-  // Chunking + JSON extract
   function splitHost(s){
     return String(s).replace(/\r\n/g,"\n").replace(/(?<!\n)(>\s*SYNC start:[^\n]*)/g,"\n$1").replace(/(?<!\n)(\[\s*i\s*]\s*[^\n]*)/gi,"\n$1").replace(/(?<!\n)(\[SYNC]\s*exit code:[^\n]*)/g,"\n$1").replace(/(?<!\n)(▶\s*Sync started[^\n]*)/g,"\n$1").replace(/(?<!\n)(🔗\s*Pair:[^\n]*)/g,"\n$1").replace(/(?<!\n)(📝\s*Plan[^\n]*)/g,"\n$1").replace(/(?<!\n)(✅\s*Pair finished[^\n]*)/g,"\n$1").replace(/(?<!\n)(🏁\s*Sync complete[^\n]*)/g,"\n$1").replace(/}\s*(?=\{")/g,"}\n").split(/\n+/);
   }
@@ -318,7 +356,7 @@
     return {tokens,buf:s.slice(i)};
   }
 
-  // Plain squelch
+// Continuation line detection
   const isContinuationLine=(t)=>/^[\{\[]/.test(t)||/^['"]?[A-Za-z0-9_]+['"]?\s*:/.test(t)||/^\s{2,}\S/.test(t)||/[}\]]$/.test(t);
   const shouldDropAndMaybeSquelch=(t,isDebug)=>{
     if(isDebug) return false;
@@ -333,7 +371,6 @@
     return false;
   };
 
-  // Row limit (keeps UI snappy)
   const CF_MAX_ROWS = 400;
   function trimRows(el){
     const rows = el.querySelectorAll(".cf-event,.cf-line");
@@ -341,7 +378,6 @@
     for(let i=0;i<extra;i++) rows[i]?.remove();
   }
 
-  // Render one line
   function renderInto(el,line,isDebug){
     if(!el||!line) return;
     isDebug=!!(isDebug??(typeof window!=="undefined"&&window.appDebug));

@@ -14,6 +14,24 @@ const chips = ids =>
     .map(([k, v]) => `<span class="chip mono">${k}:${v}</span>`)
     .join("");
 
+const displayTitle = r => {
+  const type = String(r.type || "").toLowerCase();
+  const series = r.series_title || "";
+  const season = r.season;
+  const episode = r.episode;
+
+  if (series && type === "episode" && season != null && episode != null) {
+    const s = String(season).padStart(2, "0");
+    const e = String(episode).padStart(2, "0");
+    return `${series} - S${s}E${e}`;
+  }
+  if (series && type === "season" && season != null) {
+    const s = String(season).padStart(2, "0");
+    return `${series} - S${s}`;
+  }
+  return r.title || "Untitled";
+};
+
 const fmtCounts = c => {
   const entries = Object.entries(c || {});
   if (!entries.length) return "";
@@ -54,121 +72,69 @@ function css() {
   const el = document.createElement("style");
   el.id = "an-css";
   el.textContent = `
-  .modal-root{position:relative;display:flex;flex-direction:column;height:100%}
-  .cx-head{display:flex;align-items:center;gap:10px;justify-content:space-between;background:radial-gradient(circle at top,#313870,#050814);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
-  .cx-left{display:flex;align-items:center;gap:12px;flex:1}
-  .cx-title{font-weight:800}
-  .an-pairs{display:flex;flex-wrap:wrap;gap:6px;padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.12);background:#070b14}
-  .an-pair-chip{
-    font-size:12px;
-    cursor:pointer;
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    padding:4px 10px;
-    border-radius:999px;
-    border:1px solid rgba(255,255,255,.18);
-    background:radial-gradient(circle at top,#151a2e,#050814);
-    opacity:.8;
-    color:#f5f6ff;
-    font-weight:600;
-    letter-spacing:.03em;
-    text-transform:uppercase;
-    box-shadow:0 0 12px #000000aa;
-    transition:background .16s ease,box-shadow .16s ease,opacity .16s ease,transform .12s ease;
-  }
-  .an-pair-chip:hover{opacity:1;box-shadow:0 0 18px #6a5cff66;transform:translateY(-1px);}
-  .an-pair-chip.on{background:linear-gradient(90deg,#2b5cff,#23a8ff);box-shadow:0 0 14px #6a5cffaa;opacity:1}
-  .an-pair-chip span.dir{opacity:.9}
-  .an-actions{display:flex;gap:8px;align-items:center}
-  .pill{
-    border:1px solid rgba(255,255,255,.12);
-    background:#0e1320;
-    color:#dbe8ff;
-    border-radius:16px;
-    padding:6px 12px;
-    font-size:13px;
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    white-space:nowrap;
-    flex:0 0 auto;
-  }
-  .pill.ghost{background:transparent}
-  .pill[disabled]{opacity:.55;pointer-events:none}
-  .close-btn{border:1px solid rgba(255,255,255,.2);background:#171b2a;color:#fff;border-radius:10px;padding:6px 10px}
-  #an-toggle-ids{white-space:nowrap;min-width:110px;padding:6px 16px}
-  .badge{padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:#0b0f19}
-  .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(220px,1fr) 8px minmax(180px,1fr);overflow:hidden}
-  .an-split{height:8px;background:linear-gradient(90deg,#27214b,#2b5cff);box-shadow:0 0 10px #6a5cff88 inset;cursor:row-resize}
-  .an-grid{overflow:auto;border-bottom:1px solid rgba(255,255,255,.08)}
-  .an-issues{overflow:auto;padding:8px}
-  .row{display:grid;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);align-items:center}
-  .head{position:sticky;top:0;background:#0b0f19;z-index:2}
-  .row.sel{outline:1px solid #6aa3ff}
-  .chip{display:inline-block;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:2px 6px;margin:2px}
-  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-  .ids{opacity:.9}
-  .an-grid.show-ids .ids{display:block}
-  .an-grid .ids{display:none}
-  .row .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .row .title small{opacity:.7;margin-left:6px}
-  .row .prov{font-weight:600}
-  .row .feat{opacity:.8}
-  .row .counts{font-size:12px;opacity:.8}
-  .sort{cursor:pointer;user-select:none}
-  .sort span.label{margin-right:4px}
-  .sort span.dir{opacity:.7;font-size:11px}
-  .issue{border-radius:12px;padding:10px 11px;margin-bottom:8px;background:radial-gradient(circle at top left,#262349,#050814);border:1px solid rgba(255,255,255,.1);box-shadow:0 0 14px #111526}
-  .issue .h{font-weight:700;margin-bottom:4px}
-  .issue .badge{margin-top:4px}
-  .issue.manual-ids{margin-top:4px}
-  .ids-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-  .ids-edit-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
-  .ids-edit-row label{display:flex;align-items:center;gap:6px;font-size:12px;opacity:.9}
-  .ids-edit-row label span{min-width:52px;text-transform:uppercase;letter-spacing:.03em;color:#9fb4ff}
-  .ids-edit-row input{flex:1 1 auto;background:#050814;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:4px 6px;font-size:12px;color:#dbe8ff}
-  .ids-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
-  .an-footer{
-    padding:8px 12px;
-    border-top:1px solid rgba(255,255,255,.12);
-    display:flex;
-    align-items:center;
-    font-size:12px;
-    background:#050814;
-    gap:8px;
-  }
-  .an-footer #an-issues-count{
-    font-weight:600;
-    color:#dbe8ff;
-  }
-  .an-footer .stats{
-    margin-left:auto;
-    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
-    opacity:.78;
-  }
-  .an-footer .stats.empty{opacity:.45}
-  input[type=search]{background:#0b0f19;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
-  #an-search{flex:1 1 420px;min-width:220px;max-width:460px;width:auto}
-  .an-grid, .an-issues{scrollbar-width:thin; scrollbar-color:#7a6bff #0b0f19;}
-  .an-grid::-webkit-scrollbar, .an-issues::-webkit-scrollbar{height:12px;width:12px}
-  .an-grid::-webkit-scrollbar-track, .an-issues::-webkit-scrollbar-track{background:#0b0f19}
-  .an-grid::-webkit-scrollbar-thumb, .an-issues::-webkit-scrollbar-thumb{
-    background:linear-gradient(180deg,#7a6bff,#23a8ff);
-    border-radius:10px; border:2px solid #0b0f19; box-shadow:0 0 12px #7a6bff88 inset;
-  }
-  .unsync-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:radial-gradient(circle,#ffb0b0,#ff2757);box-shadow:0 0 6px #ff2757aa;vertical-align:middle}
-  .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-    background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
+  .an-modal{position:relative;display:flex;flex-direction:column;height:100%}
+  .an-modal .cx-head{display:flex;align-items:center;gap:10px;justify-content:space-between;background:linear-gradient(90deg,#05070d,#05040b);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);box-shadow:0 0 24px rgba(0,0,0,.85)}
+  .an-modal .cx-left{display:flex;align-items:center;gap:12px;flex:1}
+  .an-modal .cx-title{font-weight:800}
+  .an-modal .an-pairs{display:flex;flex-wrap:wrap;gap:6px;padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:#05060c}
+  .an-modal .an-pair-chip{font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:radial-gradient(circle at top,#12131f,#05060c);opacity:.85;color:#f5f6ff;font-weight:600;letter-spacing:.03em;text-transform:uppercase;box-shadow:0 0 10px rgba(0,0,0,.9);transition:background .16s ease,box-shadow .16s ease,opacity .16s ease,transform .12s ease}
+  .an-modal .an-pair-chip:hover{opacity:1;box-shadow:0 0 18px rgba(122,107,255,.45);transform:translateY(-1px)}
+  .an-modal .an-pair-chip.on{background:linear-gradient(120deg,#7a6bff,#23d5ff);box-shadow:0 0 18px rgba(122,107,255,.7);border-color:rgba(122,107,255,.9);opacity:1}
+  .an-modal .an-pair-chip span.dir{opacity:.9}
+  .an-modal .an-actions{display:flex;gap:8px;align-items:center}
+  .an-modal .pill{border:1px solid rgba(255,255,255,.14);background:#080a12;color:#e5ecff;border-radius:16px;padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:0 0 auto}
+  .an-modal .pill.ghost{background:transparent}
+  .an-modal .pill[disabled]{opacity:.55;pointer-events:none}
+  .an-modal .close-btn{border:1px solid rgba(255,255,255,.16);background:#11131e;color:#fff;border-radius:10px;padding:6px 10px}
+  .an-modal #an-toggle-ids{white-space:nowrap;min-width:110px;padding:6px 16px}
+  .an-modal .badge{padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:#10121e}
+  .an-modal .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(220px,1fr) 8px minmax(180px,1fr);overflow:hidden}
+  .an-modal .an-split{height:8px;background:linear-gradient(90deg,#141624,#3b1f5f);box-shadow:0 0 10px rgba(122,107,255,.55) inset;cursor:row-resize}
+  .an-modal .an-grid{overflow:auto;border-bottom:1px solid rgba(255,255,255,.08);background:#05060c}
+  .an-modal .an-issues{overflow:auto;padding:8px;background:#05060c}
+  .an-modal .row{display:grid;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);align-items:center}
+  .an-modal .head{position:sticky;top:0;background:#05060c;z-index:2}
+  .an-modal .row.sel{outline:1px solid rgba(122,163,255,.9);background:rgba(122,107,255,.08)}
+  .an-modal .chip{display:inline-block;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:2px 6px;margin:2px}
+  .an-modal .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+  .an-modal .ids{opacity:.9}
+  .an-modal .an-grid.show-ids .ids{display:block}
+  .an-modal .an-grid .ids{display:none}
+  .an-modal .row .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .an-modal .row .title small{opacity:.7;margin-left:6px}
+  .an-modal .row .prov{font-weight:600}
+  .an-modal .row .feat{opacity:.8}
+  .an-modal .row .counts{font-size:12px;opacity:.8}
+  .an-modal .sort{cursor:pointer;user-select:none}
+  .an-modal .sort span.label{margin-right:4px}
+  .an-modal .sort span.dir{opacity:.7;font-size:11px}
+  .an-modal .issue{border-radius:12px;padding:10px 11px;margin-bottom:8px;background:radial-gradient(circle at top left,#151624,#05060c);border:1px solid rgba(255,255,255,.1);box-shadow:0 0 18px rgba(0,0,0,.85)}
+  .an-modal .issue .h{font-weight:700;margin-bottom:4px}
+  .an-modal .issue .badge{margin-top:4px}
+  .an-modal .issue.manual-ids{margin-top:4px}
+  .an-modal .ids-edit{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .an-modal .ids-edit-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+  .an-modal .ids-edit-row label{display:flex;align-items:center;gap:6px;font-size:12px;opacity:.9}
+  .an-modal .ids-edit-row label span{min-width:52px;text-transform:uppercase;letter-spacing:.03em;color:#9fb4ff}
+  .an-modal .ids-edit-row input{flex:1 1 auto;background:#05060c;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:4px 6px;font-size:12px;color:#dbe8ff}
+  .an-modal .ids-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+  .an-modal .an-footer{padding:8px 12px;border-top:1px solid rgba(255,255,255,.12);display:flex;align-items:center;font-size:12px;background:#05060c;gap:8px}
+  .an-modal .an-footer #an-issues-count{font-weight:600;color:#dbe8ff}
+  .an-modal .an-footer .stats{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;opacity:.78}
+  .an-modal .an-footer .stats.empty{opacity:.45}
+  .an-modal input[type=search]{background:#05060c;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
+  .an-modal #an-search{flex:1 1 420px;min-width:220px;max-width:460px;width:auto}
+  .an-modal .an-grid,.an-modal .an-issues{scrollbar-width:thin;scrollbar-color:#7a6bff #05060c}
+  .an-modal .an-grid::-webkit-scrollbar,.an-modal .an-issues::-webkit-scrollbar{height:12px;width:12px}
+  .an-modal .an-grid::-webkit-scrollbar-track,.an-modal .an-issues::-webkit-scrollbar-track{background:#05060c}
+  .an-modal .an-grid::-webkit-scrollbar-thumb,.an-modal .an-issues::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#7a6bff,#23d5ff);border-radius:10px;border:2px solid #05060c;box-shadow:0 0 12px rgba(122,107,255,.55) inset}
+  .unsync-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:radial-gradient(circle,#ffb0d0,#ff3b7f);box-shadow:0 0 8px rgba(255,59,127,.8);vertical-align:middle}
+  .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,10,.8);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease}
   .wait-overlay.hidden{opacity:0;pointer-events:none}
-  .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;
-    background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
-  .wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
-  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;
-    background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);
-    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
-    animation:wait-spin 1.1s linear infinite}
-  .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
+  .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#05060c,#101124);box-shadow:0 0 40px rgba(122,107,255,.45),inset 0 0 1px rgba(255,255,255,.08)}
+  .wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px rgba(122,107,255,.55))}
+  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23d5ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
+  .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px rgba(122,107,255,.6)}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
   `;
   document.head.appendChild(el);
@@ -181,7 +147,7 @@ function gridTemplateFrom(widths) {
 export default {
   async mount(root) {
     css();
-    root.classList.add("modal-root");
+    root.classList.add("modal-root","an-modal");
     root.innerHTML = `
       <div class="cx-head">
         <div class="cx-left">
@@ -257,9 +223,8 @@ export default {
     const btnScope = Q("#an-scope", root);
     const split = Q("#an-split", root);
 
-    let COLS =
-      JSON.parse(localStorage.getItem("an.cols") || "null") ||
-      [110, 110, 430, 80, 100];
+    let COLS = JSON.parse(localStorage.getItem("an.cols") || "null");
+    if (!Array.isArray(COLS) || COLS.length !== 4) COLS = [110, 110, 360, 90];
     let ITEMS = [];
     let VIEW = [];
     let SORT_KEY = "title";
@@ -339,12 +304,11 @@ export default {
       const k = SORT_KEY;
       const dir = SORT_DIR === "asc" ? 1 : -1;
       const val = r => {
-        if (k === "title") return (r.title || "").toLowerCase();
-        if (k === "year") return r.year || 0;
-        if (k === "provider") return r.provider || "";
-        if (k === "feature") return r.feature || "";
-        if (k === "type") return r.type || "";
-        return r.title || "";
+        if (k === "title") return displayTitle(r).toLowerCase();
+        if (k === "provider") return String(r.provider || "").toUpperCase();
+        if (k === "feature") return String(r.feature || "").toUpperCase();
+        if (k === "type") return String(r.type || "").toUpperCase();
+        return displayTitle(r).toLowerCase();
       };
       return rows.sort((a, b) => {
         const va = val(a);
@@ -371,9 +335,6 @@ export default {
           <div class="cell sort" data-k="title"><span class="label">Title</span><span class="dir">${dirMark(
             "title"
           )}</span></div>
-          <div class="cell sort" data-k="year"><span class="label">Year</span><span class="dir">${dirMark(
-            "year"
-          )}</span></div>
           <div class="cell sort" data-k="type"><span class="label">Type</span><span class="dir">${dirMark(
             "type"
           )}</span></div>
@@ -385,22 +346,20 @@ export default {
         .map(r => {
           const tag = tagOf(r.provider, r.feature, r.key);
           const uns = UNSYNCED.has(tag);
+          const label = displayTitle(r);
           return `<div class="row${SELECTED === tag ? " sel" : ""}" data-tag="${tag}">
-          <div class="prov">${r.provider}</div>
-          <div class="feat">${r.feature}</div>
-          <div>
-            <div class="title">${
-              uns
-                ? '<span class="unsync-dot" title="Missing peer"></span>'
-                : ""
-            }${r.title || "Untitled"}${
-              r.year ? ` <small>(${r.year})</small>` : ""
-            }</div>
-            <div class="ids mono">${chips(r.ids)}</div>
-          </div>
-          <div>${r.year || ""}</div>
-          <div>${r.type || ""}</div>
-        </div>`;
+            <div class="prov">${r.provider}</div>
+            <div class="feat">${r.feature}</div>
+            <div>
+              <div class="title">${
+                uns
+                  ? '<span class="unsync-dot" title="Missing peer"></span>'
+                  : ""
+              }${label}</div>
+              <div class="ids mono">${chips(r.ids)}</div>
+            </div>
+            <div>${r.type || ""}</div>
+          </div>`;
         })
         .join("");
     }
@@ -457,74 +416,13 @@ export default {
       }
       const W = q.split(/\s+/g);
       VIEW = base.filter(r => {
-        const hay = [r.provider, r.feature, r.title, r.year, r.type]
+        const label = displayTitle(r);
+        const hay = [r.provider, r.feature, r.title, r.year, r.type, label]
           .map(x => String(x || "").toLowerCase())
           .join(" ");
         return W.every(w => hay.includes(w));
       });
       draw();
-    }
-
-    function fixHint(provider, feature) {
-      const p = String(provider || "").toUpperCase();
-      const f = String(feature || "").toLowerCase();
-
-      const where = prov => {
-        switch (prov) {
-          case "PLEX":      return "Plex";
-          case "JELLYFIN":  return "Jellyfin";
-          case "EMBY":      return "Emby";
-          case "TRAKT":     return "Trakt";
-          case "SIMKL":     return "Simkl";
-          case "MDBLIST":   return "mdblist";
-          case "CROSSWATCH":return "CrossWatch";
-          default:          return "source";
-        }
-      };
-
-      const isServer   = ["PLEX", "JELLYFIN", "EMBY"].includes(p);
-      const isTracker  = ["TRAKT", "SIMKL", "MDBLIST", "CROSSWATCH"].includes(p);
-
-      if (f === "history") {
-        if (isServer) {
-          return `Check that watch history is correctly matched in ${where(
-            p
-          )}. Prefer IMDb/TMDB/TVDB IDs; avoid local-only matches. For Plex/Jellyfin/Emby, language or alt-title differences (e.g. Dutch vs English episode titles) often mean one side is missing those IDs.`;
-        }
-        if (isTracker) {
-          return `This history entry is missing a peer on at least one media server. Check that the matching item exists in Plex/Jellyfin/Emby with correct IMDb/TMDB/TVDB IDs and that your sync pair towards ${where(
-            p
-          )} is enabled.`;
-        }
-        return `Check that watch history is correctly matched. Prefer IMDb/TMDB/TVDB IDs; avoid local-only matches.`;
-      }
-
-      if (f === "watchlist") {
-        if (isServer) {
-          return `Check that the title exists on all paired trackers and has matching IMDb/TMDB/TVDB IDs. If one side uses localized titles, make sure both sides share the same core IDs; title language alone is not enough for matching.`;
-        }
-        if (isTracker) {
-          return `Check that the item exists on the paired media server (Plex/Jellyfin/Emby) with correct IMDb/TMDB/TVDB IDs. The watchlist on ${where(
-            p
-          )} follows the server once IDs and sync are correct.`;
-        }
-        return `Check that the title exists on both sides and has matching IMDb/TMDB/TVDB IDs. Run a sync after fixing IDs.`;
-      }
-
-      if (f === "ratings") {
-        if (isTracker) {
-          return `Ensure ratings are set on the same item on both sides with the same core IDs. In practice you usually fix mismatches on the media server and then re-sync into ${where(
-            p
-          )}.`;
-        }
-        return `Ensure ratings are set on the same item on both sides with the same core IDs. Fix mismatches in ${where(
-          p
-        )} and re-sync.`;
-      }
-
-      return `Open ${where(
-        p
-      )} → item → “Match” (or edit metadata) and make sure IMDb/TMDB/TVDB IDs and year/title are correct. Then run a sync.`;
     }
 
     function manualIdsBlock(it) {
@@ -625,10 +523,9 @@ export default {
     async function select(tag) {
       SELECTED = tag;
       draw();
+
       const [provider, feature, key] = tag.split("::");
-      const it = ITEMS.find(
-        r => tagOf(r.provider, r.feature, r.key) === tag
-      );
+      const it = ITEMS.find(r => tagOf(r.provider, r.feature, r.key) === tag);
       if (!it) {
         issues.innerHTML =
           "<div class='issue'><div class='h'>No selection</div></div>";
@@ -636,62 +533,21 @@ export default {
       }
 
       const unsynced = UNSYNCED.has(tag);
-      let sugs = [];
-      if (unsynced) {
-        const meta = await fjson("/api/analyzer/suggest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, feature, key })
-        }).catch(() => ({ suggestions: [] }));
-        sugs = meta.suggestions || [];
-      }
+      const label = displayTitle(it);
+      const heading = it.year ? `${label} (${it.year})` : label;
+      const status = unsynced
+        ? `<span class="badge">Missing peer</span>`
+        : `<span class="badge">No analyzer issues</span>`;
 
-      if (!unsynced) {
-        const guidance = `<div class="issue">
-          <div class="h">${it.title || "Untitled"} ${
-          it.year ? `(${it.year})` : ""
-        } • <span class="mono">${provider}/${feature}</span></div>
-          <div>This item appears synced correctly for active pairs. No analyzer issues detected.</div>
-        </div>`;
-        const manual = manualIdsBlock(it);
-        issues.innerHTML = guidance + manual;
-        issues.scrollTop = 0;
-        bindManualIds(provider, feature, key, it);
-        return;
-      }
-
-      const guidance = `<div class="issue">
-        <div class="h">${it.title || "Untitled"} ${
-        it.year ? `(${it.year})` : ""
-      } • <span class="mono">${provider}/${feature}</span></div>
-        <div>${fixHint(provider, feature)}</div>
+      const header = `<div class="issue">
+        <div class="h">${heading}</div>
+        <div>${status}</div>
       </div>`;
 
-      const lines =
-        sugs
-          .slice(0, 5)
-          .map(s => {
-            const hdr = `${
-              s.reason || "Candidate"
-            } • <span class="mono">${s.source || ""}</span>`;
-            const meta = `Confidence ${(
-              (s.confidence || 0) * 100
-            ).toFixed(1)}%`;
-            return `
-        <div class="issue">
-          <div class="h">${hdr}</div>
-          <div>${meta}</div>
-          <div class="mono ids" style="margin-top:6px">${chips(
-            s.ids
-          )}</div>
-        </div>`;
-          })
-          .join("") ||
-        `<div class="issue"><div class="h">No candidates</div><div>Match it manually in your media server (Plex/Emby/Jellyfin) and sync back to your trackers.</div></div>`;
-
       const manual = manualIdsBlock(it);
-      issues.innerHTML = guidance + lines + manual;
+      issues.innerHTML = header + manual;
       issues.scrollTop = 0;
+
       bindManualIds(provider, feature, key, it);
     }
 

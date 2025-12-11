@@ -989,16 +989,19 @@
 
   #stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{
     position:absolute;left:0;right:0;bottom:6px;padding:0 8px;
-    font-size:10px;line-height:1.2;font-weight:700;text-align:center;
-    color:rgba(255,255,255,.55);text-shadow:0 1px 2px rgba(0,0,0,.6);
+    font-size:11px;line-height:1.2;font-weight:700;text-align:center;
+    color:rgba(255,255,255,.60);text-shadow:0 1px 2px rgba(0,0,0,.85);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
+
   #stats-card #stat-providers .tile .mse{
     position:absolute;left:50%;bottom:6px;transform-origin:center bottom;
     padding:0 6px;font-size:11px;line-height:1.2;font-weight:700;font-variant-numeric:tabular-nums;
     white-space:nowrap;text-align:center;
     transform:translateX(-50%) scale(var(--ins-mse-scale,1));
-    color:rgba(255,255,255,.78);text-shadow:0 1px 2px rgba(0,0,0,.85);pointer-events:none;
+    color:rgba(255,255,255,.60);
+    text-shadow:0 1px 2px rgba(0,0,0,.85);
+    pointer-events:none;
   }
 
   #stats-card #stat-providers .tile .mse .mse-group{

@@ -27,7 +27,6 @@
     { key: "playlists", icon: "queue_music", label: "Playlists" }
   ];
 
-  // DOM
   const elProgress = document.getElementById("ux-progress");
   const elLanes    = document.getElementById("ux-lanes");
   const elSpot     = document.getElementById("ux-spotlight");
@@ -118,8 +117,6 @@
 
   const startRunVisualsSafe = (...a) => window.startRunVisuals?.(...a);
   const stopRunVisualsSafe = (...a) => window.stopRunVisuals?.(...a);
-
-  // IO
   const fetchJSON = async (url, fallback = null) => {
     try {
       const r = await fetch(
@@ -137,8 +134,14 @@
     if (typeof x === "string") return x;
     if (!x || typeof x !== "object") return "item";
 
+    if (typeof x.display_title === "string" && x.display_title.trim()) {
+      return x.display_title.trim();
+    }
+
+    const type = String(x.type || "").toLowerCase();
+
     if (
-      x.type === "episode" &&
+      type === "episode" &&
       x.series_title &&
       Number.isInteger(x.season) &&
       Number.isInteger(x.episode)
@@ -148,13 +151,18 @@
       ).padStart(2, "0")}`;
     }
 
-    return (
-      x.title ||
-      x.series_title ||
-      x.name ||
-      x.key ||
-      "item"
-    );
+    if (type === "season") {
+      const show = (x.series_title || x.show_title || "").trim();
+      const seasonLabel =
+        (x.title && String(x.title).trim()) ||
+        (Number.isInteger(x.season) ? `Season ${x.season}` : "");
+
+      if (show && seasonLabel) return `${show} - ${seasonLabel}`;
+      if (show) return show;
+      if (seasonLabel) return seasonLabel;
+    }
+
+    return x.title || x.series_title || x.name || x.key || "item";
   };
 
   const synthSpots = (items, key) => {
@@ -231,7 +239,8 @@
     playlists: true
   });
 
-  const getEnabledMap = () => enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
+  const getEnabledMap = () =>
+    enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
 
   const guardLaneOverwrite = (key, payload, ts) => {
     const sum =
@@ -262,7 +271,11 @@
     let spotRem = Array.isArray(f.spotlight_remove) ? f.spotlight_remove : [];
     let spotUpd = Array.isArray(f.spotlight_update) ? f.spotlight_update : [];
 
-    if ((added || removed || updated) === 0 && hydratedLanes[key] && sync.isRunning()) {
+    if (
+      (added || removed || updated) === 0 &&
+      hydratedLanes[key] &&
+      sync.isRunning()
+    ) {
       return { ...hydratedLanes[key] };
     }
 
@@ -293,7 +306,7 @@
 
   const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
 
-  // Spotlight "more" modal
+  // Spotlight more modal
   let _spotsModal = null;
   const esc = (s) =>
     String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -494,9 +507,12 @@
       body.className = "lane-body";
 
       const spots = [];
-      for (const x of (spotAdd || []).slice(0, 2)) spots.push({ t: "add", text: titleOf(x) });
-      for (const x of (spotRem || []).slice(0, 2)) spots.push({ t: "rem", text: titleOf(x) });
-      for (const x of (spotUpd || []).slice(0, 2)) spots.push({ t: "upd", text: titleOf(x) });
+      for (const x of (spotAdd || []).slice(0, 2))
+        spots.push({ t: "add", text: titleOf(x) });
+      for (const x of (spotRem || []).slice(0, 2))
+        spots.push({ t: "rem", text: titleOf(x) });
+      for (const x of (spotUpd || []).slice(0, 2))
+        spots.push({ t: "upd", text: titleOf(x) });
 
       if (!spots.length && items?.length) {
         const s = synthSpots(items, f.key);
@@ -551,7 +567,9 @@
 
           row.append(
             tag,
-            Object.assign(document.createElement("span"), { textContent: s.text })
+            Object.assign(document.createElement("span"), {
+              textContent: s.text
+            })
           );
 
           body.appendChild(row);
@@ -566,10 +584,11 @@
           moreChip.style.marginLeft = "auto";
           moreChip.addEventListener("click", (ev) => {
             ev.stopPropagation();
-            openSpotsModal(
-              f.label,
-              { add: spotAdd, rem: spotRem, upd: spotUpd }
-            );
+            openSpotsModal(f.label, {
+              add: spotAdd,
+              rem: spotRem,
+              upd: spotUpd
+            });
           });
 
           lastRow.appendChild(moreChip);
@@ -592,7 +611,7 @@
     renderSpotlightSummary();
   };
 
-  // Pairs → enablement
+  // Pairs hydration
   async function pullPairs() {
     const arr = await fetchJSON("/api/pairs", null);
     if (!Array.isArray(arr)) return;
@@ -656,8 +675,7 @@
     };
 
     const mapFeature = (e) => {
-      const f = String(e.feature || e.lane || e.kind || "")
-        .toLowerCase();
+      const f = String(e.feature || e.lane || e.kind || "").toLowerCase();
       if (f) return f;
 
       const act = String(e.action || "").toLowerCase();
@@ -713,15 +731,17 @@
         removed: hasPrevCounts ? prevRemoved : L.removed || 0,
         updated: hasPrevCounts ? prevUpdated : L.updated || 0,
         spotlight_add:
-          (prev.spotlight_add?.length ? prev.spotlight_add : L.spotAdd) || [],
+          (L.spotAdd && L.spotAdd.length
+            ? L.spotAdd
+            : prev.spotlight_add || []) || [],
         spotlight_remove:
-          (prev.spotlight_remove?.length
-            ? prev.spotlight_remove
-            : L.spotRem) || [],
+          (L.spotRem && L.spotRem.length
+            ? L.spotRem
+            : prev.spotlight_remove || []) || [],
         spotlight_update:
-          (prev.spotlight_update?.length
-            ? prev.spotlight_update
-            : L.spotUpd) || []
+          (L.spotUpd && L.spotUpd.length
+            ? L.spotUpd
+            : prev.spotlight_update || []) || []
       };
 
       if (guardLaneOverwrite(feat, merged, nowTs)) {
@@ -1008,13 +1028,13 @@
           v?.spotlight_update?.length
       );
 
-    if (!hasFeatures && sync.state().timeline.done && !_insightsTried) {
+    if (sync.state().timeline.done && !_insightsTried) {
       _insightsTried = true;
       const startTs =
         summary?.raw_started_ts ||
         (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
       const got = await hydrateFromInsights(startTs);
-      if (!got) {
+      if (!got && !hasFeatures) {
         setTimeout(() => {
           if (!hasFeatures) hydrateFromLog();
         }, 300);
@@ -1138,7 +1158,6 @@
     } catch {}
   };
 
-  // Public UX hooks
   window.UX = {
     updateTimeline: (tl) => sync.updateTimeline(tl || {}),
     updateProgress: (payload) =>
@@ -1146,7 +1165,6 @@
     refresh: () => pullSummary().then(() => renderAll())
   };
 
-  // Visibility reconnect
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       openSummaryStream();
@@ -1154,7 +1172,6 @@
     }
   });
 
-  // Periodic polling
   function tick() {
     const running = sync.isRunning();
     pullSummary();
@@ -1185,7 +1202,6 @@
     tick._t = setTimeout(tick, running ? 1500 : 5000);
   }
 
-  // Boot
   renderAll();
   wireRunButton();
   openSummaryStream();
@@ -1194,9 +1210,8 @@
   tick();
 })();
 
-// Hard lock: preview only on Main
+// FIX - CSS Guard for Preview Pane
 (() => {
-  // CSS guard
   (document.getElementById("preview-guard-css") || {}).remove?.();
   document.head.appendChild(
     Object.assign(document.createElement("style"), {

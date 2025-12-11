@@ -360,13 +360,18 @@
       this._pctMemo=Math.max(this._pctMemo,clamp(base));
       fill.style.width=this._pctMemo+"%";
 
-      const isRunning=this.isRunning();
-      rail.classList.toggle("running",isRunning&&!this.timeline.done);
-      rail.classList.toggle("indet",isRunning&&!this.timeline.done&&byPhases==null);
-      rail.classList.toggle("apply",PhaseAgg.apply.started&&!PhaseAgg.apply.finished);
-      rail.classList.toggle("starting",isRunning&&!(this.timeline.pre||this.timeline.post));
-      rail.classList.toggle("finishing",!isRunning&&!this.timeline.done&&(logicalDone||this._pendingDone));
-      rail.classList.toggle("error",this._hadError);
+      const isRunning = this.isRunning();
+      const shouldFlow = isRunning && !hardDone;
+
+      rail.classList.toggle("running", isRunning && !this.timeline.done);
+      rail.classList.toggle("indet", shouldFlow);
+      rail.classList.toggle("apply", PhaseAgg.apply.started && !PhaseAgg.apply.finished);
+      rail.classList.toggle("starting", isRunning && !(this.timeline.pre || this.timeline.post));
+      rail.classList.toggle(
+        "finishing",
+        !isRunning && !this.timeline.done && (logicalDone || this._pendingDone)
+      );
+      rail.classList.toggle("error", this._hadError);
 
       const pct=this._pctMemo/100, railW=host.clientWidth||1;
       const left=Math.max(8,Math.min(railW-8, railW*pct));

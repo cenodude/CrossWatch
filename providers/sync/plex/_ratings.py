@@ -528,6 +528,14 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     return out
 
+def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
+    try:
+        it = srv.fetchItem(int(rating_key))
+    except Exception:
+        return None
+    return _norm_rating(getattr(it, "userRating", None))
+
+
 # Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     srv = getattr(adapter.client, "server", None)
@@ -557,6 +565,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not rk:
             _freeze_item(it, action="add", reasons=["not_in_library"])
             unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
+            continue
+
+        existing = _get_existing_rating(srv, rk)
+        if existing is not None and existing == rating:
+            _log(f"skip rate: same rating for {id_minimal(it).get('title')}")
+            _unfreeze_keys_if_present([_event_key(it)])
             continue
 
         if _rate(srv, rk, rating):

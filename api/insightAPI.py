@@ -13,7 +13,6 @@ from typing import Any, Callable
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
-
 def _env() -> tuple[
     Any | None,
     Callable[[], dict[str, Any]],
@@ -106,7 +105,17 @@ def register_insights(app: FastAPI) -> None:
         _load_wall_snapshot = getattr(CW, "_load_wall_snapshot", lambda: [])
         _get_orchestrator = getattr(CW, "_get_orchestrator", None)
         _append_log = getattr(CW, "_append_log", lambda *a, **k: None)
+        
         _compute_lanes_impl = getattr(CW, "_compute_lanes_from_stats", None)
+        _load_state = getattr(CW, "_load_state", lambda: {})
+        
+        def _series_title_for_event(e: dict[str, Any]) -> str:
+            series_title = (
+                e.get("series_title")
+                or e.get("show_title")
+                or ""
+            )
+            return str(series_title).strip()
 
         def _format_event_title(e: dict[str, Any]) -> dict[str, Any]:
             out = dict(e)
@@ -121,7 +130,7 @@ def register_insights(app: FastAPI) -> None:
                     out["display_title"] = "Movie"
 
             elif t == "episode":
-                series_title = (e.get("series_title") or e.get("show_title") or "").strip()
+                series_title = _series_title_for_event(e)
                 season = e.get("season")
                 episode = e.get("episode")
                 ep_title = (e.get("title") or e.get("episode_title") or "").strip()
@@ -135,6 +144,23 @@ def register_insights(app: FastAPI) -> None:
 
                 if ep_title and ep_title.lower() != series_title.lower():
                     out["display_subtitle"] = ep_title
+
+            elif t == "season":
+                series_title = _series_title_for_event(e)
+                season_title = (e.get("title") or "").strip()
+                season_num = e.get("season")
+
+                if not season_title and isinstance(season_num, int):
+                    season_title = f"Season {season_num}"
+
+                if series_title and season_title:
+                    out["display_title"] = f"{series_title} - {season_title}"
+                elif series_title:
+                    out["display_title"] = series_title
+                elif season_title:
+                    out["display_title"] = season_title
+                else:
+                    out["display_title"] = "Season"
 
             else:
                 title = (e.get("title") or e.get("name") or "").strip()
