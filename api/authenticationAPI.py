@@ -626,6 +626,23 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception as e:
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR: {e}")
             return {"ok": False, "error": str(e)}
+        
+    @app.post("/api/trakt/token/delete", tags=["auth"])
+    def api_trakt_token_delete() -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            tr = cfg.setdefault("trakt", {})
+            tr["access_token"] = ""
+            tr["refresh_token"] = ""
+            tr["token_expires_at"] = 0
+            tr["scopes"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "TRAKT", "[TRAKT] token cleared")
+            _probe_bust("trakt")
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR token delete: {e}")
+            return {"ok": False, "error": str(e)}
 
     # ---------- SIMKL ----------
     SIMKL_STATE: dict[str, Any] = {}
