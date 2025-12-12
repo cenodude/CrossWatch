@@ -953,7 +953,6 @@
       () => {
         if (btn.disabled || btn.classList.contains("glass")) return;
         setRunButtonState(true);
-        sync.markInit();
       },
       { capture: true }
     );

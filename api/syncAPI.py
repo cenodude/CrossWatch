@@ -1533,7 +1533,13 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
         cfg = _env()[0]()  # load_config
         pairs = list((cfg or {}).get("pairs") or [])
         if not any(p.get("enabled", True) for p in pairs):
-            _rt()[8]("SYNC", "[i] No pairs configured — skipping sync.")
+            _summary_reset()
+            _summary_set("raw_started_ts", str(time.time()))
+            _summary_set("started_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            _summary_set_timeline("start", True)
+            _sync_progress_ui("[i] No pairs configured - skipping sync. Configure/Enable one or more pairs to enable syncing.")
+            _sync_progress_ui("[SYNC] exit code: 0")
+
             return {"ok": True, "skipped": "no_pairs_configured"}
         run_id = str(int(time.time()))
         th = threading.Thread(

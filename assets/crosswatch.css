@@ -3110,6 +3110,28 @@ select {
   opacity: .45;
   cursor: not-allowed
 }
+.cx-switch-wrap{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+}
+
+.cx-help{
+  width:26px;height:26px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.06);
+  font-size:18px;
+  line-height:1;
+  padding:0;
+  cursor:help;
+}
+
+.cx-help:hover{ background:rgba(255,255,255,.10); }
+
 .feature-tabs {
   display: flex;
   gap: 10px;

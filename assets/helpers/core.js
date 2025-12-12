@@ -912,6 +912,19 @@ async function runSync(){
   if (busy) return;
   setBusy?.(true);
 
+  const undoOptimisticSyncUI = () => {
+    try{ window.SyncBar?.reset?.(); }catch{}
+    try{
+      const btn = document.getElementById("run");
+      if (btn){
+        btn.removeAttribute("disabled");
+        btn.setAttribute("aria-busy", "false");
+        btn.classList.remove("glass");
+        btn.title = "Run synchronization";
+      }
+    }catch{}
+  };
+
   try{ window.UX?.updateTimeline({ start:true, pre:false, post:false, done:false }); window.UX?.updateProgress({ pct:0 }); }catch{}
 
   try {
@@ -928,11 +941,22 @@ async function runSync(){
     let j = null; try{ j = await resp.json(); }catch{}
     if (!resp.ok || !j || j.ok !== true){
       typeof setSyncHeader === "function" && setSyncHeader("sync-bad", `Failed to start${j?.error ? ` – ${j.error}` : ""}`);
+      undoOptimisticSyncUI();
+      try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
+      return;
+    }
+    if (j?.skipped){
+      const msg = (j.skipped === "no_pairs_configured")
+        ? "No pairs configured — skipping sync"
+        : `Sync skipped — ${j.skipped}`;
+      typeof setSyncHeader === "function" && setSyncHeader("sync-warn", msg);
+      undoOptimisticSyncUI();
       try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
       return;
     }
   }catch(_){
     typeof setSyncHeader === "function" && setSyncHeader("sync-bad", "Failed to reach server");
+    undoOptimisticSyncUI();
     try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
   }finally{
     setBusy?.(false);

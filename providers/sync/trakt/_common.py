@@ -86,7 +86,7 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, str]:
         for key in list(ids.keys()):
             if key in show_ids and str(ids.get(key)) == str(show_ids.get(key)):
                 ids.pop(key, None)
-        for key in ("imdb", "tvdb", "trakt", "tmdb"):
+        for key in ("imdb", "tmdb", "trakt", "tvdb"):
             v = ids.get(key)
             if v:
                 return {key: str(v)}

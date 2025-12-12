@@ -114,15 +114,21 @@ const css = `
 .cw-pop{
   position:fixed;
   z-index:10060;
-  background:radial-gradient(circle at 0 0,#050816,#020617 55%);
-  border-radius:14px;
-  border:1px solid rgba(129,140,248,.9);
-  box-shadow:0 18px 45px rgba(15,23,42,.95),0 0 32px rgba(79,70,229,.45);
-  padding:8px 10px 10px;
-  min-width:360px;
-  max-width:720px;
-  color:#e5e7ff;
+  background:linear-gradient(180deg,#05060c,#0a0d16);
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow:0 22px 60px rgba(0,0,0,.75),inset 0 0 0 1px rgba(255,255,255,.04);
+  padding:10px 12px 12px;
+  color:#e5e7eb;
+
+  width:min(560px,calc(100vw - 28px));
+  max-height:calc(100vh - 120px);
+  overflow:hidden;
+
+  display:flex;
+  flex-direction:column;
 }
+
 .cw-pop-title{
   font-size:11px;
   font-weight:600;
@@ -185,29 +191,31 @@ const css = `
 
 .cw-search-results{
   margin-top:6px;
-  max-height:260px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.08);
+  background:#05060c;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+
+  flex:0 1 auto;
+  max-height:min(360px, calc(100vh - 260px));
   overflow:auto;
-  border-radius:10px;
-  border:1px solid rgba(55,65,194,.9);
-  background:radial-gradient(circle at 0 0,rgba(67,56,202,.42),rgba(15,23,42,.96));
-  box-shadow:0 0 18px rgba(79,70,229,.45);
 }
+
 .cw-search-item{
   width:100%;
   text-align:left;
-  padding:6px 9px;
+  padding:8px 10px;
   border:none;
-  border-bottom:1px solid rgba(15,23,42,.95);
+  border-bottom:1px solid rgba(255,255,255,.06);
   cursor:pointer;
   display:flex;
   align-items:flex-start;
-  gap:8px;
-  background:rgba(15,23,42,.9);
+  gap:10px;
+  background:transparent;
 }
 .cw-search-item:last-child{border-bottom:none}
 .cw-search-item:hover{
-  background:radial-gradient(circle at 0 0,rgba(129,140,248,.45),rgba(15,23,42,.98));
-  box-shadow:0 0 12px rgba(129,140,248,.9);
+  background:rgba(255,255,255,.03);
 }
 
 .cw-search-poster{
@@ -265,30 +273,35 @@ const css = `
   flex:0 0 auto;
   font-size:9px;
   text-transform:uppercase;
-  padding:2px 6px;
+  padding:2px 7px;
   border-radius:999px;
-  background:radial-gradient(circle at 0 0,rgba(79,70,229,.9),rgba(37,99,235,.85));
-  color:#f9fafb;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.10);
+  color:#e5e7eb;
   letter-spacing:.06em;
 }
 
 .cw-search-meta{
   font-size:10px;
   opacity:.9;
-  color:#e5e7eb; 
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+  color:#cbd5e1;
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+  overflow-wrap:anywhere;
 }
 
 .cw-search-overview{
   font-size:10px;
-  opacity:.9;    
+  opacity:.9;
   color:#e5e9ff;
-  max-height:1.4em;
+
+  white-space:normal;
   overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  word-break:break-word;
 }
 
 .cw-search-empty{
@@ -1933,18 +1946,28 @@ const css = `
 }
   async function loadTrackerCounts() {
     try {
-      const data = await fetchJSON("/api/maintenance/crosswatch-tracker");
-      const counts = data && data.counts ? data.counts : {};
-      const stateFiles = counts.state_files != null ? counts.state_files : 0;
-      const snaps = counts.snapshots != null ? counts.snapshots : 0;
+      let data = await fetchJSON("/api/maintenance/crosswatch-tracker");
+      let counts = data && data.counts ? data.counts : {};
+
+      let stateFiles = counts.state_files != null ? counts.state_files : 0;
+      let snaps = counts.snapshots != null ? counts.snapshots : 0;
+
+      if (stateFiles === 0 && snaps === 0) {
+        for (let i = 0; i < 3; i += 1) {
+          await new Promise(r => setTimeout(r, 400));
+          const d2 = await fetchJSON("/api/maintenance/crosswatch-tracker");
+          const c2 = d2 && d2.counts ? d2.counts : {};
+          stateFiles = c2.state_files != null ? c2.state_files : stateFiles;
+          snaps = c2.snapshots != null ? c2.snapshots : snaps;
+          if (stateFiles || snaps) break;
+        }
+      }
+
       if (summaryStateFiles) summaryStateFiles.textContent = String(stateFiles);
       if (summarySnapshots) summarySnapshots.textContent = String(snaps);
+
       if (stateHint) {
-        if (stateFiles === 0 && snaps === 0) {
-          stateHint.style.display = "block";
-        } else {
-          stateHint.style.display = "none";
-        }
+        stateHint.style.display = (stateFiles === 0 && snaps === 0) ? "block" : "none";
       }
     } catch (e) {
       console.error(e);
@@ -2225,10 +2248,12 @@ const css = `
     renderRows();
   });
 
-  reloadBtn.addEventListener("click", () => {
+  reloadBtn.addEventListener("click", async () => {
     state.snapshot = snapSel.value || "";
     state.page = 0;
-    loadState();
+    await loadTrackerCounts();
+    await loadSnapshots();
+    await loadState();
   });
 
   addBtn.addEventListener("click", addRow);
@@ -2240,7 +2265,12 @@ const css = `
     e.returnValue = "";
   });
 
-  setStatus("Loading CrossWatch tracker state…");
-  loadTrackerCounts();
-  loadSnapshots().then(loadState);
+  (async () => {
+    setTag("warn", "Loading tracker state…");
+    await loadTrackerCounts();
+    await loadSnapshots();
+    await loadState();
+  })();
+
 })();
+

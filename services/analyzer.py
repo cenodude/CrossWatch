@@ -585,6 +585,112 @@ def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
 
     return issues
 
+def _history_show_signature(rec: dict[str, Any]) -> str | None:
+    typ = str(rec.get("type") or "").strip().lower()
+    ids = (rec.get("ids") or {}) or {}
+    show_ids = (rec.get("show_ids") or {}) or {}
+
+    def pick(obj: dict[str, Any]) -> str | None:
+        for idk in ("imdb", "tmdb", "tvdb", "slug"):
+            v = obj.get(idk)
+            if v:
+                return f"{idk}:{str(v).lower()}"
+        return None
+
+    sig: str | None = None
+    if typ == "episode":
+        sig = pick(show_ids)
+    elif typ == "show":
+        sig = pick(ids)
+    else:
+        if show_ids or rec.get("series_title") or rec.get("show_title"):
+            sig = pick(show_ids)
+
+    if sig is None:
+        title = (
+            rec.get("series_title")
+            or rec.get("show_title")
+            or rec.get("title")
+            or rec.get("name")
+        )
+        if title:
+            y = rec.get("series_year") or rec.get("year")
+            sig = f"{str(title).strip().lower()}|year:{y}"
+    return sig
+
+
+def _missing_peer_show_hints(
+    s: dict[str, Any],
+    feat: str,
+    item: dict[str, Any],
+    targets: list[str],
+) -> list[dict[str, Any]]:
+    if feat != "history":
+        return []
+
+    sig = _history_show_signature(item)
+    if not sig:
+        return []
+
+    season = item.get("season")
+    episode = item.get("episode")
+    out: list[dict[str, Any]] = []
+
+    for dst in targets:
+        bucket = _bucket(s, dst, feat) or {}
+        show_episodes = 0
+        has_episode = False
+
+        for rec in bucket.values():
+            if not isinstance(rec, dict):
+                continue
+            if _history_show_signature(rec) != sig:
+                continue
+
+            rtyp = str(rec.get("type") or "").strip().lower()
+            if rtyp == "episode":
+                show_episodes += 1
+                if (
+                    season is not None
+                    and episode is not None
+                    and rec.get("season") == season
+                    and rec.get("episode") == episode
+                ):
+                    has_episode = True
+
+        dst_name = str(dst or "").upper()
+        if show_episodes == 0:
+            msg = f"{dst_name} history snapshot has no entries for this show."
+        elif has_episode:
+            msg = (
+                f"{dst_name} history snapshot already has this episode, "
+                "but it did not match by IDs."
+            )
+        else:
+            if season is not None and episode is not None:
+                msg = (
+                    f"{dst_name} has this show and {show_episodes} other episodes, "
+                    f"but S{int(season):02d}E{int(episode):02d} is not in the "
+                    f"{dst_name} history snapshot."
+                )
+            else:
+                msg = (
+                    f"{dst_name} has this show and {show_episodes} other episodes, "
+                    f"but this entry is not in the {dst_name} history snapshot."
+                )
+
+        out.append(
+            {
+                "target": dst_name,
+                "feature": feat,
+                "show_episodes": show_episodes,
+                "has_episode": has_episode,
+                "message": msg,
+            }
+        )
+
+    return out
+
 def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     core = ("imdb", "tmdb", "tvdb")
@@ -689,6 +795,10 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
                             hints.append(h)
                 if hints:
                     prob["hints"] = hints
+                details = _missing_peer_show_hints(s, feat, v, filtered_targets)
+                if details:
+                    prob["target_show_info"] = details
+
                 probs.append(prob)
 
     for p, f, k, it in _iter_items(s):

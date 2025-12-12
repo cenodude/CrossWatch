@@ -236,6 +236,8 @@ export default {
     let PAIR_STATS = [];
     let PAIR_SCOPE_KEYS = new Set();
     let UNSYNCED = new Set();
+    let UNSYNCED_META = new Map();
+    let UNSYNCED_REASON = new Map();
     let SCOPE = "issues";
     let NORMALIZATION = [];
 
@@ -354,7 +356,13 @@ export default {
             <div>
               <div class="title">${
                 uns
-                  ? '<span class="unsync-dot" title="Missing peer"></span>'
+                  ? (() => {
+                      const miss = UNSYNCED_META.get(tag) || [];
+                      const text = miss.length
+                        ? `Missing at ${miss.join(" & ")}`
+                        : "Missing at other provider";
+                      return `<span class="unsync-dot" title="${text}"></span>`;
+                    })()
                   : ""
               }${label}</div>
               <div class="ids mono">${chips(r.ids)}</div>
@@ -646,11 +654,22 @@ export default {
         return;
       }
 
-      const unsynced = UNSYNCED.has(tag);
       const label = displayTitle(it);
       const heading = it.year ? `${label} (${it.year})` : label;
+      const unsynced = UNSYNCED.has(tag);
+      const missingTargets = UNSYNCED_META.get(tag) || [];
+      const missingLabel = missingTargets.length
+        ? `Missing at ${missingTargets.join(" & ")}`
+        : "Missing at other provider";
+
+      const reasons = UNSYNCED_REASON.get(tag) || [];
+      const reasonBadge =
+        unsynced && reasons.length
+          ? ` <span class="badge mono">${escHtml(reasons[0])}</span>`
+          : "";
+
       const status = unsynced
-        ? `<span class="badge">Missing peer</span>`
+        ? `<span class="badge">${missingLabel}</span>${reasonBadge}`
         : `<span class="badge">No analyzer issues</span>`;
 
       const header = `<div class="issue">
@@ -660,7 +679,9 @@ export default {
 
       const manual = manualIdsBlock(it);
       const normalizationBlock = renderNormalizationPanel(NORMALIZATION);
-      issues.innerHTML = header + manual + normalizationBlock;
+      issues.innerHTML = header + normalizationBlock + manual;
+
+
       issues.scrollTop = 0;
 
       bindManualIds(provider, feature, key, it);
@@ -892,6 +913,27 @@ export default {
       UNSYNCED = new Set(
         keep.map(p => tagOf(p.provider, p.feature, p.key))
       );
+
+      UNSYNCED_META = new Map(
+        keep.map(p => [
+          tagOf(p.provider, p.feature, p.key),
+          (p.targets || []).map(t => String(t || "").toUpperCase())
+        ])
+      );
+
+      UNSYNCED_REASON = new Map();
+      for (const p of keep) {
+        const tag = tagOf(p.provider, p.feature, p.key);
+        const details = Array.isArray(p.target_show_info)
+          ? p.target_show_info
+          : [];
+        const msgs = details
+          .map(d => String((d && d.message) || "").trim())
+          .filter(Boolean);
+        if (msgs.length) {
+          UNSYNCED_REASON.set(tag, msgs);
+        }
+      }
 
       const parts = [`Issues: ${keep.length}`];
       if (per.history) parts.push(`H:${per.history}`);

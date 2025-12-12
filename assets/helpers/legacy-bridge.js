@@ -1,4 +1,4 @@
-/* helpers/legacy-bridge.js – map legacy globals to CW + shims */
+/* helpers/legacy-bridge.js – map legacy globals to CW \ */
 (function(){
   (window.CW ||= {}); const Legacy = (window.CW.Legacy ||= {});
   try {
@@ -87,7 +87,7 @@
     if (typeof window["fixFormLabels"]==="function") Legacy["fixFormLabels"] = window["fixFormLabels"];
   } catch(e) { console.warn('legacy map failed', e); }
 
-  // Proxies – use legacy implementations if available
+  // Proxies
   (window.CW.Providers ||= {});
   CW.Providers.load = CW.Providers.load || (Legacy.loadProviders ? ()=>Legacy.loadProviders() : ()=>{});
   CW.Providers.mountMetadataProviders = CW.Providers.mountMetadataProviders || (Legacy.mountMetadataProviders ? ()=>Legacy.mountMetadataProviders() : ()=>{});
@@ -110,7 +110,7 @@
   CW.UX.initWallInteractions = CW.UX.initWallInteractions || (Legacy.initWallInteractions ? ()=>Legacy.initWallInteractions() : ()=>{});
 
 
-  // Global inline handler shim
+  // Global inline
   if (typeof window.toggleDetails !== "function") {
     window.toggleDetails = function(btnOrId, id){
       var btn = (typeof btnOrId === "string") ? null : btnOrId;

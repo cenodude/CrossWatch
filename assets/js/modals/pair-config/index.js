@@ -10,6 +10,30 @@ const jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
 const isEmby = v => same(v, "emby");
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 
+// Help
+const HELP_TEXT = {
+  "gl-dry": "Dry run\nPlan and log only; no writes. Reset states after testing (in maintenance).",
+  "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
+  "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
+  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.",
+  "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
+  "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
+  "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
+
+  "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
+  "cx-wl-add": "Watchlist: Add\nAdds missing items to the target watchlist.",
+  "cx-wl-remove": "Watchlist: Remove\nRemoves items from the target.",
+
+  "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
+  "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
+  "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
+
+  "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
+  "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",
+  "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
+  "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
+};
+
 // Provider helpers
 const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLowerCase();
 const isSimkl=(v)=>same(v,"simkl");
@@ -188,11 +212,13 @@ async function loadProviders(state){
 async function loadConfigBits(state){
   const cfg=(await getJSON("/api/config?cb="+Date.now()))||{}, s=cfg?.sync||{};
   state.cfgRaw=cfg||{};
+  const dropOn=!!s.drop_guard;
+  const massOn=!!s.allow_mass_delete && !dropOn;
   state.globals={
     dry_run:!!s.dry_run,
     verify_after_write:!!s.verify_after_write,
-    drop_guard:!!s.drop_guard,
-    allow_mass_delete:!!s.allow_mass_delete,
+    drop_guard:dropOn,
+    allow_mass_delete:massOn,
     tombstone_ttl_days:Number.isFinite(s.tombstone_ttl_days)?s.tombstone_ttl_days:30,
     include_observed_deletes:!!s.include_observed_deletes,
     blackbox:Object.assign(
@@ -1058,6 +1084,7 @@ function refreshTabs(state){
       state.feature = k;
       renderFeaturePanel(state);
       renderWarnings(state);
+      queueMicrotask(() => injectHelpIcons(ID("cx-modal")));
       [...tabs.children].forEach(c=>c.classList.toggle('active', c.dataset.key===k));
       restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
     };
@@ -1071,11 +1098,35 @@ function refreshTabs(state){
   queueMicrotask(()=>{
     renderFeaturePanel(state);
     renderWarnings(state);
+    queueMicrotask(() => injectHelpIcons(ID("cx-modal")));
     restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
   });
 }
 
 function bindChangeHandlers(state,root){
+  const syncGlobalsUI = () => {
+    const drop = ID("gl-drop");
+    const mass = ID("gl-mass");
+    if (!drop || !mass) return;
+
+    if (drop.checked && mass.checked) mass.checked = false;
+    if (mass.checked) drop.checked = false;
+
+    const dropOn = !!drop.checked;
+    const massOn = !!mass.checked;
+
+    mass.disabled = dropOn;
+    drop.disabled = massOn;
+
+    mass.closest?.(".opt-row")?.classList.toggle("muted", mass.disabled);
+    drop.closest?.(".opt-row")?.classList.toggle("muted", drop.disabled);
+
+    const adv = ID("gl-drop-adv");
+    if (adv) {
+      adv.style.opacity = dropOn ? "" : "0.5";
+      adv.style.pointerEvents = dropOn ? "auto" : "none";
+    }
+  };
   root.addEventListener("input",(e)=>{
     const id=e.target.id;
     if(id==="gl-sus-pct-range"||id==="gl-sus-pct"||id==="gl-sus-min"){
@@ -1097,7 +1148,7 @@ function bindChangeHandlers(state,root){
         dry_run:!!Q("#gl-dry")?.checked,
         verify_after_write:!!Q("#gl-verify")?.checked,
         drop_guard:dropOn,
-        allow_mass_delete:!!Q("#gl-mass")?.checked,
+        allow_mass_delete:!!Q("#gl-mass")?.checked && !dropOn,
         tombstone_ttl_days:parseInt(Q("#gl-ttl")?.value||"0",10)||0,
         include_observed_deletes:!!Q("#gl-observed")?.checked,
         runtime:{suspect_min_prev:minPrev,suspect_shrink_ratio:pct/100},
@@ -1111,7 +1162,27 @@ function bindChangeHandlers(state,root){
   root.addEventListener("change",(e)=>{
     const id=e.target.id,map={"cx-wl-enable":"cx-wl-remove","cx-rt-enable":"cx-rt-remove","cx-pl-enable":"cx-pl-remove"};
     if(map[id]){const rm=ID(map[id]);if(rm){rm.disabled=!e.target.checked;if(!e.target.checked)rm.checked=false}}
-    if(id==="cx-wl-enable"||id==="cx-rt-enable"||id==="cx-hs-enable"||id==="cx-pl-enable"){applySubDisable(id.startsWith("cx-wl")?"watchlist":id.startsWith("cx-rt")?"ratings":id.startsWith("cx-hs")?"history":"playlists")}
+    if (id === "gl-drop" || id === "gl-mass") {
+      if (id === "gl-drop" && !!ID("gl-drop")?.checked) {
+        const m = ID("gl-mass");
+        if (m) m.checked = false;
+      }
+      if (id === "gl-mass" && !!ID("gl-mass")?.checked) {
+        const d = ID("gl-drop");
+        if (d) d.checked = false;
+      }
+      syncGlobalsUI();
+    }
+
+    if (id === "cx-wl-enable" && !!ID("cx-wl-enable")?.checked) {
+      const add = ID("cx-wl-add");
+      if (add) add.checked = true;
+    }
+
+    if (id === "cx-hs-enable" && !!ID("cx-hs-enable")?.checked) {
+      const add = ID("cx-hs-add");
+      if (add) add.checked = true;
+    }
 
     if(id.startsWith("cx-wl-")){
       const prev=state.options.watchlist||{};
@@ -1193,6 +1264,7 @@ function bindChangeHandlers(state,root){
       if(numEl) numEl.value=String(pct);
 
       const minPrev=Math.max(0,parseInt(Q("#gl-sus-min")?.value||"20",10)||20);
+      syncGlobalsUI();
       const dropOn=!!Q("#gl-drop")?.checked;
       const adv=ID("gl-drop-adv");
       if(adv){adv.style.opacity=dropOn?"":"0.5";adv.style.pointerEvents=dropOn?"auto":"none"}
@@ -1201,7 +1273,7 @@ function bindChangeHandlers(state,root){
         dry_run:!!Q("#gl-dry")?.checked,
         verify_after_write:!!Q("#gl-verify")?.checked,
         drop_guard:dropOn,
-        allow_mass_delete:!!Q("#gl-mass")?.checked,
+        allow_mass_delete:!!Q("#gl-mass")?.checked && !dropOn,
         tombstone_ttl_days:parseInt(Q("#gl-ttl")?.value||"0",10)||0,
         include_observed_deletes:!!Q("#gl-observed")?.checked,
         runtime:{suspect_min_prev:minPrev,suspect_shrink_ratio:pct/100},
@@ -1232,6 +1304,7 @@ function bindChangeHandlers(state,root){
     if(id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two") updateFlow(state,true);
     updateFlowClasses(state);renderWarnings(state);
   });
+  queueMicrotask(syncGlobalsUI);
 }
 
 // Save config bits
@@ -1241,11 +1314,15 @@ async function saveConfigBits(state){
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
 
     if(ID("gl-dry")){
+      const dropOn=!!ID("gl-drop")?.checked;
+      const massOn=!!ID("gl-mass")?.checked && !dropOn;
       const s={
         dry_run:!!ID("gl-dry")?.checked,
         verify_after_write:!!ID("gl-verify")?.checked,
         drop_guard:!!ID("gl-drop")?.checked,
         allow_mass_delete:!!ID("gl-mass")?.checked,
+        drop_guard:dropOn,
+        allow_mass_delete:massOn,
         tombstone_ttl_days:Math.max(0,parseInt(ID("gl-ttl")?.value||"0",10)||0),
         include_observed_deletes:!!ID("gl-observed")?.checked
       };
@@ -1418,6 +1495,41 @@ async function saveConfigBits(state){
   }catch(e){console.warn("[cx] saving config bits failed",e)}
 }
 
+function injectHelpIcons(root) {
+  if (!root) return;
+
+  for (const [inputId, text] of Object.entries(HELP_TEXT)) {
+    const input = root.querySelector(`#${CSS.escape(inputId)}`);
+    if (!input) continue;
+
+    const sw = input.closest("label.switch");
+    if (!sw) continue;
+
+    let wrap = sw.parentElement;
+    if (!wrap || !wrap.classList.contains("cx-switch-wrap")) {
+      wrap = document.createElement("span");
+      wrap.className = "cx-switch-wrap";
+      sw.parentNode.insertBefore(wrap, sw);
+      wrap.appendChild(sw);
+    }
+
+    if (wrap.querySelector(`.cx-help[data-for="${inputId}"]`)) continue;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cx-help material-symbols-rounded";
+    btn.textContent = "help";
+    btn.dataset.for = inputId;
+    btn.dataset.tip = String(text || "").trim();
+    btn.title = btn.dataset.tip;
+    btn.setAttribute("aria-label", "Help");
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+
+    wrap.insertBefore(btn, sw);
+  }
+}
+
 function buildPayload(state,wrap){
   const src=state.src||ID("cx-src")?.value||ID("cx-src-display")?.dataset.value||"";
   const dst=state.dst||ID("cx-dst")?.value||ID("cx-dst-display")?.dataset.value||"";
@@ -1427,7 +1539,7 @@ function buildPayload(state,wrap){
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
 }
 
-// Save: REST-first (PUT id → POST), then legacy fallback
+// Save:
 async function savePair(payload){
   try{if(payload?.id){const r=await fetch(`/api/pairs/${encodeURIComponent(payload.id)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(r.ok)return{ok:true}}}catch{}
   try{const r=await fetch("/api/pairs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(r&&r.ok)return{ok:true}}catch{}
@@ -1477,7 +1589,7 @@ export default{
     ID("cx-enabled").addEventListener("change",()=>updateFlow(state,true));
     QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>updateFlow(state,true)));
     bindChangeHandlers(state,wrap);
-
+    queueMicrotask(() => injectHelpIcons(wrap));
     ensureInlineFoot(hostEl);
     hostEl.__doSave=async()=>{
       await saveConfigBits(state);
