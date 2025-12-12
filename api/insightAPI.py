@@ -229,7 +229,10 @@ def register_insights(app: FastAPI) -> None:
         def _empty_enabled() -> dict[str, bool]:
             return {k: False for k in feature_keys}
 
-        def _compute_history_breakdown(state_obj: dict[str, Any] | None) -> dict[str, int]:
+        def _compute_history_breakdown(
+            state_obj: dict[str, Any] | None,
+            feature: str = "history",
+        ) -> dict[str, int]:
             movies: set[str] = set()
             shows: set[str] = set()
             episodes: set[str] = set()
@@ -237,8 +240,8 @@ def register_insights(app: FastAPI) -> None:
             try:
                 prov_block = (state_obj or {}).get("providers") or {}
                 for _prov_name, prov_data in prov_block.items():
-                    hist = (prov_data or {}).get("history") or {}
-                    node = hist.get("baseline") or hist
+                    feat_block = (prov_data or {}).get(feature) or {}
+                    node = feat_block.get("baseline") or feat_block
                     items = node.get("items") or {}
 
                     if isinstance(items, dict):
@@ -254,8 +257,14 @@ def register_insights(app: FastAPI) -> None:
 
                         typ = str(rec.get("type") or "").strip().lower()
                         ids = (rec.get("ids") or {}) or {}
+                        show_ids_field = (rec.get("show_ids") or {}) or {}
+                        has_show_meta = bool(
+                            show_ids_field
+                            or rec.get("series_title")
+                            or rec.get("show_title")
+                        )
 
-                        if typ == "movie":
+                        if typ == "movie" and not has_show_meta:
                             sig: str | None = None
                             for idk in ("imdb", "tmdb", "tvdb", "slug"):
                                 v = ids.get(idk)
@@ -263,7 +272,9 @@ def register_insights(app: FastAPI) -> None:
                                     sig = f"{idk}:{str(v).lower()}"
                                     break
                             if sig is None:
-                                title = str(rec.get("title") or rec.get("name") or "").strip().lower()
+                                title = str(
+                                    rec.get("title") or rec.get("name") or ""
+                                ).strip().lower()
                                 y = str(rec.get("year") or "")
                                 sig = f"{title}|year:{y}"
                             movies.add(sig)
@@ -273,20 +284,22 @@ def register_insights(app: FastAPI) -> None:
                             s = int(rec.get("season") or 0)
                             ep = int(rec.get("episode") or 0)
 
-                            sig = None
+                            ep_sig: str | None = None
                             for idk in ("imdb", "tmdb", "tvdb", "slug"):
                                 v = ids.get(idk)
                                 if v:
-                                    sig = f"{idk}:{str(v).lower()}|s{s}e{ep}"
+                                    ep_sig = f"{idk}:{str(v).lower()}|s{s}e{ep}"
                                     break
-                            if sig is None:
-                                t = str(rec.get("title") or rec.get("name") or "").strip().lower()
+                            if ep_sig is None:
+                                t = str(
+                                    rec.get("title") or rec.get("name") or ""
+                                ).strip().lower()
                                 y = str(rec.get("year") or "")
-                                sig = f"{t}|year:{y}|s{s}e{ep}"
-                            episodes.add(sig)
+                                ep_sig = f"{t}|year:{y}|s{s}e{ep}"
+                            episodes.add(ep_sig)
 
-                            show_ids = (rec.get("show_ids") or {}) or {}
-                            show_sig = None
+                            show_ids = show_ids_field
+                            show_sig: str | None = None
                             for idk in ("imdb", "tmdb", "tvdb", "slug"):
                                 v = show_ids.get(idk)
                                 if v:
@@ -301,14 +314,16 @@ def register_insights(app: FastAPI) -> None:
                                 )
                                 if title:
                                     y = rec.get("series_year") or rec.get("year")
-                                    show_sig = f"{str(title).strip().lower()}|year:{y}"
+                                    show_sig = (
+                                        f"{str(title).strip().lower()}|year:{y}"
+                                    )
                             if show_sig:
                                 shows.add(show_sig)
                             continue
 
-                        if typ == "show":
-                            ids_show = ids
-                            show_sig = None
+                        if typ == "show" or (typ == "movie" and has_show_meta):
+                            ids_show = show_ids_field or ids
+                            show_sig: str | None = None
                             for idk in ("imdb", "tmdb", "tvdb", "slug"):
                                 v = ids_show.get(idk)
                                 if v:
@@ -323,11 +338,41 @@ def register_insights(app: FastAPI) -> None:
                                 )
                                 if title:
                                     y = rec.get("series_year") or rec.get("year")
-                                    show_sig = f"{str(title).strip().lower()}|year:{y}"
+                                    show_sig = (
+                                        f"{str(title).strip().lower()}|year:{y}"
+                                    )
+                            if show_sig:
+                                shows.add(show_sig)
+                            continue
+
+                        # Fallback:
+                        if has_show_meta:
+                            ids_show = show_ids_field or ids
+                            show_sig: str | None = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = ids_show.get(idk)
+                                if v:
+                                    show_sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if show_sig is None:
+                                title = (
+                                    rec.get("series_title")
+                                    or rec.get("show_title")
+                                    or rec.get("title")
+                                    or rec.get("name")
+                                )
+                                if title:
+                                    y = rec.get("series_year") or rec.get("year")
+                                    show_sig = (
+                                        f"{str(title).strip().lower()}|year:{y}"
+                                    )
                             if show_sig:
                                 shows.add(show_sig)
             except Exception as exc:
-                _append_log("INSIGHTS", f"[!] history breakdown failed: {exc}")
+                _append_log(
+                    "INSIGHTS",
+                    f"[!] {feature} breakdown failed: {exc}",
+                )
 
             return {
                 "movies": len(movies),
@@ -711,10 +756,11 @@ def register_insights(app: FastAPI) -> None:
                 key = str(prov_upper or "").strip().lower()
                 for feat in feature_keys:
 
-                    if feat == "history":
+                    if feat in ("history", "ratings"):
                         try:
                             per_counts = _compute_history_breakdown(
-                                {"providers": {prov_upper: pdata}}
+                                {"providers": {prov_upper: pdata}},
+                                feat,
                             ) or {}
                         except Exception:
                             per_counts = {}

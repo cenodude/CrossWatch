@@ -98,7 +98,6 @@ def _load_trakt_last_limit_error(
     except Exception:
         return {}
 
-
 def _trakt_limits_used(
     client_id: str,
     token: str,
@@ -116,28 +115,25 @@ def _trakt_limits_used(
     }
     base = "https://api.trakt.tv"
 
-    endpoints: dict[str, list[str]] = {
-        "watchlist": [f"{base}/sync/watchlist?page=1&limit=1"],
-        "collection": [
-            f"{base}/sync/collection/movies?page=1&limit=1",
-            f"{base}/sync/collection/shows?page=1&limit=1",
-        ],
-    }
+    def _count_items(url: str) -> int:
+        code, body = _http_get(url, headers=headers, timeout=timeout)
+        if code != 200:
+            return 0
+        data = _json_loads(body) or []
+        if isinstance(data, list):
+            return len(data)
+        return 0
 
-    for feature, urls in endpoints.items():
-        total = 0
-        have = False
-        for url in urls:
-            code, _body, hdrs = _http_get_with_headers(url, headers=headers, timeout=timeout)
-            if code != 200:
-                continue
-            cnt = _hdr_int(hdrs, "x-pagination-item-count")
-            if cnt is None:
-                continue
-            total += cnt
-            have = True
-        if have:
-            out[feature] = total
+    # Watchlist total
+    wl_count = _count_items(f"{base}/sync/watchlist")
+    if wl_count:
+        out["watchlist"] = wl_count
+
+    # Collection = movies + shows
+    movies_count = _count_items(f"{base}/sync/collection/movies")
+    shows_count = _count_items(f"{base}/sync/collection/shows")
+    if movies_count or shows_count:
+        out["collection"] = movies_count + shows_count
 
     return out
 
