@@ -660,7 +660,7 @@ def _missing_peer_show_hints(
 
         dst_name = str(dst or "").upper()
         if show_episodes == 0:
-            msg = f"{dst_name} history snapshot has no entries for this show."
+            msg = f"{dst_name} history snapshot has no entries for this item."
         elif has_episode:
             msg = (
                 f"{dst_name} history snapshot already has this episode, "

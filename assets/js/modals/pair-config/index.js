@@ -32,6 +32,9 @@ const HELP_TEXT = {
   "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
   "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
+
+  "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
+
 };
 
 // Provider helpers
@@ -523,6 +526,7 @@ function bindFoldToggles(root){
   const isSummary=(el)=>el && el.tagName==="SUMMARY";
   root.addEventListener("click",(e)=>{
     const sum=e.target.closest?.("summary.fold-head, .fold > summary");
+    
     if(!sum)return;
     const det=sum.closest("details"); if(!det)return;
     e.preventDefault(); e.stopPropagation();
@@ -772,7 +776,12 @@ function renderFeaturePanel(state){
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
         <details id="cx-jf-wl" open>
-          <summary class="muted" style="margin-bottom:10px;">Favorites / Playlist / Collections</summary>
+          <summary class="muted" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span>Favorites / Playlist / Collections</span>
+            <button type="button"
+                    class="cx-help material-symbols-rounded"
+                    data-tip-id="cx-jf-wl-mode">help</button>
+          </summary>
           <div class="grid2 compact">
             <div class="opt-row" style="grid-column:1/-1">
               <label>Mode</label>
@@ -786,7 +795,6 @@ function renderFeaturePanel(state){
               <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist">
             </div>
           </div>
-          <div class="hint" style="text-align:center;">Jellyfin does not have a native Watchlist; use <b>Favorites</b>, <b>Playlist</b>, or <b>Collections</b>.</div>
         </details>
       `);
     }
@@ -1160,8 +1168,22 @@ function bindChangeHandlers(state,root){
   });
 
   root.addEventListener("change",(e)=>{
-    const id=e.target.id,map={"cx-wl-enable":"cx-wl-remove","cx-rt-enable":"cx-rt-remove","cx-pl-enable":"cx-pl-remove"};
-    if(map[id]){const rm=ID(map[id]);if(rm){rm.disabled=!e.target.checked;if(!e.target.checked)rm.checked=false}}
+    const id=e.target.id,
+          map={
+            "cx-wl-enable":"cx-wl-remove",
+            "cx-rt-enable":"cx-rt-remove",
+            "cx-hs-enable":"cx-hs-remove",
+            "cx-pl-enable":"cx-pl-remove"
+          };
+
+    if(map[id]){
+      const rm=ID(map[id]);
+      if(rm){
+        rm.disabled=!e.target.checked;
+        if(!e.target.checked) rm.checked=false;
+      }
+    }
+
     if (id === "gl-drop" || id === "gl-mass") {
       if (id === "gl-drop" && !!ID("gl-drop")?.checked) {
         const m = ID("gl-mass");
@@ -1174,19 +1196,37 @@ function bindChangeHandlers(state,root){
       syncGlobalsUI();
     }
 
-    if (id === "cx-wl-enable" && !!ID("cx-wl-enable")?.checked) {
-      const add = ID("cx-wl-add");
-      if (add) add.checked = true;
+    if (id === "cx-wl-enable") {
+      if (!!ID("cx-wl-enable")?.checked) {
+        const add = ID("cx-wl-add");
+        if (add) add.checked = true;
+      }
+      applySubDisable("watchlist");
     }
 
-    if (id === "cx-hs-enable" && !!ID("cx-hs-enable")?.checked) {
-      const add = ID("cx-hs-add");
-      if (add) add.checked = true;
+    if (id === "cx-rt-enable") {
+      applySubDisable("ratings");
+    }
+
+    if (id === "cx-hs-enable") {
+      if (!!ID("cx-hs-enable")?.checked) {
+        const add = ID("cx-hs-add");
+        if (add) add.checked = true;
+      }
+      applySubDisable("history");
+    }
+
+    if (id === "cx-pl-enable") {
+      applySubDisable("playlists");
     }
 
     if(id.startsWith("cx-wl-")){
       const prev=state.options.watchlist||{};
-      state.options.watchlist=Object.assign({},prev,{enable:!!ID("cx-wl-enable")?.checked,add:!!ID("cx-wl-add")?.checked,remove:!!ID("cx-wl-remove")?.checked});
+      state.options.watchlist=Object.assign({},prev,{
+        enable:!!ID("cx-wl-enable")?.checked,
+        add:!!ID("cx-wl-add")?.checked,
+        remove:!!ID("cx-wl-remove")?.checked
+      });
       state.visited.add("watchlist");
     }
 
@@ -1219,7 +1259,8 @@ function bindChangeHandlers(state,root){
         enable:!!ID("cx-rt-enable")?.checked,
         add:!!ID("cx-rt-add")?.checked,
         remove:!!ID("cx-rt-remove")?.checked,
-        types,mode:ID("cx-rt-mode")?.value||"all",
+        types,
+        mode:ID("cx-rt-mode")?.value||"all",
         from_date:(ID("cx-rt-from-date")?.value||"").trim()
       });
       state.visited.add("ratings");
@@ -1239,12 +1280,15 @@ function bindChangeHandlers(state,root){
 
     if(id.startsWith("cx-pl-")){
       const prev=state.options.playlists||{};
-      state.options.playlists=Object.assign({},prev,{enable:!!ID("cx-pl-enable")?.checked,add:!!ID("cx-pl-add")?.checked,remove:!!ID("cx-pl-remove")?.checked});
+      state.options.playlists=Object.assign({},prev,{
+        enable:!!ID("cx-pl-enable")?.checked,
+        add:!!ID("cx-pl-add")?.checked,
+        remove:!!ID("cx-pl-remove")?.checked
+      });
       state.visited.add("playlists");
     }
 
     if(id.startsWith("gl-")){
-      const g=state.globals||{};
       const bb={
         enabled:!!Q("#gl-bb-enable")?.checked,
         pair_scoped:!!Q("#gl-bb-pair")?.checked,
@@ -1304,7 +1348,6 @@ function bindChangeHandlers(state,root){
     if(id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two") updateFlow(state,true);
     updateFlowClasses(state);renderWarnings(state);
   });
-  queueMicrotask(syncGlobalsUI);
 }
 
 // Save config bits
@@ -1528,6 +1571,19 @@ function injectHelpIcons(root) {
 
     wrap.insertBefore(btn, sw);
   }
+
+  QA(".cx-help[data-tip-id]", root).forEach(btn => {
+    if (btn.__wired) return;
+    btn.__wired = true;
+    const key = btn.dataset.tipId;
+    const tip = String(HELP_TEXT[key] || "").trim();
+    if (!tip) return;
+    btn.dataset.tip = tip;
+    btn.title = tip;
+    btn.setAttribute("aria-label", "Help");
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+  });
 }
 
 function buildPayload(state,wrap){

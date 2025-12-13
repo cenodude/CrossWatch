@@ -667,6 +667,7 @@
 
     const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),pv=$("#sc-provider",STATE.mount),sk=$("#sc-sink",STATE.mount);
     const syncExclusive=async src=>{
+      try { await refreshCfgBeforePopulate(); } catch {}
       const webOn=!!wh?.checked,watOn=!!wa?.checked;
       if(src==="webhook"&&webOn&&wa) wa.checked=false;
       if(src==="watch"&&watOn&&wh) wh.checked=false;
@@ -736,6 +737,13 @@
     }
     buildUI();
     wire();
+    if (!STATE.__authChangedBound) {
+      STATE.__authChangedBound = true;
+      window.addEventListener("auth-changed", async () => {
+        try { await refreshCfgBeforePopulate(); } catch {}
+        applyModeDisable();
+      });
+    }
     await refreshCfgBeforePopulate();
     populate();
     await refreshWatcher();

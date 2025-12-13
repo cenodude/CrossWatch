@@ -212,55 +212,64 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         return out
 
     # Favorites mode
-    r = http.get(
-        f"/Users/{uid}/Items",
-        params={
-            "IncludeItemTypes": "Movie,Series",
-            "Recursive": True,
-            "EnableUserData": True,
-            "Fields": "ProviderIds,ProductionYear,UserData,Type",
-            "Filters": "IsFavorite",
-            "SortBy": "DateLastSaved",
-            "SortOrder": "Descending",
-            "EnableTotalRecordCount": True,
-            "Limit": max(1, int(getattr(cfg, "watchlist_query_limit", 1000))),
-        },
-    )
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    start = 0
+    total: int | None = None
 
     out: dict[str, dict[str, Any]] = {}
-    rows: list[Mapping[str, Any]] = []
-    total = 0
-    try:
-        body = r.json() or {}
-        rows = body.get("Items") or []
-        total = int(body.get("TotalRecordCount") or len(rows) or 0)
-    except Exception:
-        rows, total = [], 0
-
-    if prog:
-        try:
-            prog.tick(0, total=total, force=True)
-        except Exception:
-            pass
-
     done = 0
-    for row in rows:
+
+    while True:
+        r = http.get(
+            f"/Users/{uid}/Items",
+            params={
+                "IncludeItemTypes": "Movie,Series",
+                "Recursive": True,
+                "EnableUserData": True,
+                "Fields": "ProviderIds,ProductionYear,UserData,Type",
+                "Filters": "IsFavorite",
+                "SortBy": "DateLastSaved",
+                "SortOrder": "Descending",
+                "EnableTotalRecordCount": True,
+                "StartIndex": start,
+                "Limit": page_size,
+            },
+        )
+
         try:
-            m = jelly_normalize(row)
-            out[canonical_key(m)] = m
+            body = r.json() or {}
+            rows: list[Mapping[str, Any]] = body.get("Items") or []
+            if total is None:
+                total = int(body.get("TotalRecordCount") or 0)
+                if prog:
+                    try:
+                        prog.tick(0, total=total, force=True)
+                    except Exception:
+                        pass
         except Exception:
-            pass
-        done += 1
-        if prog:
+            rows = []
+            if total is None:
+                total = 0
+
+        for row in rows:
             try:
-                prog.tick(done, total=total)
+                m = jelly_normalize(row)
+                out[canonical_key(m)] = m
             except Exception:
                 pass
+            done += 1
+            if prog and total is not None:
+                try:
+                    prog.tick(done, total=total)
+                except Exception:
+                    pass
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
 
     _thaw_if_present(out.keys())
     _log(f"index size: {len(out)} (favorites)")
     return out
-
 
 # writes
 def _favorite(http: Any, uid: str, item_id: str, flag: bool) -> bool:
@@ -273,7 +282,6 @@ def _favorite(http: Any, uid: str, item_id: str, flag: bool) -> bool:
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
-
 
 def _verify_favorite(
     http: Any,

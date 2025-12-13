@@ -74,7 +74,7 @@ def get_manifest() -> Mapping[str, Any]:
         "features": {
             "watchlist": True,
             "history": True,
-            "ratings": True,
+            "ratings": False,
             "playlists": False,
         },
         "requires": ["requests"],

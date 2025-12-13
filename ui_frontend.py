@@ -606,6 +606,7 @@ function watchAuthMount(){
 
   __authMo = new MutationObserver(() => {
     refreshAuthDots(false).catch(()=>{});
+    try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
   });
 
   __authMo.observe(host, { childList: true, subtree: true });
