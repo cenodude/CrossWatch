@@ -34,7 +34,7 @@ try:
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
-__VERSION__ = "0.1.0"
+__VERSION__ = "1.0.0"
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
 _FEATURES: dict[str, Any] = {}

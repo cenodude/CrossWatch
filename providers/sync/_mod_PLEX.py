@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-__VERSION__ = "2.1.0"
+__VERSION__ = "2.5.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:

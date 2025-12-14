@@ -29,7 +29,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0.1"
+__VERSION__ = "2.0.0"
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 
 _DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
