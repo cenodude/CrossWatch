@@ -16,8 +16,8 @@ from ._common import (
     create_playlist,
     find_collection_id_by_name,
     find_playlist_id_by_name,
-    get_collection_items,
-    get_playlist_items,
+    playlist_fetch_all,
+    collection_fetch_all,
     mark_favorite,
     playlist_add_items,
     playlist_remove_entries,
@@ -134,19 +134,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         pid = _get_playlist_id(adapter, create_if_missing=False)
         out: dict[str, dict[str, Any]] = {}
         if pid:
-            body = get_playlist_items(
-                http,
-                pid,
-                start=0,
-                limit=max(1, int(getattr(cfg, "watchlist_query_limit", 1000))),
-            )
-            rows: list[Mapping[str, Any]] = body.get("Items") or []
-            total = int(body.get("TotalRecordCount") or len(rows) or 0)
+            page_size = max(200, int(getattr(cfg, "watchlist_query_limit", 1000)))
+            rows, total = playlist_fetch_all(http, pid, page_size=page_size)
             if prog:
                 try:
                     prog.tick(0, total=total, force=True)
                 except Exception:
                     pass
+
             done = 0
             for row in rows:
                 if not _is_movie_or_show(row):
@@ -168,6 +163,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         prog.tick(done, total=total)
                     except Exception:
                         pass
+
         _thaw_if_present(out.keys())
         _log(f"index size: {len(out)} (playlist:{name})")
         return out
@@ -178,14 +174,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         cid = _get_collection_id(adapter, create_if_missing=False)
         out: dict[str, dict[str, Any]] = {}
         if cid:
-            body = get_collection_items(http, uid, cid)
-            rows = body.get("Items") or []
-            total = int(body.get("TotalRecordCount") or len(rows) or 0)
+            page_size = max(200, int(getattr(cfg, "watchlist_query_limit", 1000)))
+            rows, total = collection_fetch_all(http, uid, cid, page_size=page_size)
             if prog:
                 try:
                     prog.tick(0, total=total, force=True)
                 except Exception:
                     pass
+
             done = 0
             for row in rows:
                 if not _is_movie_or_show(row):
@@ -207,6 +203,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         prog.tick(done, total=total)
                     except Exception:
                         pass
+
         _thaw_if_present(out.keys())
         _log(f"index size: {len(out)} (collection:{name})")
         return out
@@ -472,40 +469,50 @@ def _remove_playlist(
     if not pid:
         return 0, [{"item": {}, "hint": "playlist_missing"}]
 
-    body = get_playlist_items(http, pid, start=0, limit=10000)
-    rows = body.get("Items") or []
-    entry_by_key: dict[str, str] = {}
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    rows, _total = playlist_fetch_all(http, pid, page_size=page_size)
+
+    entry_by_key: dict[str, list[str]] = {}
+    keys_by_eid: dict[str, set[str]] = {}
+
     for row in rows:
         if not _is_movie_or_show(row):
             continue
         key = jelly_key_of(row)
         entry_id = row.get("PlaylistItemId") or row.get("playlistitemid") or row.get("Id")
-        if key and entry_id:
-            entry_by_key[key] = str(entry_id)
+        if not key or not entry_id:
+            continue
+        eid = str(entry_id)
+        entry_by_key.setdefault(key, []).append(eid)
+        keys_by_eid.setdefault(eid, set()).add(key)
 
     items = _filter_watchlist_items(items)
     eids: list[str] = []
     unresolved: list[dict[str, Any]] = []
     for it in items:
         k = canonical_key(id_minimal(it))
-        eid = entry_by_key.get(k)
-        if eid:
-            eids.append(eid)
+        found = entry_by_key.get(k)
+        if found:
+            eids.extend(found)
         else:
             unresolved.append({"item": id_minimal(it), "hint": "no_entry_id"})
             _freeze(it, reason="resolve_failed")
-
+    seen: set[str] = set()
+    eids = [x for x in eids if not (x in seen or seen.add(x))]
     ok = 0
     for chunk in chunked(eids, qlim):
         if playlist_remove_entries(http, pid, chunk):
             ok += len(chunk)
-            _thaw_if_present([k for k, v in entry_by_key.items() if v in set(chunk)])
+            thaw_keys: set[str] = set()
+            for eid in chunk:
+                thaw_keys |= keys_by_eid.get(eid, set())
+            if thaw_keys:
+                _thaw_if_present(thaw_keys)
         else:
             for _ in chunk:
                 unresolved.append({"item": {}, "hint": "playlist_remove_failed"})
         sleep_ms(delay)
     return ok, unresolved
-
 
 def _add_collection(
     adapter: Any,
@@ -558,33 +565,56 @@ def _remove_collection(
     if not cid:
         return 0, [{"item": {}, "hint": "collection_missing"}]
 
-    body = get_collection_items(http, uid, cid)
-    rows = [r for r in (body.get("Items") or []) if _is_movie_or_show(r)]
-    by_key: dict[str, str] = {jelly_key_of(r): str(r.get("Id")) for r in rows if jelly_key_of(r)}
+    page_size = max(200, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    rows_all, _total = collection_fetch_all(http, uid, cid, page_size=page_size)
+
+    by_key: dict[str, list[str]] = {}
+    for r in rows_all:
+        if not _is_movie_or_show(r):
+            continue
+        k = jelly_key_of(r)
+        iid = r.get("Id")
+        if k and iid:
+            by_key.setdefault(k, []).append(str(iid))
 
     items = _filter_watchlist_items(items)
-    rm_ids: list[str] = []
+    rm_pairs: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
     unresolved: list[dict[str, Any]] = []
+
+    def _push(iid: str, k: str) -> None:
+        if iid and iid not in seen_ids:
+            rm_pairs.append((iid, k))
+            seen_ids.add(iid)
+
     for it in items:
         k = canonical_key(id_minimal(it))
-        iid = by_key.get(k) or resolve_item_id(adapter, it)
+        hit = by_key.get(k) or []
+        if hit:
+            for iid in hit:
+                _push(iid, k)
+            continue
+
+        iid = resolve_item_id(adapter, it)
         if iid:
-            rm_ids.append(iid)
+            _push(str(iid), k)
         else:
             unresolved.append({"item": id_minimal(it), "hint": "no_collection_item"})
             _freeze(it, reason="resolve_failed")
 
     ok = 0
-    for chunk in chunked(rm_ids, qlim):
-        if collection_remove_items(http, cid, chunk):
-            ok += len(chunk)
-            _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in chunk])
+    for chunk in chunked(rm_pairs, qlim):
+        ids = [iid for iid, _k in chunk]
+        keys = [k for _iid, k in chunk]
+        if collection_remove_items(http, cid, ids):
+            ok += len(ids)
+            _thaw_if_present(keys)
+            _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in ids])
         else:
-            for _ in chunk:
+            for _ in ids:
                 unresolved.append({"item": {}, "hint": "collection_remove_failed"})
         sleep_ms(delay)
     return ok, unresolved
-
 
 def add(
     adapter: Any,

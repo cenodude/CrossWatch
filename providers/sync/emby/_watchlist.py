@@ -13,18 +13,18 @@ from ._common import (
     update_userdata,
     find_playlist_id_by_name,
     create_playlist,
-    get_playlist_items,
     playlist_add_items,
     playlist_remove_entries,
     find_collection_id_by_name,
     create_collection,
-    get_collection_items,
     collection_add_items,
     collection_remove_items,
     chunked,
     sleep_ms,
     resolve_item_id,
-    get_series_episodes,
+    _fetch_all_playlist_items,
+    _fetch_all_collection_items,
+    _fetch_all_series_episodes,
     _is_future_episode,
     playlist_as_watchlist_index,
     _series_minimal_from_episode,
@@ -151,7 +151,7 @@ def _is_collections_mode(cfg: Any) -> bool:
     return m in ("collection", "collections")
 
 
-# ---------- index ----------
+# Index building
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
@@ -179,9 +179,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         cid = _get_collection_id(adapter, create_if_missing=False)
         out: dict[str, dict[str, Any]] = {}
         if cid:
-            body = get_collection_items(http, uid, cid)
-            rows: list[Mapping[str, Any]] = body.get("Items") or []
-            total = int(body.get("TotalRecordCount") or len(rows) or 0)
+            page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+            rows, total = _fetch_all_collection_items(http, uid, cid, page_size=page_size)
+
             if prog:
                 try:
                     prog.tick(0, total=total, force=True)
@@ -212,57 +212,68 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _log(f"index size: {len(out)} (collections:{name})")
         return out
 
-    r = http.get(
-        f"/Users/{uid}/Items",
-        params={
-            "IncludeItemTypes": "Movie,Series",
-            "Recursive": True,
-            "EnableUserData": True,
-            "Fields": "ProviderIds,ProductionYear,UserData,Type",
-            "Filters": "IsFavorite",
-            "SortBy": "DateLastSaved",
-            "SortOrder": "Descending",
-            "EnableTotalRecordCount": True,
-            "Limit": max(1, int(getattr(cfg, "watchlist_query_limit", 1000))),
-        },
-    )
+    # Favorites mode
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    start = 0
+    total: int | None = None
 
     out: dict[str, dict[str, Any]] = {}
-    rows: list[Mapping[str, Any]] = []
-    total = 0
-    try:
-        body = r.json() or {}
-        rows = body.get("Items") or []
-        total = int(body.get("TotalRecordCount") or len(rows) or 0)
-    except Exception:
-        rows, total = [], 0
-
-    if prog:
-        try:
-            prog.tick(0, total=total, force=True)
-        except Exception:
-            pass
-
     done = 0
-    for row in rows:
+
+    while True:
+        r = http.get(
+            f"/Users/{uid}/Items",
+            params={
+                "IncludeItemTypes": "Movie,Series",
+                "Recursive": True,
+                "EnableUserData": True,
+                "Fields": "ProviderIds,ProductionYear,UserData,Type",
+                "Filters": "IsFavorite",
+                "SortBy": "DateLastSaved",
+                "SortOrder": "Descending",
+                "EnableTotalRecordCount": True,
+                "StartIndex": start,
+                "Limit": page_size,
+            },
+        )
+
         try:
-            m = emby_normalize(row)
-            out[canonical_key(m)] = m
+            body = r.json() or {}
+            rows: list[Mapping[str, Any]] = body.get("Items") or []
+            if total is None:
+                total = int(body.get("TotalRecordCount") or 0)
+                if prog:
+                    try:
+                        prog.tick(0, total=total, force=True)
+                    except Exception:
+                        pass
         except Exception:
-            pass
-        done += 1
-        if prog:
+            rows = []
+            if total is None:
+                total = 0
+
+        for row in rows:
             try:
-                prog.tick(done, total=total)
+                m = emby_normalize(row)
+                out[canonical_key(m)] = m
             except Exception:
                 pass
+            done += 1
+            if prog and total is not None:
+                try:
+                    prog.tick(done, total=total)
+                except Exception:
+                    pass
+
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
 
     _thaw_if_present(out.keys())
     _log(f"index size: {len(out)} (favorites)")
     return out
 
-
-# ---------- writes ----------
+# Write helpers
 def _favorite(http: Any, uid: str, item_id: str, flag: bool) -> bool:
     try:
         r = (
@@ -457,8 +468,8 @@ def _add_playlist(
     if not pid:
         return 0, [{"item": {}, "hint": "playlist_missing"}]
 
-    body_now = get_playlist_items(http, pid, start=0, limit=10000)
-    rows_now = body_now.get("Items") or []
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    rows_now, _total_now = _fetch_all_playlist_items(http, pid, page_size=page_size)
     existing_ids = {str(r.get("Id")) for r in rows_now if r.get("Id")}
     existing_keys = {emby_key_of(r) for r in rows_now if emby_key_of(r)}
     froz = _load() or {}
@@ -516,9 +527,7 @@ def _add_playlist(
             if not sid:
                 _freeze(it, reason="resolve_failed")
                 continue
-            eps = get_series_episodes(http, uid, sid, start=0, limit=10000).get(
-                "Items",
-            ) or []
+            eps = _fetch_all_series_episodes(http, uid, sid, page_size=page_size)
             eps = [ep for ep in eps if not _is_future_episode(ep)]
             if not eps:
                 _freeze(it, reason="future_episode")
@@ -553,10 +562,8 @@ def _add_playlist(
             )
             sleep_ms(delay)
             continue
-        body_after = get_playlist_items(http, pid, start=0, limit=10000)
-        after_ids = {
-            str(r.get("Id")) for r in (body_after.get("Items") or []) if r.get("Id")
-        }
+        rows_after, _total_after = _fetch_all_playlist_items(http, pid, page_size=page_size)
+        after_ids = {str(r.get("Id")) for r in rows_after if r.get("Id")}
         for iid in chunk:
             if iid in after_ids:
                 ok += 1
@@ -583,9 +590,10 @@ def _remove_playlist(
     if not pid:
         return 0, [{"item": {}, "hint": "playlist_missing"}]
 
-    body = get_playlist_items(http, pid, start=0, limit=10000)
-    rows = body.get("Items") or []
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    rows, _total = _fetch_all_playlist_items(http, pid, page_size=page_size)
     entry_by_key: dict[str, list[str]] = {}
+    keys_by_eid: dict[str, set[str]] = {}
     series_cache: dict[str, dict[str, Any] | None] = {}
 
     for row in rows:
@@ -597,15 +605,18 @@ def _remove_playlist(
         )
         if not entry_id:
             continue
+        eid = str(entry_id)
         if t == "movie":
             key = emby_key_of(row)
             if key:
-                entry_by_key.setdefault(key, []).append(str(entry_id))
+                entry_by_key.setdefault(key, []).append(eid)
+                keys_by_eid.setdefault(eid, set()).add(key)
         elif t == "episode":
             m = _series_minimal_from_episode(http, uid, row, series_cache)
             if m:
                 key = canonical_key(m)
-                entry_by_key.setdefault(key, []).append(str(entry_id))
+                entry_by_key.setdefault(key, []).append(eid)
+                keys_by_eid.setdefault(eid, set()).add(key)
 
     items = _filter_watchlist_items(items)
     eids: list[str] = []
@@ -618,13 +629,19 @@ def _remove_playlist(
         else:
             unresolved.append({"item": id_minimal(it), "hint": "no_entry_id"})
             _freeze(it, reason="resolve_failed")
+
+    seen: set[str] = set()
+    eids = [x for x in eids if not (x in seen or seen.add(x))]
+
     ok = 0
     for chunk in chunked(eids, qlim):
         if playlist_remove_entries(http, pid, chunk):
             ok += len(chunk)
-            _thaw_if_present(
-                [k for k, v in entry_by_key.items() if v in set(chunk)],
-            )
+            thaw_keys: set[str] = set()
+            for eid in chunk:
+                thaw_keys |= keys_by_eid.get(eid, set())
+            if thaw_keys:
+                _thaw_if_present(thaw_keys)
         else:
             for _ in chunk:
                 unresolved.append({"item": {}, "hint": "playlist_remove_failed"})
@@ -695,8 +712,9 @@ def _remove_collections(
     if not cid:
         return 0, [{"item": {}, "hint": "collection_missing"}]
 
-    body = get_collection_items(http, uid, cid)
-    rows = [r for r in (body.get("Items") or []) if _is_movie_or_show(r)]
+    page_size = max(1, int(getattr(cfg, "watchlist_query_limit", 1000)))
+    rows_all, _total = _fetch_all_collection_items(http, uid, cid, page_size=page_size)
+    rows = [r for r in rows_all if _is_movie_or_show(r)]
     by_key: dict[str, str] = {
         emby_key_of(r): str(r.get("Id")) for r in rows if emby_key_of(r)
     }

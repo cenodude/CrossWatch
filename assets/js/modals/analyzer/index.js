@@ -240,6 +240,8 @@ export default {
     let UNSYNCED_REASON = new Map();
     let SCOPE = "issues";
     let NORMALIZATION = [];
+    let LIMIT_INFO = {};
+    let LIMIT_AFFECTED = new Map();
 
     function applySplit(top, total) {
       const bar = 8;
@@ -361,7 +363,10 @@ export default {
                       const text = miss.length
                         ? `Missing at ${miss.join(" & ")}`
                         : "Missing at other provider";
-                      return `<span class="unsync-dot" title="${text}"></span>`;
+                      const rs = UNSYNCED_REASON.get(tag) || [];
+                      const reason = rs.length ? rs[0] : "";
+                      const tip = reason ? `${text} — ${reason}` : text;
+                      return `<span class="unsync-dot" title="${escHtml(tip)}"></span>`;
                     })()
                   : ""
               }${label}</div>
@@ -642,6 +647,52 @@ export default {
       });
     }
 
+
+    function renderLimitPanel(tag) {
+      const hit = LIMIT_AFFECTED.get(tag);
+      if (!hit) return "";
+      const key = hit.key;
+      const info = (LIMIT_INFO && LIMIT_INFO[key]) || {};
+      const prov = String(hit.provider || "").toUpperCase() || "PROVIDER";
+      const what = String(hit.limit_feature || "").toLowerCase() || "watchlist";
+      const cap = typeof info.cap === "number" ? info.cap : null;
+      const used = typeof info.used === "number" ? info.used : null;
+      const affected =
+        typeof info.affected === "number" && info.affected > 0
+          ? info.affected
+          : null;
+      const last =
+        typeof info.last_error === "string" && info.last_error
+          ? info.last_error
+          : "";
+      const title =
+        prov === "TRAKT" && info.plan === "free"
+          ? "TRAKT free account limit reached"
+          : `${prov} limit reached`;
+      const targetLabel = what === "collection" ? "collection" : "watchlist";
+      const capLine =
+        cap != null && used != null
+          ? `${targetLabel} is at ${used}/${cap}.`
+          : `${targetLabel} limit reached.`;
+      const fix =
+        prov === "TRAKT" && info.plan === "free"
+          ? "Fix: remove items from Trakt, or upgrade to Trakt VIP."
+          : "Fix: remove items, or upgrade the account.";
+      const countLine = affected
+        ? `<div class="mono" style="opacity:.78;margin-top:6px">Affected items: ${affected}</div>`
+        : "";
+      const lastLine = last
+        ? `<div class="mono" style="opacity:.75;margin-top:6px">Last limit error: ${escHtml(last)}</div>`
+        : "";
+      return `<div class="issue">
+        <div class="h">${escHtml(title)}</div>
+        <div>${escHtml(capLine)} CrossWatch can't add more items there.</div>
+        <div style="opacity:.85;margin-top:6px">${escHtml(fix)}</div>
+        ${countLine}
+        ${lastLine}
+      </div>`;
+    }
+
     async function select(tag) {
       SELECTED = tag;
       draw();
@@ -679,7 +730,8 @@ export default {
 
       const manual = manualIdsBlock(it);
       const normalizationBlock = renderNormalizationPanel(NORMALIZATION);
-      issues.innerHTML = header + normalizationBlock + manual;
+      const limitBlock = renderLimitPanel(tag);
+      issues.innerHTML = limitBlock + header + normalizationBlock + manual;
 
 
       issues.scrollTop = 0;
@@ -868,9 +920,10 @@ export default {
 
     async function analyze(silent = false) {
       if (!silent) showWait("Analyzing…");
-      const [pairMap, meta] = await Promise.all([
+      const [pairMap, meta, status] = await Promise.all([
         getActivePairMap(),
-        fjson("/api/analyzer/problems").catch(() => ({ problems: [] }))
+        fjson("/api/analyzer/problems").catch(() => ({ problems: [] })),
+        fjson("/api/status").catch(() => null)
       ]);
 
       PAIR_STATS = meta.pair_stats || [];
@@ -882,6 +935,46 @@ export default {
         p => p && p.type === "history_show_normalization"
       );
       NORMALIZATION = normalization;
+
+      LIMIT_INFO = {};
+      LIMIT_AFFECTED = new Map();
+      try {
+        const provs = (status && status.providers) || {};
+        const pickProvider = want => {
+          const w = String(want || "").toUpperCase();
+          for (const [k, v] of Object.entries(provs)) {
+            if (String(k).toUpperCase() === w) return v || null;
+          }
+          return null;
+        };
+        const trakt = pickProvider("TRAKT");
+        if (trakt && trakt.connected) {
+          const vip = trakt.vip;
+          const plan = vip === false ? "free" : "vip";
+          const limits = trakt.limits || {};
+          const last = trakt.last_limit_error || {};
+          const pushLimit = (name, lf) => {
+            const node = limits[name] || {};
+            const cap = Number(node.item_count || 0) || 0;
+            const used = Number(node.used || 0) || 0;
+            if (!cap) return;
+            LIMIT_INFO[`TRAKT::${lf}`] = {
+              provider: "TRAKT",
+              limit_feature: lf,
+              plan,
+              cap,
+              used,
+              reached: used >= cap,
+              last_error:
+                String(last.feature || "").toLowerCase() === String(lf || "").toLowerCase()
+                  ? String(last.ts || "")
+                  : ""
+            };
+          };
+          pushLimit("watchlist", "watchlist");
+          pushLimit("collection", "collection");
+        }
+      } catch {}
 
       const hasPairFilter = pairMap && pairMap.size > 0;
       const seen = new Set();
@@ -922,6 +1015,14 @@ export default {
       );
 
       UNSYNCED_REASON = new Map();
+      const limitKeyFor = (provUpper, featLower) => {
+        const p = String(provUpper || "").toUpperCase();
+        const f = String(featLower || "").toLowerCase();
+        if (p !== "TRAKT") return null;
+        if (f.includes("watchlist")) return "TRAKT::watchlist";
+        if (f.includes("collect")) return "TRAKT::collection";
+        return null;
+      };
       for (const p of keep) {
         const tag = tagOf(p.provider, p.feature, p.key);
         const details = Array.isArray(p.target_show_info)
@@ -930,10 +1031,48 @@ export default {
         const msgs = details
           .map(d => String((d && d.message) || "").trim())
           .filter(Boolean);
-        if (msgs.length) {
-          UNSYNCED_REASON.set(tag, msgs);
+        const reasons = msgs.slice();
+        try {
+          const featLower = String(p.feature || "").toLowerCase();
+          const targets = (p.targets || []).map(t => String(t || "").toUpperCase());
+          for (const t of targets) {
+            const lk = limitKeyFor(t, featLower);
+            if (!lk) continue;
+            const info = LIMIT_INFO && LIMIT_INFO[lk];
+            if (info && info.reached) {
+              const cap = typeof info.cap === "number" ? info.cap : null;
+              const used = typeof info.used === "number" ? info.used : null;
+              const short =
+                cap != null && used != null
+                  ? `${t} limit reached (${used}/${cap})`
+                  : `${t} limit reached`;
+              reasons.unshift(short);
+              LIMIT_AFFECTED.set(tag, {
+                key: lk,
+                provider: t,
+                limit_feature: info.limit_feature || "watchlist"
+              });
+              break;
+            }
+          }
+        } catch {}
+        if (reasons.length) {
+          UNSYNCED_REASON.set(tag, reasons);
         }
       }
+
+      try {
+        const by = {};
+        for (const v of LIMIT_AFFECTED.values()) {
+          const k = v && v.key ? String(v.key) : "";
+          if (!k) continue;
+          by[k] = (by[k] || 0) + 1;
+        }
+        for (const [k, c] of Object.entries(by)) {
+          const info = LIMIT_INFO && LIMIT_INFO[k];
+          if (info) info.affected = c;
+        }
+      } catch {}
 
       const parts = [`Issues: ${keep.length}`];
       if (per.history) parts.push(`H:${per.history}`);

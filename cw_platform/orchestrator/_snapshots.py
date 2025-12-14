@@ -81,7 +81,6 @@ def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str
     if isinstance(raw, Mapping):
         acts = raw
     else:
-        # Unknown structure; treat as empty mapping for type safety
         return None
 
     try:
@@ -137,6 +136,21 @@ def _parse_ts(v: Any) -> int | None:
     except Exception:
         return None
 
+def _eventish_count(feature: str, idx: Mapping[str, Any]) -> int:
+    if feature == "history":
+        return sum(
+            1
+            for v in idx.values()
+            if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+        )
+    if feature == "ratings":
+        return sum(
+            1
+            for v in idx.values()
+            if isinstance(v, Mapping)
+            and (v.get("rated_at") or v.get("user_rated_at") or v.get("rating") or v.get("user_rating"))
+        )
+    return len(idx)
 
 def build_snapshots_for_feature(
     *,
@@ -153,7 +167,6 @@ def build_snapshots_for_feature(
     allowed = allowed_providers_for_feature(config, feature)
 
     for name, ops in providers.items():
-        # features() may be typed loosely; normalise to Mapping
         try:
             feats_raw = ops.features()  # type: ignore[call-arg]
         except Exception:
@@ -169,11 +182,9 @@ def build_snapshots_for_feature(
             continue
 
         if allowed and name.upper() not in allowed:
-            # snapshot for this provider not needed for current pairs; skip
             continue
 
         if not provider_configured(config, name):
-            # provider not configured; skip
             continue
 
         memo_key = (name, feature)
@@ -183,7 +194,7 @@ def build_snapshots_for_feature(
                 ts, cached_idx = ent
                 if (now - ts) < snap_ttl_sec:
                     snaps[name] = cached_idx
-                    dbg("snapshot.memo", provider=name, feature=feature, count=len(cached_idx))
+                    dbg("snapshot.memo", provider=name, feature=feature, count=_eventish_count(feature, cached_idx), raw_count=len(cached_idx))
                     continue
 
         degraded = False
@@ -205,16 +216,21 @@ def build_snapshots_for_feature(
                     continue
                 item = dict(raw)
                 key = canonical_key(item)
-                canon[key] = item
+                if key:
+                    canon[key] = item
+                    
         elif isinstance(idx_raw, Mapping):
-            for raw in idx_raw.values():
+            for k, raw in idx_raw.items():
                 if not isinstance(raw, Mapping):
                     continue
                 item = dict(raw)
                 key = canonical_key(item)
-                canon[key] = item
+                if not key and isinstance(k, str) and k:
+                    key = k.split("@", 1)[0]
+                if key:
+                    canon[key] = item
+
         else:
-            # Unknown shape; keep empty index
             canon = {}
 
         snaps[name] = canon
@@ -229,9 +245,8 @@ def build_snapshots_for_feature(
                 )
             else:
                 snap_cache[memo_key] = (now, canon)
-        dbg("snapshot", provider=name, feature=feature, count=len(canon))
+        dbg("snapshot", provider=name, feature=feature, count=_eventish_count(feature, canon), raw_count=len(canon))
     return snaps
-
 
 def coerce_suspect_snapshot(
     *,
@@ -244,11 +259,10 @@ def coerce_suspect_snapshot(
     suspect_shrink_ratio: float,
     suspect_debug: bool,
     emit: Callable[..., Any],
-    emit_info: Callable[[str], Any],  # kept for signature symmetry
+    emit_info: Callable[[str], Any],
     prev_cp: str | None,
     now_cp: str | None,
 ) -> tuple[dict[str, Any], bool, str]:
-    # Normalise capabilities to a mapping
     try:
         caps_raw = ops.capabilities()  # type: ignore[call-arg]
     except Exception:

@@ -74,6 +74,8 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             out["tvdb"] = int(tvdb_val)
         except Exception:
             pass
+    if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
+        out.pop("tvdb", None)
     return out
 
 
@@ -95,9 +97,17 @@ def _pick_kind(item: Mapping[str, Any]) -> str:
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
-    ids: dict[str, Any] = dict((obj.get("ids") or obj) or {})
     kind = str(obj.get("type") or "").lower()
+
+    ids_src: Any = obj.get("ids") or obj
+    if kind in ("season", "episode"):
+        show_ids = obj.get("show_ids")
+        if isinstance(show_ids, Mapping) and show_ids:
+            ids_src = show_ids
+
+    ids: dict[str, Any] = dict(ids_src or {})
     imdb = str(ids.get("imdb") or ids.get("imdb_id") or "").strip()
+
     base = ""
     if imdb:
         base = f"imdb:{imdb}"
@@ -119,17 +129,19 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             mdbl = ids.get("mdblist") or ids.get("id")
             if mdbl:
                 base = f"mdblist:{mdbl}"
-    if kind in ("season", "episode"):
-        if not base:
-            title = str(obj.get("title") or "").strip()
-            year_val = obj.get("year")
-            base = f"title:{title}|year:{year_val}" if title and year_val else ""
+
+    if kind in ("season", "episode") and not base:
+        title = str(obj.get("title") or "").strip()
+        year_val = obj.get("year")
+        base = f"title:{title}|year:{year_val}" if title and year_val else ""
+
     if kind == "season":
         s = obj.get("season")
         if base and s is not None:
             return f"season:{base}:S{int(s)}"
         if base:
             return f"season:{base}"
+
     if kind == "episode":
         s = obj.get("season")
         e = obj.get("number")
@@ -139,8 +151,10 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             return f"episode:{base}:{int(s)}x{int(e)}"
         if base:
             return f"episode:{base}"
+
     if base:
         return base
+
     title = str(obj.get("title") or "").strip()
     year_val = obj.get("year")
     if title and year_val:
@@ -287,6 +301,8 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
         except Exception:
             year = None
         out: dict[str, Any] = {"type": "season", "ids": ids, "rating": rating, "season": sv.get("number")}
+        if sh_ids:
+            out["show_ids"] = sh_ids
         if row.get("rated_at"):
             out["rated_at"] = row["rated_at"]
         if title:
@@ -334,8 +350,10 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
             "ids": ids,
             "rating": rating,
             "season": ev.get("season"),
-            "number": num,
+            "episode": num,
         }
+        if sh_ids:
+            out["show_ids"] = sh_ids
         if row.get("rated_at"):
             out["rated_at"] = row["rated_at"]
         if title:
@@ -359,7 +377,7 @@ def build_index(
         _log("missing api_key → empty ratings index")
         _save_cache({})
         return {}
-    per_page = int(cfg.get("ratings_per_page") or per_page)
+    per_page = _cfg_int(cfg, "ratings_per_page", per_page)
     sess = adapter.client.session
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
@@ -427,6 +445,7 @@ def build_index(
                     sm: dict[str, Any] = {
                         "type": "season",
                         "ids": ids_for_season,
+                        "show_ids": ids_sh,
                         "rating": sr,
                         "season": sv.get("number"),
                     }
@@ -451,9 +470,10 @@ def build_index(
                     em: dict[str, Any] = {
                         "type": "episode",
                         "ids": ids_for_episode,
+                        "show_ids": ids_sh,
                         "rating": er,
                         "season": sv.get("number"),
-                        "number": num,
+                        "episode": num,
                     }
                     rae = ev.get("rated_at")
                     if rae:
@@ -474,9 +494,12 @@ def build_index(
         for m in minis:
             out[_key_of(m)] = m
         pag = data.get("pagination") or {}
-        has_more = bool(pag.get("has_more"))
+        has_more = pag.get("has_more")
+        if has_more is None:
+            has_more = any(len(x) >= per_page for x in (movies, shows, seasons_top, episodes_top))
+
         pages += 1
-        if not has_more or pages >= max_pages:
+        if not bool(has_more) or pages >= max_pages:
             break
         page += 1
 
@@ -511,7 +534,10 @@ def build_index(
                         out[_key_of(m_)] = m_
             pag_ = d.get("pagination") or {}
             done += 1
-            if not bool(pag_.get("has_more")) or done >= max_pages:
+            has_more = pag_.get("has_more")
+            if has_more is None:
+                has_more = len(rows) >= per_page
+            if not bool(has_more) or done >= max_pages:
                 break
             p += 1
 
@@ -574,6 +600,8 @@ def _bucketize(
 
         if kind in ("seasons", "episodes"):
             ids = _ids_for_mdblist(item.get("show_ids") or {})
+            if not ids:
+                ids = _ids_for_mdblist(item)
             if not ids:
                 skip["missing_show_ids"] += 1
                 continue
@@ -698,7 +726,7 @@ def _bucketize(
         episodes_list.append(ep)
         attach["episode_to_season"] += 1
 
-        acc4: dict[str, Any] = {"type": "episode", "ids": ids, "season": s, "number": e}
+        acc4: dict[str, Any] = {"type": "episode", "ids": ids, "season": s, "episode": e}
         if not unrate:
             acc4["rating"] = rating
             if rated_at:
@@ -756,28 +784,37 @@ def _write(
     if not apikey:
         _log("write abort: missing api_key")
         return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
+
     sess = adapter.client.session
     tmo = adapter.cfg.timeout
     rr = adapter.cfg.max_retries
+
     chunk_size = _cfg_int(cfg, "ratings_chunk_size", 25)
     delay_ms = _cfg_int(cfg, "ratings_write_delay_ms", 600)
     max_backoff_ms = _cfg_int(cfg, "ratings_max_backoff_ms", 8000)
+
     body, accepted = _bucketize(items, unrate=unrate)
     if not body:
         _log("nothing to write (empty body after aggregate)")
         return 0, []
+
     ok = 0
     unresolved: list[dict[str, Any]] = []
+
     for bucket in ("movies", "shows"):
         rows = body.get(bucket) or []
         if not rows:
             continue
+
         _log(f"{'UNRATE' if unrate else 'UPSERT'} bucket={bucket} rows={len(rows)} chunk={chunk_size}")
+
         for part in _chunk(rows, chunk_size):
             payload = {bucket: part}
             url = URL_UNRATE if unrate else URL_UPSERT
+
             attempt = 0
             backoff = delay_ms
+
             while True:
                 r = request_with_retries(
                     sess,
@@ -788,26 +825,51 @@ def _write(
                     timeout=tmo,
                     max_retries=rr,
                 )
-                if r.status_code in (200, 201):
-                    d = r.json() if (r.text or "").strip() else {}
-                    kinds = ("movies", "shows", "seasons", "episodes")
-                    if unrate:
-                        removed = d.get("removed") or {}
-                        _log(f"UNRATE ok bucket={bucket} removed={removed}")
-                        ok += sum(int(removed.get(k) or 0) for k in kinds)
+
+                if r.status_code in (200, 201, 204):
+                    if r.status_code == 204 or not (r.text or "").strip():
+                        d: dict[str, Any] = {}
                     else:
-                        updated = d.get("updated") or {}
-                        added = d.get("added") or {}
-                        existing = d.get("existing") or {}
+                        try:
+                            d = r.json()
+                        except Exception:
+                            d = {}
+
+                    kinds = ("movies", "shows", "seasons", "episodes")
+
+                    if r.status_code == 204:
+                        ok += len(part)
                         _log(
-                            f"UPSERT ok bucket={bucket} updated={updated} "
-                            f"added={added} existing={existing}"
+                            f"{'UNRATE' if unrate else 'UPSERT'} ok "
+                            f"bucket={bucket} (204) count={len(part)}"
                         )
-                        ok += sum(int(updated.get(k) or 0) for k in kinds)
-                        ok += sum(int(added.get(k) or 0) for k in kinds)
-                        ok += sum(int(existing.get(k) or 0) for k in kinds)
+                    else:
+                        if unrate:
+                            removed = d.get("removed") or {}
+                            n = sum(int(removed.get(k) or 0) for k in kinds)
+                            if n <= 0:
+                                n = len(part)
+                            _log(f"UNRATE ok bucket={bucket} removed={removed} counted={n}")
+                            ok += n
+                        else:
+                            updated = d.get("updated") or {}
+                            added = d.get("added") or {}
+                            existing = d.get("existing") or {}
+                            n = 0
+                            n += sum(int(updated.get(k) or 0) for k in kinds)
+                            n += sum(int(added.get(k) or 0) for k in kinds)
+                            n += sum(int(existing.get(k) or 0) for k in kinds)
+                            if n <= 0:
+                                n = len(part)
+                            _log(
+                                f"UPSERT ok bucket={bucket} updated={updated} "
+                                f"added={added} existing={existing} counted={n}"
+                            )
+                            ok += n
+
                     time.sleep(max(0.0, delay_ms / 1000.0))
                     break
+
                 if r.status_code in (429, 503):
                     _log(
                         f"{'UNRATE' if unrate else 'UPSERT'} throttled {r.status_code} "
@@ -818,6 +880,7 @@ def _write(
                     backoff = min(max_backoff_ms, int(backoff * 1.6) + 200)
                     if attempt <= 4:
                         continue
+
                 _log(
                     f"{'UNRATE' if unrate else 'UPSERT'} failed {r.status_code} "
                     f"bucket={bucket}: {(r.text or '')[:200]}"
@@ -833,6 +896,7 @@ def _write(
                         _log(f"payload.sample movies.ids={sample.get('ids')}")
                 except Exception:
                     pass
+
                 for x in part:
                     iid = x.get("ids") or {}
                     t = "show" if bucket == "shows" else "movie"
@@ -840,19 +904,23 @@ def _write(
                         {"item": id_minimal({"type": t, "ids": iid}), "hint": f"http:{r.status_code}"}
                     )
                 break
-    if ok > 0 and not unrate:
+
+    if ok > 0 and not unresolved and not unrate:
         cache = _load_cache()
         _merge_by_key(cache, accepted)
         _save_cache(cache)
-    if ok > 0 and unrate:
+
+    if ok > 0 and not unresolved and unrate:
         cache2 = _load_cache()
         for it in accepted:
             cache2.pop(_key_of(it), None)
         _save_cache(cache2)
+
     if unresolved:
         _log(f"unresolved count={len(unresolved)}")
     else:
         _log("all writes resolved")
+
     return ok, unresolved
 
 

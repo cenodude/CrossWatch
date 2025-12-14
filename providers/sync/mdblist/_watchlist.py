@@ -411,12 +411,17 @@ def _batch_payload(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    frozen = _load_unresolved()
+    frozen_keys = set(frozen.keys())
     for item in items or []:
-        if _is_frozen(item):
+        if _key_of(id_minimal(item)) in frozen_keys:
             continue
         ids = _ids_for_mdblist(item)
         if not ids:
             rejected.append({"item": id_minimal(item), "hint": "missing ids"})
+            continue
+        if not ids.get("imdb") and ids.get("tmdb") is None:
+            rejected.append({"item": id_minimal(item), "hint": "missing imdb/tmdb"})
             continue
         kind = "show" if str(item.get("type") or "").lower() in ("show", "shows", "tv", "series") else "movie"
         accepted.append({"type": kind, "ids": ids})
@@ -436,6 +441,8 @@ def _payload_from_accepted(accepted_slice: list[dict[str, Any]]) -> dict[str, An
     ]
     movies = [{k: v for k, v in d.items() if v is not None} for d in movies]
     shows = [{k: v for k, v in d.items() if v is not None} for d in shows]
+    movies = [d for d in movies if d]
+    shows = [d for d in shows if d]
     payload: dict[str, Any] = {}
     if movies:
         payload["movies"] = movies
@@ -480,6 +487,9 @@ def _write(
     for sl in _chunk(accepted, batch):
         payload = _payload_from_accepted(sl)
         if not payload:
+            for x in sl:
+                minimal = id_minimal({"type": x["type"], "ids": x["ids"]})
+                unresolved.append({"item": minimal, "hint": "missing imdb/tmdb"})
             continue
         r = request_with_retries(
             sess,
@@ -503,8 +513,24 @@ def _write(
             else:
                 ok += int(removed.get("movies") or 0)
                 ok += int(removed.get("shows") or 0)
+
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action=action, unresolved=unresolved, add_details=freeze_details)
+
+            not_found_keys: set[str] = set()
+            for bucket in ("movies", "shows"):
+                for obj in nf.get(bucket) or []:
+                    ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("imdb", "tmdb")}
+                    if ids_nf:
+                        not_found_keys.add(_key_of({"ids": ids_nf}))
+
+            ok_keys: list[str] = []
+            for x in sl:
+                k = _key_of({"type": x["type"], "ids": x["ids"]})
+                if k not in not_found_keys:
+                    ok_keys.append(k)
+            if ok_keys:
+                _unfreeze_keys_if_present(ok_keys)
         else:
             text = (r.text or "")[:200]
             _log(f"{action.upper()} failed {r.status_code}: {text}")

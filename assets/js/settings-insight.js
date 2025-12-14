@@ -397,7 +397,7 @@
         <div class="hero-text">
           <div class="h1">No synchronization pairs/Scrobbler configured</div>
           <p class="p">Authentication looks good. Next step: create at least one pair under <b>Synchronization providers</b><br>
-          — <i>or/and</i> enable the <b>Scrobbler</b> (Webhook or Watcher) if you only want live progress tracking.</p>
+          <i>or/and</i> enable the <b>Scrobbler</b> (Webhook or Watcher) if you only want live progress tracking.</p>
           <div class="tip">💡 Tip: pick a source and a target (e.g., <b>Plex → Trakt</b>), or/and toggle Webhook/Watcher under <b>Scrobbler</b>.</div>
         </div>
       </div>

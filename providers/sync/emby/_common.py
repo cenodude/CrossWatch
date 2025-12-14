@@ -527,6 +527,84 @@ def _series_minimal_from_episode(
     _cache[sid] = None
     return None
 
+def _fetch_all_playlist_items(
+    http: Any,
+    pid: str,
+    *,
+    page_size: int,
+) -> tuple[list[Mapping[str, Any]], int]:
+    start = 0
+    total: int | None = None
+    out: list[Mapping[str, Any]] = []
+    while True:
+        body = get_playlist_items(http, pid, start=start, limit=page_size)
+        rows: list[Mapping[str, Any]] = body.get("Items") or []
+        if total is None:
+            total = int(body.get("TotalRecordCount") or 0)
+        out.extend(rows)
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
+    return out, int(total or len(out))
+
+
+def _fetch_all_series_episodes(
+    http: Any,
+    uid: str,
+    sid: str,
+    *,
+    page_size: int,
+) -> list[Mapping[str, Any]]:
+    start = 0
+    total: int | None = None
+    out: list[Mapping[str, Any]] = []
+    while True:
+        body = get_series_episodes(http, uid, sid, start=start, limit=page_size)
+        rows: list[Mapping[str, Any]] = body.get("Items") or []
+        if total is None:
+            total = int(body.get("TotalRecordCount") or 0)
+        out.extend(rows)
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
+    return out
+
+
+def _fetch_all_collection_items(
+    http: Any,
+    uid: str,
+    cid: str,
+    *,
+    page_size: int,
+) -> tuple[list[Mapping[str, Any]], int]:
+    start = 0
+    total: int | None = None
+    out: list[Mapping[str, Any]] = []
+    while True:
+        r = http.get(
+            f"/Users/{uid}/Items",
+            params={
+                "IncludeItemTypes": "Movie,Series",
+                "ParentId": cid,
+                "Recursive": False,
+                "Fields": "ProviderIds,ProductionYear,Type",
+                "EnableTotalRecordCount": True,
+                "StartIndex": start,
+                "Limit": page_size,
+            },
+        )
+        if getattr(r, "status_code", 0) != 200:
+            break
+        body = r.json() or {}
+        rows: list[Mapping[str, Any]] = body.get("Items") or []
+        if total is None:
+            total = int(body.get("TotalRecordCount") or 0)
+        out.extend(rows)
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
+    return out, int(total or len(out))
+
 
 def playlist_as_watchlist_index(
     http: Any,
@@ -536,17 +614,19 @@ def playlist_as_watchlist_index(
     limit: int = 1000,
     progress: Any = None,
 ) -> dict[str, dict[str, Any]]:
-    body = get_playlist_items(http, playlist_id, start=0, limit=max(1, int(limit)))
-    rows: list[Mapping[str, Any]] = body.get("Items") or []
-    total = int(body.get("TotalRecordCount") or len(rows) or 0)
+    page_size = max(1, int(limit))
+    rows, total = _fetch_all_playlist_items(http, playlist_id, page_size=page_size)
+
+    out: dict[str, dict[str, Any]] = {}
+    cache: dict[str, dict[str, Any] | None] = {}
+    done = 0
+
     if progress:
         try:
             progress.tick(0, total=total, force=True)
         except Exception:
             pass
-    out: dict[str, dict[str, Any]] = {}
-    cache: dict[str, dict[str, Any] | None] = {}
-    done = 0
+
     for row in rows:
         t = (row.get("Type") or row.get("type") or "").strip().lower()
         if t == "movie":
@@ -562,14 +642,15 @@ def playlist_as_watchlist_index(
                     out[canonical_key(m)] = m
             except Exception:
                 pass
+
         done += 1
         if progress:
             try:
                 progress.tick(done, total=total)
             except Exception:
                 pass
-    return out
 
+    return out
 
 # playlists (for future use)
 def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
@@ -1076,7 +1157,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         if ser_row and season is not None and episode is not None:
             sid = ser_row.get("Id")
             if sid:
-                eps = get_series_episodes(http, uid, sid, start=0, limit=500).get("Items") or []
+                eps = _fetch_all_series_episodes(http, uid, sid, page_size=500)
                 for ep in eps:
                     if (
                         int(ep.get("ParentIndexNumber") or -1) == int(season)
@@ -1120,8 +1201,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         if series_row and season is not None and episode is not None:
             sid = series_row.get("Id")
             if sid:
-                eps = get_series_episodes(http, uid, sid, start=0, limit=10000)
-                for row in eps.get("Items") or []:
+                eps = _fetch_all_series_episodes(http, uid, sid, page_size=500)
+                for row in eps:
                     s = row.get("ParentIndexNumber")
                     e = row.get("IndexNumber")
                     if (

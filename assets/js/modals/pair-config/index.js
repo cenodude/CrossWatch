@@ -15,7 +15,7 @@ const HELP_TEXT = {
   "gl-dry": "Dry run\nPlan and log only; no writes. Reset states after testing (in maintenance).",
   "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
   "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
-  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.",
+  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\n It's either mass-delete or drop-guard or none; not both.",
   "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
   "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
@@ -34,7 +34,10 @@ const HELP_TEXT = {
   "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
 
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
+  "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
 
+  "plx-fallback-guid": "Plex: Fallback GUID\nAlso searches Plex’s database beyond your visible libraries (including hidden/old items) to recover older matches.\nWarning: enable only for a single run, it increases duration and resource usage.",
+  "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
 };
 
 // Provider helpers
@@ -681,13 +684,15 @@ function renderFeaturePanel(state){
     if (!warn) {
       warn = document.createElement("div");
       warn.id = "cx-prov-warn";
-      warn.className = "prov-warning";
       main.appendChild(warn);
     }
-    warn.innerHTML = `
-      <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-      Provider specific settings — whitelist libraries are included in above (Plex, Jellyfin, Emby) sections, but ONLY if they are part of this Pair.
-    `;
+    warn.className = "simkl-alert";
+    warn.setAttribute("role","note");
+    warn.setAttribute("aria-live","polite");
+    warn.innerHTML = `<div class="title"><span class="ic">⚠</span> Provider specific settings</div>
+      <div class="body">
+        <div class="mini">Whitelist libraries are shown above (Plex, Jellyfin, Emby) but only if that provider is part of this pair.</div>
+      </div>`;
     QA(".fold").forEach(f=>{f.classList.remove("open")});
     return;
   }
@@ -739,6 +744,7 @@ function renderFeaturePanel(state){
   if (state.feature === "watchlist") {
     const wl = getOpts(state, "watchlist");
     const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+    const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
 
     left.innerHTML = `
       <div class="panel-title">Watchlist — basics</div>
@@ -750,8 +756,35 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
       </div>
+
+      ${hasJelly(state)?`
+        <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
+        <div class="muted" style="margin:-2px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span>Favorites / Playlist / Collections</span>
+          <button type="button" class="cx-help material-symbols-rounded" data-tip-id="cx-jf-wl-mode">help</button>
+        </div>
+        <div class="grid2 compact">
+          <div class="opt-row" style="grid-column:1/-1">
+            <label>Mode</label>
+            <div class="seg">
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">Favorites</label>
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
+              <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection")?"checked":""}/><label for="cx-jf-wl-mode-col">Collections</label>
+            </div>
+          </div>
+          <div class="opt-row" style="grid-column:1/-1">
+            <label for="cx-jf-wl-pl-name">Name</label>
+            <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+          </div>
+        </div>
+      `:""}
+
       ${hasEmby(state)?`
         <div class="panel-title small" style="margin-top:6px">Emby specifics</div>
+        <div class="muted" style="margin:-2px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span>Favorites / Playlist / Collections</span>
+          <button type="button" class="cx-help material-symbols-rounded" data-tip-id="cx-em-wl-mode">help</button>
+        </div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
             <label>Mode</label>
@@ -771,34 +804,6 @@ function renderFeaturePanel(state){
 
     const parts = [`<div class="panel-title">Advanced</div>`];
     
-    if (hasJelly(state)) {
-      const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
-        <details id="cx-jf-wl" open>
-          <summary class="muted" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-            <span>Favorites / Playlist / Collections</span>
-            <button type="button"
-                    class="cx-help material-symbols-rounded"
-                    data-tip-id="cx-jf-wl-mode">help</button>
-          </summary>
-          <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label>Mode</label>
-              <div class="seg">
-                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">Favorites</label>
-                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
-                <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-col" value="collection" ${(jfw.mode==="collection")?"checked":""}/><label for="cx-jf-wl-mode-col">Collections</label>
-              </div>
-            </div>
-            <div class="opt-row" style="grid-column:1/-1"><label for="cx-jf-wl-pl-name">Name</label>
-              <input id="cx-jf-wl-pl-name" class="input" type="text" value="${jfw.playlist_name||"Watchlist"}" placeholder="Watchlist">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
       const defPri = ["imdb","tmdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];

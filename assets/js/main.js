@@ -104,6 +104,10 @@
   let lastPairsAt = 0;
   let _finishedForRun = null;
   let _prevRunKey = null;
+  let _sumBusy = false;
+  let _sumAbort = null;
+  let _insightsTriedForRun = null;
+  let _logHydratedForRun = null;
 
   const runKeyOf = (s) =>
     s?.run_id ||
@@ -117,13 +121,15 @@
 
   const startRunVisualsSafe = (...a) => window.startRunVisuals?.(...a);
   const stopRunVisualsSafe = (...a) => window.stopRunVisuals?.(...a);
-  const fetchJSON = async (url, fallback = null) => {
+
+  const fetchJSON = async (url, fallback = null, signal) => {
     try {
       const r = await fetch(
         url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now(),
-        { credentials: "same-origin", cache: "no-store" }
+        { credentials: "same-origin", cache: "no-store", signal }
       );
-      return r.ok ? r.json() : fallback;
+      if (!r.ok) return fallback;
+      return await r.json();
     } catch {
       return fallback;
     }
@@ -646,9 +652,6 @@
     enabledFromPairs = enabled;
   }
 
-  // Insights hydration
-  let _insightsTried = false;
-
   async function hydrateFromInsights(startTsEpoch) {
     const src = await fetchJSON("/api/insights", null);
     const events = src?.events;
@@ -960,95 +963,124 @@
 
   // Summary pull
   async function pullSummary() {
-    const s = await fetchJSON("/api/run/summary", summary);
-    if (!s) return;
+    if (_sumBusy) return;
+    _sumBusy = true;
 
-    const runKey = runKeyOf(s);
-    if (runKey && runKey !== _prevRunKey) {
-      _finishedForRun = null;
-      _prevRunKey = runKey;
-    }
-
-    const { running, justFinished } = sync.fromSummary(s);
-    summary = s;
-    setRunButtonState(running);
-
-    if (justFinished && runKey && _finishedForRun !== runKey) {
-      _finishedForRun = runKey;
-
-      if ("_optimistic" in sync) sync._optimistic = false;
-
+    try {
       try {
-        window.updatePreviewVisibility?.();
-        window.refreshSchedulingBanner?.();
+        _sumAbort?.abort?.();
       } catch {}
+      _sumAbort = new AbortController();
+      const s = await fetchJSON("/api/run/summary", null, _sumAbort.signal);
+      if (!s) return;
 
-      try {
-        (window.Insights?.refreshInsights || window.refreshInsights)?.();
-      } catch {}
+      const runKey = runKeyOf(s) || "_";
 
-      try {
-        const startTs =
-          s?.raw_started_ts ||
-          (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
-        await hydrateFromInsights(startTs);
-      } catch {}
-
-      try {
-        window.wallLoaded = false;
-        if (typeof window.updateWatchlistPreview === "function") {
-          await window.updateWatchlistPreview();
-        } else if (typeof window.updatePreviewVisibility === "function") {
-          await window.updatePreviewVisibility();
-        } else if (typeof window.loadWatchlist === "function") {
-          await window.loadWatchlist();
-        }
-      } catch {}
-
-      try {
-        window.dispatchEvent(
-          new CustomEvent("sync-complete", {
-            detail: { at: Date.now(), summary: s }
-          })
-        );
-      } catch {}
-    }
-
-    if (!summary.enabled) summary.enabled = defaultEnabledMap();
-    renderAll();
-
-    const hasFeatures =
-      summary?.features &&
-      Object.values(summary.features).some(
-        (v) =>
-          (v?.added || v?.removed || v?.updated || 0) > 0 ||
-          v?.spotlight_add?.length ||
-          v?.spotlight_remove?.length ||
-          v?.spotlight_update?.length
-      );
-
-    if (sync.state().timeline.done && !_insightsTried) {
-      _insightsTried = true;
-      const startTs =
-        summary?.raw_started_ts ||
-        (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
-      const got = await hydrateFromInsights(startTs);
-      if (!got && !hasFeatures) {
-        setTimeout(() => {
-          if (!hasFeatures) hydrateFromLog();
-        }, 300);
+      if (runKey !== _prevRunKey) {
+        _finishedForRun = null;
+        _prevRunKey = runKey;
+        _insightsTriedForRun = null;
+        _logHydratedForRun = null;
       }
-    } else {
-      const missing = FEATS.some((f) => {
-        const lane = summary?.features?.[f.key];
-        return !(
-          lane?.spotlight_add?.length ||
-          lane?.spotlight_remove?.length ||
-          lane?.spotlight_update?.length ||
-          (lane?.added || lane?.removed || lane?.updated)
+
+      const { running, justFinished } = sync.fromSummary(s);
+      summary = s;
+      setRunButtonState(running);
+
+      if (justFinished && _finishedForRun !== runKey) {
+        _finishedForRun = runKey;
+
+        if ("_optimistic" in sync) sync._optimistic = false;
+
+        try {
+          window.updatePreviewVisibility?.();
+          window.refreshSchedulingBanner?.();
+        } catch {}
+
+        try {
+          (window.Insights?.refreshInsights || window.refreshInsights)?.();
+        } catch {}
+
+        if (_insightsTriedForRun !== runKey) {
+          _insightsTriedForRun = runKey;
+          try {
+            const startTs =
+              s?.raw_started_ts ||
+              (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
+            await hydrateFromInsights(startTs);
+          } catch {}
+        }
+
+        try {
+          window.wallLoaded = false;
+          if (typeof window.updateWatchlistPreview === "function") {
+            await window.updateWatchlistPreview();
+          } else if (typeof window.updatePreviewVisibility === "function") {
+            await window.updatePreviewVisibility();
+          } else if (typeof window.loadWatchlist === "function") {
+            await window.loadWatchlist();
+          }
+        } catch {}
+
+        try {
+          window.dispatchEvent(
+            new CustomEvent("sync-complete", {
+              detail: { at: Date.now(), summary: s }
+            })
+          );
+        } catch {}
+      }
+
+      if (!summary.enabled) summary.enabled = defaultEnabledMap();
+      renderAll();
+
+      const hasFeatures =
+        summary?.features &&
+        Object.values(summary.features).some(
+          (v) =>
+            (v?.added || v?.removed || v?.updated || 0) > 0 ||
+            v?.spotlight_add?.length ||
+            v?.spotlight_remove?.length ||
+            v?.spotlight_update?.length
         );
-      });
-      if (missing) hydrateFromLog();
+
+      if (sync.state().timeline.done) {
+        if (_insightsTriedForRun !== runKey) {
+          _insightsTriedForRun = runKey;
+
+          const startTs =
+            summary?.raw_started_ts ||
+            (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
+
+          const got = await hydrateFromInsights(startTs);
+
+          if (!got && !hasFeatures) {
+            setTimeout(() => {
+              if (_logHydratedForRun !== runKey) {
+                _logHydratedForRun = runKey;
+                hydrateFromLog();
+              }
+            }, 300);
+          }
+        } else {
+          const missing = FEATS.some((f) => {
+            const lane = summary?.features?.[f.key];
+            return !(
+              lane?.spotlight_add?.length ||
+              lane?.spotlight_remove?.length ||
+              lane?.spotlight_update?.length ||
+              (lane?.added || lane?.removed || lane?.updated)
+            );
+          });
+
+          if (missing && _logHydratedForRun !== runKey) {
+            _logHydratedForRun = runKey;
+            hydrateFromLog();
+          }
+        }
+      }
+    } finally {
+      _sumBusy = false;
     }
   }
 
@@ -1171,9 +1203,9 @@
     }
   });
 
-  function tick() {
+  async function tick() {
     const running = sync.isRunning();
-    pullSummary();
+    await pullSummary();
 
     if (Date.now() - lastPairsAt > 10000) {
       pullPairs().finally(() => {

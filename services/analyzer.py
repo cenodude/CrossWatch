@@ -401,7 +401,112 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
     show_sets: dict[str, set[str]] = {}
     labels: dict[str, str] = {}
 
+    def pick_sig(obj: Any) -> str | None:
+        if not isinstance(obj, dict):
+            return None
+        for idk in ("imdb", "tmdb", "tvdb", "slug"):
+            v = obj.get(idk)
+            if v:
+                return f"{idk}:{str(v).lower()}"
+        return None
+
+    def title_key(rec: dict[str, Any]) -> tuple[str, int | None] | None:
+        title = (
+            rec.get("series_title")
+            or rec.get("show_title")
+            or rec.get("title")
+            or rec.get("name")
+        )
+        if not title:
+            return None
+        t = str(title).strip().lower()
+        if not t:
+            return None
+        y = rec.get("series_year") or rec.get("year")
+        yi: int | None = None
+        if y not in (None, ""):
+            try:
+                yi = int(y)
+            except Exception:
+                yi = None
+        return (t, yi)
+
+    def best_sig(sigs: set[str]) -> str | None:
+        if not sigs:
+            return None
+        by_ns: dict[str, set[str]] = {}
+        for s0 in sigs:
+            if ":" not in s0:
+                continue
+            ns, v = s0.split(":", 1)
+            by_ns.setdefault(ns, set()).add(v)
+        for vals in by_ns.values():
+            if len(vals) > 1:
+                return None
+        order = {"imdb": 0, "tmdb": 1, "tvdb": 2, "slug": 3}
+        best: str | None = None
+        best_p = 999
+        for s0 in sigs:
+            ns = s0.split(":", 1)[0] if ":" in s0 else ""
+            p = order.get(ns, 999)
+            if p < best_p:
+                best_p = p
+                best = s0
+        return best
+
+    def sig_prio(sig: str | None) -> int:
+        if not sig or ":" not in sig:
+            return 999
+        order = {"imdb": 0, "tmdb": 1, "tvdb": 2, "slug": 3}
+        return order.get(sig.split(":", 1)[0], 999)
+
+    def show_id_sig(rec: dict[str, Any]) -> str | None:
+        typ = str(rec.get("type") or "").strip().lower()
+        if typ == "episode":
+            return pick_sig(rec.get("show_ids") or {})
+        if typ == "show":
+            return pick_sig(rec.get("ids") or {})
+        if rec.get("show_ids") or rec.get("series_title") or rec.get("show_title"):
+            return pick_sig(rec.get("show_ids") or {})
+        return None
+
     prov_block = (s.get("providers") or {}) if isinstance(s, dict) else {}
+
+    title_ids: dict[str, set[str]] = {}
+    title_year_ids: dict[tuple[str, int | None], set[str]] = {}
+
+    for prov_data in prov_block.values():
+        if not isinstance(prov_data, dict):
+            continue
+        hist = (prov_data or {}).get("history") or {}
+        node = hist.get("baseline") or hist
+        items = node.get("items") or {}
+        recs = items.values() if isinstance(items, dict) else (items if isinstance(items, list) else [])
+        for rec in recs:
+            if not isinstance(rec, dict):
+                continue
+            tk = title_key(rec)
+            if not tk:
+                continue
+            sig = show_id_sig(rec)
+            if not sig:
+                continue
+            t, y = tk
+            title_ids.setdefault(t, set()).add(sig)
+            title_year_ids.setdefault((t, y), set()).add(sig)
+
+    title_best: dict[str, str] = {}
+    for t, sigs in title_ids.items():
+        b = best_sig(sigs)
+        if b:
+            title_best[t] = b
+
+    title_year_best: dict[tuple[str, int | None], str] = {}
+    for k, sigs in title_year_ids.items():
+        b = best_sig(sigs)
+        if b:
+            title_year_best[k] = b
+
     for prov_name, prov_data in prov_block.items():
         prov = str(prov_name or "").upper().strip()
         if not prov or not isinstance(prov_data, dict):
@@ -424,9 +529,6 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
             if not isinstance(rec, dict):
                 continue
 
-            typ = str(rec.get("type") or "").strip().lower()
-            ids = (rec.get("ids") or {}) or {}
-
             def ensure_label(sig: str) -> None:
                 if sig in labels:
                     return
@@ -447,78 +549,30 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
                     lbl = sig
                 labels[sig] = lbl
 
-            if typ == "episode":
-                show_ids = (rec.get("show_ids") or {}) or {}
-                show_sig: str | None = None
-                for idk in ("imdb", "tmdb", "tvdb", "slug"):
-                    v = show_ids.get(idk)
-                    if v:
-                        show_sig = f"{idk}:{str(v).lower()}"
-                        break
-                if show_sig is None:
-                    series_title = (
-                        rec.get("series_title")
-                        or rec.get("show_title")
-                        or rec.get("title")
-                        or rec.get("name")
-                    )
-                    if series_title:
-                        y = rec.get("series_year") or rec.get("year")
-                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
-                if show_sig:
-                    p_shows.add(show_sig)
-                    ensure_label(show_sig)
+            typ = str(rec.get("type") or "").strip().lower()
+            if typ not in ("episode", "show") and not (
+                rec.get("show_ids") or rec.get("series_title") or rec.get("show_title")
+            ):
                 continue
 
-            if typ == "show":
-                show_ids = ids
-                show_sig = None
-                for idk in ("imdb", "tmdb", "tvdb", "slug"):
-                    v = show_ids.get(idk)
-                    if v:
-                        show_sig = f"{idk}:{str(v).lower()}"
-                        break
-                if show_sig is None:
-                    series_title = (
-                        rec.get("series_title")
-                        or rec.get("show_title")
-                        or rec.get("title")
-                        or rec.get("name")
-                    )
-                    if series_title:
-                        y = rec.get("series_year") or rec.get("year")
-                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
-                if show_sig:
-                    p_shows.add(show_sig)
-                    ensure_label(show_sig)
-                continue
+            tk = title_key(rec)
+            show_sig = show_id_sig(rec)
 
-            has_show_meta = bool(
-                (rec.get("show_ids") or {})
-                or rec.get("series_title")
-                or rec.get("show_title")
-            )
-            if has_show_meta:
-                show_ids = (rec.get("show_ids") or {}) or {}
-                show_sig = None
-                for idk in ("imdb", "tmdb", "tvdb", "slug"):
-                    v = show_ids.get(idk)
-                    if v:
-                        show_sig = f"{idk}:{str(v).lower()}"
-                        break
-                if show_sig is None:
-                    series_title = (
-                        rec.get("series_title")
-                        or rec.get("show_title")
-                        or rec.get("title")
-                        or rec.get("name")
-                    )
-                    if series_title:
-                        y = rec.get("series_year") or rec.get("year")
-                        show_sig = f"{str(series_title).strip().lower()}|year:{y}"
-                if show_sig:
-                    p_shows.add(show_sig)
-                    ensure_label(show_sig)
+            mapped: str | None = None
+            if tk:
+                mapped = title_year_best.get(tk)
+                if mapped is None:
+                    mapped = title_best.get(tk[0])
+
+            if mapped and sig_prio(mapped) < sig_prio(show_sig):
+                show_sig = mapped
+
+            if show_sig is None and tk:
+                show_sig = f"{tk[0]}|year:{tk[1]}"
+
+            if show_sig:
+                p_shows.add(show_sig)
+                ensure_label(show_sig)
 
         show_sets[prov] = p_shows
 

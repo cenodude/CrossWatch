@@ -626,6 +626,25 @@ def get_playlist_items(http: Any, playlist_id: str, start: int = 0, limit: int =
     data.setdefault("TotalRecordCount", len(data["Items"]))
     return data
 
+def playlist_fetch_all(
+    http: Any,
+    playlist_id: str,
+    *,
+    page_size: int = 500,
+) -> tuple[list[Mapping[str, Any]], int]:
+    out: list[Mapping[str, Any]] = []
+    start = 0
+    total: int | None = None
+    while True:
+        body = get_playlist_items(http, playlist_id, start=start, limit=page_size)
+        rows: list[Mapping[str, Any]] = body.get("Items") or []
+        if total is None:
+            total = int(body.get("TotalRecordCount") or 0)
+        out.extend(rows)
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
+    return out, int(total or len(out))
 
 def playlist_add_items(http: Any, playlist_id: str, user_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)
@@ -713,6 +732,40 @@ def get_collection_items(http: Any, user_id: str, collection_id: str) -> dict[st
     except Exception:
         return {"Items": [], "TotalRecordCount": 0}
 
+def collection_fetch_all(
+    http: Any,
+    user_id: str,
+    collection_id: str,
+    *,
+    page_size: int = 500,
+) -> tuple[list[Mapping[str, Any]], int]:
+    out: list[Mapping[str, Any]] = []
+    start = 0
+    total: int | None = None
+    while True:
+        r = http.get(
+            f"/Users/{user_id}/Items",
+            params={
+                "IncludeItemTypes": "Movie,Series",
+                "ParentId": collection_id,
+                "Recursive": False,
+                "Fields": "ProviderIds,ProductionYear,Type",
+                "EnableTotalRecordCount": True,
+                "StartIndex": start,
+                "Limit": max(1, int(page_size)),
+            },
+        )
+        if getattr(r, "status_code", 0) != 200:
+            return out, int(total or len(out))
+        body = r.json() or {}
+        rows: list[Mapping[str, Any]] = body.get("Items") or []
+        if total is None:
+            total = int(body.get("TotalRecordCount") or 0)
+        out.extend(rows)
+        start += len(rows)
+        if not rows or (total is not None and start >= total):
+            break
+    return out, int(total or len(out))
 
 def collection_add_items(http: Any, collection_id: str, item_ids: Iterable[str]) -> bool:
     ids = ",".join(str(x) for x in item_ids if x)

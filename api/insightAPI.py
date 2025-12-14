@@ -228,6 +228,23 @@ def register_insights(app: FastAPI) -> None:
 
         def _empty_enabled() -> dict[str, bool]:
             return {k: False for k in feature_keys}
+        
+        def _is_presence_stub(rec: dict[str, Any]) -> bool:
+            if not rec:
+                return True
+            if set(rec.keys()) <= {"watched"}:
+                return True
+            if rec.get("watched") is True and not any(
+                rec.get(k)
+                for k in (
+                    "type", "title", "name", "ids", "show_ids", "series_title", "show_title",
+                    "season", "episode", "year", "series_year",
+                    "watched_at", "last_watched_at",
+                    "rated_at", "user_rated_at", "rating", "user_rating",
+                )
+            ):
+                return True
+            return False
 
         def _compute_history_breakdown(
             state_obj: dict[str, Any] | None,
@@ -253,6 +270,8 @@ def register_insights(app: FastAPI) -> None:
 
                     for rec in it:
                         if not isinstance(rec, dict):
+                            continue
+                        if _is_presence_stub(rec):
                             continue
 
                         typ = str(rec.get("type") or "").strip().lower()
@@ -705,12 +724,28 @@ def register_insights(app: FastAPI) -> None:
                 pass
             return []
 
-        def _count_items(node: Any) -> int:
+        def _count_items(node: Any, feature: str | None = None) -> int:
             try:
+                if feature in ("history", "ratings") and isinstance(node, dict):
+                    recs = _iter_feature_items(node)
+                    if feature == "history":
+                        return sum(
+                            1
+                            for r in recs
+                            if (not _is_presence_stub(r)) and (r.get("watched_at") or r.get("last_watched_at"))
+                        )
+                    return sum(
+                        1
+                        for r in recs
+                        if (not _is_presence_stub(r))
+                        and (r.get("rated_at") or r.get("user_rated_at") or r.get("rating") or r.get("user_rating"))
+                    )
+
                 if isinstance(node, dict):
                     base = node.get("baseline") or {}
                     chk = node.get("checkpoint") or {}
                     pres = node.get("present") or {}
+
                     for cand in (
                         (chk.get("items") if isinstance(chk, dict) else None),
                         (base.get("items") if isinstance(base, dict) else None),
@@ -742,9 +777,7 @@ def register_insights(app: FastAPI) -> None:
             for prov_upper, pdata in (prov_block or {}).items():
                 key = str(prov_upper or "").strip().lower()
                 for feat in feature_keys:
-                    providers_by_feature[feat][key] = _count_items(
-                        (pdata or {}).get(feat) or {}
-                    )
+                    providers_by_feature[feat][key] = _count_items((pdata or {}).get(feat) or {}, feat)
         except Exception:
             pass
 

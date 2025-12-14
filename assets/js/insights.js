@@ -343,35 +343,21 @@
     const wrap = $("#sync-history") || $("[data-role='sync-history']") || $(".sync-history");
     if (!wrap) return;
 
-    if (!wrap.dataset.tabsInit){
-      wrap.innerHTML =
-        '<div class="sync-tabs" role="tablist" aria-label="Recent syncs">' +
-          FEATS.map((f,i)=>`<button class="tab ${i?'':'active'}" data-tab="${f}" role="tab" aria-selected="${i?'false':'true'}">${FEAT_LABEL[f]}</button>`).join("") +
-        '</div><div class="sync-tabpanes">' +
-          FEATS.map((f,i)=>`<div class="pane ${i?'':'active'}" data-pane="${f}" role="tabpanel"${i?' hidden':''}><div class="list"></div></div>`).join("") +
-        '</div>';
-      wrap.dataset.tabsInit = "1";
-      wrap.addEventListener("click", ev => {
-        const btn = ev.target.closest(".tab"); if (!btn) return;
-        const name = btn.dataset.tab;
-        $$(".sync-tabs .tab", wrap).forEach(b => {
-          const on = b.dataset.tab === name;
-          b.classList.toggle("active", on);
-          b.setAttribute("aria-selected", on ? "true" : "false");
-        });
-        $$(".sync-tabpanes .pane", wrap).forEach(p => {
-          const on = p.dataset.pane === name;
-          p.classList.toggle("active", on);
-          p.hidden = !on;
-        });
-      });
+    if (!wrap.dataset.listInit){
+      wrap.innerHTML = '<div class="list"></div>';
+      wrap.dataset.listInit = "1";
     }
-    // Fill in recent sync data
+
+    const listEl = wrap.querySelector(".list");
+    if (!listEl) return;
+
     const emptyMsg = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>';
     const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); if(isNaN(+dt)) return "—"; const dd=String(dt.getDate()).padStart(2,"0"), mm=String(dt.getMonth()+1).padStart(2,"0"), yy=String(dt.getFullYear()).slice(-2), hh=String(dt.getHours()).padStart(2,"0"), mi=String(dt.getMinutes()).padStart(2,"0"); return `${dd}-${mm}-${yy} ${hh}:${mi}`; };
     const dur  = v => { if(v==null) return "—"; const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return Number.isFinite(n)? n.toFixed(1)+'s':'—'; };
 
-    const totalsFor = (row, feat) => {
+    const feat = _feature;
+
+    const totalsFor = (row) => {
       const f = (row?.features?.[feat]) || {};
       const a = f.added   | 0;
       const r = f.removed | 0;
@@ -388,43 +374,29 @@
     };
 
     const all = Array.isArray(hist) ? hist.slice() : [];
+    const sorted = all
+      .slice()
+      .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0));
 
-    function renderPane(list, feat){
-      const paneList = wrap.querySelector(`.pane[data-pane="${feat}"] .list`);
-      if (!paneList) return;
-
-      const sorted = (list || [])
-        .slice()
-        .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0));
-
-      const rows = [];
-      for (const row of sorted) {
-        const en = row?.features_enabled;
-        if (en && en[feat] === false) continue;
-        rows.push(row);
-        if (rows.length >= LIMIT_HISTORY) break;
-      }
-
-      if (!rows.length){ paneList.innerHTML = emptyMsg; return; }
-
-      paneList.innerHTML = rows.map(row=>{
-        const t = totalsFor(row, feat);
-        const b = badgeCls(row, t);
-        const upd = t.u ? ` <span class="badge micro">~${t.u}</span>` : "";
-        return `<div class="history-item">
-          <div class="history-meta">${when(row)} • <span class="badge ${b}">${(row?.result)||"—"}${(typeof row?.exit_code==="number")?(' · '+row.exit_code):''}</span> • ${dur(row?.duration_sec)}</div>
-          <div class="history-badges"><span class="badge">+${t.a|0}</span><span class="badge">-${t.r|0}</span>${upd}</div>
-        </div>`;
-      }).join("");
+    const rows = [];
+    for (const row of sorted) {
+      const en = row?.features_enabled;
+      if (en && en[feat] === false) continue;
+      rows.push(row);
+      if (rows.length >= LIMIT_HISTORY) break;
     }
 
-    FEATS.forEach(n=>{
-      const pane = wrap.querySelector(`.pane[data-pane="${n}"] .list`);
-      if (pane) pane.innerHTML = emptyMsg;
-    });
+    if (!rows.length){ listEl.innerHTML = emptyMsg; return; }
 
-    if (!all.length) return;
-    FEATS.forEach(n => renderPane(all, n));
+    listEl.innerHTML = rows.map(row=>{
+      const t = totalsFor(row);
+      const b = badgeCls(row, t);
+      const upd = t.u ? ` <span class="badge micro">~${t.u}</span>` : "";
+      return `<div class="history-item">
+        <div class="history-meta">${when(row)} • <span class="badge ${b}">${(row?.result)||"—"}${(typeof row?.exit_code==="number")?(' · '+row.exit_code):''}</span> • ${dur(row?.duration_sec)}</div>
+        <div class="history-badges"><span class="badge">+${t.a|0}</span><span class="badge">-${t.r|0}</span>${upd}</div>
+      </div>`;
+    }).join("");
   }
 
   // Top counters
@@ -835,45 +807,6 @@
   }
 
 })(window, document);
-
-(() => {
-  const id='insights-tabs-layout-fix';
-  if(document.getElementById(id)) return;
-  const s=document.createElement('style'); s.id=id;
-  s.textContent = `
-  .sync-tabs{display:flex;justify-content:center;gap:.5rem;margin:.25rem 0 .6rem;flex-wrap:wrap}
-  .sync-tabpanes{margin-top:.25rem}
-  .sync-tabpanes .pane{display:none;width:100%}
-  .sync-tabpanes .pane.active{display:block}
-  .sync-tabpanes .pane .list{display:flex;flex-direction:column;gap:.5rem}
-  .sync-tabpanes .pane .history-item{width:100%}
-  `;
-  document.head.appendChild(s);
-})();
-
-(() => {
-  const id='insights-tabs-style-v2';
-  if(document.getElementById(id)) return;
-  const s=document.createElement('style'); s.id=id;
-  s.textContent = `
-  #sync-history .sync-tabs{gap:.35rem;margin:.1rem 0 .4rem;flex-wrap:wrap}
-  #sync-history .sync-tabs .tab{
-    appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);
-    -webkit-backdrop-filter:blur(8px) saturate(110%);backdrop-filter:blur(8px) saturate(110%);
-    border-radius:12px;padding:.34rem .68rem;min-height:32px;line-height:1;font-weight:700;letter-spacing:.2px;color:#e6e8ee;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 6px 16px rgba(0,0,0,.22);
-    transition:background .16s,border-color .16s,box-shadow .16s,color .16s
-  }
-  #sync-history .sync-tabs .tab:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.18)}
-  #sync-history .sync-tabs .tab.active{
-    background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,.06));
-    border-color:rgba(120,150,255,.45);color:#fff;
-    box-shadow:0 0 0 1px rgba(120,150,255,.5),inset 0 10px 24px rgba(80,130,255,.16),0 8px 18px rgba(64,128,255,.2)
-  }
-  #sync-history .sync-tabs .tab:focus-visible{outline:2px solid rgba(120,150,255,.7);outline-offset:2px}
-  `;
-  document.head.appendChild(s);
-})();
 
 (() => {
   const id = 'insights-provider-styles-v6';
