@@ -2,7 +2,7 @@
 
 (function () {
 
-  /* ========= styles ========= */
+  /* Styles */
   const css = `
   .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
   .wl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
@@ -164,11 +164,41 @@
     position:fixed;left:50%;bottom:12px;
     transform:translate(-50%, calc(100% + 12px));
     width:min(640px, calc(100vw - 420px));
-    background:#101018;border:1px solid rgba(255,255,255,.12);
+    background:#05060b;border:1px solid rgba(255,255,255,.12);
     border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.55);
     z-index:10000;transition:transform .3s ease;
+    overflow:hidden;
   }
   .wl-detail.show{transform:translate(-50%,0)}
+
+  .wl-detail::before{
+    content:"";
+    position:absolute;
+    inset:4px;
+    border-radius:12px;
+    background-image:
+      linear-gradient(
+        90deg,
+        rgba(4,6,12,0.94) 0%,
+        rgba(4,6,12,0.93) 30%,
+        rgba(4,6,12,0.90) 65%,
+        rgba(4,6,12,0.86) 100%
+      ),
+      var(--wl-backdrop, none);
+    background-size:100% 100%, cover;
+    background-position:center center, right center;
+    background-repeat:no-repeat,no-repeat;
+    pointer-events:none;
+    z-index:0;
+  }
+
+  .wl-detail .overview{
+    margin-top:8px;
+    padding:8px 10px;
+    border-radius:10px;
+    background:rgba(0,0,0,.28);
+    border:1px solid rgba(255,255,255,.08);
+  }
 
   /* Resizers */
   .wl-resize{position:absolute;right:0;top:0;height:100%;width:6px;cursor:col-resize;opacity:.25}
@@ -184,7 +214,7 @@
   ensureStyle("watchlist-refresh-css", `.wl-refresh-btn{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);cursor:pointer;transition:background .15s,opacity .15s}.wl-refresh-btn:hover{background:rgba(255,255,255,.10)}.wl-refresh-btn.loading{opacity:.6;pointer-events:none}.wl-refresh-btn .material-symbol{font-size:18px;line-height:1;color:#fff;-webkit-text-fill-color:#fff;font-variation-settings:'FILL' 1,'wght' 500,'GRAD' 0,'opsz' 24;display:inline-block;will-change:transform}.wl-refresh-btn.spin .material-symbol,.wl-refresh-btn.loading .material-symbol,.wl-refresh-btn[disabled] .material-symbol{animation:wlrot .5s linear infinite!important}@keyframes wlrot{to{transform:rotate(360deg)}}`);
   ensureStyle("watchlist-title-css", `.wl-table td.title{white-space:normal;text-transform:none!important;letter-spacing:normal!important;font:inherit;color:inherit;-webkit-text-fill-color:currentColor}.wl-table td.title a{color:inherit;text-decoration:none;font:inherit;-webkit-text-fill-color:currentColor}.wl-table td.title a:visited{color:inherit}`);
 
-  /* ========= layout ========= */
+  /* Layout */
   const host=document.getElementById("page-watchlist"); if(!host) return;
   const readPrefs=()=>{try{return JSON.parse(localStorage.getItem("wl.prefs")||"{}")}catch{return{}}};
   const writePrefs=p=>{try{localStorage.setItem("wl.prefs",JSON.stringify(p))}catch{}};
@@ -309,7 +339,7 @@
     <div id="wl-trailer" class="wl-modal" aria-modal="true" role="dialog"><div class="box"><button class="x" id="wl-trailer-close" title="Close"><span class="material-symbol">close</span></button></div></div>
   `;
 
-  /* ========= refs ========= */
+  /* References to elements */
   const $ = id => document.getElementById(id);
 
   const postersEl   = $("wl-posters");
@@ -344,7 +374,7 @@
   const pagerNext   = $("wl-page-next");
   const pagerLabel  = $("wl-page-label");
 
-  /* ========= column widths ========= */
+  /* Column sizing */
   const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
   const minPx  = { title: 120, rel: 90, genre: 140, type: 70, sync: 140, poster: 48 };
 
@@ -363,7 +393,7 @@
     }
   }
 
-  /* ========= column resizing ========= */
+  /* Column resizers */
   function attachResizers() {
     const cg = document.querySelector(".wl-table colgroup");
     if (!cg) return;
@@ -416,7 +446,7 @@
   applyCols(true);
   attachResizers();
 
-  /* ======== data & state ======== */
+  /* Date formatting */
   let [items, filtered] = [[], []];
   const selected = new Set();
   const hiddenSet = (() => { try { return new Set(JSON.parse(localStorage.getItem("wl.hidden") || "[]")); } catch { return new Set(); } })();
@@ -436,7 +466,7 @@
   let currentPage = 1;
   let pageInfo = { start:0, end:0, total:0, pageCount:1 };
 
-  /* ========= utils ========= */
+  /* utils */
   const esc = s => String(s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   const toLocale = () => navigator.language || "en-US";
   const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
@@ -485,7 +515,7 @@
     pagerNext.disabled = currentPage >= pageCount;
   }
 
-  /* ========= hide/show snackbar ========= */
+  /* Hide/Unhide buttons */
   hideBtn?.addEventListener("click", () => {
     if (!selected.size) return;
     selected.forEach(k => hiddenSet.add(k));
@@ -496,7 +526,7 @@
     hiddenSet.clear(); saveHidden(); applyFilters(); updateSelCount(); snackbar("All unhidden");
   }, true);
 
-  /* ========= hydrate rows (list view) ========= */
+  /* Hydration listing */
   const _hydrating = new Set();
   const setText = (el, t) => {
     if (!el) return;
@@ -532,7 +562,7 @@
     } finally { _hydrating.delete(k); }
   }
 
-  /* ========= API ========= */
+  /* API fetches */
   const fetchWatchlist = async () => {
     const r = await fetch("/api/watchlist?limit=5000", { cache: "no-store" });
     if (!r.ok) throw new Error("watchlist fetch failed");
@@ -570,7 +600,7 @@
     } catch { return null; }
   };
 
-  /* ========= genre index ========= */
+  /*  Genre extraction  */
   const extractGenres = it => {
     const meta = metaCache.get(metaKey(it));
     const srcs = [it.genres, it.genre, it.detail?.genres, it.meta?.genres, it.meta?.detail?.genres, meta?.genres, meta?.detail?.genres].filter(Boolean);
@@ -606,7 +636,7 @@
     genreSel.value = prefs.genre || "";
   };
 
-  /* ========= providers & metrics ========= */
+  /* Provider chips */
   const SRC_LOGOS = {
     PLEX:"/assets/img/PLEX.svg",
     SIMKL:"/assets/img/SIMKL.svg",
@@ -665,7 +695,7 @@
       : "";
   }
 
-  /* ========= sorting ========= */
+  /* Sorting */
   const _t = it => String(it.title || "").toLowerCase();
   const _type = it => ((it.type || "").toLowerCase() === "show" ? "tv" : String(it.type || "").toLowerCase());
 
@@ -723,7 +753,7 @@
     updateSortHeaderUI();
   }
 
-  /* ========= filters ========= */
+  /* Filtering */
   const applyOverlayPrefUI = () => {
     postersEl.classList.toggle("wl-hide-overlays", prefs.overlays === "no");
     const show = viewMode === "posters";
@@ -766,7 +796,7 @@
     updateMetrics();
   }
 
-  /* ========= trailer & detail ========= */
+  /* Trailer modal */
   function pickTrailer(meta) {
     const flat = [meta?.videos, meta?.videos?.results, meta?.detail?.videos, meta?.detail?.videos?.results].flatMap(v => Array.isArray(v) ? v : []);
     const scored = flat.map(v => {
@@ -814,7 +844,25 @@
     </svg>`;
   }
 
+  function backdropFromMeta(meta){
+  if (!meta) return "";
+  const images = meta.images || {};
+  let arr = images.backdrop || images.backdrops || [];
+  if (!arr) return "";
+  if (!Array.isArray(arr)) arr = [arr];
+  const first = arr[0];
+  if (!first) return "";
+  if (typeof first === "string") return first;
+  if (first.url) return first.url;
+  if (first.path) return `https://image.tmdb.org/t/p/w1280${first.path}`;
+  if (first.file_path) return `https://image.tmdb.org/t/p/w1280${first.file_path}`;
+  return "";
+}
+
   function renderDetail(it, meta) {
+    if (viewMode !== "posters") { forceHideDetail(); return; }
+    const backdrop = backdropFromMeta(meta);
+    detailEl.style.setProperty("--wl-backdrop", backdrop ? `url("${backdrop}")` : "none");
     const isMovie = String(it.type || "").toLowerCase() === "movie";
     const poster = artUrl(it, "w154") || "/assets/img/placeholder_poster.svg";
     const year = it.year || meta?.year ? `<span class="year">${it.year || meta?.year}</span>` : "";
@@ -859,13 +907,21 @@
     }, true);
   }
 
-  /* preview & detail */
+  /* preview on hover (posters view) */
   let activePreviewKey = null;
   function forceHideDetail(){ if(!detailEl) return; detailEl.classList.remove("show"); activePreviewKey=null; }
-  function showPreview(it){ const k=normKey(it); activePreviewKey=k; getMetaFor(it).then(m=>{ if(activePreviewKey===k) renderDetail(it,m||{}); }); }
-  function hidePreview(it){ const k=normKey(it); if(!selected.has(k)&&activePreviewKey===k){ detailEl.classList.remove("show"); activePreviewKey=null; } }
+  function showPreview(it){
+    if (viewMode !== "posters") return;
+    const k=normKey(it); activePreviewKey=k;
+    getMetaFor(it).then(m=>{ if(activePreviewKey===k) renderDetail(it,m||{}); });
+  }
+  function hidePreview(it){
+    if (viewMode !== "posters") return;
+    const k=normKey(it);
+    if(!selected.has(k)&&activePreviewKey===k){ detailEl.classList.remove("show"); activePreviewKey=null; }
+  }
 
-  /* ========= render ========= */
+
   const _show = (el, on) => el && (el.style.display = on ? "" : "none");
 
   function render() {
@@ -962,9 +1018,6 @@
       if (!d.relFmt || !d.genresText) setTimeout(() => hydrateRow(it, tr), 0);
 
       tr.querySelector('input[type=checkbox]')?.addEventListener("change", e => { e.target.checked ? selected.add(key) : selected.delete(key); updateSelCount(); }, true);
-      tr.addEventListener("click", ev => { if (!ev.target.closest("input")) getMetaFor(it).then(m => renderDetail(it, m || {})); }, true);
-      tr.addEventListener("mouseenter", () => showPreview(it), true);
-      tr.addEventListener("mouseleave", () => hidePreview(it), true);
 
       const relEmpty = !tr.querySelector(".rel")?.textContent?.trim();
       const genreEmpty = !tr.querySelector(".genre")?.textContent?.trim();
@@ -978,7 +1031,6 @@
     updateSortHeaderUI();
   }
 
-  /* ========= snackbar & selection/delete ========= */
   let snackTimer = null;
   function snackbar(html){
     clearTimeout(snackTimer); snackTimer = null;
@@ -1055,7 +1107,7 @@
     snackbar(ok>0 ? (PROV_UP==="ALL" ? `Deleted on available providers for ${ok}/${total}` : `Deleted ${ok}/${total} on ${PROV_UP}`) : "Delete completed with no visible changes");
   }, true);
 
-  /* ========= events & refresh/init ========= */
+  /* reference: event wiring */
   const on = (els, evts, fn, cap=true) => evts.forEach(e => els.forEach(el => el?.addEventListener(e, fn, cap)));
   const setPosterMin = px => postersEl.style.setProperty("--wl-min", `${px}px`);
 
@@ -1099,7 +1151,12 @@
     if (e.key === "Escape") trailerModal.classList.contains("show") ? closeTrailer() : detailEl.classList.remove("show");
   }, true);
 
-  viewSel.addEventListener("change", () => { viewMode = viewSel.value === "list" ? "list" : "posters"; prefs.view = viewMode; writePrefs(prefs); render(); });
+  viewSel.addEventListener("change", () => {
+    viewMode = viewSel.value === "list" ? "list" : "posters";
+    prefs.view = viewMode; writePrefs(prefs);
+    forceHideDetail();
+    render();
+  });
 
   pagerPrev?.addEventListener("click", () => {
     if (currentPage > 1) {
@@ -1118,7 +1175,6 @@
     }
   }, true);
 
-  /* ========= refresh ========= */
   async function hardReloadWatchlist(){
     try{ items=await fetchWatchlist(); populateGenreOptions(buildGenreIndex(items)); applyFilters(); rebuildDeleteProviderOptions(); }
     catch(e){ console.warn("watchlist reload failed:", e); }
@@ -1128,7 +1184,6 @@
   window.Watchlist=Object.assign(window.Watchlist||{}, { refresh: hardReloadWatchlist });
   window.addEventListener("watchlist:refresh", hardReloadWatchlist);
 
-  /* ========= init ========= */
   (async function init(){
     viewSel.value = viewMode;
     sizeInput.value = String(prefs.posterMin); setPosterMin(prefs.posterMin);

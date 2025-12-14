@@ -846,7 +846,7 @@ function renderFeaturePanel(state){
       const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Emby</div>
-        <details id="cx-em-wl" open>
+        <details id="cx-em-wl">
           <summary class="muted" style="margin-bottom:10px;">Emby watchlist controls</summary>
           <div class="grid2 compact">
             <div class="opt-row">

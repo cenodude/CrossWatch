@@ -691,8 +691,8 @@ function render(payload){
 
   host.classList.add('vip-badges');
 
-  // layout: max 5 per row
-  const MAX_PER_ROW = 5;
+  // layout: max 6 per row
+  const MAX_PER_ROW = 6;
   host.style.display = 'grid';
   host.style.gridTemplateColumns = `repeat(${MAX_PER_ROW}, max-content)`;
   host.style.columnGap = '8px';
