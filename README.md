@@ -65,7 +65,11 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
-<img width="541" height="142" alt="image" src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920" />
+<p align="center">
+  <img alt="image"
+       src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920"
+       style="max-width: 100%; height: auto;" />
+</p>
 
 - _.....and more...._
 
