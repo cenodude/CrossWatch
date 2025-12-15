@@ -491,6 +491,13 @@ def _ensure_watch_started(request: Request, provider: str | None = None) -> Any:
         prov = "plex"
 
     w = make_watch(sinks=sinks)
+    filters = (watch_cfg.get("filters") or {})
+    if isinstance(filters, dict) and hasattr(w, "set_filters"):
+        try:
+            getattr(w, "set_filters")(filters)
+        except Exception:
+            pass
+
     if hasattr(w, "start_async"):
         w.start_async()
     else:

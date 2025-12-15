@@ -542,15 +542,19 @@
     const srv=String(read(srvProv,"")||"");
     const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
     const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
+
     if(prov==="plex"){
       if(!plexTokenOk) return setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err");
       if(!isValidServerUrl(srv)) return setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
     }else{
       if(!embyTokenOk) return setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err");
     }
+
+    try{ await API.watch.stop(); }catch{}
     try{ await API.watch.start(prov); }catch{ setNote("sc-pms-note","Start failed","err"); }
     refreshWatcher();
   }
+
   async function onWatchStop(){ try{ await API.watch.stop(); }catch{ setNote("sc-pms-note","Stop failed","err"); } refreshWatcher(); }
 
   async function fetchServerUUID(){
