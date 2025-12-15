@@ -1,33 +1,27 @@
 # CrossWatch
-
-<!-- Logo centered -->
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
 </p>
 
-<!-- Click-to-zoom screenshots (links to full size) -->
 <p align="center">
   <a href="images/screenshot1.jpg">
-    <img src="images/screenshot1.jpg" alt="CrossWatch — Screenshot 1" width="24%">
+    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="24%">
   </a>
   <a href="images/screenshot2.jpg">
-    <img src="images/screenshot2.jpg" alt="CrossWatch — Screenshot 2" width="24%">
+    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="24%">
   </a>
   <a href="images/screenshot3.jpg">
-    <img src="images/screenshot3.jpg" alt="CrossWatch — Screenshot 3" width="24%">
+    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="24%">
   </a>
   <a href="images/screenshot4.jpg">
-    <img src="images/screenshot4.jpg" alt="CrossWatch — Screenshot 4" width="24%">
+    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="24%">
   </a>
 </p>
 
-<!-- Caption directly under screenshots -->
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 <p align="center">
   <img width="783" height="225" alt="image" src="https://github.com/user-attachments/assets/4337e4b3-b641-4826-9460-d4be441ddc14" />
 </p>
-
-<!-- Download + Wiki + Best Practices -->
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img
@@ -44,7 +38,7 @@
 </p>
 
 <p align="center">
-  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server→server writes.</sub>
+  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server to server writes.</sub>
 </p>
 
 **CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
@@ -60,8 +54,8 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 - **Internal CrossWatch Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
 - **Unified, visual Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
-- **Webhooks** (Plex / Jellyfin / Emby → Trakt)  
-- **Watcher** (Plex / Emby → Trakt and/or SIMKL) Plugin-free and subscription-free.
+- **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
+- **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
@@ -70,25 +64,25 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
        src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920"
        style="max-width: 100%; height: auto;" />
 </p>
-
 - _.....and more...._
 
-<h2 align="center">🚀 Features</h2>
+<h2>🚀 Features</h2>
+
 <div align="center">
-  <table style="display:inline-block;text-align:left;">
+  <table style="display:inline-block; text-align:left; border:0 !important; border-collapse:collapse !important;">
     <tr>
-      <td valign="top">
-        <ul style="margin:0;padding-left:1.1em">
+      <td valign="top" style="border:0 !important; padding-right:24px;">
+        <ul style="margin:0; padding-left:1.1em;">
           <li>Sync watchlists (one-/two-way)</li>
-          <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
+          <li>Live scrobble (Plex/Jellyfin/Emby to Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
           <li>Keep snapshots with CrossWatch tracker</li>
           <li>Auto-remove from watchlist after finish</li>
         </ul>
       </td>
-      <td valign="top">
-        <ul style="margin:0;padding-left:1.1em">
+      <td valign="top" style="border:0 !important;">
+        <ul style="margin:0; padding-left:1.1em;">
           <li>Analyzer - finds broken or missing matches/IDs</li>
           <li>Exporter - CSV files for popular service</li>
           <li>Now Playing card, Stats, history, live logs</li>
@@ -110,7 +104,6 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
   </table>
 </div>
 
-
 ## ⬇️ Download
 
 - **Docker (recommended):**
@@ -118,7 +111,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
   docker pull ghcr.io/cenodude/crosswatch:latest
   ```
 - **Prebuilt releases:**  
-  Get the latest builds and assets here → **[Releases ▸](https://github.com/cenodude/CrossWatch/releases/latest)**
+  Get the latest builds and assets here: **[Releases ▸](https://github.com/cenodude/CrossWatch/releases/latest)**
 
 <sub>Tip: use <code>:latest</code> for stable, or a specific tag like <code>:v0.2.x</code>.</sub>
 
@@ -158,15 +151,15 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 ## 📋 Usage
 
 1. Open the web UI  
-2. Connect at least two authentication providers — Plex, Jellyfin, <b>Emby</b>, SIMKL and/or TRAKT  
-3. Create one or more <b>Sync Pairs</b> (e.g. Plex → SIMKL or two-way) and/or enable Scrobble  
+2. Connect at least two authentication providers, Plex, Jellyfin, <b>Emby</b>, SIMKL and/or TRAKT  
+3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) and/or enable Scrobble  
 4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
 
 ---
 
-## 🎬 Live Scrobbling (Plex/Jellyfin/Emby → Trakt and/or SIMKL)
-CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b> — so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
+## 🎬 Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
+CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
 Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
 
 ---
