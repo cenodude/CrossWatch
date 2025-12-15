@@ -797,7 +797,7 @@ async function showTab(n) {
     try {
       const firstLoad = !window.__watchlistLoaded;
       if (firstLoad) {
-        const base = new URL("./assets/js/watchlist.js", document.baseURI).href;
+        const base = new URL("/assets/js/watchlist.js", document.baseURI).href;
         const wlUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
 
         try {
