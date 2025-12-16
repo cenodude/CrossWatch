@@ -616,6 +616,7 @@ const css = `
   if (!host) return;
 
   const state = {
+    source: "tracker",
     kind: "watchlist",
     snapshot: "",
     items: {},
@@ -707,6 +708,12 @@ const css = `
             </div>
             <div class="ins-row">
               <div class="ins-kv" style="width:100%">
+                <label>Data</label>
+                <select id="cw-source" class="cw-select">
+                  <option value="tracker">CW Tracker</option>
+                  <option value="state">Current State</option>
+                </select>
+
                 <label>Kind</label>
                 <select id="cw-kind" class="cw-select">
                   <option value="watchlist">Watchlist</option>
@@ -714,7 +721,7 @@ const css = `
                   <option value="ratings">Ratings</option>
                 </select>
 
-                <label>Snapshot</label>
+                <label id="cw-snapshot-label">Snapshot</label>
                 <select id="cw-snapshot" class="cw-select">
                   <option value="">Latest</option>
                 </select>
@@ -807,7 +814,7 @@ const css = `
             </div>
           </div>
 
-          <div class="ins-card">
+          <div class="ins-card" id="cw-backup-card">
             <div class="ins-row">
               <div class="ins-icon"><span class="material-symbol">backup</span></div>
               <div class="ins-title">Backup</div>
@@ -828,7 +835,9 @@ const css = `
   `;
 
   const $ = id => document.getElementById(id);
+  const sourceSel = $("cw-source");
   const kindSel = $("cw-kind");
+  const snapLabel = $("cw-snapshot-label");
   const snapSel = $("cw-snapshot");
   const filterInput = $("cw-filter");
   const reloadBtn = $("cw-reload");
@@ -852,6 +861,7 @@ const css = `
   const nextBtn = $("cw-next");
   const pageInfo = $("cw-page-info");
   const typeFilterWrap = $("cw-type-filter");
+  const backupCard = $("cw-backup-card");
   const downloadBtn = $("cw-download");
   const uploadBtn = $("cw-upload");
   const uploadInput = $("cw-upload-input");
@@ -904,6 +914,7 @@ const css = `
     try {
       if (typeof localStorage === "undefined") return;
       const data = {
+        source: state.source,
         kind: state.kind,
         snapshot: state.snapshot,
         filter: state.filter,
@@ -915,7 +926,17 @@ const css = `
     } catch (_) {}
   }
 
-  function setTag(mode, label) {
+  
+function syncSourceUI() {
+  const isState = state.source === "state";
+  if (sourceSel) sourceSel.value = state.source;
+  if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+  if (backupCard) backupCard.style.display = isState ? "none" : "";
+  const hint = $("cw-state-hint");
+  if (hint && isState) hint.style.display = "none";
+}
+
+function setTag(mode, label) {
     tag.classList.remove("warn", "error");
     if (mode === "warn") tag.classList.add("warn");
     if (mode === "error") tag.classList.add("error");
@@ -1863,16 +1884,30 @@ const css = `
     return "Snapshot";
   }
 
-  function rebuildSnapshots() {
-    const options = (state.snapshots || [])
-      .map(s => {
-        const label = formatSnapshotLabel(s);
-        return `<option value="${s.name}">${label}</option>`;
-      })
-      .join("");
-    snapSel.innerHTML = `<option value="">Latest</option>` + options;
+  
+function rebuildSnapshots() {
+  if (!snapSel) return;
+  const isState = state.source === "state";
+  if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+  if (isState) {
+    const list = Array.isArray(state.snapshots) ? state.snapshots : [];
+    const options = list.map(p => `<option value="${p}">${p}</option>`).join("");
+    snapSel.innerHTML = options;
+    const opts = Array.from(snapSel.options).map(o => o.value);
+    const next = opts.includes(state.snapshot) ? state.snapshot : (opts[0] || "");
+    if (next !== state.snapshot) state.snapshot = next;
     snapSel.value = state.snapshot || "";
+    return;
   }
+  const options = (state.snapshots || [])
+    .map(s => {
+      const label = formatSnapshotLabel(s);
+      return `<option value="${s.name}">${label}</option>`;
+    })
+    .join("");
+  snapSel.innerHTML = `<option value="">Latest</option>` + options;
+  snapSel.value = state.snapshot || "";
+}
 
   async function fetchJSON(url, opts) {
     const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
@@ -1880,15 +1915,22 @@ const css = `
     return await res.json();
   }
 
-  async function loadSnapshots() {
-    try {
-      const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
-      state.snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+  
+async function loadSnapshots() {
+  try {
+    if (state.source === "state") {
+      const data = await fetchJSON(`/api/editor/state/providers`);
+      state.snapshots = Array.isArray(data.providers) ? data.providers : [];
       rebuildSnapshots();
-    } catch (e) {
-      console.error(e);
+      return;
     }
+    const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
+    state.snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+    rebuildSnapshots();
+  } catch (e) {
+    console.error(e);
   }
+}
 
   async function resolveRowIds(row) {
   if (!row.tmdb) return;
@@ -1978,8 +2020,9 @@ const css = `
     state.loading = true;
     setTag("warn", "Loading…");
     try {
-      const params = new URLSearchParams({ kind: state.kind });
-      if (state.snapshot) params.set("snapshot", state.snapshot);
+      const params = new URLSearchParams({ kind: state.kind, source: state.source });
+      if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
+      if (state.source === "state" && state.snapshot) params.set("provider", state.snapshot);
       const data = await fetchJSON(`/api/editor?${params.toString()}`);
       state.items = data.items || {};
       state.rows = buildRows(state.items);
@@ -2046,7 +2089,8 @@ const css = `
         raw.year = y ? parseInt(y, 10) || null : null;
         items[key] = raw;
       }
-      const payload = { kind: state.kind, items };
+      const payload = { kind: state.kind, source: state.source, items };
+      if (state.source === "state") payload.provider = state.snapshot;
       const res = await fetchJSON("/api/editor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2223,10 +2267,24 @@ const css = `
     });
   }
 
-  kindSel.addEventListener("change", async () => {
+  
+if (sourceSel) {
+  sourceSel.addEventListener("change", async () => {
+    state.source = (sourceSel.value || "tracker").trim();
+    state.snapshot = "";
+    state.page = 0;
+    persistUIState();
+    syncSourceUI();
+    if (state.source !== "state") await loadTrackerCounts();
+    await loadSnapshots();
+    await loadState();
+  });
+}
+
+kindSel.addEventListener("change", async () => {
 
     state.kind = (kindSel.value || "watchlist").trim();
-    state.snapshot = "";
+    if (state.source !== "state") state.snapshot = "";
     state.page = 0;
     persistUIState();
     await loadSnapshots();
@@ -2248,13 +2306,14 @@ const css = `
     renderRows();
   });
 
-  reloadBtn.addEventListener("click", async () => {
-    state.snapshot = snapSel.value || "";
-    state.page = 0;
-    await loadTrackerCounts();
-    await loadSnapshots();
-    await loadState();
-  });
+  
+reloadBtn.addEventListener("click", async () => {
+  state.snapshot = snapSel.value || "";
+  state.page = 0;
+  if (state.source !== "state") await loadTrackerCounts();
+  await loadSnapshots();
+  await loadState();
+});;
 
   addBtn.addEventListener("click", addRow);
   saveBtn.addEventListener("click", saveState);
@@ -2265,12 +2324,14 @@ const css = `
     e.returnValue = "";
   });
 
-  (async () => {
-    setTag("warn", "Loading tracker state…");
-    await loadTrackerCounts();
-    await loadSnapshots();
-    await loadState();
-  })();
+  
+(async () => {
+  syncSourceUI();
+  setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
+  if (state.source !== "state") await loadTrackerCounts();
+  await loadSnapshots();
+  await loadState();
+})();
 
 })();
 
