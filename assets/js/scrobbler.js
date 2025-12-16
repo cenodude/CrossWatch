@@ -84,7 +84,10 @@
     },
     watch:{
       status:()=>j("/api/watch/status"),
-      start:(prov)=>t(`/api/watch/start${prov?`?provider=${encodeURIComponent(prov)}`:""}`,{method:"POST"}),
+      start:(prov,sink)=>t(
+        `/api/watch/start?provider=${encodeURIComponent(prov||"")}&sink=${encodeURIComponent(sink||"")}`,
+        {method:"POST"}
+      ),
       stop:()=>t("/api/watch/stop",{method:"POST"})
     }
   };
@@ -534,14 +537,20 @@
     syncHiddenServerInputs(); applyModeDisable();
   }
 
+  // watcher control
   async function refreshWatcher(){ try{ setWatcherStatus(await API.watch.status()||{});}catch{ setWatcherStatus({alive:false}); } }
 
   async function onWatchStart(){
-    const prov=provider();
+    const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex").toLowerCase().trim();
+    const sink = String($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink","trakt") || "trakt").toLowerCase().trim();
+
+    write("scrobble.watch.provider", prov);
+    write("scrobble.watch.sink", sink);
+
     const srvProv = prov==="plex" ? "plex.server_url" : "emby.server";
-    const srv=String(read(srvProv,"")||"");
-    const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
-    const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
+    const srv = String(read(srvProv,"")||"");
+    const plexTokenOk = !!String(read("plex.account_token","")||"").trim();
+    const embyTokenOk = !!String(read("emby.access_token","")||"").trim();
 
     if(prov==="plex"){
       if(!plexTokenOk) return setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err");
@@ -550,8 +559,38 @@
       if(!embyTokenOk) return setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err");
     }
 
+    try{
+      const nextScrobble=getScrobbleConfig();
+      const rootPatch=getRootPatch();
+
+      const serverCfg=await API.cfgGet();
+      const cfg=(typeof structuredClone==="function")
+        ? structuredClone(serverCfg||{})
+        : JSON.parse(JSON.stringify(serverCfg||{}));
+
+      cfg.scrobble=nextScrobble;
+      cfg.plex=Object.assign({}, cfg.plex||{}, rootPatch.plex||{});
+      cfg.emby=Object.assign({}, cfg.emby||{}, rootPatch.emby||{});
+
+      const r=await fetch("/api/config",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        cache:"no-store",
+        body:JSON.stringify(cfg),
+      });
+      if(!r.ok) throw new Error(`POST /api/config ${r.status}`);
+
+      w._cfgCache=cfg;
+      STATE.cfg=cfg;
+      try{ syncHiddenServerInputs(); }catch{}
+    }catch(e){
+      console.warn("[scrobbler] pre-start save failed:", e);
+      return setNote("sc-pms-note","Couldn’t save settings. Hit Save or check logs.","err");
+    }
+
     try{ await API.watch.stop(); }catch{}
-    try{ await API.watch.start(prov); }catch{ setNote("sc-pms-note","Start failed","err"); }
+    try{ await API.watch.start(prov, sink); }catch{ setNote("sc-pms-note","Start failed","err"); }
+
     refreshWatcher();
   }
 

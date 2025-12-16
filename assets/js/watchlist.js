@@ -193,11 +193,31 @@
   }
 
   .wl-detail .overview{
-    margin-top:8px;
-    padding:8px 10px;
+    margin-top:10px;
+    padding:0;
+    background:transparent;
+    border:0;
+    border-radius:0;
+    line-height:1.45;
+    text-shadow:0 2px 10px rgba(0,0,0,.65);
+  }
+
+  .wl-detail .poster-col{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    align-items:flex-start;
+  }
+  .wl-detail .type-pill{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:6px 10px;
     border-radius:10px;
-    background:rgba(0,0,0,.28);
-    border:1px solid rgba(255,255,255,.08);
+    background:rgba(0,0,0,.22);
+    border:1px solid rgba(255,255,255,.10);
+    font-size:12px;
+    font-weight:700;
   }
 
   /* Resizers */
@@ -312,6 +332,7 @@
             <div class="wl-actions" style="display:flex;gap:10px">
               <select id="wl-delete-provider" class="wl-input" style="flex:1">
                 <option value="ALL">ALL (default)</option>
+                <option value="CROSSWATCH">CROSSWATCH</option>
                 <option value="PLEX">PLEX</option>
                 <option value="SIMKL">SIMKL</option>
                 <option value="TRAKT">TRAKT</option>
@@ -472,7 +493,7 @@
   const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   const cmpDir = v => (sortDir === "asc" ? v : -v);
   const normKey = it => it.key || it.guid || it.id || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
-  const artUrl=(it,size)=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv")}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?size=${encodeURIComponent(size||"w342")}`;
+  const artUrl=(it,size)=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv")}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}`;
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };
   const providersOf = it => Array.isArray(it.sources) ? it.sources.map(s => String(s).toUpperCase()) : [];
@@ -646,6 +667,10 @@
     MDBLIST:"/assets/img/MDBLIST.svg",
     CROSSWATCH:"/assets/img/CROSSWATCH.svg"
   };
+
+  const PROV_LABEL = { CROSSWATCH: "CW" };
+  const provLabel = p => PROV_LABEL[String(p || "").toUpperCase()] || String(p || "");
+
   const providerChip = name => {
     const src = SRC_LOGOS[name];
     return `<span class="wl-mat ok" title="${name} present">${
@@ -869,9 +894,10 @@
     const runtime = (() => { const m = meta?.runtime_minutes|0; if (!m) return ""; const h = (m/60)|0, mm = m%60; return h ? `${h}h ${mm?mm+'m':''}` : `${mm}m`; })();
     const genresText = (Array.isArray(meta?.genres) ? meta.genres : Array.isArray(it?.genres) ? it.genres : []).slice(0,3).join(", ");
     const relIso = isMovie ? (meta?.detail?.release_date || meta?.release?.date || it?.release_date) : (meta?.detail?.first_air_date || it?.first_air_date);
-    const metaLine = [isMovie ? "Movie" : "TV", runtime, fmtDateSmart(relIso, toLocale()), meta?.certification || meta?.release?.cert || meta?.detail?.certification, genresText]
-      .filter(Boolean).map((p,i)=> i? `<span class="dot">&bull;</span><span class="chip">${esc(p)}</span>` : `<span class="chip">${esc(p)}</span>`).join("");
-
+    const metaLine = [runtime, fmtDateSmart(relIso, toLocale()), meta?.certification || meta?.release?.cert || meta?.detail?.certification, genresText]
+      .filter(Boolean)
+      .map((p,i)=> i? `<span class="dot">&bull;</span><span class="chip">${esc(p)}</span>` : `<span class="chip">${esc(p)}</span>`)
+      .join("");
     const score100 = Number.isFinite(meta?.score) ? Math.round(meta.score) : (Number.isFinite(meta?.vote_average) ? Math.round(meta.vote_average*10) : null);
     const scoreCls = score100 == null ? "" : score100 >= 70 ? "good" : score100 >= 40 ? "mid" : "bad";
     const scoreHtml = score100 != null ? `<div style="text-align:center">${createScoreSVG(score100).replace('<svg', `<svg class="score ${scoreCls}"`)}<span class="score-label">User Score</span></div>` : "";
@@ -881,8 +907,11 @@
     const overview = meta?.overview ? `<div class="overview" id="wl-overview">${esc(meta.overview)}</div>` : `<div class="overview wl-muted">No description available</div>`;
 
     detailEl.innerHTML = `
-      <div class="inner" style="position:relative;z-index:1;max-width:unset;margin:0 auto;padding:10px 14px 12px;display:grid;grid-template-columns:80px 1fr 96px;gap:12px;align-items:start">
-        <div><img class="poster" src="${poster}" alt="" style="width:76px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.6)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" /></div>
+      <div class="inner" style="position:relative;z-index:1;max-width:unset;margin:0 auto;padding:10px 14px 12px;display:grid;grid-template-columns:116px 1fr 120px;gap:12px;align-items:start">
+      <div class="poster-col">
+        <img class="poster" src="${poster}" alt="" style="width:108px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.6)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" />
+        <div class="type-pill">${isMovie ? "Movie" : "Show"}</div>
+      </div>
         <div>
           <div style="display:flex;align-items:center;gap:10px">
             <div class="title" style="font-weight:800;font-size:18px;flex:1">${esc(it.title || meta?.title || "Unknown")} ${year}</div>
@@ -960,7 +989,7 @@
       const card=document.createElement("div");
       card.className=`wl-card ${selected.has(key)?"selected":""}`;
 
-      const provHtml=providersOf(it).map(p=>`<span class="wl-tag">${p}</span>`).join("");
+      const provHtml=providersOf(it).map(p=>`<span class="wl-tag">${esc(provLabel(p))}</span>`).join("");
       const eager=i<24?`loading="eager" fetchpriority="high"`:`loading="lazy"`;
       card.innerHTML=`<div class="wl-tags">${provHtml}</div><img ${eager} decoding="async" src="${src}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/>`;
 
@@ -1042,7 +1071,7 @@
   function rebuildDeleteProviderOptions(){
     const byKey = mapProvidersByKey(items), union = new Set(), prev = delProv.value;
     for (const k of selected) byKey.get(k)?.forEach?.(p => union.add(p));
-    const ALL = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
+    const ALL = ["CROSSWATCH","PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
     delProv.innerHTML = `<option value="ALL">ALL (default)</option>${ALL.filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
   }
@@ -1190,6 +1219,7 @@
     releasedSel.value = prefs.released; overlaysSel.value = prefs.overlays; morePanel.style.display = prefs.moreOpen ? "" : "none";
 
     const cfg = await fetchConfig();
+    window.__CW_LOCALE = (cfg?.metadata?.locale || cfg?.ui?.locale || window.__CW_LOCALE || navigator.language || "en-US");
     const active = new Set(["CROSSWATCH"]);
     if (cfg?.plex?.account_token) active.add("PLEX");
     if (cfg?.simkl?.access_token) active.add("SIMKL");
@@ -1207,4 +1237,4 @@
 
     window.dispatchEvent(new CustomEvent("watchlist-ready"));
   })();
-})(); // close outer IIFE
+})();

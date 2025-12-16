@@ -20,7 +20,7 @@ from services.watchlist import (
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
-# ---------- helpers ----------
+# Helper functions
 def _norm_key(x: Any) -> str:
     s = str((x.get("key") if isinstance(x, dict) else x) or "").strip()
     return urllib.parse.unquote(s) if "%" in s else s
@@ -37,8 +37,11 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
         if not isinstance(it, dict):
             continue
         pid = str(it.get("id") or "").strip().upper()
-        if pid and pid != "ALL" and bool(it.get("configured")) and pid not in out:
+        if pid and pid != "ALL" and (bool(it.get("configured")) or pid == "CROSSWATCH") and pid not in out:
             out.append(pid)
+
+    if "CROSSWATCH" not in out:
+        out.insert(0, "CROSSWATCH")
     return out
 
 def _type_from_item_or_guess(item: dict[str, Any], key: str = "") -> str:
@@ -95,7 +98,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
     keys = list(dict.fromkeys(keys))
 
     cfg = load_config()
-    state = _load_state()
+    state = _load_state() or {}
     active = _active_providers(cfg)
     prov = (provider or "ALL").upper().strip()
 
@@ -116,11 +119,14 @@ def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
             per_key: list[dict[str, Any]] = []
             deleted = 0
             for k in keys:
+                if not _find_item_in_state_for_provider(state, k, p):
+                    per_key.append({"key": k, "deleted": 0, "attempted": False, "reason": "not_in_state"})
+                    continue
                 kind, label = _item_label(state, k, p)
                 safe_label = (label or "").replace("'", "’")
                 r = delete_watchlist_batch([k], p, state, cfg) or {}
                 d = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
-                per_key.append({"key": k, "deleted": d})
+                per_key.append({"key": k, "deleted": d, "attempted": True})
                 deleted += d
                 _append_log(
                     "SYNC",
@@ -284,7 +290,7 @@ def remove_from_plex_by_ids(
     return remove_from_provider_by_ids("PLEX", ids, media_type)
 
 
-# ---------- routes ----------
+# Route handlers
 @router.get("/")
 def api_watchlist(
     overview: Literal["none", "short", "full"] = Query(

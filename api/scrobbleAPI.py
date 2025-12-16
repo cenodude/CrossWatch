@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import time
 import threading
 import urllib.parse
 from typing import Any
@@ -60,6 +61,20 @@ def _debug_on() -> bool:
     except Exception:
         return False
 
+def _stop_watch_blocking(w: Any, timeout: float = 6.0) -> bool:
+    try:
+        w.stop()
+    except Exception:
+        pass
+    end = time.monotonic() + max(0.2, float(timeout))
+    while time.monotonic() < end:
+        try:
+            if not bool(getattr(w, "is_alive", lambda: False)()):
+                return True
+        except Exception:
+            return True
+        time.sleep(0.05)
+    return False
 
 def _watch_kind(w: Any) -> str | None:
     try:
@@ -417,86 +432,82 @@ def debug_watch_status(request: Request) -> dict[str, Any]:
     }
 
 
-def _ensure_watch_started(request: Request, provider: str | None = None) -> Any:
+def _ensure_watch_started(
+    request: Request,
+    provider: str | None = None,
+    sink: str | None = None,
+) -> Any:
     w = getattr(request.app.state, "watch", None)
-    if w and getattr(w, "is_alive", lambda: False)():
-        if provider:
-            want = provider.lower().strip()
-            cur = _watch_kind(w)
-            if want != cur:
-                try:
-                    w.stop()
-                except Exception:
-                    pass
-                request.app.state.watch = None
-            else:
-                return w
-        else:
-            return w
+    meta = getattr(request.app.state, "watch_meta", None) or {}
 
     cfg = load_config() or {}
-    prov = (
-        provider
-        or (((cfg.get("scrobble") or {}).get("watch") or {}).get("provider"))
-        or "plex"
-    )
-    prov = prov.lower().strip()
+    scrobble = (cfg.get("scrobble") or {}) or {}
+    watch_cfg = (scrobble.get("watch") or {}) or {}
 
-    watch_cfg = ((cfg.get("scrobble") or {}).get("watch") or {}) or {}
-    sink_cfg = watch_cfg.get("sink") or "trakt"
+    prov = (provider or watch_cfg.get("provider") or "plex").lower().strip()
+    sink_cfg = sink or watch_cfg.get("sink") or "trakt"
     names = [s.strip().lower() for s in str(sink_cfg).split(",") if s and s.strip()]
+    want_sinks = sorted(set(names or ["trakt"]))
+
+    if w and getattr(w, "is_alive", lambda: False)():
+        cur_prov = str(meta.get("provider") or _watch_kind(w) or prov).lower().strip()
+        cur_sinks = sorted(set(meta.get("sinks") or []))
+
+        if cur_prov == prov and cur_sinks == want_sinks:
+            filters = dict((watch_cfg.get("filters") or {}) or {})
+            try:
+                if filters and hasattr(w, "set_filters"):
+                    w.set_filters(filters)
+            except Exception:
+                pass
+            return w
+
+        if not _stop_watch_blocking(w):
+            return w
+
+        request.app.state.watch = None
+        request.app.state.watch_meta = None
+        w = None
 
     added: set[str] = set()
     sinks: list[Any] = []
 
-    for name in names or ["trakt"]:
+    for name in want_sinks:
         if name == "trakt" and "trakt" not in added:
-            try:
-                from providers.scrobble.trakt.sink import TraktSink
-
-                sinks.append(TraktSink())
-                added.add("trakt")
-            except Exception:
-                pass
+            from providers.scrobble.trakt.sink import TraktSink
+            sinks.append(TraktSink())
+            added.add("trakt")
         elif name == "simkl" and "simkl" not in added:
-            try:
-                from providers.scrobble.simkl.sink import SimklSink
-
-                sinks.append(SimklSink())
-                added.add("simkl")
-            except Exception:
-                pass
+            from providers.scrobble.simkl.sink import SimklSink
+            sinks.append(SimklSink())
+            added.add("simkl")
 
     if not sinks:
-        try:
-            from providers.scrobble.trakt.sink import TraktSink
-
-            sinks = [TraktSink()]
-        except Exception:
-            sinks = []
+        from providers.scrobble.trakt.sink import TraktSink
+        sinks = [TraktSink()]
+        added = {"trakt"}
 
     make_watch: Any | None = None
     if prov == "emby":
         try:
             from providers.scrobble.emby.watch import make_default_watch as _mk
-
             make_watch = _mk
         except Exception:
             make_watch = None
 
     if make_watch is None:
         from providers.scrobble.plex.watch import make_default_watch as _mk
-
         make_watch = _mk
         prov = "plex"
 
     w = make_watch(sinks=sinks)
-    filters = (watch_cfg.get("filters") or {})
-    if isinstance(filters, dict) and hasattr(w, "set_filters"):
-        try:
-            getattr(w, "set_filters")(filters)
-        except Exception:
-            pass
+
+    filters = dict((watch_cfg.get("filters") or {}) or {})
+    try:
+        if filters and hasattr(w, "set_filters"):
+            w.set_filters(filters)
+    except Exception:
+        pass
 
     if hasattr(w, "start_async"):
         w.start_async()
@@ -504,13 +515,14 @@ def _ensure_watch_started(request: Request, provider: str | None = None) -> Any:
         threading.Thread(target=w.start, daemon=True).start()
 
     request.app.state.watch = w
+    request.app.state.watch_meta = {"provider": prov, "sinks": sorted(added)}
     return w
-
 
 @router.post("/api/watch/start")
 def debug_watch_start(
     request: Request,
     provider: str | None = Query(None),
+    sink: str | None = Query(None),
 ) -> dict[str, Any]:
     if callable(_reset_currently_watching):
         try:
@@ -518,22 +530,18 @@ def debug_watch_start(
         except Exception:
             pass
 
-    w = _ensure_watch_started(request, provider)
-    return {
-        "ok": True,
-        "alive": bool(getattr(w, "is_alive", lambda: False)()),
-        "provider": _watch_kind(w),
-    }
+    w = _ensure_watch_started(request, provider, sink)
+    alive = bool(getattr(w, "is_alive", lambda: False)())
+    meta = getattr(request.app.state, "watch_meta", None) or {}
+    return {"ok": True, "alive": alive, "provider": _watch_kind(w), "sinks": meta.get("sinks") or []}
 
 @router.post("/api/watch/stop")
 def debug_watch_stop(request: Request) -> dict[str, Any]:
     w = getattr(request.app.state, "watch", None)
-    if w:
-        try:
-            w.stop()
-        except Exception:
-            pass
-    request.app.state.watch = None
+    stopped = _stop_watch_blocking(w) if w else True
+    if stopped:
+        request.app.state.watch = None
+        request.app.state.watch_meta = None
 
     if callable(_reset_currently_watching):
         try:
@@ -541,9 +549,7 @@ def debug_watch_stop(request: Request) -> dict[str, Any]:
         except Exception:
             pass
 
-    return {"ok": True, "alive": False}
-
-
+    return {"ok": True, "alive": False, "stopped": bool(stopped)}
 
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request) -> JSONResponse:

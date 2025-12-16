@@ -3030,6 +3030,8 @@ async function loadWall() {
       case "simkl_only": return { text: "SIMKL",   cls: "p-sk" };
       case "trakt_only": return { text: "TRAKT",   cls: "p-tr" };
       case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
+      case "crosswatch_only": return { text: "CW", cls: "p-sk" };
+      case "cw_only":         return { text: "CW", cls: "p-sk" };
       default:           return { text: "—",       cls: "p-sk" };
     }
   }

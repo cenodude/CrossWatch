@@ -276,7 +276,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
-        "locale": "",                                   # e.g. "en-US" / "nl-NL"
+        "locale": "en-US",                              # e.g. "en-US" / "nl-NL"
         "ttl_hours": 6,                                 # Coarse cache TTL
     },
 

@@ -94,9 +94,10 @@ class CROSSWATCHConfig:
     retention_days: int = 30
     auto_snapshot: bool = True
     max_snapshots: int = 64
-    restore_watchlist: str | None = "latest"
-    restore_history: str | None = "latest"
-    restore_ratings: str | None = "latest"
+    
+    restore_watchlist: str | None = None
+    restore_history: str | None = None
+    restore_ratings: str | None = None
 
     @property
     def base_path(self) -> Path:
@@ -124,6 +125,15 @@ class CROSSWATCHModule:
                 return int(cw_cfg.get(key, default))
             except Exception:
                 return int(default)
+            
+        def _restore_id(key: str) -> str | None:
+            v = cw_cfg.get(key)
+            if v is None:
+                return None
+            s = str(v).strip()
+            if not s or s.lower() == "latest":
+                return None
+            return s
 
         root_dir = str(cw_cfg.get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
         self.cfg = CROSSWATCHConfig(
@@ -131,9 +141,9 @@ class CROSSWATCHModule:
             retention_days=_int("retention_days", 30),
             auto_snapshot=_bool("auto_snapshot", True),
             max_snapshots=_int("max_snapshots", 64),
-            restore_watchlist=(cw_cfg.get("restore_watchlist") or "latest"),
-            restore_history=(cw_cfg.get("restore_history") or "latest"),
-            restore_ratings=(cw_cfg.get("restore_ratings") or "latest"),
+            restore_watchlist=_restore_id("restore_watchlist"),
+            restore_history=_restore_id("restore_history"),
+            restore_ratings=_restore_id("restore_ratings"),
         )
 
         try:

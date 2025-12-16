@@ -93,6 +93,142 @@ def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Pat
     return sub / f"{tmdb_id}.{loc}.json"
 
 
+def _cfg_ui_locale() -> str | None:
+    try:
+        cfg = load_config() or {}
+        md = cfg.get("metadata") or {}
+        loc = md.get("locale") or (cfg.get("ui") or {}).get("locale") or None
+        loc = str(loc).strip() if loc else None
+        return loc or None
+    except Exception:
+        return None
+
+
+def _lang_from_locale(locale: str | None) -> str | None:
+    loc = (locale or "").strip()
+    if not loc:
+        return None
+    return (loc.split("-", 1)[0] or "").lower() or None
+
+
+def _img_lang(img: dict[str, Any]) -> str | None:
+    for k in ("lang", "iso_639_1", "language", "locale"):
+        v = img.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+    return None
+
+
+def _locale_tag(locale: str | None) -> str:
+    return (locale or "any").strip().replace("/", "_").replace(":", "_") or "any"
+
+def _tmdb_include_image_language(locale: str | None) -> str:
+    base = _lang_from_locale(locale) or "en"
+    parts: list[str] = []
+    for p in (base, "en", "null"):
+        if p and p not in parts:
+            parts.append(p)
+    return ",".join(parts)
+
+
+def _tmdb_fetch_posters(api_key: str, typ: str, tmdb_id: str, locale: str | None) -> list[dict[str, Any]]:
+    kind = "movie" if typ == "movie" else "tv"
+    url = f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/images"
+    params = {"api_key": api_key, "include_image_language": _tmdb_include_image_language(locale)}
+    try:
+        r = requests.get(url, params=params, timeout=20)
+        if not r.ok:
+            return []
+        data = r.json()
+    except Exception:
+        return []
+    posters = data.get("posters") if isinstance(data, dict) else None
+    if not isinstance(posters, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for p in posters:
+        if not isinstance(p, dict):
+            continue
+        fp = p.get("file_path")
+        if not fp:
+            continue
+        out.append(
+            {
+                "path": fp,
+                "url": f"https://image.tmdb.org/t/p/original{fp}",
+                "iso_639_1": p.get("iso_639_1") or "",
+                "vote_average": p.get("vote_average") or 0,
+                "vote_count": p.get("vote_count") or 0,
+            }
+        )
+    return out
+
+
+def _tmdb_size_url(img: dict[str, Any], size_tag: str) -> str | None:
+    path = img.get("path") or img.get("file_path")
+    if path:
+        return f"https://image.tmdb.org/t/p/{size_tag}{path}"
+    url = img.get("url") or ""
+    return url or None
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _pick_best_image(imgs: list[dict[str, Any]], locale: str | None) -> dict[str, Any] | None:
+    if not imgs:
+        return None
+    pref = _lang_from_locale(locale)
+    best: dict[str, Any] | None = None
+    best_key: tuple[int, float, int] = (-10**9, float(-10**9), -10**9)
+    for i, img in enumerate(imgs):
+        if not isinstance(img, dict) or not img.get("url"):
+            continue
+        lang = _img_lang(img)
+        score = 0
+        if lang:
+            score += 10
+        else:
+            score -= 5
+        if pref and lang and lang.startswith(pref):
+            score += 50
+        if lang in {"en", "en-us", "en-gb"}:
+            score += 30
+        vscore = 0.0
+        for k in ("score", "vote_average", "vote", "rating"):
+            raw = img.get(k)
+            if raw is None:
+                continue
+            if isinstance(raw, (int, float)):
+                vscore = float(raw)
+                break
+            if isinstance(raw, str):
+                txt = raw.strip()
+                if not txt:
+                    continue
+                try:
+                    vscore = float(txt)
+                    break
+                except ValueError:
+                    continue
+        key = (score, vscore, -i)
+
+        if key > best_key:
+            best_key = key
+            best = img
+    return best
+
 def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
     if not need:
         return True
@@ -143,7 +279,12 @@ def _read_meta_cache(p: Path) -> dict[str, Any] | None:
         data = json.loads(p.read_text("utf-8"))
         if not isinstance(data, dict):
             return None
-        if (time.time() - float(data.get("fetched_at") or 0)) > _cfg_meta_ttl_secs():
+        raw_ts = data.get("fetched_at")
+        try:
+            fetched_ts = float(raw_ts) if raw_ts is not None else 0.0
+        except (TypeError, ValueError):
+            fetched_ts = 0.0
+        if (time.time() - fetched_ts) > _cfg_meta_ttl_secs():
             return None
         return data
     except Exception:
@@ -229,8 +370,7 @@ def get_meta(
     entity = "movie" if str(typ).lower() == "movie" else "show"
     eff_need = need or {"poster": True, "backdrop": True, "logo": False}
     need_key = tuple(sorted(k for k, v in eff_need.items() if v))
-    eff_locale = locale
-
+    eff_locale = locale or _cfg_ui_locale()
     if _meta_cache_enabled():
         p = _meta_cache_path(entity, tmdb_id, eff_locale or "en-US")
         cached = _read_meta_cache(p)
@@ -295,6 +435,8 @@ def _cache_download(
         mime = "application/octet-stream"
     return dest_path, mime
 
+def _placeholder_poster() -> Path:
+    return Path(__file__).resolve().parent / "assets" / "img" / "placeholder_poster.svg"
 
 def get_poster_file(
     api_key: str,
@@ -302,28 +444,53 @@ def get_poster_file(
     tmdb_id: str | int,
     size: str,
     cache_dir: Path | str,
+    locale: str | None = None,
 ) -> tuple[str, str]:
-    meta = get_meta(
-        api_key,
-        typ,
-        tmdb_id,
-        cache_dir,
-        need={"poster": True},
-    ) or {}
-    posters = ((meta.get("images") or {}).get("poster") or [])
-    if not posters:
-        raise FileNotFoundError("No poster found")
-    src_url = posters[0]["url"]
-    ext = ".jpg" if (".jpg" in src_url or ".jpeg" in src_url) else ".png"
-    size_tag = (size or "w780").lower().strip()
-    _, base, _ = _env()
-    cache_root = Path(cache_dir or (base / "posters"))
-    if cache_root == base:
-        cache_root = base / "posters"
-    dest = cache_root / f"{typ}_{tmdb_id}_{size_tag}{ext}"
-    path, mime = _cache_download(src_url, dest)
-    return str(path), mime
+    cache_root = Path(cache_dir) / "art"
+    cache_root.mkdir(parents=True, exist_ok=True)
 
+    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={"poster": True}, locale=locale) or {}
+    eff_locale = locale or meta.get("locale") or None
+
+    images = meta.get("images") or {}
+    posters = images.get("poster") or images.get("posters") or []
+    if not isinstance(posters, list):
+        posters = []
+
+    has_lang = any(_img_lang(p) for p in posters if isinstance(p, dict))
+    if not posters or not has_lang:
+        posters2 = _tmdb_fetch_posters(api_key, typ, str(tmdb_id), eff_locale)
+        if posters2:
+            posters = posters2
+
+    best = _pick_best_image(posters, eff_locale)
+    if not best:
+        return str(_placeholder_poster()), "image/svg+xml"
+
+    size_tag = size or "w342"
+    src_url = _tmdb_size_url(best, size_tag) or ""
+    if not src_url:
+        return str(_placeholder_poster()), "image/svg+xml"
+
+    loc_tag = _locale_tag(eff_locale)
+    base = cache_root / f"{typ}_{tmdb_id}_{loc_tag}_{size_tag}"
+    meta_path = base.with_suffix(".json")
+
+    ext = Path(src_url.split("?", 1)[0]).suffix or ".jpg"
+    dest = base.with_suffix(ext)
+
+    prev_url = _read_json(meta_path).get("url") if meta_path.exists() else None
+    if (prev_url and prev_url != src_url) or (not meta_path.exists()):
+        for f in cache_root.glob(base.name + ".*"):
+            if f.name != meta_path.name:
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+
+    path, mime = _cache_download(src_url, dest)
+    _write_json(meta_path, {"url": src_url, "ts": int(time.time())})
+    return str(path), mime
 
 def _tmdb_external_ids(entity: str, tmdb_id: str | int) -> dict[str, str]:
     try:
@@ -369,6 +536,7 @@ def api_tmdb_art(
     typ: str = FPath(...),
     tmdb_id: int = FPath(...),
     size: str = Query("w342"),
+    locale: str | None = Query(None),
 ):
     t = typ.lower()
     if t == "show":
@@ -383,7 +551,8 @@ def api_tmdb_art(
 
     try:
         _, base, _ = _env()
-        local_path, mime = get_poster_file(api_key, t, tmdb_id, size, base)
+        eff_locale = locale or _cfg_ui_locale()
+        local_path, mime = get_poster_file(api_key, t, tmdb_id, size, base, locale=eff_locale)
         return FileResponse(
             str(local_path),
             media_type=mime,

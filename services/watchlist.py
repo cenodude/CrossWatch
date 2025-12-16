@@ -370,6 +370,28 @@ def _jf_get(
         j = {}
     return j if isinstance(j, dict) else {}
 
+def _delete_on_crosswatch_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) -> None:
+    ops = load_sync_ops("CROSSWATCH")
+    if not ops:
+        raise RuntimeError("CROSSWATCH module not available")
+    payload: list[dict[str, Any]] = []
+    for it in items or []:
+        obj = it.get("item") if isinstance(it.get("item"), dict) else {}
+        d = dict(obj or {})
+        ids = _ids_from_key_or_item(str(it.get("key") or ""), d)
+        if ids:
+            existing = d.get("ids")
+            d["ids"] = (dict(existing) | dict(ids)) if isinstance(existing, dict) else dict(ids)
+        t = it.get("type")
+        if t and "type" not in d:
+            d["type"] = t
+        payload.append(d)
+
+    r = ops.remove(cfg, payload, feature="watchlist", dry_run=False) or {}
+    if not isinstance(r, dict) or not r.get("ok"):
+        raise RuntimeError(f"CROSSWATCH delete failed: {r.get('error')}")
+    if int(r.get("count", 0) or 0) < 1:
+        raise RuntimeError("CROSSWATCH delete matched 0 items")
 
 def _jf_delete(
     base: str,
@@ -1086,27 +1108,13 @@ def delete_watchlist_batch(
         return arr
 
     handlers: dict[str, Any] = {
+        "CROSSWATCH": lambda items: _delete_on_crosswatch_batch(items, cfg),
         "PLEX": lambda items: _delete_on_plex_batch(items, state, cfg),
-        "SIMKL": lambda items: _delete_on_simkl_batch(
-            items,
-            cfg.get("simkl", {}) or {},
-        ),
-        "TRAKT": lambda items: _delete_on_trakt_batch(
-            items,
-            cfg.get("trakt", {}) or {},
-        ),
-        "JELLYFIN": lambda items: _delete_on_jellyfin_batch(
-            items,
-            cfg.get("jellyfin", {}) or {},
-        ),
-        "EMBY": lambda items: _delete_on_emby_batch(
-            items,
-            cfg.get("emby", {}) or {},
-        ),
-        "MDBLIST": lambda items: _delete_on_mdblist_batch(
-            items,
-            cfg.get("mdblist", {}) or {},
-        ),
+        "SIMKL": lambda items: _delete_on_simkl_batch(items, cfg.get("simkl", {}) or {}),
+        "TRAKT": lambda items: _delete_on_trakt_batch(items, cfg.get("trakt", {}) or {}),
+        "JELLYFIN": lambda items: _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {}),
+        "EMBY": lambda items: _delete_on_emby_batch(items, cfg.get("emby", {}) or {}),
+        "MDBLIST": lambda items: _delete_on_mdblist_batch(items, cfg.get("mdblist", {}) or {}),
     }
 
     if prov == "ALL":
@@ -1185,6 +1193,11 @@ def delete_watchlist_item(
         if prov == "PLEX":
             _delete_on_plex_single(key, state, cfg)
             _del_key_from_provider_items(state, "PLEX", key)
+        elif prov == "CROSSWATCH":
+            _delete_and_drop(
+                "CROSSWATCH",
+                lambda items: _delete_on_crosswatch_batch(items, cfg),
+            )
         elif prov == "SIMKL":
             _delete_and_drop(
                 "SIMKL",
@@ -1231,6 +1244,12 @@ def delete_watchlist_item(
                 try:
                     if p == "PLEX":
                         _delete_on_plex_single(key, state, cfg)
+                        _del_key_from_provider_items(state, "PLEX", key)
+                    elif p == "CROSSWATCH":
+                        _delete_and_drop(
+                            "CROSSWATCH",
+                            lambda items: _delete_on_crosswatch_batch(items, cfg),
+                        )
                     elif p == "SIMKL":
                         _delete_and_drop(
                             "SIMKL",
@@ -1272,10 +1291,7 @@ def delete_watchlist_item(
                             ),
                         )
                     else:
-                        details[p] = {
-                            "ok": False,
-                            "error": "delete not supported",
-                        }
+                        details[p] = {"ok": False, "error": "delete not supported"}
                         continue
                     details[p] = {"ok": True}
                 except Exception as e:
@@ -1304,7 +1320,6 @@ def delete_watchlist_item(
     except Exception as e:
         _log("TRBL", f"[WATCHLIST] {prov} delete failed: {e}")
         return {"ok": False, "error": str(e), "provider": prov}
-
 
 # Registered providers detection
 def detect_available_watchlist_providers(
