@@ -118,8 +118,10 @@ function css() {
   .an-modal .ids-edit-row label span{min-width:52px;text-transform:uppercase;letter-spacing:.03em;color:#9fb4ff}
   .an-modal .ids-edit-row input{flex:1 1 auto;background:#05060c;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:4px 6px;font-size:12px;color:#dbe8ff}
   .an-modal .ids-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
-  .an-modal .an-footer{padding:8px 12px;border-top:1px solid rgba(255,255,255,.12);display:flex;align-items:center;font-size:12px;background:#05060c;gap:8px}
+  .an-modal .an-footer{padding:8px 12px;border-top:1px solid rgba(255,255,255,.12);display:flex;align-items:center;font-size:12px;background:#05060c;gap:12px}
+  .an-modal .an-footer .count-stack{display:flex;flex-direction:column;line-height:1.15}
   .an-modal .an-footer #an-issues-count{font-weight:600;color:#dbe8ff}
+  .an-modal .an-footer #an-blocked-count{opacity:.75}
   .an-modal .an-footer .stats{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;opacity:.78}
   .an-modal .an-footer .stats.empty{opacity:.45}
   .an-modal input[type=search]{background:#05060c;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
@@ -129,6 +131,7 @@ function css() {
   .an-modal .an-grid::-webkit-scrollbar-track,.an-modal .an-issues::-webkit-scrollbar-track{background:#05060c}
   .an-modal .an-grid::-webkit-scrollbar-thumb,.an-modal .an-issues::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#7a6bff,#23d5ff);border-radius:10px;border:2px solid #05060c;box-shadow:0 0 12px rgba(122,107,255,.55) inset}
   .unsync-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:radial-gradient(circle,#ffb0d0,#ff3b7f);box-shadow:0 0 8px rgba(255,59,127,.8);vertical-align:middle}
+  .blocked-ico{display:inline-block;margin-right:6px;vertical-align:middle;font-size:13px;line-height:1;filter:drop-shadow(0 0 10px rgba(255,90,120,.7))}
   .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,10,.8);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease}
   .wait-overlay.hidden{opacity:0;pointer-events:none}
   .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#05060c,#101124);box-shadow:0 0 40px rgba(122,107,255,.45),inset 0 0 1px rgba(255,255,255,.08)}
@@ -168,7 +171,10 @@ export default {
         <div class="an-issues" id="an-issues"></div>
       </div>
       <div class="an-footer">
-        <span class="mono" id="an-issues-count">Issues: 0</span>
+        <div class="count-stack">
+          <span class="mono" id="an-issues-count">Issues: 0</span>
+          <span class="mono" id="an-blocked-count">Blocked: 0</span>
+        </div>
         <div class="stats empty" id="an-stats"></div>
       </div>
     `;
@@ -216,6 +222,7 @@ export default {
     const pairBar = Q("#an-pairs", root);
     const stats = Q("#an-stats", root);
     const issuesCount = Q("#an-issues-count", root);
+    const blockedCount = Q("#an-blocked-count", root);
     const search = Q("#an-search", root);
     const btnRun = Q("#an-run", root);
     const btnToggleIDs = Q("#an-toggle-ids", root);
@@ -242,6 +249,7 @@ export default {
     let NORMALIZATION = [];
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
+    let BLOCKS_BY_PF = new Map();
 
     function applySplit(top, total) {
       const bar = 8;
@@ -346,10 +354,54 @@ export default {
         </div>`;
     }
 
+
+    function _pfKey(provider, feature) {
+      return `${String(provider || "").toUpperCase()}::${String(feature || "").toLowerCase()}`;
+    }
+    function _normKey(v) {
+      return String(v || "").trim().toLowerCase();
+    }
+    function isBlocked(provider, feature, key) {
+      const set = BLOCKS_BY_PF.get(_pfKey(provider, feature));
+      if (!set) return false;
+      return set.has(_normKey(key));
+    }
+    async function refreshBlocked() {
+      const pairs = new Map();
+      for (const r of ITEMS || []) {
+        const k = _pfKey(r.provider, r.feature);
+        if (!pairs.has(k)) pairs.set(k, { provider: r.provider, feature: r.feature });
+      }
+      if (!pairs.size) {
+        BLOCKS_BY_PF = new Map();
+        return;
+      }
+      const next = new Map();
+      await Promise.all(
+        Array.from(pairs.values()).map(async ({ provider, feature }) => {
+          try {
+            const u = `/api/editor?source=state&kind=${encodeURIComponent(
+              String(feature || "")
+            )}&provider=${encodeURIComponent(String(provider || ""))}`;
+            const res = await fjson(u, { cache: "no-store" });
+            const blocks = Array.isArray(res && res.manual_blocks)
+              ? res.manual_blocks
+              : [];
+            const set = new Set(blocks.map(_normKey).filter(Boolean));
+            next.set(_pfKey(provider, feature), set);
+          } catch {
+            next.set(_pfKey(provider, feature), new Set());
+          }
+        })
+      );
+      BLOCKS_BY_PF = next;
+    }
+
     function renderBody(rows) {
       return rows
         .map(r => {
           const tag = tagOf(r.provider, r.feature, r.key);
+          const blk = isBlocked(r.provider, r.feature, r.key);
           const uns = UNSYNCED.has(tag);
           const label = displayTitle(r);
           return `<div class="row${SELECTED === tag ? " sel" : ""}" data-tag="${tag}">
@@ -357,6 +409,10 @@ export default {
             <div class="feat">${r.feature}</div>
             <div>
               <div class="title">${
+                blk
+                  ? `<span class="blocked-ico" title="Blocked (manual)">⛔</span>`
+                  : ""
+              }${
                 uns
                   ? (() => {
                       const miss = UNSYNCED_META.get(tag) || [];
@@ -708,6 +764,7 @@ export default {
       const label = displayTitle(it);
       const heading = it.year ? `${label} (${it.year})` : label;
       const unsynced = UNSYNCED.has(tag);
+      const blocked = isBlocked(provider, feature, key);
       const missingTargets = UNSYNCED_META.get(tag) || [];
       const missingLabel = missingTargets.length
         ? `Missing at ${missingTargets.join(" & ")}`
@@ -719,9 +776,13 @@ export default {
           ? ` <span class="badge mono">${escHtml(reasons[0])}</span>`
           : "";
 
+      const blockedBadge = blocked
+        ? ` <span class="badge mono">Blocked</span>`
+        : "";
+
       const status = unsynced
-        ? `<span class="badge">${missingLabel}</span>${reasonBadge}`
-        : `<span class="badge">No analyzer issues</span>`;
+        ? `<span class="badge">${missingLabel}</span>${reasonBadge}${blockedBadge}`
+        : `<span class="badge">No analyzer issues</span>${blockedBadge}`;
 
       const header = `<div class="issue">
         <div class="h">${heading}</div>
@@ -909,6 +970,7 @@ export default {
       if (!countsText) stats.classList.add("empty");
       else stats.classList.remove("empty");
       issuesCount.textContent = "Issues: 0";
+      if (blockedCount) blockedCount.textContent = "Blocked: 0";
       draw();
       setWaitText("Analyzing…");
       try {
@@ -923,7 +985,8 @@ export default {
       const [pairMap, meta, status] = await Promise.all([
         getActivePairMap(),
         fjson("/api/analyzer/problems").catch(() => ({ problems: [] })),
-        fjson("/api/status").catch(() => null)
+        fjson("/api/status").catch(() => null),
+        refreshBlocked().catch(() => null)
       ]);
 
       PAIR_STATS = meta.pair_stats || [];
@@ -995,6 +1058,8 @@ export default {
           );
           if (!tgts.some(t => allowed.has(t))) continue;
         }
+
+        if (isBlocked(p.provider, p.feature, p.key)) continue;
 
         const sig = `${p.provider}::${p.feature}::${p.key}`;
         if (seen.has(sig)) continue;
@@ -1079,6 +1144,14 @@ export default {
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
       issuesCount.textContent = parts.join(" • ");
+      if (blockedCount) {
+        const scoped = ITEMS.filter(inPairScope);
+        const n = scoped.reduce(
+          (acc, r) => acc + (isBlocked(r.provider, r.feature, r.key) ? 1 : 0),
+          0
+        );
+        blockedCount.textContent = `Blocked: ${n}`;
+      }
 
       filter(search.value || "");
 
