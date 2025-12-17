@@ -28,9 +28,9 @@
       alt="Latest Release"
       src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&sort=semver&logo=github&label=Latest%20Release&style=for-the-badge">
   </a>
-  <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices">
+  <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started">
     <img
-      alt="Must-read: Best Practices"
+      alt="Must-read: Quick Start"
       src="https://img.shields.io/badge/Best%20Practices-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/wiki">
@@ -38,7 +38,7 @@
 </p>
 
 <p align="center">
-  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started"><strong>Getting Started</strong></a> page before enabling two-way sync or server to server writes.</sub>
+  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
 **CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
