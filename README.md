@@ -31,7 +31,7 @@
   <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started">
     <img
       alt="Must-read: Quick Start"
-      src="https://img.shields.io/badge/Best%20Practices-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
+      src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/wiki">
   </a>
