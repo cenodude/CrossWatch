@@ -38,7 +38,7 @@
 </p>
 
 <p align="center">
-  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> page before enabling two-way sync or server to server writes.</sub>
+  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started"><strong>Getting Started</strong></a> page before enabling two-way sync or server to server writes.</sub>
 </p>
 
 **CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
@@ -58,6 +58,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
+- **Editor** Inspect and adjust CrossWatch data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
 <p align="center">
   <img alt="image"
