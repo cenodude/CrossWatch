@@ -17,6 +17,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
+MANUAL_STATE_PATH = CONFIG_DIR / "state.manual.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
 _LOCK = threading.Lock()
 
@@ -53,6 +54,35 @@ def _load_state() -> dict[str, Any]:
     except Exception:
         raise HTTPException(500, "Failed to parse state.json")
 
+
+
+def _load_manual_state() -> dict[str, Any]:
+    try:
+        return json.loads(MANUAL_STATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+
+def _manual_add_blocks(manual: dict[str, Any]) -> dict[tuple[str, str], set[str]]:
+    out: dict[tuple[str, str], set[str]] = {}
+    providers = manual.get("providers") if isinstance(manual, dict) else None
+    if not isinstance(providers, dict):
+        return out
+    for prov, prov_data in providers.items():
+        if not isinstance(prov_data, dict):
+            continue
+        for feat, feat_data in prov_data.items():
+            if not isinstance(feat_data, dict):
+                continue
+            adds = feat_data.get("adds")
+            if not isinstance(adds, dict):
+                continue
+            blocks = adds.get("blocks")
+            if not isinstance(blocks, list) or not blocks:
+                continue
+            out[(str(prov).upper(), str(feat).lower())] = set(str(x) for x in blocks if x)
+    return out
 
 def _save_state(s: dict[str, Any]) -> None:
     with _LOCK:
@@ -754,6 +784,8 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
     cw_state = _read_cw_state()
+    manual = _load_manual_state()
+    manual_blocks = _manual_add_blocks(manual)
     unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
 
     for name, body in (cw_state or {}).items():
@@ -822,18 +854,29 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
             alias_keys = _alias_keys(vv)
 
             if not any(ak in merged_keys for ak in alias_keys):
+                blocks = manual_blocks.get((prov, feat))
+                blocked = False
+                if blocks:
+                    for kk in [k, *alias_keys]:
+                        if kk in blocks:
+                            blocked = True
+                            break
+                ptype = "blocked_manual" if blocked else "missing_peer"
+                sev = "info" if blocked else "warn"
                 prob: dict[str, Any] = {
-                    "severity": "warn",
-                    "type": "missing_peer",
+                    "severity": sev,
+                    "type": ptype,
                     "provider": prov,
                     "feature": feat,
                     "key": k,
                     "title": v.get("title"),
                     "year": v.get("year"),
                     "targets": filtered_targets,
+                    **({"manual_ref": str(MANUAL_STATE_PATH)} if blocked else {}),
                 }
-
                 hints: list[dict[str, Any]] = []
+                if blocked:
+                    hints.append({"kind": "blocked_manual", "message": f"Blocked by manual list ({MANUAL_STATE_PATH}).", "source": str(MANUAL_STATE_PATH)})
                 for dst in filtered_targets:
                     idx_key = (str(dst).upper(), feat.lower())
                     uidx = unresolved_index.get(idx_key) or {}
@@ -850,9 +893,10 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
                 if hints:
                     prob["hints"] = hints
                 details = _missing_peer_show_hints(s, feat, v, filtered_targets)
+                if blocked:
+                    details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + (details or []))
                 if details:
                     prob["target_show_info"] = details
-
                 probs.append(prob)
 
     for p, f, k, it in _iter_items(s):

@@ -277,6 +277,7 @@
         if ("skipped" in ev) parts.push(`skipped=${ev.skipped|0}`);
         if ("unresolved" in ev) parts.push(`unresolved=${ev.unresolved|0}`);
         if ("errors" in ev) parts.push(`errors=${ev.errors|0}`);
+        if ("blocked" in ev) parts.push(`blocked=${ev.blocked|0}`);
         return block("complete",`${ICON.complete} Sync complete`, parts.join(" · "));
       }
 
@@ -314,13 +315,18 @@
       if(/^•\s*feature=/i.test(t)) return null;
       if(/^\[SYNC]\s*exit code:/i.test(t)) return null;
     }
-    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)(?:,\s*Total skipped:\s*(\d+))?(?:,\s*Total unresolved:\s*(\d+))?(?:,\s*Total errors:\s*(\d+))?/i);
+
+    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)(?:,\s*Total skipped:\s*(\d+))?(?:,\s*Total unresolved:\s*(\d+))?(?:,\s*Total errors:\s*(\d+))?(?:,\s*Total blocked:\s*(\d+))?/i);
+
     if(mDone){
-      const added=Number(mDone[1]||0), removed=Number(mDone[2]||0), skipped=Number(mDone[3]||0), unresolved=Number(mDone[4]||0), errors=Number(mDone[5]||0);
+      const added=Number(mDone[1]||0), removed=Number(mDone[2]||0),
+            skipped=Number(mDone[3]||0), unresolved=Number(mDone[4]||0),
+            errors=Number(mDone[5]||0), blocked=Number(mDone[6]||0);
       const parts=[`+${added} / -${removed}`];
       if(mDone[3]) parts.push(`skipped=${skipped}`);
       if(mDone[4]) parts.push(`unresolved=${unresolved}`);
       if(mDone[5]) parts.push(`errors=${errors}`);
+      if (mDone[6] != null) parts.push(`blocked=${blocked}`);
       return block("complete",`${ICON.complete} Sync complete`, parts.join(" · "));
     }
     const mSched1=t.match(/^\s*(?:\[?INFO]?)\s*\[?SCHED]?\s*scheduler\s+(started|stopped|refreshed)\s*\((enabled|disabled)\)/i);
@@ -395,11 +401,28 @@
               const meta=Object.entries(ev).filter(([k])=>!["event","msg"].includes(k)).map(([k,v])=>`${k}=${v}`).join(", ");
               el.insertAdjacentHTML("beforeend", block("plan", `🐞 ${esc(ev.msg||"debug")}`, meta, "cf-muted"));
               trimRows(el);
+              return;
             }else if(String(ev.msg)==="blocked.counts"){
               const n=Number(ev.blocked_total||ev.total||0);
-              if(n>0){ el.insertAdjacentHTML("beforeend", block("plan", `🚫 Blocked: ${n}`, "")); trimRows(el); }
+              if(n>0){
+                el.insertAdjacentHTML("beforeend", block("plan", `🚫 Blocked: ${n}`, ""));
+                trimRows(el);
+              }
+              return;
+            }else if(String(ev.msg)==="blocked.manual"){
+              const n = Number(ev.blocked_items ?? ev.blocked_keys ?? (Array.isArray(ev.blocked_keys) ? ev.blocked_keys.length : 0) ?? 0);
+              if(n > 0){
+                const meta = [
+                  ev.feature ? `feature=${esc(cap(ev.feature))}` : "",
+                  ev.pair ? `pair=${esc(ev.pair)}` : ""
+                ].filter(Boolean).join(" · ");
+                el.insertAdjacentHTML("beforeend", block("plan", `🚫 Blocked: ${n}`, meta || "manual", "cf-pop"));
+                trimRows(el);
+              }
+              return;
             }
-            return;
+
+            return; 
           }
 
           if(ev.event==="snapshot:progress"){ updateProgressRow(el,ev,{final:ev.final===true}); trimRows(el); return; }

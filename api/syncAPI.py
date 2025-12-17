@@ -264,7 +264,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     _sync_progress_ui(f"SYNC start: orchestrator pairs run_id={run_id}")
 
     def _totals_from_log(buf: list[str]) -> dict:
-        t = {"attempted": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+        t = {"attempted": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "blocked": 0}
         for line in buf or []:
             s = strip_ansi(line).strip()
             if not s.startswith("{"):
@@ -273,6 +273,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 o = json.loads(s)
             except Exception:
                 continue
+
             ev = str(o.get("event") or "")
             if ev == "apply:add:done":
                 t["attempted"] += int(o.get("attempted", 0))
@@ -280,12 +281,24 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 t["unresolved"] += int(o.get("unresolved", 0))
                 t["errors"] += int(o.get("errors", 0))
                 t["added"] += int(o.get("added", o.get("count", 0)) or 0)
+
             elif ev == "apply:remove:done":
                 t["attempted"] += int(o.get("attempted", 0))
                 t["skipped"] += int(o.get("skipped", 0))
                 t["unresolved"] += int(o.get("unresolved", 0))
                 t["errors"] += int(o.get("errors", 0))
                 t["removed"] += int(o.get("removed", o.get("count", 0)) or 0)
+
+            elif ev == "debug":
+                msg = str(o.get("msg") or "")
+                if msg == "manual.blocks":
+                    t["blocked"] += int(o.get("adds_blocked", 0) or 0) + int(o.get("removes_blocked", 0) or 0)
+                elif msg == "blocked.manual":
+                    t["blocked"] += int(o.get("blocked_items", o.get("blocked_keys", 0)) or 0)
+
+            elif ev == "run:done":
+                t["blocked"] = max(t["blocked"], int(o.get("blocked", 0) or 0))
+
         return t
 
     try:
@@ -365,11 +378,14 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         skipped = _merge_total("skipped")
         unresolved = _merge_total("unresolved")
         errors = _merge_total("errors")
-
+        blocked = _merge_total("blocked")
+        extra = f", Total blocked: {blocked}"
+        
         _sync_progress_ui(
             f"[i] Done. Total added: {added}, Total removed: {removed}, "
-            f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}"
+            f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
         )
+
         _sync_progress_ui("[SYNC] exit code: 0")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")

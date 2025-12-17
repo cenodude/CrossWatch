@@ -21,12 +21,15 @@ from ._phantoms import PhantomGuard
 
 # Utility imports
 from ._pairs_utils import (
-    supports_feature as _supports_feature,
-    resolve_flags as _resolve_flags,
-    health_status as _health_status,
-    health_feature_ok as _health_feature_ok,
-    rate_remaining as _rate_remaining,
-    apply_verify_after_write_supported as _apply_verify_after_write_supported,
+    _supports_feature,
+    _resolve_flags,
+    _health_status,
+    _health_feature_ok,
+    _rate_remaining,
+    _apply_verify_after_write_supported,
+    manual_policy as _manual_policy,
+    merge_manual_adds as _merge_manual_adds,
+    filter_manual_block as _filter_manual_block,
 )
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
@@ -258,6 +261,7 @@ def run_one_way_feature(
     dst_cur = snaps.get(dst) or {}
 
     prev_state = ctx.state_store.load_state() or {}
+    manual_adds, manual_blocks = _manual_policy(prev_state, src, feature)
     prev_provs = (prev_state.get("providers") or {})
     prev_src = dict((((prev_provs.get(src, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
     prev_dst = dict((((prev_provs.get(dst, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
@@ -324,8 +328,12 @@ def run_one_way_feature(
     if feature == "ratings":
         src_idx  = _ratings_filter_index(src_idx,  fcfg)
         dst_full = _ratings_filter_index(dst_full, fcfg)
+        if manual_adds:
+            src_idx = _merge_manual_adds(src_idx, manual_adds)
         adds, removes = diff_ratings(src_idx, dst_full)
     else:
+        if manual_adds:
+            src_idx = _merge_manual_adds(src_idx, manual_adds)
         adds, removes = diff(src_idx, dst_full)
 
     src_alias = _alias_index(src_idx)
@@ -365,6 +373,24 @@ def run_one_way_feature(
         adds = apply_blocklist(
             ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
         )
+
+    manual_blocked = 0
+    if manual_blocks:
+        b_adds, b_rem = len(adds), len(removes)
+        adds = _filter_manual_block(adds, manual_blocks)
+        removes = _filter_manual_block(removes, manual_blocks)
+        manual_blocked = (b_adds - len(adds)) + (b_rem - len(removes))
+
+        if manual_blocked:
+            ctx.emit(
+                "debug",
+                msg="blocked.manual",
+                feature=feature,
+                pair=f"{src}-{dst}",
+                blocked_items=int(manual_blocked),
+                blocked_keys=int(len(manual_blocks)),
+            )
+            ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
 
     try:
         unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=True) or [])

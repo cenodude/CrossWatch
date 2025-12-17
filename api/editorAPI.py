@@ -25,6 +25,7 @@ from services.editor import (
 router = APIRouter(prefix="/api/editor", tags=["editor"])
 
 _STATE_PATH = Path("/config/state.json")
+_POLICY_PATH = Path("/config/state.manual.json")
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
     try:
@@ -37,12 +38,362 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 
 def _load_current_state() -> dict[str, Any]:
     if not _STATE_PATH.exists():
-        raise HTTPException(status_code=404, detail=f"Missing state file: {_STATE_PATH}")
+        return {}
     try:
         raw = json.loads(_STATE_PATH.read_text("utf-8"))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read state file: {e}")
     return raw if isinstance(raw, dict) else {}
+
+
+def _load_policy() -> dict[str, Any]:
+    if not _POLICY_PATH.exists():
+        return {"version": 1, "providers": {}}
+    try:
+        raw = json.loads(_POLICY_PATH.read_text("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read policy file: {e}")
+    if not isinstance(raw, dict):
+        return {"version": 1, "providers": {}}
+    prov = raw.get("providers")
+    if not isinstance(prov, dict):
+        raw["providers"] = {}
+    if "version" not in raw:
+        raw["version"] = 1
+    return raw
+
+
+def _policy_providers(raw: dict[str, Any]) -> list[str]:
+    providers = raw.get("providers") or {}
+    if not isinstance(providers, dict):
+        return []
+    return sorted([str(k) for k in providers.keys() if str(k).strip()])
+
+
+def _union_providers(state_raw: dict[str, Any], policy_raw: dict[str, Any]) -> list[str]:
+    a = _state_providers(state_raw)
+    b = _policy_providers(policy_raw)
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in a + b:
+        s = str(x).strip()
+        if not s:
+            continue
+        sl = s.lower()
+        if sl in seen:
+            continue
+        seen.add(sl)
+        out.append(s)
+    return out
+
+
+def _merge_blocks(a: list[str], b: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in (a or []) + (b or []):
+        s = str(x).strip()
+        if not s:
+            continue
+        sl = s.lower()
+        if sl in seen:
+            continue
+        seen.add(sl)
+        out.append(s)
+    return out
+
+
+def _load_policy_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[str]]:
+    raw = _load_policy()
+    providers = raw.get("providers") or {}
+    if not isinstance(providers, dict):
+        return {}, []
+    node = providers.get(provider)
+    if not isinstance(node, dict):
+        for k, v in providers.items():
+            if str(k).lower() == str(provider).lower() and isinstance(v, dict):
+                node = v
+                break
+    if not isinstance(node, dict):
+        return {}, []
+    f = node.get(kind) or {}
+    if not isinstance(f, dict):
+        return {}, []
+    blocks_raw = f.get("blocks") or []
+    blocks: list[str] = []
+    seen: set[str] = set()
+    if isinstance(blocks_raw, (list, tuple, set)):
+        for x in blocks_raw:
+            s = str(x).strip()
+            if not s:
+                continue
+            sl = s.lower()
+            if sl in seen:
+                continue
+            seen.add(sl)
+            blocks.append(s)
+    elif isinstance(blocks_raw, dict):
+        for k in blocks_raw.keys():
+            s = str(k).strip()
+            if not s:
+                continue
+            sl = s.lower()
+            if sl in seen:
+                continue
+            seen.add(sl)
+            blocks.append(s)
+
+    adds_raw = f.get("adds") or {}
+    adds_items = {}
+    if isinstance(adds_raw, dict):
+        items = adds_raw.get("items") or {}
+        if isinstance(items, dict):
+            adds_items = {str(k): v for k, v in items.items()}
+    return adds_items, blocks
+
+
+def _save_policy_manual(kind: Kind, provider: str, adds_items: dict[str, Any], blocks: list[str]) -> None:
+    raw = _load_policy()
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        raw["providers"] = providers
+
+    key = None
+    if provider in providers:
+        key = provider
+    else:
+        pl = str(provider).lower()
+        for k in providers.keys():
+            if str(k).lower() == pl:
+                key = str(k)
+                break
+    if key is None:
+        key = provider
+        providers[key] = {}
+
+    node = providers.get(key)
+    if not isinstance(node, dict):
+        node = {}
+        providers[key] = node
+
+    f = node.get(kind)
+    if not isinstance(f, dict):
+        f = {}
+        node[kind] = f
+
+    f["blocks"] = list(blocks or [])
+
+    adds = f.get("adds")
+    if not isinstance(adds, dict):
+        adds = {}
+        f["adds"] = adds
+    adds["items"] = dict(adds_items or {})
+
+    _atomic_write_json(_POLICY_PATH, raw)
+
+
+def _policy_from_state() -> dict[str, Any]:
+    raw = _load_current_state()
+    provs = raw.get("providers") or {}
+    if not isinstance(provs, dict):
+        return {"version": 1, "providers": {}}
+    out: dict[str, Any] = {"version": 1, "providers": {}}
+    dst = out["providers"]
+    for p, node in provs.items():
+        if not isinstance(node, dict):
+            continue
+        manual = node.get("manual")
+        if not isinstance(manual, dict):
+            continue
+        entry: dict[str, Any] = {}
+        for kind in ("watchlist", "history", "ratings"):
+            f = manual.get(kind)
+            if not isinstance(f, dict):
+                continue
+            blocks = f.get("blocks") or []
+            adds = f.get("adds") or {}
+            if not isinstance(adds, dict):
+                adds = {}
+            items = adds.get("items") or {}
+            if not isinstance(items, dict):
+                items = {}
+            if blocks or items:
+                entry[kind] = {"blocks": list(blocks) if isinstance(blocks, list) else list(blocks.keys()) if isinstance(blocks, dict) else [], "adds": {"items": dict(items)}}
+        if entry:
+            dst[str(p)] = entry
+    return out
+
+
+def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[str, Any]:
+    if mode == "replace":
+        base = {"version": 1, "providers": {}}
+        prov = src.get("providers") if isinstance(src, dict) else None
+        base["providers"] = prov if isinstance(prov, dict) else {}
+        return base
+
+    out = into if isinstance(into, dict) else {"version": 1, "providers": {}}
+    if "version" not in out:
+        out["version"] = 1
+    prov_out = out.get("providers")
+    if not isinstance(prov_out, dict):
+        prov_out = {}
+        out["providers"] = prov_out
+
+    prov_in = src.get("providers") if isinstance(src, dict) else None
+    if not isinstance(prov_in, dict):
+        return out
+
+    for p, node in prov_in.items():
+        if not isinstance(node, dict):
+            continue
+        target = prov_out.get(p)
+        if not isinstance(target, dict):
+            target = {}
+            prov_out[p] = target
+        for kind in ("watchlist", "history", "ratings"):
+            f = node.get(kind)
+            if not isinstance(f, dict):
+                continue
+            t = target.get(kind)
+            if not isinstance(t, dict):
+                t = {}
+                target[kind] = t
+
+            blocks_in = f.get("blocks") or []
+            blocks_in_list: list[str] = []
+            if isinstance(blocks_in, (list, tuple, set)):
+                blocks_in_list = [str(x) for x in blocks_in]
+            elif isinstance(blocks_in, dict):
+                blocks_in_list = [str(x) for x in blocks_in.keys()]
+
+            blocks_out = t.get("blocks") or []
+            blocks_out_list: list[str] = []
+            if isinstance(blocks_out, (list, tuple, set)):
+                blocks_out_list = [str(x) for x in blocks_out]
+            elif isinstance(blocks_out, dict):
+                blocks_out_list = [str(x) for x in blocks_out.keys()]
+
+            t["blocks"] = _merge_blocks(blocks_out_list, blocks_in_list)
+
+            adds_in = f.get("adds") or {}
+            items_in = adds_in.get("items") if isinstance(adds_in, dict) else None
+            if isinstance(items_in, dict):
+                adds_out = t.get("adds")
+                if not isinstance(adds_out, dict):
+                    adds_out = {}
+                    t["adds"] = adds_out
+                items_out = adds_out.get("items")
+                if not isinstance(items_out, dict):
+                    items_out = {}
+                merged = dict(items_out)
+                merged.update({str(k): v for k, v in items_in.items()})
+                adds_out["items"] = merged
+
+    return out
+
+
+def _mirror_policy_into_state() -> None:
+    if not _STATE_PATH.exists():
+        return
+    pol = _load_policy()
+    prov_pol = pol.get("providers")
+    if not isinstance(prov_pol, dict) or not prov_pol:
+        return
+
+    raw = _load_current_state()
+    provs = raw.get("providers")
+    if not isinstance(provs, dict):
+        provs = {}
+        raw["providers"] = provs
+
+    changed = False
+
+    def _find_key(name: str) -> str:
+        if name in provs:
+            return name
+        nl = name.lower()
+        for k in provs.keys():
+            if str(k).lower() == nl:
+                return str(k)
+        return name
+
+    for p, node in prov_pol.items():
+        if not isinstance(node, dict):
+            continue
+        key = _find_key(str(p))
+        cur = provs.get(key)
+        if not isinstance(cur, dict):
+            cur = {}
+            provs[key] = cur
+            changed = True
+        manual = cur.get("manual")
+        if not isinstance(manual, dict):
+            manual = {}
+            cur["manual"] = manual
+            changed = True
+        for kind in ("watchlist", "history", "ratings"):
+            f = node.get(kind)
+            if not isinstance(f, dict):
+                continue
+            t = manual.get(kind)
+            if not isinstance(t, dict):
+                t = {}
+                manual[kind] = t
+                changed = True
+
+            adds_in, blocks_in = _load_policy_manual(kind, str(p))
+            adds_state, blocks_state = _load_state_manual(kind, key)
+
+            merged_blocks = _merge_blocks(blocks_state, blocks_in)
+            if t.get("blocks") != merged_blocks:
+                t["blocks"] = merged_blocks
+                changed = True
+
+            adds = t.get("adds")
+            if not isinstance(adds, dict):
+                adds = {}
+                t["adds"] = adds
+                changed = True
+            items_out = adds.get("items")
+            if not isinstance(items_out, dict):
+                items_out = {}
+            merged_items = dict(items_out)
+            merged_items.update(adds_state)
+            merged_items.update(adds_in)
+            if items_out != merged_items:
+                adds["items"] = merged_items
+                changed = True
+
+    if changed:
+        _atomic_write_json(_STATE_PATH, raw)
+
+
+def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
+    prov = pol.get("providers") or {}
+    if not isinstance(prov, dict):
+        return {"providers": 0, "blocks": 0, "adds": 0}
+    pcount = 0
+    bcount = 0
+    acount = 0
+    for _, node in prov.items():
+        if not isinstance(node, dict):
+            continue
+        pcount += 1
+        for kind in ("watchlist", "history", "ratings"):
+            f = node.get(kind)
+            if not isinstance(f, dict):
+                continue
+            blocks = f.get("blocks") or []
+            if isinstance(blocks, (list, tuple, set)):
+                bcount += len(list(blocks))
+            elif isinstance(blocks, dict):
+                bcount += len(list(blocks.keys()))
+            adds = f.get("adds") or {}
+            if isinstance(adds, dict):
+                items = adds.get("items") or {}
+                if isinstance(items, dict):
+                    acount += len(items)
+    return {"providers": pcount, "blocks": bcount, "adds": acount}
 
 def _state_providers(raw: dict[str, Any]) -> list[str]:
     providers = raw.get("providers") or {}
@@ -88,6 +439,105 @@ def _save_state_items(kind: Kind, provider: str, items: dict[str, Any]) -> None:
     baseline["items"] = dict(items or {})
     _atomic_write_json(_STATE_PATH, raw)
 
+
+def _load_state_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[str]]:
+    raw = _load_current_state()
+    providers = raw.get("providers") or {}
+    if not isinstance(providers, dict):
+        return {}, []
+    node = providers.get(provider)
+    if not isinstance(node, dict):
+        for k, v in providers.items():
+            if str(k).lower() == str(provider).lower() and isinstance(v, dict):
+                node = v
+                break
+    if not isinstance(node, dict):
+        return {}, []
+    manual = node.get("manual") or {}
+    if not isinstance(manual, dict):
+        return {}, []
+    f = manual.get(kind) or {}
+    if not isinstance(f, dict):
+        return {}, []
+    blocks_raw = f.get("blocks") or []
+    blocks: list[str] = []
+    seen: set[str] = set()
+    if isinstance(blocks_raw, (list, tuple, set)):
+        for x in blocks_raw:
+            s = str(x).strip()
+            if not s:
+                continue
+            sl = s.lower()
+            if sl in seen:
+                continue
+            seen.add(sl)
+            blocks.append(s)
+    elif isinstance(blocks_raw, dict):
+        for k in blocks_raw.keys():
+            s = str(k).strip()
+            if not s:
+                continue
+            sl = s.lower()
+            if sl in seen:
+                continue
+            seen.add(sl)
+            blocks.append(s)
+
+    adds_raw = f.get("adds") or {}
+    adds_items = {}
+    if isinstance(adds_raw, dict):
+        items = adds_raw.get("items") or {}
+        if isinstance(items, dict):
+            adds_items = {str(k): v for k, v in items.items()}
+
+    return adds_items, blocks
+
+
+def _save_state_manual(kind: Kind, provider: str, adds_items: dict[str, Any], blocks: list[str]) -> None:
+    raw = _load_current_state()
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        raw["providers"] = providers
+
+    key = None
+    if provider in providers:
+        key = provider
+    else:
+        pl = str(provider).lower()
+        for k in providers.keys():
+            if str(k).lower() == pl:
+                key = str(k)
+                break
+    if key is None:
+        key = provider
+        providers[key] = {}
+
+    node = providers.get(key)
+    if not isinstance(node, dict):
+        node = {}
+        providers[key] = node
+
+    manual = node.get("manual")
+    if not isinstance(manual, dict):
+        manual = {}
+        node["manual"] = manual
+
+    f = manual.get(kind)
+    if not isinstance(f, dict):
+        f = {}
+        manual[kind] = f
+
+    f["blocks"] = list(blocks or [])
+
+    adds = f.get("adds")
+    if not isinstance(adds, dict):
+        adds = {}
+        f["adds"] = adds
+    adds["items"] = dict(adds_items or {})
+
+    _atomic_write_json(_STATE_PATH, raw)
+
 def _normalize_kind(val: str | None) -> Kind:
     k = (val or "watchlist").strip().lower()
     if k not in ("watchlist", "history", "ratings"):
@@ -96,8 +546,9 @@ def _normalize_kind(val: str | None) -> Kind:
 
 @router.get("/state/providers")
 def api_editor_state_providers() -> dict[str, Any]:
-    raw = _load_current_state()
-    return {"providers": _state_providers(raw)}
+    raw_state = _load_current_state()
+    raw_policy = _load_policy()
+    return {"providers": _union_providers(raw_state, raw_policy)}
 
 @router.get("")
 def api_editor_get_state(
@@ -123,8 +574,9 @@ def api_editor_get_state(
             "items": items,
         }
     if src in ("state", "current"):
-        raw = _load_current_state()
-        providers = _state_providers(raw)
+        raw_state = _load_current_state()
+        raw_policy = _load_policy()
+        providers = _union_providers(raw_state, raw_policy)
         chosen = (provider or "").strip() or (providers[0] if providers else "")
         if not chosen:
             return {
@@ -135,11 +587,28 @@ def api_editor_get_state(
                 "ts": None,
                 "count": 0,
                 "items": {},
+                "manual_adds": {},
+                "manual_blocks": [],
             }
-        items = _load_state_items(k, chosen)
+
+        if _STATE_PATH.exists() and _POLICY_PATH.exists():
+            _mirror_policy_into_state()
+            raw_state = _load_current_state()
+
+        items = _load_state_items(k, chosen) if raw_state else {}
+        st_adds, st_blocks = _load_state_manual(k, chosen) if raw_state else ({}, [])
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen)
+
+        manual_adds = dict(st_adds or {})
+        manual_adds.update(dict(pol_adds or {}))
+        manual_blocks = _merge_blocks(st_blocks or [], pol_blocks or [])
+
         ts = None
         try:
-            ts = int(_STATE_PATH.stat().st_mtime)
+            if _STATE_PATH.exists():
+                ts = int(_STATE_PATH.stat().st_mtime)
+            elif _POLICY_PATH.exists():
+                ts = int(_POLICY_PATH.stat().st_mtime)
         except Exception:
             ts = None
         return {
@@ -150,6 +619,8 @@ def api_editor_get_state(
             "ts": ts,
             "count": len(items),
             "items": items,
+            "manual_adds": manual_adds,
+            "manual_blocks": manual_blocks,
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
 @router.get("/snapshots")
@@ -196,7 +667,35 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail="Missing provider for source=state")
-        _save_state_items(kind, provider, items)
+        blocks_raw = payload.get("blocks") or []
+        blocks: list[str] = []
+        seen: set[str] = set()
+        if isinstance(blocks_raw, (list, tuple, set)):
+            for x in blocks_raw:
+                s = str(x).strip()
+                if not s:
+                    continue
+                sl = s.lower()
+                if sl in seen:
+                    continue
+                seen.add(sl)
+                blocks.append(s)
+        elif isinstance(blocks_raw, dict):
+            for k in blocks_raw.keys():
+                s = str(k).strip()
+                if not s:
+                    continue
+                sl = s.lower()
+                if sl in seen:
+                    continue
+                seen.add(sl)
+                blocks.append(s)
+
+        _save_policy_manual(kind, provider, items, blocks)
+        if _STATE_PATH.exists():
+            _save_state_manual(kind, provider, items, blocks)
+        if _STATE_PATH.exists() and _POLICY_PATH.exists():
+            _mirror_policy_into_state()
         ts = None
         try:
             ts = int(_STATE_PATH.stat().st_mtime)
@@ -208,9 +707,51 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
             "source": "state",
             "provider": provider,
             "count": len(items),
+            "blocks": len(blocks),
             "ts": ts,
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
+
+@router.get("/state/manual/export")
+def api_editor_state_manual_export() -> StreamingResponse:
+    pol = _load_policy()
+    if _policy_stats(pol)["providers"] == 0:
+        pol = _policy_from_state()
+    data = json.dumps(pol, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=crosswatch-state-policy.json"},
+    )
+
+
+@router.post("/state/manual/import")
+async def api_editor_state_manual_import(
+    mode: str = Query("merge"),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    payload = await file.read()
+    try:
+        incoming = json.loads(payload.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(incoming, dict) or not isinstance(incoming.get("providers"), dict):
+        raise HTTPException(status_code=400, detail="Invalid policy format")
+
+    mode_n = str(mode or "merge").strip().lower()
+    if mode_n not in ("merge", "replace"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+
+    current = _load_policy()
+    merged = _merge_policy(current, incoming, mode_n)
+    _atomic_write_json(_POLICY_PATH, merged)
+
+    if _STATE_PATH.exists():
+        _mirror_policy_into_state()
+
+    stats = _policy_stats(merged)
+    return {"ok": True, "mode": mode_n, **stats}
+
 @router.get("/export")
 def api_editor_export() -> StreamingResponse:
     data = export_tracker_zip()

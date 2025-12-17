@@ -32,6 +32,9 @@ from ._pairs_utils import (
     health_feature_ok as _health_feature_ok,
     rate_remaining as _rate_remaining,
     apply_verify_after_write_supported as _apply_verify_after_write_supported,
+    manual_policy as _manual_policy,
+    merge_manual_adds as _merge_manual_adds,
+    filter_manual_block as _filter_manual_block,
 )
 
 try:
@@ -227,6 +230,9 @@ def _two_way_sync(
         except Exception:
             pass
 
+    manual_adds_A, manual_blocks_A = _manual_policy(prev_state, a, feature)
+    manual_adds_B, manual_blocks_B = _manual_policy(prev_state, b, feature)
+
     prev_provs = (prev_state.get("providers") or {})
     prevA = dict((((prev_provs.get(a, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
     prevB = dict((((prev_provs.get(b, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
@@ -339,6 +345,11 @@ def _two_way_sync(
 
     for k in list(obsA): A_eff.pop(k, None)
     for k in list(obsB): B_eff.pop(k, None)
+    
+    if manual_adds_A:
+        A_eff = _merge_manual_adds(A_eff, manual_adds_A)
+    if manual_adds_B:
+        B_eff = _merge_manual_adds(B_eff, manual_adds_B)
 
     def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
         m: dict[str, str] = {}
@@ -474,6 +485,34 @@ def _two_way_sync(
     if feature != "watchlist":
         add_to_A = apply_blocklist(ctx.state_store, add_to_A, dst=a, feature=feature, pair_key=pair_key, emit=emit)
         add_to_B = apply_blocklist(ctx.state_store, add_to_B, dst=b, feature=feature, pair_key=pair_key, emit=emit)
+        
+    manual_blocked = 0
+    # blocks apply to the DESTINATION provider
+    if manual_blocks_A:
+        pre_add, pre_rem = len(add_to_A), len(rem_from_A)
+        add_to_A = _filter_manual_block(add_to_A, manual_blocks_A)
+        rem_from_A = _filter_manual_block(rem_from_A, manual_blocks_A)
+        blk = (pre_add - len(add_to_A)) + (pre_rem - len(rem_from_A))
+        if blk:
+            emit("debug", msg="blocked.counts", feature=feature, dst=a, pair=f"{a}-{b}",
+                blocked_manual=int(blk), blocked_total=int(blk))
+        manual_blocked += blk
+
+    if manual_blocks_B:
+        pre_add, pre_rem = len(add_to_B), len(rem_from_B)
+        add_to_B = _filter_manual_block(add_to_B, manual_blocks_B)
+        rem_from_B = _filter_manual_block(rem_from_B, manual_blocks_B)
+        blk = (pre_add - len(add_to_B)) + (pre_rem - len(rem_from_B))
+        if blk:
+            emit("debug", msg="blocked.counts", feature=feature, dst=b, pair=f"{a}-{b}",
+                blocked_manual=int(blk), blocked_total=int(blk))
+        manual_blocked += blk
+
+    if manual_blocked:
+        try:
+            ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
+        except Exception:
+            pass
 
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
     use_phantoms = bool(bb.get("enabled") and bb.get("block_adds", True))

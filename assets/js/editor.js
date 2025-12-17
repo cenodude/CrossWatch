@@ -92,7 +92,9 @@ const css = `
 .cw-row-episode{background:rgba(108,92,231,.05)}
 .cw-row-deleted td{opacity:.4;text-decoration:line-through}
 
-.cw-title-cell{display:flex;align-items:center;gap:4px}
+.cw-title-cell{display:flex;flex-direction:column;align-items:stretch;gap:4px}
+.cw-title-row{display:flex;align-items:center;gap:4px}
+.cw-title-sub{font-size:12px;opacity:.75;line-height:1.1;padding-left:2px}
 .cw-title-cell input{flex:1 1 auto}
 .cw-title-search-btn{
   flex:0 0 auto;
@@ -616,9 +618,12 @@ const css = `
   if (!host) return;
 
   const state = {
-    source: "tracker",
+    source: "state",
     kind: "watchlist",
     snapshot: "",
+    baselineItems: {},
+    manualAdds: {},
+    manualBlocks: [],
     items: {},
     rows: [],
     filter: "",
@@ -638,6 +643,8 @@ const css = `
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw);
+      const sources = ["tracker", "state"];
+      if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
       const kinds = ["watchlist", "history", "ratings"];
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
@@ -734,6 +741,7 @@ const css = `
                   <button type="button" data-type="movie" class="cw-type-chip active">Movies</button>
                   <button type="button" data-type="show" class="cw-type-chip active">Shows</button>
                   <button type="button" data-type="episode" class="cw-type-chip active">Episodes</button>
+                  <button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked only</button>
                 </div>
               </div>
             </div>
@@ -829,6 +837,22 @@ const css = `
               </div>
             </div>
           </div>
+          <div class="ins-card" id="cw-state-backup-card">
+            <div class="ins-row">
+              <div class="ins-icon"><span class="material-symbol">backup</span></div>
+              <div class="ins-title">Policy Backup</div>
+            </div>
+            <div class="ins-row">
+              <div class="ins-kv" style="width:100%">
+                <label>Export / Import</label>
+                <div class="cw-backup-actions">
+                    <button id="cw-state-download" class="cw-btn" type="button">Download JSON</button>
+                    <button id="cw-state-upload" class="cw-btn" type="button">Import file</button>
+                    <input id="cw-state-upload-input" type="file" accept=".json" style="display:none">
+              </div>
+            </div>
+          </div>
+
         </aside>
       </div>
     </div>
@@ -862,9 +886,14 @@ const css = `
   const pageInfo = $("cw-page-info");
   const typeFilterWrap = $("cw-type-filter");
   const backupCard = $("cw-backup-card");
+  const blockedOnlyBtn = $("cw-blocked-only");
   const downloadBtn = $("cw-download");
   const uploadBtn = $("cw-upload");
   const uploadInput = $("cw-upload-input");
+  const stateBackupCard = $("cw-state-backup-card");
+  const stateDownloadBtn = $("cw-state-download");
+  const stateUploadBtn = $("cw-state-upload");
+  const stateUploadInput = $("cw-state-upload-input");
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
 
   let statusStickyUntil = 0;
@@ -905,6 +934,7 @@ const css = `
       const on = state.typeFilter[t] !== false;
       btn.classList.toggle("active", on);
     });
+    if (blockedOnlyBtn) blockedOnlyBtn.classList.toggle("active", !!state.blockedOnly);
   }
 
   syncKindUI();
@@ -919,6 +949,7 @@ const css = `
         snapshot: state.snapshot,
         filter: state.filter,
         typeFilter: state.typeFilter,
+        blockedOnly: state.blockedOnly,
         sortKey: state.sortKey,
         sortDir: state.sortDir,
       };
@@ -932,8 +963,28 @@ function syncSourceUI() {
   if (sourceSel) sourceSel.value = state.source;
   if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
   if (backupCard) backupCard.style.display = isState ? "none" : "";
-  const hint = $("cw-state-hint");
-  if (hint && isState) hint.style.display = "none";
+  if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
+  if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
+  if (!isState && state.blockedOnly) {
+    state.blockedOnly = false;
+    syncTypeFilterUI();
+    persistUIState();
+  }
+}
+
+function showStateHint(mode) {
+  if (!stateHint) return;
+  if (mode === "tracker") {
+    stateHint.innerHTML = "<strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.";
+    stateHint.style.display = "block";
+    return;
+  }
+  if (mode === "state") {
+    stateHint.innerHTML = "<strong>No state.json found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
+    stateHint.style.display = "block";
+    return;
+  }
+  stateHint.style.display = "none";
 }
 
 function setTag(mode, label) {
@@ -1138,6 +1189,11 @@ function setTag(mode, label) {
         }
         if (!allowed) return false;
       }
+
+      if (state.blockedOnly && state.source === "state") {
+        if (!(r.deleted && r._origin === "baseline")) return false;
+      }
+
       if (!q) return true;
       const parts = [
         r.key,
@@ -1167,9 +1223,11 @@ function setTag(mode, label) {
 
       const dateInput = document.createElement("input");
       dateInput.type = "date";
+      dateInput.disabled = locked;
 
       const timeInput = document.createElement("input");
       timeInput.type = "time";
+      timeInput.disabled = locked;
       timeInput.step = 60;
 
       const current = row.raw && row.raw.watched_at;
@@ -1705,6 +1763,7 @@ function setTag(mode, label) {
     const frag = document.createDocumentFragment();
     rows.forEach(row => {
       const tr = document.createElement("tr");
+      const locked = state.source === "state" && row._origin === "baseline";
       if (row.episode) tr.classList.add("cw-row-episode");
       if (row.deleted) tr.classList.add("cw-row-deleted");
 
@@ -1718,7 +1777,7 @@ function setTag(mode, label) {
       delBtn.type = "button";
       delBtn.className = "cw-btn cw-btn-del danger";
       delBtn.innerHTML = '<span class="material-symbol">delete</span>';
-      delBtn.title = "Delete row";
+      delBtn.title = locked ? (row.deleted ? "Unblock row" : "Block row") : "Delete row";
       delBtn.onclick = () => {
         row.deleted = !row.deleted;
         markChanged();
@@ -1729,6 +1788,8 @@ function setTag(mode, label) {
       const keyIn = document.createElement("input");
       keyIn.value = row.key || "";
       keyIn.className = "cw-key";
+      keyIn.disabled = locked;
+
       keyIn.oninput = e => {
         row.key = e.target.value;
         markChanged();
@@ -1747,6 +1808,10 @@ function setTag(mode, label) {
       const titleCell = document.createElement("div");
       titleCell.className = "cw-title-cell";
 
+      const titleRow = document.createElement("div");
+      titleRow.className = "cw-title-row";
+      titleCell.appendChild(titleRow);
+
       const titleIn = document.createElement("input");
       titleIn.value = row.title || "";
       titleIn.oninput = e => {
@@ -1754,7 +1819,7 @@ function setTag(mode, label) {
         row.raw.title = e.target.value || null;
         markChanged();
       };
-      titleCell.appendChild(titleIn);
+      titleRow.appendChild(titleIn);
 
       const searchBtn = document.createElement("button");
       searchBtn.type = "button";
@@ -1772,11 +1837,18 @@ function setTag(mode, label) {
           typeBtn,
         });
       };
-      titleCell.appendChild(searchBtn);
+      titleRow.appendChild(searchBtn);
+      if (((row.raw && row.raw.type) || row.type || "").toLowerCase() === "episode" && row.raw && row.raw.series_title) {
+        const sub = document.createElement("div");
+        sub.className = "cw-title-sub";
+        sub.textContent = row.raw.series_title;
+        titleCell.appendChild(sub);
+      }
       tr.appendChild(cell(titleCell));
 
       const yearIn = document.createElement("input");
       yearIn.value = row.year || "";
+      yearIn.disabled = locked;
       yearIn.oninput = e => {
         row.year = e.target.value;
         const v = e.target.value.trim();
@@ -1787,6 +1859,7 @@ function setTag(mode, label) {
 
       const imdbIn = document.createElement("input");
       imdbIn.value = row.imdb || "";
+      imdbIn.disabled = locked;
       imdbIn.oninput = e => {
         row.imdb = e.target.value;
         row.raw.ids = row.raw.ids || {};
@@ -1797,6 +1870,7 @@ function setTag(mode, label) {
 
       const tmdbIn = document.createElement("input");
       tmdbIn.value = row.tmdb || "";
+      tmdbIn.disabled = locked;
       tmdbIn.oninput = e => {
         row.tmdb = e.target.value;
         row.raw.ids = row.raw.ids || {};
@@ -1807,6 +1881,7 @@ function setTag(mode, label) {
 
       const traktIn = document.createElement("input");
       traktIn.value = row.trakt || "";
+      traktIn.disabled = locked;
       traktIn.oninput = e => {
         row.trakt = e.target.value;
         row.raw.ids = row.raw.ids || {};
@@ -1922,6 +1997,8 @@ async function loadSnapshots() {
       const data = await fetchJSON(`/api/editor/state/providers`);
       state.snapshots = Array.isArray(data.providers) ? data.providers : [];
       rebuildSnapshots();
+      if (!state.snapshots.length) showStateHint("state");
+      else showStateHint(null);
       return;
     }
     const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
@@ -2008,9 +2085,9 @@ async function loadSnapshots() {
       if (summaryStateFiles) summaryStateFiles.textContent = String(stateFiles);
       if (summarySnapshots) summarySnapshots.textContent = String(snaps);
 
-      if (stateHint) {
-        stateHint.style.display = (stateFiles === 0 && snaps === 0) ? "block" : "none";
-      }
+      if (stateFiles === 0 && snaps === 0) showStateHint("tracker");
+      else showStateHint(null);
+
     } catch (e) {
       console.error(e);
     }
@@ -2024,16 +2101,64 @@ async function loadSnapshots() {
       if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
       if (state.source === "state" && state.snapshot) params.set("provider", state.snapshot);
       const data = await fetchJSON(`/api/editor?${params.toString()}`);
-      state.items = data.items || {};
-      state.rows = buildRows(state.items);
+
+      if (data && data.ok === false) {
+        throw new Error(data.error || data.detail || "Load failed");
+      }
+
+      if (state.source === "state") {
+        state.baselineItems = data.items || {};
+        state.manualAdds = data.manual_adds || {};
+        state.manualBlocks = Array.isArray(data.manual_blocks) ? data.manual_blocks : [];
+        const merged = Object.assign({}, state.baselineItems || {});
+        for (const [k, v] of Object.entries(state.manualAdds || {})) {
+          if (!(k in merged)) merged[k] = v;
+        }
+        state.items = merged;
+        state.rows = buildRows(state.items);
+        const baselineKeys = new Set(Object.keys(state.baselineItems || {}));
+        const blocked = new Set(
+          (state.manualBlocks || [])
+            .map(x => String(x || "").trim())
+            .filter(Boolean)
+        );
+        for (const row of state.rows) {
+          row._origin = baselineKeys.has(row.key) ? "baseline" : "manual";
+          if (row._origin === "baseline") row.deleted = blocked.has(row.key);
+        }
+      } else {
+        state.items = data.items || {};
+        state.rows = buildRows(state.items);
+      }
       state.hasChanges = false;
       state.page = 0;
       renderRows();
+      
+      if (state.source === "state") {
+        const hasBaseline = state.baselineItems && Object.keys(state.baselineItems).length > 0;
+        const hasManual = state.manualAdds && Object.keys(state.manualAdds).length > 0;
+        const hasBlocks = Array.isArray(state.manualBlocks) && state.manualBlocks.length > 0;
+        showStateHint(hasBaseline || hasManual || hasBlocks ? null : "state");
+      } else {
+        showStateHint(null);
+      }
+
       setTag("warn", "Loaded");
     } catch (e) {
       console.error(e);
-      setTag("error", "Load failed");
-      setStatus(String(e));
+      const msg = String(e || "");
+      
+      if (state.source === "state" && (msg.includes("404") || /state\.json/i.test(msg) || /missing state/i.test(msg))) {
+        showStateHint("state");
+        state.items = {};
+        state.rows = [];
+        renderRows();
+        setTag("warn", "Missing state");
+        setStatus("");
+      } else {
+        setTag("error", "Load failed");
+        setStatus(msg);
+      }
     } finally {
       state.loading = false;
     }
@@ -2073,12 +2198,30 @@ async function loadSnapshots() {
     saveBtn.disabled = true;
     try {
       const items = {};
+      const blocks = [];
+      const seenBlocks = new Set();
       for (const row of state.rows) {
-        if (row.deleted) continue;
+        if (row.deleted) {
+          if (state.source === "state" && row._origin === "baseline") {
+            const k = (row.key || "").trim();
+            if (k) {
+              const kl = k.toLowerCase();
+              if (!seenBlocks.has(kl)) {
+                seenBlocks.add(kl);
+                blocks.push(k);
+              }
+            }
+          }
+          continue;
+        }
+
+        if (state.source === "state" && row._origin === "baseline") continue;
+
         const key = (row.key || "").trim();
         if (!key) continue;
-        const raw = Object.assign({}, row.raw);
-        const ids = Object.assign({}, raw.ids || {});
+
+        const raw = row.raw || {};
+        const ids = raw.ids || {};
         if (row.imdb) ids.imdb = row.imdb;
         if (row.tmdb) ids.tmdb = row.tmdb;
         if (row.trakt) ids.trakt = row.trakt;
@@ -2090,8 +2233,11 @@ async function loadSnapshots() {
         items[key] = raw;
       }
       const payload = { kind: state.kind, source: state.source, items };
-      if (state.source === "state") payload.provider = state.snapshot;
-      const res = await fetchJSON("/api/editor", {
+      if (state.source === "state") {
+        payload.provider = state.snapshot;
+        payload.blocks = blocks;
+      }
+const res = await fetchJSON("/api/editor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -2123,6 +2269,7 @@ async function loadSnapshots() {
       raw,
       deleted: false,
       episode: false,
+      _origin: state.source === "state" ? "manual" : "tracker",
     });
     state.page = 0;
     markChanged();
@@ -2172,6 +2319,16 @@ async function loadSnapshots() {
         if (enabledCount <= 1) return;
       }
       state.typeFilter[t] = !current;
+      syncTypeFilterUI();
+      state.page = 0;
+      persistUIState();
+      renderRows();
+    });
+  }
+
+  if (blockedOnlyBtn) {
+    blockedOnlyBtn.addEventListener("click", () => {
+      state.blockedOnly = !state.blockedOnly;
       syncTypeFilterUI();
       state.page = 0;
       persistUIState();
@@ -2325,6 +2482,80 @@ reloadBtn.addEventListener("click", async () => {
   });
 
   
+
+  if (stateDownloadBtn) {
+    stateDownloadBtn.addEventListener("click", async () => {
+      try {
+        setTag("warn", "Preparing download…");
+        const res = await fetch("/api/editor/state/manual/export", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "crosswatch-state-policy.json";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          a.remove();
+        }, 0);
+        setTag("warn", "Loaded");
+        if (window.cxToast) window.cxToast("Policy export downloaded");
+      } catch (e) {
+        console.error(e);
+        setTag("error", "Download failed");
+        setStatus(String(e));
+      }
+    });
+  }
+
+  if (stateUploadBtn && stateUploadInput) {
+    stateUploadBtn.addEventListener("click", () => {
+      stateUploadInput.click();
+    });
+
+    stateUploadInput.addEventListener("change", async () => {
+      const file = stateUploadInput.files && stateUploadInput.files[0];
+      if (!file) return;
+
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        setTag("warn", "Importing…");
+        setStatus("");
+        const res = await fetch("/api/editor/state/manual/import?mode=merge", { method: "POST", body: fd });
+        if (!res.ok) {
+          let msg = `Import failed: ${res.status}`;
+          try {
+            const err = await res.json();
+            if (err && err.detail) msg += ` – ${err.detail}`;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
+        const data = await res.json();
+        const parts = [];
+        if (data.providers != null) parts.push(`${data.providers} provider${data.providers === 1 ? "" : "s"}`);
+        if (data.blocks != null) parts.push(`${data.blocks} block${data.blocks === 1 ? "" : "s"}`);
+        if (data.adds != null) parts.push(`${data.adds} add${data.adds === 1 ? "" : "s"}`);
+
+        const msg = "Imported " + (parts.length ? parts.join(", ") : "policy");
+        if (window.cxToast) window.cxToast(msg);
+        setTag("ok", "Imported");
+        await loadSnapshots();
+        await loadState();
+      } catch (e) {
+        console.error(e);
+        setTag("error", "Import failed");
+        setStatus(String(e));
+      } finally {
+        try { stateUploadInput.value = ""; } catch (_) {}
+      }
+    });
+  }
+
+
 (async () => {
   syncSourceUI();
   setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
@@ -2334,4 +2565,3 @@ reloadBtn.addEventListener("click", async () => {
 })();
 
 })();
-

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Callable
 from typing import Any
 import importlib
+from collections.abc import Mapping as _Mapping
+from ..id_map import canonical_key as _ck, ID_KEYS
 
 def supports_feature(ops, feature: str) -> bool:
     try:
@@ -112,6 +114,94 @@ def pair_key(a: str, b: str, *, mode: str = "two-way", src: str | None = None, d
 
     A, B = str(a).upper(), str(b).upper()
     return "-".join(sorted([A, B]))
+
+def manual_policy(state: _Mapping[str, Any] | None, provider: str, feature: str) -> tuple[dict[str, Any], set[str]]:
+    st = state or {}
+    provs = st.get("providers") or {}
+    p = provs.get(str(provider).upper()) or provs.get(str(provider).lower()) or {}
+    feat_key = str(feature).lower()
+
+    f: Any = {}
+    manual = p.get("manual")
+    if isinstance(manual, _Mapping):
+        f = manual.get(feat_key) or manual.get(str(feature)) or {}
+    if not isinstance(f, _Mapping) or not f:
+        direct = p.get(feat_key) or p.get(str(feature)) or {}
+        if isinstance(direct, _Mapping):
+            f = direct
+
+    blocks_raw = f.get("blocks") or []
+    adds_raw = ((f.get("adds") or {}).get("items")) or {}
+
+    blocks: set[str] = set()
+    if isinstance(blocks_raw, (list, tuple, set)):
+        for x in blocks_raw:
+            s = str(x).strip()
+            if s:
+                blocks.add(s.lower())
+    elif isinstance(blocks_raw, dict):
+        for k in blocks_raw.keys():
+            s = str(k).strip()
+            if s:
+                blocks.add(s.lower())
+
+    adds: dict[str, Any] = {}
+    if isinstance(adds_raw, dict):
+        for k, v in adds_raw.items():
+            kk = str(k).strip()
+            if kk:
+                adds[kk] = v
+
+    return adds, blocks
+
+
+def merge_manual_adds(idx: dict[str, Any], adds: _Mapping[str, Any] | None) -> dict[str, Any]:
+    if not adds:
+        return dict(idx or {})
+    out = dict(idx or {})
+    for k, v in adds.items():
+        kk = str(k).strip()
+        if not kk:
+            continue
+        if kk not in out:
+            out[kk] = v
+    return out
+
+
+def filter_manual_block(items: list[dict[str, Any]] | None, blocked: set[str] | None) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    if not blocked:
+        return list(items)
+
+    blk = set(blocked)
+
+    def _hit(it: _Mapping[str, Any]) -> bool:
+        try:
+            if _ck(it).lower() in blk:
+                return True
+        except Exception:
+            pass
+
+        ids = it.get("ids") or {}
+        if isinstance(ids, _Mapping):
+            for k in ID_KEYS:
+                v = ids.get(k)
+                if v is None or str(v) == "":
+                    continue
+                if f"{str(k).lower()}:{str(v).lower()}" in blk:
+                    return True
+
+        t = str(it.get("title") or "").strip().lower()
+        y = it.get("year")
+        if t and y is not None:
+            tok = f"title:{t}|year:{str(y).strip()}"
+            if tok in blk:
+                return True
+
+        return False
+
+    return [it for it in items if not _hit(it)]
 
 _supports_feature = supports_feature
 _resolve_flags = resolve_flags
