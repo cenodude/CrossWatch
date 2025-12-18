@@ -800,19 +800,44 @@ async function showTab(n) {
         const base = new URL("/assets/js/watchlist.js", document.baseURI).href;
         const wlUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
 
-        try {
-          await import(/* @vite-ignore */ wlUrl);
-        } catch (_) {
-          await new Promise((resolve, reject) => {
-            const s = document.createElement("script");
-            s.type = "module";
-            s.src = wlUrl;
-            s.onload = resolve;
-            s.onerror = reject;
-            document.head.appendChild(s);
-          });
+      const loadClassic = (src) => new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+
+      const loadViaBlobModule = async (src) => {
+        const res = await fetch(src, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status} loading ${src}`);
+        const text = await res.text();
+
+        const head = text.slice(0, 200).toLowerCase();
+        if (head.includes("<!doctype") || head.includes("<html")) {
+          const err = new Error("watchlist.js was served as HTML (reverse-proxy fallback?)");
+          err.code = "WL_HTML_FALLBACK";
+          throw err;
         }
 
+        const blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
+        try {
+          await import(/* @vite-ignore */ blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      };
+
+      try {
+        await import(/* @vite-ignore */ wlUrl);
+      } catch (e1) {
+        try {
+          await loadViaBlobModule(wlUrl);
+        } catch (e2) {
+          await loadClassic(wlUrl);
+        }
+      }
         window.__watchlistLoaded = true;
       } else {
         if (window.Watchlist?.refresh) {
