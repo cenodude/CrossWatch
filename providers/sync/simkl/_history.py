@@ -97,6 +97,12 @@ def _dedupe_history_movies(out: dict[str, dict[str, Any]]) -> None:
 
     _log(f"deduped {len(drop_buckets)} movie buckets ({len(to_drop)} events)")
 
+def _safe_int(value: Any) -> int:
+    try:
+        n = int(value)
+        return n if n > 0 else 0
+    except Exception:
+        return 0
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
@@ -149,8 +155,34 @@ def _raw_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = _raw_show_ids(item)
-    return {k: show_ids[k] for k in ID_KEYS if show_ids.get(k)}
+    have = {k: show_ids[k] for k in ID_KEYS if show_ids.get(k)}
+    if have:
+        return have
 
+    raw_ids = item.get("ids")
+    ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+    guid = str(ids.get("guid") or "")
+
+    if guid.startswith("plex://show/"):
+        inferred: dict[str, Any] = {}
+        for k in ID_KEYS:
+            v = ids.get(k)
+            if v:
+                inferred[k] = v
+        if inferred:
+            adapter = item.get("_adapter")
+            if adapter:
+                resolved = _resolve_show_ids(adapter, item, inferred)
+                return resolved or inferred
+            return inferred
+
+    adapter = item.get("_adapter")
+    if adapter:
+        resolved = _resolve_show_ids(adapter, item, show_ids)
+        if resolved:
+            return resolved
+
+    return {}
 
 def _load_json(path: str) -> dict[str, Any]:
     try:
@@ -299,6 +331,35 @@ def _best_ids(obj: Mapping[str, Any]) -> dict[str, str]:
     ids = dict(obj.get("ids") or obj or {})
     return {k: str(ids[k]) for k in ("tvdb", "tmdb", "imdb", "simkl") if ids.get(k)}
 
+def _simkl_resolve_show_via_ids(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
+    params: dict[str, str] = {}
+    for key in ("imdb", "tvdb", "tmdb"):
+        value = ids.get(key)
+        if value:
+            params[key] = str(value)
+    if not params:
+        return {}
+    session = adapter.client.session
+    headers = _headers(adapter, force_refresh=True)
+    try:
+        resp = session.get(
+            f"{BASE}/search/id",
+            headers=headers,
+            params=params,
+            timeout=adapter.cfg.timeout,
+        )
+        if not resp.ok:
+            return {}
+        body = resp.json() or {}
+    except Exception:
+        return {}
+    candidate: Any = body[0] if isinstance(body, list) and body else body
+    if isinstance(candidate, Mapping):
+        show = candidate.get("show") if isinstance(candidate.get("show"), Mapping) else candidate
+        if isinstance(show, Mapping):
+            return _best_ids(show)
+    return {}
+
 
 def _simkl_search_show(adapter: Any, title: str, year: int | None) -> dict[str, str]:
     if not title or os.getenv("CW_SIMKL_AUTO_RESOLVE", "1") == "0":
@@ -387,7 +448,14 @@ def _simkl_resolve_show_via_episode_id(adapter: Any, item: Mapping[str, Any]) ->
 def _resolve_show_ids(adapter: Any, item: Mapping[str, Any], raw_show_ids: Mapping[str, Any]) -> dict[str, str]:
     have = {k: raw_show_ids[k] for k in ("tvdb", "tmdb", "imdb", "simkl") if raw_show_ids.get(k)}
     if have:
-        return {k: str(v) for k, v in have.items()}
+        out = {k: str(v) for k, v in have.items()}
+
+        if "simkl" not in out:
+            enriched = _simkl_resolve_show_via_ids(adapter, out)
+            if enriched.get("simkl"):
+                out["simkl"] = str(enriched["simkl"])
+        return out
+
     plex = raw_show_ids.get("plex")
     title = (
         item.get("series_title")
@@ -399,13 +467,20 @@ def _resolve_show_ids(adapter: Any, item: Mapping[str, Any], raw_show_ids: Mappi
     key = f"plex:{plex}" if plex else _norm_title(title)
     if key in _RESOLVE_CACHE:
         return _RESOLVE_CACHE[key]
+
     mapping = _load_show_map().get("map", {})
     if isinstance(mapping, Mapping) and key in mapping:
         cached = dict(mapping[key])
         _RESOLVE_CACHE[key] = cached
         return cached
-    year = item.get("series_year") or item.get("year")
-    year_int = year if isinstance(year, int) else None
+
+    year = item.get("series_year")
+    year_int: int | None = None
+    if isinstance(year, int):
+        year_int = year
+    elif isinstance(year, str) and year.isdigit():
+        year_int = int(year)
+
     found = _simkl_search_show(adapter, title, year_int)
     if not found:
         found = _simkl_resolve_show_via_episode_id(adapter, item)
@@ -504,9 +579,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if not show_ids:
                 continue
             for season in row.get("seasons") or []:
-                s_num = int((season or {}).get("number") or (season or {}).get("season") or 0)
-                for episode in season.get("episodes") or []:
-                    e_num = int((episode or {}).get("number") or (episode or {}).get("episode") or 0)
+                season = season if isinstance(season, Mapping) else {}
+                s_num = int((season.get("number") or season.get("season") or 0))
+                for episode in (season.get("episodes") or []):
+                    episode = episode if isinstance(episode, Mapping) else {}
+                    e_num = int((episode.get("number") or episode.get("episode") or 0))
                     watched_at = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
                     ts = _as_epoch(watched_at)
                     if not ts or not s_num or not e_num:
@@ -572,29 +649,33 @@ def _show_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     return {"ids": ids} if ids else None
 
 
-def _episode_add_entry(item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
-    s_num = int(item.get("season") or item.get("season_number") or 0)
-    e_num = int(item.get("episode") or item.get("episode_number") or 0)
-    watched_at = (item.get("watched_at") or item.get("watchedAt") or "").strip()
-    if not s_num or not e_num or not watched_at:
+def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
+    show_ids_raw = _show_ids_of_episode(item)
+    if not show_ids_raw:
         return None
-    show_ids_raw = _raw_show_ids(item)
-    adapter = item.get("_adapter") if isinstance(item, Mapping) else None
-    if adapter:
-        show_ids = _resolve_show_ids(adapter, item, show_ids_raw) or {
-            k: show_ids_raw.get(k) for k in ID_KEYS if show_ids_raw.get(k)
-        }
-    else:
-        show_ids = {k: show_ids_raw.get(k) for k in ID_KEYS if show_ids_raw.get(k)}
+    show_ids = {k: str(show_ids_raw[k]) for k in ID_KEYS if show_ids_raw.get(k)}
     if not show_ids:
         return None
-    show = {
-        "ids": show_ids,
-        "title": item.get("series_title") or item.get("title"),
-        "year": item.get("series_year") or item.get("year"),
-    }
-    return show, s_num, e_num, watched_at
 
+    s_num = _safe_int(item.get("season") or item.get("season_number"))
+    e_num = _safe_int(item.get("episode") or item.get("episode_number"))
+    watched_at = item.get("watched_at") or item.get("watchedAt")
+    if not s_num or not e_num or not isinstance(watched_at, str) or not watched_at:
+        return None
+
+    show: dict[str, Any] = {"ids": show_ids}
+
+    show_title = item.get("series_title") or item.get("title")
+    if isinstance(show_title, str) and show_title.strip():
+        show["title"] = show_title.strip()
+
+    series_year = item.get("series_year")
+    if isinstance(series_year, int):
+        show["year"] = series_year
+    elif isinstance(series_year, str) and series_year.isdigit():
+        show["year"] = int(series_year)
+
+    return show, s_num, e_num, watched_at
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     session = adapter.client.session
@@ -607,9 +688,25 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     thaw_keys: list[str] = []
     shadow_events: list[dict[str, Any]] = []
     items_list: list[Mapping[str, Any]] = list(items or [])
+
+    guid_eps = sum(
+        1
+        for it in items_list
+        if str((it.get("ids") or {}).get("guid") or "").startswith("plex://show/")
+    )
+    guid_mov = sum(
+        1
+        for it in items_list
+        if str((it.get("ids") or {}).get("guid") or "").startswith("plex://movie/")
+    )
+    _log(f"incoming items={len(items_list)} guid_eps={guid_eps} guid_movies={guid_mov}")
+
     for item in items_list:
         if isinstance(item, dict):
             item["_adapter"] = adapter
+
+    unresolved_eps_missing = 0
+
     for item in items_list:
         typ = str(item.get("type") or "").lower()
         if typ == "movie":
@@ -624,13 +721,16 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             else:
                 unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
             continue
+
         if typ == "episode":
-            packed = _episode_add_entry(item)
+            packed = _episode_add_entry(adapter, item)
             if not packed:
+                unresolved_eps_missing += 1
                 unresolved.append(
                     {"item": id_minimal(item), "hint": "missing_show_ids_or_s/e_or_watched_at"},
                 )
                 continue
+
             show_entry, s_num, e_num, watched_at = packed
             ids_key = json.dumps(show_entry["ids"], sort_keys=True)
             group = shows_with_eps.setdefault(
@@ -647,20 +747,29 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 season = {"number": s_num, "episodes": []}
                 group["seasons"].append(season)
             season["episodes"].append({"number": e_num, "watched_at": watched_at})
+
             thaw_keys.append(simkl_key_of(id_minimal(item)))
             ev = dict(id_minimal(item))
             ev["watched_at"] = watched_at
             shadow_events.append(ev)
             continue
+
         entry = _show_add_entry(item)
         if entry:
             shows_whole.append(entry)
             thaw_keys.append(simkl_key_of(id_minimal(item)))
         else:
             unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
+
+    _log(
+        f"prepared movies={len(movies)} shows_whole={len(shows_whole)} shows_with_eps={len(shows_with_eps)} "
+        f"unresolved_eps_missing={unresolved_eps_missing}",
+    )
+
     body: dict[str, Any] = {}
     if movies:
         body["movies"] = movies
+
     shows_payload: list[dict[str, Any]] = []
     if shows_whole:
         shows_payload.extend(shows_whole)
@@ -668,8 +777,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         shows_payload.extend(list(shows_with_eps.values()))
     if shows_payload:
         body["shows"] = shows_payload
+
     if not body:
         return 0, unresolved
+
     try:
         resp = session.post(URL_ADD, headers=headers, json=body, timeout=timeout)
         if 200 <= resp.status_code < 300:
@@ -688,9 +799,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             except Exception as exc:
                 _log(f"shadow.put skipped: {exc}")
             return ok, unresolved
+
         _log(f"ADD failed {resp.status_code}: {(resp.text or '')[:200]}")
     except Exception as exc:
         _log(f"ADD error: {exc}")
+
     for item in items_list:
         ids = _ids_of(item) or _show_ids_of_episode(item)
         watched_at = item.get("watched_at") or item.get("watchedAt") or None
@@ -704,7 +817,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 watched_at=watched_str,
             )
     return 0, unresolved
-
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     session = adapter.client.session

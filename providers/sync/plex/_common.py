@@ -1144,11 +1144,17 @@ def minimal_from_history_row(
                 if cur_sid and new_sid and not (cur_sid & new_sid):
                     overlap_ok = False
             has_ext = _has_ext_ids(nd.get("ids", {})) or (kind == "episode" and _has_ext_ids(nd.get("show_ids", {})))
+
             if overlap_ok and has_ext:
                 if _has_ext_ids(nd.get("ids", {})):
-                    m["ids"].update({k: v for k, v in nd["ids"].items() if v})
+                    nd_ids = {k: v for k, v in (nd.get("ids", {}) or {}).items() if v}
+                    m["ids"].update(nd_ids)
+                    if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})) and not _has_ext_ids(nd.get("show_ids", {})):
+                        m.setdefault("show_ids", {}).update({k: v for k, v in nd_ids.items() if k in ("imdb", "tmdb", "tvdb")})
+
                 if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
-                    m.setdefault("show_ids", {}).update({k: v for k, v in nd["show_ids"].items() if v})
+                    m.setdefault("show_ids", {}).update({k: v for k, v in (nd.get("show_ids", {}) or {}).items() if v})
+
                 if kind == "episode":
                     if m.get("season") is None:
                         m["season"] = nd.get("season")

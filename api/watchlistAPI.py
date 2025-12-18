@@ -291,6 +291,7 @@ def remove_from_plex_by_ids(
 
 
 # Route handlers
+@router.get("", include_in_schema=False)
 @router.get("/")
 def api_watchlist(
     overview: Literal["none", "short", "full"] = Query(
@@ -299,7 +300,7 @@ def api_watchlist(
     ),
     locale: str | None = Query(
         None,
-        description="Override metadata locale (e.g., 'nl-NL')",
+        description="Override metadata locale",
     ),
     limit: int = Query(
         0,
@@ -314,6 +315,7 @@ def api_watchlist(
         description="Cap enriched items",
     ),
 ) -> JSONResponse:
+
     try:
         from cw_platform.config_base import load_config
         from crosswatch import CACHE_DIR
