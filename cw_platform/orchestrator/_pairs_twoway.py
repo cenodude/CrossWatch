@@ -86,7 +86,7 @@ def _effective_library_whitelist(
 
     return []
 
-def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str, Any]:
+def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_unknown: bool = False) -> dict[str, Any]:
     if not libs or not idx:
         return dict(idx)
 
@@ -104,13 +104,14 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str
             or v.get("section_id")
             or v.get("sectionId")
         )
+
         if lid is None:
-            continue
-        try:
-            if str(lid).strip() in allowed:
+            if allow_unknown:
                 out[ck] = v
-        except Exception:
             continue
+
+        if str(lid).strip() in allowed:
+            out[ck] = v
 
     return out
 
@@ -279,15 +280,19 @@ def _two_way_sync(
     libs_A = _effective_library_whitelist(cfg, a, feature, fcfg)
     libs_B = _effective_library_whitelist(cfg, b, feature, fcfg)
 
+    allow_unknown_A = (str(a).upper() == "PLEX" and feature == "history")
+    allow_unknown_B = (str(b).upper() == "PLEX" and feature == "history")
+
     if libs_A:
-        prevA = _filter_index_by_libraries(prevA, libs_A)
-        A_cur = _filter_index_by_libraries(A_cur, libs_A)
-        A_eff = _filter_index_by_libraries(A_eff, libs_A)
+        prevA = _filter_index_by_libraries(prevA, libs_A, allow_unknown=allow_unknown_A)
+        A_cur = _filter_index_by_libraries(A_cur, libs_A, allow_unknown=allow_unknown_A)
+        A_eff = _filter_index_by_libraries(A_eff, libs_A, allow_unknown=allow_unknown_A)
 
     if libs_B:
-        prevB = _filter_index_by_libraries(prevB, libs_B)
-        B_cur = _filter_index_by_libraries(B_cur, libs_B)
-        B_eff = _filter_index_by_libraries(B_eff, libs_B)
+        prevB = _filter_index_by_libraries(prevB, libs_B, allow_unknown=allow_unknown_B)
+        B_cur = _filter_index_by_libraries(B_cur, libs_B, allow_unknown=allow_unknown_B)
+        B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_B)
+
 
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))

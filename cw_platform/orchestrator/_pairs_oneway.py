@@ -85,7 +85,7 @@ def _effective_library_whitelist(
 
     return []
 
-def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str, Any]:
+def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_unknown: bool = False) -> dict[str, Any]:
     if not libs or not idx:
         return dict(idx)
 
@@ -103,13 +103,14 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str]) -> dict[str
             or v.get("section_id")
             or v.get("sectionId")
         )
+
         if lid is None:
-            continue
-        try:
-            if str(lid).strip() in allowed:
+            if allow_unknown:
                 out[ck] = v
-        except Exception:
             continue
+
+        if str(lid).strip() in allowed:
+            out[ck] = v
 
     return out
 
@@ -303,15 +304,18 @@ def run_one_way_feature(
     libs_src: list[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
     libs_dst: list[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
 
+    allow_unknown_src = (str(src).upper() == "PLEX" and feature == "history")
+    allow_unknown_dst = (str(dst).upper() == "PLEX" and feature == "history")
+
     if libs_src:
-        prev_src = _filter_index_by_libraries(prev_src, libs_src)
-        src_cur = _filter_index_by_libraries(src_cur, libs_src)
-        eff_src = _filter_index_by_libraries(eff_src, libs_src)
+        prev_src = _filter_index_by_libraries(prev_src, libs_src, allow_unknown=allow_unknown_src)
+        src_cur  = _filter_index_by_libraries(src_cur,  libs_src, allow_unknown=allow_unknown_src)
+        eff_src  = _filter_index_by_libraries(eff_src,  libs_src, allow_unknown=allow_unknown_src)
 
     if libs_dst:
-        prev_dst = _filter_index_by_libraries(prev_dst, libs_dst)
-        dst_cur = _filter_index_by_libraries(dst_cur, libs_dst)
-        eff_dst = _filter_index_by_libraries(eff_dst, libs_dst)
+        prev_dst = _filter_index_by_libraries(prev_dst, libs_dst, allow_unknown=allow_unknown_dst)
+        dst_cur  = _filter_index_by_libraries(dst_cur,  libs_dst, allow_unknown=allow_unknown_dst)
+        eff_dst  = _filter_index_by_libraries(eff_dst,  libs_dst, allow_unknown=allow_unknown_dst)
 
     try:
         dst_sem = str((dst_ops.capabilities() or {}).get("index_semantics", "present")).lower()

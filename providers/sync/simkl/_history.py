@@ -159,28 +159,24 @@ def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     if have:
         return have
 
-    raw_ids = item.get("ids")
-    ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+    ids_raw = item.get("ids")
+    ids: dict[str, Any] = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
     guid = str(ids.get("guid") or "")
 
-    if guid.startswith("plex://show/"):
-        inferred: dict[str, Any] = {}
-        for k in ID_KEYS:
-            v = ids.get(k)
-            if v:
-                inferred[k] = v
-        if inferred:
-            adapter = item.get("_adapter")
-            if adapter:
-                resolved = _resolve_show_ids(adapter, item, inferred)
-                return resolved or inferred
-            return inferred
+    inferred = {k: ids[k] for k in ID_KEYS if ids.get(k)}
+    if inferred:
+        adapter = item.get("_adapter") if isinstance(item, Mapping) else None
+        if adapter:
+            resolved = _resolve_show_ids(adapter, item, inferred)
+            return resolved or {k: str(v) for k, v in inferred.items()}
+        return inferred
 
-    adapter = item.get("_adapter")
-    if adapter:
-        resolved = _resolve_show_ids(adapter, item, show_ids)
-        if resolved:
-            return resolved
+    if guid.startswith("plex://"):
+        adapter = item.get("_adapter") if isinstance(item, Mapping) else None
+        if adapter:
+            resolved = _resolve_show_ids(adapter, item, show_ids)
+            if resolved:
+                return resolved
 
     return {}
 
