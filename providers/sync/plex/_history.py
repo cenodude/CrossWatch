@@ -16,6 +16,8 @@ from ._common import (
     normalize as plex_normalize,
     minimal_from_history_row,
     server_find_rating_key_by_guid,
+    candidate_guids_from_ids,
+    sort_guid_candidates,
 )
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
@@ -370,7 +372,7 @@ def _iter_marked_watched_from_library(
                         continue
     return results
 
-# Index
+
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -388,22 +390,27 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         except Exception:
             return 0
 
-    acct_id = _int_or_zero(getattr(getattr(adapter, "client", None), "user_account_id", None)) or _int_or_zero(
-        _plex_cfg_get(adapter, "account_id", 0)
-    )
-    uname = str(
-        _plex_cfg_get(adapter, "username", "") or getattr(getattr(adapter, "client", None), "user_username", "") or ""
-    ).strip().lower()
+    cfg_acct_id = _int_or_zero(_plex_cfg_get(adapter, "account_id", 0))
+    cli_acct_id = _int_or_zero(getattr(getattr(adapter, "client", None), "user_account_id", None))
+    acct_id = cfg_acct_id or cli_acct_id
+
+    cfg_uname = str(_plex_cfg_get(adapter, "username", "") or "").strip().lower()
+    cli_uname = str(getattr(getattr(adapter, "client", None), "user_username", "") or "").strip().lower()
+    uname = cfg_uname or cli_uname
+
     allow = _allowed_history_sec_ids(adapter)
     rows: list[Any] = []
     try:
+        explicit_user = bool(cfg_acct_id or cfg_uname)
         kwargs: dict[str, Any] = {}
-        if acct_id:
-            kwargs["accountID"] = int(acct_id)
+        if cfg_acct_id:
+            kwargs["accountID"] = int(cfg_acct_id)
+        elif not explicit_user and cli_acct_id:
+            kwargs["accountID"] = int(cli_acct_id)
         if since is not None:
             kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
         rows = list(srv.history(**kwargs) or [])
-        if not rows and "accountID" in kwargs:
+        if not rows and "accountID" in kwargs and not explicit_user:
             _log("no rows with accountID → retry without account scope")
             kwargs.pop("accountID", None)
             rows = list(srv.history(**kwargs) or [])
@@ -434,16 +441,28 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             section_id = _row_section_id(entry)
             if section_id and section_id not in allow:
                 continue
-        account_id = getattr(entry, "accountID", None)
-        if acct_id:
+
+        entry_acct = getattr(entry, "accountID", None)
+
+        if cfg_acct_id:
             try:
-                if account_id and int(account_id) != int(acct_id):
+                if not entry_acct or int(entry_acct) != int(cfg_acct_id):
                     continue
             except Exception:
-                pass
-        else:
-            if uname and not _username_match(entry, uname):
                 continue
+        elif cfg_uname:
+            if not _username_match(entry, cfg_uname):
+                continue
+        elif cli_acct_id:
+            try:
+                if not entry_acct or int(entry_acct) != int(cli_acct_id):
+                    continue
+            except Exception:
+                continue
+        else:
+            if cli_uname and not _username_match(entry, cli_uname):
+                continue
+
         ts = (
             _as_epoch(getattr(entry, "viewedAt", None))
             or _as_epoch(getattr(entry, "viewed_at", None))
@@ -615,7 +634,32 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     except Exception:
         pass
 
-    include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", False))
+    include_marked_cfg = bool(_history_cfg_get(adapter, "include_marked_watched", False))
+
+    selected_acct_id = cfg_acct_id
+    selected_uname = cfg_uname
+    token_acct_id = cli_acct_id
+    token_uname = cli_uname
+
+    explicit_user = bool(selected_acct_id or selected_uname)
+    token_known = bool(token_acct_id or token_uname)
+
+    mismatch = False
+    if explicit_user and not token_known:
+        mismatch = True
+    elif explicit_user:
+        if selected_acct_id and token_acct_id and selected_acct_id != token_acct_id:
+            mismatch = True
+        elif selected_uname and token_uname and selected_uname != token_uname:
+            mismatch = True
+
+    include_marked = bool(include_marked_cfg and not mismatch)
+
+    if include_marked_cfg and mismatch:
+        _log(
+            f"include_marked_watched disabled: token user {token_acct_id or token_uname} != selected user {selected_acct_id or selected_uname}"
+        )
+
     if include_marked:
         try:
             base_keys: set[str] = set()
@@ -660,7 +704,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
     _log(
         f"index size: {len(out)} (ignored={ignored}, since={since}, scanned={total}, "
-        f"workers={workers}, unique={len(unique_rks)}, user={uname or acct_id})"
+        f"workers={workers}, unique={len(unique_rks)}, selected={acct_id or uname}, token_acct_id={cli_acct_id}, "
+        f"include_marked={include_marked})"
     )
     return out
 
@@ -803,24 +848,18 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     allow = _allowed_history_sec_ids(adapter)
     hits: list[Any] = []
 
-    session = getattr(srv, "_session", None)
-    try:
-        baseurl = srv.url("/").rstrip("/")
-    except Exception:
-        baseurl = ""
-
-    if ids and session and baseurl:
+    if ids:
         try:
-            rk_any = server_find_rating_key_by_guid(session, baseurl=baseurl, ids=ids)
+            guids = sort_guid_candidates(candidate_guids_from_ids({"ids": ids}))
+            rk_any = server_find_rating_key_by_guid(srv, guids)
         except Exception:
             rk_any = None
+
         if rk_any:
             try:
                 obj = srv.fetchItem(int(rk_any))
                 if obj:
-                    section_id = str(
-                        getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or ""
-                    )
+                    section_id = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
                     if not allow or not section_id or section_id in allow:
                         hits.append(obj)
             except Exception:
@@ -845,9 +884,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             mediatype = "episode" if is_episode else "movie"
             search_hits = srv.search(query_title, mediatype=mediatype) or []
             for obj in search_hits:
-                section_id = str(
-                    getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or ""
-                )
+                section_id = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
                 if allow and section_id and section_id not in allow:
                     continue
                 hits.append(obj)

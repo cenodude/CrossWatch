@@ -9,7 +9,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from ._common import normalize as plex_normalize, minimal_from_history_row
+from ._common import (
+    normalize as plex_normalize,
+    minimal_from_history_row,
+    server_find_rating_key_by_guid,
+    candidate_guids_from_ids,
+    sort_guid_candidates,
+)
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_ratings.unresolved.json"
@@ -34,7 +40,6 @@ def _emit(evt: dict[str, Any]) -> None:
         pass
 
 
-# Config helpers
 def _get_rating_workers(adapter: Any) -> int:
     try:
         cfg = getattr(adapter, "config", {}) or {}
@@ -71,7 +76,6 @@ def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     return default if v is None else v
 
 
-# Helpers for data normalization
 def _as_epoch(v: Any) -> int | None:
     if v is None:
         return None
@@ -118,12 +122,12 @@ def _norm_rating(v: Any) -> int | None:
         i = 10
     return i
 
+
 def _has_ext_ids(m: Mapping[str, Any]) -> bool:
     ids = (m.get("ids") if isinstance(m, Mapping) else None) or {}
     return bool(ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb"))
 
 
-# Unresolved storage helpers
 def _load_unresolved() -> dict[str, Any]:
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
@@ -176,10 +180,63 @@ def _is_frozen(it: Mapping[str, Any]) -> bool:
     return _event_key(it) in _load_unresolved()
 
 
-# Rating key resolution
+def _season_rk_from_show(show_obj: Any, season: Any) -> str | None:
+    try:
+        try:
+            s_target = int(season) if season is not None else None
+        except Exception:
+            s_target = season
+        if s_target is None:
+            return None
+        try:
+            seasons = show_obj.seasons() or []
+        except Exception:
+            seasons = []
+        for sn in seasons:
+            try:
+                idx = getattr(sn, "index", None)
+                if idx is not None and int(idx) == int(s_target):
+                    rk = getattr(sn, "ratingKey", None)
+                    return str(rk) if rk else None
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
+    try:
+        try:
+            s_target = int(season) if season is not None else None
+        except Exception:
+            s_target = season
+        try:
+            e_target = int(episode) if episode is not None else None
+        except Exception:
+            e_target = episode
+
+        try:
+            episodes = show_obj.episodes() or []
+        except Exception:
+            episodes = []
+        for ep in episodes:
+            try:
+                s_ok = s_target is None or getattr(ep, "parentIndex", None) == s_target or getattr(ep, "seasonNumber", None) == s_target
+                e_ok = e_target is None or getattr(ep, "index", None) == e_target
+                if s_ok and e_ok:
+                    rk = getattr(ep, "ratingKey", None)
+                    return str(rk) if rk else None
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     ids = ids_from(it)
-    srv = getattr(adapter.client, "server", None)
+    srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return None
 
@@ -209,6 +266,23 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     sec_types = ("show",) if (is_episode or is_season) else ("movie",)
 
     hits: list[Any] = []
+
+    if ids:
+        try:
+            guids = sort_guid_candidates(candidate_guids_from_ids({"ids": ids}))
+            rk_any = server_find_rating_key_by_guid(srv, guids)
+        except Exception:
+            rk_any = None
+        if rk_any:
+            try:
+                obj = srv.fetchItem(int(rk_any))
+                if obj:
+                    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
+                    if not allow or not sid or sid in allow:
+                        hits.append(obj)
+            except Exception:
+                pass
+
     for sec in adapter.libraries(types=sec_types) or []:
         sid = str(getattr(sec, "key", "")).strip()
         if allow and sid not in allow:
@@ -221,7 +295,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
 
     if not hits:
         try:
-            med = "episode" if is_episode else "movie"
+            med = "episode" if is_episode else ("season" if is_season else "movie")
             hs = srv.search(query_title, mediatype=med) or []
             for o in hs:
                 sid = str(getattr(o, "librarySectionID", "") or getattr(o, "sectionID", "") or "")
@@ -249,13 +323,46 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 e_ok = (episode is None) or (getattr(obj, "index", None) == episode)
                 if s_ok and e_ok:
                     sc += 2
-            mids = plex_normalize(obj).get("ids") or {}
+            if is_season:
+                s_ok = (season is None) or (
+                    getattr(obj, "index", None) == season or getattr(obj, "seasonNumber", None) == season
+                )
+                if s_ok:
+                    sc += 2
+            norm = plex_normalize(obj) or {}
+            mids = norm.get("ids") or {}
             for k in ("imdb", "tmdb", "tvdb"):
                 if k in mids and k in ids and mids[k] == ids[k]:
                     sc += 4
         except Exception:
             pass
         return sc
+
+    if is_episode:
+        ep_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "episode"]
+        if ep_hits:
+            best_ep = max(ep_hits, key=_score)
+            rk2 = getattr(best_ep, "ratingKey", None)
+            return str(rk2) if rk2 else None
+        show_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "show"]
+        for show in show_hits:
+            rk2 = _episode_rk_from_show(show, season, episode)
+            if rk2:
+                return rk2
+        return None
+
+    if is_season:
+        sn_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "season"]
+        if sn_hits:
+            best_sn = max(sn_hits, key=_score)
+            rk2 = getattr(best_sn, "ratingKey", None)
+            return str(rk2) if rk2 else None
+        show_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "show"]
+        for show in show_hits:
+            rk2 = _season_rk_from_show(show, season)
+            if rk2:
+                return rk2
+        return None
 
     best = max(hits, key=_score)
     rk2 = getattr(best, "ratingKey", None)
@@ -272,7 +379,6 @@ def _rate(srv: Any, rating_key: Any, rating_1to10: int) -> bool:
         return False
 
 
-# Per-item fetch (plexapi)
 def _fetch_one_rating(srv: Any, rk: str) -> dict[str, Any] | None:
     try:
         it = srv.fetchItem(int(rk))
@@ -348,9 +454,8 @@ def _fetch_one_rating(srv: Any, rk: str) -> dict[str, Any] | None:
     return m
 
 
-# Index
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
-    srv = getattr(adapter.client, "server", None)
+    srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         raise RuntimeError("PLEX server not bound")
 
@@ -449,7 +554,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                             "rk": rk,
                         }
                     )
-                    fb = minimal_from_history_row(m, allow_discover=True)
+                    try:
+                        fb = minimal_from_history_row(m, allow_discover=True)
+                    except Exception:
+                        fb = None
                     ids_fb: dict[str, Any] = {}
                     show_ids_fb: dict[str, Any] = {}
                     if isinstance(fb, Mapping):
@@ -478,8 +586,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
                 if typ in ("movie", "show", "season", "episode"):
                     m["type"] = typ
-                out[canonical_key(m)] = m
-                added += 1
+                k = canonical_key(m)
+                if k:
+                    out[k] = m
+                    added += 1
 
             _tick()
             if limit is not None and added >= limit:
@@ -501,7 +611,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         f"index size: {len(out)} (added={added}, scanned={grand_total}, fb_try={fb_try}, fb_ok={fb_ok})"
     )
 
-    # additional debug snapshot - needs to be enabled manually
     if os.getenv("CW_PLEX_SNAPSHOT_DEBUG"):
         try:
             from pathlib import Path
@@ -528,6 +637,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     return out
 
+
 def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
     try:
         it = srv.fetchItem(int(rating_key))
@@ -536,12 +646,11 @@ def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
     return _norm_rating(getattr(it, "userRating", None))
 
 
-# Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    srv = getattr(adapter.client, "server", None)
+    srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         unresolved: list[dict[str, Any]] = []
-        for it in items:
+        for it in items or []:
             _freeze_item(it, action="add", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
         _log("add skipped: no PMS bound")
@@ -550,7 +659,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     ok = 0
     unresolved: list[dict[str, Any]] = []
 
-    for it in items:
+    for it in items or []:
         if _is_frozen(it):
             _log(f"skip frozen: {id_minimal(it).get('title')}")
             continue
@@ -583,12 +692,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     _log(f"add done: +{ok} / unresolved {len(unresolved)}")
     return ok, unresolved
 
-# Remove
+
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    srv = getattr(adapter.client, "server", None)
+    srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         unresolved: list[dict[str, Any]] = []
-        for it in items:
+        for it in items or []:
             _freeze_item(it, action="remove", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
         _log("remove skipped: no PMS bound")
@@ -597,7 +706,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     ok = 0
     unresolved: list[dict[str, Any]] = []
 
-    for it in items:
+    for it in items or []:
         if _is_frozen(it):
             _log(f"skip frozen: {id_minimal(it).get('title')}")
             continue
