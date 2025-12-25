@@ -13,6 +13,12 @@ from pathlib import Path
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+from cw_platform.config_base import load_config
+from cw_platform.id_map import canonical_key, minimal
+from cw_platform.modules_registry import load_sync_ops
+from cw_platform.orchestrator._snapshots import module_checkpoint
+from cw_platform.orchestrator._state_store import StateStore
+
 from services.editor import (
     Kind,
     export_tracker_zip,
@@ -770,3 +776,222 @@ async def api_editor_import(file: UploadFile = File(...)) -> dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, **stats}
+
+
+
+def _import_enabled() -> bool:
+    try:
+        cfg = load_config()
+        rt = cfg.get("runtime") or {}
+        return bool(
+            rt.get("debug_mods")
+            or rt.get("debug")
+            or os.environ.get("CW_DEBUG")
+            or os.environ.get("CW_DEV_IMPORT")
+        )
+    except Exception:
+        return bool(os.environ.get("CW_DEBUG") or os.environ.get("CW_DEV_IMPORT"))
+
+
+def _state_store() -> StateStore:
+    return StateStore(_STATE_PATH.parent)
+
+
+def _rebuild_watchlist_wall(state: dict[str, Any]) -> None:
+    providers = state.get("providers")
+    if not isinstance(providers, dict):
+        return
+
+    wall: list[dict[str, Any]] = []
+    for _, fmap in providers.items():
+        fentry = (fmap or {}).get("watchlist") or {}
+        base = ((fentry.get("baseline") or {}).get("items") or {})
+        if not isinstance(base, dict):
+            continue
+        for v in base.values():
+            try:
+                wall.append(minimal(v))
+            except Exception:
+                wall.append(dict(v) if isinstance(v, dict) else {"title": str(v)})
+
+    seen: set[str] = set()
+    uniq: list[dict[str, Any]] = []
+    for it in wall:
+        try:
+            k = canonical_key(it)
+        except Exception:
+            k = str(it.get("title") or "")
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        uniq.append(it)
+    state["wall"] = uniq
+
+
+@router.get("/state/import/providers")
+def api_editor_state_import_providers() -> dict[str, Any]:
+    if not _import_enabled():
+        return {"enabled": False, "providers": []}
+
+    cfg = load_config()
+    names = ["PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST"]
+    out: list[dict[str, Any]] = []
+
+    for name in names:
+        ops = load_sync_ops(name)
+        if not ops:
+            continue
+        try:
+            label = str(getattr(ops, "label", lambda: name)())
+        except Exception:
+            label = name
+        try:
+            feats = dict(getattr(ops, "features", lambda: {})())
+        except Exception:
+            feats = {}
+        try:
+            configured = bool(getattr(ops, "is_configured", lambda _cfg: True)(cfg))
+        except Exception:
+            configured = False
+
+        out.append(
+            {
+                "name": name,
+                "label": label or name,
+                "configured": configured,
+                "features": {
+                    "watchlist": bool(feats.get("watchlist")),
+                    "history": bool(feats.get("history")),
+                    "ratings": bool(feats.get("ratings")),
+                },
+            }
+        )
+
+    out.sort(key=lambda x: (not x.get("configured"), x.get("name") or ""))
+    return {"enabled": True, "providers": out}
+
+
+@router.post("/state/import")
+def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if not _import_enabled():
+        raise HTTPException(status_code=403, detail="State import is disabled (enable runtime.debug_mods).")
+
+    provider = str((payload or {}).get("provider") or "").strip().upper()
+    feats_in = (payload or {}).get("features")
+    mode = str((payload or {}).get("mode") or "replace").strip().lower()
+    dry_run = bool((payload or {}).get("dry_run") or False)
+
+    if not provider:
+        raise HTTPException(status_code=400, detail="Missing provider")
+    if mode not in ("replace", "merge"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+
+    features: list[str]
+    if isinstance(feats_in, list):
+        features = [str(x).strip().lower() for x in feats_in if str(x).strip()]
+    else:
+        features = ["watchlist", "history", "ratings"]
+
+    allowed = {"watchlist", "history", "ratings"}
+    features = [f for f in features if f in allowed]
+    if not features:
+        raise HTTPException(status_code=400, detail="No features selected")
+
+    cfg = load_config()
+    ops = load_sync_ops(provider)
+    if not ops:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+    if hasattr(ops, "is_configured"):
+        try:
+            if not ops.is_configured(cfg):
+                raise HTTPException(status_code=400, detail=f"Provider not configured: {provider}")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Provider not configured: {provider}")
+
+    try:
+        feats_supported = dict(getattr(ops, "features", lambda: {})())
+    except Exception:
+        feats_supported = {}
+
+    store = _state_store()
+    state = store.load_state() if not dry_run else {"providers": {}, "wall": [], "last_sync_epoch": None}
+
+    providers_block = state.get("providers")
+    if not isinstance(providers_block, dict):
+        providers_block = {}
+        state["providers"] = providers_block
+
+    prov_node = providers_block.setdefault(provider, {})
+    if not isinstance(prov_node, dict):
+        prov_node = {}
+        providers_block[provider] = prov_node
+
+    imported: dict[str, Any] = {"provider": provider, "mode": mode, "dry_run": dry_run, "features": {}} 
+
+    import time as _t
+
+    for feature in features:
+        if not bool(feats_supported.get(feature)):
+            imported["features"][feature] = {"ok": False, "skipped": True, "reason": "feature disabled"}
+            continue
+
+        t0 = _t.time()
+        try:
+            idx = dict(ops.build_index(cfg, feature=feature) or {})
+        except Exception as e:
+            imported["features"][feature] = {"ok": False, "error": str(e)}
+            continue
+
+        items_min = {}
+        for k, v in idx.items():
+            try:
+                items_min[str(k)] = minimal(v)
+            except Exception:
+                items_min[str(k)] = dict(v) if isinstance(v, dict) else {"title": str(v)}
+
+        try:
+            cp = module_checkpoint(ops, cfg, feature)
+        except Exception:
+            cp = None
+
+        imported["features"][feature] = {
+            "ok": True,
+            "count": len(items_min),
+            "checkpoint": cp,
+            "elapsed_ms": int((_t.time() - t0) * 1000),
+        }
+
+        if dry_run:
+            continue
+
+        feat_node = prov_node.setdefault(feature, {})
+        if not isinstance(feat_node, dict):
+            feat_node = {}
+            prov_node[feature] = feat_node
+
+        base_node = feat_node.setdefault("baseline", {})
+        if not isinstance(base_node, dict):
+            base_node = {}
+            feat_node["baseline"] = base_node
+
+        if mode == "merge":
+            cur = base_node.get("items")
+            cur_items = dict(cur) if isinstance(cur, dict) else {}
+            for k, v in items_min.items():
+                cur_items[k] = v
+            base_node["items"] = cur_items
+        else:
+            base_node["items"] = items_min
+
+        feat_node["checkpoint"] = cp
+
+    if not dry_run:
+        state["last_sync_epoch"] = int(_t.time())
+        if "watchlist" in features:
+            _rebuild_watchlist_wall(state)
+        store.save_state(state)
+
+    return {"ok": True, **imported}

@@ -615,6 +615,11 @@
 .cw-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cw-bulk-count{font-size:12px;opacity:.85}
 
+.cw-btn.sm{padding:6px 10px;font-size:12px;min-height:30px}
+.cw-progress{width:100%;height:8px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10)}
+.cw-progress>span{display:block;height:100%;width:40%;background:linear-gradient(90deg,rgba(129,140,248,.15),rgba(129,140,248,.85),rgba(34,193,195,.85),rgba(129,140,248,.15));animation:cw-progress-move 1.2s linear infinite}
+@keyframes cw-progress-move{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+
 @media (max-width:1100px){
   .cw-wrap{grid-template-columns:minmax(0,1fr)}
 }
@@ -650,6 +655,11 @@
     loading: false,
     saving: false,
     snapshots: [],
+    importEnabled: false,
+    importProviders: [],
+    importProvider: "",
+    importMode: "replace",
+    importFeatures: { watchlist: true, history: true, ratings: true },
     hasChanges: false,
     page: 0,
     blockedOnly: false,
@@ -748,6 +758,7 @@
               <div class="ins-icon"><span class="material-symbol">tune</span></div>
               <div class="ins-title">Editor filters</div>
             </div>
+
             <div class="ins-row">
               <div class="ins-kv" style="width:100%">
                 <label>Data</label>
@@ -769,6 +780,7 @@
                 </select>
               </div>
             </div>
+
             <div class="ins-row">
               <div class="ins-kv" style="width:100%">
                 <label>Types</label>
@@ -782,18 +794,55 @@
               </div>
             </div>
 
-          <div class="ins-row" id="cw-state-bulk" style="display:none">
-            <div style="display:flex;flex-direction:column;gap:8px;width:100%">
-              <div style="font-weight:700">Bulk policy</div>
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                <select id="cw-bulk-type" class="cw-select" style="min-width:160px"></select>
-                <button id="cw-bulk-block-type" class="cw-btn danger" type="button">Block all</button>
-                <button id="cw-bulk-unblock-type" class="cw-btn" type="button">Unblock all</button>
-              </div>
-              <div class="cw-status-text">Current State only • affects baseline items</div>
+            <div class="ins-row" id="cw-state-bulk" style="display:none">
+              <details class="cw-collapse" id="cw-bulk-details" style="width:100%">
+                <summary style="cursor:pointer;font-weight:700;user-select:none">Bulk policy</summary>
+                <div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px">
+                  <select id="cw-bulk-type" class="cw-select" style="width:100%"></select>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button>
+                    <button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button>
+                  </div>
+                  <div class="cw-status-text">Current State only • affects baseline items</div>
+                </div>
+              </details>
             </div>
-          </div>
 
+            <div class="ins-row" id="cw-import-row" style="display:none">
+              <details class="cw-collapse" id="cw-import-details" style="width:100%">
+                <summary style="cursor:pointer;font-weight:700;user-select:none">Import datasets</summary>
+
+                <div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px">
+                  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                    <select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select>
+                    <select id="cw-import-mode" class="cw-select" style="min-width:180px">
+                      <option value="replace">Replace baseline</option>
+                      <option value="merge">Merge (keep old)</option>
+                    </select>
+                  </div>
+
+                  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                    <label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
+                      <input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist
+                    </label>
+                    <label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
+                      <input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History
+                    </label>
+                    <label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
+                      <input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings
+                    </label>
+
+                    <span style="flex:1 1 auto"></span>
+                    <button id="cw-import-run" class="cw-btn sm" type="button">Import</button>
+                  </div>
+
+                  <div id="cw-import-progress" style="display:none">
+                    <div class="cw-progress"><span></span></div>
+                    <div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div>
+                  </div>
+                </div>
+              </details>
+            </div>
           </div>
 
           <div class="ins-card">
@@ -954,6 +1003,19 @@
   const stateDownloadBtn = $("cw-state-download");
   const stateUploadBtn = $("cw-state-upload");
   const stateUploadInput = $("cw-state-upload-input");
+
+  const importRow = $("cw-import-row");
+  const importProviderSel = $("cw-import-provider");
+  const importWatchlistCb = $("cw-import-watchlist");
+  const importHistoryCb = $("cw-import-history");
+  const importRatingsCb = $("cw-import-ratings");
+  const importModeSel = $("cw-import-mode");
+  const importRunBtn = $("cw-import-run");
+  const importWatchlistWrap = $("cw-import-watchlist-wrap");
+  const importHistoryWrap = $("cw-import-history-wrap");
+  const importRatingsWrap = $("cw-import-ratings-wrap");
+  const importProgressWrap = $("cw-import-progress");
+  const importProgressText = $("cw-import-progress-text");
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
 
   const selectPage = $("cw-select-page");
@@ -1033,6 +1095,165 @@
     if (opts.some(o => o.v === current)) bulkTypeSel.value = current;
     else bulkTypeSel.value = opts[0] ? opts[0].v : "movie";
   }
+
+  function setImportBusy(on, message) {
+    if (importProgressWrap) importProgressWrap.style.display = on ? "" : "none";
+    if (importProgressText) importProgressText.textContent = message || "";
+    const disabled = !!on;
+    if (importRunBtn) importRunBtn.disabled = disabled;
+    if (importProviderSel) importProviderSel.disabled = disabled;
+    if (importModeSel) importModeSel.disabled = disabled;
+    if (importWatchlistCb) importWatchlistCb.disabled = disabled || importWatchlistCb.disabled;
+    if (importHistoryCb) importHistoryCb.disabled = disabled || importHistoryCb.disabled;
+    if (importRatingsCb) importRatingsCb.disabled = disabled || importRatingsCb.disabled;
+  }
+
+  function syncImportUI() {
+    if (!importRow) return;
+    const show = state.source === "state" && state.importEnabled;
+    importRow.style.display = show ? "" : "none";
+    if (!show) return;
+
+    if (importModeSel) importModeSel.value = state.importMode || "replace";
+
+    const all = Array.isArray(state.importProviders) ? state.importProviders : [];
+    const list = all.filter(p => p && p.configured && p.name);
+
+    if (importProviderSel) {
+      const current = importProviderSel.value || state.importProvider || "";
+      const opts = list
+        .map(p => {
+          const name = p && p.name ? String(p.name) : "";
+          const label = p && p.label ? String(p.label) : name;
+          return `<option value="${name}">${label}</option>`;
+        })
+        .join("");
+
+      importProviderSel.innerHTML = opts || `<option value="">No configured providers</option>`;
+
+      const names = list.map(p => String(p.name));
+      let next = current;
+
+      if (!next || !names.includes(next)) {
+        next = state.snapshot && names.includes(state.snapshot) ? state.snapshot : "";
+      }
+      if (!next) next = names[0] || "";
+
+      state.importProvider = next;
+      importProviderSel.value = next;
+      importProviderSel.disabled = !names.length;
+    }
+
+    const sel = state.importProvider || (importProviderSel ? importProviderSel.value : "");
+    const p = list.find(x => String((x || {}).name || "") === String(sel || ""));
+    const feats = (p && p.features) ? p.features : {};
+
+    const setCb = (wrap, cb, key) => {
+      const supported = !!feats[key];
+      if (wrap) wrap.style.display = supported ? "" : "none";
+      if (!cb) return;
+      cb.disabled = !supported;
+      if (!supported) cb.checked = false;
+      else if (state.importFeatures && typeof state.importFeatures[key] === "boolean") cb.checked = !!state.importFeatures[key];
+    };
+
+    setCb(importWatchlistWrap, importWatchlistCb, "watchlist");
+    setCb(importHistoryWrap, importHistoryCb, "history");
+    setCb(importRatingsWrap, importRatingsCb, "ratings");
+
+    if (importRunBtn) importRunBtn.disabled = !state.importProvider;
+  }
+
+  async function loadImportProviders() {
+    state.importEnabled = false;
+    state.importProviders = [];
+    if (!importRow) return;
+    try {
+      const data = await fetchJSON("/api/editor/state/import/providers");
+      state.importEnabled = !!(data && data.enabled);
+      state.importProviders = Array.isArray(data && data.providers) ? data.providers : [];
+    } catch (e) {
+      state.importEnabled = false;
+      state.importProviders = [];
+    }
+    syncImportUI();
+  }
+
+  function _collectImportFeatures() {
+    const feats = [];
+    if (importWatchlistCb && importWatchlistCb.checked && !importWatchlistCb.disabled) feats.push("watchlist");
+    if (importHistoryCb && importHistoryCb.checked && !importHistoryCb.disabled) feats.push("history");
+    if (importRatingsCb && importRatingsCb.checked && !importRatingsCb.disabled) feats.push("ratings");
+    return feats;
+  }
+
+  async function runStateImport() {
+    if (state.source !== "state") return;
+    const provider = (importProviderSel ? importProviderSel.value : state.importProvider) || "";
+    const features = _collectImportFeatures();
+    const mode = (importModeSel ? importModeSel.value : state.importMode) || "replace";
+
+    if (!provider) {
+      setStatusSticky("Pick a provider first", 3000);
+      return;
+    }
+    if (!features.length) {
+      setStatusSticky("Pick at least one dataset", 3000);
+      return;
+    }
+
+    state.importProvider = provider;
+    state.importMode = mode;
+    state.importFeatures = {
+      watchlist: features.includes("watchlist"),
+      history: features.includes("history"),
+      ratings: features.includes("ratings"),
+    };
+
+    try {
+      const msg = `Importing ${features.join(", ")} from ${provider}…`;
+      setImportBusy(true, msg);
+      setTag("warn", "Importing…");
+      setStatus(msg);
+
+      const res = await fetchJSON("/api/editor/state/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, features, mode }),
+      });
+
+      const featsOut = (res && res.features) ? res.features : {};
+      const bits = [];
+      let totalMs = 0;
+
+      for (const k of Object.keys(featsOut)) {
+        const r = featsOut[k] || {};
+        if (r.skipped) continue;
+        if (r.ok) bits.push(`${k}:${r.count}`);
+        if (typeof r.elapsed_ms === "number") totalMs += r.elapsed_ms;
+      }
+
+      let done = "Imported " + (bits.length ? bits.join(" • ") : "done");
+      if (totalMs) done += ` (${(totalMs / 1000).toFixed(1)}s)`;
+
+      setTag("loaded", "Imported");
+      setStatusSticky(done, 6000);
+      if (window.cxToast) window.cxToast(done);
+
+      state.snapshot = provider;
+      persistUIState();
+      await loadSnapshots();
+      await loadState();
+    } catch (e) {
+      console.error(e);
+      setTag("error", "Import failed");
+      setStatus(String(e));
+    } finally {
+      setImportBusy(false, "");
+      syncImportUI();
+    }
+  }
+
 
   syncKindUI();
   syncTypeFilterUI();
@@ -1155,6 +1376,7 @@
       persistUIState();
     }
     syncStateBulkUI();
+    syncImportUI();
   }
 
   function showStateHint(mode) {
@@ -2734,6 +2956,8 @@
       persistUIState();
       syncSourceUI();
       clearSelection();
+      if (state.source === "state") await loadImportProviders();
+      else if (importRow) syncImportUI();
       if (state.source !== "state") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
@@ -2769,6 +2993,44 @@
       await loadState();
     });
   }
+
+  if (importProviderSel) {
+    importProviderSel.addEventListener("change", () => {
+      state.importProvider = importProviderSel.value || "";
+      syncImportUI();
+    });
+  }
+
+  if (importModeSel) {
+    importModeSel.addEventListener("change", () => {
+      state.importMode = importModeSel.value || "replace";
+    });
+  }
+
+  if (importWatchlistCb) {
+    importWatchlistCb.addEventListener("change", () => {
+      state.importFeatures.watchlist = !!importWatchlistCb.checked;
+    });
+  }
+
+  if (importHistoryCb) {
+    importHistoryCb.addEventListener("change", () => {
+      state.importFeatures.history = !!importHistoryCb.checked;
+    });
+  }
+
+  if (importRatingsCb) {
+    importRatingsCb.addEventListener("change", () => {
+      state.importFeatures.ratings = !!importRatingsCb.checked;
+    });
+  }
+
+  if (importRunBtn) {
+    importRunBtn.addEventListener("click", async () => {
+      await runStateImport();
+    });
+  }
+
 
   if (filterInput) {
     filterInput.addEventListener("input", () => {
@@ -2893,6 +3155,7 @@
 
   (async () => {
     syncSourceUI();
+    await loadImportProviders();
     setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
     if (state.source !== "state") await loadTrackerCounts();
     await loadSnapshots();
