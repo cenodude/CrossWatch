@@ -2,7 +2,7 @@
   const PAGE_SIZE = 50;
   const STORAGE_KEY = "cw-editor-ui";
 
-const css = `
+  const css = `
 .cw-root{display:flex;flex-direction:column;gap:10px}
 .cw-topline{margin-bottom:4px}
 .cw-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:flex-start}
@@ -525,6 +525,15 @@ const css = `
   box-shadow:0 0 8px rgba(52,211,153,.9),0 0 14px rgba(52,211,153,.75);
   animation:cw-status-pulse 1.4s ease-in-out infinite;
 }
+.cw-tag.loaded{
+  background:radial-gradient(circle at 0 50%,rgba(147,197,253,.25),rgba(15,23,42,.96));
+  border-color:rgba(96,165,250,.9);
+  box-shadow:0 0 0 1px rgba(15,23,42,1),0 0 18px rgba(96,165,250,.5);
+}
+.cw-tag.loaded .cw-tag-dot{
+  background:linear-gradient(135deg,#93c5fd,#3b82f6);
+  box-shadow:0 0 10px rgba(147,197,253,1),0 0 20px rgba(59,130,246,.9);
+}
 .cw-tag.warn{
   background:radial-gradient(circle at 0 50%,rgba(248,187,109,.3),rgba(24,16,4,.96));
   border-color:rgba(250,204,21,.9);
@@ -601,6 +610,11 @@ const css = `
 }
 .cw-state-hint strong{color:#a5b4fc}
 
+/* bulk selection */
+.cw-checkbox{width:16px;height:16px;cursor:pointer;accent-color:#4f46e5}
+.cw-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cw-bulk-count{font-size:12px;opacity:.85}
+
 @media (max-width:1100px){
   .cw-wrap{grid-template-columns:minmax(0,1fr)}
 }
@@ -608,7 +622,10 @@ const css = `
 
   const ensureStyle = (id, txt) => {
     let s = document.getElementById(id);
-    if (!s) { s = document.createElement("style"); s.id = id; }
+    if (!s) {
+      s = document.createElement("style");
+      s.id = id;
+    }
     s.textContent = txt;
     if (!s.parentNode) document.head.appendChild(s);
   };
@@ -626,13 +643,17 @@ const css = `
     manualBlocks: [],
     items: {},
     rows: [],
+    selected: new Set(),
+    pageRids: [],
+    ridSeq: 1,
     filter: "",
     loading: false,
     saving: false,
     snapshots: [],
     hasChanges: false,
     page: 0,
-    typeFilter: { movie: true, show: true, episode: true },
+    blockedOnly: false,
+    typeFilter: { movie: true, show: true, season: true, episode: true },
     sortKey: "title",
     sortDir: "asc",
   };
@@ -643,17 +664,24 @@ const css = `
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw);
+
       const sources = ["tracker", "state"];
+      if (saved.source && sources.includes(saved.source)) state.source = saved.source;
+
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
+
       const kinds = ["watchlist", "history", "ratings"];
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
+
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
       if (typeof saved.filter === "string") state.filter = saved.filter;
+
       if (saved.typeFilter && typeof saved.typeFilter === "object") {
-        ["movie", "show", "episode"].forEach(t => {
+        ["movie", "show", "season", "episode"].forEach(t => {
           if (typeof saved.typeFilter[t] === "boolean") state.typeFilter[t] = saved.typeFilter[t];
         });
       }
+
       const sortKeys = ["title", "type", "key", "extra"];
       if (saved.sortKey && sortKeys.includes(saved.sortKey)) state.sortKey = saved.sortKey;
       if (saved.sortDir === "asc" || saved.sortDir === "desc") state.sortDir = saved.sortDir;
@@ -674,6 +702,12 @@ const css = `
             <input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id...">
             <span class="cw-status-text" id="cw-status"></span>
             <div class="cw-controls-spacer"></div>
+            <div class="cw-bulk" id="cw-bulk" style="display:none">
+              <span class="cw-bulk-count" id="cw-bulk-count"></span>
+              <button id="cw-bulk-remove" class="cw-btn danger" type="button"></button>
+              <button id="cw-bulk-restore" class="cw-btn" type="button"></button>
+              <button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button>
+            </div>
             <button id="cw-reload" class="cw-btn" type="button">Reload</button>
             <button id="cw-add" class="cw-btn" type="button">Add row</button>
             <button id="cw-save" class="cw-btn primary" type="button">Save changes</button>
@@ -681,19 +715,20 @@ const css = `
 
           <div class="cw-table-wrap" id="cw-table-wrap">
             <table class="cw-table">
-                <thead>
+              <thead>
                 <tr>
-                    <th style="width:30px"></th>
-                    <th style="width:12%" data-sort="key" class="sortable">Key</th>
-                    <th style="width:10%" data-sort="type" class="sortable">Type</th>
-                    <th style="width:24%" data-sort="title" class="sortable">Title</th>
-                    <th style="width:6%">Year</th>
-                    <th style="width:10%">IMDb</th>
-                    <th style="width:10%">TMDB</th>
-                    <th style="width:10%">Trakt</th>
-                    <th style="width:16%" data-sort="extra" class="sortable">Extra</th>
+                  <th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th>
+                  <th style="width:30px"></th>
+                  <th style="width:12%" data-sort="key" class="sortable">Key</th>
+                  <th style="width:10%" data-sort="type" class="sortable">Type</th>
+                  <th style="width:24%" data-sort="title" class="sortable">Title</th>
+                  <th style="width:6%">Year</th>
+                  <th style="width:10%">IMDb</th>
+                  <th style="width:10%">TMDB</th>
+                  <th style="width:10%">Trakt</th>
+                  <th style="width:16%" data-sort="extra" class="sortable">Extra</th>
                 </tr>
-                </thead>
+              </thead>
               <tbody id="cw-tbody"></tbody>
             </table>
           </div>
@@ -740,11 +775,25 @@ const css = `
                 <div id="cw-type-filter" class="cw-type-filter">
                   <button type="button" data-type="movie" class="cw-type-chip active">Movies</button>
                   <button type="button" data-type="show" class="cw-type-chip active">Shows</button>
-                  <button type="button" data-type="episode" class="cw-type-chip active">Episodes</button>
+                  <button type="button" data-type="season" class="cw-type-chip active">S</button>
+                  <button type="button" data-type="episode" class="cw-type-chip active">EP</button>
                   <button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked only</button>
                 </div>
               </div>
             </div>
+
+          <div class="ins-row" id="cw-state-bulk" style="display:none">
+            <div style="display:flex;flex-direction:column;gap:8px;width:100%">
+              <div style="font-weight:700">Bulk policy</div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <select id="cw-bulk-type" class="cw-select" style="min-width:160px"></select>
+                <button id="cw-bulk-block-type" class="cw-btn danger" type="button">Block all</button>
+                <button id="cw-bulk-unblock-type" class="cw-btn" type="button">Unblock all</button>
+              </div>
+              <div class="cw-status-text">Current State only • affects baseline items</div>
+            </div>
+          </div>
+
           </div>
 
           <div class="ins-card">
@@ -791,10 +840,17 @@ const css = `
                     </div>
                   </div>
                   <div class="metric">
+                    <span class="material-symbol">layers</span>
+                    <div>
+                      <div class="m-val" id="cw-summary-seasons">0</div>
+                      <div class="m-lbl">S</div>
+                    </div>
+                  </div>
+                  <div class="metric">
                     <span class="material-symbol">live_tv</span>
                     <div>
                       <div class="m-val" id="cw-summary-episodes">0</div>
-                      <div class="m-lbl">Episodes</div>
+                      <div class="m-lbl">EP</div>
                     </div>
                   </div>
                 </div>
@@ -831,12 +887,14 @@ const css = `
               <div class="ins-kv" style="width:100%">
                 <label>Export / Import</label>
                 <div class="cw-backup-actions">
-                    <button id="cw-download" class="cw-btn" type="button">Download ZIP</button>
-                    <button id="cw-upload" class="cw-btn" type="button">Import file</button>
-                    <input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none">
+                  <button id="cw-download" class="cw-btn" type="button">Download ZIP</button>
+                  <button id="cw-upload" class="cw-btn" type="button">Import file</button>
+                  <input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none">
+                </div>
               </div>
             </div>
           </div>
+
           <div class="ins-card" id="cw-state-backup-card">
             <div class="ins-row">
               <div class="ins-icon"><span class="material-symbol">backup</span></div>
@@ -846,9 +904,10 @@ const css = `
               <div class="ins-kv" style="width:100%">
                 <label>Export / Import</label>
                 <div class="cw-backup-actions">
-                    <button id="cw-state-download" class="cw-btn" type="button">Download JSON</button>
-                    <button id="cw-state-upload" class="cw-btn" type="button">Import file</button>
-                    <input id="cw-state-upload-input" type="file" accept=".json" style="display:none">
+                  <button id="cw-state-download" class="cw-btn" type="button">Download JSON</button>
+                  <button id="cw-state-upload" class="cw-btn" type="button">Import file</button>
+                  <input id="cw-state-upload-input" type="file" accept=".json" style="display:none">
+                </div>
               </div>
             </div>
           </div>
@@ -876,6 +935,7 @@ const css = `
   const summaryTotal = $("cw-summary-total");
   const summaryMovies = $("cw-summary-movies");
   const summaryShows = $("cw-summary-shows");
+  const summarySeasons = $("cw-summary-seasons");
   const summaryEpisodes = $("cw-summary-episodes");
   const summaryStateFiles = $("cw-summary-state-files");
   const summarySnapshots = $("cw-summary-snapshots");
@@ -896,6 +956,17 @@ const css = `
   const stateUploadInput = $("cw-state-upload-input");
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
 
+  const selectPage = $("cw-select-page");
+  const bulkWrap = $("cw-bulk");
+  const bulkCount = $("cw-bulk-count");
+  const bulkRemoveBtn = $("cw-bulk-remove");
+  const bulkRestoreBtn = $("cw-bulk-restore");
+  const bulkClearBtn = $("cw-bulk-clear");
+  const stateBulkRow = $("cw-state-bulk");
+  const bulkTypeSel = $("cw-bulk-type");
+  const bulkBlockTypeBtn = $("cw-bulk-block-type");
+  const bulkUnblockTypeBtn = $("cw-bulk-unblock-type");
+
   let statusStickyUntil = 0;
 
   function setStatus(message) {
@@ -913,32 +984,59 @@ const css = `
     setStatus(message);
   }
 
-  if (filterInput && state.filter) {
-    filterInput.value = state.filter;
-  }
+  if (filterInput && state.filter) filterInput.value = state.filter;
 
   function syncKindUI() {
     if (!kindSel) return;
     const allowed = ["watchlist", "history", "ratings"];
-    if (!allowed.includes(state.kind)) {
-      state.kind = "watchlist";
-    }
+    if (!allowed.includes(state.kind)) state.kind = "watchlist";
     kindSel.value = state.kind;
+  }
+
+  function allowedTypesForKind(kind) {
+    return kind === "watchlist" ? ["movie", "show"] : ["movie", "show", "season", "episode"];
+  }
+
+  function enforceKindTypeRules() {
+    const allowed = allowedTypesForKind(state.kind);
+    for (const t of ["movie", "show", "season", "episode"]) {
+      if (!allowed.includes(t)) state.typeFilter[t] = false;
+      else if (typeof state.typeFilter[t] !== "boolean") state.typeFilter[t] = true;
+    }
   }
 
   function syncTypeFilterUI() {
     if (!typeFilterWrap) return;
+    enforceKindTypeRules();
+    const allowed = allowedTypesForKind(state.kind);
     const buttons = typeFilterWrap.querySelectorAll("button[data-type]");
     buttons.forEach(btn => {
       const t = btn.dataset.type;
+      const visible = allowed.includes(t);
+      btn.style.display = visible ? "" : "none";
       const on = state.typeFilter[t] !== false;
       btn.classList.toggle("active", on);
     });
     if (blockedOnlyBtn) blockedOnlyBtn.classList.toggle("active", !!state.blockedOnly);
   }
 
+  function syncStateBulkUI() {
+    if (!stateBulkRow || !bulkTypeSel || !bulkBlockTypeBtn || !bulkUnblockTypeBtn) return;
+    const show = state.source === "state" && state.kind !== "watchlist";
+    stateBulkRow.style.display = show ? "" : "none";
+    if (!show) return;
+
+    const allowed = allowedTypesForKind(state.kind);
+    const opts = allowed.map(t => ({ v: t, l: t.charAt(0).toUpperCase() + t.slice(1) }));
+    const current = bulkTypeSel.value;
+    bulkTypeSel.innerHTML = opts.map(o => `<option value="${o.v}">${o.l}</option>`).join("");
+    if (opts.some(o => o.v === current)) bulkTypeSel.value = current;
+    else bulkTypeSel.value = opts[0] ? opts[0].v : "movie";
+  }
+
   syncKindUI();
   syncTypeFilterUI();
+  syncStateBulkUI();
 
   function persistUIState() {
     try {
@@ -957,40 +1055,131 @@ const css = `
     } catch (_) {}
   }
 
-  
-function syncSourceUI() {
-  const isState = state.source === "state";
-  if (sourceSel) sourceSel.value = state.source;
-  if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
-  if (backupCard) backupCard.style.display = isState ? "none" : "";
-  if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
-  if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
-  if (!isState && state.blockedOnly) {
-    state.blockedOnly = false;
-    syncTypeFilterUI();
-    persistUIState();
+  function syncBulkBar() {
+    if (!bulkWrap || !bulkCount || !bulkRemoveBtn || !bulkRestoreBtn || !bulkClearBtn) return;
+    const n = state.selected ? state.selected.size : 0;
+    bulkWrap.style.display = n ? "flex" : "none";
+    if (!n) return;
+    bulkCount.textContent = `${n} selected`;
+    if (state.source === "state") {
+      bulkRemoveBtn.textContent = "Block selected";
+      bulkRestoreBtn.textContent = "Unblock selected";
+    } else {
+      bulkRemoveBtn.textContent = "Delete selected";
+      bulkRestoreBtn.textContent = "Restore selected";
+    }
   }
-}
 
-function showStateHint(mode) {
-  if (!stateHint) return;
-  if (mode === "tracker") {
-    stateHint.innerHTML = "<strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.";
-    stateHint.style.display = "block";
-    return;
+  function clearSelection() {
+    if (!state.selected) state.selected = new Set();
+    state.selected.clear();
+    syncBulkBar();
   }
-  if (mode === "state") {
-    stateHint.innerHTML = "<strong>No state.json found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
-    stateHint.style.display = "block";
-    return;
-  }
-  stateHint.style.display = "none";
-}
 
-function setTag(mode, label) {
-    tag.classList.remove("warn", "error");
+  function syncSelectPageCheckbox() {
+    if (!selectPage) return;
+    const rids = Array.isArray(state.pageRids) ? state.pageRids : [];
+    if (!rids.length) {
+      selectPage.checked = false;
+      selectPage.indeterminate = false;
+      return;
+    }
+    const sel = state.selected || new Set();
+    const all = rids.every(r => sel.has(r));
+    const any = rids.some(r => sel.has(r));
+    selectPage.checked = all;
+    selectPage.indeterminate = any && !all;
+  }
+
+  function bulkSetDeletedForSelected(flag) {
+    const sel = state.selected || new Set();
+    if (!sel.size) return;
+    let changed = 0;
+    for (const row of state.rows || []) {
+      if (!sel.has(row._rid)) continue;
+      if (row.deleted !== flag) {
+        row.deleted = flag;
+        changed += 1;
+      }
+    }
+    clearSelection();
+    if (changed) {
+      markChanged();
+      renderRows();
+      const verb = flag
+        ? state.source === "state"
+          ? "Blocked"
+          : "Deleted"
+        : state.source === "state"
+          ? "Unblocked"
+          : "Restored";
+      setStatusSticky(`${verb} ${changed} item${changed === 1 ? "" : "s"}`, 3000);
+    }
+  }
+
+  function bulkSetBlocksByType(type, flag) {
+    if (state.source !== "state") return;
+    const t = String(type || "").toLowerCase();
+    if (!t) return;
+    let changed = 0;
+    for (const row of state.rows || []) {
+      if (row._origin !== "baseline") continue;
+      if (((row.type || "") + "").toLowerCase() !== t) continue;
+      if (row.deleted !== flag) {
+        row.deleted = flag;
+        changed += 1;
+      }
+    }
+    clearSelection();
+    if (changed) {
+      markChanged();
+      renderRows();
+      setStatusSticky(
+        `${flag ? "Blocked" : "Unblocked"} ${changed} ${t} item${changed === 1 ? "" : "s"}`,
+        3500
+      );
+    }
+  }
+
+  function syncSourceUI() {
+    const isState = state.source === "state";
+    if (sourceSel) sourceSel.value = state.source;
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+    if (backupCard) backupCard.style.display = isState ? "none" : "";
+    if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
+    if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
+
+    if (!isState && state.blockedOnly) {
+      state.blockedOnly = false;
+      syncTypeFilterUI();
+      persistUIState();
+    }
+    syncStateBulkUI();
+  }
+
+  function showStateHint(mode) {
+    if (!stateHint) return;
+    if (mode === "tracker") {
+      stateHint.innerHTML =
+        "<strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.";
+      stateHint.style.display = "block";
+      return;
+    }
+    if (mode === "state") {
+      stateHint.innerHTML =
+        "<strong>No state.json found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
+      stateHint.style.display = "block";
+      return;
+    }
+    stateHint.style.display = "none";
+  }
+
+  function setTag(mode, label) {
+    if (!tag || !tagLabel) return;
+    tag.classList.remove("warn", "error", "loaded");
     if (mode === "warn") tag.classList.add("warn");
-    if (mode === "error") tag.classList.add("error");
+    else if (mode === "error") tag.classList.add("error");
+    else if (mode === "loaded") tag.classList.add("loaded");
     tagLabel.textContent = label;
   }
 
@@ -1082,22 +1271,17 @@ function setTag(mode, label) {
     if (state.kind === "ratings") {
       icon = "star";
       const r = row.raw && row.raw.rating;
-      if (r == null || r === "") {
-        placeholder = "Set rating";
-      } else {
-        label = String(r) + "/10";
-      }
+      if (r == null || r === "") placeholder = "Set rating";
+      else label = String(r) + "/10";
     } else if (state.kind === "history") {
       icon = "schedule";
       const w = row.raw && row.raw.watched_at;
-      if (!w) {
-        placeholder = "Set time";
-      } else {
-        label = formatHistoryLabel(w);
-      }
+      if (!w) placeholder = "Set time";
+      else label = formatHistoryLabel(w);
     } else {
       placeholder = "";
     }
+
     el.innerHTML = "";
     const text = document.createElement("span");
     text.className = "cw-extra-display-label";
@@ -1109,6 +1293,7 @@ function setTag(mode, label) {
       text.classList.add("cw-extra-display-placeholder");
     }
     el.appendChild(text);
+
     if (icon) {
       const iconEl = document.createElement("span");
       iconEl.className = "material-symbol cw-extra-display-icon";
@@ -1127,10 +1312,14 @@ function setTag(mode, label) {
     } else if (t === "show") {
       label = "Show";
       icon = "monitoring";
+    } else if (t === "season") {
+      label = "Season";
+      icon = "layers";
     } else if (t === "episode") {
       label = "Episode";
       icon = "live_tv";
     }
+
     el.innerHTML = "";
     const text = document.createElement("span");
     text.className = "cw-extra-display-label";
@@ -1142,10 +1331,17 @@ function setTag(mode, label) {
       text.classList.add("cw-extra-display-placeholder");
     }
     el.appendChild(text);
+
     const iconEl = document.createElement("span");
     iconEl.className = "material-symbol cw-extra-display-icon";
     iconEl.textContent = icon;
     el.appendChild(iconEl);
+  }
+
+  function imdbFromKey(key) {
+    const s = (key || "") + "";
+    if (!s.startsWith("imdb:")) return "";
+    return s.slice(5).split("#")[0];
   }
 
   function buildRows(items) {
@@ -1157,11 +1353,12 @@ function setTag(mode, label) {
       const isEpisode = type === "episode";
       const baseTitle = raw.title || raw.series_title || "";
       rows.push({
+        _rid: state.ridSeq++,
         key,
         type,
         title: baseTitle,
-        year: raw.year != null ? String(raw.year || "") : "",
-        imdb: ids.imdb || "",
+        year: raw.year != null ? String(raw.year) : "",
+        imdb: ids.imdb || (type === "season" ? showIds.imdb || imdbFromKey(key) : ""),
         tmdb: ids.tmdb || showIds.tmdb || "",
         trakt: ids.trakt || showIds.trakt || "",
         raw: JSON.parse(JSON.stringify(raw)),
@@ -1176,15 +1373,17 @@ function setTag(mode, label) {
   function applyFilter(rows) {
     const q = (state.filter || "").trim().toLowerCase();
     const filters = state.typeFilter || {};
-    const hasTypeFilter = filters.movie || filters.show || filters.episode;
+    const hasTypeFilter = filters.movie || filters.show || filters.season || filters.episode;
+
     return rows.filter(r => {
       if (hasTypeFilter) {
         const t = (r.type || "").toLowerCase();
-        const known = t === "movie" || t === "show" || t === "episode";
+        const known = t === "movie" || t === "show" || t === "season" || t === "episode";
         let allowed = true;
         if (known) {
           if (t === "movie") allowed = !!filters.movie;
           else if (t === "show") allowed = !!filters.show;
+          else if (t === "season") allowed = !!filters.season;
           else if (t === "episode") allowed = !!filters.episode;
         }
         if (!allowed) return false;
@@ -1195,6 +1394,7 @@ function setTag(mode, label) {
       }
 
       if (!q) return true;
+
       const parts = [
         r.key,
         r.title,
@@ -1207,27 +1407,46 @@ function setTag(mode, label) {
       ]
         .join(" ")
         .toLowerCase();
+
       return parts.includes(q);
     });
   }
 
   function openHistoryEditor(row, anchor, displayEl) {
+    const locked = false;
+
     openPopup(anchor, (pop, close) => {
       const title = document.createElement("div");
       title.className = "cw-pop-title";
       title.textContent = "Watched at";
       pop.appendChild(title);
 
+      if (locked) {
+        const status = document.createElement("div");
+        status.className = "cw-search-status";
+        status.textContent = "Baseline rows are read-only. Block the row to exclude it.";
+        pop.appendChild(status);
+
+        const actions = document.createElement("div");
+        actions.className = "cw-pop-actions";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cw-pop-btn primary";
+        closeBtn.textContent = "Close";
+        closeBtn.onclick = close;
+        actions.appendChild(closeBtn);
+        pop.appendChild(actions);
+        return;
+      }
+
       const grid = document.createElement("div");
       grid.className = "cw-datetime-grid";
 
       const dateInput = document.createElement("input");
       dateInput.type = "date";
-      dateInput.disabled = locked;
 
       const timeInput = document.createElement("input");
       timeInput.type = "time";
-      timeInput.disabled = locked;
       timeInput.step = 60;
 
       const current = row.raw && row.raw.watched_at;
@@ -1258,11 +1477,11 @@ function setTag(mode, label) {
         close();
       };
 
-      const saveBtn = document.createElement("button");
-      saveBtn.type = "button";
-      saveBtn.className = "cw-pop-btn primary";
-      saveBtn.textContent = "Save";
-      saveBtn.onclick = () => {
+      const saveBtn2 = document.createElement("button");
+      saveBtn2.type = "button";
+      saveBtn2.className = "cw-pop-btn primary";
+      saveBtn2.textContent = "Save";
+      saveBtn2.onclick = () => {
         const dv = dateInput.value;
         const tv = timeInput.value;
         if (!dv) {
@@ -1272,6 +1491,7 @@ function setTag(mode, label) {
           const y = parseInt(parts[0], 10);
           const m = parseInt(parts[1], 10);
           const dDay = parseInt(parts[2], 10);
+
           let hh = 0;
           let mm = 0;
           if (tv) {
@@ -1279,6 +1499,7 @@ function setTag(mode, label) {
             hh = parseInt(tparts[0], 10) || 0;
             mm = parseInt(tparts[1], 10) || 0;
           }
+
           const dt = new Date(Date.UTC(y, m - 1, dDay, hh, mm, 0));
           let iso = dt.toISOString();
           iso = iso.replace(/\.\d{3}Z$/, ".000Z");
@@ -1290,7 +1511,7 @@ function setTag(mode, label) {
       };
 
       actions.appendChild(clearBtn);
-      actions.appendChild(saveBtn);
+      actions.appendChild(saveBtn2);
       pop.appendChild(actions);
 
       dateInput.focus();
@@ -1298,11 +1519,31 @@ function setTag(mode, label) {
   }
 
   function openRatingEditor(row, anchor, displayEl) {
+    const locked = false;
+
     openPopup(anchor, (pop, close) => {
       const title = document.createElement("div");
       title.className = "cw-pop-title";
       title.textContent = "Rating";
       pop.appendChild(title);
+
+      if (locked) {
+        const status = document.createElement("div");
+        status.className = "cw-search-status";
+        status.textContent = "Baseline rows are read-only. Block the row to exclude it.";
+        pop.appendChild(status);
+
+        const actions = document.createElement("div");
+        actions.className = "cw-pop-actions";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cw-pop-btn primary";
+        closeBtn.textContent = "Close";
+        closeBtn.onclick = close;
+        actions.appendChild(closeBtn);
+        pop.appendChild(actions);
+        return;
+      }
 
       const grid = document.createElement("div");
       grid.className = "cw-rating-grid";
@@ -1372,7 +1613,7 @@ function setTag(mode, label) {
         opt.textContent = label;
         typeSelect.appendChild(opt);
       });
-      typeSelect.value = (row.type === "show" || row.type === "episode") ? "show" : "movie";
+      typeSelect.value = row.type === "show" || row.type === "episode" ? "show" : "movie";
       bar.appendChild(typeSelect);
 
       pop.appendChild(bar);
@@ -1413,16 +1654,14 @@ function setTag(mode, label) {
         }
 
         let url = `/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(typeSelect.value)}`;
-        if (!Number.isNaN(yearVal)) {
-          url += `&year=${yearVal}`;
-        }
+        if (!Number.isNaN(yearVal)) url += `&year=${yearVal}`;
 
         status.textContent = "Searching…";
         resultsBox.innerHTML = "";
         try {
           const data = await fetchJSON(url);
           if (!data || data.ok === false) {
-            status.textContent = (data && data.error) ? data.error : "Search failed.";
+            status.textContent = data && data.error ? data.error : "Search failed.";
             return;
           }
           const items = Array.isArray(data.results) ? data.results : [];
@@ -1438,7 +1677,6 @@ function setTag(mode, label) {
             btn.type = "button";
             btn.className = "cw-search-item";
 
-            // Poster (small neon frame)
             const posterWrap = document.createElement("div");
             posterWrap.className = "cw-search-poster";
 
@@ -1468,10 +1706,10 @@ function setTag(mode, label) {
             t.textContent = (item.title || "") + yearTxt;
             titleLine.appendChild(t);
 
-            const tag = document.createElement("span");
-            tag.className = "cw-search-tag";
-            tag.textContent = item.type === "show" ? "Show" : "Movie";
-            titleLine.appendChild(tag);
+            const tag2 = document.createElement("span");
+            tag2.className = "cw-search-tag";
+            tag2.textContent = item.type === "show" ? "Show" : "Movie";
+            titleLine.appendChild(tag2);
 
             content.appendChild(titleLine);
 
@@ -1521,16 +1759,12 @@ function setTag(mode, label) {
                 refs.tmdbIn.value = tmdbStr;
               }
 
-              // Resolve extra IDs (IMDb / Trakt) using metadata manager
               if (tmdbId != null) {
                 try {
                   const metaRes = await fetchJSON("/api/metadata/resolve", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      entity: newType,
-                      ids: { tmdb: tmdbId },
-                    }),
+                    body: JSON.stringify({ entity: newType, ids: { tmdb: tmdbId } }),
                   });
 
                   if (metaRes && metaRes.ok && metaRes.result && metaRes.result.ids) {
@@ -1565,6 +1799,7 @@ function setTag(mode, label) {
                   console.error("metadata resolve failed", err);
                 }
               }
+
               markChanged();
               setStatusSticky("Row updated from metadata", 2500);
               close();
@@ -1573,15 +1808,15 @@ function setTag(mode, label) {
 
             resultsBox.appendChild(btn);
           });
+
           status.textContent = `${items.length} result${items.length === 1 ? "" : "s"} found.`;
         } catch (err) {
           console.error("search failed", err);
           status.textContent = "Search failed.";
         }
       }
-      searchBtn.onclick = () => {
-        doSearch();
-      };
+
+      searchBtn.onclick = () => doSearch();
 
       qInput.addEventListener("keydown", ev => {
         if (ev.key === "Enter") {
@@ -1590,29 +1825,48 @@ function setTag(mode, label) {
         }
       });
 
-      if ((row.title || "").trim().length >= 3) {
-        doSearch();
-      } else {
-        status.textContent = "Enter a title and press Enter or Search.";
-      }
+      if ((row.title || "").trim().length >= 3) doSearch();
+      else status.textContent = "Enter a title and press Enter or Search.";
     });
   }
 
   function openTypeEditor(row, anchor) {
+    const locked = false;
+
     openPopup(anchor, (pop, close) => {
       const title = document.createElement("div");
       title.className = "cw-pop-title";
       title.textContent = "Type";
       pop.appendChild(title);
 
+      if (locked) {
+        const status = document.createElement("div");
+        status.className = "cw-search-status";
+        status.textContent = "Baseline rows are read-only. Block the row to exclude it.";
+        pop.appendChild(status);
+
+        const actions = document.createElement("div");
+        actions.className = "cw-pop-actions";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cw-pop-btn primary";
+        closeBtn.textContent = "Close";
+        closeBtn.onclick = close;
+        actions.appendChild(closeBtn);
+        pop.appendChild(actions);
+        return;
+      }
+
       const grid = document.createElement("div");
       grid.className = "cw-type-grid";
       const current = (row.type || "").toLowerCase();
+      const allowed = allowedTypesForKind(state.kind);
       const options = [
         { key: "movie", label: "Movie" },
         { key: "show", label: "Show" },
+        { key: "season", label: "Season" },
         { key: "episode", label: "Episode" },
-      ];
+      ].filter(o => allowed.includes(o.key));
 
       options.forEach(opt => {
         const pill = document.createElement("button");
@@ -1670,7 +1924,7 @@ function setTag(mode, label) {
     const key = state.sortKey;
     const dir = state.sortDir === "desc" ? -1 : 1;
     if (!key) return rows;
-    const sorted = rows.slice().sort((a, b) => {
+    return rows.slice().sort((a, b) => {
       let av;
       let bv;
       if (key === "title") {
@@ -1689,10 +1943,8 @@ function setTag(mode, label) {
         } else if (state.kind === "history") {
           const aw = a.raw && a.raw.watched_at;
           const bw = b.raw && b.raw.watched_at;
-          const at = aw ? Date.parse(aw) || 0 : 0;
-          const bt = bw ? Date.parse(bw) || 0 : 0;
-          av = at;
-          bv = bt;
+          av = aw ? Date.parse(aw) || 0 : 0;
+          bv = bw ? Date.parse(bw) || 0 : 0;
         } else {
           av = "";
           bv = "";
@@ -1703,22 +1955,20 @@ function setTag(mode, label) {
       }
       return compareValues(av, bv) * dir;
     });
-    return sorted;
   }
 
   function updateSortUI() {
     sortHeaders.forEach(th => {
       const k = th.dataset.sort;
       th.classList.remove("sort-asc", "sort-desc");
-      if (k === state.sortKey) {
-        th.classList.add(state.sortDir === "desc" ? "sort-desc" : "sort-asc");
-      }
+      if (k === state.sortKey) th.classList.add(state.sortDir === "desc" ? "sort-desc" : "sort-asc");
     });
   }
 
   function renderRows() {
     closePopup();
     updateSortUI();
+
     let filtered = applyFilter(state.rows);
     const totalFiltered = filtered.length;
     const totalAll = state.rows.length;
@@ -1727,30 +1977,36 @@ function setTag(mode, label) {
 
     let movies = 0;
     let shows = 0;
+    let seasons = 0;
     let episodes = 0;
     for (const row of state.rows) {
       const t = (row.type || "").toLowerCase();
       if (t === "movie") movies += 1;
       else if (t === "show") shows += 1;
+      else if (t === "season") seasons += 1;
       else if (t === "episode") episodes += 1;
     }
     if (summaryMovies) summaryMovies.textContent = String(movies);
     if (summaryShows) summaryShows.textContent = String(shows);
+    if (summarySeasons) summarySeasons.textContent = String(seasons);
     if (summaryEpisodes) summaryEpisodes.textContent = String(episodes);
 
-    tbody.innerHTML = "";
+    if (tbody) tbody.innerHTML = "";
 
     if (!totalFiltered) {
-      empty.style.display = "block";
+      if (empty) empty.style.display = "block";
       if (pager) pager.style.display = "none";
       if (summaryVisible) summaryVisible.textContent = "0";
       if (summaryTotal) summaryTotal.textContent = String(totalAll || 0);
       setStatus("0 rows visible");
+      state.pageRids = [];
+      syncSelectPageCheckbox();
+      clearSelection();
       if (pageInfo) pageInfo.textContent = "";
       return;
     }
 
-    empty.style.display = "none";
+    if (empty) empty.style.display = "none";
 
     const pageCount = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
     if (state.page >= pageCount) state.page = pageCount - 1;
@@ -1760,10 +2016,14 @@ function setTag(mode, label) {
     const end = start + PAGE_SIZE;
     const rows = filtered.slice(start, end);
 
+    state.pageRids = rows.map(r => r._rid);
+    syncSelectPageCheckbox();
+    syncBulkBar();
+
     const frag = document.createDocumentFragment();
     rows.forEach(row => {
       const tr = document.createElement("tr");
-      const locked = state.source === "state" && row._origin === "baseline";
+      const locked = false;
       if (row.episode) tr.classList.add("cw-row-episode");
       if (row.deleted) tr.classList.add("cw-row-deleted");
 
@@ -1772,6 +2032,19 @@ function setTag(mode, label) {
         td.appendChild(inner);
         return td;
       };
+
+      const selCb = document.createElement("input");
+      selCb.type = "checkbox";
+      selCb.className = "cw-checkbox";
+      selCb.checked = (state.selected || new Set()).has(row._rid);
+      selCb.onchange = () => {
+        if (!state.selected) state.selected = new Set();
+        if (selCb.checked) state.selected.add(row._rid);
+        else state.selected.delete(row._rid);
+        syncBulkBar();
+        syncSelectPageCheckbox();
+      };
+      tr.appendChild(cell(selCb));
 
       const delBtn = document.createElement("button");
       delBtn.type = "button";
@@ -1789,7 +2062,6 @@ function setTag(mode, label) {
       keyIn.value = row.key || "";
       keyIn.className = "cw-key";
       keyIn.disabled = locked;
-
       keyIn.oninput = e => {
         row.key = e.target.value;
         markChanged();
@@ -1799,8 +2071,14 @@ function setTag(mode, label) {
       const typeBtn = document.createElement("button");
       typeBtn.type = "button";
       typeBtn.className = "cw-extra-display";
+      typeBtn.disabled = locked;
+      if (locked) {
+        typeBtn.style.opacity = "0.6";
+        typeBtn.style.cursor = "not-allowed";
+      }
       updateTypeDisplay(row, typeBtn);
       typeBtn.onclick = () => {
+        if (typeBtn.disabled) return;
         openTypeEditor(row, typeBtn);
       };
       tr.appendChild(cell(typeBtn));
@@ -1814,6 +2092,7 @@ function setTag(mode, label) {
 
       const titleIn = document.createElement("input");
       titleIn.value = row.title || "";
+      titleIn.disabled = locked;
       titleIn.oninput = e => {
         row.title = e.target.value;
         row.raw.title = e.target.value || null;
@@ -1821,12 +2100,62 @@ function setTag(mode, label) {
       };
       titleRow.appendChild(titleIn);
 
+      const yearIn = document.createElement("input");
+      yearIn.value = row.year || "";
+      yearIn.disabled = locked;
+      yearIn.oninput = e => {
+        row.year = e.target.value;
+        const v = e.target.value.trim();
+        const n = v ? parseInt(v, 10) : NaN;
+        row.raw.year = Number.isFinite(n) ? n : null;
+        markChanged();
+      };
+
+      const imdbIn = document.createElement("input");
+      imdbIn.value = row.imdb || "";
+      imdbIn.disabled = locked;
+      imdbIn.oninput = e => {
+        row.imdb = e.target.value;
+        row.raw.ids = row.raw.ids || {};
+        if (e.target.value) row.raw.ids.imdb = e.target.value;
+        else delete row.raw.ids.imdb;
+        markChanged();
+      };
+
+      const tmdbIn = document.createElement("input");
+      tmdbIn.value = row.tmdb || "";
+      tmdbIn.disabled = locked;
+      tmdbIn.oninput = e => {
+        row.tmdb = e.target.value;
+        row.raw.ids = row.raw.ids || {};
+        if (e.target.value) row.raw.ids.tmdb = e.target.value;
+        else delete row.raw.ids.tmdb;
+        markChanged();
+      };
+
+      const traktIn = document.createElement("input");
+      traktIn.value = row.trakt || "";
+      traktIn.disabled = locked;
+      traktIn.oninput = e => {
+        row.trakt = e.target.value;
+        row.raw.ids = row.raw.ids || {};
+        if (e.target.value) row.raw.ids.trakt = e.target.value;
+        else delete row.raw.ids.trakt;
+        markChanged();
+      };
+
       const searchBtn = document.createElement("button");
       searchBtn.type = "button";
       searchBtn.className = "cw-title-search-btn";
       searchBtn.innerHTML = '<span class="material-symbol">search</span>';
       searchBtn.title = "Search and fill IDs";
+      searchBtn.disabled = locked;
+      if (locked) {
+        searchBtn.style.opacity = "0.6";
+        searchBtn.style.cursor = "not-allowed";
+      }
       searchBtn.onclick = () => {
+        if (searchBtn.disabled) return;
         openTitleSearchEditor(row, searchBtn, {
           keyIn,
           titleIn,
@@ -1838,7 +2167,9 @@ function setTag(mode, label) {
         });
       };
       titleRow.appendChild(searchBtn);
-      if (((row.raw && row.raw.type) || row.type || "").toLowerCase() === "episode" && row.raw && row.raw.series_title) {
+
+      const subType = (((row.raw && row.raw.type) || row.type || "") + "").toLowerCase();
+      if ((subType === "episode" || subType === "season") && row.raw && row.raw.series_title) {
         const sub = document.createElement("div");
         sub.className = "cw-title-sub";
         sub.textContent = row.raw.series_title;
@@ -1846,72 +2177,33 @@ function setTag(mode, label) {
       }
       tr.appendChild(cell(titleCell));
 
-      const yearIn = document.createElement("input");
-      yearIn.value = row.year || "";
-      yearIn.disabled = locked;
-      yearIn.oninput = e => {
-        row.year = e.target.value;
-        const v = e.target.value.trim();
-        row.raw.year = v ? parseInt(v, 10) || null : null;
-        markChanged();
-      };
       tr.appendChild(cell(yearIn));
-
-      const imdbIn = document.createElement("input");
-      imdbIn.value = row.imdb || "";
-      imdbIn.disabled = locked;
-      imdbIn.oninput = e => {
-        row.imdb = e.target.value;
-        row.raw.ids = row.raw.ids || {};
-        row.raw.ids.imdb = e.target.value || undefined;
-        markChanged();
-      };
       tr.appendChild(cell(imdbIn));
-
-      const tmdbIn = document.createElement("input");
-      tmdbIn.value = row.tmdb || "";
-      tmdbIn.disabled = locked;
-      tmdbIn.oninput = e => {
-        row.tmdb = e.target.value;
-        row.raw.ids = row.raw.ids || {};
-        row.raw.ids.tmdb = e.target.value || undefined;
-        markChanged();
-      };
       tr.appendChild(cell(tmdbIn));
-
-      const traktIn = document.createElement("input");
-      traktIn.value = row.trakt || "";
-      traktIn.disabled = locked;
-      traktIn.oninput = e => {
-        row.trakt = e.target.value;
-        row.raw.ids = row.raw.ids || {};
-        row.raw.ids.trakt = e.target.value || undefined;
-        markChanged();
-      };
       tr.appendChild(cell(traktIn));
 
       const extraBtn = document.createElement("button");
       extraBtn.type = "button";
       extraBtn.className = "cw-extra-display";
       updateExtraDisplay(row, extraBtn);
-      if (state.kind === "ratings") {
-        extraBtn.onclick = () => {
-          openRatingEditor(row, extraBtn, extraBtn);
-        };
-      } else if (state.kind === "history") {
-        extraBtn.onclick = () => {
-          openHistoryEditor(row, extraBtn, extraBtn);
-        };
-      } else {
+
+      const extraEditable = !locked && (state.kind === "ratings" || state.kind === "history");
+      if (!extraEditable) {
         extraBtn.disabled = true;
         extraBtn.style.opacity = "0.6";
-        extraBtn.style.cursor = "default";
+        extraBtn.style.cursor = locked ? "not-allowed" : "default";
+      } else if (state.kind === "ratings") {
+        extraBtn.onclick = () => openRatingEditor(row, extraBtn, extraBtn);
+      } else if (state.kind === "history") {
+        extraBtn.onclick = () => openHistoryEditor(row, extraBtn, extraBtn);
       }
+
       tr.appendChild(cell(extraBtn));
 
       frag.appendChild(tr);
     });
-    tbody.appendChild(frag);
+
+    if (tbody) tbody.appendChild(frag);
 
     const vis = rows.length;
     const first = start + 1;
@@ -1920,24 +2212,17 @@ function setTag(mode, label) {
     if (summaryVisible) summaryVisible.textContent = String(vis);
     if (summaryTotal) summaryTotal.textContent = String(totalAll);
 
-    if (pageInfo) {
-      pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • Rows ${first}-${last} of ${totalFiltered}`;
-    }
-
-    if (pager) {
-      pager.style.display = pageCount > 1 ? "flex" : "none";
-    }
+    if (pageInfo) pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • Rows ${first}-${last} of ${totalFiltered}`;
+    if (pager) pager.style.display = pageCount > 1 ? "flex" : "none";
     if (prevBtn) prevBtn.disabled = state.page <= 0;
     if (nextBtn) nextBtn.disabled = state.page >= pageCount - 1;
 
     if (totalFiltered > vis) {
-      setRowsStatus(
-        `${vis} rows visible (rows ${first}-${last} of ${totalFiltered} filtered, ${totalAll} total)`
-      );
+      setRowsStatus(`${vis} rows visible (rows ${first}-${last} of ${totalFiltered} filtered, ${totalAll} total)`);
     } else {
       setRowsStatus(`${vis} rows visible, ${totalAll} total`);
     }
-}
+  }
 
   function formatSnapshotLabel(s) {
     if (s && typeof s.ts === "number" && s.ts > 0) {
@@ -1959,30 +2244,32 @@ function setTag(mode, label) {
     return "Snapshot";
   }
 
-  
-function rebuildSnapshots() {
-  if (!snapSel) return;
-  const isState = state.source === "state";
-  if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
-  if (isState) {
-    const list = Array.isArray(state.snapshots) ? state.snapshots : [];
-    const options = list.map(p => `<option value="${p}">${p}</option>`).join("");
-    snapSel.innerHTML = options;
-    const opts = Array.from(snapSel.options).map(o => o.value);
-    const next = opts.includes(state.snapshot) ? state.snapshot : (opts[0] || "");
-    if (next !== state.snapshot) state.snapshot = next;
+  function rebuildSnapshots() {
+    if (!snapSel) return;
+    const isState = state.source === "state";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+
+    if (isState) {
+      const list = Array.isArray(state.snapshots) ? state.snapshots : [];
+      const options = list.map(p => `<option value="${p}">${p}</option>`).join("");
+      snapSel.innerHTML = options;
+      const opts = Array.from(snapSel.options).map(o => o.value);
+      const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
+      if (next !== state.snapshot) state.snapshot = next;
+      snapSel.value = state.snapshot || "";
+      return;
+    }
+
+    const options = (state.snapshots || [])
+      .map(s => {
+        const label = formatSnapshotLabel(s);
+        return `<option value="${s.name}">${label}</option>`;
+      })
+      .join("");
+
+    snapSel.innerHTML = `<option value="">Latest</option>` + options;
     snapSel.value = state.snapshot || "";
-    return;
   }
-  const options = (state.snapshots || [])
-    .map(s => {
-      const label = formatSnapshotLabel(s);
-      return `<option value="${s.name}">${label}</option>`;
-    })
-    .join("");
-  snapSel.innerHTML = `<option value="">Latest</option>` + options;
-  snapSel.value = state.snapshot || "";
-}
 
   async function fetchJSON(url, opts) {
     const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
@@ -1990,83 +2277,80 @@ function rebuildSnapshots() {
     return await res.json();
   }
 
-  
-async function loadSnapshots() {
-  try {
-    if (state.source === "state") {
-      const data = await fetchJSON(`/api/editor/state/providers`);
-      state.snapshots = Array.isArray(data.providers) ? data.providers : [];
+  async function loadSnapshots() {
+    try {
+      if (state.source === "state") {
+        const data = await fetchJSON(`/api/editor/state/providers`);
+        state.snapshots = Array.isArray(data.providers) ? data.providers : [];
+        rebuildSnapshots();
+        if (!state.snapshots.length) showStateHint("state");
+        else showStateHint(null);
+        return;
+      }
+      const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
+      state.snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
       rebuildSnapshots();
-      if (!state.snapshots.length) showStateHint("state");
-      else showStateHint(null);
-      return;
+    } catch (e) {
+      console.error(e);
     }
-    const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
-    state.snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
-    rebuildSnapshots();
-  } catch (e) {
-    console.error(e);
   }
-}
 
   async function resolveRowIds(row) {
-  if (!row.tmdb) return;
+    const t = ((row.type || "") + "").toLowerCase();
+    if (t === "season") return;
+    if (!row.tmdb) return;
 
-  try {
-    const payload = {
-      entity: (row.type || "movie"), // "movie" | "show" | "episode"
-      ids: { tmdb: row.tmdb },
-      locale: null,
-      need: { ids: true, titles: true, year: true },
-    };
+    try {
+      const payload = {
+        entity: row.type || "movie",
+        ids: { tmdb: row.tmdb },
+        locale: null,
+        need: { ids: true, titles: true, year: true },
+      };
 
-    const data = await fetchJSON("/api/metadata/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+      const data = await fetchJSON("/api/metadata/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!data || data.ok === false || !data.result) {
-      return;
-    }
+      if (!data || data.ok === false || !data.result) return;
 
-    const result = data.result;
-    const ids = (result.ids || {});
+      const result = data.result;
+      const ids = result.ids || {};
 
-    // Copy IDs
-    row.imdb = ids.imdb || row.imdb || "";
-    row.tmdb = ids.tmdb || row.tmdb || "";
-    row.trakt = ids.trakt || row.trakt || "";
+      row.imdb = ids.imdb || row.imdb || "";
+      row.tmdb = ids.tmdb || row.tmdb || "";
+      row.trakt = ids.trakt || row.trakt || "";
 
-    row.raw.ids = Object.assign({}, row.raw.ids || {}, {
-      imdb: row.imdb || undefined,
-      tmdb: row.tmdb || undefined,
-      trakt: row.trakt || undefined,
-    });
+      row.raw.ids = Object.assign({}, row.raw.ids || {}, {
+        imdb: row.imdb || undefined,
+        tmdb: row.tmdb || undefined,
+        trakt: row.trakt || undefined,
+      });
 
-    if (row.imdb) {
-      const imdbKey = `imdb:${row.imdb}`;
-      const prevKey = (row.key || "").trim();
-      if (!prevKey || /^imdb:/i.test(prevKey)) {
-        row.key = imdbKey;
+      if (row.imdb) {
+        const imdbKey = `imdb:${row.imdb}`;
+        const prevKey = (row.key || "").trim();
+        if (!prevKey || /^imdb:tt\d+$/i.test(prevKey)) row.key = imdbKey;
       }
+      if (result.title) {
+        row.title = result.title;
+        row.raw.title = result.title;
+      }
+      if (result.year) {
+        row.year = String(result.year);
+        row.raw.year = result.year;
+      }
+    } catch (err) {
+      console.error("Metadata resolve failed", err);
     }
-    if (result.title) {
-      row.title = result.title;
-      row.raw.title = result.title;
-    }
-    if (result.year) {
-      row.year = String(result.year);
-      row.raw.year = result.year;
-    }
-  } catch (err) {
-    console.error("Metadata resolve failed", err);
   }
-}
+
   async function loadTrackerCounts() {
     try {
-      let data = await fetchJSON("/api/maintenance/crosswatch-tracker");
-      let counts = data && data.counts ? data.counts : {};
+      const data = await fetchJSON("/api/maintenance/crosswatch-tracker");
+      const counts = data && data.counts ? data.counts : {};
 
       let stateFiles = counts.state_files != null ? counts.state_files : 0;
       let snaps = counts.snapshots != null ? counts.snapshots : 0;
@@ -2087,7 +2371,6 @@ async function loadSnapshots() {
 
       if (stateFiles === 0 && snaps === 0) showStateHint("tracker");
       else showStateHint(null);
-
     } catch (e) {
       console.error(e);
     }
@@ -2100,40 +2383,47 @@ async function loadSnapshots() {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
       if (state.source === "state" && state.snapshot) params.set("provider", state.snapshot);
-      const data = await fetchJSON(`/api/editor?${params.toString()}`);
 
-      if (data && data.ok === false) {
-        throw new Error(data.error || data.detail || "Load failed");
-      }
+      const data = await fetchJSON(`/api/editor?${params.toString()}`);
+      if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
 
       if (state.source === "state") {
         state.baselineItems = data.items || {};
         state.manualAdds = data.manual_adds || {};
         state.manualBlocks = Array.isArray(data.manual_blocks) ? data.manual_blocks : [];
+
         const merged = Object.assign({}, state.baselineItems || {});
         for (const [k, v] of Object.entries(state.manualAdds || {})) {
           if (!(k in merged)) merged[k] = v;
         }
+
         state.items = merged;
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
         state.rows = buildRows(state.items);
+
         const baselineKeys = new Set(Object.keys(state.baselineItems || {}));
         const blocked = new Set(
-          (state.manualBlocks || [])
-            .map(x => String(x || "").trim())
-            .filter(Boolean)
+          (state.manualBlocks || []).map(x => String(x || "").trim()).filter(Boolean)
         );
+
         for (const row of state.rows) {
           row._origin = baselineKeys.has(row.key) ? "baseline" : "manual";
           if (row._origin === "baseline") row.deleted = blocked.has(row.key);
         }
       } else {
         state.items = data.items || {};
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
         state.rows = buildRows(state.items);
       }
+
       state.hasChanges = false;
       state.page = 0;
       renderRows();
-      
+
       if (state.source === "state") {
         const hasBaseline = state.baselineItems && Object.keys(state.baselineItems).length > 0;
         const hasManual = state.manualAdds && Object.keys(state.manualAdds).length > 0;
@@ -2143,12 +2433,15 @@ async function loadSnapshots() {
         showStateHint(null);
       }
 
-      setTag("warn", "Loaded");
+      setTag("loaded", "Loaded");
     } catch (e) {
       console.error(e);
       const msg = String(e || "");
-      
-      if (state.source === "state" && (msg.includes("404") || /state\.json/i.test(msg) || /missing state/i.test(msg))) {
+
+      if (
+        state.source === "state" &&
+        (msg.includes("404") || /state\.json/i.test(msg) || /missing state/i.test(msg))
+      ) {
         showStateHint("state");
         state.items = {};
         state.rows = [];
@@ -2170,6 +2463,7 @@ async function loadSnapshots() {
       if (row.deleted) continue;
       const key = (row.key || "").trim();
       if (key) continue;
+
       const hasOther =
         (row.title && row.title.trim()) ||
         (row.type && row.type.trim()) ||
@@ -2177,6 +2471,7 @@ async function loadSnapshots() {
         (row.imdb && row.imdb.trim()) ||
         (row.tmdb && row.tmdb.trim()) ||
         (row.trakt && row.trakt.trim());
+
       if (hasOther) missing.push(row);
     }
     return missing;
@@ -2188,18 +2483,22 @@ async function loadSnapshots() {
     const missing = findRowsMissingKey();
     if (missing.length) {
       setTag("error", "Missing key");
-      setStatus(`Cannot save: ${missing.length} row${missing.length === 1 ? "" : "s"} have data but no Key. Fill the Key or delete the row.`);
+      setStatus(
+        `Cannot save: ${missing.length} row${missing.length === 1 ? "" : "s"} have data but no Key. Fill the Key or delete the row.`
+      );
       if (window.cxToast) window.cxToast("Fill Key for all rows with data before saving");
       return;
     }
 
     state.saving = true;
     setTag("warn", "Saving…");
-    saveBtn.disabled = true;
+    if (saveBtn) saveBtn.disabled = true;
+
     try {
       const items = {};
       const blocks = [];
       const seenBlocks = new Set();
+
       for (const row of state.rows) {
         if (row.deleted) {
           if (state.source === "state" && row._origin === "baseline") {
@@ -2222,26 +2521,39 @@ async function loadSnapshots() {
 
         const raw = row.raw || {};
         const ids = raw.ids || {};
+
         if (row.imdb) ids.imdb = row.imdb;
+        else delete ids.imdb;
+
         if (row.tmdb) ids.tmdb = row.tmdb;
+        else delete ids.tmdb;
+
         if (row.trakt) ids.trakt = row.trakt;
+        else delete ids.trakt;
+
         raw.ids = ids;
         raw.type = row.type || raw.type || null;
-        if (row.title) raw.title = row.title;
+        raw.title = row.title ? row.title : raw.title || null;
+
         const y = (row.year || "").trim();
-        raw.year = y ? parseInt(y, 10) || null : null;
+        const n = y ? parseInt(y, 10) : NaN;
+        raw.year = Number.isFinite(n) ? n : null;
+
         items[key] = raw;
       }
+
       const payload = { kind: state.kind, source: state.source, items };
       if (state.source === "state") {
         payload.provider = state.snapshot;
         payload.blocks = blocks;
       }
-const res = await fetchJSON("/api/editor", {
+
+      const res = await fetchJSON("/api/editor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
       state.hasChanges = false;
       setTag("warn", "Saved");
       setStatus(`Saved ${res.count || Object.keys(items).length} items`);
@@ -2252,13 +2564,14 @@ const res = await fetchJSON("/api/editor", {
       setStatus(String(e));
     } finally {
       state.saving = false;
-      saveBtn.disabled = false;
+      if (saveBtn) saveBtn.disabled = false;
     }
   }
 
   function addRow() {
     const raw = { ids: {}, type: "movie", title: "", year: null };
     state.rows.unshift({
+      _rid: state.ridSeq++,
       key: "",
       type: raw.type,
       title: "",
@@ -2283,6 +2596,7 @@ const res = await fetchJSON("/api/editor", {
       renderRows();
     });
   }
+
   if (nextBtn) {
     nextBtn.addEventListener("click", () => {
       const filteredCount = applyFilter(state.rows).length;
@@ -2297,9 +2611,8 @@ const res = await fetchJSON("/api/editor", {
     th.addEventListener("click", () => {
       const key = th.dataset.sort;
       if (!key) return;
-      if (state.sortKey === key) {
-        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-      } else {
+      if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      else {
         state.sortKey = key;
         state.sortDir = "asc";
       }
@@ -2353,7 +2666,7 @@ const res = await fetchJSON("/api/editor", {
           URL.revokeObjectURL(url);
           a.remove();
         }, 0);
-        setTag("warn", "Loaded");
+        setTag("loaded", "Loaded");
         if (window.cxToast) window.cxToast("Tracker export downloaded");
       } catch (e) {
         console.error(e);
@@ -2364,9 +2677,7 @@ const res = await fetchJSON("/api/editor", {
   }
 
   if (uploadBtn && uploadInput) {
-    uploadBtn.addEventListener("click", () => {
-      uploadInput.click();
-    });
+    uploadBtn.addEventListener("click", () => uploadInput.click());
 
     uploadInput.addEventListener("change", async () => {
       const file = uploadInput.files && uploadInput.files[0];
@@ -2377,6 +2688,7 @@ const res = await fetchJSON("/api/editor", {
         fd.append("file", file);
         setTag("warn", "Importing…");
         setStatus("");
+
         const res = await fetch("/api/editor/import", { method: "POST", body: fd });
         if (!res.ok) {
           let msg = `Import failed: ${res.status}`;
@@ -2390,26 +2702,16 @@ const res = await fetchJSON("/api/editor", {
         const data = await res.json();
 
         const parts = [];
-        if (data.files != null) {
-          parts.push(`${data.files} file${data.files === 1 ? "" : "s"}`);
-        }
-        if (data.states != null) {
-          parts.push(`${data.states} state file${data.states === 1 ? "" : "s"}`);
-        }
-        if (data.snapshots != null) {
-          parts.push(`${data.snapshots} snapshot${data.snapshots === 1 ? "" : "s"}`);
-        }
+        if (data.files != null) parts.push(`${data.files} file${data.files === 1 ? "" : "s"}`);
+        if (data.states != null) parts.push(`${data.states} state file${data.states === 1 ? "" : "s"}`);
+        if (data.snapshots != null) parts.push(`${data.snapshots} snapshot${data.snapshots === 1 ? "" : "s"}`);
 
         let msg = "Imported " + (parts.length ? parts.join(", ") : "tracker data");
-        if (data.overwritten) {
-          msg += ` (${data.overwritten} overwritten)`;
-        }
+        if (data.overwritten) msg += ` (${data.overwritten} overwritten)`;
 
-        setTag("warn", "Loaded");
+        setTag("loaded", "Loaded");
         setStatusSticky(msg, 5000);
-        if (window.cxToast) {
-        window.cxToast(msg);
-        }
+        if (window.cxToast) window.cxToast(msg);
 
         await loadTrackerCounts();
         await loadSnapshots();
@@ -2424,64 +2726,99 @@ const res = await fetchJSON("/api/editor", {
     });
   }
 
-  
-if (sourceSel) {
-  sourceSel.addEventListener("change", async () => {
-    state.source = (sourceSel.value || "tracker").trim();
-    state.snapshot = "";
-    state.page = 0;
-    persistUIState();
-    syncSourceUI();
-    if (state.source !== "state") await loadTrackerCounts();
-    await loadSnapshots();
-    await loadState();
-  });
-}
+  if (sourceSel) {
+    sourceSel.addEventListener("change", async () => {
+      state.source = (sourceSel.value || "tracker").trim();
+      state.snapshot = "";
+      state.page = 0;
+      persistUIState();
+      syncSourceUI();
+      clearSelection();
+      if (state.source !== "state") await loadTrackerCounts();
+      await loadSnapshots();
+      await loadState();
+    });
+  }
 
-kindSel.addEventListener("change", async () => {
+  if (kindSel) {
+    kindSel.addEventListener("change", async () => {
+      const prevKind = state.kind;
+      state.kind = (kindSel.value || "watchlist").trim();
+      if (prevKind === "watchlist" && state.kind !== "watchlist") {
+        state.typeFilter.season = true;
+        state.typeFilter.episode = true;
+      }
+      syncKindUI();
+      syncTypeFilterUI();
+      syncStateBulkUI();
+      clearSelection();
+      if (state.source !== "state") state.snapshot = "";
+      state.page = 0;
+      persistUIState();
+      await loadSnapshots();
+      renderRows();
+      await loadState();
+    });
+  }
 
-    state.kind = (kindSel.value || "watchlist").trim();
-    if (state.source !== "state") state.snapshot = "";
-    state.page = 0;
-    persistUIState();
-    await loadSnapshots();
-    renderRows();
-    await loadState();
-  });
+  if (snapSel) {
+    snapSel.addEventListener("change", async () => {
+      state.snapshot = snapSel.value || "";
+      state.page = 0;
+      persistUIState();
+      await loadState();
+    });
+  }
 
-  snapSel.addEventListener("change", async () => {
-    state.snapshot = snapSel.value || "";
-    state.page = 0;
-    persistUIState();
-    await loadState();
-  });
+  if (filterInput) {
+    filterInput.addEventListener("input", () => {
+      state.filter = filterInput.value || "";
+      state.page = 0;
+      clearSelection();
+      persistUIState();
+      renderRows();
+    });
+  }
 
-  filterInput.addEventListener("input", () => {
-    state.filter = filterInput.value || "";
-    state.page = 0;
-    persistUIState();
-    renderRows();
-  });
+  if (reloadBtn) {
+    reloadBtn.addEventListener("click", async () => {
+      state.snapshot = (snapSel && snapSel.value) ? snapSel.value : "";
+      state.page = 0;
+      if (state.source !== "state") await loadTrackerCounts();
+      await loadSnapshots();
+      await loadState();
+    });
+  }
 
-  
-reloadBtn.addEventListener("click", async () => {
-  state.snapshot = snapSel.value || "";
-  state.page = 0;
-  if (state.source !== "state") await loadTrackerCounts();
-  await loadSnapshots();
-  await loadState();
-});;
+  if (selectPage) {
+    selectPage.addEventListener("change", () => {
+      if (!state.selected) state.selected = new Set();
+      const on = !!selectPage.checked;
+      for (const rid of state.pageRids || []) {
+        if (on) state.selected.add(rid);
+        else state.selected.delete(rid);
+      }
+      syncBulkBar();
+      syncSelectPageCheckbox();
+      renderRows();
+    });
+  }
 
-  addBtn.addEventListener("click", addRow);
-  saveBtn.addEventListener("click", saveState);
+  if (bulkRemoveBtn) bulkRemoveBtn.addEventListener("click", () => bulkSetDeletedForSelected(true));
+  if (bulkRestoreBtn) bulkRestoreBtn.addEventListener("click", () => bulkSetDeletedForSelected(false));
+  if (bulkClearBtn) bulkClearBtn.addEventListener("click", () => { clearSelection(); renderRows(); });
+
+  if (bulkBlockTypeBtn) bulkBlockTypeBtn.addEventListener("click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, true));
+  if (bulkUnblockTypeBtn) bulkUnblockTypeBtn.addEventListener("click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, false));
+
+  if (addBtn) addBtn.addEventListener("click", addRow);
+  if (saveBtn) saveBtn.addEventListener("click", saveState);
 
   window.addEventListener("beforeunload", e => {
     if (!state.hasChanges) return;
     e.preventDefault();
     e.returnValue = "";
   });
-
-  
 
   if (stateDownloadBtn) {
     stateDownloadBtn.addEventListener("click", async () => {
@@ -2500,7 +2837,7 @@ reloadBtn.addEventListener("click", async () => {
           URL.revokeObjectURL(url);
           a.remove();
         }, 0);
-        setTag("warn", "Loaded");
+        setTag("loaded", "Loaded");
         if (window.cxToast) window.cxToast("Policy export downloaded");
       } catch (e) {
         console.error(e);
@@ -2511,9 +2848,7 @@ reloadBtn.addEventListener("click", async () => {
   }
 
   if (stateUploadBtn && stateUploadInput) {
-    stateUploadBtn.addEventListener("click", () => {
-      stateUploadInput.click();
-    });
+    stateUploadBtn.addEventListener("click", () => stateUploadInput.click());
 
     stateUploadInput.addEventListener("change", async () => {
       const file = stateUploadInput.files && stateUploadInput.files[0];
@@ -2524,6 +2859,7 @@ reloadBtn.addEventListener("click", async () => {
         fd.append("file", file);
         setTag("warn", "Importing…");
         setStatus("");
+
         const res = await fetch("/api/editor/state/manual/import?mode=merge", { method: "POST", body: fd });
         if (!res.ok) {
           let msg = `Import failed: ${res.status}`;
@@ -2542,7 +2878,7 @@ reloadBtn.addEventListener("click", async () => {
 
         const msg = "Imported " + (parts.length ? parts.join(", ") : "policy");
         if (window.cxToast) window.cxToast(msg);
-        setTag("ok", "Imported");
+        setTag("warn", "Imported");
         await loadSnapshots();
         await loadState();
       } catch (e) {
@@ -2555,13 +2891,11 @@ reloadBtn.addEventListener("click", async () => {
     });
   }
 
-
-(async () => {
-  syncSourceUI();
-  setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
-  if (state.source !== "state") await loadTrackerCounts();
-  await loadSnapshots();
-  await loadState();
-})();
-
+  (async () => {
+    syncSourceUI();
+    setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
+    if (state.source !== "state") await loadTrackerCounts();
+    await loadSnapshots();
+    await loadState();
+  })();
 })();
