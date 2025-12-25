@@ -436,7 +436,7 @@ def _cache_download(
     return dest_path, mime
 
 def _placeholder_poster() -> Path:
-    return Path(__file__).resolve().parent / "assets" / "img" / "placeholder_poster.svg"
+    return Path("/app/assets/img/placeholder_poster.svg")
 
 def get_poster_file(
     api_key: str,
