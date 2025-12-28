@@ -65,9 +65,8 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
        src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920"
        style="max-width: 100%; height: auto;" />
 </p>
-- _.....and more...._
 
-<h2>🚀 Features</h2>
+<h2>Features</h2>
 
 <div align="center">
   <table style="display:inline-block; text-align:left; border:0 !important; border-collapse:collapse !important;">
@@ -105,7 +104,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
   </table>
 </div>
 
-## ⬇️ Download
+## Download
 
 - **Docker (recommended):**
   ```bash
@@ -118,7 +117,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 
 ---
 
-## 🐳 Run as Container
+## Run as Container
 
 ```bash
 docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=Europe/Amsterdam   ghcr.io/cenodude/crosswatch:latest
@@ -142,14 +141,14 @@ services:
 ```
 
 > The container exposes the web UI at:  
-> 👉 http://localhost:8787
+> http://localhost:8787
 
 By default <code>CONFIG_BASE</code> will be <code>/config</code> inside the container.  
 Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</code>, etc. will all be stored there.
 
 ---
 
-## 📋 Usage
+## Usage
 
 1. Open the web UI  
 2. Connect at least two authentication providers, Plex, Jellyfin, <b>Emby</b>, SIMKL and/or TRAKT  
@@ -159,15 +158,15 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 
 ---
 
-## 🎬 Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
+## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
 CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
 Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
 
 ---
 
-## 🔐 Security
+## Security
 
-⚠️ CrossWatch is NOT meant to be exposed directly to the public internet.
+CrossWatch is NOT meant to be exposed directly to the public internet.
     During the current development stage there is no authentication built in, so treat it as a LAN/VPN-only tool.
 
 - Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
