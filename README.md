@@ -153,25 +153,26 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 ## Usage
 
 1. Open the web UI  
-2. Connect at least two authentication providers, Plex, Jellyfin, <b>Emby</b>, SIMKL and/or TRAKT  
-3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) and/or enable Scrobble  
+2. Connect at least one authentication providers such as: Plex, Jellyfin, Emby, SIMKL, TRAKT etc.
+3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble  
 4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
 
 ---
 
 ## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
-CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt.  
-Have Plex Pass / Emby Premiere? Prefer <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>.
+CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
+Have Plex Pass / Emby Premiere? you can use <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>. 
+Personally, I prefer the watcher because it’s real-time.
 
 ---
 
 ## Security
 
 CrossWatch is NOT meant to be exposed directly to the public internet.
-    During the current development stage there is no authentication built in, so treat it as a LAN/VPN-only tool.
+    During the current development stage there is also no authentication built in, so treat it as a LAN/VPN-only tool.
 
-- Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
+- Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN. 
 - Run CrossWatch on your **local network** only, or access it via:
   - a **VPN** (WireGuard, Tailscale, etc.)
 - Anyone who can reach the web UI can change sync pairs, tokens and settings, which may:
