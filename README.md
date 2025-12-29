@@ -42,17 +42,19 @@
 </p>
 
 **CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
-It runs locally with a clean web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
-CrossWatch also includes its own tracker to keep your data safe with snapshots. 
-It supports **movies** and **shows/episodes** Anime is not supported yet....sorry..
+It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
+CrossWatch also includes its own tracker to keep your data safe with snapshots.  
 
-## Why CrossWatch?
+Supported: **Movies** and **TV shows / episodes / Seasons**
+Not supported: **Anime** (not yet) and **Multi-users/servers**
+
+## CrossWatch in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
 - **Internal CrossWatch Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
-- **Unified, visual Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
+- **Unified Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
 - **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
@@ -106,7 +108,7 @@ It supports **movies** and **shows/episodes** Anime is not supported yet....sorr
 
 ## Download
 
-- **Docker (recommended):**
+- **Docker:**
   ```bash
   docker pull ghcr.io/cenodude/crosswatch:latest
   ```
