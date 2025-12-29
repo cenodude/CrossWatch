@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import re
 import threading
 import time
@@ -813,6 +812,14 @@ def _resolve_trakt_episode_id(
 ) -> int | None:
     s = md.get("parentIndex")
     e = md.get("index")
+    try:
+        s = int(s) if s is not None else None
+    except Exception:
+        s = None
+    try:
+        e = int(e) if e is not None else None
+    except Exception:
+        e = None
     key = ("episode", ids_all.get("imdb"), ids_all.get("tmdb"), ids_all.get("tvdb"), s, e)
     c = _cache_get(key)
     if c is not None:
@@ -872,6 +879,14 @@ def _build_primary_body(
 
     s = md.get("parentIndex")
     n = md.get("index")
+    try:
+        s = int(s) if s is not None else None
+    except Exception:
+        s = None
+    try:
+        n = int(n) if n is not None else None
+    except Exception:
+        n = None
     show_ids = _show_ids_from_md(md)
 
     if not show_ids:
@@ -938,8 +953,8 @@ def _account_key(payload: dict[str, Any]) -> str:
     acc_uuid = str(acc.get("uuid") or "").lower()
     acc_id = str(acc.get("id") or "")
     title = str(acc.get("title") or "")
-    return acc_uuid or f"id:{acc_id}" or title or "unknown"
-
+    acc_id_key = f"id:{acc_id}" if acc_id else ""
+    return acc_uuid or acc_id_key or title or "unknown"
 
 def _player_state_from_sessions(
     cfg: dict[str, Any],
@@ -956,19 +971,42 @@ def _player_state_from_sessions(
         if r.status_code != 200:
             return "unknown"
         root = ET.fromstring(r.text or "")
+
+        rk_hits: list[ET.Element] = []
+
         for v in root.iter("Video"):
             rk = v.get("ratingKey") or ""
             sk = v.get("sessionKey") or ""
+
+            if target_sk and sk == target_sk:
+                p = v.find("Player")
+                return ((p.get("state") if p is not None else "") or "").lower() or "unknown"
+
+            if not target_sk and target_rk and rk == target_rk:
+                rk_hits.append(v)
+
+        if not rk_hits:
+            return "none"
+
+        # sessionKey wasn't usable:
+        if not acc_id and not acc_title:
+            return "ambiguous"
+
+        def user_matches(v: ET.Element) -> bool:
             user = v.find("User")
             u_id = (user.get("id") if user is not None else "") or ""
             u_title = (user.get("title") if user is not None else "") or ""
-            if ((target_sk and sk == target_sk) or (target_rk and rk == target_rk)) and (u_id == acc_id or u_title == acc_title):
-                p = v.find("Player")
-                state = ((p.get("state") if p is not None else "") or "").lower()
-                _emit(None, f"autoplay probe match rk={rk} sk={sk} user={u_title or u_id} state={state}", "DEBUG")
-                return state or "unknown"
-        _emit(None, f"autoplay probe no match for rk={target_rk} sk={target_sk}", "DEBUG")
-        return "none"
+            if acc_id:
+                return u_id == acc_id
+            return (u_title or "").strip().lower() == (acc_title or "").strip().lower()
+
+        hits = [v for v in rk_hits if user_matches(v)]
+        if len(hits) != 1:
+            return "ambiguous"
+
+        p = hits[0].find("Player")
+        return ((p.get("state") if p is not None else "") or "").lower() or "unknown"
+
     except Exception as e:
         _emit(None, f"autoplay probe error: {e}", "DEBUG")
         return "unknown"
@@ -980,26 +1018,30 @@ def _check_autoplay_after(
     md: dict[str, Any],
     ids_all2: dict[str, Any],
     wait_s: int,
-    suppress_start_at: float,
-    stop_pause_threshold: float,
-    force_stop_at: float,
+    
     logger: Callable[..., None] | Any | None = None,
 ) -> None:
     try:
-        rk = str(md.get("ratingKey") or "")
-        sk = str(payload.get("sessionKey") or md.get("sessionKey") or "")
+        rk = str(md.get("ratingKey") or md.get("ratingkey") or "")
+        sk = str(payload.get("sessionKey") or md.get("sessionKey") or md.get("sessionkey") or "")
         acc = payload.get("Account") or {}
         acc_id = str(acc.get("id") or "")
         acc_title = str(acc.get("title") or "")
+        acc_key = _account_key(payload)
+
         time.sleep(max(0.0, float(wait_s)))
         state = _player_state_from_sessions(cfg, rk, sk, acc_id, acc_title)
 
+        player_uuid = str((payload.get("Player") or {}).get("uuid") or "")
+        sess = sk or f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
+
         if state in ("playing", "buffering"):
-            sess = str(md.get("ratingKey") or sk or "n/a")
+            
             st = _SCROBBLE_STATE.get(sess) or {}
             prog = max(2.0, float(st.get("prog", 0.0)) or 2.0)
             media_type = (md.get("type") or "").lower()
             body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
+
             if not body:
                 _emit(logger, "autoplay promote: no IDs", "DEBUG")
                 _SCROBBLE_STATE[sess] = {
@@ -1012,13 +1054,15 @@ def _check_autoplay_after(
                     "autoplay_until": 0.0,
                 }
                 return
-            _emit(logger, "autoplay window expired; player playing → send start", "DEBUG")
+
+            _emit(logger, "autoplay window expired; player playing to send start", "DEBUG")
             r = _post_trakt("/scrobble/start", body, cfg)
             try:
                 rj: Any = r.json()
             except Exception:
                 rj = {"raw": (r.text or "")[:200]}
             _emit(logger, f"trakt /scrobble/start -> {r.status_code}", "DEBUG")
+
             _SCROBBLE_STATE[sess] = {
                 "ts": time.time(),
                 "last_event": "media.play",
@@ -1029,8 +1073,7 @@ def _check_autoplay_after(
                 "autoplay_until": 0.0,
             }
         else:
-            _emit(logger, "autoplay window expired; player not playing → clear quarantine", "DEBUG")
-            sess = str(md.get("ratingKey") or sk or "n/a")
+            _emit(logger, "autoplay window expired; player not playing to clear quarantine", "DEBUG")
             st = _SCROBBLE_STATE.get(sess) or {}
             _SCROBBLE_STATE[sess] = {
                 "ts": time.time(),
@@ -1102,7 +1145,7 @@ def process_webhook(
     suppress_autoplay = int(wh.get("suppress_autoplay_seconds", _DEF_WEBHOOK["suppress_autoplay_seconds"]) or 0)
     probe_progress = bool(wh.get("probe_session_progress", True))
     flt = (wh.get("filters_plex") or {})
-    allow_users = set((flt.get("username_whitelist") or []))
+    allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
     srv_uuid_cfg = (flt.get("server_uuid") or "").strip() or ((cfg.get("plex") or {}).get("server_uuid") or "").strip()
 
     tset = (sc.get("trakt") or {})
@@ -1152,22 +1195,25 @@ def process_webhook(
 
     prog_raw = _progress(payload)
 
-    rk = md.get("ratingKey") or md.get("ratingkey")
-    sk = md.get("sessionKey") or md.get("sessionkey")
-    if probe_progress:
-        p_probe = _probe_session_progress(cfg, rk, sk)
+    acc_key = _account_key(payload)
+    rk = str(md.get("ratingKey") or md.get("ratingkey") or "")
+    sk_current = str(payload.get("sessionKey") or md.get("sessionKey") or md.get("sessionkey") or "")
+    player_uuid = str((payload.get("Player") or {}).get("uuid") or "")
+    sess = sk_current or f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
+
+    if probe_progress and sk_current:
+        p_probe = _probe_session_progress(cfg, None, sk_current)
         if isinstance(p_probe, int) and abs(p_probe - int(round(prog_raw))) >= 5:
             best = p_probe
             if 5 <= best <= 95 or (best >= 96 and prog_raw >= 95):
                 _emit(logger, f"probe correction: {prog_raw:.0f}% → {best:.0f}%", "DEBUG")
                 prog_raw = float(best)
 
-    sess = str(md.get("ratingKey") or payload.get("sessionKey") or md.get("sessionKey") or "n/a")
+
     now = time.time()
     st = _SCROBBLE_STATE.get(sess) or {}
 
-    acc_key = _account_key(payload)
-    sk_current = str(payload.get("sessionKey") or md.get("sessionKey") or "")
+
     if event in ("media.play", "media.resume") and suppress_autoplay > 0:
         fin = _LAST_FINISH_BY_ACC.get(acc_key)
         if fin:
@@ -1187,7 +1233,7 @@ def process_webhook(
                 }
                 threading.Thread(
                     target=_check_autoplay_after,
-                    args=(cfg, payload, md, ids_all2, suppress_autoplay, suppress_start_at, stop_pause_threshold, force_stop_at, logger),
+                    args=(cfg, payload, md, ids_all2, suppress_autoplay, logger),
                     daemon=True,
                 ).start()
                 return {"ok": True, "quarantined": True}
@@ -1213,6 +1259,7 @@ def process_webhook(
     )
     fresh_start_quarantined = bool(st.get("autoplay_pending") and now <= float(st.get("autoplay_until", 0)))
     fresh_start = fresh_start_rewatch or fresh_start_quarantined
+
 
     if fresh_start_quarantined and event == "media.stop" and _progress(payload) < 2.0:
         _emit(logger, "autoplay stopped immediately (<2%) → ignore", "DEBUG")
@@ -1250,20 +1297,36 @@ def process_webhook(
             _emit(logger, f"PMS says played → force STOP at ≥95%", "DEBUG")
             prog = max(prog, last_prog, 95.0)
 
+    fast_cancel_stop = False
     if event == "media.stop" and prog < force_stop_at:
         dt = now - float(st.get("ts", 0))
-        if dt < 2.0:
+        last_evt = str(st.get("last_event") or "")
+        last_sk = str(st.get("sk") or "")
+        last_p = float(st.get("prog", 0.0) or 0.0)
+        fast_cancel = (
+            dt < 2.0
+            and last_evt in ("media.play", "media.resume")
+            and last_p <= 5.0
+            and (not sk_current or not last_sk or sk_current == last_sk)
+        )
+        fast_cancel_stop = bool(fast_cancel)
+
+        if dt < 2.0 and not fast_cancel:
             _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
             _SCROBBLE_STATE[sess] = {
                 "ts": now,
                 "last_event": event,
                 "prog": prog,
                 "sk": sk_current,
-                "finished": (prog >= force_stop_at),
+                "finished": False,
                 "autoplay_pending": False,
                 "autoplay_until": 0.0,
             }
             return {"ok": True, "suppressed": True}
+
+        if fast_cancel and prog < last_p:
+            _emit(logger, f"fast-cancel stop: use last progress {last_p:.1f}% (current {prog:.1f}%)", "DEBUG")
+            prog = last_p
 
     path = _map_event(event)
     if not path:
@@ -1294,17 +1357,15 @@ def process_webhook(
     intended = path
 
     if event == "media.pause" and (prog >= force_stop_at or last_prog >= force_stop_at):
-        _emit(logger, f"promote PAUSE→STOP at {max(prog, last_prog):.1f}%", "DEBUG")
+        _emit(logger, f"promote PAUSE to STOP at {max(prog, last_prog):.1f}%", "DEBUG")
         intended = "/scrobble/stop"
         prog = max(prog, last_prog, 95.0)
 
-    if intended == "/scrobble/stop":
-        if prog < stop_pause_threshold:
-            intended = "/scrobble/pause"
-        elif prog < force_stop_at:
+    if intended == "/scrobble/stop" and not fast_cancel_stop:
+        if prog < force_stop_at:
             intended = "/scrobble/pause"
         elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
-            _emit(logger, f"Demote STOP→PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
+            _emit(logger, f"Demote STOP to PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
             intended = "/scrobble/pause"
             prog = last_prog
 
@@ -1325,6 +1386,23 @@ def process_webhook(
             "autoplay_until": 0.0,
         }
         return {"ok": True, "suppressed": True}
+
+    if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
+        fin = _LAST_FINISH_BY_ACC.get(acc_key)
+        if fin and str(fin.get("rk") or "") == str(rk or "") and (now - float(fin.get("ts", 0))) <= 180:
+            _emit(logger, "suppress duplicate finish (stop<->scrobble)", "DEBUG")
+            _SCROBBLE_STATE[sess] = {
+                "ts": now,
+                "last_event": event,
+                "last_pause_ts": st.get("last_pause_ts", 0),
+                "prog": prog,
+                "sk": sk_current,
+                "finished": True,
+                "autoplay_pending": False,
+                "autoplay_until": 0.0,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            }
+            return {"ok": True, "suppressed": True}
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
