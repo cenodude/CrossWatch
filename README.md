@@ -41,26 +41,26 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
 It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
-CrossWatch also includes its own tracker to keep your data safe with snapshots.  
+CW also includes its own tracker to keep your data safe with snapshots.  
 
-Supported: **Movies** and **TV shows / episodes / Seasons**
-Not supported: **Anime** (not yet) and **Multi-users/servers**
+Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
+NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
-## CrossWatch in a nutshell:
+## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
-- **Internal CrossWatch Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
+- **Internal CW Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
 - **Unified Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
 - **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
-- **Editor** Inspect and adjust CrossWatch data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
+- **Editor** Inspect and adjust CW data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
 <p align="center">
   <img alt="image"
@@ -79,7 +79,7 @@ Not supported: **Anime** (not yet) and **Multi-users/servers**
           <li>Live scrobble (Plex/Jellyfin/Emby to Trakt)</li>
           <li>Sync ratings (one-/two-way)</li>
           <li>Sync watch history (one-/two-way)</li>
-          <li>Keep snapshots with CrossWatch tracker</li>
+          <li>Keep snapshots with CW tracker</li>
           <li>Auto-remove from watchlist after finish</li>
         </ul>
       </td>
@@ -161,7 +161,7 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 ---
 
 ## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
-CrossWatch can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
+CW can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
 Have Plex Pass / Emby Premiere? you can use <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>. 
 Personally, I prefer the watcher because it’s real-time.
 
@@ -169,11 +169,11 @@ Personally, I prefer the watcher because it’s real-time.
 
 ## Security
 
-CrossWatch is NOT meant to be exposed directly to the public internet.
+CW is NOT meant to be exposed directly to the public internet.
     During the current development stage there is also no authentication built in, so treat it as a LAN/VPN-only tool.
 
 - Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN. 
-- Run CrossWatch on your **local network** only, or access it via:
+- Run CW on your **local network** only, or access it via:
   - a **VPN** (WireGuard, Tailscale, etc.)
 - Anyone who can reach the web UI can change sync pairs, tokens and settings, which may:
   - delete or corrupt watch history / ratings / watchlists,
