@@ -48,6 +48,11 @@ CW also includes its own tracker to keep your data safe with snapshots.
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
 NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
+> [!WARNING]
+> I’m seeing this more and more on this project (and plenty of other open-source projects too): people, especially on Reddit, acting like they can make demands, or like I *have* to do things their way.
+> Let me be clear: I don’t owe anyone anything. This is a hobby project I work on in my free time. Use it if it fits your needs; if it doesn’t, move on.
+> I’m not interested in lectures about your principles, what I can or can’t do, the holy war around using AI, or any other opinion pieces aimed at my project. If you’re here to demand, complain, or moralize: leave. Spend your time building something instead of complaining. Make your own project.
+
 ## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
