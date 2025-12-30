@@ -72,7 +72,6 @@
 
     if (!server) { note("Enter Tautulli server URL"); return; }
 
-    // If key is masked/empty but we already have one, allow updating server/user_id only.
     if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) {
       note("Enter your Tautulli API key");
       return;
@@ -86,7 +85,7 @@
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "save_failed");
 
-      // If we sent a real key, mask it after save.
+      
       if (key) maskKey(keyInput, true);
 
       el("tautulli_hint")?.classList.add("hidden");
@@ -125,17 +124,33 @@
   function watch() {
     const host = document.getElementById("auth-providers");
     if (!host || watch._obs) return;
-    watch._obs = new MutationObserver(() => wire());
+
+    watch._obs = new MutationObserver(() => {
+      try { wire(); } catch {}
+      if (!watch._hydrated && el("tautulli_server")) {
+        watch._hydrated = true;
+        setTimeout(() => { hydrate().catch(() => {}); }, 0);
+      }
+    });
+
     watch._obs.observe(host, { childList: true, subtree: true });
   }
 
   function boot() {
     wire();
     watch();
+
+    const run = () => {
+      if (el("tautulli_server")) {
+        watch._hydrated = true;
+        hydrate().catch(() => {});
+      }
+    };
+
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", hydrate, { once: true });
+      document.addEventListener("DOMContentLoaded", run, { once: true });
     } else {
-      hydrate();
+      run();
     }
   }
 

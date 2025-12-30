@@ -857,8 +857,9 @@ async function showTab(n) {
     layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
 
-    try { await mountAuthProviders?.(); } catch {}
     try { await loadConfig(); } catch {}
+    try { await mountAuthProviders?.(); } catch {}
+
     updateTmdbHint?.(); updateSimklHint?.(); updateSimklButtonState?.(); updateTraktHint?.(); startTraktTokenPoll?.();
 
     if (typeof window.loadScheduling === "function") {
