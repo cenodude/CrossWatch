@@ -916,6 +916,9 @@
   #stats-card #stat-providers [data-provider=mdblist]{
     --brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg");
   }
+  #stats-card #stat-providers [data-provider=tautulli]{
+    --brand:255,138,0;--wm:url("/assets/img/TAUTULLI.svg");
+  }
   #stats-card #stat-providers [data-provider=crosswatch]{
     --brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg");
   }

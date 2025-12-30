@@ -32,7 +32,7 @@ HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
 STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
-PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist")
+PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tautulli")
 
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -381,6 +381,35 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     PROBE_DETAIL_CACHE["mdblist"] = (now, ok, rsn)
     return ok, rsn
 
+def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    cached = PROBE_DETAIL_CACHE.get("tautulli")
+    now = time.time()
+    if cached and (now - cached[0]) < max_age_sec:
+        return cached[1], cached[2]
+
+    t = cfg.get("tautulli") or {}
+    base = str(t.get("server_url") or "").strip().rstrip("/")
+    key = str(t.get("api_key") or "").strip()
+    if not base or not key:
+        PROBE_DETAIL_CACHE["tautulli"] = (now, False, "not configured")
+        return False, "not configured"
+
+    url = f"{base}/api/v2?apikey={key}&cmd=get_server_info"
+    code, body = _http_get(url, headers=UA, timeout=HTTP_TIMEOUT)
+    if code != 200:
+        reason = f"HTTP {code}"
+        PROBE_DETAIL_CACHE["tautulli"] = (now, False, reason)
+        return False, reason
+
+    j = _json_loads(body) or {}
+    resp = j.get("response") if isinstance(j, dict) else None
+    if isinstance(resp, dict) and str(resp.get("result") or "").lower() == "success":
+        PROBE_DETAIL_CACHE["tautulli"] = (now, True, "")
+        return True, ""
+    reason = str(resp.get("message") or "invalid response") if isinstance(resp, dict) else "invalid response"
+    PROBE_DETAIL_CACHE["tautulli"] = (now, False, reason)
+    return False, reason
+
 
 def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["jellyfin"]
@@ -709,6 +738,10 @@ def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
     if n == "mdblist":
         md = cfg.get("mdblist") or {}
         return bool((md.get("api_key") or "").strip())
+    
+    if n == "tautulli":
+        tt = cfg.get("tautulli") or {}
+        return bool((tt.get("server_url") or "").strip() and (tt.get("api_key") or "").strip())
     return False
 
 
@@ -775,6 +808,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
     "MDBLIST": _probe_mdblist_detail,
+    "TAUTULLI": _probe_tautulli_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -819,6 +853,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         jelly_ok, jelly_reason = results.get("JELLYFIN", (False, ""))
         emby_ok, emby_reason = results.get("EMBY", (False, ""))
         mdbl_ok, mdbl_reason = results.get("MDBLIST", (False, ""))
+        taut_ok, taut_reason = results.get("TAUTULLI", (False, ""))
 
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
@@ -873,6 +908,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             "jellyfin_connected": jelly_ok,
             "emby_connected": emby_ok,
             "mdblist_connected": mdbl_ok,
+            "tautulli_connected": taut_ok,
             "debug": debug,
             "can_run": bool(any_pair_ready),
             "ts": int(now),
@@ -908,6 +944,10 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                         else {"premiere": bool(info_emby.get("premiere"))}
                     ),
                 },
+                 "TAUTULLI": {
+                     "connected": taut_ok,
+                     **({} if taut_ok else {"reason": taut_reason}),
+                 },
                 "MDBLIST": {
                     "connected": mdbl_ok,
                     **({} if mdbl_ok else {"reason": mdbl_reason}),

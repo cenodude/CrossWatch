@@ -3324,6 +3324,7 @@ async function mountAuthProviders() {
     if (slot) slot.innerHTML = html;
 
     window.initMDBListAuthUI?.();
+    window.initTautulliAuthUI?.();
 
     document.getElementById("btn-copy-plex-pin")
       ?.addEventListener("click", (e) => copyInputValue?.("plex_pin", e.currentTarget));

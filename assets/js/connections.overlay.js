@@ -1,17 +1,13 @@
-// connections.overlay.js — Providers connection UI 
+// connections.overlay.js - Providers connection UI 
 
 (function () {
-  // ────────────────────────────────────────────────────────────────────────────
-  // Globals (drag state)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Globals
   let dragSrc = null;
   let isDragging = false;
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Branding helper
-  // ────────────────────────────────────────────────────────────────────────────
   /**
-   * Brand details (class + icon) for a provider name.
+   * Brand details
    * @param {string} name
    * @returns {{cls:string, icon:string}}
    */
@@ -24,16 +20,15 @@
     if (key === "EMBY")     return { cls: "brand-emby",     icon: "/assets/img/EMBY.svg" };
     if (key === "MDBLIST")     return { cls: "brand-mdblist",     icon: "/assets/img/MDBLIST.svg" };
     if (key === "CROSSWATCH") return { cls: "brand-crosswatch", icon: "/assets/img/CROSSWATCH.svg" };
+    if (key === "TAUTULLI")    return { cls: "brand-tautulli",    icon: "/assets/img/TAUTULLI.svg" };
     return { cls: "", icon: "" };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Styles (injected once)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Styles
   function ensureStyles() {
     if (document.getElementById("cx-overlay-style")) return;
     const css = `
-      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; --jellyfin:#9654f4; --emby:#52b54b; --mdblist:#00a3ff; --crosswatch:#7c5cff; }
+      :root{ --plex:#e5a00d; --simkl:#00b7eb; --trakt:#ed1c24; --jellyfin:#9654f4; --emby:#52b54b; --mdblist:#00a3ff; --tautulli:#ff8a00; --crosswatch:#7c5cff; }
 
       .cx-grid{
         display:grid;

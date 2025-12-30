@@ -15,6 +15,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_JELLYFIN": "providers.auth._auth_JELLYFIN",
         "_auth_EMBY":     "providers.auth._auth_EMBY",
         "_auth_MDBLIST":  "providers.auth._auth_MDBLIST",
+        "_auth_TAUTULLI": "providers.auth._auth_TAUTULLI",
     },
     "SYNC": {
         "_mod_PLEX":       "providers.sync._mod_PLEX",
@@ -24,6 +25,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_EMBY":       "providers.sync._mod_EMBY",
         "_mod_MDBLIST":    "providers.sync._mod_MDBLIST",
         "_mod_CROSSWATCH": "providers.sync._mod_CROSSWATCH",
+        "_mod_TAUTULLI":   "providers.sync._mod_TAUTULLI",
     },
 }
 

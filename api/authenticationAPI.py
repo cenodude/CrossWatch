@@ -515,6 +515,36 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
             return {"ok": False, "error": str(e)}
+        
+    # ---------- TAUTULLI ----------
+    @app.post("/api/tautulli/save", tags=["auth"])
+    def tautulli_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        cfg = load_config()
+        t = cfg.setdefault("tautulli", {})
+        server = str(payload.get("server_url") or payload.get("server") or "").strip()
+        key = str(payload.get("api_key") or payload.get("key") or "").strip()
+        user_id = str(payload.get("user_id") or "").strip()
+
+        t["server_url"] = server
+        t["api_key"] = key
+        if "verify_ssl" in payload:
+            t["verify_ssl"] = bool(payload.get("verify_ssl"))
+        if user_id:
+            t.setdefault("history", {})["user_id"] = user_id
+
+        save_config(cfg)
+        _probe_bust("tautulli")
+        return {"ok": True}
+
+    @app.post("/api/tautulli/disconnect", tags=["auth"])
+    def tautulli_disconnect() -> dict[str, Any]:
+        cfg = load_config()
+        t = cfg.setdefault("tautulli", {})
+        t["server_url"] = ""
+        t["api_key"] = ""
+        save_config(cfg)
+        _probe_bust("tautulli")
+        return {"ok": True}
 
     # ---------- TRAKT ----------
     def trakt_request_pin() -> dict[str, Any]:

@@ -86,6 +86,20 @@ DEFAULT_CFG: dict[str, Any] = {
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
         "ratings_max_backoff_ms": 8000                  # Max backoff time for retries
     },
+    
+     "tautulli": {
+         "server_url": "",                               # http(s)://host:8181
+         "api_key": "",                                  # Tautulli API key
+         "verify_ssl": False,                            # Verify TLS certificates
+         "timeout": 10.0,                                # HTTP timeout (seconds)
+         "max_retries": 3,                               # Retry budget
+         "history": {
+             "user_id": "",                              # Optional user filter
+             "per_page": 100,                            # Tautulli history page size
+             "max_pages": 5000,                          # Safety cap
+             "metadata_fallback": True,                  # Call get_metadata when GUIDs are missing
+         },
+     },
 
     "trakt": {
         "client_id": "",                                # From your Trakt app

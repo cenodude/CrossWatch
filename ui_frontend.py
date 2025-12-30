@@ -465,6 +465,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/auth/auth.jellyfin.js" defer></script>
 <script src="/assets/auth/auth.emby.js" defer></script>
 <script src="/assets/auth/auth.mdblist.js" defer></script>
+<script src="/assets/auth/auth.tautulli.js" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
 
