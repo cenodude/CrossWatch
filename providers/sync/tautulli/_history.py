@@ -94,19 +94,15 @@ def _ids_from_plex_guid(s: str) -> dict[str, str]:
     if not g:
         return {}
     out: dict[str, str] = {}
-
     m = re.search(r"(?:com\.plexapp\.agents\.)?imdb://(tt\d+)", g, re.IGNORECASE)
     if m:
         out["imdb"] = m.group(1)
-
     m = re.search(r"(?:com\.plexapp\.agents\.)?(?:themoviedb|tmdb)://(\d+)", g, re.IGNORECASE)
     if m:
         out["tmdb"] = m.group(1)
-
     m = re.search(r"(?:com\.plexapp\.agents\.)?thetvdb://(\d+)", g, re.IGNORECASE)
     if m:
         out["tvdb"] = m.group(1)
-
     return out
 
 
@@ -141,6 +137,16 @@ def _has_any_ids(ids: Mapping[str, str], show_ids: Mapping[str, str]) -> bool:
     return bool(ids.get("plex") or show_ids.get("plex"))
 
 
+def _has_ext_ids(ids: Mapping[str, str]) -> bool:
+    return any(ids.get(k) for k in _EXT_ID_KEYS)
+
+
+def _merge_ids(dst: dict[str, str], src: Mapping[str, str]) -> None:
+    for k, v in (src or {}).items():
+        if v and not dst.get(k):
+            dst[k] = str(v)
+
+
 def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     ids: dict[str, str] = {}
     show_ids: dict[str, str] = {}
@@ -154,18 +160,24 @@ def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
         show_ids["plex"] = str(gp_rk)
 
     for g in _collect_guids(row):
+        gg = _clean_guid(g)
+        if gg.lower().startswith("plex://") and "guid" not in ids:
+            ids["guid"] = gg
         try:
-            ids.update(ids_from_guid(g))
+            ids.update(ids_from_guid(gg))
         except Exception:
             pass
-        ids.update(_ids_from_plex_guid(g))
+        ids.update(_ids_from_plex_guid(gg))
 
     for g in _collect_guids({k: row.get(k) for k in ("grandparent_guid", "grandparent_guids") if row.get(k)}):
+        gg = _clean_guid(g)
+        if gg.lower().startswith("plex://") and "guid" not in show_ids:
+            show_ids["guid"] = gg
         try:
-            show_ids.update(ids_from_guid(g))
+            show_ids.update(ids_from_guid(gg))
         except Exception:
             pass
-        show_ids.update(_ids_from_plex_guid(g))
+        show_ids.update(_ids_from_plex_guid(gg))
 
     for k in _EXT_ID_KEYS:
         if k in ids and k not in show_ids:
@@ -186,6 +198,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         cfg_max_pages = max_pages
 
     out: dict[str, dict[str, Any]] = {}
+    meta_cache: dict[str, Mapping[str, Any] | None] = {}
     start = 0
     pages = 0
     prev_sig = ""
@@ -201,6 +214,19 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         ft = first.get("date") or ""
         lt = last.get("date") or ""
         return f"{fk}:{ft}|{lk}:{lt}|{len(rows)}"
+
+    def _get_meta(rating_key: str) -> Mapping[str, Any] | None:
+        rk = str(rating_key or "").strip()
+        if not rk:
+            return None
+        if rk in meta_cache:
+            return meta_cache[rk]
+        try:
+            meta = client.call("get_metadata", rating_key=rk) or None
+        except Exception:
+            meta = None
+        meta_cache[rk] = meta if isinstance(meta, Mapping) else None
+        return meta_cache[rk]
 
     while True:
         pages += 1
@@ -254,6 +280,20 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             if not _has_any_ids(ids, show_ids):
                 continue
 
+            if ids.get("plex") and (not _has_ext_ids(ids) or (mtype == "episode" and not _has_ext_ids(show_ids))):
+                meta = _get_meta(ids["plex"])
+                if isinstance(meta, Mapping):
+                    m_ids, m_show_ids = _row_ids(meta)
+                    _merge_ids(ids, m_ids)
+                    _merge_ids(show_ids, m_show_ids)
+
+            if mtype == "episode" and show_ids.get("plex") and not _has_ext_ids(show_ids):
+                show_meta = _get_meta(show_ids["plex"])
+                if isinstance(show_meta, Mapping):
+                    sm_ids, sm_show_ids = _row_ids(show_meta)
+                    _merge_ids(show_ids, sm_ids)
+                    _merge_ids(show_ids, sm_show_ids)
+
             if mtype == "movie":
                 item: dict[str, Any] = {
                     "type": "movie",
@@ -267,12 +307,12 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 episode_i = _to_int(row.get("media_index") or row.get("episode"))
                 if season_i is None or episode_i is None:
                     continue
+                ids_out = show_ids if _has_ext_ids(show_ids) else ids
                 item = {
                     "type": "episode",
-                    "ids": ids,
-                    "show_ids": show_ids,
-                    "series_title": row.get("grandparent_title") or row.get("grandparentTitle"),
+                    "ids": ids_out,
                     "title": row.get("title") or row.get("full_title"),
+                    "year": row.get("year"),
                     "season": season_i,
                     "episode": episode_i,
                     "watched_at": watched_at,
