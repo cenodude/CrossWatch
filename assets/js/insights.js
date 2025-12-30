@@ -59,6 +59,10 @@
     if (has(cfg?.jellyfin?.access_token)) S.add("jellyfin");
     if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("emby");
     if (has(cfg?.mdblist?.api_key)) S.add("mdblist");
+
+    const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
+    if (has(t?.server_url || t?.server)) S.add("tautulli");
+
     S.add("crosswatch");
 
     _cfgSet = S;
@@ -921,6 +925,10 @@
   }
   #stats-card #stat-providers [data-provider=crosswatch]{
     --brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg");
+  }
+
+  #stats-card #stat-providers [data-provider=tautulli]{
+    --brand:245,124,46;--wm:url("/assets/img/TAUTULLI.svg");
   }
 
   #stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{

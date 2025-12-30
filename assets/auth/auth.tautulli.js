@@ -1,60 +1,113 @@
-// auth.tautulli.js - Tautulli API-key auth UI
+// assets/auth/auth.tautulli.js
 (function () {
-  const el = (id) => document.getElementById(id);
-  const txt = (v) => String(v ?? "").trim();
+  if (window._tautPatched) return;
+  window._tautPatched = true;
 
-  function note(msg, ok = true) {
+  const el = (id) => document.getElementById(id);
+  const txt = (v) => (typeof v === "string" ? v : "").trim();
+  const note = (m) => (typeof window.notify === "function" ? window.notify(m) : void 0);
+
+  async function fetchJSON(url, opts) {
+    const r = await fetch(url, opts || {});
+    let j = null; try { j = await r.json(); } catch {}
+    return { ok: r.ok, data: j, status: r.status };
+  }
+
+  async function getCfg() {
+    const r = await fetchJSON("/api/config", { cache: "no-store" });
+    return r.ok ? (r.data || {}) : {};
+  }
+
+  function setConn(ok, msg) {
     const m = el("tautulli_msg");
     if (!m) return;
-    m.textContent = msg || "";
+    m.textContent = ok ? (msg || "Connected") : (msg || "Not connected");
     m.classList.remove("hidden");
     m.classList.toggle("warn", !ok);
   }
 
-  function setConn(connected, msg) {
-    try { window.setConnBadge?.("TAUTULLI", !!connected); } catch {}
-    if (msg) note(msg, !!connected);
+  function maskKey(i, has) {
+    if (!i) return;
+    if (has) { i.value = "••••••••"; i.dataset.masked = "1"; }
+    else { i.value = ""; i.dataset.masked = "0"; }
+    i.dataset.hasKey = has ? "1" : "";
   }
 
   async function refresh() {
     try {
-      const s = await window.apiFetchJSON?.("/api/status?fresh=1");
-      const p = s?.data?.providers?.TAUTULLI;
-      if (!p) return setConn(false, "Tautulli not configured");
-      setConn(!!p.connected, p.connected ? "Connected" : (p.reason || "Disconnected"));
+      await fetch("/api/debug/clear_probe_cache", { method: "POST" }).catch(() => {});
+      const r = await fetchJSON("/api/status?fresh=1", { cache: "no-store" });
+      const ok = !!(r.ok && r.data?.providers?.TAUTULLI?.connected);
+      setConn(ok, ok ? "Connected" : (r.data?.providers?.TAUTULLI?.reason || "Not connected"));
+      note(ok ? "Tautulli verified ✓" : "Tautulli not connected");
     } catch {
-      setConn(false, "Tautulli verify failed");
+      setConn(false, "Verify failed");
+      note("Tautulli verify failed");
     }
   }
 
+  async function hydrate() {
+    const cfg = window._cfgCache || await getCfg();
+    const t = cfg?.tautulli || {};
+    const h = t?.history || {};
+
+    const server = txt(t.server_url || "");
+    const hasKey = !!txt(t.api_key || "");
+    const userId = txt(h.user_id || "");
+
+    if (el("tautulli_server")) el("tautulli_server").value = server;
+    if (el("tautulli_user_id")) el("tautulli_user_id").value = userId;
+
+    maskKey(el("tautulli_key"), hasKey);
+    el("tautulli_hint")?.classList.toggle("hidden", hasKey);
+
+    await refresh();
+  }
+
   async function onSave() {
-    const server = txt(el("tautulli_server")?.value);
-    const key = txt(el("tautulli_key")?.value);
-    const user_id = txt(el("tautulli_user_id")?.value);
-    if (!server || !key) return note("Server + API key required", false);
+    const server = txt(el("tautulli_server")?.value || "");
+    const keyInput = el("tautulli_key");
+    const key = txt(keyInput?.value || "");
+    const user_id = txt(el("tautulli_user_id")?.value || "");
+
+    if (!server) { note("Enter Tautulli server URL"); return; }
+
+    // If key is masked/empty but we already have one, allow updating server/user_id only.
+    if (!key && !(keyInput && keyInput.dataset.hasKey === "1")) {
+      note("Enter your Tautulli API key");
+      return;
+    }
 
     try {
-      const r = await window.apiFetchJSON?.("/api/tautulli/save", {
+      const r = await fetchJSON("/api/tautulli/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server_url: server, api_key: key, user_id }),
       });
-      if (!r?.ok) throw new Error("save_failed");
-      note("Saved");
+      if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "save_failed");
+
+      // If we sent a real key, mask it after save.
+      if (key) maskKey(keyInput, true);
+
+      el("tautulli_hint")?.classList.add("hidden");
+      note("Tautulli saved");
       await refresh();
-    } catch {
-      note("Save failed", false);
+    } catch (e) {
+      note(`Saving Tautulli failed${e?.message ? `: ${e.message}` : ""}`);
     }
   }
 
   async function onDisc() {
     try {
-      const r = await window.apiFetchJSON?.("/api/tautulli/disconnect", { method: "POST" });
-      if (!r?.ok) throw new Error("disconnect_failed");
-      note("Disconnected");
-      await refresh();
-    } catch {
-      note("Disconnect failed", false);
+      const r = await fetchJSON("/api/tautulli/disconnect", { method: "POST" });
+      if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "disconnect_failed");
+
+      maskKey(el("tautulli_key"), false);
+      el("tautulli_hint")?.classList.remove("hidden");
+      setConn(false);
+      note("Tautulli disconnected");
+    } catch (e) {
+      note(`Tautulli disconnect failed${e?.message ? `: ${e.message}` : ""}`);
     }
   }
 
@@ -80,20 +133,22 @@
     wire();
     watch();
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", refresh, { once: true });
+      document.addEventListener("DOMContentLoaded", hydrate, { once: true });
     } else {
-      refresh();
+      hydrate();
     }
   }
 
   document.addEventListener("settings-collect", (ev) => {
     const cfg = ev?.detail?.cfg;
     if (!cfg) return;
-    const server = txt(el("tautulli_server")?.value);
-    const key = txt(el("tautulli_key")?.value);
-    const user_id = txt(el("tautulli_user_id")?.value);
+
+    const server = txt(el("tautulli_server")?.value || "");
+    const key = txt(el("tautulli_key")?.value || "");
+    const user_id = txt(el("tautulli_user_id")?.value || "");
 
     if (!server && !key && !user_id) return;
+
     cfg.tautulli = cfg.tautulli || {};
     if (server) cfg.tautulli.server_url = server;
     if (key) cfg.tautulli.api_key = key;

@@ -2,29 +2,6 @@
 /* This file needs to be refactored and split up over time. - its garbage right now. */
 /* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-(function(){
-  if (typeof window.showTab !== "function") {
-    window.showTab = function(id){
-      try {
-        var pages = document.querySelectorAll("#page-main, #page-watchlist, #page-settings, .tab-page");
-        pages.forEach(el => el.classList.add("hidden"));
-        var target = document.getElementById("page-" + id) || document.getElementById(id);
-        if (target) target.classList.remove("hidden");
-        ["main","watchlist","settings"].forEach(name => {
-          var th = document.getElementById("tab-" + name);
-          if (th) th.classList.toggle("active", name === id);
-        });
-        // Track current tab (used by preview guard)
-        var t = String(id || "").toLowerCase();
-        document.documentElement.dataset.tab = t;
-        if (document.body) document.body.dataset.tab = t;
-
-        document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id } }));
-      } catch(e) { console.warn("showTab bootstrap failed:", e); }
-    };
-  }
-})();
-
 // Helpers
 
 // Treat anything TV-ish as "tv"
@@ -109,6 +86,9 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
   if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
 
+  const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
+  if (has(t?.api_key) && has(t?.server_url)) S.add("TAUTULLI");
+
   const cw = cfg?.crosswatch || cfg?.CrossWatch || {};
   const cwEnabled =
     typeof cw.enabled === "boolean"
@@ -130,7 +110,10 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
   if (alt.includes("JELLYFIN")) return "JELLYFIN";
+  if (alt.includes("TAUTULLI")) return "TAUTULLI";
+  if (alt.includes("MDBLIST")) return "MDBLIST";
   if (alt.includes("EMBY")) return "EMBY";
+  if (alt.includes("CROSSWATCH")) return "CROSSWATCH";
 
   // Fallback: 
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
@@ -140,6 +123,9 @@ function resolveProviderKeyFromNode(node) {
   if (/\bTRAKT\b/.test(txt)) return "TRAKT";
   if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
   if (/\bEMBY\b/.test(txt)) return "EMBY";
+  if (/\bMDBLIST\b/.test(txt)) return "MDBLIST";
+  if (/\bTAUTULLI\b/.test(txt)) return "TAUTULLI";
+  if (/\bCROSSWATCH\b/.test(txt)) return "CROSSWATCH";
 
   return ""; // unknown
 }
@@ -166,7 +152,8 @@ function applySyncVisibility() {
     card.style.display = allowed.has(key) ? "" : "none";
   });
 
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin", EMBY: "Emby" };
+  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
+  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -181,7 +168,7 @@ function applySyncVisibility() {
       sel.appendChild(o0);
     }
 
-    ["PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY"].forEach((k) => {
+    PROVIDER_ORDER.forEach((k) => {
       if (!allowed.has(k)) return;
       const o = document.createElement("option");
       o.value = k; o.textContent = LABEL[k] || k;
@@ -263,7 +250,6 @@ async function isWatchlistEnabledInPairs(){
   return anyWL(live);
 }
 
-window.updatePreviewVisibility = updatePreviewVisibility;
 
 const AUTO_STATUS = false; // DISABLED by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
 let lastStatusMs = 0;
@@ -304,6 +290,8 @@ function normalizeProviders(input) {
     JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
     EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
     MDBLIST:  normOne(pick(p, "MDBLIST")  ?? p.mdblist_connected),
+    TAUTULLI:  normOne(pick(p, "TAUTULLI")  ?? p.tautulli_connected),
+    CROSSWATCH:normOne(pick(p, "CROSSWATCH")?? p.crosswatch_connected),
   };
 }
 
@@ -343,7 +331,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     if (res.ok) pairs = await res.json();
   } catch (_) {}
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false, EMBY: false };
+  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
   for (const p of pairs || []) {
     if (p && p.enabled !== false) {
       const s = String(p.source || "").toUpperCase();
@@ -363,7 +351,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
 
 // Hide/show badges by provider
 function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist" };
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
   for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
     if (el) el.classList.toggle("hidden", !active?.[prov]);
@@ -500,6 +488,7 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   const jelly   = pickCase(p, "JELLYFIN");
   const emby    = pickCase(p, "EMBY");
   const mdbl  = pickCase(p, "MDBLIST");
+  const taut  = pickCase(p, "TAUTULLI");
 
   setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
   setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
@@ -507,6 +496,7 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
   setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
   setBadge("badge-mdblist",  "MDBlist",  connState(mdbl ?? false), stale, "MDBLIST", mdbl);
+  setBadge("badge-tautulli", "Tautulli", connState(taut ?? false), stale, "TAUTULLI", taut);
 }
 
 function fetchWithTimeout(url, opts = {}, ms = 15000) {
@@ -523,8 +513,10 @@ async function refreshStatus(force = false) {
 
   try {
 
-    await refreshPairedProviders(force ? 0 : 5000);
-    const r = await fetchWithTimeout("/api/status", {}, 15000);
+        await refreshPairedProviders(force ? 0 : 5000);
+    const res = await fetchWithTimeout("/api/status", {}, 15000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const r = await res.json();
 
     if (typeof appDebug !== "undefined") appDebug = !!r.debug;
 
@@ -539,6 +531,7 @@ async function refreshStatus(force = false) {
       JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
       EMBY:     norm(pick(pRaw, "EMBY"),     (r.emby_connected    ?? r.emby)),
       MDBLIST:  norm(pick(pRaw, "MDBLIST"),  (r.mdblist_connected  ?? r.mdblist)),
+      TAUTULLI: norm(pick(pRaw, "TAUTULLI"), (r.tautulli_connected ?? r.tautulli)),
     };
 
     renderConnectorStatus(providers, { stale: false });
@@ -553,11 +546,13 @@ async function refreshStatus(force = false) {
       jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
       emby_connected:     !!(providers.EMBY?.connected     ?? providers.EMBY?.ok),
       mdblist_connected:  !!(providers.MDBLIST?.connected  ?? providers.MDBLIST?.ok),
+      tautulli_connected: !!(providers.TAUTULLI?.connected ?? providers.TAUTULLI?.ok),
     };
 
     if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
 
-    const onMain = !document.getElementById("ops-card").classList.contains("hidden");
+    const opsCard = document.getElementById("ops-card");
+    const onMain = opsCard ? !opsCard.classList.contains("hidden") : true;
     const logPanel = document.getElementById("log-panel");
     const layout = document.getElementById("layout");
     const stats = document.getElementById("stats-card");
@@ -604,6 +599,7 @@ async function manualRefreshStatus() {
         JELLYFIN: { connected: !!s.jellyfin_connected },
         EMBY:     { connected: !!s.emby_connected },
         MDBLIST:  { connected: !!s.mdblist_connected },
+        TAUTULLI: { connected: !!s.tautulli_connected },
       }, { stale: true });
     }
 
@@ -931,6 +927,7 @@ function toggleSection(id) {
 }
 function setBusy(v) {
   busy = v;
+  window.busy = v;
   recomputeRunDisabled();
 }
 
@@ -3271,6 +3268,9 @@ async function updatePreviewVisibility() {
   }
 }
 
+try { window.updatePreviewVisibility = updatePreviewVisibility; } catch (e) {}
+
+
 showTab("main");
 
 let _bootPreviewTriggered = false;
@@ -4051,25 +4051,35 @@ function renderConnections() {
 })();
 
 async function populateSyncModes() {
-  const res = await fetch("/api/sync/providers");
-  const data = await res.json();
   const src = document.getElementById("src-provider")?.value?.toUpperCase();
   const dst = document.getElementById("dst-provider")?.value?.toUpperCase();
   const select = document.getElementById("sync-mode");
   if (!select || !src || !dst) return;
 
+  let data = null;
+  try {
+    const res = await fetch("/api/sync/providers", { cache: "no-store" });
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (_) { return; }
+
+  // This helper only works when the API provides explicit direction/mode info.
+  const dirs = (data && typeof data === "object" && Array.isArray(data.directions)) ? data.directions : null;
+  if (!dirs) return;
+
   const dir =
-    data.directions.find((d) => d.source === src && d.target === dst) ||
-    data.directions.find((d) => d.source === dst && d.target === src); 
-  const modes = dir?.modes || [];
+    dirs.find((d) => String(d.source || "").toUpperCase() === src && String(d.target || "").toUpperCase() === dst) ||
+    dirs.find((d) => String(d.source || "").toUpperCase() === dst && String(d.target || "").toUpperCase() === src);
+
+  const modes = Array.isArray(dir?.modes) ? dir.modes : [];
   select.innerHTML = "";
-  modes.forEach((m) => {
+  for (const m of modes) {
     const opt = document.createElement("option");
     opt.value = m;
-    opt.textContent = m === "two-way" ? "Two-way (bidirectional)" : "One-way";
+    opt.textContent = (m === "two-way") ? "Two-way (bidirectional)" : "One-way";
     select.appendChild(opt);
-  });
-  if (modes.length === 0) {
+  }
+  if (!modes.length) {
     const opt = document.createElement("option");
     opt.value = "";
     opt.textContent = "Not supported";

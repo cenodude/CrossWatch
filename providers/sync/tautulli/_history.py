@@ -1,12 +1,14 @@
 # providers/sync/tautulli/_history.py
-# CrossWatch - Tautulli history sync (read-only)
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
+import re
 
 from cw_platform.id_map import canonical_key, ids_from_guid
+
+_EXT_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "simkl")
 
 
 def _cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
@@ -32,6 +34,18 @@ def _to_int(v: Any) -> int | None:
     if not s or not s.isdigit():
         return None
     return int(s)
+
+
+def _to_int_total(v: Any) -> int | None:
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return int(digits) if digits else None
 
 
 def _as_epoch(v: Any) -> int | None:
@@ -68,6 +82,34 @@ def _iso_z(epoch: int | None) -> str | None:
         return None
 
 
+def _clean_guid(s: str) -> str:
+    x = (s or "").strip()
+    if not x:
+        return ""
+    return x.split("?", 1)[0].split("#", 1)[0].strip()
+
+
+def _ids_from_plex_guid(s: str) -> dict[str, str]:
+    g = _clean_guid(s)
+    if not g:
+        return {}
+    out: dict[str, str] = {}
+
+    m = re.search(r"(?:com\.plexapp\.agents\.)?imdb://(tt\d+)", g, re.IGNORECASE)
+    if m:
+        out["imdb"] = m.group(1)
+
+    m = re.search(r"(?:com\.plexapp\.agents\.)?(?:themoviedb|tmdb)://(\d+)", g, re.IGNORECASE)
+    if m:
+        out["tmdb"] = m.group(1)
+
+    m = re.search(r"(?:com\.plexapp\.agents\.)?thetvdb://(\d+)", g, re.IGNORECASE)
+    if m:
+        out["tvdb"] = m.group(1)
+
+    return out
+
+
 def _collect_guids(obj: Any) -> list[str]:
     out: list[str] = []
 
@@ -91,7 +133,15 @@ def _collect_guids(obj: Any) -> list[str]:
     return out
 
 
-def _row_ids(adapter: Any, row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+def _has_any_ids(ids: Mapping[str, str], show_ids: Mapping[str, str]) -> bool:
+    if any(ids.get(k) for k in _EXT_ID_KEYS):
+        return True
+    if any(show_ids.get(k) for k in _EXT_ID_KEYS):
+        return True
+    return bool(ids.get("plex") or show_ids.get("plex"))
+
+
+def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     ids: dict[str, str] = {}
     show_ids: dict[str, str] = {}
 
@@ -104,21 +154,22 @@ def _row_ids(adapter: Any, row: Mapping[str, Any]) -> tuple[dict[str, str], dict
         show_ids["plex"] = str(gp_rk)
 
     for g in _collect_guids(row):
-        ids.update(ids_from_guid(g))
-
-    need_meta = not any(k in ids for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl"))
-    meta_fallback = bool(_cfg_get(adapter, "tautulli.history.metadata_fallback", True))
-
-    if need_meta and meta_fallback and rk and hasattr(getattr(adapter, "client", None), "call"):
         try:
-            meta = adapter.client.call("get_metadata", rating_key=str(rk)) or {}
-            for g in _collect_guids(meta):
-                ids.update(ids_from_guid(g))
+            ids.update(ids_from_guid(g))
         except Exception:
             pass
+        ids.update(_ids_from_plex_guid(g))
 
     for g in _collect_guids({k: row.get(k) for k in ("grandparent_guid", "grandparent_guids") if row.get(k)}):
-        show_ids.update(ids_from_guid(g))
+        try:
+            show_ids.update(ids_from_guid(g))
+        except Exception:
+            pass
+        show_ids.update(_ids_from_plex_guid(g))
+
+    for k in _EXT_ID_KEYS:
+        if k in ids and k not in show_ids:
+            show_ids[k] = ids[k]
 
     return {k: v for k, v in ids.items() if v}, {k: v for k, v in show_ids.items() if v}
 
@@ -137,6 +188,19 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     out: dict[str, dict[str, Any]] = {}
     start = 0
     pages = 0
+    prev_sig = ""
+    repeats = 0
+
+    def _page_sig(rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return ""
+        first = rows[0] if isinstance(rows[0], Mapping) else {}
+        last = rows[-1] if isinstance(rows[-1], Mapping) else {}
+        fk = first.get("row_id") or first.get("reference_id") or first.get("rating_key") or ""
+        lk = last.get("row_id") or last.get("reference_id") or last.get("rating_key") or ""
+        ft = first.get("date") or ""
+        lt = last.get("date") or ""
+        return f"{fk}:{ft}|{lk}:{lt}|{len(rows)}"
 
     while True:
         pages += 1
@@ -149,20 +213,29 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
 
         payload = client.call("get_history", **params) or {}
         rows: list[dict[str, Any]] = []
-        total: int | None = None
+        total: Any = None
 
         if isinstance(payload, Mapping):
             if isinstance(payload.get("data"), list):
                 rows = list(payload.get("data") or [])
+                total = payload.get("recordsFiltered") or payload.get("recordsTotal")
             elif isinstance(payload.get("data"), Mapping):
                 blk = payload.get("data") or {}
                 if isinstance(blk.get("data"), list):
                     rows = list(blk.get("data") or [])
                 total = blk.get("recordsFiltered") or blk.get("recordsTotal")
-            total = total or payload.get("recordsFiltered") or payload.get("recordsTotal")
 
         if not rows:
             break
+
+        sig = _page_sig(rows)
+        if sig and sig == prev_sig:
+            repeats += 1
+            if repeats >= 2:
+                break
+        else:
+            repeats = 0
+            prev_sig = sig
 
         for row in rows:
             if not isinstance(row, Mapping):
@@ -177,7 +250,9 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             if not watched_at:
                 continue
 
-            ids, show_ids = _row_ids(adapter, row)
+            ids, show_ids = _row_ids(row)
+            if not _has_any_ids(ids, show_ids):
+                continue
 
             if mtype == "movie":
                 item: dict[str, Any] = {
@@ -192,7 +267,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 episode_i = _to_int(row.get("media_index") or row.get("episode"))
                 if season_i is None or episode_i is None:
                     continue
-
                 item = {
                     "type": "episode",
                     "ids": ids,
@@ -209,12 +283,9 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 out[ck] = item
 
         start += cfg_per_page
-        if total is not None:
-            try:
-                if start >= int(total):
-                    break
-            except Exception:
-                pass
+        total_i = _to_int_total(total)
+        if total_i is not None and start >= total_i:
+            break
         if len(rows) < cfg_per_page:
             break
 

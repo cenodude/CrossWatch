@@ -39,6 +39,7 @@ code {
   --emby-rgb: 76, 175, 80;
   --mdblist-rgb: 59, 122, 189;
   --jellyfin-rgb: 170, 92, 195;
+  --tautulli-rgb: 245, 124, 46;
 }
 
 :root {
@@ -49,6 +50,7 @@ code {
   --trakt: #ed1c24;
   --mdblist: #3B7ABD;
   --jellyfin: #AA5CC3;
+  --tautulli: #F57C2E;
 }
 
 .prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
@@ -56,6 +58,7 @@ code {
 .prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
 .prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
 .prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
+.prov-card.brand-tautulli { --brand-color: var(--tautulli); --brand-rgb: var(--tautulli-rgb); }
 .prov-card.brand-mdblist { --brand-color: var(--mdblist); --brand-rgb: var(--mdblist-rgb); }
 .prov-card[class*="brand-"] {
   border: 1px solid color-mix(in oklab, var(--brand-color) 55%, rgba(255,255,255,0.14));
@@ -116,6 +119,12 @@ code {
   color: var(--mdblist);
   background: rgba(var(--mdblist-rgb), .12);
   border-color: rgba(var(--mdblist-rgb), .35);
+}
+
+.brand-ico.tautulli{
+  color: var(--tautulli);
+  background: rgba(var(--tautulli-rgb), .12);
+  border-color: rgba(var(--tautulli-rgb), .35);
 }
 
 .brand {
@@ -1608,6 +1617,26 @@ select {
   border-left: 3px solid var(--mdblist);
   padding-left: 10px
 }
+#sec-tautulli > .head{
+  border-left: 3px solid var(--tautulli);
+  padding-left: 10px;
+}
+.prov-card[data-prov="Tautulli"] .prov-head::after,
+.prov-card[data-prov="TAUTULLI"] .prov-head::after,
+.prov-card[data-prov="tautulli"] .prov-head::after{
+  content: " ";
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 28px; height: 28px;
+  display: block; z-index: 50;
+  background-color: rgba(0,0,0,55) !important;
+  background-image: url("/assets/img/TAUTULLI.svg?v=1") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  border-radius: 8px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,55));
+}
 .prov-card[data-prov="Plex"] .prov-head::after {
   content: " ";
   position: absolute;
@@ -2023,6 +2052,14 @@ select {
   color: var(--fg, #fff);
   text-shadow: none
 }
+.tile.tautulli{
+  background: transparent;
+  border: 1px solid rgba(var(--tautulli-rgb), .35);
+  box-shadow: 0 0 6px rgba(var(--tautulli-rgb), .18);
+}
+.tile.tautulli .k,
+.tile.tautulli .n{ color: var(--fg, #fff); text-shadow: none; }
+
 .tile.emby{
   background: transparent;
   border: 1px solid rgba(var(--emby-rgb), .35);

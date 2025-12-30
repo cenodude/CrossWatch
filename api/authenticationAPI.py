@@ -12,7 +12,7 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
-from fastapi import Body, Request
+from fastapi import Body, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from cw_platform.config_base import load_config, save_config
@@ -518,33 +518,57 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         
     # ---------- TAUTULLI ----------
     @app.post("/api/tautulli/save", tags=["auth"])
-    def tautulli_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    def api_tautulli_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        server = str((payload or {}).get("server_url") or (payload or {}).get("server") or "").strip().rstrip("/")
+        key_in = str((payload or {}).get("api_key") or (payload or {}).get("key") or "").strip()
+        user_id = str((payload or {}).get("user_id") or "").strip()
+
+        if server and not server.startswith(("http://", "https://")):
+            server = "http://" + server
+
         cfg = load_config()
         t = cfg.setdefault("tautulli", {})
-        server = str(payload.get("server_url") or payload.get("server") or "").strip()
-        key = str(payload.get("api_key") or payload.get("key") or "").strip()
-        user_id = str(payload.get("user_id") or "").strip()
+        cur_server = str(t.get("server_url") or "").strip()
+        cur_key = str(t.get("api_key") or "").strip()
 
-        t["server_url"] = server
-        t["api_key"] = key
-        if "verify_ssl" in payload:
-            t["verify_ssl"] = bool(payload.get("verify_ssl"))
+        if server:
+            t["server_url"] = server
+        if key_in and key_in not in ("••••••••", "********", "**********"):
+            t["api_key"] = key_in
+
+        t.setdefault("history", {})
         if user_id:
-            t.setdefault("history", {})["user_id"] = user_id
+            t["history"]["user_id"] = user_id
+
+        final_server = str(t.get("server_url") or "").strip()
+        final_key = str(t.get("api_key") or "").strip()
+
+        if not final_server:
+            raise HTTPException(status_code=400, detail="server_url required")
+        if not final_key:
+            raise HTTPException(status_code=400, detail="api_key required")
 
         save_config(cfg)
-        _probe_bust("tautulli")
-        return {"ok": True}
+        _safe_log(log_fn, "TAUTULLI", "[TAUTULLI] saved")
+        if isinstance(probe_cache, dict):
+            probe_cache["tautulli"] = (0.0, False)
+        return {"ok": True, "server_url": final_server, "has_key": bool(final_key)}
 
     @app.post("/api/tautulli/disconnect", tags=["auth"])
-    def tautulli_disconnect() -> dict[str, Any]:
-        cfg = load_config()
-        t = cfg.setdefault("tautulli", {})
-        t["server_url"] = ""
-        t["api_key"] = ""
-        save_config(cfg)
-        _probe_bust("tautulli")
-        return {"ok": True}
+    def api_tautulli_disconnect() -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            t = cfg.setdefault("tautulli", {})
+            t["server_url"] = ""
+            t["api_key"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "TAUTULLI", "[TAUTULLI] disconnected")
+            if isinstance(probe_cache, dict):
+                probe_cache["tautulli"] = (0.0, False)
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] ERROR disconnect: {e}")
+            return {"ok": False, "error": str(e)}
 
     # ---------- TRAKT ----------
     def trakt_request_pin() -> dict[str, Any]:

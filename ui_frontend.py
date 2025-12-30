@@ -91,14 +91,14 @@ def _get_index_html_static() -> str:
   
   /* Auth provider configured dots */
   .auth-dot{
-    width:18px;height:18px;border-radius:999px;
+    width:14px;height:14px;border-radius:999px;
     display:inline-block;flex:0 0 auto;
     background:rgba(255,255,255,.22);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
-    margin-left:auto;      /* push to far right */
-    margin-right:16px;     /* align with your red line */
+    margin-left:auto;
+    margin-right:16px;
   }
-  .auth-dot{
+.auth-dot{
     width:14px;height:14px;border-radius:999px;
     display:inline-block;flex:0 0 auto;
     background:rgba(255,255,255,.22);
@@ -262,6 +262,7 @@ def _get_index_html_static() -> str:
               <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
             </span>
           </div>
@@ -530,6 +531,7 @@ function isProviderConfigured(key,cfg){
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
     case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
     case 'MDBLIST':  return !!(c?.mdblist?.api_key);
+    case 'TAUTULLI': return !!((c?.tautulli?.server_url || c?.auth?.tautulli?.server_url) && (c?.tautulli?.api_key || c?.auth?.tautulli?.api_key));
     default: return false;
   }
 }
@@ -571,6 +573,7 @@ async function refreshAuthDots(force=false){
     ["sec-trakt",    "TRAKT"],
     ["sec-simkl",    "SIMKL"],
     ["sec-mdblist",  "MDBLIST"],
+    ["sec-tautulli", "TAUTULLI"],
   ];
 
   let any = false;
@@ -581,30 +584,17 @@ async function refreshAuthDots(force=false){
 }
 window.refreshAuthDots = refreshAuthDots;
 
-function watchAuthMount(){
-  const IDS = ["sec-plex","sec-emby","sec-jellyfin","sec-trakt","sec-simkl","sec-mdblist"];
-  const hasAny = () => IDS.some(id => document.getElementById(id));
-
-  if (hasAny()){
-    refreshAuthDots(true).catch(()=>{});
-    return;
-  }
-
-  const mo = new MutationObserver(() => {
-    if (!hasAny()) return;
-    mo.disconnect();
-    refreshAuthDots(true).catch(()=>{});
-  });
-
-  mo.observe(document.documentElement, { childList:true, subtree:true });
-}
 
 let __authMo = null;
 
 function watchAuthMount(){
   const host = document.getElementById("auth-providers");
-  if (!host || __authMo) return;
+  if (!host) return;
 
+  // Initial paint
+  refreshAuthDots(true).catch(()=>{});
+
+  if (__authMo) return;
   __authMo = new MutationObserver(() => {
     refreshAuthDots(false).catch(()=>{});
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
@@ -725,7 +715,8 @@ function render(payload){
       SIMKL: 'SIMKL',
       JELLYFIN: 'Jellyfin',
       EMBY: 'Emby',
-      MDBLIST: 'MDBlist'
+      MDBLIST: 'MDBlist',
+      TAUTULLI: 'Tautulli',
     };
     const name = LABELS[K] || titleCase(K);
     const connected = !!d.connected;
