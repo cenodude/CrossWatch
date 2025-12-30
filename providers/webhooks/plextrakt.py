@@ -7,7 +7,6 @@ import base64
 import hashlib
 import hmac
 import re
-import threading
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Iterable, Mapping
@@ -23,6 +22,7 @@ except Exception:
 
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
@@ -41,7 +41,6 @@ _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)"
 _DEF_WEBHOOK: dict[str, Any] = {
     "pause_debounce_seconds": 5,
     "suppress_start_at": 99,
-    "suppress_autoplay_seconds": 12,
     "filters_plex": {"username_whitelist": [], "server_uuid": ""},
     "probe_session_progress": True,
 }
@@ -170,9 +169,6 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
         changed = True
     if "suppress_start_at" not in wh:
         wh["suppress_start_at"] = _DEF_WEBHOOK["suppress_start_at"]
-        changed = True
-    if "suppress_autoplay_seconds" not in wh:
-        wh["suppress_autoplay_seconds"] = _DEF_WEBHOOK["suppress_autoplay_seconds"]
         changed = True
     if "probe_session_progress" not in wh:
         wh["probe_session_progress"] = _DEF_WEBHOOK["probe_session_progress"]
@@ -956,138 +952,6 @@ def _account_key(payload: dict[str, Any]) -> str:
     acc_id_key = f"id:{acc_id}" if acc_id else ""
     return acc_uuid or acc_id_key or title or "unknown"
 
-def _player_state_from_sessions(
-    cfg: dict[str, Any],
-    target_rk: str,
-    target_sk: str,
-    acc_id: str,
-    acc_title: str,
-) -> str:
-    try:
-        base, token = _plex_base_token(cfg)
-        if not token:
-            return "unknown"
-        r = requests.get(f"{base}/status/sessions", headers={"X-Plex-Token": token}, timeout=5)
-        if r.status_code != 200:
-            return "unknown"
-        root = ET.fromstring(r.text or "")
-
-        rk_hits: list[ET.Element] = []
-
-        for v in root.iter("Video"):
-            rk = v.get("ratingKey") or ""
-            sk = v.get("sessionKey") or ""
-
-            if target_sk and sk == target_sk:
-                p = v.find("Player")
-                return ((p.get("state") if p is not None else "") or "").lower() or "unknown"
-
-            if not target_sk and target_rk and rk == target_rk:
-                rk_hits.append(v)
-
-        if not rk_hits:
-            return "none"
-
-        # sessionKey wasn't usable:
-        if not acc_id and not acc_title:
-            return "ambiguous"
-
-        def user_matches(v: ET.Element) -> bool:
-            user = v.find("User")
-            u_id = (user.get("id") if user is not None else "") or ""
-            u_title = (user.get("title") if user is not None else "") or ""
-            if acc_id:
-                return u_id == acc_id
-            return (u_title or "").strip().lower() == (acc_title or "").strip().lower()
-
-        hits = [v for v in rk_hits if user_matches(v)]
-        if len(hits) != 1:
-            return "ambiguous"
-
-        p = hits[0].find("Player")
-        return ((p.get("state") if p is not None else "") or "").lower() or "unknown"
-
-    except Exception as e:
-        _emit(None, f"autoplay probe error: {e}", "DEBUG")
-        return "unknown"
-
-
-def _check_autoplay_after(
-    cfg: dict[str, Any],
-    payload: dict[str, Any],
-    md: dict[str, Any],
-    ids_all2: dict[str, Any],
-    wait_s: int,
-    
-    logger: Callable[..., None] | Any | None = None,
-) -> None:
-    try:
-        rk = str(md.get("ratingKey") or md.get("ratingkey") or "")
-        sk = str(payload.get("sessionKey") or md.get("sessionKey") or md.get("sessionkey") or "")
-        acc = payload.get("Account") or {}
-        acc_id = str(acc.get("id") or "")
-        acc_title = str(acc.get("title") or "")
-        acc_key = _account_key(payload)
-
-        time.sleep(max(0.0, float(wait_s)))
-        state = _player_state_from_sessions(cfg, rk, sk, acc_id, acc_title)
-
-        player_uuid = str((payload.get("Player") or {}).get("uuid") or "")
-        sess = sk or f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
-
-        if state in ("playing", "buffering"):
-            
-            st = _SCROBBLE_STATE.get(sess) or {}
-            prog = max(2.0, float(st.get("prog", 0.0)) or 2.0)
-            media_type = (md.get("type") or "").lower()
-            body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
-
-            if not body:
-                _emit(logger, "autoplay promote: no IDs", "DEBUG")
-                _SCROBBLE_STATE[sess] = {
-                    "ts": time.time(),
-                    "last_event": "media.play",
-                    "prog": prog,
-                    "sk": sk,
-                    "finished": False,
-                    "autoplay_pending": False,
-                    "autoplay_until": 0.0,
-                }
-                return
-
-            _emit(logger, "autoplay window expired; player playing to send start", "DEBUG")
-            r = _post_trakt("/scrobble/start", body, cfg)
-            try:
-                rj: Any = r.json()
-            except Exception:
-                rj = {"raw": (r.text or "")[:200]}
-            _emit(logger, f"trakt /scrobble/start -> {r.status_code}", "DEBUG")
-
-            _SCROBBLE_STATE[sess] = {
-                "ts": time.time(),
-                "last_event": "media.play",
-                "prog": prog,
-                "sk": sk,
-                "finished": False,
-                "autoplay_pending": False,
-                "autoplay_until": 0.0,
-            }
-        else:
-            _emit(logger, "autoplay window expired; player not playing to clear quarantine", "DEBUG")
-            st = _SCROBBLE_STATE.get(sess) or {}
-            _SCROBBLE_STATE[sess] = {
-                "ts": time.time(),
-                "last_event": "autoplay_cleared",
-                "prog": 0.0,
-                "sk": sk,
-                "finished": False,
-                "autoplay_pending": False,
-                "autoplay_until": 0.0,
-                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
-            }
-    except Exception as e:
-        _emit(logger, f"autoplay check error: {e}", "DEBUG")
-
 
 def _map_event(event: str) -> str | None:
     e = (event or "").lower()
@@ -1142,7 +1006,6 @@ def process_webhook(
     wh = (sc.get("webhook") or {})
     pause_debounce = int(wh.get("pause_debounce_seconds", _DEF_WEBHOOK["pause_debounce_seconds"]) or 0)
     suppress_start_at = float(wh.get("suppress_start_at", _DEF_WEBHOOK["suppress_start_at"]) or 99)
-    suppress_autoplay = int(wh.get("suppress_autoplay_seconds", _DEF_WEBHOOK["suppress_autoplay_seconds"]) or 0)
     probe_progress = bool(wh.get("probe_session_progress", True))
     flt = (wh.get("filters_plex") or {})
     allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
@@ -1209,34 +1072,8 @@ def process_webhook(
                 _emit(logger, f"probe correction: {prog_raw:.0f}% → {best:.0f}%", "DEBUG")
                 prog_raw = float(best)
 
-
     now = time.time()
     st = _SCROBBLE_STATE.get(sess) or {}
-
-
-    if event in ("media.play", "media.resume") and suppress_autoplay > 0:
-        fin = _LAST_FINISH_BY_ACC.get(acc_key)
-        if fin:
-            dt = now - float(fin.get("ts", 0))
-            rk_new = str(md.get("ratingKey") or "")
-            rk_old = str(fin.get("rk") or "")
-            if rk_new and rk_new != rk_old and dt <= suppress_autoplay and (prog_raw <= 5.0):
-                _emit(logger, f"quarantine autoplay start dt={dt:.1f}s (rk {rk_old}->{rk_new})", "DEBUG")
-                _SCROBBLE_STATE[sess] = {
-                    "ts": now,
-                    "last_event": "autoplay_quarantined",
-                    "prog": 0.0,
-                    "sk": sk_current,
-                    "autoplay_pending": True,
-                    "autoplay_until": now + float(suppress_autoplay),
-                    "finished": False,
-                }
-                threading.Thread(
-                    target=_check_autoplay_after,
-                    args=(cfg, payload, md, ids_all2, suppress_autoplay, logger),
-                    daemon=True,
-                ).start()
-                return {"ok": True, "quarantined": True}
 
     if st.get("last_event") == event and (now - float(st.get("ts", 0))) < 1.0:
         return {"ok": True, "dedup": True}
@@ -1247,7 +1084,7 @@ def process_webhook(
 
     is_start = event in ("media.play", "media.resume")
     finished_flag = bool(st.get("finished"))
-    fresh_start_rewatch = (
+    fresh_start = (
         is_start
         and float(prog_raw) <= 5.0
         and (
@@ -1257,22 +1094,6 @@ def process_webhook(
             or (float(st.get("prog", 0.0)) >= force_stop_at)
         )
     )
-    fresh_start_quarantined = bool(st.get("autoplay_pending") and now <= float(st.get("autoplay_until", 0)))
-    fresh_start = fresh_start_rewatch or fresh_start_quarantined
-
-
-    if fresh_start_quarantined and event == "media.stop" and _progress(payload) < 2.0:
-        _emit(logger, "autoplay stopped immediately (<2%) → ignore", "DEBUG")
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
-            "last_event": event,
-            "prog": 0.0,
-            "sk": sk_current,
-            "finished": False,
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
-        }
-        return {"ok": True, "ignored": True}
 
     last_prog = float(st.get("prog", 0.0))
     tol_pts = max(0.0, regress_tol)
@@ -1294,7 +1115,7 @@ def process_webhook(
 
     if event in ("media.stop", "media.scrobble") and prog < force_stop_at:
         if _probe_played_status(cfg, rk):
-            _emit(logger, f"PMS says played → force STOP at ≥95%", "DEBUG")
+            _emit(logger, "PMS says played → force STOP at ≥95%", "DEBUG")
             prog = max(prog, last_prog, 95.0)
 
     fast_cancel_stop = False
@@ -1319,8 +1140,6 @@ def process_webhook(
                 "prog": prog,
                 "sk": sk_current,
                 "finished": False,
-                "autoplay_pending": False,
-                "autoplay_until": 0.0,
             }
             return {"ok": True, "suppressed": True}
 
@@ -1336,8 +1155,6 @@ def process_webhook(
             "prog": prog,
             "sk": sk_current,
             "finished": (prog >= force_stop_at),
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
         }
         return {"ok": True, "ignored": True}
 
@@ -1349,8 +1166,6 @@ def process_webhook(
             "prog": prog,
             "sk": sk_current,
             "finished": (prog >= force_stop_at),
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
         }
         return {"ok": True, "suppressed": True}
 
@@ -1382,8 +1197,6 @@ def process_webhook(
             "prog": prog,
             "sk": sk_current,
             "finished": (prog >= force_stop_at),
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
         }
         return {"ok": True, "suppressed": True}
 
@@ -1398,8 +1211,6 @@ def process_webhook(
                 "prog": prog,
                 "sk": sk_current,
                 "finished": True,
-                "autoplay_pending": False,
-                "autoplay_until": 0.0,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
             return {"ok": True, "suppressed": True}
@@ -1457,7 +1268,6 @@ def process_webhook(
             clear_on_stop=True,
             ids=cw_ids,
         )
-
     except Exception:
         pass
 
@@ -1470,8 +1280,6 @@ def process_webhook(
             "prog": prog,
             "sk": sk_current,
             "finished": (prog >= force_stop_at),
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
         }
         return {"ok": True, "ignored": True}
 
@@ -1488,7 +1296,7 @@ def process_webhook(
         rj: Any = r.json()
     except Exception:
         rj = {"raw": (r.text or "")[:200]}
-    _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/',1)[-1]}", "DEBUG")
+    _emit(logger, f"trakt {intended} -> {r.status_code} action={rj.get('action') or intended.rsplit('/', 1)[-1]}", "DEBUG")
 
     if r.status_code == 404 and media_type == "episode":
         epi_hint = {**(_episode_ids_from_md(md) or {}), **ids_all2}
@@ -1519,8 +1327,6 @@ def process_webhook(
                 "prog": prog,
                 "sk": sk_current,
                 "finished": True,
-                "autoplay_pending": False,
-                "autoplay_until": 0.0,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
             _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
@@ -1540,8 +1346,6 @@ def process_webhook(
             "prog": prog,
             "sk": sk_current,
             "finished": (intended == "/scrobble/stop" and prog >= force_stop_at),
-            "autoplay_pending": False,
-            "autoplay_until": 0.0,
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
         }
         if intended == "/scrobble/stop" and prog >= force_stop_at:
@@ -1564,8 +1368,6 @@ def process_webhook(
         "prog": prog,
         "sk": sk_current,
         "finished": (prog >= force_stop_at),
-        "autoplay_pending": False,
-        "autoplay_until": 0.0,
         **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
     }
     return {"ok": False, "status": r.status_code, "trakt": rj}
