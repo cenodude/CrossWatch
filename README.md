@@ -54,14 +54,14 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
-- **Internal CW Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
-- **Unified Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
+- **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
+- **Unified Watchlist across providers** View all watchlist items in one place.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
 - **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
-- **Editor** Inspect and adjust CW data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
+- **Editor** Inspect and adjust state.json and CW data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
 <p align="center">
   <img alt="image"
