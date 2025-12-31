@@ -82,9 +82,9 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
 <ul>
   <li>Sync watchlists (one-/two-way)</li>
-  <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
+  <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL)</li>
   <li>Sync ratings (one-/two-way)</li>
-  <li>Sync watch history (one-/two-way)</li>
+  <li>Sync history (one-/two-way)</li>
   <li>Keep snapshots with CW tracker</li>
   <li>Auto-remove from watchlist after finish</li>
 </ul>
