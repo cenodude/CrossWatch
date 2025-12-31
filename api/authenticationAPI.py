@@ -521,7 +521,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def api_tautulli_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         server = str((payload or {}).get("server_url") or (payload or {}).get("server") or "").strip().rstrip("/")
         key_in = str((payload or {}).get("api_key") or (payload or {}).get("key") or "").strip()
-        user_id = str((payload or {}).get("user_id") or "").strip()
+        user_id = str((payload or {}).get("user_id") or ((payload or {}).get("history") or {}).get("user_id") or "").strip()
 
         if server and not server.startswith(("http://", "https://")):
             server = "http://" + server
@@ -537,7 +537,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             t["api_key"] = key_in
 
         t.setdefault("history", {})
-        if user_id:
+        if ("user_id" in (payload or {}) or ("history" in (payload or {}) and isinstance((payload or {}).get("history"), dict) and "user_id" in ((payload or {}).get("history") or {}))):
             t["history"]["user_id"] = user_id
 
         final_server = str(t.get("server_url") or "").strip()

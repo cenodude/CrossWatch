@@ -85,7 +85,6 @@
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "save_failed");
 
-      
       if (key) maskKey(keyInput, true);
 
       el("tautulli_hint")?.classList.add("hidden");
@@ -119,38 +118,45 @@
 
     const d = el("tautulli_disconnect");
     if (d && !d.__wired) { d.addEventListener("click", onDisc); d.__wired = true; }
+
+    const k = el("tautulli_key");
+    if (k && !k.__wiredSecret) {
+      k.addEventListener("focus", () => {
+        if (k.dataset.masked === "1") {
+          k.value = "";
+          k.dataset.masked = "0";
+          k.dataset.touched = "1";
+        }
+      });
+      k.addEventListener("input", () => {
+        k.dataset.masked = "0";
+        k.dataset.touched = "1";
+        k.dataset.hasKey = "";
+      });
+      k.__wiredSecret = true;
+    }
+
+    const u = el("tautulli_user_id");
+    if (u && !u.__wiredUser) {
+      u.addEventListener("input", () => { u.dataset.touched = "1"; });
+      u.__wiredUser = true;
+    }
   }
 
   function watch() {
     const host = document.getElementById("auth-providers");
     if (!host || watch._obs) return;
-
-    watch._obs = new MutationObserver(() => {
-      try { wire(); } catch {}
-      if (!watch._hydrated && el("tautulli_server")) {
-        watch._hydrated = true;
-        setTimeout(() => { hydrate().catch(() => {}); }, 0);
-      }
-    });
-
+    watch._obs = new MutationObserver(() => wire());
     watch._obs.observe(host, { childList: true, subtree: true });
   }
 
   function boot() {
     wire();
     watch();
-
-    const run = () => {
-      if (el("tautulli_server")) {
-        watch._hydrated = true;
-        hydrate().catch(() => {});
-      }
-    };
-
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", run, { once: true });
+      document.addEventListener("DOMContentLoaded", hydrate, { once: true });
     } else {
-      run();
+      hydrate();
     }
   }
 
@@ -159,16 +165,27 @@
     if (!cfg) return;
 
     const server = txt(el("tautulli_server")?.value || "");
-    const key = txt(el("tautulli_key")?.value || "");
-    const user_id = txt(el("tautulli_user_id")?.value || "");
+    const keyEl = el("tautulli_key");
+    let key = txt(keyEl?.value || "");
 
-    if (!server && !key && !user_id) return;
+    const userIdEl = el("tautulli_user_id");
+    const user_id = txt(userIdEl?.value || "");
+    const uidTouched = !!userIdEl?.dataset.touched;
+
+    if (keyEl && (keyEl.dataset.masked === "1" || key === "••••••••" || key === "********" || key === "**********")) {
+      key = "";
+    }
+
+    if (!server && !key && !user_id && !uidTouched) return;
 
     cfg.tautulli = cfg.tautulli || {};
     if (server) cfg.tautulli.server_url = server;
     if (key) cfg.tautulli.api_key = key;
-    cfg.tautulli.history = cfg.tautulli.history || {};
-    if (user_id) cfg.tautulli.history.user_id = user_id;
+
+    if (user_id || uidTouched) {
+      cfg.tautulli.history = cfg.tautulli.history || {};
+      cfg.tautulli.history.user_id = user_id;
+    }
   });
 
   window.initTautulliAuthUI = boot;

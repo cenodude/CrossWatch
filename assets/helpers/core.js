@@ -857,9 +857,8 @@ async function showTab(n) {
     layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
 
-    try { await loadConfig(); } catch {}
     try { await mountAuthProviders?.(); } catch {}
-
+    try { await loadConfig(); } catch {}
     updateTmdbHint?.(); updateSimklHint?.(); updateSimklButtonState?.(); updateTraktHint?.(); startTraktTokenPoll?.();
 
     if (typeof window.loadScheduling === "function") {
@@ -2597,6 +2596,15 @@ async function saveSettings() {
       console.warn("saveSettings: scrobbler merge failed", e);
     }
 
+    // Allow auth panels to contribute extra settings (e.g., Tautulli user_id)
+    try {
+      const before = JSON.stringify(cfg);
+      document.dispatchEvent(new CustomEvent("settings-collect", { detail: { cfg, serverCfg } }));
+      if (JSON.stringify(cfg) !== before) changed = true;
+    } catch (e) {
+      console.warn("saveSettings: settings-collect failed", e);
+    }
+
     // Scheduling merge
     try {
       let sched = {};
@@ -2630,6 +2638,25 @@ async function saveSettings() {
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
 
       try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
+      // Best-effort: persist Tautulli History User ID via auth API
+      try {
+        const tServer = (document.getElementById("tautulli_server")?.value || "").trim();
+        const tUserId = (document.getElementById("tautulli_user_id")?.value || "").trim();
+        const tKeyEl = document.getElementById("tautulli_key");
+        const tKeyVal = (tKeyEl?.value || "").trim();
+        const tHasKey = tKeyEl?.dataset?.hasKey === "1";
+        const tKeyMasked = !!tKeyEl && (tKeyEl.dataset.masked === "1" || tKeyVal === "••••••••" || tKeyVal === "********" || tKeyVal === "**********");
+        if (tServer && tUserId && (tHasKey || (tKeyVal && !tKeyMasked))) {
+          const payload = { server_url: tServer, user_id: tUserId };
+          if (tKeyVal && !tKeyMasked) payload.api_key = tKeyVal;
+          await fetch("/api/tautulli/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            cache: "no-store"
+          });
+        }
+      } catch {}
       try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
 
       if (schedChanged) {

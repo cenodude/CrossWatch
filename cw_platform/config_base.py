@@ -96,8 +96,7 @@ DEFAULT_CFG: dict[str, Any] = {
          "history": {
              "user_id": "",                              # Optional user filter
              "per_page": 100,                            # Tautulli history page size
-             "max_pages": 5000,                          # Safety cap
-             "metadata_fallback": True,                  # Call get_metadata when GUIDs are missing
+             "max_pages": 5000                           # Safety cap
          },
      },
 
