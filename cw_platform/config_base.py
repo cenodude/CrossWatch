@@ -341,6 +341,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "enabled": False,                               # Master toggle for periodic runs
         "mode": "hourly",                               # "hourly" or "daily"
         "every_n_hours": 2,                             # When mode=hourly, run every N hours (1–12)
+        "minute_offset": 0,                             # Minute offset for every_n_hours mode (0-59)
         "daily_time": "03:30",                          # When mode=daily, run at this time (HH:MM, 24h)
     },
 

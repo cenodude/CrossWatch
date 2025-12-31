@@ -2035,6 +2035,7 @@ async function loadConfig() {
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
   _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "2");
+  _setVal("schMinuteOffset", Number.isFinite(s.minute_offset) ? String(s.minute_offset) : "0");
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
@@ -2607,6 +2608,7 @@ async function saveSettings() {
           enabled: readToggle("schEnabled"),
           mode: _getVal("schMode"),
           every_n_hours: parseInt((_getVal("schN") || "2"), 10),
+          minute_offset: parseInt((_getVal("schMinuteOffset") || "0"), 10),
           daily_time: _getVal("schTime") || "03:30",
           advanced: { enabled: false, jobs: [] }
         };

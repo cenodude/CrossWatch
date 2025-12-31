@@ -290,6 +290,7 @@ def _get_index_html_static() -> str:
               <div><label>Enable</label><select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
               <div><label>Frequency</label><select id="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
               <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
+              <div><label>Minute offset (0-59)</label><input id="schMinuteOffset" type="number" min="0" max="59" value="0"></div>
               <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
             </div>
           </div>
