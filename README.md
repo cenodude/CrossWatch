@@ -93,8 +93,8 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 <b>Tools & modes</b>
 
 <ul>
-  <li>Analyzer – finds broken or missing matches/IDs</li>
-  <li>Exporter – CSV files for popular services</li>
+  <li>Analyzer: finds broken or missing matches/IDs</li>
+  <li>Exporter: CSV files for popular services</li>
   <li>Now Playing card, Stats, history, live logs</li>
   <li>Headless scheduled runs</li>
 </ul>
