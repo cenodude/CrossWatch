@@ -1,7 +1,6 @@
 // connections.overlay.js - Providers connection UI 
 
 (function () {
-  // Globals
   let dragSrc = null;
   let isDragging = false;
 
@@ -157,23 +156,45 @@
     document.head.appendChild(s);
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Capability helper
-  // ────────────────────────────────────────────────────────────────────────────
   /**
    * capability check for a provider object.
-   * @param {any} obj provider manifest-like object
-   * @param {string} key capability key (e.g., "watchlist")
+   * @param {any} obj
+   * @param {string} key
    * @returns {boolean}
    */
   function cap(obj, key) {
     try { return !!(obj && obj.features && obj.features[key]); } catch (_) { return false; }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // UI: (Re)build providers list
-  // ────────────────────────────────────────────────────────────────────────────
-  /** (Re)build the providers list UI based on current state in window.cx. */
+  function _provByName(name) {
+    const key = String(name || "").trim().toUpperCase();
+    const list = (window.cx && window.cx.providers) || [];
+    return (list || []).find((p) => String(p?.name || "").trim().toUpperCase() === key) || null;
+  }
+
+  function _canTarget(name, sourceName) {
+    const tgt = String(name || "").trim().toUpperCase();
+    const src = String(sourceName || "").trim().toUpperCase();
+
+    // Policy: Tautulli is read-only 
+    if (tgt === "TAUTULLI" && src !== "TAUTULLI") return false;
+
+    const p = _provByName(tgt);
+    const caps = p && typeof p === "object" ? p.capabilities : null;
+    if (caps && typeof caps === "object") {
+      if (caps.can_target === false) return false;
+      if (caps.read_only === true && tgt !== src) return false;
+    }
+    return true;
+  }
+
+  function _toast(msg) {
+    try {
+      if (typeof window.showToast === "function") return window.showToast(String(msg || ""), false);
+    } catch (_) {}
+    alert(String(msg || ""));
+  }
+
   function rebuildProviders() {
     ensureStyles();
     const host = document.getElementById("providers_list");
@@ -189,12 +210,16 @@
       const displayName = String(rawName || "").toUpperCase(); // force uppercase display
       const brand = _brandInfo(p.name);
       const isSrc = !!(selSrc && String(selSrc).toUpperCase() === String(p.name).toUpperCase());
-      const btnLab = !selSrc ? "Set as Source" : isSrc ? "Cancel" : "Set as Target";
+      const isPickingTarget = !!(selSrc && !isSrc);
+      const targetOk = !isPickingTarget ? true : _canTarget(p.name, selSrc);
+      const btnLab = !selSrc ? "Set as Source" : isSrc ? "Cancel" : (targetOk ? "Set as Target" : "Source only");
       const btnOn = !selSrc
         ? `cxToggleConnect('${p.name}')`
         : isSrc
           ? `cxToggleConnect('${p.name}')`
-          : `cxPickTarget('${p.name}')`;
+          : (targetOk ? `cxPickTarget('${p.name}')` : "");
+      const btnDis = isPickingTarget && !targetOk ? "disabled" : "";
+      const btnTitle = isPickingTarget && !targetOk ? "This provider can only be used as a source." : "";
 
       const wl = cap(p, "watchlist"),
             rat = cap(p, "ratings"),
@@ -217,7 +242,7 @@
             <div class="prov-title">${displayName}</div>
           </div>
           ${caps}
-          <button type="button" class="btn neon prov-action" onclick="${btnOn}">${btnLab}</button>
+          <button type="button" class="btn neon prov-action" ${btnDis} title="${btnTitle}" onclick="${btnOn}">${btnLab}</button>
         </div>`;
     }).join("");
 
@@ -238,18 +263,12 @@
     try { rebuildProviders(); } catch (_) {}
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Glue: keep original render
-  // ────────────────────────────────────────────────────────────────────────────
   const _origRender = window.renderConnections;
   window.renderConnections = function () {
     try { if (typeof _origRender === "function") _origRender(); } catch {}
     rebuildProviders();
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Glue: keep original start + update selection
-  // ────────────────────────────────────────────────────────────────────────────
   const _origStart = window.cxStartConnect;
   window.cxStartConnect = function (name) {
     try { if (typeof _origStart === "function") _origStart(name); } catch {}
@@ -258,15 +277,13 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Actions: pick target / toggle connect
-  // ────────────────────────────────────────────────────────────────────────────
-  /**
-   * Set the target provider for an in-progress connect action. If a modal
-   * opener is available, it is used; otherwise, a custom event is dispatched.
-   */
   window.cxPickTarget = window.cxPickTarget || function (name) {
     if (!window.cx || !window.cx.connect || !window.cx.connect.source) return;
+    const src = String(window.cx.connect.source || "");
+    if (!_canTarget(name, src)) {
+      _toast("Tautulli can only be used as a source (not as a destination).");
+      return;
+    }
     window.cx.connect.target = String(name);
     const detail = { source: window.cx.connect.source, target: window.cx.connect.target };
     try {
@@ -282,10 +299,6 @@
     }
   };
 
-  /**
-   * Toggle connect state: no source → set source; other provider → set target;
-   * same source → cancel selection.
-   */
   window.cxToggleConnect = function (name) {
     name = String(name || "");
     window.cx = window.cx || { providers: [], pairs: [], connect: { source: null, target: null } };
@@ -296,10 +309,6 @@
     try { window.renderConnections(); } catch (_) {}
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Drag & Drop (button-safe)
-  // ────────────────────────────────────────────────────────────────────────────
-  // Disable button clicks during drag so a drop can be performed cleanly.
   document.addEventListener("click", (e) => {
     if (!isDragging) return;
     if (e.target.closest && e.target.closest(".prov-action")) {
@@ -323,7 +332,9 @@
     card.classList.add("dragging");
 
     document.querySelectorAll('.prov-card').forEach(c=>{
-      if (c !== card) c.classList.add('drop-ok');
+      if (c === card) return;
+      const tgt = c.getAttribute("data-prov");
+      if (tgt && _canTarget(tgt, name)) c.classList.add('drop-ok');
     });
   });
 
@@ -354,9 +365,7 @@
     document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok','dragging'));
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Keyboard helpers
-  // ────────────────────────────────────────────────────────────────────────────
+
   document.addEventListener("keydown", (e)=>{
     const card = e.target.closest && e.target.closest(".prov-card");
     if (!card) return;
@@ -372,9 +381,7 @@
     }
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Init
-  // ────────────────────────────────────────────────────────────────────────────
+  
   document.addEventListener("DOMContentLoaded", () => {
     try { window.renderConnections && window.renderConnections(); } catch (_) {}
   });

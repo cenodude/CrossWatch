@@ -1,8 +1,6 @@
-/* assets/crosswatch.js *
+/* assets/helpers/core.js *
 /* This file needs to be refactored and split up over time. - its garbage right now. */
 /* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
-
-// Helpers
 
 // Treat anything TV-ish as "tv"
 const isTV = v => /^(tv|show|shows|series|season|episode)$/i.test(String(v||""));
@@ -2596,15 +2594,6 @@ async function saveSettings() {
       console.warn("saveSettings: scrobbler merge failed", e);
     }
 
-    // Allow auth panels to contribute extra settings (e.g., Tautulli user_id)
-    try {
-      const before = JSON.stringify(cfg);
-      document.dispatchEvent(new CustomEvent("settings-collect", { detail: { cfg, serverCfg } }));
-      if (JSON.stringify(cfg) !== before) changed = true;
-    } catch (e) {
-      console.warn("saveSettings: settings-collect failed", e);
-    }
-
     // Scheduling merge
     try {
       let sched = {};
@@ -2638,25 +2627,6 @@ async function saveSettings() {
       if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
 
       try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
-      // Best-effort: persist Tautulli History User ID via auth API
-      try {
-        const tServer = (document.getElementById("tautulli_server")?.value || "").trim();
-        const tUserId = (document.getElementById("tautulli_user_id")?.value || "").trim();
-        const tKeyEl = document.getElementById("tautulli_key");
-        const tKeyVal = (tKeyEl?.value || "").trim();
-        const tHasKey = tKeyEl?.dataset?.hasKey === "1";
-        const tKeyMasked = !!tKeyEl && (tKeyEl.dataset.masked === "1" || tKeyVal === "••••••••" || tKeyVal === "********" || tKeyVal === "**********");
-        if (tServer && tUserId && (tHasKey || (tKeyVal && !tKeyMasked))) {
-          const payload = { server_url: tServer, user_id: tUserId };
-          if (tKeyVal && !tKeyMasked) payload.api_key = tKeyVal;
-          await fetch("/api/tautulli/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            cache: "no-store"
-          });
-        }
-      } catch {}
       try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
 
       if (schedChanged) {
@@ -3806,9 +3776,19 @@ function renderConnections() {
       if (F.ratings) features.ratings = normRatings(F.ratings);
 
       // ---- Payload -----------------------------------------------------------
+      const srcKey = String(data.source || "").trim().toUpperCase();
+      const dstKey = String(data.target || "").trim().toUpperCase();
+
       const modeIn = String(data.mode || "one-way").toLowerCase();
-      const mode =
-        modeIn === "two" || modeIn === "two-way" ? "two-way" : "one-way";
+      let mode = modeIn === "two" || modeIn === "two-way" ? "two-way" : "one-way";
+
+      // Policy: Tautulli is read-only (source-only). Never allow it as a destination.
+      if (dstKey === "TAUTULLI") {
+        alert("Tautulli can only be used as a source (not as a destination).");
+        return;
+      }
+      // Extra guard: if Tautulli is the source, force one-way.
+      if (srcKey === "TAUTULLI") mode = "one-way";
 
       const payload = {
         source: data.source,

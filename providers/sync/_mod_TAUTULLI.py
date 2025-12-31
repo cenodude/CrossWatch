@@ -26,7 +26,14 @@ def get_manifest() -> Mapping[str, Any]:
         "bidirectional": False,
         "features": {"watchlist": False, "ratings": False, "history": True, "playlists": False},
         "requires": [],
-        "capabilities": {"bidirectional": False, "provides_ids": True, "index_semantics": "present"},
+        "capabilities": {
+            "bidirectional": False,
+            "provides_ids": True,
+            "index_semantics": "present",
+            "can_source": True,
+            "can_target": False,
+            "read_only": True,
+        },
         "description": "Plex monitoring (history only).",
     }
 
@@ -170,7 +177,14 @@ class _TAUTULLIOPS:
         return TAUTULLIModule.supported_features()
 
     def capabilities(self) -> Mapping[str, Any]:
-        return {"bidirectional": False, "provides_ids": True, "index_semantics": "present"}
+        return {
+            "bidirectional": False,
+            "provides_ids": True,
+            "index_semantics": "present",
+            "can_source": True,
+            "can_target": False,
+            "read_only": True,
+        }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         t = cfg.get("tautulli") or {}
