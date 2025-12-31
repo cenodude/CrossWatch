@@ -95,6 +95,7 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 <ul>
   <li>Analyzer: finds broken or missing matches/IDs</li>
   <li>Exporter: CSV files for popular services</li>
+  <li>Editor: Edit and adjust your items</li>
   <li>Now Playing card, Stats, history, live logs</li>
   <li>Headless scheduled runs</li>
 </ul>
