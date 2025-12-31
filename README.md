@@ -161,8 +161,6 @@ services:
 By default <code>CONFIG_BASE</code> will be <code>/config</code> inside the container.  
 Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</code>, etc. will all be stored there.
 
----
-
 ## Usage
 
 1. Open the web UI  
@@ -171,24 +169,7 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
 
----
-
 ## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
 CW can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
 Have Plex Pass / Emby Premiere? you can use <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>. 
 Personally, I prefer the watcher because it’s real-time.
-
----
-
-## Security
-
-CW is NOT meant to be exposed directly to the public internet.
-    During the current development stage there is also no authentication built in, so treat it as a LAN/VPN-only tool.
-
-- Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN. 
-- Run CW on your **local network** only, or access it via:
-  - a **VPN** (WireGuard, Tailscale, etc.)
-- Anyone who can reach the web UI can change sync pairs, tokens and settings, which may:
-  - delete or corrupt watch history / ratings / watchlists,
-  - cause unwanted writes between servers/trackers,
-  - leak information about your media libraries and accounts.
