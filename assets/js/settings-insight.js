@@ -253,7 +253,7 @@
       { key:"emby", label:"Emby" },
       { key:"jellyfin", label:"Jellyfin" }
     ];
-    const cats = ["history","ratings","watchlist","playlists"];
+    const cats = ["history","ratings","scrobble","watchlist","playlists"];
 
     const serverActive = [];
     for (const p of providers) {
@@ -329,7 +329,7 @@
     const { serverActive, pairActive } = wl;
     if (!serverActive.length && !pairActive.length) return "";
 
-    const catShort = { history:"H", ratings:"R", watchlist:"W", playlists:"P" };
+    const catShort = { history:"H", ratings:"R", scrobble:"S", watchlist:"W", playlists:"P" };
 
     const out = [];
     out.push(`<div class="si-wl">`);

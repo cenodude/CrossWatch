@@ -46,6 +46,142 @@ _DEF_TRAKT: dict[str, Any] = {
 }
 
 
+_JF_VIEW_CACHE_TTL_SECS = 60.0
+_JF_VIEW_ROOTS_CACHE: dict[str, tuple[float, set[str]]] = {}
+_JF_ITEM_VIEW_CACHE: dict[str, str | None] = {}
+
+
+def _as_set_str(v: Any) -> set[str]:
+    it = v if isinstance(v, (list, tuple, set)) else ([v] if v is not None else [])
+    out: set[str] = set()
+    for x in it:
+        s = str(x).strip()
+        if s:
+            out.add(s)
+    return out
+
+
+def _jf_conn(cfg: dict[str, Any]) -> tuple[str, str, str, float, bool, str]:
+    j = cfg.get('jellyfin') or {}
+    base = str(j.get('server') or '').strip().rstrip('/')
+    tok = str(j.get('access_token') or '').strip()
+    uid = str(j.get('user_id') or '').strip()
+    did = str(j.get('device_id') or 'crosswatch').strip() or 'crosswatch'
+    try:
+        timeout = float(j.get('timeout') or 6.0)
+    except Exception:
+        timeout = 6.0
+    verify = bool(j.get('verify_ssl', True))
+    if base and '://' not in base:
+        base = 'http://' + base
+    return base, tok, uid, timeout, verify, did
+
+
+def _jf_headers(tok: str, did: str) -> dict[str, str]:
+    return {
+        'Accept': 'application/json',
+        'X-Emby-Token': tok,
+        'X-MediaBrowser-Token': tok,
+        'Authorization': f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+    }
+
+
+def _jf_get_json(base: str, tok: str, did: str, *, timeout: float, verify: bool, path: str) -> Any:
+    url = f'{base}{path}'
+    r = requests.get(url, headers=_jf_headers(tok, did), timeout=timeout, verify=verify)
+    if getattr(r, 'status_code', 0) != 200:
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+
+def _jf_view_roots(cfg: dict[str, Any], logger: Callable[..., None] | None) -> set[str]:
+    base, tok, uid, timeout, verify, did = _jf_conn(cfg)
+    if not (base and tok and uid):
+        return set()
+    now = time.time()
+    cached = _JF_VIEW_ROOTS_CACHE.get(uid)
+    if cached and (now - float(cached[0] or 0.0)) < _JF_VIEW_CACHE_TTL_SECS:
+        return cached[1]
+    roots: set[str] = set()
+    try:
+        j = _jf_get_json(base, tok, did, timeout=timeout, verify=verify, path=f'/Users/{uid}/Views') or {}
+        items = (j.get('Items') if isinstance(j, dict) else None) or []
+        for it in items:
+            rid = (it or {}).get('Id') or (it or {}).get('Key')
+            if rid is None:
+                continue
+            s = str(rid).strip()
+            if s:
+                roots.add(s)
+    except Exception:
+        roots = set()
+    _JF_VIEW_ROOTS_CACHE[uid] = (now, roots)
+    return roots
+
+
+def _jf_view_id_via_ancestors(cfg: dict[str, Any], iid: str, logger: Callable[..., None] | None) -> str | None:
+    base, tok, uid, timeout, verify, did = _jf_conn(cfg)
+    iid = str(iid or '').strip()
+    if not (base and tok and uid and iid):
+        return None
+    if iid in _JF_ITEM_VIEW_CACHE:
+        return _JF_ITEM_VIEW_CACHE[iid]
+    roots = _jf_view_roots(cfg, logger)
+    if not roots:
+        _JF_ITEM_VIEW_CACHE[iid] = None
+        return None
+    found: str | None = None
+    try:
+        arr = _jf_get_json(base, tok, did, timeout=timeout, verify=verify, path=f'/Items/{iid}/Ancestors?Fields=Id&UserId={uid}') or []
+        if isinstance(arr, list):
+            for a in arr:
+                aid = str((a or {}).get('Id') or '').strip()
+                if aid and aid in roots:
+                    found = aid
+                    break
+    except Exception:
+        found = None
+    if len(_JF_ITEM_VIEW_CACHE) > 4096:
+        _JF_ITEM_VIEW_CACHE.clear()
+    _JF_ITEM_VIEW_CACHE[iid] = found
+    return found
+
+
+def _jf_passes_scrobble_library(
+    cfg: dict[str, Any],
+    md: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    logger: Callable[..., None] | None,
+) -> bool:
+    libs = _as_set_str((((cfg.get('jellyfin') or {}).get('scrobble') or {}).get('libraries')) or [])
+    if not libs:
+        return True
+
+    name = str(md.get('Name') or md.get('SeriesName') or '').strip() or '?'
+    candidates = [
+        md.get('Id'),
+        payload.get('ItemId'),
+        md.get('ItemId'),
+        (payload.get('Item') or {}).get('Id') if isinstance(payload.get('Item'), Mapping) else None,
+        md.get('SeriesId'),
+        md.get('ParentId'),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        view_id = _jf_view_id_via_ancestors(cfg, str(c), logger)
+        if view_id:
+            if view_id in libs:
+                return True
+            _emit(logger, f"event filtered by scrobble whitelist: view={view_id} allowed={sorted(libs)} item={name}", 'DEBUG')
+            return False
+
+    _emit(logger, f"event filtered by scrobble whitelist: view=none allowed={sorted(libs)} item={name}", 'DEBUG')
+    return False
+
 def _load_config() -> dict[str, Any]:
     try:
         return load_config()
@@ -972,6 +1108,9 @@ def process_webhook(
             return {"ok": True, "ignored": True}
 
         if not md or media_type not in ("movie", "episode"):
+            return {"ok": True, "ignored": True}
+
+        if not _jf_passes_scrobble_library(cfg, md, payload, logger):
             return {"ok": True, "ignored": True}
 
         ids_epi = _ids_from_providerids(md, payload) or {}

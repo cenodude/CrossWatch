@@ -1050,6 +1050,17 @@ def process_webhook(
     if not md or media_type not in ("movie", "episode"):
         return {"ok": True, "ignored": True}
 
+    libs_sc = {str(x).strip() for x in ((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")) or []) if str(x).strip()}
+    if libs_sc:
+        lib_id = (md.get("librarySectionID") or md.get("librarySectionId") or md.get("librarySectionKey") or payload.get("librarySectionID") or payload.get("LibrarySectionID"))
+        if lib_id is None:
+            _emit(logger, f"event filtered by scrobble whitelist: lib=none allowed={sorted(libs_sc)} media={media_name_dbg}", "DEBUG")
+            return {"ok": True, "ignored": True}
+        lib_id_s = str(lib_id).strip()
+        if lib_id_s not in libs_sc:
+            _emit(logger, f"event filtered by scrobble whitelist: lib={lib_id_s} allowed={sorted(libs_sc)} media={media_name_dbg}", "DEBUG")
+            return {"ok": True, "ignored": True}
+
     show_ids = _show_ids_from_md(md)
     epi_ids = _episode_ids_from_md(md)
     all_ids = _all_ids_from_metadata(md)
