@@ -61,6 +61,18 @@ def _safe_int(x: Any) -> int | None:
         return None
 
 
+def _as_set_str(v: Any) -> set[str]:
+    if v is None:
+        return set()
+    it = v if isinstance(v, (list, tuple, set)) else [v]
+    out: set[str] = set()
+    for x in it:
+        s = str(x).strip()
+        if s:
+            out.add(s)
+    return out
+
+
 def _ids_desc(ids: dict[str, Any] | None) -> str:
     d = ids or {}
     for k in ("trakt", "imdb", "tmdb", "tvdb"):
@@ -178,6 +190,59 @@ class WatchService:
                 if r:
                     return r
         return None
+    def _plex_section_id(self, ev: ScrobbleEvent) -> str | None:
+        raw = ev.raw or {}
+        psn = self._find_psn(raw)
+        if isinstance(psn, list) and psn:
+            n = psn[0] or {}
+            if isinstance(n, dict):
+                for k in ("librarySectionID", "librarySectionId", "sectionID", "sectionId"):
+                    v = n.get(k)
+                    if v is not None:
+                        s = str(v).strip()
+                        if s:
+                            return s
+        if isinstance(raw, dict):
+            for k in ("librarySectionID", "librarySectionId", "sectionID", "sectionId"):
+                v = raw.get(k)
+                if v is not None:
+                    s = str(v).strip()
+                    if s:
+                        return s
+
+        rk = self._find_rating_key(raw if isinstance(raw, dict) else {})
+        if rk is None or not self._plex:
+            return None
+        try:
+            obj = self._plex.fetchItem(int(rk))
+        except Exception:
+            obj = None
+        if not obj:
+            return None
+
+        for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
+            try:
+                v = getattr(obj, attr, None)
+                if v is not None:
+                    s = str(v).strip()
+                    if s:
+                        return s
+            except Exception:
+                pass
+
+        try:
+            sec = getattr(obj, "section", None)
+            if callable(sec):
+                s2 = sec()
+                key = getattr(s2, "key", None)
+                if key is not None:
+                    s = str(key).strip()
+                    if s:
+                        return s
+        except Exception:
+            pass
+        return None
+
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         sk = str(ev.session_key) if ev.session_key is not None else None
@@ -189,6 +254,14 @@ class WatchService:
         want = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
         if want and ev.server_uuid and str(ev.server_uuid) != str(want):
             return False
+        libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
+        if libs:
+            sid = self._plex_section_id(ev)
+            if not sid:
+                return False
+            if sid not in libs:
+                return False
+
 
         def _allow() -> bool:
             if sk:

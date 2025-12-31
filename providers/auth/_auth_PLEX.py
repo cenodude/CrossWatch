@@ -183,10 +183,10 @@ def html() -> str:
     }
 
     /* matrix */
-    #sec-plex .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
+    #sec-plex .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
     #sec-plex .lm-head .title{font-weight:700}
     #sec-plex .lm-rows{display:grid;gap:6px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;background:#090b10}
-    #sec-plex .lm-row{display:grid;grid-template-columns:1fr 40px 40px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
+    #sec-plex .lm-row{display:grid;grid-template-columns:1fr 40px 40px 40px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
     #sec-plex .lm-row.hide{display:none}
     #sec-plex .lm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     #sec-plex .lm-id{opacity:.5;margin-left:6px}
@@ -195,6 +195,8 @@ def html() -> str:
     #sec-plex .lm-dot.hist.on{background:#b066ff;box-shadow:0 0 10px rgba(176,102,255,.95)}
     #sec-plex .lm-dot.rate{color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
     #sec-plex .lm-dot.rate.on{background:#00d1ff;box-shadow:0 0 10px rgba(0,209,255,.95)}
+    #sec-plex .lm-dot.scr{color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
+    #sec-plex .lm-dot.scr.on{background:#35ff8f;box-shadow:0 0 10px rgba(53,255,143,.95)}
     #sec-plex .lm-col{display:flex;align-items:center;gap:6px}
     #sec-plex .lm-filter{min-width:160px}
     #sec-plex select.lm-hidden{display:none}
@@ -345,11 +347,13 @@ def html() -> str:
             <input id="plex_lib_filter" class="lm-filter" placeholder="Filter…">
             <div class="lm-col"><button id="plex_hist_all" type="button" class="lm-dot hist" title="Toggle all History"></button><span class="sub">History</span></div>
             <div class="lm-col"><button id="plex_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings"></button><span class="sub">Ratings</span></div>
+            <div class="lm-col"><button id="plex_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble"></button><span class="sub">Scrobble</span></div>
           </div>
           <div id="plex_lib_matrix" class="lm-rows"></div>
           <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
           <select id="plex_lib_history" class="lm-hidden" multiple></select>
           <select id="plex_lib_ratings" class="lm-hidden" multiple></select>
+          <select id="plex_lib_scrobble" class="lm-hidden" multiple></select>
         </div>
 
         <div class="footspace" aria-hidden="true"></div>

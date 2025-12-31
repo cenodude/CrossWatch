@@ -40,6 +40,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "max_retries": 3,                               # Optional retry budget.
         "fallback_GUID": False,                         # Opt-in GUID/Discover fallback for missing library items (history/ratings)
 
+        "scrobble": {
+            "libraries": [],                            # Whitelist of library IDs for scrobble (webhook/watch); empty = all
+        },
+
         "history": {
             "libraries": [],                            # Whitelist of library GUIDs; empty = all
             "include_marked_watched": True,             # Include items manually marked as watched in Plex
@@ -154,6 +158,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget for API calls
 
+        "scrobble": {
+            "libraries": []                             # whitelist of library GUIDs; empty = all
+        },
+
         # Watchlist settings
         "watchlist": {
             "mode": "favorites",                        # "favorites" | "playlist" | "collections"
@@ -194,6 +202,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget for API calls
+
+        "scrobble": {
+            "libraries": []                             # whitelist of library GUIDs; empty = all
+        },
 
         # Watchlist settings
         "watchlist": {

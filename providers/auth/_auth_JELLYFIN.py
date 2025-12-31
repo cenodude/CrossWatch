@@ -251,13 +251,13 @@ def html() -> str:
     }
     #sec-jellyfin details.settings[open] > summary::after{transform:translateY(-50%) rotate(90deg);color:#00d1ff}
     #sec-jellyfin details.settings .wrap{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
-    #sec-jellyfin .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
+    #sec-jellyfin .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
     #sec-jellyfin .lm-head .title{font-weight:700}
     #sec-jellyfin .lm-rows{
       display:grid;gap:6px;max-height:280px;min-height:200px;
       overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;background:#090b10
     }
-    #sec-jellyfin .lm-row{display:grid;grid-template-columns:1fr 40px 40px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
+    #sec-jellyfin .lm-row{display:grid;grid-template-columns:1fr 40px 40px 40px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
     #sec-jellyfin .lm-row.hide{display:none}
     #sec-jellyfin .lm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     #sec-jellyfin .lm-dot{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;background:transparent;cursor:pointer;display:inline-block;vertical-align:middle}
@@ -265,6 +265,8 @@ def html() -> str:
     #sec-jellyfin .lm-dot.hist.on{background:#b066ff;box-shadow:0 0 10px rgba(176,102,255,.95)}
     #sec-jellyfin .lm-dot.rate{color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
     #sec-jellyfin .lm-dot.rate.on{background:#00d1ff;box-shadow:0 0 10px rgba(0,209,255,.95)}
+    #sec-jellyfin .lm-dot.scr{color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
+    #sec-jellyfin .lm-dot.scr.on{background:#35ff8f;box-shadow:0 0 10px rgba(53,255,143,.95)}
     #sec-jellyfin .lm-col{display:flex;align-items:center;gap:6px}
     #sec-jellyfin .lm-filter{min-width:160px}
     #sec-jellyfin select.lm-hidden{display:none}
@@ -355,11 +357,13 @@ def html() -> str:
             <div class="lm-col"><span class="sub">Select all:</span></div>
             <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
             <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
+            <div class="lm-col"><button id="jfy_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble" aria-pressed="false"></button><span class="sub">Scrobble</span></div>
           </div>
           <div id="jfy_lib_matrix" class="lm-rows"></div>
           <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
           <select id="jfy_lib_history" class="lm-hidden" multiple></select>
           <select id="jfy_lib_ratings" class="lm-hidden" multiple></select>
+          <select id="jfy_lib_scrobble" class="lm-hidden" multiple></select>
         </div>
       </div>
     </details>

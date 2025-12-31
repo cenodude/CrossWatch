@@ -1,6 +1,6 @@
-// auth.plex.js — Plex auth + settings + library matrix UI 
+// auth.plex.js - Plex auth
 (function (w, d) {
-  // --- tiny utils
+
   const $ = (s) => d.getElementById(s);
   const q = (sel, root = d) => root.querySelector(sel);
   const notify = w.notify || ((m) => console.log("[notify]", m));
@@ -17,10 +17,10 @@
     });
   }
 
-  // ---------- success banner
+  // success banner
   function setPlexSuccess(on) { $("plex_msg")?.classList.toggle("hidden", !on); }
 
-  // ---------- PIN flow
+  // PIN flow
   async function requestPlexPin() {
     try { setPlexSuccess(false); } catch {}
     let win = null; try { win = w.open("https://plex.tv/link", "_blank"); } catch {}
@@ -40,7 +40,7 @@
     try { startPlexTokenPoll(); } catch {}
   }
 
-  // ---------- token poll
+  // token poll
   let plexPoll = null;
   function startPlexTokenPoll() {
     try { if (plexPoll) clearTimeout(plexPoll); } catch {}
@@ -110,7 +110,7 @@
     plexPoll = setTimeout(poll, 1000);
   }
 
-  // --- delete Plex account token
+  // delete Plex account token
   async function plexDeleteToken() {
     const btn = document.querySelector('#sec-plex .btn.danger');
     try { if (btn) { btn.disabled = true; btn.classList.add('busy'); } } catch {}
@@ -136,10 +136,9 @@
     }
   }
 
-  // ---------- local state (UI only)
-  function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), libs: [] }); }
+  function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), scr: new Set(), libs: [] }); }
 
-  // ---------- Config → UI
+  // Config
   async function hydratePlexFromConfigRaw() {
     try {
       const r = await fetch("/api/config", { cache: "no-store" }); if (!r.ok) return;
@@ -155,19 +154,20 @@
       const st = getPlexState();
       st.hist = new Set((p.history?.libraries || []).map(x => String(x)));
       st.rate = new Set((p.ratings?.libraries || []).map(x => String(x)));
+      st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
 
-      ["plex_lib_history", "plex_lib_ratings"].forEach(id => {
+      ["plex_lib_history", "plex_lib_ratings", "plex_lib_scrobble"].forEach(id => {
         const el = $(id); if (!el) return;
         Array.from(el.options || []).forEach(o => {
           if (id === "plex_lib_history") o.selected = st.hist.has(o.value);
           if (id === "plex_lib_ratings") o.selected = st.rate.has(o.value);
+          if (id === "plex_lib_scrobble") o.selected = st.scr.has(o.value);
         });
       });
     } catch (e) { console.warn("[plex] hydrate failed", e); }
   }
 
-  // --- build server suggestions (from /api/plex/pms)
-  // Preference: local > non-relay > HTTP > plain IP host > everything else
+  // build server suggestions (from /api/plex/pms)
   function fillPlexServerSuggestions(servers) {
     const dl = document.getElementById("plex_server_suggestions");
     if (!dl) return "";
@@ -264,13 +264,12 @@
     return items[0]?.url || "";
   }
 
-  // --- Auto-Fetch: prefer /api/plex/pms; then hydrate user/id via /api/plex/inspect
+  // Auto-Fetch: prefer /api/plex/pms; then hydrate user/id via /api/plex/inspect
   async function plexAuto() {
     const urlEl = document.getElementById("plex_server_url");
     const setIfEmpty = (el, val) => { if (el && !el.value && val) el.value = String(val); };
 
     try {
-      // Load existing config server_url first
       let cfgUrl = "";
       try {
         const rCfg = await fetch("/api/config?ts=" + Date.now(), { cache: "no-store" });
@@ -281,7 +280,7 @@
         }
       } catch {}
 
-      // 1) If we have a valid config URL, skip PMS fetch
+      // Fetch /api/plex/pms for server suggestions
       let bestSuggestion = "";
       try {
         const r = await fetch("/api/plex/pms?ts=" + Date.now(), { cache: "no-store" });
@@ -336,7 +335,7 @@
     }
   }
   
-  // ---------- User picker
+  // User picker
   let __plexUsers = null;
 
   async function fetchPlexUsers() {
@@ -459,7 +458,7 @@
     }
   }
 
-  // ---------- Libraries
+  // Libraries
   async function plexLoadLibraries() {
     let libs = [];
     try {
@@ -487,6 +486,7 @@
       };
       fill("plex_lib_history");
       fill("plex_lib_ratings");
+      fill("plex_lib_scrobble");
     } catch (e) {
       console.warn("[plex] library select fill failed", e);
     }
@@ -512,7 +512,7 @@
     return libs;
   }
 
-  // --- refresh libs (used by the "Load libraries" button) ---
+
   async function refreshPlexLibraries() {
     try {
       const host = document.getElementById("plex_lib_matrix");
@@ -524,11 +524,12 @@
     try { mountPlexLibraryMatrix(); } catch {}
   }
 
-  // ---------- Matrix UI
+  // Matrix UI
   function mountPlexLibraryMatrix() {
     const host    = $("plex_lib_matrix");
     const histSel = $("plex_lib_history");
     const rateSel = $("plex_lib_ratings");
+    const scrSel  = $("plex_lib_scrobble");
     const filter  = $("plex_lib_filter");
     if (!host) return;
     const firstMount = !host.__wired;
@@ -550,6 +551,7 @@
          <div class="lm-name" title="#${lib.id}">${lib.title} <span class="lm-id">#${lib.id}</span></div>
          <button type="button" class="lm-dot hist ${st.hist.has(lib.id) ? "on" : ""}" aria-label="History" aria-pressed="${st.hist.has(lib.id)}"></button>
          <button type="button" class="lm-dot rate ${st.rate.has(lib.id) ? "on" : ""}" aria-label="Ratings" aria-pressed="${st.rate.has(lib.id)}"></button>
+         <button type="button" class="lm-dot scr ${st.scr.has(lib.id) ? "on" : ""}" aria-label="Scrobble" aria-pressed="${st.scr.has(lib.id)}"></button>
        </div>`;
 
     function applyFilter() {
@@ -575,19 +577,21 @@
       applyFilter();
       setSelFromSet(histSel, st.hist);
       setSelFromSet(rateSel, st.rate);
+      setSelFromSet(scrSel,  st.scr);
     }
 
     function toggleOne(id, which) {
-      if (which === "hist") { st.hist.has(id) ? st.hist.delete(id) : st.hist.add(id); }
-      else { st.rate.has(id) ? st.rate.delete(id) : st.rate.add(id); }
-      render();
+      if (which === "hist") { st.hist.has(id) ? st.hist.delete(id) : st.hist.add(id); render(); return; }
+      if (which === "rate") { st.rate.has(id) ? st.rate.delete(id) : st.rate.add(id); render(); return; }
+      if (which === "scr")  { st.scr.has(id) ? st.scr.delete(id) : st.scr.add(id);  render(); return; }
     }
 
     if (firstMount) {
       host.addEventListener("click", (ev) => {
         const btn = ev.target.closest(".lm-dot"); if (!btn) return;
         const row = ev.target.closest(".lm-row"); const id = row?.dataset?.id; if (!id) return;
-        toggleOne(id, btn.classList.contains("hist") ? "hist" : "rate");
+        const which = btn.classList.contains("hist") ? "hist" : (btn.classList.contains("scr") ? "scr" : "rate");
+        toggleOne(id, which);
       });
 
       $("plex_hist_all")?.addEventListener("click", () => {
@@ -604,6 +608,13 @@
         render();
       });
 
+      $("plex_scr_all")?.addEventListener("click", () => {
+        const visible = Array.from(host.querySelectorAll(".lm-row:not(.hide)")).map(r => r.dataset.id);
+        const allOn = visible.every(id => st.scr.has(id));
+        if (allOn) visible.forEach(id => st.scr.delete(id)); else visible.forEach(id => st.scr.add(id));
+        render();
+      });
+
       filter?.addEventListener("input", applyFilter);
 
       histSel?.addEventListener("change", () => {
@@ -616,20 +627,25 @@
         st.rate = new Set(Array.from(rateSel.selectedOptions || []).map(o => String(o.value)));
         render();
       });
+      scrSel?.addEventListener("change", () => {
+        if (syncing) return;
+        st.scr = new Set(Array.from(scrSel.selectedOptions || []).map(o => String(o.value)));
+        render();
+      });
     }
 
     (async () => {
       if (!getPlexState().libs.length) await plexLoadLibraries();
-      render(); // always render, even on subsequent calls
+      render();
     })();
   }
 
-  // ---------- Read UI on save
+  // Read UI on save
   function readMatrixSelection(which) {
     const host = $("plex_lib_matrix");
     if (!host) return null;
     const sels = new Set();
-    const sel = which === "hist" ? ".lm-dot.hist.on" : ".lm-dot.rate.on";
+    const sel = which === "hist" ? ".lm-dot.hist.on" : (which === "rate" ? ".lm-dot.rate.on" : ".lm-dot.scr.on");
     host.querySelectorAll(sel).forEach(btn => {
       const id = btn.closest(".lm-row")?.dataset?.id;
       const n = parseInt(String(id), 10);
@@ -667,17 +683,20 @@
 
     let hist = readMatrixSelection("hist");
     let rate = readMatrixSelection("rate");
+    let scr  = readMatrixSelection("scr");
     if (hist === null) hist = readSelectInts("#plex_lib_history") || [];
     if (rate === null) rate = readSelectInts("#plex_lib_ratings") || [];
+    if (scr  === null) scr  = readSelectInts("#plex_lib_scrobble") || [];
+    plex.scrobble = Object.assign({}, plex.scrobble || {}, { libraries: scr });
     plex.history = Object.assign({}, plex.history || {}, { libraries: hist });
     plex.ratings = Object.assign({}, plex.ratings || {}, { libraries: rate });
     return cfg;
   }
 
-  // track if server URL changed 
+
   let __plexUrlDirty = false;
 
-  // ---------- Hook save
+
   function hookPlexSave() {
     try {
       const api = w.CW?.API?.Config;
@@ -724,13 +743,13 @@
     w.registerSettingsCollector?.((cfg) => { try { mergePlexIntoCfg(cfg); } catch {} });
   }
 
-  // ---------- Lifecycle
+
   d.addEventListener("DOMContentLoaded", () => {
     hookPlexSave();
     setTimeout(() => { try { hydratePlexFromConfigRaw(); } catch {} }, 100);
     try { mountPlexLibraryMatrix(); } catch {}
     try { mountPlexUserPicker(); } catch {}
-    // remember initial URL to detect changes
+
     try { w.__lastPlexUrl = $("#plex_server_url")?.value?.trim() || ""; } catch {}
   });
 
@@ -748,7 +767,7 @@
     }
   });
 
-  // ---------- exports
+  //  exports
   Object.assign(w, {
     setPlexSuccess, requestPlexPin, startPlexTokenPoll, plexDeleteToken,
     mergePlexIntoCfg, plexAuto, plexLoadLibraries,

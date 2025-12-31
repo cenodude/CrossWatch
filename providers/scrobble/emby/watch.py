@@ -9,7 +9,7 @@ from typing import Any, Iterable, Mapping
 import requests
 
 try:
-    from _logging import log as BASE_LOG  # print fallback below
+    from _logging import log as BASE_LOG
 except Exception:
     BASE_LOG = None
 
@@ -19,6 +19,7 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 
 TRAKT_API = "https://api.trakt.tv"
 _TRAKT_ID_CACHE: dict[tuple, Any] = {}
+_VIEW_CACHE_TTL_SECS = 60.0
 
 
 def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
@@ -64,6 +65,16 @@ def _cfg() -> dict[str, Any]:
         return load_config()
     except Exception:
         return {}
+
+
+def _as_set_str(v: Any) -> set[str]:
+    it = v if isinstance(v, (list, tuple, set)) else ([v] if v is not None else [])
+    out: set[str] = set()
+    for x in it:
+        s = str(x).strip()
+        if s:
+            out.add(s)
+    return out
 
 
 def _is_debug() -> bool:
@@ -467,6 +478,8 @@ class EmbyWatchService:
         self._dbg_last_playing = None
         self._dbg_last_ts = 0.0
         self._cw_last_heartbeat: dict[str, float] = {}
+        self._view_roots_cache: dict[str, tuple[float, set[str]]] = {}
+        self._item_root_cache: dict[str, str | None] = {}
         self._log(f"Ensuring Watcher is running; wired sinks: {len(self._sinks)}", "INFO")
 
     def _log(self, msg: str, level: str = "INFO") -> None:
@@ -485,44 +498,133 @@ class EmbyWatchService:
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
 
+    def _scrobble_whitelist(self) -> set[str]:
+        try:
+            cfg = _cfg() or {}
+            libs = ((((cfg.get("emby") or {}).get("scrobble") or {}).get("libraries")) or [])
+            return _as_set_str(libs)
+        except Exception:
+            return set()
+
+    def _view_roots(self, uid: str) -> set[str]:
+        uid = str(uid or "").strip()
+        if not uid:
+            return set()
+        now = time.time()
+        cached = self._view_roots_cache.get(uid)
+        if cached and (now - float(cached[0] or 0.0)) < _VIEW_CACHE_TTL_SECS:
+            return cached[1]
+
+        roots: set[str] = set()
+        try:
+            j = _get_json(self._base, self._tok, f"/Users/{uid}/Views") or {}
+            items = (j.get("Items") if isinstance(j, dict) else None) or []
+            for it in items:
+                rid = (it or {}).get("Id") or (it or {}).get("Key")
+                if rid is not None:
+                    s = str(rid).strip()
+                    if s:
+                        roots.add(s)
+        except Exception:
+            roots = set()
+
+        self._view_roots_cache[uid] = (now, roots)
+        return roots
+
+    def _view_id_via_ancestors(self, uid: str, item_id: str) -> str | None:
+        uid = str(uid or "").strip()
+        iid = str(item_id or "").strip()
+        if not uid or not iid:
+            return None
+
+        if iid in self._item_root_cache:
+            return self._item_root_cache[iid]
+
+        roots = self._view_roots(uid)
+        if not roots:
+            self._item_root_cache[iid] = None
+            return None
+
+        found: str | None = None
+        try:
+            arr = _get_json(self._base, self._tok, f"/Items/{iid}/Ancestors?Fields=Id&UserId={uid}") or []
+            if isinstance(arr, list):
+                for a in arr:
+                    aid = str((a or {}).get("Id") or "").strip()
+                    if aid and aid in roots:
+                        found = aid
+                        break
+        except Exception:
+            found = None
+
+        if len(self._item_root_cache) > 4096:
+            self._item_root_cache.clear()
+        self._item_root_cache[iid] = found
+        return found
+
+    def _session_view_id(self, sess: Mapping[str, Any]) -> str | None:
+        uid = str(sess.get("UserId") or "").strip()
+        item = (sess.get("NowPlayingItem") or {}) if isinstance(sess, Mapping) else {}
+        iid = str((item.get("Id") or "") if isinstance(item, Mapping) else "").strip()
+        if uid and iid:
+            vid = self._view_id_via_ancestors(uid, iid)
+            if vid:
+                return vid
+
+        sid = str((item.get("SeriesId") or item.get("ParentId") or "") if isinstance(item, Mapping) else "").strip()
+        if uid and sid:
+            return self._view_id_via_ancestors(uid, sid)
+        return None
+
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
-        if ev.session_key and ev.session_key in self._allowed_sessions:
+        sk = str(ev.session_key or "")
+        if sk and sk in self._allowed_sessions:
             return True
 
         cfg = _cfg() or {}
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         wl = filt.get("username_whitelist")
-
-        def _allow() -> bool:
-            if ev.session_key:
-                self._allowed_sessions.add(str(ev.session_key))
-            return True
-
-        if not wl:
-            return _allow()
+        wl_list = wl if isinstance(wl, list) else ([wl] if wl else [])
 
         def norm(s: str) -> str:
             return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
-        wl_list = wl if isinstance(wl, list) else [wl]
+        user_ok = True
+        if wl_list:
+            user_ok = False
+            if any(
+                not str(x).lower().startswith(("id:", "uuid:"))
+                and norm(str(x)) == norm(ev.account or "")
+                for x in wl_list
+            ):
+                user_ok = True
+            else:
+                raw = ev.raw or {}
+                uid = str(raw.get("UserId") or "").strip().lower()
+                for e in wl_list:
+                    s = str(e).strip().lower()
+                    if s.startswith("id:") and uid and s.split(":", 1)[1].strip().lower() == uid:
+                        user_ok = True
+                        break
+                    if s.startswith("uuid:") and uid and s.split(":", 1)[1].strip().lower() == uid:
+                        user_ok = True
+                        break
+        if not user_ok:
+            return False
 
-        if any(
-            not str(x).lower().startswith(("id:", "uuid:"))
-            and norm(str(x)) == norm(ev.account or "")
-            for x in wl_list
-        ):
-            return _allow()
+        libs = self._scrobble_whitelist()
+        if libs:
+            view_id = self._session_view_id(ev.raw or {})
+            if not view_id or view_id not in libs:
+                if _is_debug():
+                    item = ((ev.raw or {}).get("NowPlayingItem") or {}) if isinstance(ev.raw, Mapping) else {}
+                    name = (item.get("Name") or item.get("SeriesName") or "?") if isinstance(item, Mapping) else "?"
+                    self._dbg(f"event filtered by scrobble whitelist: view={view_id or 'none'} allowed={sorted(libs)} item={name}")
+                return False
 
-        raw = ev.raw or {}
-        uid = str(raw.get("UserId") or "").strip().lower()
-        for e in wl_list:
-            s = str(e).strip().lower()
-            if s.startswith("id:") and uid and s.split(":", 1)[1].strip().lower() == uid:
-                return _allow()
-            if s.startswith("uuid:") and uid and s.split(":", 1)[1].strip().lower() == uid:
-                return _allow()
-
-        return False
+        if sk:
+            self._allowed_sessions.add(sk)
+        return True
 
     def _build_event(self, sess: dict[str, Any], action: str, progress: int) -> ScrobbleEvent | None:
         item, _ps = _media_from_session(sess)

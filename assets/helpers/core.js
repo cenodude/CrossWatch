@@ -2357,27 +2357,29 @@ async function saveSettings() {
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#jfy_lib_matrix .lm-row");
         if (!rows.length) return null;
-        const H = [], R = [];
+        const H = [], R = [], S = [];
         rows.forEach(r => {
           const id = String(r.dataset.id || "").trim(); // GUID string
           if (!id) return;
           if (r.querySelector(".lm-dot.hist.on")) H.push(id);
           if (r.querySelector(".lm-dot.rate.on")) R.push(id);
+          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
         });
-        return { H, R };
+        return { H, R, S };
       };
 
       const readFromWhitelist = () => {
         const rows = document.querySelectorAll("#jfy_lib_whitelist .whrow");
         if (!rows.length) return null;  
-        const H = [], R = [];
+        const H = [], R = [], S = [];
         rows.forEach(r => {
           const id = String(r.dataset.id || "").trim(); // GUID string
           if (!id) return;
           if (r.querySelector(".whtog.hist.on")) H.push(id);
           if (r.querySelector(".whtog.rate.on")) R.push(id);
+          if (r.querySelector(".whtog.scr.on")) S.push(id);
         });
-        return { H, R };
+        return { H, R, S };
       };
 
       const readFromSelects = () => {
@@ -2391,7 +2393,7 @@ async function saveSettings() {
             .map(o => String(o.value || o.dataset.value || o.textContent).trim())
             .filter(Boolean);
         };
-        return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings") };
+        return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings"), S: toStrs("#jfy_lib_scrobble") };
       };
 
       const src = readFromMatrix() || readFromWhitelist() || readFromSelects();
@@ -2407,12 +2409,17 @@ async function saveSettings() {
       if (src) {
         const prevH = (serverCfg?.jellyfin?.history?.libraries || []).map(String);
         const prevR = (serverCfg?.jellyfin?.ratings?.libraries || []).map(String);
+        const prevS = (serverCfg?.jellyfin?.scrobble?.libraries || []).map(String);
         if (!same(src.H, prevH)) {
           (cfg.jellyfin ||= {}).history = Object.assign({}, cfg.jellyfin.history || {}, { libraries: src.H || [] });
           changed = true;
         }
         if (!same(src.R, prevR)) {
           (cfg.jellyfin ||= {}).ratings = Object.assign({}, cfg.jellyfin.ratings || {}, { libraries: src.R || [] });
+          changed = true;
+        }
+        if (!same(src.S, prevS)) {
+          (cfg.jellyfin ||= {}).scrobble = Object.assign({}, cfg.jellyfin.scrobble || {}, { libraries: src.S || [] });
           changed = true;
         }
       }
@@ -2425,27 +2432,29 @@ async function saveSettings() {
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
         if (!rows.length) return null;
-        const H = [], R = [];
+        const H = [], R = [], S = [];
         rows.forEach((r) => {
           const id = String(r.dataset.id || "").trim(); // GUID string
           if (!id) return;
           if (r.querySelector(".lm-dot.hist.on")) H.push(id);
           if (r.querySelector(".lm-dot.rate.on")) R.push(id);
+          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
         });
-        return { H, R };
+        return { H, R, S };
       };
 
       const readFromWhitelist = () => {
         const rows = document.querySelectorAll("#emby_lib_whitelist .whrow");
         if (!rows.length) return null;
-        const H = [], R = [];
+        const H = [], R = [], S = [];
         rows.forEach((r) => {
           const id = String(r.dataset.id || "").trim();
           if (!id) return;
           if (r.querySelector(".whtog.hist.on")) H.push(id);
           if (r.querySelector(".whtog.rate.on")) R.push(id);
+          if (r.querySelector(".whtog.scr.on")) S.push(id);
         });
-        return { H, R };
+        return { H, R, S };
       };
 
       const readFromSelects = () => {
@@ -2462,6 +2471,7 @@ async function saveSettings() {
         return {
           H: toStrs("#emby_lib_history"),
           R: toStrs("#emby_lib_ratings"),
+          S: toStrs("#emby_lib_scrobble"),
         };
       };
 
@@ -2478,6 +2488,7 @@ async function saveSettings() {
       if (src) {
         const prevH = (serverCfg?.emby?.history?.libraries || []).map(String);
         const prevR = (serverCfg?.emby?.ratings?.libraries || []).map(String);
+        const prevS = (serverCfg?.emby?.scrobble?.libraries || []).map(String);
 
         if (!same(src.H, prevH)) {
           (cfg.emby ||= {}).history = Object.assign(
@@ -2492,6 +2503,14 @@ async function saveSettings() {
             {},
             cfg.emby.ratings || {},
             { libraries: src.R || [] }
+          );
+          changed = true;
+        }
+        if (!same(src.S, prevS)) {
+          (cfg.emby ||= {}).scrobble = Object.assign(
+            {},
+            cfg.emby.scrobble || {},
+            { libraries: src.S || [] }
           );
           changed = true;
         }
@@ -2549,7 +2568,7 @@ async function saveSettings() {
       }
 
       // Read selecioned libraries from UI
-      const st = (window.__plexState || { hist: new Set(), rate: new Set() });
+      const st = (window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() });
       const toNums = (xs) =>
         (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
           .map(x => parseInt(String(x), 10))
@@ -2557,6 +2576,7 @@ async function saveSettings() {
 
       const hist = toNums(st.hist);
       const rate = toNums(st.rate);
+      const scr  = toNums(st.scr);
 
       const _same = (a, b) => {
         const A = (a || []).map(Number).sort((x,y)=>x-y);
@@ -2568,6 +2588,7 @@ async function saveSettings() {
 
       const prevHist = (serverCfg?.plex?.history?.libraries || []).map(Number);
       const prevRate = (serverCfg?.plex?.ratings?.libraries || []).map(Number);
+      const prevScr  = (serverCfg?.plex?.scrobble?.libraries || []).map(Number);
 
       if (!_same(hist, prevHist)) {
         (cfg.plex ||= {}).history = Object.assign({}, cfg.plex.history || {}, { libraries: hist });
@@ -2575,6 +2596,10 @@ async function saveSettings() {
       }
       if (!_same(rate, prevRate)) {
         (cfg.plex ||= {}).ratings = Object.assign({}, cfg.plex.ratings || {}, { libraries: rate });
+        changed = true;
+      }
+      if (!_same(scr, prevScr)) {
+        (cfg.plex ||= {}).scrobble = Object.assign({}, cfg.plex.scrobble || {}, { libraries: scr });
         changed = true;
       }
     } catch (e) {

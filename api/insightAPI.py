@@ -71,7 +71,7 @@ def register_insights(app: FastAPI) -> None:
 
     @app.post("/api/crosswatch/select-snapshot", tags=["insight"])
     def api_select_snapshot(
-        feature: str = Query(..., regex="^(watchlist|history|ratings)$"),
+        feature: str = Query(..., pattern="^(watchlist|history|ratings)$"),
         snapshot: str = Query(...),
     ) -> dict[str, Any]:
         _, load_config, save_config, _ = _env()

@@ -10,6 +10,7 @@
 
   let H = new Set();
   let R = new Set();
+  let S = new Set();
   let hydrated = false;
 
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
@@ -27,17 +28,21 @@
   function syncHidden() {
     const selH = Q("#jfy_lib_history");
     const selR = Q("#jfy_lib_ratings");
+    const selS = Q("#jfy_lib_scrobble");
     if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
   function syncSelectAll() {
     const rows = Qa("#jfy_lib_matrix .lm-row:not(.hide)");
     const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
     const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
-    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all");
+    const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
+    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all"), s = Q("#jfy_scr_all");
     if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
     if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
+    if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
   }
 
   function renderLibraries(libs) {
@@ -51,7 +56,8 @@
       row.innerHTML = `
         <div class="lm-name">${ESC(it.title)}</div>
         <button type="button" class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
-        <button type="button" class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>`;
+        <button type="button" class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
+        <button type="button" class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
       f.appendChild(row);
     });
     box.appendChild(f);
@@ -104,6 +110,7 @@
 
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
+      S = new Set((jf.scrobble?.libraries || []).map(String));
 
       hydrated = true;
       await jfyLoadLibraries();
@@ -208,12 +215,13 @@
     jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
     jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
     jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
+    jf.scrobble = Object.assign({}, jf.scrobble || {}, { libraries: Array.from(S) });
     return cfg;
   }
 
   document.addEventListener("click", (ev) => {
     const t = ev.target; if (!(t instanceof Element)) return;
-    const btn = t.closest(".lm-dot"); if (!btn) return;
+    const btn = t.closest(".lm-dot") || t.closest(".lm-col")?.querySelector(".lm-dot"); if (!btn) return;
 
     if (btn.id === "jfy_hist_all") {
       ev.preventDefault(); ev.stopPropagation();
@@ -243,13 +251,29 @@
       return;
     }
 
+    if (btn.id === "jfy_scr_all") {
+      ev.preventDefault(); ev.stopPropagation();
+      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
+      S = new Set();
+      Qa("#jfy_lib_matrix .lm-dot.scr").forEach((b) => {
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = b.closest(".lm-row"); if (r) S.add(String(r.dataset.id || "")); }
+      });
+      syncHidden();
+      repaint();
+      syncSelectAll();
+      return;
+    }
+
     if (btn.closest("#jfy_lib_matrix")) {
       ev.preventDefault(); ev.stopPropagation();
       const row = btn.closest(".lm-row"); if (!row) return;
       const id = String(row.dataset.id || ""), kind = btn.dataset.kind;
       const on = !btn.classList.contains("on");
       btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      if (kind === "history") (on ? H.add(id) : H.delete(id)); else (on ? R.add(id) : R.delete(id));
+      if (kind === "history") { (on ? H.add(id) : H.delete(id)); }
+      else if (kind === "ratings") { (on ? R.add(id) : R.delete(id)); }
+      else if (kind === "scrobble") { (on ? S.add(id) : S.delete(id)); }
       syncHidden();
       repaint();
       syncSelectAll();

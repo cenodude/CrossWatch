@@ -11,6 +11,7 @@
 
   let H = new Set(); // history lib ids
   let R = new Set(); // ratings lib ids
+  let S = new Set(); // scrobble lib ids
   let hydrated = false;
 
   // --- tiny helpers
@@ -27,6 +28,26 @@
     });
   }
 
+  function syncHidden() {
+    const selH = Q("#emby_lib_history");
+    const selR = Q("#emby_lib_ratings");
+    const selS = Q("#emby_lib_scrobble");
+    if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
+  }
+
+  function syncSelectAll() {
+    const rows = Qa("#emby_lib_matrix .lm-row:not(.hide)");
+    const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
+    const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
+    const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
+    const h = Q("#emby_hist_all"), r = Q("#emby_rate_all"), s = Q("#emby_scr_all");
+    if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
+    if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
+    if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
+  }
+
   function renderLibraries(libs) {
     const box = Q("#emby_lib_matrix"); if (!box) return;
     box.innerHTML = "";
@@ -38,11 +59,14 @@
       row.innerHTML = `
         <div class="lm-name">${ESC(it.title)}</div>
         <button class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
-        <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>`;
+        <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
+        <button class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
       f.appendChild(row);
     });
     box.appendChild(f);
     applyFilter();
+    syncHidden();
+    syncSelectAll();
   }
 
   async function embyLoadLibraries() {
@@ -83,6 +107,7 @@
 
       H = new Set((em.history?.libraries || []).map(String));
       R = new Set((em.ratings?.libraries || []).map(String));
+      S = new Set((em.scrobble?.libraries || []).map(String));
 
       hydrated = true;
       await embyLoadLibraries();
@@ -197,39 +222,66 @@
     em.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
     em.history = Object.assign({}, em.history || {}, { libraries: Array.from(H) });
     em.ratings = Object.assign({}, em.ratings || {}, { libraries: Array.from(R) });
+    em.scrobble = Object.assign({}, em.scrobble || {}, { libraries: Array.from(S) });
     return cfg;
   }
 
+
   // --- toggles + master toggles
   document.addEventListener("click", (ev) => {
-    const t = ev.target; if (!(t instanceof HTMLElement)) return;
+    const t = ev.target; if (!(t instanceof Element)) return;
+    const btn = t.closest(".lm-dot") || t.closest(".lm-col")?.querySelector(".lm-dot");
+    if (!btn) return;
 
-    if (t.classList.contains("lm-dot")) {
-      const row = t.closest(".lm-row"); if (!row) return;
-      const id = String(row.dataset.id || ""), kind = t.dataset.kind;
-      const on = !t.classList.contains("on");
-      t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
-      if (kind === "history") (on ? H.add(id) : H.delete(id)); else (on ? R.add(id) : R.delete(id));
+    if (btn.closest("#emby_lib_matrix")) {
+      const row = btn.closest(".lm-row"); if (!row) return;
+      const id = String(row.dataset.id || ""), kind = btn.dataset.kind;
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
+      if (kind === "history") { (on ? H.add(id) : H.delete(id)); }
+      else if (kind === "ratings") { (on ? R.add(id) : R.delete(id)); }
+      else if (kind === "scrobble") { (on ? S.add(id) : S.delete(id)); }
+      syncHidden();
+      syncSelectAll();
       return;
     }
 
-    if (t.id === "emby_hist_all" && t.classList.contains("lm-dot")) {
-      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+    if (btn.id === "emby_hist_all") {
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
       H = new Set();
       Qa("#emby_lib_matrix .lm-dot.hist").forEach((b) => {
         b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
         if (on) { const r = b.closest(".lm-row"); if (r) H.add(String(r.dataset.id || "")); }
       });
+      syncHidden();
+      syncSelectAll();
       return;
     }
 
-    if (t.id === "emby_rate_all" && t.classList.contains("lm-dot")) {
-      const on = !t.classList.contains("on"); t.classList.toggle("on", on); t.setAttribute("aria-pressed", on ? "true" : "false");
+    if (btn.id === "emby_rate_all") {
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
       R = new Set();
       Qa("#emby_lib_matrix .lm-dot.rate").forEach((b) => {
         b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
         if (on) { const r = b.closest(".lm-row"); if (r) R.add(String(r.dataset.id || "")); }
       });
+      syncHidden();
+      syncSelectAll();
+      return;
+    }
+
+    if (btn.id === "emby_scr_all") {
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
+      S = new Set();
+      Qa("#emby_lib_matrix .lm-dot.scr").forEach((b) => {
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = b.closest(".lm-row"); if (r) S.add(String(r.dataset.id || "")); }
+      });
+      syncHidden();
+      syncSelectAll();
       return;
     }
   }, true);

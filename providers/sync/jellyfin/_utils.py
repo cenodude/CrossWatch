@@ -44,15 +44,16 @@ def _headers(token: str | None, device_id: str) -> dict[str, str]:
 
 def ensure_whitelist_defaults() -> None:
     cfg = load_config()
-    em = cfg.setdefault("emby", {})
+    jf = cfg.setdefault("jellyfin", {})
     changed = False
 
-    if "history" not in em or "libraries" not in em.get("history", {}):
-        em.setdefault("history", {}).setdefault("libraries", [])
-        changed = True
-    if "ratings" not in em or "libraries" not in em.get("ratings", {}):
-        em.setdefault("ratings", {}).setdefault("libraries", [])
-        changed = True
+    for sec in ("history", "ratings", "scrobble"):
+        if sec not in jf or not isinstance(jf.get(sec), dict):
+            jf[sec] = {}
+            changed = True
+        if not isinstance(jf[sec].get("libraries"), list):
+            jf[sec]["libraries"] = []
+            changed = True
 
     if changed:
         save_config(cfg)

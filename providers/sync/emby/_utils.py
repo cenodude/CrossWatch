@@ -55,6 +55,10 @@ def ensure_whitelist_defaults() -> None:
         em.setdefault("ratings", {}).setdefault("libraries", [])
         changed = True
 
+    if "scrobble" not in em or "libraries" not in em.get("scrobble", {}):
+        em.setdefault("scrobble", {}).setdefault("libraries", [])
+        changed = True
+
     if changed:
         save_config(cfg)
 

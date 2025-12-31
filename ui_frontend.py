@@ -442,7 +442,7 @@ def _get_index_html_static() -> str:
 
 </main>
 
-<script src="/assets/helpers/core.js"></script>
+<script src="/assets/helpers/core.js?v=0.2.5-20251014-02"></script>
 <script src="/assets/helpers/dom.js"></script>
 <script src="/assets/helpers/events.js"></script>
 <script src="/assets/helpers/api.js"></script>
@@ -460,11 +460,11 @@ def _get_index_html_static() -> str:
 <script src="/assets/js/scrobbler.js" defer></script>
 <script src="/assets/js/editor.js" defer></script>
 
-<script src="/assets/auth/auth.plex.js" defer></script>
+<script src="/assets/auth/auth.plex.js?v=0.2.5-20251014-02" defer></script>
 <script src="/assets/auth/auth.simkl.js" defer></script>
 <script src="/assets/auth/auth.trakt.js" defer></script>
-<script src="/assets/auth/auth.jellyfin.js" defer></script>
-<script src="/assets/auth/auth.emby.js" defer></script>
+<script src="/assets/auth/auth.jellyfin.js?v=0.2.5-20251014-02" defer></script>
+<script src="/assets/auth/auth.emby.js?v=0.2.5-20251014-02" defer></script>
 <script src="/assets/auth/auth.mdblist.js" defer></script>
 <script src="/assets/auth/auth.tautulli.js" defer></script>
 

@@ -525,13 +525,19 @@ def ensure_whitelist_defaults() -> bool:
     if not isinstance(plex.get("ratings"), dict):
         plex["ratings"] = {}
         changed = True
+    if not isinstance(plex.get("scrobble"), dict):
+        plex["scrobble"] = {}
+        changed = True
     if not isinstance(plex["history"].get("libraries"), list):
         plex["history"]["libraries"] = []
         changed = True
     if not isinstance(plex["ratings"].get("libraries"), list):
         plex["ratings"]["libraries"] = []
         changed = True
-    for sec in ("history", "ratings"):
+    if not isinstance(plex["scrobble"].get("libraries"), list):
+        plex["scrobble"]["libraries"] = []
+        changed = True
+    for sec in ("history", "ratings", "scrobble"):
         libs = plex[sec]["libraries"]
         norm = sorted({str(x).strip() for x in libs if str(x).strip()})
         if libs != norm:
