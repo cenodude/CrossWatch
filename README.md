@@ -42,7 +42,7 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt and MDBlist** in sync.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautullit** in sync.  
 It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
 CW also includes its own tracker to keep your data safe with snapshots.  
 
@@ -72,39 +72,50 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 <h2>Features</h2>
 
 <div align="center">
-  <table style="display:inline-block; text-align:left; border:0 !important; border-collapse:collapse !important;">
-    <tr>
-      <td valign="top" style="border:0 !important; padding-right:24px;">
-        <ul style="margin:0; padding-left:1.1em;">
-          <li>Sync watchlists (one-/two-way)</li>
-          <li>Live scrobble (Plex/Jellyfin/Emby to Trakt)</li>
-          <li>Sync ratings (one-/two-way)</li>
-          <li>Sync watch history (one-/two-way)</li>
-          <li>Keep snapshots with CW tracker</li>
-          <li>Auto-remove from watchlist after finish</li>
-        </ul>
-      </td>
-      <td valign="top" style="border:0 !important;">
-        <ul style="margin:0; padding-left:1.1em;">
-          <li>Analyzer - finds broken or missing matches/IDs</li>
-          <li>Exporter - CSV files for popular service</li>
-          <li>Now Playing card, Stats, history, live logs</li>
-          <li>Headless scheduled runs</li>
-          <li><strong>Trackers:</strong>
-            <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
-            &nbsp;<img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
-            &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
-            &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
-          </li>
-          <li><strong>Media servers:</strong>
-            <img alt="Plex" src="https://img.shields.io/badge/Plex-E08A00?logo=plex&logoColor=white&labelColor=1f2328" />
-            &nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
-            &nbsp;<img alt="Emby" src="https://img.shields.io/badge/Emby-52B54B?logo=emby&logoColor=white&labelColor=1f2328" />
-          </li>
-        </ul>
-      </td>
-    </tr>
-  </table>
+
+<table border="0" cellspacing="0" cellpadding="10">
+  <tr>
+    <td valign="top" align="left" width="520">
+
+<b>Core features</b>
+
+<ul>
+  <li>Sync watchlists (one-/two-way)</li>
+  <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
+  <li>Sync ratings (one-/two-way)</li>
+  <li>Sync watch history (one-/two-way)</li>
+  <li>Keep snapshots with CW tracker</li>
+  <li>Auto-remove from watchlist after finish</li>
+</ul>
+    </td>
+    <td valign="top" align="left" width="520">
+
+<b>Tools & modes</b>
+
+<ul>
+  <li>Analyzer – finds broken or missing matches/IDs</li>
+  <li>Exporter – CSV files for popular services</li>
+  <li>Now Playing card, Stats, history, live logs</li>
+  <li>Headless scheduled runs</li>
+</ul>
+
+<b>Trackers</b><br/>
+<img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
+&nbsp;<img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+&nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
+&nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
+
+<b>Media servers</b><br/>
+<img alt="Plex" src="https://img.shields.io/badge/Plex-E08A00?logo=plex&logoColor=white&labelColor=1f2328" />
+&nbsp;<img alt="Jellyfin" src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&logoColor=white&labelColor=1f2328" />
+&nbsp;<img alt="Emby" src="https://img.shields.io/badge/Emby-52B54B?logo=emby&logoColor=white&labelColor=1f2328" />
+
+<b>Others</b><br/>
+<img alt="Tautulli" src="https://img.shields.io/badge/Tautulli-FF5C5C?labelColor=1f2328" />
+    </td>
+  </tr>
+</table>
+
 </div>
 
 ## Download
