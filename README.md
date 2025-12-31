@@ -42,7 +42,7 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautullit** in sync.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautulli** in sync.  
 It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
 CW also includes its own tracker to keep your data safe with snapshots.  
 
