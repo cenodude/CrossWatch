@@ -47,6 +47,7 @@ It runs locally with a web UI where you link accounts, define sync pairs, run th
 CW also includes its own tracker to keep your data safe with snapshots.  
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
+Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, Trakt, SIMKL and CW internal tracker** <br>
 NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
 ## CW in a nutshell:
