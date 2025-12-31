@@ -61,7 +61,7 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
-- **Editor** Inspect and adjust state.json and CW data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
+- **Editor** Inspect and adjust your items and Add or block items. Example: tell Plex to stop sending movie X.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
 <p align="center">
   <img alt="image"
