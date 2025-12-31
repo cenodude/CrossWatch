@@ -146,6 +146,35 @@ def _merge_ids(dst: dict[str, str], src: Mapping[str, str]) -> None:
         if v and not dst.get(k):
             dst[k] = str(v)
 
+def _first_text(*vals: Any) -> str | None:
+    for v in vals:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.lower() not in ("none", "null"):
+            return s
+    return None
+
+
+def _series_title(row: Mapping[str, Any], meta: Mapping[str, Any] | None, show_meta: Mapping[str, Any] | None) -> str | None:
+    m = meta if isinstance(meta, Mapping) else {}
+    sm = show_meta if isinstance(show_meta, Mapping) else {}
+    return _first_text(
+        row.get("grandparent_title"),
+        row.get("grandparentTitle"),
+        row.get("grandparent_name"),
+        row.get("grandparentName"),
+        m.get("grandparent_title"),
+        m.get("grandparentTitle"),
+        m.get("grandparent_name"),
+        m.get("grandparentName"),
+        sm.get("title"),
+        sm.get("original_title"),
+        sm.get("grandparent_title"),
+        sm.get("grandparentTitle"),
+    )
+
+
 
 def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     ids: dict[str, str] = {}
@@ -277,12 +306,15 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 continue
 
             ids, show_ids = _row_ids(row)
+            ep_meta: Mapping[str, Any] | None = None
+            show_meta: Mapping[str, Any] | None = None
             if not _has_any_ids(ids, show_ids):
                 continue
 
             if ids.get("plex") and (not _has_ext_ids(ids) or (mtype == "episode" and not _has_ext_ids(show_ids))):
                 meta = _get_meta(ids["plex"])
                 if isinstance(meta, Mapping):
+                    ep_meta = meta
                     m_ids, m_show_ids = _row_ids(meta)
                     _merge_ids(ids, m_ids)
                     _merge_ids(show_ids, m_show_ids)
@@ -317,6 +349,11 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                     "episode": episode_i,
                     "watched_at": watched_at,
                 }
+                st = _series_title(row, ep_meta, show_meta)
+                if st:
+                    item["series_title"] = st
+                if _has_ext_ids(show_ids):
+                    item["show_ids"] = show_ids
 
             ck = canonical_key(item)
             if ck and ck not in out:
