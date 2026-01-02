@@ -47,6 +47,7 @@ It runs locally with a web UI where you link accounts, define sync pairs, run th
 CW also includes its own tracker to keep your data safe with snapshots.  
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
+Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, Trakt, SIMKL and CW internal tracker** <br>
 NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
 ## CW in a nutshell:
@@ -54,14 +55,14 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 - **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
-- **Internal CW Tracker** Keeps snapshots/backups of your Watchlist, History and Ratings from your media servers and trackers.
-- **Unified Watchlist across providers** View all watchlist items in one place, with filter, search, bulk-remove and more.
+- **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
+- **Unified Watchlist across providers** View all watchlist items in one place.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
 - **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
 - **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
-- **Editor** Inspect and adjust CW data. Add or block items. Example: tell Plex to stop sending movie X because you do not want it.
+- **Editor** Inspect and adjust your items and Add or block items. Example: tell Plex to stop sending movie X.
 - **Player card** (Webhooks and Watcher) Shows what you are currently watching in real time while Webhooks or Watcher are active.
 <p align="center">
   <img alt="image"
@@ -81,9 +82,9 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 
 <ul>
   <li>Sync watchlists (one-/two-way)</li>
-  <li>Live scrobble (Plex/Jellyfin/Emby → Trakt)</li>
+  <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL)</li>
   <li>Sync ratings (one-/two-way)</li>
-  <li>Sync watch history (one-/two-way)</li>
+  <li>Sync history (one-/two-way)</li>
   <li>Keep snapshots with CW tracker</li>
   <li>Auto-remove from watchlist after finish</li>
 </ul>
