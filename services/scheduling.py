@@ -18,6 +18,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
     "enabled": False,
     "mode": "disabled",          # disabled | hourly | every_n_hours | daily_time
     "every_n_hours": 2,
+    "minute_offset": 0,          # Minute offset for every_n_hours mode (0-59)
     "daily_time": "03:30",       # HH:MM (24h)
     "timezone": "Europe/Amsterdam",
     "jitter_seconds": 0,
@@ -85,7 +86,11 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
             n = max(1, int(sch.get("every_n_hours") or 2))
         except Exception:
             n = 2
-        anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
+        try:
+            minute_offset = max(0, min(59, int(sch.get("minute_offset") or 0)))
+        except Exception:
+            minute_offset = 0
+        anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(minute=minute_offset, second=0, microsecond=0)
         return _apply_jitter(anchor + timedelta(hours=n), sch)
 
     if mode == "daily_time":

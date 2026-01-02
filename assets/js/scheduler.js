@@ -180,6 +180,7 @@
       setBooleanSelect($("#schEnabled"), !!saved.enabled);
       $("#schMode") && ($("#schMode").value = saved.mode || "hourly");
       $("#schN")    && ($("#schN").value = String(saved.every_n_hours || 2));
+      $("#schMinuteOffset") && ($("#schMinuteOffset").value = String(saved.minute_offset || 0));
       $("#schTime") && ($("#schTime").value = saved.daily_time || "03:30");
 
       const adv = saved?.advanced || {};
@@ -218,9 +219,10 @@
     const enabled = ($("#schEnabled")?.value || "").trim() === "true";
     const mode = $("#schMode")?.value || "hourly";
     const every_n_hours = parseInt($("#schN")?.value || "2", 10);
+    const minute_offset = parseInt($("#schMinuteOffset")?.value || "0", 10);
     const daily_time = $("#schTime")?.value || "03:30";
     const advanced = serializeAdvanced();
-    return { enabled, mode, every_n_hours, daily_time, advanced };
+    return { enabled, mode, every_n_hours, minute_offset, daily_time, advanced };
   };
 
   // boot
