@@ -33,6 +33,8 @@ TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: dict[str, dict[str, Any]] = {}
 _TRAKT_ID_CACHE: dict[tuple[Any, ...], Any] = {}
 _LAST_FINISH_BY_ACC: dict[str, dict[str, Any]] = {}
+_LAST_RATING_BY_ACC: dict[tuple[str, str, str], dict[str, Any]] = {}
+
 
 _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
@@ -43,6 +45,7 @@ _DEF_WEBHOOK: dict[str, Any] = {
     "suppress_start_at": 99,
     "filters_plex": {"username_whitelist": [], "server_uuid": ""},
     "probe_session_progress": True,
+    "plex_trakt_ratings": False,
 }
 
 _DEF_TRAKT: dict[str, Any] = {
@@ -173,6 +176,10 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
     if "probe_session_progress" not in wh:
         wh["probe_session_progress"] = _DEF_WEBHOOK["probe_session_progress"]
         changed = True
+    if "plex_trakt_ratings" not in wh:
+        wh["plex_trakt_ratings"] = _DEF_WEBHOOK.get("plex_trakt_ratings", False)
+        changed = True
+
 
     flt = wh.setdefault("filters_plex", {})
     if "username_whitelist" not in flt:
@@ -976,6 +983,76 @@ def _verify_signature(raw: bytes | None, headers: Mapping[str, str], secret: str
     expected = base64.b64encode(digest).decode("ascii")
     return hmac.compare_digest(sig.strip(), expected.strip())
 
+def _plex_rating_to_trakt(v: Any) -> int | None:
+    try:
+        if v is None or isinstance(v, bool):
+            return None
+        f = float(str(v).strip())
+    except Exception:
+        return None
+    if f <= 0:
+        return 0
+    if f <= 5.0:
+        f = f * 2.0
+    n = int(round(f))
+    return max(1, min(10, n))
+
+
+def _sanitize_trakt_ids(ids: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    imdb = ids.get("imdb")
+    if imdb:
+        s = str(imdb).strip()
+        if s:
+            out["imdb"] = s
+    for k in ("trakt", "tmdb", "tvdb"):
+        v = ids.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s or not s.isdigit():
+            continue
+        out[k] = int(s)
+    return out
+
+
+def _rating_payload(
+    media_type: str,
+    md: dict[str, Any],
+    ids_all: dict[str, Any],
+    rating: int | None,
+    cfg: dict[str, Any],
+    logger: Callable[..., None] | Any | None = None,
+) -> dict[str, Any]:
+    mt = (media_type or "").lower()
+    ids: dict[str, Any] = {}
+    bucket = ""
+
+    if mt == "movie":
+        bucket = "movies"
+        tid = _resolve_trakt_movie_id(ids_all, cfg, logger=logger)
+        ids = {"trakt": tid} if tid else {k: ids_all.get(k) for k in ("imdb", "tmdb", "tvdb") if ids_all.get(k)}
+    elif mt == "show":
+        bucket = "shows"
+        tid = _resolve_trakt_show_id(ids_all, cfg, logger=logger)
+        ids = {"trakt": tid} if tid else {k: ids_all.get(k) for k in ("tmdb", "imdb", "tvdb") if ids_all.get(k)}
+    elif mt == "episode":
+        bucket = "episodes"
+        tid = _resolve_trakt_episode_id(md, ids_all, cfg, logger=logger)
+        ids = {"trakt": tid} if tid else {k: ids_all.get(k) for k in ("tmdb", "imdb", "tvdb") if ids_all.get(k)}
+    else:
+        return {}
+
+    ids2 = _sanitize_trakt_ids(ids)
+    if not ids2:
+        return {}
+
+    obj: dict[str, Any] = {"ids": ids2}
+    if rating is not None:
+        obj["rating"] = rating
+    return {bucket: [obj]}
+
+
 
 def process_webhook(
     payload: dict[str, Any],
@@ -1007,6 +1084,7 @@ def process_webhook(
     pause_debounce = int(wh.get("pause_debounce_seconds", _DEF_WEBHOOK["pause_debounce_seconds"]) or 0)
     suppress_start_at = float(wh.get("suppress_start_at", _DEF_WEBHOOK["suppress_start_at"]) or 99)
     probe_progress = bool(wh.get("probe_session_progress", True))
+    enable_ratings = bool(wh.get("plex_trakt_ratings", False))
     flt = (wh.get("filters_plex") or {})
     allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
     srv_uuid_cfg = (flt.get("server_uuid") or "").strip() or ((cfg.get("plex") or {}).get("server_uuid") or "").strip()
@@ -1047,8 +1125,15 @@ def process_webhook(
         _emit(logger, f"ignored user '{acc_title}'", "DEBUG")
         return {"ok": True, "ignored": True}
 
-    if not md or media_type not in ("movie", "episode"):
+    if not md:
         return {"ok": True, "ignored": True}
+
+    if event == "media.rate":
+        if media_type not in ("movie", "show", "episode"):
+            return {"ok": True, "ignored": True}
+    else:
+        if media_type not in ("movie", "episode"):
+            return {"ok": True, "ignored": True}
 
     libs_sc = {str(x).strip() for x in ((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")) or []) if str(x).strip()}
     if libs_sc:
@@ -1066,6 +1151,59 @@ def process_webhook(
     all_ids = _all_ids_from_metadata(md)
     ids_all2 = {**show_ids, **epi_ids} if (show_ids or epi_ids) else dict(all_ids)
     _emit(logger, f"ids resolved: {media_name_dbg} -> {_describe_ids((show_ids or epi_ids) or all_ids)}", "DEBUG")
+
+    if event == "media.rate":
+        if not enable_ratings:
+            _emit(logger, "rating forwarding disabled (webhook.plex_trakt_ratings=false)", "DEBUG")
+            return {"ok": True, "ignored": True}
+
+        rating_raw = md.get("userRating")
+        if rating_raw is None:
+            rating_raw = payload.get("userRating") or payload.get("rating") or md.get("user_rating")
+        rating_val = _plex_rating_to_trakt(rating_raw)
+        if rating_val is None:
+            _emit(logger, "rating event without userRating; ignore", "DEBUG")
+            return {"ok": True, "ignored": True}
+
+        acc_key_r = _account_key(payload)
+        rk_r = str(md.get("ratingKey") or md.get("ratingkey") or "")
+        dedup_key = (acc_key_r, rk_r, media_type)
+        prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
+        if prev and prev.get("rating") == rating_val and (time.time() - float(prev.get("ts", 0))) < 10:
+            _emit(logger, "suppress duplicate rating event", "DEBUG")
+            return {"ok": True, "dedup": True}
+        _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_val, "ts": time.time()}
+
+        if rating_val == 0:
+            body_r = _rating_payload(media_type, md, ids_all2, None, cfg, logger=logger)
+            if not body_r:
+                _emit(logger, "no usable IDs; skip rating remove", "DEBUG")
+                return {"ok": True, "ignored": True}
+            r = _post_trakt("/sync/ratings/remove", body_r, cfg)
+        else:
+            body_r = _rating_payload(media_type, md, ids_all2, int(rating_val), cfg, logger=logger)
+            if not body_r:
+                _emit(logger, "no usable IDs; skip rating", "DEBUG")
+                return {"ok": True, "ignored": True}
+            r = _post_trakt("/sync/ratings", body_r, cfg)
+
+        try:
+            rj_r: Any = r.json()
+        except Exception:
+            rj_r = {"raw": (r.text or "")[:200]}
+
+        if r.status_code < 400:
+            try:
+                if rating_val == 0:
+                    _emit(logger, f"user='{acc_title}' unrated • {media_name_dbg}", "INFO")
+                else:
+                    _emit(logger, f"user='{acc_title}' rated {int(rating_val)} • {media_name_dbg}", "INFO")
+            except Exception:
+                pass
+            return {"ok": True, "status": r.status_code, "action": "rating", "trakt": rj_r}
+
+        _emit(logger, f"rating forward failed {r.status_code} {(str(rj_r)[:180])}", "ERROR")
+        return {"ok": False, "status": r.status_code, "trakt": rj_r}
 
     prog_raw = _progress(payload)
 

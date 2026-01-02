@@ -314,7 +314,7 @@ def _iter_marked_watched_from_library(
 ) -> list[tuple[dict[str, Any], int]]:
     results: list[tuple[dict[str, Any], int]] = []
     try:
-        sections = adapter.libraries(types=("movie", "show")) or []
+        sections = list(adapter.libraries(types=("movie", "show")) or [])
     except Exception:
         sections = []
     for sec in sections:
@@ -403,7 +403,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     try:
         explicit_user = bool(cfg_acct_id or cfg_uname)
         kwargs: dict[str, Any] = {}
-        if cfg_acct_id:
+        if cfg_acct_id and (not cli_acct_id or int(cfg_acct_id) != int(cli_acct_id)):
             kwargs["accountID"] = int(cfg_acct_id)
         elif not explicit_user and cli_acct_id:
             kwargs["accountID"] = int(cli_acct_id)
@@ -636,29 +636,80 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
     include_marked_cfg = bool(_history_cfg_get(adapter, "include_marked_watched", False))
 
-    selected_acct_id = cfg_acct_id
-    selected_uname = cfg_uname
-    token_acct_id = cli_acct_id
-    token_uname = cli_uname
+    cli = getattr(adapter, "client", None)
 
-    explicit_user = bool(selected_acct_id or selected_uname)
-    token_known = bool(token_acct_id or token_uname)
+    def _same_user(aid1: int | None, uname1: str | None, aid2: int | None, uname2: str | None) -> bool:
+        try:
+            if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
+                return True
+        except Exception:
+            pass
+        if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
+            return True
+        return False
 
-    mismatch = False
-    if explicit_user and not token_known:
-        mismatch = True
-    elif explicit_user:
-        if selected_acct_id and token_acct_id and selected_acct_id != token_acct_id:
-            mismatch = True
-        elif selected_uname and token_uname and selected_uname != token_uname:
-            mismatch = True
+    desired_acct_id: int | None = cfg_acct_id or None
+    desired_uname: str | None = cfg_uname or None
+    if cli:
+        try:
+            sel_aid = int(getattr(cli, "selected_account_id", 0) or 0)
+            if sel_aid > 0:
+                desired_acct_id = sel_aid
+        except Exception:
+            pass
+        try:
+            sel_uname = str(getattr(cli, "selected_username", "") or "").strip().lower() or None
+            if sel_uname:
+                desired_uname = sel_uname
+        except Exception:
+            pass
 
-    include_marked = bool(include_marked_cfg and not mismatch)
+    active_acct_id: int | None = cli_acct_id or None
+    active_uname: str | None = cli_uname or None
 
-    if include_marked_cfg and mismatch:
-        _log(
-            f"include_marked_watched disabled: token user {token_acct_id or token_uname} != selected user {selected_acct_id or selected_uname}"
-        )
+    need_switch = bool(desired_acct_id or desired_uname) and not _same_user(
+        desired_acct_id, desired_uname, active_acct_id, active_uname
+    )
+
+    include_marked = False
+    did_switch = False
+    if include_marked_cfg:
+        try:
+            token_is_owner = int(getattr(cli, "token_account_id", 0) or 0) == 1 if cli else False
+        except Exception:
+            token_is_owner = False
+
+        can_home = False
+        try:
+            can_home = bool(getattr(cli, "can_home_switch")()) if cli else False
+        except Exception:
+            can_home = False
+
+        if not token_is_owner and not can_home:
+            _log("include_marked_watched disabled: token is not PMS owner and not a Plex Home user")
+        elif need_switch:
+            if not cli:
+                _log("include_marked_watched disabled: no Plex client bound for home switch")
+            else:
+                pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
+                try:
+                    did_switch = bool(
+                        getattr(cli, "enter_home_user_scope")(
+                            target_username=desired_uname or None,
+                            target_account_id=desired_acct_id or None,
+                            pin=pin,
+                        )
+                    )
+                except Exception:
+                    did_switch = False
+                if did_switch:
+                    need_switch = False
+                else:
+                    _log(
+                        f"include_marked_watched disabled: switch failed or not a home user (selected={desired_acct_id or desired_uname})"
+                    )
+
+        include_marked = bool(include_marked_cfg and not need_switch)
 
     if include_marked:
         try:
@@ -670,7 +721,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         base_keys.add(base_key)
                 except Exception:
                     continue
+
             marked = _iter_marked_watched_from_library(adapter, allow, since)
+            _log(f"marked-watched scan: found={len(marked)} allow={sorted(allow) if allow else 'ALL'}")
+            added_marked = 0
+
             for meta, ts in marked:
                 if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
                     _log(f"index truncated at {limit} (including marked-watched)")
@@ -693,8 +748,17 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 out[f"{base_key}@{ts_int}"] = row
                 if base_key:
                     base_keys.add(base_key)
+                added_marked += 1
+
+            _log(f"marked-watched hydrate: added={added_marked} (skipped duplicates via base_key)")
         except Exception as e:
             _log(f"marked-watched hydrate failed: {e}")
+        finally:
+            if did_switch:
+                try:
+                    getattr(getattr(adapter, "client", None), "exit_home_user_scope")()
+                except Exception:
+                    pass
 
     if prog:
         try:
@@ -704,7 +768,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
     _log(
         f"index size: {len(out)} (ignored={ignored}, since={since}, scanned={total}, "
-        f"workers={workers}, unique={len(unique_rks)}, selected={acct_id or uname}, token_acct_id={cli_acct_id}, "
+        f"workers={workers}, unique={len(unique_rks)}, selected={acct_id or uname}, token_acct_id={_int_or_zero(getattr(getattr(adapter, 'client', None), 'user_account_id', None))}, "
         f"include_marked={include_marked})"
     )
     return out

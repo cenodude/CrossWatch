@@ -500,15 +500,17 @@ def resolve_user_scope(
     cfg_username: str | None,
     cfg_account_id: int | None,
 ) -> tuple[str | None, int | None]:
-    if cfg_username and cfg_account_id is not None:
-        return cfg_username, int(cfg_account_id)
+    cfg_uname = (cfg_username or "").strip() or None
+    cfg_aid = int(cfg_account_id) if cfg_account_id is not None else None
+    if cfg_uname and cfg_aid is not None:
+        return cfg_uname, cfg_aid
+    if cfg_aid is not None:
+        return None, cfg_aid
     try:
         owner_name = getattr(account, "username", None)
     except Exception:  # noqa: BLE001
         owner_name = None
-    username = cfg_username or owner_name or None
-    if cfg_account_id is not None:
-        return username, int(cfg_account_id)
+    username = cfg_uname or (str(owner_name).strip() if owner_name else None)
     aid = resolve_account_id_by_username(srv, token, username) if (username and srv) else None
     if aid is None:
         aid = resolve_owner_account_id(srv, token)

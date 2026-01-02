@@ -1,14 +1,17 @@
 # /providers/sync/_mod_PLEX.py
 # CrossWatch - Plex Sync Module
-# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
 import os
+import socket
 import time
+import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-__VERSION__ = "2.5.1"
+__VERSION__ = "3.0.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -17,6 +20,11 @@ try:
 except Exception as e:
     raise RuntimeError("plexapi is required for _mod_PLEX") from e
 
+try:
+    import requests
+except Exception as e:
+    raise RuntimeError("requests is required for _mod_PLEX") from e
+
 from .plex._common import configure_plex_context
 from .plex._common import (
     normalize as plex_normalize,
@@ -24,10 +32,7 @@ from .plex._common import (
     plex_headers,
     DISCOVER,
 )
-from .plex._utils import (
-    resolve_user_scope,
-    patch_history_with_account_id,
-)
+from .plex._utils import resolve_user_scope
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -87,6 +92,174 @@ def _log(msg: str) -> None:
         print(f"[PLEX] {msg}")
 
 
+def _as_int(v: Any) -> int | None:
+    try:
+        if v is None or v is False or v is True:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        return int(s)
+    except Exception:
+        return None
+
+
+def _stable_client_id() -> str:
+    for k in ("CW_PLEX_CID", "PLEX_CLIENT_IDENTIFIER", "X_PLEX_CLIENT_IDENTIFIER"):
+        v = os.environ.get(k)
+        if v and v.strip():
+            return v.strip()
+
+    state_dir = "/config/.cw_state" if os.path.isdir("/config") else ".cw_state"
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    cid_path = os.path.join(state_dir, "plex_client_id.txt")
+    try:
+        if os.path.isfile(cid_path):
+            with open(cid_path, "r", encoding="utf-8") as f:
+                existing = (f.read() or "").strip()
+            if existing:
+                return existing
+        new_id = f"crosswatch-{uuid.uuid4().hex[:16]}"
+        with open(cid_path, "w", encoding="utf-8") as f:
+            f.write(new_id)
+        return new_id
+    except Exception:
+        host = socket.gethostname() or "host"
+        return f"crosswatch-{host}"
+
+
+def _plex_tv_client_id(cfg: Any) -> str:
+    v = getattr(cfg, "client_id", None)
+    if v:
+        s = str(v).strip()
+        if s:
+            return s
+    return _stable_client_id()
+
+
+def _plex_tv_session(token: str, client_id: str) -> requests.Session:
+    s = requests.Session()
+    s.trust_env = False
+    s.headers.update(
+        {
+            "X-Plex-Token": token,
+            "X-Plex-Client-Identifier": client_id,
+            "X-Plex-Product": "CrossWatch",
+            "X-Plex-Platform": "CrossWatch",
+            "X-Plex-Version": __VERSION__,
+            "Accept": "application/xml, application/json;q=0.9,*/*;q=0.8",
+        }
+    )
+    return s
+
+
+def _plex_tv_home_users(token: str, client_id: str, timeout: float = 10.0) -> list[dict[str, Any]]:
+    s = _plex_tv_session(token, client_id)
+    urls = ("https://plex.tv/api/v2/home/users", "https://plex.tv/api/home/users")
+    last_err: Exception | None = None
+
+    for url in urls:
+        try:
+            r = s.get(url, timeout=timeout)
+            r.raise_for_status()
+            ct = (r.headers.get("Content-Type") or "").lower()
+
+            if "json" in ct:
+                try:
+                    data = r.json()
+                    if isinstance(data, list):
+                        return [u for u in data if isinstance(u, dict)]
+                except Exception:
+                    pass
+
+            users: list[dict[str, Any]] = []
+            root = ET.fromstring(r.text or "")
+            for el in root.iter():
+                if (el.tag or "").lower() == "user":
+                    users.append(dict(el.attrib))
+            if users:
+                return users
+        except Exception as e:
+            last_err = e
+            continue
+
+    if last_err is not None:
+        raise last_err
+    return []
+
+
+def _plex_tv_switch_user(
+    token: str,
+    client_id: str,
+    user_id: int,
+    pin: str | None,
+    timeout: float = 10.0,
+) -> str | None:
+    s = _plex_tv_session(token, client_id)
+    url = f"https://plex.tv/api/home/users/{int(user_id)}/switch"
+    params: dict[str, Any] = {}
+    if pin:
+        params["pin"] = str(pin)
+    r = s.post(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    root = ET.fromstring(r.text or "")
+    return root.attrib.get("authenticationToken") or None
+
+
+def _plex_tv_resource_access_token(
+    token: str,
+    client_id: str,
+    machine_id: str,
+    timeout: float = 10.0,
+) -> str | None:
+    if not token or not machine_id:
+        return None
+    s = _plex_tv_session(token, client_id)
+    r = s.get(
+        "https://plex.tv/api/resources",
+        params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    root = ET.fromstring(r.text or "")
+    mid = str(machine_id).strip().lower()
+    for el in list(root):
+        if (el.tag or "").lower() != "device":
+            continue
+        attrs = el.attrib or {}
+        cid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip().lower()
+        if cid and cid == mid:
+            return attrs.get("accessToken") or None
+    return None
+
+
+def _pick_home_user(
+    home_users: list[dict[str, Any]],
+    target: str | None,
+    target_id: int | None,
+) -> dict[str, Any] | None:
+    if target_id is not None:
+        tid = int(target_id)
+        for u in home_users:
+            for k in ("id", "userId", "user_id", "accountId", "account_id"):
+                uid = _as_int(u.get(k))
+                if uid is not None and uid == tid:
+                    return u
+
+    if target:
+        t = str(target).strip().lower()
+        for u in home_users:
+            for k in ("title", "username", "name", "email", "friendlyName"):
+                v = u.get(k)
+                if v and str(v).strip().lower() == t:
+                    return u
+    return None
+
+
 def get_manifest() -> Mapping[str, Any]:
     return {
         "name": "PLEX",
@@ -94,12 +267,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": {
-            "watchlist": True,
-            "history": True,
-            "ratings": True,
-            "playlists": False,
-        },
+        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": False},
         "requires": ["plexapi"],
         "capabilities": {
             "bidirectional": True,
@@ -125,6 +293,7 @@ class PLEXConfig:
     machine_id: str | None = None
     username: str | None = None
     account_id: int | None = None
+    home_pin: str | None = None
     password: str | None = None
     timeout: float = 10.0
     max_retries: int = 3
@@ -138,8 +307,22 @@ class PLEXClient:
         self.server: PlexServer | None = None
         self._account: MyPlexAccount | None = None
         self.session = build_session("PLEX", ctx, feature_label=label_plex)
+
         self.user_username: str | None = None
         self.user_account_id: int | None = None
+
+        self.token_username: str | None = None
+        self.token_account_id: int | None = None
+
+        self.selected_username: str | None = None
+        self.selected_account_id: int | None = None
+
+        self._pms_token: str | None = None
+        self._pms_baseurl: str | None = None
+
+        self._home_users_cache: list[dict[str, Any]] | None = None
+        self._home_users_cache_ts: float = 0.0
+        self._token_stack: list[tuple[str | None, str | None, int | None]] = []
 
     def connect(self) -> PLEXClient:
         try:
@@ -153,32 +336,40 @@ class PLEXClient:
                 raise PLEXAuthError("Missing Plex auth (account token or username/password)")
 
             token = self.cfg.token or self._account.authenticationToken
+            self._pms_token = token
+
+            cid = _plex_tv_client_id(self.cfg)
+            self.session.headers.setdefault("X-Plex-Client-Identifier", cid)
+            self.session.headers.setdefault("X-Plex-Product", "CrossWatch")
+            self.session.headers.setdefault("X-Plex-Platform", "CrossWatch")
+            self.session.headers.setdefault("X-Plex-Version", __VERSION__)
+            self.session.headers.setdefault("Accept", "application/xml")
+            self.session.headers["X-Plex-Token"] = token
 
             if self.cfg.baseurl:
                 try:
                     self.server = PlexServer(self.cfg.baseurl, token, timeout=self.cfg.timeout)
-                    server = self.server
-                    if server is not None:
-                        try:
-                            server._session = self.session  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
+                    self.server._session = self.session  # type: ignore[attr-defined]
+                    self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
+                    if self._pms_baseurl:
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
                 except Exception as e:
                     _log(f"PMS baseurl connect failed: {e}; continuing account-only")
+                    self._post_connect_user_scope(token)
+                    return self
+
                 self._post_connect_user_scope(token)
                 return self
 
             try:
                 res = self._pick_resource(self._account)
                 self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore[assignment]
-                server = self.server
-                if server is not None:
-                    try:
-                        server._session = self.session  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
+                self.server._session = self.session  # type: ignore[attr-defined]
+                self._pms_baseurl = str(getattr(self.server, "baseurl", None) or "")
+                if self._pms_baseurl:
+                    configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
             except Exception as e:
-                _log(f"No PMS resource bound: {e}; running account-only")
+                _log(f"No PMS resource bound: {e}; continuing account-only")
                 self._post_connect_user_scope(token)
                 return self
 
@@ -194,12 +385,14 @@ class PLEXClient:
     def _pick_resource(self, acc: MyPlexAccount):
         servers = [r for r in acc.resources() if "server" in (r.provides or "")]
         if self.cfg.machine_id:
+            mid = self.cfg.machine_id.lower()
             for r in servers:
-                if (r.clientIdentifier or "").lower() == self.cfg.machine_id.lower():
+                if (r.clientIdentifier or "").lower() == mid:
                     return r
         if self.cfg.server_name:
+            name = self.cfg.server_name.lower()
             for r in servers:
-                if (r.name or "").lower() == self.cfg.server_name.lower():
+                if (r.name or "").lower() == name:
                     return r
         for r in servers:
             if getattr(r, "owned", False):
@@ -209,18 +402,206 @@ class PLEXClient:
         raise PLEXNotFound("No Plex Media Server resource found")
 
     def _post_connect_user_scope(self, token: str) -> None:
+        srv = self.server
         try:
-            self.user_username, self.user_account_id = resolve_user_scope(
-                self._account,
-                self.server,
-                token,
-                self.cfg.username,
-                self.cfg.account_id,
-            )
-            if self.cfg.account_id is None:
-                patch_history_with_account_id(self.server, self.user_account_id)
+            token_uname, token_aid = resolve_user_scope(self._account, srv, token, None, None)
+        except Exception:
+            token_uname, token_aid = (None, None)
+
+        cfg_uname = (self.cfg.username or "").strip() or None
+        cfg_aid = self.cfg.account_id
+        try:
+            if cfg_aid is not None and not cfg_uname:
+                sel_uname, sel_aid = (None, int(cfg_aid))
+            else:
+                sel_uname, sel_aid = resolve_user_scope(self._account, srv, token, cfg_uname, cfg_aid)
+        except Exception:
+            sel_uname, sel_aid = (cfg_uname, cfg_aid)
+
+        self.token_username = token_uname
+        self.token_account_id = token_aid
+        self.selected_username = sel_uname
+        self.selected_account_id = sel_aid
+
+        self.user_username = token_uname
+        self.user_account_id = token_aid
+
+        def _same_user(aid1: int | None, uname1: str | None, aid2: int | None, uname2: str | None) -> bool:
+            try:
+                if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
+                    return True
+            except Exception:
+                pass
+            if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
+                return True
+            return False
+
+        if srv and _same_user(token_aid, token_uname, sel_aid, sel_uname):
+            self.user_username = sel_uname or token_uname
+            self.user_account_id = sel_aid or token_aid
+        elif srv and (sel_aid is not None or sel_uname):
+            _log(f"user scope selection set (token stays {token_uname}@{token_aid}; selected {sel_uname}@{sel_aid})")
+
+    def can_home_switch(self) -> bool:
+        return bool(self.home_users())
+
+    def home_users(self, *, force: bool = False) -> list[dict[str, Any]]:
+        token = self._pms_token or self.cfg.token
+        if not token:
+            return []
+        now = time.time()
+        if not force and self._home_users_cache is not None and (now - self._home_users_cache_ts) < 30.0:
+            return self._home_users_cache
+        client_id = _plex_tv_client_id(self.cfg)
+        try:
+            users = _plex_tv_home_users(token, client_id, timeout=float(self.cfg.timeout))
         except Exception as e:
-            _log(f"user scope init failed: {e}")
+            _log(f"home users fetch failed: {e}")
+            users = []
+        self._home_users_cache = users
+        self._home_users_cache_ts = now
+        return users
+
+    def is_home_user(self, *, target_username: str | None = None, target_account_id: int | None = None) -> bool:
+        return _pick_home_user(self.home_users(), target=target_username, target_id=target_account_id) is not None
+
+    def enter_home_user_scope(
+        self,
+        *,
+        target_username: str | None = None,
+        target_account_id: int | None = None,
+        pin: str | None = None,
+    ) -> bool:
+        srv = self.server
+        token = self._pms_token or self.cfg.token
+        if not srv or not token:
+            return False
+
+        picked = _pick_home_user(self.home_users(), target=target_username, target_id=target_account_id)
+        if not picked:
+            return False
+
+        user_id = _as_int(picked.get("id")) or 0
+        if not user_id:
+            return False
+
+        protected = str(picked.get("protected") or "").strip().lower() in {"1", "true"}
+        use_pin = (pin or "").strip() or None
+        if protected and not use_pin:
+            _log(f"switchHomeUser requires PIN (target={picked.get('title') or target_username or user_id})")
+            return False
+
+        client_id = _plex_tv_client_id(self.cfg)
+        try:
+            user_token = _plex_tv_switch_user(token, client_id, user_id=user_id, pin=use_pin, timeout=float(self.cfg.timeout))
+        except Exception as e:
+            hint = " (PIN?)" if use_pin else ""
+            _log(f"switchHomeUser failed (target={picked.get('title') or target_username or user_id}){hint}: {e}")
+            return False
+
+        if not user_token:
+            return False
+
+        machine_id = (self.cfg.machine_id or "").strip() or None
+        if not machine_id:
+            try:
+                machine_id = str(getattr(srv, "machineIdentifier", None) or "").strip() or None
+            except Exception:
+                machine_id = None
+        if not machine_id:
+            try:
+                rr = request_with_retries(self.session, "GET", srv.url("/identity"), timeout=float(self.cfg.timeout), max_retries=1)
+                if rr.ok:
+                    root = ET.fromstring(rr.text or "")
+                    machine_id = (root.attrib.get("machineIdentifier") or "").strip() or None
+            except Exception:
+                machine_id = None
+
+        if not machine_id:
+            _log("home scope failed: missing PMS machineIdentifier")
+            return False
+
+        pms_user_token = user_token
+        try:
+            access_token = _plex_tv_resource_access_token(user_token, client_id, machine_id=machine_id, timeout=float(self.cfg.timeout))
+            if access_token:
+                pms_user_token = access_token
+        except Exception:
+            pass
+
+        prev_token_raw = self.session.headers.get("X-Plex-Token")
+        if isinstance(prev_token_raw, bytes):
+            prev_token = prev_token_raw.decode("utf-8", "ignore")
+        elif isinstance(prev_token_raw, str):
+            prev_token = prev_token_raw
+        else:
+            prev_token = None
+
+        self._token_stack.append((prev_token, self.user_username, self.user_account_id))
+        self.session.headers["X-Plex-Token"] = pms_user_token
+
+        try:
+            srv._token = pms_user_token  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            sess = getattr(srv, "_session", None) or self.session
+            sess.headers["X-Plex-Token"] = pms_user_token
+        except Exception:
+            pass
+
+        try:
+            baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
+            if baseurl:
+                configure_plex_context(baseurl=baseurl, token=pms_user_token)
+        except Exception:
+            pass
+
+        try:
+            rr = request_with_retries(self.session, "GET", srv.url("/library/sections"), timeout=float(self.cfg.timeout), max_retries=1)
+            if rr.status_code in (401, 403):
+                _log("home scope token rejected by PMS (/library/sections)")
+                self.exit_home_user_scope()
+                return False
+        except Exception as e:
+            _log(f"home scope verify failed: {e}")
+            self.exit_home_user_scope()
+            return False
+
+        self.user_username = (str(picked.get("title") or "").strip() or target_username)
+        self.user_account_id = _as_int(picked.get("id")) or target_account_id
+        _log(f"home scope entered -> {self.user_username}@{self.user_account_id}")
+        return True
+
+    def exit_home_user_scope(self) -> None:
+        if not self._token_stack:
+            return
+        prev_token, prev_uname, prev_aid = self._token_stack.pop()
+        srv = self.server
+        if prev_token:
+            try:
+                self.session.headers["X-Plex-Token"] = prev_token
+            except Exception:
+                pass
+            if srv:
+                try:
+                    srv._token = prev_token  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                try:
+                    sess = getattr(srv, "_session", None) or self.session
+                    sess.headers["X-Plex-Token"] = prev_token
+                except Exception:
+                    pass
+            try:
+                baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
+                if baseurl:
+                    configure_plex_context(baseurl=baseurl, token=prev_token)
+            except Exception:
+                pass
+        self.user_username = prev_uname
+        self.user_account_id = prev_aid
+        _log("home scope exited -> back to token user")
 
     def account(self) -> MyPlexAccount:
         if not self._account:
@@ -251,16 +632,6 @@ class PLEXClient:
             return s.fetchItem(int(rating_key))
         except Exception:
             return None
-
-    def _retry(self, fn, *a, **kw):
-        tries = self.cfg.max_retries
-        for i in range(tries):
-            try:
-                return fn(*a, **kw)
-            except Exception:
-                if i >= tries - 1:
-                    raise
-                time.sleep(0.5 * (i + 1))
 
     @staticmethod
     def normalize(obj) -> dict[str, Any]:
@@ -300,23 +671,16 @@ class PLEXModule:
             server_name=plex_cfg.get("server_name") or plex_cfg.get("server"),
             machine_id=plex_cfg.get("machine_id"),
             username=plex_cfg.get("username"),
-            account_id=(
-                int(plex_cfg["account_id"])
-                if str(plex_cfg.get("account_id", "")).strip().isdigit()
-                else None
-            ),
+            account_id=int(plex_cfg["account_id"]) if str(plex_cfg.get("account_id", "")).strip().isdigit() else None,
+            home_pin=plex_cfg.get("home_pin"),
             password=plex_cfg.get("password"),
             timeout=float(plex_cfg.get("timeout", cfg.get("timeout", 10.0))),
             max_retries=int(plex_cfg.get("max_retries", cfg.get("max_retries", 3))),
             watchlist_allow_pms_fallback=bool(plex_cfg.get("watchlist_allow_pms_fallback", True)),
             watchlist_page_size=int(plex_cfg.get("watchlist_page_size", 100)),
         )
-        baseurl_norm = self.cfg.baseurl or ""
-        token_norm = self.cfg.token or ""
-        configure_plex_context(
-            baseurl=baseurl_norm,
-            token=token_norm,
-        )
+
+        configure_plex_context(baseurl=self.cfg.baseurl or "", token=self.cfg.token or "")
 
         if self.cfg.client_id:
             cid = str(self.cfg.client_id)
@@ -342,12 +706,7 @@ class PLEXModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {
-            "watchlist": True,
-            "ratings": True,
-            "history": True,
-            "playlists": False,
-        }
+        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": False}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -378,6 +737,7 @@ class PLEXModule:
         tmo = max(3.0, min(self.cfg.timeout, 10.0))
 
         import time as _t
+
         started = _t.perf_counter()
 
         wl_needed = bool(enabled.get("watchlist"))
@@ -397,7 +757,7 @@ class PLEXModule:
                         self.client.session,
                         "GET",
                         url,
-                        headers=plex_headers(token),  # <-- change is here
+                        headers=plex_headers(token),
                         params={"limit": 1},
                         timeout=tmo,
                         max_retries=self.cfg.max_retries,
@@ -428,9 +788,7 @@ class PLEXModule:
             srv = getattr(self.client, "server", None)
             if srv:
                 try:
-                    session = getattr(srv, "_session", None)
-                    if not session:
-                        session = self.client.session
+                    session = getattr(srv, "_session", None) or self.client.session
                     rr = request_with_retries(
                         session,
                         "GET",
@@ -465,12 +823,8 @@ class PLEXModule:
         if lib_needed:
             checks.append(pms_ok)
 
-        disc_auth_failed = wl_needed and (
-            disc_code in (401, 403) or discover_reason == "unauthorized"
-        )
-        pms_auth_failed = lib_needed and (
-            pms_code in (401, 403) or pms_reason == "unauthorized"
-        )
+        disc_auth_failed = wl_needed and (disc_code in (401, 403) or discover_reason == "unauthorized")
+        pms_auth_failed = lib_needed and (pms_code in (401, 403) or pms_reason == "unauthorized")
 
         if not checks:
             status = "ok"
@@ -488,6 +842,7 @@ class PLEXModule:
             details["account"] = bool(token) and discover_ok
         if lib_needed:
             details["pms"] = pms_ok
+
         disabled_list = [k for k, v in enabled.items() if not v]
         if disabled_list:
             details["disabled"] = disabled_list
@@ -508,9 +863,7 @@ class PLEXModule:
             "discover": {
                 "status": disc_code if wl_needed else None,
                 "retry_after": retry_after if wl_needed else None,
-                "rate": disc_rate
-                if wl_needed
-                else {"limit": None, "remaining": None, "reset": None},
+                "rate": disc_rate if wl_needed else {"limit": None, "remaining": None, "reset": None},
             },
             "pms": {"status": pms_code if lib_needed else None},
         }
@@ -630,12 +983,7 @@ class _PlexOPS:
     def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
         return PLEXModule(cfg)
 
-    def build_index(
-        self,
-        cfg: Mapping[str, Any],
-        *,
-        feature: str,
-    ) -> Mapping[str, dict[str, Any]]:
+    def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
 
     def add(
@@ -660,5 +1008,6 @@ class _PlexOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
 
 OPS = _PlexOPS()

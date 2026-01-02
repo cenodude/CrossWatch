@@ -1,21 +1,62 @@
 // Scrobbler UI
 (function (w, d) {
-  const $=(s,r)=> (r||d).querySelector(s),
-        $all=(s,r)=>[...(r||d).querySelectorAll(s)],
-        el=(t,a)=>Object.assign(d.createElement(t),a||{}),
-        on=(n,e,f)=>n&&n.addEventListener(e,f);
-  const j=async(u,o)=>{const r=await fetch(u,{cache:"no-store",...(o||{})});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();};
-  const t=async(u,o)=>{const r=await fetch(u,{cache:"no-store",...(o||{})});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.text();};
+  const $ = (s, r) => (r || d).querySelector(s);
+  const $all = (s, r) => [...(r || d).querySelectorAll(s)];
+  const el = (t, a) => Object.assign(d.createElement(t), a || {});
+  const on = (n, e, f) => n && n.addEventListener(e, f);
 
-  function setNote(id,msg,kind){
-    const n=d.getElementById(id); if(!n) return;
-    n.textContent=msg||""; n.style.cssText="margin:6px 0 2px;font-size:12px;opacity:.9;color:"+(kind==="err"?"#ff6b6b":"var(--muted,#a7a7a7)");
+  const j = async (u, o) => {
+    const r = await fetch(u, { cache: "no-store", ...(o || {}) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
+
+  function setNote(id, msg, kind) {
+    const n = d.getElementById(id);
+    if (!n) return;
+    n.textContent = msg || "";
+    n.style.cssText =
+      "margin:6px 0 2px;font-size:12px;opacity:.9;color:" +
+      (kind === "err" ? "#ff6b6b" : "var(--muted,#a7a7a7)");
   }
 
-  function injectStyles(){
-    if(document.getElementById("sc-styles")) return;
-    const s=document.createElement("style"); s.id="sc-styles";
-    s.textContent=`
+  const HELP_TEXT = {
+    "sc-help-auto-remove":
+      "When you finish a movie, CW will automatically remove that title from your configured Watchlists. It’s currently movies-only. It honors your filters (username/server). If the movie isn’t on your Watchlist, nothing happens, your libraries and other services remain untouched.",
+    "sc-help-webhook-plex-ratings":
+      "When enabled, we’ll send ratings to Trakt. Movies, shows, seasons, and episodes are supported.",
+    "sc-help-watch-plex-ratings":
+      "When enabled, we’ll send ratings to Trakt and/or SIMKL.\nTrakt: Movies, shows, seasons, and episodes are supported.\nSIMKL: Movies and shows are supported.\nAdd the below webhook to your Plex instance to enable ratings.",
+
+    "sc-help-adv-pause":
+      "Pause debounce (sec) (default 5) - Ignore rapid, duplicate pause events.",
+    "sc-help-adv-suppress":
+      "Suppress start @ (%) (default 99) - If play/resume is at or above this %, don’t send /scrobble/start.",
+    "sc-help-adv-regress":
+      "Regress tol % (default 5) - Block progress rollbacks bigger than this %.",
+    "sc-help-adv-stop-pause":
+      "Stop pause ≥ (%) (default 80) - If STOP arrives below this %, treat it as PAUSE.",
+    "sc-help-adv-force-stop":
+      "Force stop @ (%) (default 80) - If STOP is at or above this %, send /scrobble/stop.",
+  };
+
+  const helpBtn = (tipId) =>
+    `<button type="button" class="cx-help material-symbols-rounded" data-tip-id="${tipId}" aria-label="Help">help</button>`;
+
+  function bindHelpTips(root) {
+    const scope = root || d;
+    $all(".cx-help[data-tip-id]", scope).forEach((btn) => {
+      const id = btn.getAttribute("data-tip-id") || "";
+      const text = HELP_TEXT[id];
+      if (text && !btn.title) btn.title = text;
+    });
+  }
+
+  function injectStyles() {
+    if (d.getElementById("sc-styles")) return;
+    const s = d.createElement("style");
+    s.id = "sc-styles";
+    s.textContent = `
     .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     .codepair{display:flex;gap:8px;align-items:center}
     .codepair code{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
@@ -23,18 +64,31 @@
     .status-dot{width:10px;height:10px;border-radius:50%}.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}
     .watcher-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     @media (max-width:960px){.watcher-row{grid-template-columns:1fr}}
-    .chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}.chip .rm{cursor:pointer;opacity:.7}
+
+    .chips{display:flex;flex-wrap:wrap;gap:6px}
+    .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
+    .chip .rm{cursor:pointer;opacity:.7}
+
     .sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:end}
-    .field{display:flex;gap:6px;align-items:center;position:relative}.field label{white-space:nowrap;font-size:12px;opacity:.8}.field input{width:100%}
-    details.sc-filters,details.sc-advanced{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
-    details.sc-filters>summary,details.sc-advanced>summary{cursor:pointer;list-style:none;padding:14px;border-radius:12px;font-weight:600}
-    details.sc-filters[open]>summary,details.sc-advanced[open]>summary{border-bottom:1px solid rgba(255,255,255,.06)}
-    details.sc-filters .body,details.sc-advanced .body{padding:12px 14px}
-    .sc-ctrls{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
-    .sc-ctrls .left{display:flex;align-items:center;gap:8px}
-    .sc-ctrls .right{display:flex;align-items:center;gap:8px;margin-left:auto}
+
+    .sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+    .sc-adv-grid .field{display:grid;grid-template-columns:auto 26px 1fr;align-items:center;gap:8px}
+    .sc-adv-grid .field label{white-space:nowrap;font-size:12px;opacity:.8}
+    .sc-adv-grid .field input{width:64px;max-width:100%;justify-self:end}
+    @media (max-width:1100px){.sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+    @media (max-width:640px){.sc-adv-grid{grid-template-columns:1fr;}}
+
+    details.sc-filters,details.sc-advanced,details.sc-box{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+    details.sc-filters>summary,details.sc-advanced>summary,details.sc-box>summary{cursor:pointer;list-style:none;padding:14px;border-radius:12px;font-weight:600}
+    details.sc-filters[open]>summary,details.sc-advanced[open]>summary,details.sc-box[open]>summary{border-bottom:1px solid rgba(255,255,255,.06)}
+    details.sc-filters .body,details.sc-advanced .body,details.sc-box .body{padding:12px 14px}
+
+    .sc-subbox{margin-top:12px;border-radius:12px;background:rgba(255,255,255,.04);box-shadow:0 0 0 1px rgba(255,255,255,.06) inset}
+    .sc-subbox .head{padding:12px 14px;font-weight:700;opacity:.92}
+    .sc-subbox .body{padding:12px 14px;border-top:1px solid rgba(255,255,255,.06)}
+
     .sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9;white-space:nowrap}
+
     .wh-top{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:12px;margin-bottom:8px;position:relative}
     .wh-toggle{display:inline-flex;gap:8px;align-items:center}
     .wh-endpoints{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
@@ -44,161 +98,225 @@
     .wh-logo[alt="Plex"]{transform:scale(1.15)}
     .wh-logo[alt="Jellyfin"]{transform:scale(1.0)}
     .wh-logo[alt="Emby"]{transform:scale(1.15)}
+
+    .sc-opt-col{display:flex;flex-direction:column;gap:10px}
+    .sc-opt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     `;
-    document.head.appendChild(s);
+    d.head.appendChild(s);
   }
 
-  const DEFAULTS={watch:{pause_debounce_seconds:5,suppress_start_at:99},trakt:{stop_pause_threshold:80,force_stop_at:95,regress_tolerance_percent:5}};
-  const STATE={mount:null,webhookHost:null,watcherHost:null,cfg:{},users:[],pms:[]};
-
-  const deepSet=(o,p,v)=>p.split(".").reduce((a,k,i,arr)=>(i===arr.length-1?(a[k]=v):((a[k]&&typeof a[k]==="object")||(a[k]={})),a[k]),o);
-  const read=(p,dflt)=>p.split(".").reduce((v,k)=>v&&typeof v==="object"?v[k]:undefined,STATE.cfg) ?? dflt;
-  function write(p,v){ deepSet(STATE.cfg,p,v); try{ w._cfgCache ||= {}; deepSet(w._cfgCache,p,v);}catch{} try{syncHiddenServerInputs();}catch{} }
-
-  const asArray=v=>Array.isArray(v)?v.slice():v==null||v===""?[]:[String(v)];
-  const clamp100=n=>Math.min(100,Math.max(1,Math.round(Number(n))));
-  const norm100=(n,dflt)=>clamp100(Number.isFinite(+n)?+n:dflt);
-  const provider=()=>String(read("scrobble.watch.provider","plex")||"plex").toLowerCase();
-
-  const API={
-    cfgGet:()=>j("/api/config"),
-    users:async()=>{
-      if(provider()==="emby"){
-        const x=await j("/api/emby/users");
-        const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
-        return Array.isArray(a)?a:[]; 
-      }else{
-        const x=await j("/api/plex/users");
-        const a=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
-        return Array.isArray(a)?a:[]; 
-      }
-    },
-    serverUUID:async()=>{
-      if(provider()==="emby"){
-        const x=await j("/api/emby/inspect");
-        const uid=x?.user_id||x?.user?.Id||x?.id||"";
-        return { id: uid };
-      }else{
-        return j("/api/plex/server_uuid");
-      }
-    },
-    watch:{
-      status:()=>j("/api/watch/status"),
-      start:(prov,sink)=>t(
-        `/api/watch/start?provider=${encodeURIComponent(prov||"")}&sink=${encodeURIComponent(sink||"")}`,
-        {method:"POST"}
-      ),
-      stop:()=>t("/api/watch/stop",{method:"POST"})
-    }
+  const DEFAULTS = {
+    watch: { pause_debounce_seconds: 5, suppress_start_at: 99 },
+    trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5 },
   };
 
-  function chip(label,onRemove,onPick){
-    const c=el("span",{className:"chip"}),t=el("span",{textContent:label}),rm=el("span",{className:"rm",title:"Remove",textContent:"×"});
-    on(rm,"click",()=>onRemove&&onRemove(label)); if(onPick) on(t,"click",()=>onPick(label)); c.append(t,rm); return c;
+  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [] };
+
+  const deepSet = (o, p, v) =>
+    p.split(".").reduce(
+      (a, k, i, arr) =>
+        i === arr.length - 1
+          ? (a[k] = v)
+          : (((a[k] && typeof a[k] === "object") || (a[k] = {})), a[k]),
+      o
+    );
+
+  const read = (p, dflt) => p.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), STATE.cfg) ?? dflt;
+
+  function write(p, v) {
+    deepSet(STATE.cfg, p, v);
+    try {
+      w._cfgCache ||= {};
+      deepSet(w._cfgCache, p, v);
+    } catch {}
+    try {
+      syncHiddenServerInputs();
+    } catch {}
   }
 
-  function setWatcherStatus(ui){
-    const alive=!!ui?.alive,q=id=>$(id,STATE.mount),dot=q("#sc-status-dot"),txt=q("#sc-status-text"),badge=q("#sc-status-badge"),last=q("#sc-status-last"),up=q("#sc-status-up");
-    if(dot){ dot.classList.toggle("on",alive); dot.classList.toggle("off",!alive); }
-    if(txt) txt.textContent=alive?"Active":"Inactive";
-    if(badge){ badge.textContent=alive?"Active":"Stopped"; badge.classList.toggle("is-on",alive); badge.classList.toggle("is-off",!alive); }
-    if(last) last.textContent=ui?.lastSeen?`Last seen: ${ui.lastSeen}`:"";
-    if(up)   up.textContent=ui?.uptime?`Uptime: ${ui.uptime}`:"";
-    STATE.watchAlive = alive;
+  const asArray = (v) => (Array.isArray(v) ? v.slice() : v == null || v === "" ? [] : [String(v)]);
+  const clamp100 = (n) => Math.min(100, Math.max(1, Math.round(Number(n))));
+  const norm100 = (n, dflt) => clamp100(Number.isFinite(+n) ? +n : dflt);
+  const provider = () => String(read("scrobble.watch.provider", "plex") || "plex").toLowerCase();
+
+  const API = {
+    cfgGet: () => j("/api/config"),
+    users: async () => {
+      if (provider() === "emby") {
+        const x = await j("/api/emby/users");
+        const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+        return Array.isArray(a) ? a : [];
+      }
+      const x = await j("/api/plex/users");
+      const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+      return Array.isArray(a) ? a : [];
+    },
+    serverUUID: async () => {
+      if (provider() === "emby") {
+        const x = await j("/api/emby/inspect");
+        const uid = x?.user_id || x?.user?.Id || x?.id || "";
+        return { id: uid };
+      }
+      return j("/api/plex/server_uuid");
+    },
+    watch: {
+      status: () => j("/api/watch/status"),
+      start: (prov, sink) => j(`/api/watch/start?provider=${encodeURIComponent(prov)}&sink=${encodeURIComponent(sink)}`, { method: "POST" }),
+      stop: () => j("/api/watch/stop", { method: "POST" }),
+    },
+  };
+
+  function chip(text, onRemove, onClick) {
+    const c = el("span", { className: "chip" });
+    const t = el("span", { textContent: text });
+    if (onClick) {
+      t.style.cursor = "pointer";
+      t.title = "Click to select";
+      on(t, "click", () => onClick(text));
+    }
+    const rm = el("span", { className: "rm", textContent: "×" });
+    on(rm, "click", () => onRemove(text));
+    c.append(t, rm);
+    return c;
   }
 
-  function isValidServerUrl(v){ if(!v) return false; try{const u=new URL(v);return (u.protocol==="http:"||u.protocol==="https:")&&!!u.host;}catch{return false;} }
+  function isValidServerUrl(s) {
+    try {
+      const u = new URL(String(s || "").trim());
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
 
-  function applyModeDisable(){
-    const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount);
-    const webhookOn=!!wh?.checked,watcherOn=!!wa?.checked;
-    write("scrobble.enabled",webhookOn||watcherOn);
-    write("scrobble.mode",watcherOn?"watch":"webhook");
+  function setWatcherStatus(st) {
+    const dot = $("#sc-status-dot", STATE.mount);
+    const badge = $("#sc-status-badge", STATE.mount);
+    const text = $("#sc-status-text", STATE.mount);
+    const last = $("#sc-status-last", STATE.mount);
+    const up = $("#sc-status-up", STATE.mount);
+    const alive = !!st?.alive;
+    if (dot) dot.className = "status-dot " + (alive ? "on" : "off");
+    if (badge) {
+      badge.className = "badge " + (alive ? "is-on" : "is-off");
+      badge.textContent = alive ? "Running" : "Stopped";
+    }
+    if (text) text.textContent = alive ? "Active" : "Inactive";
+    if (last) last.textContent = st?.last_run ? `Last: ${st.last_run}` : "";
+    if (up) up.textContent = st?.uptime ? `Up: ${st.uptime}` : "";
+  }
 
-    const prov=provider();
-    const webRoot=$("#sc-sec-webhook",STATE.mount)||STATE.mount,watchRoot=$("#sc-sec-watch",STATE.mount)||STATE.mount;
-    $all(".input, input, button, select, textarea",webRoot).forEach(n=>{if(n.id!=="sc-enable-webhook") n.disabled=!webhookOn;});
-    $all(".input, input, button, select, textarea",watchRoot).forEach(n=>{if(!["sc-enable-watcher"].includes(n.id)) n.disabled=!watcherOn;});
+  function applyModeDisable() {
+    const enabled = !!read("scrobble.enabled", false);
+    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+    const useWebhook = enabled && mode === "webhook";
+    const useWatch = enabled && mode === "watch";
 
-    const srv = prov==="plex" ? String(read("plex.server_url","")||"") : String(read("emby.server","")||"");
-    const lbl = prov==="plex" ? "Plex Server" : "Emby Server";
-    const req = $("#sc-server-required",STATE.mount); if(req) req.style.display = prov==="plex" ? "" : "none";
-    const lab = $("#sc-server-label",STATE.mount); if(lab) lab.textContent = lbl;
+    const webRoot = STATE.webhookHost;
+    const watchRoot = STATE.watcherHost;
+    if (!webRoot || !watchRoot) return;
 
-    const loadBtn=$("#sc-load-users",STATE.mount); if(loadBtn){ loadBtn.style.display=""; loadBtn.textContent = prov==="plex" ? "Load Plex users" : "Load Emby users"; }
-    const fetchUuid=$("#sc-fetch-uuid",STATE.mount); if(fetchUuid) fetchUuid.disabled = false;
-    const uuidLabel=$("#sc-uuid-label",STATE.mount); if(uuidLabel) uuidLabel.textContent = prov==="plex" ? "Server UUID" : "User ID";
-    const uuidInput=$("#sc-server-uuid",STATE.mount); if(uuidInput) uuidInput.placeholder = prov==="plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
+    const wh = $("#sc-enable-webhook", STATE.mount);
+    const wa = $("#sc-enable-watcher", STATE.mount);
 
-    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = "";
+    const webhookOn = !!wh?.checked && useWebhook;
+    const watcherOn = !!wa?.checked && useWatch;
 
-    const plexTokenOk=!!String(read("plex.account_token","")||"").trim();
-    const embyTokenOk=!!String(read("emby.access_token","")||"").trim();
+    $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
+      if (n.id !== "sc-enable-webhook") n.disabled = !webhookOn;
+    });
+    $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
+      if (n.id !== "sc-enable-watcher") n.disabled = !watcherOn;
+    });
 
-    const sink=String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase();
-    const traktTokenOk=!!String(read("trakt.access_token","")||"").trim();
-    const simklTokenOk=!!String(read("simkl.access_token","")||"").trim();
+    const prov = provider();
+    const srv = prov === "plex" ? String(read("plex.server_url", "") || "") : String(read("emby.server", "") || "");
+    const lbl = prov === "plex" ? "Plex Server" : "Emby Server";
+    const req = $("#sc-server-required", STATE.mount);
+    if (req) req.style.display = prov === "plex" ? "" : "none";
+    const lab = $("#sc-server-label", STATE.mount);
+    if (lab) lab.textContent = lbl;
 
-    let sinkOk=true;
-    let sinkErr="";
+    const loadBtn = $("#sc-load-users", STATE.mount);
+    if (loadBtn) {
+      loadBtn.style.display = "";
+      loadBtn.textContent = prov === "plex" ? "Load Plex users" : "Load Emby users";
+    }
+    const fetchUuid = $("#sc-fetch-uuid", STATE.mount);
+    if (fetchUuid) fetchUuid.disabled = false;
+    const uuidLabel = $("#sc-uuid-label", STATE.mount);
+    if (uuidLabel) uuidLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
+    const uuidInput = $("#sc-server-uuid", STATE.mount);
+    if (uuidInput) uuidInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
+
+    const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
+    const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
+
+    const sink = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
+    const traktTokenOk = !!String(read("trakt.access_token", "") || "").trim();
+    const simklTokenOk = !!String(read("simkl.access_token", "") || "").trim();
+
+    let sinkOk = true;
+    let sinkErr = "";
     const wantsTrakt = sink.includes("trakt");
     const wantsSimkl = sink.includes("simkl");
 
     if (wantsTrakt && !traktTokenOk && wantsSimkl && !simklTokenOk) {
-      sinkOk=false;
-      sinkErr="SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt. Or refresh your browser if you already configured it";
+      sinkOk = false;
+      sinkErr = "SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt. Or refresh your browser if you already configured it";
     } else if (wantsTrakt && !traktTokenOk) {
-      sinkOk=false;
-      sinkErr="Trakt is not connected. Go to Authentication → Trakt. Or refresh your browser if you already configured it";
+      sinkOk = false;
+      sinkErr = "Trakt is not connected. Go to Authentication → Trakt. Or refresh your browser if you already configured it";
     } else if (wantsSimkl && !simklTokenOk) {
-      sinkOk=false;
-      sinkErr="SIMKL is not connected. Go to Authentication → SIMKL. Or refresh your browser if you already configured it";
+      sinkOk = false;
+      sinkErr = "SIMKL is not connected. Go to Authentication → SIMKL. Or refresh your browser if you already configured it";
     }
 
-    if(watcherOn){
-      if(prov==="plex"){
-        if(!plexTokenOk){ setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it","err"); }
-        else if(!isValidServerUrl(srv)) setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
-        else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
-        else setNote("sc-pms-note",`Using ${srv}`);
-      }else{
-        if(!embyTokenOk){ setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it","err"); }
-        else if(!sinkOk) setNote("sc-pms-note",sinkErr,"err");
-        else setNote("sc-pms-note", srv?`Using ${srv}`:"");
+    rebuildPlexRatingsDropdown();
+
+    if (watcherOn) {
+      if (prov === "plex") {
+        if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it", "err");
+        else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
+        else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+        else setNote("sc-pms-note", `Using ${srv}`);
+      } else {
+        if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it", "err");
+        else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+        else setNote("sc-pms-note", srv ? `Using ${srv}` : "");
       }
-    } else setNote("sc-pms-note","");
+    } else setNote("sc-pms-note", "");
 
-    if(loadBtn){
-      if(prov==="plex" && !plexTokenOk) loadBtn.disabled=true;
-      else if(prov==="emby" && !embyTokenOk) loadBtn.disabled=true;
-      else loadBtn.disabled=!watcherOn;
+    if (loadBtn) {
+      if (prov === "plex" && !plexTokenOk) loadBtn.disabled = true;
+      else if (prov === "emby" && !embyTokenOk) loadBtn.disabled = true;
+      else loadBtn.disabled = !watcherOn;
     }
-    if(fetchUuid){
-      if(prov==="plex" && !plexTokenOk) fetchUuid.disabled=true;
-      else if(prov==="emby" && !embyTokenOk) fetchUuid.disabled=true;
-      else fetchUuid.disabled=!watcherOn;
+    if (fetchUuid) {
+      if (prov === "plex" && !plexTokenOk) fetchUuid.disabled = true;
+      else if (prov === "emby" && !embyTokenOk) fetchUuid.disabled = true;
+      else fetchUuid.disabled = !watcherOn;
     }
 
-    const startBtn=$("#sc-watch-start",STATE.mount);
-    if(startBtn){
-      const providerOk = prov==="plex" ? (plexTokenOk && isValidServerUrl(srv)) : embyTokenOk;
+    const startBtn = $("#sc-watch-start", STATE.mount);
+    if (startBtn) {
+      const providerOk = prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : embyTokenOk;
       startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
     }
   }
 
-  function buildUI(){
+  function buildAdvField(id, label, tipId, placeholder) {
+    return `<div class="field"><label for="${id}">${label}</label>${helpBtn(tipId)}<input id="${id}" class="input" type="number" min="1" max="100" step="1" placeholder="${placeholder}"></div>`;
+  }
+
+  function buildUI() {
     injectStyles();
-    if(STATE.webhookHost){
-      STATE.webhookHost.innerHTML=`
+
+    if (STATE.webhookHost) {
+      STATE.webhookHost.innerHTML = `
         <div class="wh-top" style="--wh-logo:28px">
           <div class="wh-left">
             <label class="wh-toggle"><input type="checkbox" id="sc-enable-webhook"><span>Enable</span></label>
-            <div style="margin-top:6px">
-              <label class="sc-toggle">
-                <input type="checkbox" id="sc-delete-plex-webhook">
-                <span class="one-line">Auto-remove from Watchlists</span>
-              </label>
-            </div>
           </div>
           <div class="wh-endpoints">
             <div class="codepair right">
@@ -219,38 +337,63 @@
           </div>
         </div>
         <div id="sc-endpoint-note" class="micro-note"></div>
-        <details id="sc-filters-webhook" class="sc-filters"><summary>Filters (Plex only)</summary>
+
+        <details id="sc-options-webhook" class="sc-box"><summary>Options</summary>
           <div class="body">
-            <div class="sc-filter-grid">
-              <div>
-                <div class="muted">Username whitelist</div>
-                <div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div>
-                <div id="sc-users-note-webhook" class="micro-note"></div>
-                <div style="display:flex;gap:8px;margin-top:6px">
-                  <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
-                  <button id="sc-add-user-webhook" class="btn small">Add</button>
-                  <button id="sc-load-users-webhook" class="btn small">Load Plex users</button>
-                </div>
-              </div>
-              <div>
-                <div class="muted">Server UUID</div>
-                <div id="sc-uuid-note-webhook" class="micro-note"></div>
-                <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-                  <input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1">
-                  <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
+            <span class="cx-switch-wrap">
+              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>
+              ${helpBtn("sc-help-auto-remove")}
+            </span>
+          </div>
+        </details>
+
+        <details id="sc-plex-specifics-webhook" class="sc-box"><summary>Plex specifics</summary>
+          <div class="body">
+            <div class="sc-subbox">
+              <div class="head">Filters</div>
+              <div class="body">
+                <div class="sc-filter-grid">
+                  <div>
+                    <div class="muted">Username whitelist</div>
+                    <div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div>
+                    <div id="sc-users-note-webhook" class="micro-note"></div>
+                    <div style="display:flex;gap:8px;margin-top:6px">
+                      <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
+                      <button id="sc-add-user-webhook" class="btn small">Add</button>
+                      <button id="sc-load-users-webhook" class="btn small">Load Plex users</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="muted">Server UUID</div>
+                    <div id="sc-uuid-note-webhook" class="micro-note"></div>
+                    <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                      <input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1">
+                      <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+
+            <details id="sc-plex-options-webhook" class="sc-box"><summary>Plex Options</summary>
+              <div class="body">
+                <span class="cx-switch-wrap">
+                  <label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>
+              ${helpBtn("sc-help-webhook-plex-ratings")}
+            </span>
+              </div>
+            </details>
           </div>
         </details>
-        <details class="sc-advanced" id="sc-advanced-webhook"><summary>Advanced</summary>
+
+        <details class="sc-advanced sc-box" id="sc-advanced-webhook"><summary>Advanced</summary>
           <div class="body">
             <div class="sc-adv-grid">
-              <div class="field"><label for="sc-pause-debounce-webhook">Pause debounce</label><input id="sc-pause-debounce-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.pause_debounce_seconds}"></div>
-              <div class="field"><label for="sc-suppress-start-webhook">Suppress start @</label><input id="sc-suppress-start-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.suppress_start_at}"></div>
-              <div class="field"><label for="sc-regress-webhook">Regress tol %</label><input id="sc-regress-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.regress_tolerance_percent}"></div>
-              <div class="field"><label for="sc-stop-pause-webhook">Stop pause ≥</label><input id="sc-stop-pause-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.stop_pause_threshold}"></div>
-              <div class="field"><label for="sc-force-stop-webhook">Force stop @</label><input id="sc-force-stop-webhook" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.force_stop_at}"></div>
+              ${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
+              ${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}
+              ${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}
+              ${buildAdvField("sc-stop-pause-webhook", "Stop pause ≥", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}
+              ${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}
             </div>
             <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
           </div>
@@ -310,6 +453,34 @@
               <div class="muted">Server URL (http(s)://host[:port])</div>
               <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" readonly/>
             </div>
+            <div style="margin-top:12px">
+              <div class="muted">Options</div>
+              <div class="sc-opt-col" style="margin-top:6px">
+                <span class="cx-switch-wrap">
+                  <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"><span class="one-line">Auto-remove from Watchlists</span></label>
+              ${helpBtn("sc-help-auto-remove")}
+            </span>
+                                <div id="sc-plex-ratings-wrap" style="display:none">
+                  <div class="sc-opt-row">
+                    <div class="muted" style="margin:0">Enable ratings</div>
+                    ${helpBtn("sc-help-watch-plex-ratings")}
+                  </div>
+                  <div class="sc-opt-row" style="margin-top:6px">
+                    <select id="sc-plex-ratings" class="input" style="width:160px">
+                      <option value="none">None</option>
+                      <option value="trakt">Trakt</option>
+                      <option value="simkl">SIMKL</option>
+                      <option value="both">Both (SIMKL + Trakt)</option>
+                    </select>
+                    <div id="sc-plexwatcher-url-wrap" class="codepair" style="display:none">
+                      <code id="sc-plexwatcher-url"></code>
+                      <button id="sc-copy-plexwatcher" class="btn small">Copy</button>
+                    </div>
+                  </div>
+                  <div id="sc-plexwatcher-note" class="micro-note" style="margin-top:6px"></div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="cc-card" id="sc-card-status">
@@ -335,15 +506,13 @@
                 <button id="sc-watch-refresh" class="btn small">Refresh</button>
               </div>
               <div class="cc-auto">
-                <label class="sc-toggle">
-                  <input type="checkbox" id="sc-autostart"> Autostart on boot
-                </label>
+                <label class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
               </div>
             </div>
           </div>
         </div>
 
-        <details id="sc-filters" class="sc-filters"><summary>Filters (optional)</summary>
+        <details id="sc-filters" class="sc-filters sc-box"><summary>Filters (optional)</summary>
           <div class="body">
             <div class="sc-filter-grid">
               <div>
@@ -365,439 +534,730 @@
                 </div>
               </div>
             </div>
-            <div id="sc-delete-plex-watch-wrap" style="margin-top:8px">
-              <label class="sc-toggle">
-                <input type="checkbox" id="sc-delete-plex-watch">
-                <span class="one-line">Auto-remove from Watchlists</span>
-              </label>
-            </div>
           </div>
         </details>
 
-        <details class="sc-advanced" id="sc-advanced"><summary>Advanced</summary>
+        <details class="sc-advanced sc-box" id="sc-advanced"><summary>Advanced</summary>
           <div class="body">
             <div class="sc-adv-grid">
-              <div class="field" data-tip="Per-session PAUSE debounce."><label for="sc-pause-debounce">Pause debounce</label><input id="sc-pause-debounce" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.pause_debounce_seconds}"></div>
-              <div class="field" data-tip="Suppress START when progress ≥ threshold."><label for="sc-suppress-start">Suppress start @</label><input id="sc-suppress-start" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.watch.suppress_start_at}"></div>
-              <div class="field" data-tip="Allow small regressions."><label for="sc-regress">Regress tol %</label><input id="sc-regress" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.regress_tolerance_percent}"></div>
-              <div class="field" data-tip="STOP below threshold → PAUSE."><label for="sc-stop-pause">Stop pause ≥</label><input id="sc-stop-pause" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.stop_pause_threshold}"></div>
-              <div class="field" data-tip="Final STOP threshold."><label for="sc-force-stop">Force stop @</label><input id="sc-force-stop" class="input" type="number" min="1" max="100" step="1" placeholder="${DEFAULTS.trakt.force_stop_at}"></div>
+              ${buildAdvField("sc-pause-debounce", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
+              ${buildAdvField("sc-suppress-start", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}
+              ${buildAdvField("sc-regress", "Regress", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}
+              ${buildAdvField("sc-stop-pause", "Stop pause ≥", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}
+              ${buildAdvField("sc-force-stop", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}
             </div>
             <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
           </div>
-        </details>`;
+        </details>
+      `;
     }
+
+    bindHelpTips(STATE.mount || d);
   }
 
-  function ensureHiddenServerInputs(){
-    const form=d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount||d.body);
-    let h1=d.getElementById("cfg-plex-server-url");
-    if(!h1){ h1=el("input",{type:"hidden",id:"cfg-plex-server-url",name:"plex.server_url"}); form.appendChild(h1); }
-    let h2=d.getElementById("cfg-emby-server-url");
-    if(!h2){ h2=el("input",{type:"hidden",id:"cfg-emby-server-url",name:"emby.server"}); form.appendChild(h2); }
+  function ensureHiddenServerInputs() {
+    const form = d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount || d.body);
+    let h1 = d.getElementById("cfg-plex-server-url");
+    if (!h1) {
+      h1 = el("input", { type: "hidden", id: "cfg-plex-server-url", name: "plex.server_url" });
+      form.appendChild(h1);
+    }
+    let h2 = d.getElementById("cfg-emby-server-url");
+    if (!h2) {
+      h2 = el("input", { type: "hidden", id: "cfg-emby-server-url", name: "emby.server" });
+      form.appendChild(h2);
+    }
     syncHiddenServerInputs();
   }
-  function syncHiddenServerInputs(){
-    const h1=d.getElementById("cfg-plex-server-url"); if(h1) h1.value=String(read("plex.server_url","")||"");
-    const h2=d.getElementById("cfg-emby-server-url"); if(h2) h2.value=String(read("emby.server","")||"");
+
+  function syncHiddenServerInputs() {
+    const h1 = d.getElementById("cfg-plex-server-url");
+    if (h1) h1.value = String(read("plex.server_url", "") || "");
+    const h2 = d.getElementById("cfg-emby-server-url");
+    if (h2) h2.value = String(read("emby.server", "") || "");
   }
 
-  function restoreDetailsState(sel,def,key){
-    const n=$(sel,STATE.mount); if(!n) return;
-    let open=def; try{const v=localStorage.getItem(key); if(v!=null) open=(v==="1");}catch{}
-    n.open=!!open;
-    on(n,"toggle",()=>{try{localStorage.setItem(key,n.open?"1":"0");}catch{}});
+  function restoreDetailsState(sel, def, key) {
+    const n = $(sel, STATE.mount);
+    if (!n) return;
+    let open = def;
+    try {
+      const v = localStorage.getItem(key);
+      if (v != null) open = v === "1";
+    } catch {}
+    n.open = !!open;
+    on(n, "toggle", () => {
+      try {
+        localStorage.setItem(key, n.open ? "1" : "0");
+      } catch {}
+    });
   }
 
-  const readNum=(sel,dflt)=>{const raw=String($(sel,STATE.mount)?.value??"").trim();return raw===""?clamp100(dflt):norm100(raw,dflt);};
+  const readNum = (sel, dflt) => {
+    const raw = String($(sel, STATE.mount)?.value ?? "").trim();
+    return raw === "" ? clamp100(dflt) : norm100(raw, dflt);
+  };
 
-  async function copyText(s){
-    try{ await navigator.clipboard.writeText(s); return true; }catch{
-      try{ const ta=el("textarea",{style:"position:fixed;left:-9999px;top:-9999px"}); ta.value=s; d.body.appendChild(ta); ta.select(); const ok=d.execCommand?d.execCommand("copy"):document.execCommand("copy"); d.body.removeChild(ta); return !!ok; }catch{ return false; }
+  async function copyText(s) {
+    try {
+      await navigator.clipboard.writeText(s);
+      return true;
+    } catch {
+      try {
+        const ta = el("textarea", { style: "position:fixed;left:-9999px;top:-9999px" });
+        ta.value = s;
+        d.body.appendChild(ta);
+        ta.select();
+        const ok = d.execCommand ? d.execCommand("copy") : document.execCommand("copy");
+        d.body.removeChild(ta);
+        return !!ok;
+      } catch {
+        return false;
+      }
     }
   }
 
-  function commitAdvancedInputsWatch(){
-    write("scrobble.watch.pause_debounce_seconds",readNum("#sc-pause-debounce",DEFAULTS.watch.pause_debounce_seconds));
-    write("scrobble.watch.suppress_start_at",readNum("#sc-suppress-start",DEFAULTS.watch.suppress_start_at));
-  }
-  function commitAdvancedInputsWebhook(){
-    write("scrobble.webhook.pause_debounce_seconds",readNum("#sc-pause-debounce-webhook",DEFAULTS.watch.pause_debounce_seconds));
-    write("scrobble.webhook.suppress_start_at",readNum("#sc-suppress-start-webhook",DEFAULTS.watch.suppress_start_at));
-  }
-  function commitAdvancedInputsTrakt(){
-    const keys=[["#sc-stop-pause","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold],
-                ["#sc-force-stop","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at],
-                ["#sc-regress","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent],
-                ["#sc-stop-pause-webhook","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold],
-                ["#sc-force-stop-webhook","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at],
-                ["#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent]];
-    for(const [sel,path,dflt] of keys){ const v=readNum(sel,dflt); write(path,v); }
-  }
-  function bindPercentInput(sel,path,dflt){
-    const n=$(sel,STATE.mount); if(!n) return;
-    const set=(val,commitEmpty=false)=>{const raw=String(val ?? n.value ?? "").trim(); if(raw===""){ if(commitEmpty){const v=clamp100(dflt);write(path,v);n.value=v;} return;} const v=norm100(raw,dflt); write(path,v); n.value=v;};
-    on(n,"input",()=>set(n.value,false)); on(n,"change",()=>set(n.value,true)); on(n,"blur",()=>set(n.value,true));
+  function commitAdvancedInputsWatch() {
+    write("scrobble.watch.pause_debounce_seconds", readNum("#sc-pause-debounce", DEFAULTS.watch.pause_debounce_seconds));
+    write("scrobble.watch.suppress_start_at", readNum("#sc-suppress-start", DEFAULTS.watch.suppress_start_at));
   }
 
-  function namesFromChips(hostId){
-    const host=$(hostId,STATE.mount); if(!host) return [];
-    return $all(".chip > span:first-child",host).map(s=>String(s.textContent||"").trim()).filter(Boolean);
+  function commitAdvancedInputsWebhook() {
+    write("scrobble.webhook.pause_debounce_seconds", readNum("#sc-pause-debounce-webhook", DEFAULTS.watch.pause_debounce_seconds));
+    write("scrobble.webhook.suppress_start_at", readNum("#sc-suppress-start-webhook", DEFAULTS.watch.suppress_start_at));
   }
 
-  function onSelectWatchUser(name){
-    if(provider()!=="emby") return;
-    const list=Array.isArray(STATE.users)?STATE.users:[];
-    const hit=list.find(u=>String(u?.username||u?.Name||u?.name||"").toLowerCase()===String(name||"").toLowerCase());
-    const id=hit?.id||hit?.Id;
-    if(id){
-      const inp=$("#sc-server-uuid",STATE.mount); if(inp) inp.value=id;
-      write("scrobble.watch.filters.server_uuid",id);
-      write("scrobble.watch.filters.user_id",id);
-      setNote("sc-uuid-note","User ID set from username");
-    }else{
-      setNote("sc-uuid-note","User not found","err");
+  function commitAdvancedInputsTrakt() {
+    const keys = [
+      ["#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+      ["#sc-force-stop", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+      ["#sc-regress", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+      ["#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+      ["#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+      ["#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+    ];
+    for (const [sel, path, dflt] of keys) {
+      const v = readNum(sel, dflt);
+      write(path, v);
     }
   }
 
-  // Force fresh config before populate and keep global cache in sync
+  function bindPercentInput(sel, path, dflt) {
+    const n = $(sel, STATE.mount);
+    if (!n) return;
+    const set = (val, commitEmpty = false) => {
+      const raw = String(val ?? n.value ?? "").trim();
+      if (raw === "") {
+        if (commitEmpty) {
+          const v = clamp100(dflt);
+          write(path, v);
+          n.value = v;
+        }
+        return;
+      }
+      const v = norm100(raw, dflt);
+      write(path, v);
+      n.value = v;
+    };
+    on(n, "input", () => set(n.value, false));
+    on(n, "change", () => set(n.value, true));
+    on(n, "blur", () => set(n.value, true));
+  }
+
+  function namesFromChips(hostId) {
+    const host = $(hostId, STATE.mount);
+    if (!host) return [];
+    return $all(".chip > span:first-child", host)
+      .map((s) => String(s.textContent || "").trim())
+      .filter(Boolean);
+  }
+
+  function onSelectWatchUser(name) {
+    if (provider() !== "emby") return;
+    const list = Array.isArray(STATE.users) ? STATE.users : [];
+    const hit = list.find((u) => String(u?.username || u?.Name || u?.name || "").toLowerCase() === String(name || "").toLowerCase());
+    const id = hit?.id || hit?.Id;
+    if (id) {
+      const inp = $("#sc-server-uuid", STATE.mount);
+      if (inp) inp.value = id;
+      write("scrobble.watch.filters.server_uuid", id);
+      write("scrobble.watch.filters.user_id", id);
+      setNote("sc-uuid-note", "User ID set from username");
+    } else {
+      setNote("sc-uuid-note", "User not found", "err");
+    }
+  }
+
+  function getPlexRatingsSelectionFromCfg() {
+    const t = !!read("scrobble.watch.plex_trakt_ratings", false);
+    const s = !!read("scrobble.watch.plex_simkl_ratings", false);
+    if (t && s) return "both";
+    if (t) return "trakt";
+    if (s) return "simkl";
+    return "none";
+  }
+
+  function setPlexRatingsFlagsFromSelection(v) {
+    const val = String(v || "none").toLowerCase();
+    const trakt = val === "trakt" || val === "both";
+    const simkl = val === "simkl" || val === "both";
+    write("scrobble.watch.plex_trakt_ratings", trakt);
+    write("scrobble.watch.plex_simkl_ratings", simkl);
+  }
+
+  function rebuildPlexRatingsDropdown() {
+    const wrap = $("#sc-plex-ratings-wrap", STATE.mount);
+    const sel = $("#sc-plex-ratings", STATE.mount);
+    if (!wrap || !sel) return;
+
+    const prov = provider();
+    wrap.style.display = prov === "plex" ? "" : "none";
+    if (prov !== "plex") return;
+
+    const sink = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
+    const wantsTrakt = sink.includes("trakt");
+    const wantsSimkl = sink.includes("simkl");
+
+    const options = [["none", "None"]];
+    if (wantsTrakt) options.push(["trakt", "Trakt"]);
+    if (wantsSimkl) options.push(["simkl", "SIMKL"]);
+    if (wantsTrakt && wantsSimkl) options.push(["both", "Both (SIMKL + Trakt)"]);
+
+    // Hydration: the DOM default is often "none" even when config has flags set.
+    // Only trust the current select value after the user changed it.
+    const cfgSel = getPlexRatingsSelectionFromCfg();
+    const rawSel = String(sel.value || "").toLowerCase();
+    const cur = sel.dataset.cxUserChanged === "1" ? (rawSel || cfgSel) : cfgSel;
+    sel.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
+
+    const allowed = new Set(options.map((o) => o[0]));
+    let next = cur;
+    if (!allowed.has(next)) {
+      if (cur === "both") next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
+      else if (cur === "trakt") next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
+      else if (cur === "simkl") next = wantsSimkl ? "simkl" : wantsTrakt ? "trakt" : "none";
+      else next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
+    }
+
+    sel.value = allowed.has(next) ? next : "none";
+    setPlexRatingsFlagsFromSelection(sel.value);
+
+    try {
+      updatePlexWatcherWebhookUrl();
+    } catch {}
+  }
+
+  function updatePlexWatcherWebhookUrl() {
+    const sel = $("#sc-plex-ratings", STATE.mount);
+    const wrap = $("#sc-plexwatcher-url-wrap", STATE.mount);
+    const code = $("#sc-plexwatcher-url", STATE.mount);
+    if (!sel || !wrap || !code) return;
+    const v = String(sel.value || "none").toLowerCase();
+    const on = v !== "none";
+    wrap.style.display = on ? "flex" : "none";
+    if (on) code.textContent = `${location.origin}/webhook/plexwatcher`;
+    else setNote("sc-plexwatcher-note", "");
+  }
   async function refreshCfgBeforePopulate() {
     try {
       const fresh = await API.cfgGet();
       if (fresh && typeof fresh === "object") {
         STATE.cfg = fresh;
-        try { w._cfgCache = fresh; } catch {}
+        try {
+          w._cfgCache = fresh;
+        } catch {}
       }
     } catch {}
   }
 
-  // Populate UI from config
-  function populate(){
-    const enabled=!!read("scrobble.enabled",false),mode=String(read("scrobble.mode","webhook")).toLowerCase();
-    const useWebhook=enabled&&mode==="webhook",useWatch=enabled&&mode==="watch";
-    const prov=provider();
+  function populate() {
+    const enabled = !!read("scrobble.enabled", false);
+    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+    const useWebhook = enabled && mode === "webhook";
+    const useWatch = enabled && mode === "watch";
+    const prov = provider();
 
-    const whEl=$("#sc-enable-webhook",STATE.mount),waEl=$("#sc-enable-watcher",STATE.mount),pvSel=$("#sc-provider",STATE.mount),skSel=$("#sc-sink",STATE.mount);
-    if(whEl) whEl.checked=useWebhook; if(waEl) waEl.checked=useWatch; if(pvSel) pvSel.value=prov;
-    if(skSel) skSel.value=String(read("scrobble.watch.sink","trakt")||"trakt").toLowerCase();
+    const whEl = $("#sc-enable-webhook", STATE.mount);
+    const waEl = $("#sc-enable-watcher", STATE.mount);
+    const pvSel = $("#sc-provider", STATE.mount);
+    const skSel = $("#sc-sink", STATE.mount);
 
-    let wlWatch=asArray(read("scrobble.watch.filters.username_whitelist",[]));
-    if(prov==="emby" && wlWatch.length===0){
-      const embyUser = String(read("emby.username", read("emby.user",""))||"").trim();
-      if(embyUser){ wlWatch=[embyUser]; write("scrobble.watch.filters.username_whitelist",wlWatch); }
+    if (whEl) whEl.checked = useWebhook;
+    if (waEl) waEl.checked = useWatch;
+    if (pvSel) pvSel.value = prov;
+    if (skSel) skSel.value = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
+
+    let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
+    if (prov === "emby" && wlWatch.length === 0) {
+      const embyUser = String(read("emby.username", read("emby.user", "")) || "").trim();
+      if (embyUser) {
+        wlWatch = [embyUser];
+        write("scrobble.watch.filters.username_whitelist", wlWatch);
+      }
     }
-    const hostW=$("#sc-whitelist",STATE.mount); if(hostW){ hostW.innerHTML=""; wlWatch.forEach(u=>hostW.append(chip(u,removeUserWatch,prov==="emby"?onSelectWatchUser:undefined))); }
-    const suWatch=read("scrobble.watch.filters.server_uuid",""),suInpW=$("#sc-server-uuid",STATE.mount); if(suInpW) suInpW.value=suWatch||"";
 
-    const wlWeb=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[]));
-    const hostWB=$("#sc-whitelist-webhook",STATE.mount); if(hostWB){ hostWB.innerHTML=""; wlWeb.forEach(u=>hostWB.append(chip(u,removeUserWebhook))); }
-    const suWeb=read("scrobble.webhook.filters_plex.server_uuid",""),suInpWB=$("#sc-server-uuid-webhook",STATE.mount); if(suInpWB) suInpWB.value=suWeb||"";
+    const hostW = $("#sc-whitelist", STATE.mount);
+    if (hostW) {
+      hostW.innerHTML = "";
+      wlWatch.forEach((u) => hostW.append(chip(u, removeUserWatch, prov === "emby" ? onSelectWatchUser : undefined)));
+    }
 
-    const base=location.origin;
-    const plexCode=$("#sc-webhook-url-plex",STATE.mount),
-          jfCode  =$("#sc-webhook-url-jf",STATE.mount),
-          embyCode=$("#sc-webhook-url-emby",STATE.mount);
-    if(plexCode) plexCode.textContent=`${base}/webhook/plextrakt`;
-    if(jfCode)   jfCode.textContent=`${base}/webhook/jellyfintrakt`;
-    if(embyCode) embyCode.textContent=`${base}/webhook/embytrakt`;
+    const suWatch = read("scrobble.watch.filters.server_uuid", "");
+    const suInpW = $("#sc-server-uuid", STATE.mount);
+    if (suInpW) suInpW.value = suWatch || "";
 
-    const autostart=!!read("scrobble.watch.autostart",false);
-    const auto=$("#sc-autostart",STATE.mount); if(auto) auto.checked=!!autostart;
+    const wlWeb = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+    const hostWB = $("#sc-whitelist-webhook", STATE.mount);
+    if (hostWB) {
+      hostWB.innerHTML = "";
+      wlWeb.forEach((u) => hostWB.append(chip(u, removeUserWebhook)));
+    }
 
-    const pmsInp=$("#sc-pms-input",STATE.mount);
-    const plexUrl=String(read("plex.server_url","")||"");
-    const embyUrl=String(read("emby.server","")||"");
+    const suWeb = read("scrobble.webhook.filters_plex.server_uuid", "");
+    const suInpWB = $("#sc-server-uuid-webhook", STATE.mount);
+    if (suInpWB) suInpWB.value = suWeb || "";
+
+    const base = location.origin;
+    const plexCode = $("#sc-webhook-url-plex", STATE.mount);
+    const jfCode = $("#sc-webhook-url-jf", STATE.mount);
+    const embyCode = $("#sc-webhook-url-emby", STATE.mount);
+    if (plexCode) plexCode.textContent = `${base}/webhook/plextrakt`;
+    if (jfCode) jfCode.textContent = `${base}/webhook/jellyfintrakt`;
+    if (embyCode) embyCode.textContent = `${base}/webhook/embytrakt`;
+
+    const autostart = !!read("scrobble.watch.autostart", false);
+    const auto = $("#sc-autostart", STATE.mount);
+    if (auto) auto.checked = !!autostart;
+
+    const pmsInp = $("#sc-pms-input", STATE.mount);
+    const plexUrl = String(read("plex.server_url", "") || "");
+    const embyUrl = String(read("emby.server", "") || "");
     if (pmsInp) {
       pmsInp.value = prov === "plex" ? plexUrl : embyUrl;
       pmsInp.disabled = true;
-    } 
+    }
 
-    const set=(id,v)=>{const n=$(id,STATE.mount); if(n) n.value=norm100(v,v);};
-    set("#sc-pause-debounce",read("scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
-    set("#sc-suppress-start",read("scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at));
-    set("#sc-pause-debounce-webhook",read("scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds));
-    set("#sc-suppress-start-webhook",read("scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at));
-    set("#sc-stop-pause",read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold));
-    set("#sc-force-stop",read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at));
-    set("#sc-regress",read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent));
-    set("#sc-stop-pause-webhook",read("scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold));
-    set("#sc-force-stop-webhook",read("scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at));
-    set("#sc-regress-webhook",read("scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent));
+    const set = (id, v) => {
+      const n = $(id, STATE.mount);
+      if (n) n.value = norm100(v, v);
+    };
 
-    const delEnabled=!!read("scrobble.delete_plex",false);
-    const delWh=$("#sc-delete-plex-webhook",STATE.mount); if(delWh) delWh.checked=delEnabled;
-    const delW=$("#sc-delete-plex-watch",STATE.mount); if(delW) delW.checked=delEnabled;
-    const delWrap=$("#sc-delete-plex-watch-wrap",STATE.mount); if(delWrap) delWrap.style.display = "";
+    set("#sc-pause-debounce", read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
+    set("#sc-suppress-start", read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at));
+    set("#sc-pause-debounce-webhook", read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
+    set("#sc-suppress-start-webhook", read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at));
+    set("#sc-stop-pause", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
+    set("#sc-force-stop", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
+    set("#sc-regress", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
+    set("#sc-stop-pause-webhook", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
+    set("#sc-force-stop-webhook", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
+    set("#sc-regress-webhook", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
 
-    restoreDetailsState("#sc-filters",false,"sc-filters-open");
-    restoreDetailsState("#sc-advanced",false,"sc-advanced-open");
-    restoreDetailsState("#sc-filters-webhook",false,"sc-filters-webhook-open");
-    restoreDetailsState("#sc-advanced-webhook",false,"sc-advanced-webhook-open");
+    const delEnabled = !!read("scrobble.delete_plex", false);
+    const delWh = $("#sc-delete-plex-webhook", STATE.mount);
+    if (delWh) delWh.checked = delEnabled;
+    const delW = $("#sc-delete-plex-watch", STATE.mount);
+    if (delW) delW.checked = delEnabled;
 
-    syncHiddenServerInputs(); applyModeDisable();
+    const whRat = $("#sc-webhook-plex-ratings", STATE.mount);
+    if (whRat) whRat.checked = !!read("scrobble.webhook.plex_trakt_ratings", false);
+
+    rebuildPlexRatingsDropdown();
+
+    updatePlexWatcherWebhookUrl();
+
+    restoreDetailsState("#sc-filters", false, "sc-filters-open-v2");
+    restoreDetailsState("#sc-advanced", false, "sc-advanced-open-v2");
+
+    restoreDetailsState("#sc-options-webhook", false, "sc-wh-options-open-v1");
+    restoreDetailsState("#sc-plex-specifics-webhook", true, "sc-wh-plexspec-open-v1");
+    restoreDetailsState("#sc-plex-options-webhook", false, "sc-wh-plexopts-open-v1");
+    restoreDetailsState("#sc-advanced-webhook", false, "sc-wh-advanced-open-v1");
+
+    syncHiddenServerInputs();
+    applyModeDisable();
   }
 
-  // watcher control
-  async function refreshWatcher(){ try{ setWatcherStatus(await API.watch.status()||{});}catch{ setWatcherStatus({alive:false}); } }
+  async function refreshWatcher() {
+    try {
+      setWatcherStatus((await API.watch.status()) || {});
+    } catch {
+      setWatcherStatus({ alive: false });
+    }
+  }
 
-  async function onWatchStart(){
-    const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex").toLowerCase().trim();
-    const sink = String($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink","trakt") || "trakt").toLowerCase().trim();
+  async function onWatchStart() {
+    const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
+      .toLowerCase()
+      .trim();
+    const sink = String($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink", "trakt") || "trakt")
+      .toLowerCase()
+      .trim();
 
     write("scrobble.watch.provider", prov);
     write("scrobble.watch.sink", sink);
 
-    const srvProv = prov==="plex" ? "plex.server_url" : "emby.server";
-    const srv = String(read(srvProv,"")||"");
-    const plexTokenOk = !!String(read("plex.account_token","")||"").trim();
-    const embyTokenOk = !!String(read("emby.access_token","")||"").trim();
+    const srvProv = prov === "plex" ? "plex.server_url" : "emby.server";
+    const srv = String(read(srvProv, "") || "");
+    const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
+    const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
 
-    if(prov==="plex"){
-      if(!plexTokenOk) return setNote("sc-pms-note","Not connected to Plex. Go to Authentication → Plex.","err");
-      if(!isValidServerUrl(srv)) return setNote("sc-pms-note","Plex Server is required (http(s)://…)","err");
-    }else{
-      if(!embyTokenOk) return setNote("sc-pms-note","Not connected to Emby. Go to Authentication → Emby.","err");
+    if (prov === "plex") {
+      if (!plexTokenOk) return setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex.", "err");
+      if (!isValidServerUrl(srv)) return setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
+    } else {
+      if (!embyTokenOk) return setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby.", "err");
     }
 
-    try{
-      const nextScrobble=getScrobbleConfig();
-      const rootPatch=getRootPatch();
+    try {
+      const nextScrobble = getScrobbleConfig();
+      const rootPatch = getRootPatch();
 
-      const serverCfg=await API.cfgGet();
-      const cfg=(typeof structuredClone==="function")
-        ? structuredClone(serverCfg||{})
-        : JSON.parse(JSON.stringify(serverCfg||{}));
+      const serverCfg = await API.cfgGet();
+      const cfg = typeof structuredClone === "function" ? structuredClone(serverCfg || {}) : JSON.parse(JSON.stringify(serverCfg || {}));
 
-      cfg.scrobble=nextScrobble;
-      cfg.plex=Object.assign({}, cfg.plex||{}, rootPatch.plex||{});
-      cfg.emby=Object.assign({}, cfg.emby||{}, rootPatch.emby||{});
+      cfg.scrobble = nextScrobble;
+      cfg.plex = Object.assign({}, cfg.plex || {}, rootPatch.plex || {});
+      cfg.emby = Object.assign({}, cfg.emby || {}, rootPatch.emby || {});
 
-      const r=await fetch("/api/config",{
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        cache:"no-store",
-        body:JSON.stringify(cfg),
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(cfg),
       });
-      if(!r.ok) throw new Error(`POST /api/config ${r.status}`);
+      if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
 
-      w._cfgCache=cfg;
-      STATE.cfg=cfg;
-      try{ syncHiddenServerInputs(); }catch{}
-    }catch(e){
+      w._cfgCache = cfg;
+      STATE.cfg = cfg;
+      try {
+        syncHiddenServerInputs();
+      } catch {}
+    } catch (e) {
       console.warn("[scrobbler] pre-start save failed:", e);
-      return setNote("sc-pms-note","Couldn’t save settings. Hit Save or check logs.","err");
+      return setNote("sc-pms-note", "Couldn’t save settings. Hit Save or check logs.", "err");
     }
 
-    try{ await API.watch.stop(); }catch{}
-    try{ await API.watch.start(prov, sink); }catch{ setNote("sc-pms-note","Start failed","err"); }
+    try {
+      await API.watch.stop();
+    } catch {}
+    try {
+      await API.watch.start(prov, sink);
+    } catch {
+      setNote("sc-pms-note", "Start failed", "err");
+    }
 
     refreshWatcher();
   }
 
-  async function onWatchStop(){ try{ await API.watch.stop(); }catch{ setNote("sc-pms-note","Stop failed","err"); } refreshWatcher(); }
-
-  async function fetchServerUUID(){
-    try{
-      const prov=provider();
-      const x=await API.serverUUID(),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid",STATE.mount);
-      if(inp&&v){
-        inp.value=v;
-        write("scrobble.watch.filters.server_uuid",v);
-        if(prov==="emby") write("scrobble.watch.filters.user_id",v);
-        setNote("sc-uuid-note",prov==="plex"?"Server UUID fetched":"User ID fetched");
-      } else setNote("sc-uuid-note",prov==="plex"?"No server UUID":"No user ID","err");
-    }catch{ setNote("sc-uuid-note","Fetch failed","err"); }
-  }
-  function onAddUserWatch(){
-    const inp=$("#sc-user-input",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
-    const cur=asArray(read("scrobble.watch.filters.username_whitelist",[]));
-    if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.watch.filters.username_whitelist",next); $("#sc-whitelist",STATE.mount).append(chip(v,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)); inp.value=""; }
-  }
-  function removeUserWatch(u){
-    const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])),next=cur.filter(x=>String(x)!==String(u));
-    write("scrobble.watch.filters.username_whitelist",next);
-    const host=$("#sc-whitelist",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)));
-  }
-  async function loadUsers(){
-    try{
-      const list=await API.users(),filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true||u?.IsAdministrator===true||u?.IsHidden===false||u?.IsDisabled===false);
-      STATE.users = Array.isArray(list)?list:[];
-      const names=filtered.map(u=>u?.username||u?.title||u?.Name||u?.name).filter(Boolean),host=$("#sc-whitelist",STATE.mount); let added=0;
-      for(const n of names){ const cur=asArray(read("scrobble.watch.filters.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.watch.filters.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWatch,provider()==="emby"?onSelectWatchUser:undefined)); added++; } }
-      setNote("sc-users-note",added?`Loaded ${added} user(s)`:"No eligible users");
-    }catch{ setNote("sc-users-note","Load users failed","err"); }
+  async function onWatchStop() {
+    try {
+      await API.watch.stop();
+    } catch {
+      setNote("sc-pms-note", "Stop failed", "err");
+    }
+    refreshWatcher();
   }
 
-  async function fetchServerUUIDWebhook(){
-    try{
-      const x=await j("/api/plex/server_uuid"),v=x?.server_uuid||x?.uuid||x?.id||"",inp=$("#sc-server-uuid-webhook",STATE.mount);
-      if(inp&&v){ inp.value=v; write("scrobble.webhook.filters_plex.server_uuid",v); setNote("sc-uuid-note-webhook","Server UUID fetched"); } else setNote("sc-uuid-note-webhook","No server UUID","err");
-    }catch{ setNote("sc-uuid-note-webhook","Fetch failed","err"); }
-  }
-  function onAddUserWebhook(){
-    const inp=$("#sc-user-input-webhook",STATE.mount),v=String((inp?.value||"").trim()); if(!v) return;
-    const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])); if(!cur.includes(v)){ const next=[...cur,v]; write("scrobble.webhook.filters_plex.username_whitelist",next); $("#sc-whitelist-webhook",STATE.mount).append(chip(v,removeUserWebhook)); inp.value=""; }
-  }
-  function removeUserWebhook(u){
-    const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])),next=cur.filter(x=>String(x)!==String(u));
-    write("scrobble.webhook.filters_plex.username_whitelist",next);
-    const host=$("#sc-whitelist-webhook",STATE.mount); host.innerHTML=""; next.forEach(v=>host.append(chip(v,removeUserWebhook)));
-  }
-  async function loadUsersWebhook(){
-    try{
-      const x=await j("/api/plex/users"); const list=Array.isArray(x)?x:Array.isArray(x?.users)?x.users:[];
-      const filtered=list.filter(u=>["managed","owner"].includes(String(u?.type||"").toLowerCase())||u?.owned===true||u?.isHomeUser===true);
-      const names=filtered.map(u=>u?.username||u?.title).filter(Boolean),host=$("#sc-whitelist-webhook",STATE.mount); let added=0;
-      for(const n of names){ const cur=asArray(read("scrobble.webhook.filters_plex.username_whitelist",[])); if(!cur.includes(n)){ write("scrobble.webhook.filters_plex.username_whitelist",[...cur,n]); host.append(chip(n,removeUserWebhook)); added++; } }
-      setNote("sc-users-note-webhook",added?`Loaded ${added} user(s)`:"No eligible managed/owner users");
-    }catch{ setNote("sc-users-note-webhook","Load users failed","err"); }
+  async function fetchServerUUID() {
+    try {
+      const prov = provider();
+      const x = await API.serverUUID();
+      const v = x?.server_uuid || x?.uuid || x?.id || "";
+      const inp = $("#sc-server-uuid", STATE.mount);
+      if (inp && v) {
+        inp.value = v;
+        write("scrobble.watch.filters.server_uuid", v);
+        if (prov === "emby") write("scrobble.watch.filters.user_id", v);
+        setNote("sc-uuid-note", prov === "plex" ? "Server UUID fetched" : "User ID fetched");
+      } else setNote("sc-uuid-note", prov === "plex" ? "No server UUID" : "No user ID", "err");
+    } catch {
+      setNote("sc-uuid-note", "Fetch failed", "err");
+    }
   }
 
-  async function hydrateEmby(){
-    try{
-      const info=await j("/api/emby/inspect");
-      const server=String(info?.server||"").trim();
-      const username=String(info?.username||info?.user?.Name||"").trim();
-      const uid=String(info?.user_id||info?.user?.Id||"").trim();
-      if(server){ write("emby.server",server); const inp=$("#sc-pms-input",STATE.mount); if(inp) inp.value=server; }
-      if(username){
-        const cur=asArray(read("scrobble.watch.filters.username_whitelist",[]));
-        if(!cur.includes(username)){ write("scrobble.watch.filters.username_whitelist",[...cur,username]); const host=$("#sc-whitelist",STATE.mount); if(host) host.append(chip(username,removeUserWatch,onSelectWatchUser)); }
+  function onAddUserWatch() {
+    const inp = $("#sc-user-input", STATE.mount);
+    const v = String((inp?.value || "").trim());
+    if (!v) return;
+    const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
+    if (!cur.includes(v)) {
+      const next = [...cur, v];
+      write("scrobble.watch.filters.username_whitelist", next);
+      $("#sc-whitelist", STATE.mount).append(chip(v, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined));
+      inp.value = "";
+    }
+  }
+
+  function removeUserWatch(u) {
+    const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
+    const next = cur.filter((x) => String(x) !== String(u));
+    write("scrobble.watch.filters.username_whitelist", next);
+    const host = $("#sc-whitelist", STATE.mount);
+    host.innerHTML = "";
+    next.forEach((v) => host.append(chip(v, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined)));
+  }
+
+  async function loadUsers() {
+    try {
+      const list = await API.users();
+      const filtered = list.filter(
+        (u) =>
+          ["managed", "owner"].includes(String(u?.type || "").toLowerCase()) ||
+          u?.owned === true ||
+          u?.isHomeUser === true ||
+          u?.IsAdministrator === true ||
+          u?.IsHidden === false ||
+          u?.IsDisabled === false
+      );
+      STATE.users = Array.isArray(list) ? list : [];
+      const names = filtered.map((u) => u?.username || u?.title || u?.Name || u?.name).filter(Boolean);
+      const host = $("#sc-whitelist", STATE.mount);
+      let added = 0;
+      for (const n of names) {
+        const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
+        if (!cur.includes(n)) {
+          write("scrobble.watch.filters.username_whitelist", [...cur, n]);
+          host.append(chip(n, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined));
+          added++;
+        }
       }
-      if(uid){
-        const inp=$("#sc-server-uuid",STATE.mount); if(inp) inp.value=uid;
-        write("scrobble.watch.filters.server_uuid",uid);
-        write("scrobble.watch.filters.user_id",uid);
-        setNote("sc-uuid-note","User ID detected");
-      }
-    }catch{}
+      setNote("sc-users-note", added ? `Loaded ${added} user(s)` : "No eligible users");
+    } catch {
+      setNote("sc-users-note", "Load users failed", "err");
+    }
   }
 
-  function wire(){
+  async function fetchServerUUIDWebhook() {
+    try {
+      const x = await j("/api/plex/server_uuid");
+      const v = x?.server_uuid || x?.uuid || x?.id || "";
+      const inp = $("#sc-server-uuid-webhook", STATE.mount);
+      if (inp && v) {
+        inp.value = v;
+        write("scrobble.webhook.filters_plex.server_uuid", v);
+        setNote("sc-uuid-note-webhook", "Server UUID fetched");
+      } else setNote("sc-uuid-note-webhook", "No server UUID", "err");
+    } catch {
+      setNote("sc-uuid-note-webhook", "Fetch failed", "err");
+    }
+  }
+
+  function onAddUserWebhook() {
+    const inp = $("#sc-user-input-webhook", STATE.mount);
+    const v = String((inp?.value || "").trim());
+    if (!v) return;
+    const cur = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+    if (!cur.includes(v)) {
+      const next = [...cur, v];
+      write("scrobble.webhook.filters_plex.username_whitelist", next);
+      $("#sc-whitelist-webhook", STATE.mount).append(chip(v, removeUserWebhook));
+      inp.value = "";
+    }
+  }
+
+  function removeUserWebhook(u) {
+    const cur = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+    const next = cur.filter((x) => String(x) !== String(u));
+    write("scrobble.webhook.filters_plex.username_whitelist", next);
+    const host = $("#sc-whitelist-webhook", STATE.mount);
+    host.innerHTML = "";
+    next.forEach((v) => host.append(chip(v, removeUserWebhook)));
+  }
+
+  async function loadUsersWebhook() {
+    try {
+      const x = await j("/api/plex/users");
+      const list = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+      const filtered = list.filter(
+        (u) => ["managed", "owner"].includes(String(u?.type || "").toLowerCase()) || u?.owned === true || u?.isHomeUser === true
+      );
+      const names = filtered.map((u) => u?.username || u?.title).filter(Boolean);
+      const host = $("#sc-whitelist-webhook", STATE.mount);
+      let added = 0;
+      for (const n of names) {
+        const cur = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+        if (!cur.includes(n)) {
+          write("scrobble.webhook.filters_plex.username_whitelist", [...cur, n]);
+          host.append(chip(n, removeUserWebhook));
+          added++;
+        }
+      }
+      setNote("sc-users-note-webhook", added ? `Loaded ${added} user(s)` : "No eligible managed/owner users");
+    } catch {
+      setNote("sc-users-note-webhook", "Load users failed", "err");
+    }
+  }
+
+  async function hydrateEmby() {
+    try {
+      const info = await j("/api/emby/inspect");
+      const server = String(info?.server || "").trim();
+      const username = String(info?.username || info?.user?.Name || "").trim();
+      const uid = String(info?.user_id || info?.user?.Id || "").trim();
+      if (server) {
+        write("emby.server", server);
+        const inp = $("#sc-pms-input", STATE.mount);
+        if (inp) inp.value = server;
+      }
+      if (username) {
+        const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
+        if (!cur.includes(username)) {
+          write("scrobble.watch.filters.username_whitelist", [...cur, username]);
+          const host = $("#sc-whitelist", STATE.mount);
+          if (host) host.append(chip(username, removeUserWatch, onSelectWatchUser));
+        }
+      }
+      if (uid) {
+        const inp = $("#sc-server-uuid", STATE.mount);
+        if (inp) inp.value = uid;
+        write("scrobble.watch.filters.server_uuid", uid);
+        write("scrobble.watch.filters.user_id", uid);
+        setNote("sc-uuid-note", "User ID detected");
+      }
+    } catch {}
+  }
+
+  function wire() {
     ensureHiddenServerInputs();
 
-    on($("#sc-copy-plex",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/plextrakt`); setNote("sc-endpoint-note",ok?"Plex endpoint copied":"Copy failed",ok?"":"err"); });
-    on($("#sc-copy-jf",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/jellyfintrakt`); setNote("sc-endpoint-note",ok?"Jellyfin endpoint copied":"Copy failed",ok?"":"err"); });
-    on($("#sc-copy-emby",STATE.mount),"click",async()=>{ const ok=await copyText(`${location.origin}/webhook/embytrakt`); setNote("sc-endpoint-note",ok?"Emby endpoint copied":"Copy failed",ok?"":"err"); });
-
-    on($("#sc-add-user",STATE.mount),"click",onAddUserWatch);
-    on($("#sc-load-users",STATE.mount),"click",()=>{ loadUsers(); });
-    on($("#sc-watch-start",STATE.mount),"click",onWatchStart);
-    on($("#sc-watch-stop",STATE.mount),"click",onWatchStop);
-    on($("#sc-watch-refresh",STATE.mount),"click",()=>{refreshWatcher(); try{ w.refreshWatchLogs?.(); }catch{}});
-    on($("#sc-fetch-uuid",STATE.mount),"click",()=>{ fetchServerUUID(); });
-    on($("#sc-server-uuid",STATE.mount),"input",e=>{
-      const v=String(e.target.value||"").trim();
-      write("scrobble.watch.filters.server_uuid",v);
-      if(provider()==="emby") write("scrobble.watch.filters.user_id",v);
+    on($("#sc-copy-plex", STATE.mount), "click", async () => {
+      const ok = await copyText(`${location.origin}/webhook/plextrakt`);
+      setNote("sc-endpoint-note", ok ? "Plex endpoint copied" : "Copy failed", ok ? "" : "err");
+    });
+    on($("#sc-copy-jf", STATE.mount), "click", async () => {
+      const ok = await copyText(`${location.origin}/webhook/jellyfintrakt`);
+      setNote("sc-endpoint-note", ok ? "Jellyfin endpoint copied" : "Copy failed", ok ? "" : "err");
+    });
+    on($("#sc-copy-emby", STATE.mount), "click", async () => {
+      const ok = await copyText(`${location.origin}/webhook/embytrakt`);
+      setNote("sc-endpoint-note", ok ? "Emby endpoint copied" : "Copy failed", ok ? "" : "err");
     });
 
-    on($("#sc-add-user-webhook",STATE.mount),"click",onAddUserWebhook);
-    on($("#sc-load-users-webhook",STATE.mount),"click",loadUsersWebhook);
-    on($("#sc-fetch-uuid-webhook",STATE.mount),"click",fetchServerUUIDWebhook);
-    on($("#sc-server-uuid-webhook",STATE.mount),"input",e=>write("scrobble.webhook.filters_plex.server_uuid",String(e.target.value||"").trim()));
+    on($("#sc-copy-plexwatcher", STATE.mount), "click", async () => {
+      const url = `${location.origin}/webhook/plexwatcher`;
+      const ok = await copyText(url);
+      setNote("sc-plexwatcher-note", ok ? "Watcher endpoint copied" : "Copy failed", ok ? "" : "err");
+    });
 
-    bindPercentInput("#sc-pause-debounce","scrobble.watch.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds);
-    bindPercentInput("#sc-suppress-start","scrobble.watch.suppress_start_at",DEFAULTS.watch.suppress_start_at);
-    bindPercentInput("#sc-pause-debounce-webhook","scrobble.webhook.pause_debounce_seconds",DEFAULTS.watch.pause_debounce_seconds);
-    bindPercentInput("#sc-suppress-start-webhook","scrobble.webhook.suppress_start_at",DEFAULTS.watch.suppress_start_at);
-    bindPercentInput("#sc-stop-pause","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold);
-    bindPercentInput("#sc-force-stop","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at);
-    bindPercentInput("#sc-regress","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
-    bindPercentInput("#sc-stop-pause-webhook","scrobble.trakt.stop_pause_threshold",DEFAULTS.trakt.stop_pause_threshold);
-    bindPercentInput("#sc-force-stop-webhook","scrobble.trakt.force_stop_at",DEFAULTS.trakt.force_stop_at);
-    bindPercentInput("#sc-regress-webhook","scrobble.trakt.regress_tolerance_percent",DEFAULTS.trakt.regress_tolerance_percent);
+    on($("#sc-add-user", STATE.mount), "click", onAddUserWatch);
+    on($("#sc-load-users", STATE.mount), "click", () => {
+      loadUsers();
+    });
+    on($("#sc-watch-start", STATE.mount), "click", onWatchStart);
+    on($("#sc-watch-stop", STATE.mount), "click", onWatchStop);
+    on($("#sc-watch-refresh", STATE.mount), "click", () => {
+      refreshWatcher();
+      try {
+        w.refreshWatchLogs?.();
+      } catch {}
+    });
+    on($("#sc-fetch-uuid", STATE.mount), "click", () => {
+      fetchServerUUID();
+    });
+    on($("#sc-server-uuid", STATE.mount), "input", (e) => {
+      const v = String(e.target.value || "").trim();
+      write("scrobble.watch.filters.server_uuid", v);
+      if (provider() === "emby") write("scrobble.watch.filters.user_id", v);
+    });
 
-    const wh=$("#sc-enable-webhook",STATE.mount),wa=$("#sc-enable-watcher",STATE.mount),pv=$("#sc-provider",STATE.mount),sk=$("#sc-sink",STATE.mount);
-    const syncExclusive=async src=>{
-      try { await refreshCfgBeforePopulate(); } catch {}
-      const webOn=!!wh?.checked,watOn=!!wa?.checked;
-      if(src==="webhook"&&webOn&&wa) wa.checked=false;
-      if(src==="watch"&&watOn&&wh) wh.checked=false;
-      write("scrobble.enabled",(!!wh?.checked)|| (!!wa?.checked));
-      write("scrobble.mode",(!!wa?.checked)?"watch":"webhook");
-      if(src==="watch" && !wa.checked){
-        try{ await API.watch.stop(); }catch{}
-        write("scrobble.watch.autostart",false);
-        const auto=$("#sc-autostart",STATE.mount); if(auto) auto.checked=false;
+    on($("#sc-add-user-webhook", STATE.mount), "click", onAddUserWebhook);
+    on($("#sc-load-users-webhook", STATE.mount), "click", loadUsersWebhook);
+    on($("#sc-fetch-uuid-webhook", STATE.mount), "click", fetchServerUUIDWebhook);
+    on($("#sc-server-uuid-webhook", STATE.mount), "input", (e) => write("scrobble.webhook.filters_plex.server_uuid", String(e.target.value || "").trim()));
+
+    bindPercentInput("#sc-pause-debounce", "scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds);
+    bindPercentInput("#sc-suppress-start", "scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at);
+    bindPercentInput("#sc-pause-debounce-webhook", "scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds);
+    bindPercentInput("#sc-suppress-start-webhook", "scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at);
+
+    bindPercentInput("#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold);
+    bindPercentInput("#sc-force-stop", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at);
+    bindPercentInput("#sc-regress", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent);
+
+    bindPercentInput("#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold);
+    bindPercentInput("#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at);
+    bindPercentInput("#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent);
+
+    const wh = $("#sc-enable-webhook", STATE.mount);
+    const wa = $("#sc-enable-watcher", STATE.mount);
+    const pv = $("#sc-provider", STATE.mount);
+    const sk = $("#sc-sink", STATE.mount);
+
+    const syncExclusive = async (src) => {
+      try {
+        await refreshCfgBeforePopulate();
+      } catch {}
+      const webOn = !!wh?.checked;
+      const watOn = !!wa?.checked;
+      if (src === "webhook" && webOn && wa) wa.checked = false;
+      if (src === "watch" && watOn && wh) wh.checked = false;
+
+      write("scrobble.enabled", (!!wh?.checked) || (!!wa?.checked));
+      write("scrobble.mode", (!!wa?.checked) ? "watch" : "webhook");
+
+      if (src === "watch" && !wa.checked) {
+        try {
+          await API.watch.stop();
+        } catch {}
+        write("scrobble.watch.autostart", false);
+        const auto = $("#sc-autostart", STATE.mount);
+        if (auto) auto.checked = false;
       }
       applyModeDisable();
     };
-    if(wh) on(wh,"change",()=>syncExclusive("webhook"));
-    if(wa) on(wa,"change",()=>syncExclusive("watch"));
-    on($("#sc-autostart",STATE.mount),"change",e=>write("scrobble.watch.autostart",!!e.target.checked));
-    on(pv,"change",e=>{ 
-      const val=String(e.target.value||"plex").toLowerCase(); 
-      write("scrobble.watch.provider",val); 
-      populate(); 
-      if(val==="emby") hydrateEmby(); 
+
+    if (wh) on(wh, "change", () => syncExclusive("webhook"));
+    if (wa) on(wa, "change", () => syncExclusive("watch"));
+
+    on($("#sc-autostart", STATE.mount), "change", (e) => write("scrobble.watch.autostart", !!e.target.checked));
+
+    on(pv, "change", (e) => {
+      const val = String(e.target.value || "plex").toLowerCase();
+      write("scrobble.watch.provider", val);
+      populate();
+      if (val === "emby") hydrateEmby();
     });
-    on(sk,"change",e=>{ 
-      const val=String(e.target.value||"trakt").toLowerCase(); 
-      write("scrobble.watch.sink",val); 
-      applyModeDisable();
-    });
-    on($("#sc-pms-input",STATE.mount),"input",e=>{
-      const v=String(e.target.value||"").trim();
-      if(provider()==="plex"){ 
-        write("plex.server_url",v); 
-        if(v&&!isValidServerUrl(v)) setNote("sc-pms-note","Invalid URL. Use http(s)://host[:port]","err"); 
-        else if(v) setNote("sc-pms-note",`Using ${v}`); 
-        else setNote("sc-pms-note","Plex Server is required when Watcher is enabled","err"); 
-      } else { 
-        write("emby.server",v); 
-        setNote("sc-pms-note", v?`Using ${v}`:""); 
-      }
+
+    on(sk, "change", (e) => {
+      const val = String(e.target.value || "trakt").toLowerCase();
+      write("scrobble.watch.sink", val);
+      rebuildPlexRatingsDropdown();
       applyModeDisable();
     });
 
-    on($("#sc-delete-plex-webhook",STATE.mount),"change",e=>{
-      const v=!!e.target.checked;
-      write("scrobble.delete_plex",v);
-      const other=$("#sc-delete-plex-watch",STATE.mount); if(other) other.checked=v;
-    });
-    on($("#sc-delete-plex-watch",STATE.mount),"change",e=>{
-      const v=!!e.target.checked;
-      write("scrobble.delete_plex",v);
-      const other=$("#sc-delete-plex-webhook",STATE.mount); if(other) other.checked=v;
-    });
-  }
-
-  async function init(opts={}) {
-    STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
-    STATE.cfg   = opts.cfg || w._cfgCache || {};
-    STATE.webhookHost = $("#scrob-webhook",STATE.mount);
-    STATE.watcherHost = $("#scrob-watcher",STATE.mount);
-    if(!STATE.webhookHost || !STATE.watcherHost){
-      const root=STATE.mount||d.body;
-      const makeSec=(id,title)=>{ 
-        const sec=el("div",{className:"section",id}); 
-        sec.innerHTML=`<div class="head"><strong>${title}</strong></div><div class="body"><div id="${id==="sc-sec-webhook"?"scrob-webhook":"scrob-watcher"}"></div></div>`;
-        root.append(sec);
-      };
-      if(!STATE.webhookHost){ makeSec("sc-sec-webhook","Webhook"); STATE.webhookHost=$("#scrob-webhook",STATE.mount); }
-      if(!STATE.watcherHost){ makeSec("sc-sec-watch","Watcher"); STATE.watcherHost=$("#scrob-watcher",STATE.mount); }
-    }
-    buildUI();
-    wire();
-    if (!STATE.__authChangedBound) {
-      STATE.__authChangedBound = true;
-      window.addEventListener("auth-changed", async () => {
-        try { await refreshCfgBeforePopulate(); } catch {}
-        applyModeDisable();
+    const ratingsSel = $("#sc-plex-ratings", STATE.mount);
+    if (ratingsSel) {
+      on(ratingsSel, "change", (e) => {
+        ratingsSel.dataset.cxUserChanged = "1";
+        setPlexRatingsFlagsFromSelection(e.target.value);
+        try {
+          updatePlexWatcherWebhookUrl();
+        } catch {}
       });
     }
-    await refreshCfgBeforePopulate();
-    populate();
-    await refreshWatcher();
-    if (provider() === "emby") await hydrateEmby();
+
+    const whRatings = $("#sc-webhook-plex-ratings", STATE.mount);
+    if (whRatings) {
+      on(whRatings, "change", (e) => write("scrobble.webhook.plex_trakt_ratings", !!e.target.checked));
+    }
+
+    on($("#sc-delete-plex-webhook", STATE.mount), "change", (e) => {
+      const v = !!e.target.checked;
+      write("scrobble.delete_plex", v);
+      const other = $("#sc-delete-plex-watch", STATE.mount);
+      if (other) other.checked = v;
+    });
+
+    on($("#sc-delete-plex-watch", STATE.mount), "change", (e) => {
+      const v = !!e.target.checked;
+      write("scrobble.delete_plex", v);
+      const other = $("#sc-delete-plex-webhook", STATE.mount);
+      if (other) other.checked = v;
+    });
   }
 
-  function mountLegacy(targetEl,cfg){
-    return init({ mountId: targetEl?.id, cfg: cfg||(w._cfgCache||{}) });
-  }
-
-  function getScrobbleConfig(){
+  function getScrobbleConfig() {
     commitAdvancedInputsWatch();
     commitAdvancedInputsWebhook();
     commitAdvancedInputsTrakt();
@@ -806,29 +1266,19 @@
     const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
 
     const wlWeb = namesFromChips("#sc-whitelist-webhook");
-    const suWeb = String(
-      $("#sc-server-uuid-webhook", STATE.mount)?.value ?? 
-      read("scrobble.webhook.filters_plex.server_uuid", "")
-    ).trim();
+    const suWeb = String($("#sc-server-uuid-webhook", STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid", "")).trim();
 
     const wlWatch = namesFromChips("#sc-whitelist");
-    const suWatch = String(
-      $("#sc-server-uuid", STATE.mount)?.value ?? 
-      read("scrobble.watch.filters.server_uuid", "")
-    ).trim();
+    const suWatch = String($("#sc-server-uuid", STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid", "")).trim();
     const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
 
     const filtersWatch = {
-      username_whitelist: wlWatch.length
-        ? wlWatch
-        : asArray(read("scrobble.watch.filters.username_whitelist", []))
+      username_whitelist: wlWatch.length ? wlWatch : asArray(read("scrobble.watch.filters.username_whitelist", [])),
     };
 
     if (provider() !== "emby") {
       filtersWatch.server_uuid = suWatch || "";
-      if (userIdWatch) {
-        filtersWatch.user_id = userIdWatch;
-      }
+      if (userIdWatch) filtersWatch.user_id = userIdWatch;
     }
 
     return {
@@ -836,43 +1286,94 @@
       mode: mode === "watch" ? "watch" : "webhook",
       delete_plex: !!read("scrobble.delete_plex", false),
       delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
+
       webhook: {
         pause_debounce_seconds: read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
         suppress_start_at: read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at),
+        plex_trakt_ratings: !!read("scrobble.webhook.plex_trakt_ratings", false),
         filters_plex: {
-          username_whitelist: wlWeb.length
-            ? wlWeb
-            : asArray(read("scrobble.webhook.filters_plex.username_whitelist", [])),
-          server_uuid: suWeb || ""
+          username_whitelist: wlWeb.length ? wlWeb : asArray(read("scrobble.webhook.filters_plex.username_whitelist", [])),
+          server_uuid: suWeb || "",
         },
-        filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] }
+        filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] },
       },
+
       watch: {
         provider: provider(),
         sink: String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase(),
         autostart: !!read("scrobble.watch.autostart", false),
+        plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
+        plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),
         pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
         suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
-        filters: filtersWatch
+        filters: filtersWatch,
       },
+
       trakt: {
         stop_pause_threshold: read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold),
         force_stop_at: read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at),
-        regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent)
-      }
+        regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent),
+      },
     };
   }
 
-  const getRootPatch=()=>({
-    plex:{ server_url:String(read("plex.server_url","")||"") },
-    emby:{ server:String(read("emby.server","")||"") }
+  const getRootPatch = () => ({
+    plex: { server_url: String(read("plex.server_url", "") || "") },
+    emby: { server: String(read("emby.server", "") || "") },
   });
 
-  w.ScrobUI={ $, $all, el, on, setNote, injectStyles, DEFAULTS, STATE, read, write, asArray, clamp100, norm100, API };
-  w.Scrobbler={ init, mount:mountLegacy, getConfig:getScrobbleConfig, getRootPatch };
-  w.getScrobbleConfig=getScrobbleConfig; w.getRootPatch=getRootPatch;
+  async function init(opts = {}) {
+    STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
+    STATE.cfg = opts.cfg || w._cfgCache || {};
+    STATE.webhookHost = $("#scrob-webhook", STATE.mount);
+    STATE.watcherHost = $("#scrob-watcher", STATE.mount);
 
-  d.addEventListener("DOMContentLoaded", ()=>{
+    if (!STATE.webhookHost || !STATE.watcherHost) {
+      const root = STATE.mount || d.body;
+      const makeSec = (id, title) => {
+        const sec = el("div", { className: "section", id });
+        sec.innerHTML = `<div class="head"><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
+        root.append(sec);
+      };
+      if (!STATE.webhookHost) {
+        makeSec("sc-sec-webhook", "Webhook");
+        STATE.webhookHost = $("#scrob-webhook", STATE.mount);
+      }
+      if (!STATE.watcherHost) {
+        makeSec("sc-sec-watch", "Watcher");
+        STATE.watcherHost = $("#scrob-watcher", STATE.mount);
+      }
+    }
+
+    buildUI();
+    wire();
+
+    if (!STATE.__authChangedBound) {
+      STATE.__authChangedBound = true;
+      window.addEventListener("auth-changed", async () => {
+        try {
+          await refreshCfgBeforePopulate();
+        } catch {}
+        applyModeDisable();
+      });
+    }
+
+    await refreshCfgBeforePopulate();
+    populate();
+    await refreshWatcher();
+    if (provider() === "emby") await hydrateEmby();
+  }
+
+  function mountLegacy(targetEl, cfg) {
+    return init({ mountId: targetEl?.id, cfg: cfg || (w._cfgCache || {}) });
+  }
+
+  w.ScrobUI = { $, $all, el, on, setNote, injectStyles, DEFAULTS, STATE, read, write, asArray, clamp100, norm100, API };
+  w.Scrobbler = { init, mount: mountLegacy, getConfig: getScrobbleConfig, getRootPatch };
+  w.getScrobbleConfig = getScrobbleConfig;
+  w.getRootPatch = getRootPatch;
+
+  d.addEventListener("DOMContentLoaded", () => {
     const root = d.getElementById("scrobble-mount");
     if (!root) return;
     init({ mountId: "scrobble-mount" });

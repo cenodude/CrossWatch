@@ -2008,7 +2008,8 @@ async function loadConfig() {
   };
 
   // PLEX
-  setRaw("plex_token", val(cfg.plex?.account_token));
+  setRaw("plex_token",    val(cfg.plex?.account_token));
+  setRaw("plex_home_pin", val(cfg.plex?.home_pin));
 
   // SIMKL
   setRaw("simkl_client_id",     val(cfg.simkl?.client_id));
@@ -2120,6 +2121,7 @@ async function saveSettings() {
     const prevDebugMods = !!serverCfg?.runtime?.debug_mods;
     const prevDebugHttp = !!serverCfg?.runtime?.debug_http;
     const prevPlex     = norm(serverCfg?.plex?.account_token);
+    const prevHomePin  = norm(serverCfg?.plex?.home_pin);
     const prevCid      = norm(serverCfg?.simkl?.client_id);
     const prevSec      = norm(serverCfg?.simkl?.client_secret);
     const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
@@ -2276,7 +2278,8 @@ async function saveSettings() {
     })();
 
     // Secrets (tokens, keys, client ids/secrets)
-    const sPlex   = readSecretSafe("plex_token", prevPlex);
+    const sPlex     = readSecretSafe("plex_token", prevPlex);
+    const sHomePin  = readSecretSafe("plex_home_pin", prevHomePin);
     const sCid    = readSecretSafe("simkl_client_id", prevCid);
     const sSec    = readSecretSafe("simkl_client_secret", prevSec);
     const sTmdb   = readSecretSafe("tmdb_api_key", prevTmdb);
@@ -2293,6 +2296,11 @@ async function saveSettings() {
     if (sPlex.changed) {
       cfg.plex = cfg.plex || {};
       if (sPlex.clear) delete cfg.plex.account_token; else cfg.plex.account_token = sPlex.set;
+      changed = true;
+    }
+    if (sHomePin.changed) {
+      cfg.plex = cfg.plex || {};
+      if (sHomePin.clear) cfg.plex.home_pin = ""; else cfg.plex.home_pin = sHomePin.set;
       changed = true;
     }
     if (sCid.changed) {

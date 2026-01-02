@@ -670,9 +670,12 @@
     const url  = v("#plex_server_url");
     const user = v("#plex_username");
     const aid  = v("#plex_account_id");
+    const pin  = v("#plex_home_pin");
 
     if (url)  plex.server_url = url;
     if (user) plex.username   = user;
+
+    if (pin !== null) plex.home_pin = pin;
 
     // Always ensure account_id is a positive integer; fallback to 1
     if (aid !== null) {

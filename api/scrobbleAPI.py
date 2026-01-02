@@ -968,3 +968,92 @@ async def webhook_trakt(request: Request) -> JSONResponse:
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
     )
+
+@router.post("/webhook/plexwatcher")
+async def webhook_plexwatcher(request: Request) -> JSONResponse:
+    from crosswatch import _UIHostLogger
+
+    logger = _UIHostLogger("PLEX-WATCHER", "SCROBBLE")
+
+    def log(msg: str, level: str = "INFO") -> None:
+        lvl_raw = str(level or "INFO")
+        lvl_up = lvl_raw.upper()
+        if lvl_up == "DEBUG" and not _debug_on():
+            return
+        try:
+            logger(msg, level=lvl_raw, module="SCROBBLE")
+        except Exception:
+            pass
+        try:
+            if BASE_LOG:
+                logr = BASE_LOG.child("SCROBBLE")
+                if lvl_up == "DEBUG":
+                    logr.debug(msg)
+                elif lvl_up == "INFO":
+                    logr.info(msg)
+                elif lvl_up == "WARN":
+                    (logr.warning if hasattr(logr, "warning") else logr.warn)(msg)
+                elif lvl_up == "ERROR":
+                    logr.error(msg)
+                else:
+                    logr(msg, level=lvl_raw)
+        except Exception:
+            pass
+
+    try:
+        from providers.scrobble.plex.watch import process_rating_webhook as pxw_process
+    except Exception as e:
+        log(f"/webhook/plexwatcher: missing plex watch module: {e}", "ERROR")
+        return JSONResponse({"ok": True, "ignored": True}, status_code=200)
+
+    raw = await request.body()
+    ct = (request.headers.get("content-type") or "").lower()
+
+    payload: dict[str, Any] = {}
+    try:
+        if "multipart/form-data" in ct:
+            form = await request.form()
+            part = form.get("payload")
+            if part is None:
+                payload = {}
+            elif isinstance(part, (bytes, bytearray)):
+                payload = json.loads(part.decode("utf-8", errors="replace"))
+            elif hasattr(part, "read"):
+                data = await part.read()  # type: ignore[attr-defined]
+                payload = json.loads(data.decode("utf-8", errors="replace"))
+            else:
+                payload = json.loads(str(part))
+        elif "application/x-www-form-urlencoded" in ct:
+            qs = parse_qs(raw.decode("utf-8", errors="replace"))
+            payload = json.loads((qs.get("payload") or ["{}"])[0])
+        else:
+            payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+    except Exception as e:
+        log(f"plexwatcher-webhook: failed to parse payload: {e}", "ERROR")
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    res = pxw_process(payload, dict(request.headers), raw=raw, logger=log)
+
+    if res.get("invalid_signature"):
+        log("plexwatcher-webhook: invalid signature", "WARN")
+    elif res.get("ignored"):
+        log("plexwatcher-webhook: ignored", "DEBUG")
+    elif res.get("dedup"):
+        log("plexwatcher-webhook: duplicate rating suppressed", "DEBUG")
+    elif res.get("trakt") and isinstance(res.get("trakt"), dict) and not res["trakt"].get("ok"):
+        log(f"plexwatcher-webhook: trakt failure status={res['trakt'].get('status')}", "WARN")
+    elif res.get("simkl") and isinstance(res.get("simkl"), dict) and not res["simkl"].get("ok"):
+        log(f"plexwatcher-webhook: simkl failure status={res['simkl'].get('status')}", "WARN")
+    else:
+        log(
+            f"plexwatcher-webhook: processed media_type={res.get('media_type')} rating={res.get('rating')}",
+            "DEBUG",
+        )
+
+    return JSONResponse(
+        {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
+        status_code=200,
+    )

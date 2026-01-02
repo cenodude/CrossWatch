@@ -3,8 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time, threading
-from typing import Any, Iterable
+import time, threading, re, base64, hmac, hashlib
+from typing import Any, Iterable, Mapping, Callable
 
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
@@ -621,3 +621,346 @@ def autostart_from_config() -> WatchService | None:
     _AUTO_WATCH = WatchService(sinks=sinks)
     _AUTO_WATCH.start_async()
     return _AUTO_WATCH
+
+# --- Plex webhook for ratings (watch mode only) ------------------------------
+
+_PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
+_PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
+_PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)", re.I)
+
+_LAST_RATING_BY_ACC: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+
+def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> None:
+    if logger is None:
+        return
+    try:
+        logger(msg, level)  # type: ignore[misc]
+    except Exception:
+        try:
+            logger(msg, level=level)  # type: ignore[misc]
+        except Exception:
+            pass
+
+
+def _verify_signature(raw: bytes | None, headers: Mapping[str, str], secret: str) -> bool:
+    if not secret:
+        return True
+    raw2 = raw or b""
+    sig = (headers.get("X-Plex-Signature") or headers.get("x-plex-signature") or "").strip()
+    if not sig:
+        return False
+    digest = hmac.new(secret.encode("utf-8"), raw2, hashlib.sha1).digest()
+    expected = base64.b64encode(digest).decode("ascii")
+    try:
+        return hmac.compare_digest(sig.strip(), expected.strip())
+    except Exception:
+        return sig.strip() == expected.strip()
+
+
+def _norm_user(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _account_key(payload: dict[str, Any]) -> str:
+    acc = payload.get("Account") or {}
+    if isinstance(acc, dict):
+        u = str(acc.get("uuid") or "").strip().lower()
+        if u:
+            return f"uuid:{u}"
+        i = str(acc.get("id") or "").strip()
+        if i:
+            return f"id:{i}"
+        t = str(acc.get("title") or "").strip()
+        if t:
+            return f"title:{_norm_user(t)}"
+    return "unknown"
+
+
+def _account_allowed(allow: Any, payload: dict[str, Any]) -> bool:
+    if not allow:
+        return True
+    allow_list = allow if isinstance(allow, list) else [allow]
+    acc = payload.get("Account") or {}
+    title = str((acc.get("title") if isinstance(acc, dict) else "") or "")
+    acc_id = str((acc.get("id") if isinstance(acc, dict) else "") or "")
+    acc_uuid = str((acc.get("uuid") if isinstance(acc, dict) else "") or "").lower()
+
+    for e in allow_list:
+        s = str(e).strip()
+        if not s:
+            continue
+        sl = s.lower()
+        if sl.startswith("id:") and acc_id and sl.split(":", 1)[1].strip() == acc_id:
+            return True
+        if sl.startswith("uuid:") and acc_uuid and sl.split(":", 1)[1].strip() == acc_uuid:
+            return True
+        if not sl.startswith(("id:", "uuid:")) and _norm_user(s) == _norm_user(title):
+            return True
+    return False
+
+
+def _server_allowed(want_uuid: str, payload: dict[str, Any]) -> bool:
+    if not want_uuid:
+        return True
+    srv = payload.get("Server") or {}
+    got = str((srv.get("uuid") if isinstance(srv, dict) else "") or "").strip()
+    return (not got) or got == want_uuid
+
+
+def _gather_guid_candidates(md: dict[str, Any]) -> list[str]:
+    cand: list[str] = []
+    for k in ("guid", "grandparentGuid", "parentGuid"):
+        v = md.get(k)
+        if v:
+            cand.append(str(v))
+    gi = md.get("Guid") or []
+    for g in gi:
+        if isinstance(g, dict):
+            v = g.get("id")
+            if v:
+                cand.append(str(v))
+        elif isinstance(g, str):
+            cand.append(g)
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in cand:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _all_ids_from_metadata(md: dict[str, Any]) -> dict[str, Any]:
+    ids: dict[str, Any] = {}
+    for s in _gather_guid_candidates(md):
+        if not s:
+            continue
+        m = _PAT_IMDB.search(s)
+        if m:
+            ids.setdefault("imdb", m.group(1))
+        m = _PAT_TMDB.search(s)
+        if m:
+            ids.setdefault("tmdb", int(m.group(1)))
+        m = _PAT_TVDB.search(s)
+        if m:
+            ids.setdefault("tvdb", int(m.group(1)))
+    return ids
+
+
+def _sanitize_ids(ids: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    imdb = ids.get("imdb")
+    if imdb:
+        s = str(imdb).strip()
+        if s:
+            out["imdb"] = s
+    for k in ("tmdb", "tvdb"):
+        v = ids.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s.isdigit():
+            out[k] = int(s)
+    return out
+
+
+def _plex_rating_to_10(v: Any) -> int | None:
+    try:
+        if v is None or isinstance(v, bool):
+            return None
+        f = float(str(v).strip())
+    except Exception:
+        return None
+    if f <= 0:
+        return 0
+    if f <= 5.0:
+        f *= 2.0
+    n = int(round(f))
+    return max(1, min(10, n))
+
+
+def _ids_from_guids_simple(guids: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    try:
+        for g in (guids or []):
+            gid = str(getattr(g, "id", "") or "").lower()
+            if not gid:
+                continue
+            if "imdb://" in gid:
+                out.setdefault("imdb", gid.split("imdb://", 1)[1])
+            elif "tmdb://" in gid:
+                v = gid.split("tmdb://", 1)[1]
+                if v.isdigit():
+                    out.setdefault("tmdb", int(v))
+            elif "thetvdb://" in gid or "tvdb://" in gid:
+                v = gid.split("://", 1)[1]
+                if v.isdigit():
+                    out.setdefault("tvdb", int(v))
+    except Exception:
+        pass
+    return out
+
+
+def _library_allowed(cfg: dict[str, Any], payload: dict[str, Any]) -> bool:
+    libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
+    if not libs:
+        return True
+    md = payload.get("Metadata") or {}
+    lib_id = None
+    if isinstance(md, dict):
+        lib_id = md.get("librarySectionID") or md.get("librarySectionId") or md.get("librarySectionKey")
+    if lib_id is None:
+        lib_id = payload.get("librarySectionID") or payload.get("LibrarySectionID")
+    if lib_id is None:
+        return False
+    return str(lib_id).strip() in libs
+
+
+def _trakt_post_with_refresh(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> Any:
+    from providers.scrobble.trakt import sink as trakt_sink
+    r = trakt_sink._post(path, body, cfg)
+    if r.status_code == 401 and trakt_sink._tok_refresh(cfg):
+        r = trakt_sink._post(path, body, cfg)
+    return r
+
+
+def _trakt_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
+    bucket = "movies" if media_type == "movie" else ("shows" if media_type == "show" else "episodes")
+    ids2 = _sanitize_ids(ids)
+    if not ids2:
+        return {"ok": False, "error": "no_ids"}
+    if rating == 0:
+        body = {bucket: [{"ids": ids2}]}
+        r = _trakt_post_with_refresh("/sync/ratings/remove", body, cfg)
+    else:
+        body = {bucket: [{"ids": ids2, "rating": int(rating)}]}
+        r = _trakt_post_with_refresh("/sync/ratings", body, cfg)
+    try:
+        j = r.json()
+    except Exception:
+        j = {"raw": (getattr(r, "text", "") or "")[:200]}
+    if r.status_code >= 400:
+        _emit(logger, f"trakt rating failed {r.status_code} {str(j)[:180]}", "ERROR")
+        return {"ok": False, "status": r.status_code, "trakt": j}
+    return {"ok": True, "status": r.status_code, "trakt": j}
+
+
+def _simkl_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
+    from providers.scrobble.simkl import sink as simkl_sink
+    bucket = "movies" if media_type == "movie" else "shows"
+    ids2 = _sanitize_ids(ids)
+    if not ids2:
+        return {"ok": False, "error": "no_ids"}
+    if rating == 0:
+        body = {bucket: [{"ids": ids2}]}
+        r = simkl_sink._post("/sync/ratings/remove", body, cfg)
+    else:
+        body = {bucket: [{"ids": ids2, "rating": int(rating)}]}
+        r = simkl_sink._post("/sync/ratings", body, cfg)
+    try:
+        j = r.json()
+    except Exception:
+        j = {"raw": (getattr(r, "text", "") or "")[:200]}
+    if r.status_code >= 400:
+        _emit(logger, f"simkl rating failed {r.status_code} {str(j)[:180]}", "ERROR")
+        return {"ok": False, "status": r.status_code, "simkl": j}
+    return {"ok": True, "status": r.status_code, "simkl": j}
+
+
+def process_rating_webhook(
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    raw: bytes | None = None,
+    logger: Callable[..., None] | None = None,
+) -> dict[str, Any]:
+    cfg = _cfg() or {}
+    sc = (cfg.get("scrobble") or {})
+    if not sc.get("enabled", True) or str(sc.get("mode", "watch")).lower() != "watch":
+        return {"ok": True, "ignored": True}
+
+    watch_cfg = (sc.get("watch") or {})
+    if str(watch_cfg.get("provider", "plex")).lower().strip() != "plex":
+        return {"ok": True, "ignored": True}
+
+    enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
+    enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
+    if not (enable_trakt or enable_simkl):
+        return {"ok": True, "ignored": True}
+
+    secret = str(((cfg.get("plex") or {}).get("webhook_secret") or "")).strip()
+    if secret and not _verify_signature(raw, dict(headers), secret):
+        _emit(logger, "invalid X-Plex-Signature", "WARN")
+        return {"ok": True, "ignored": True, "invalid_signature": True}
+
+    if not payload:
+        return {"ok": True, "ignored": True}
+
+    if str(payload.get("event") or "") != "media.rate":
+        return {"ok": True, "ignored": True}
+
+    filt = (watch_cfg.get("filters") or {})
+    wl = filt.get("username_whitelist")
+    want_uuid = str((filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid") or "")).strip()
+
+    if want_uuid and not _server_allowed(want_uuid, payload):
+        return {"ok": True, "ignored": True}
+
+    if not _account_allowed(wl, payload):
+        return {"ok": True, "ignored": True}
+
+    if not _library_allowed(cfg, payload):
+        return {"ok": True, "ignored": True}
+
+    md = payload.get("Metadata") or {}
+    if not isinstance(md, dict):
+        return {"ok": True, "ignored": True}
+
+    media_type = str(md.get("type") or "").lower().strip()
+    if media_type not in ("movie", "show", "episode"):
+        return {"ok": True, "ignored": True}
+
+    rating_val = _plex_rating_to_10(md.get("userRating") if "userRating" in md else (payload.get("userRating") or md.get("user_rating") or md.get("rating")))
+    if rating_val is None:
+        return {"ok": True, "ignored": True}
+
+    if media_type == "episode" and not enable_trakt:
+        return {"ok": True, "ignored": True}
+
+    acc_key = _account_key(payload)
+    rk = str(md.get("ratingKey") or md.get("ratingkey") or "").strip()
+    dedup_key = (acc_key, rk or "?", media_type)
+    prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
+    if prev and prev.get("rating") == rating_val and (time.time() - float(prev.get("ts", 0))) < 10:
+        return {"ok": True, "dedup": True}
+    _LAST_RATING_BY_ACC[dedup_key] = {"rating": rating_val, "ts": time.time()}
+
+    ids = _all_ids_from_metadata(md)
+
+    if (not ids) and rk:
+        try:
+            base, token = _plex_btok(cfg)
+            if token:
+                px = PlexServer(base, token)
+                it = px.fetchItem(int(rk))
+                if it is not None:
+                    ids.update(_ids_from_guids_simple(getattr(it, "guids", [])))
+                    if media_type == "episode":
+                        try:
+                            show = it.show()
+                            ids.update(_ids_from_guids_simple(getattr(show, "guids", [])))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    if not _sanitize_ids(ids):
+        _emit(logger, "rating event without usable external IDs; ignored", "DEBUG")
+        return {"ok": True, "ignored": True}
+
+    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_val}
+    if enable_trakt:
+        results["trakt"] = _trakt_send_rating(media_type, ids, rating_val, cfg, logger)
+    if enable_simkl and media_type in ("movie", "show"):
+        results["simkl"] = _simkl_send_rating(media_type, ids, rating_val, cfg, logger)
+    return results

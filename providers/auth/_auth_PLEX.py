@@ -334,6 +334,10 @@ def html() -> str:
           <label style="margin-top:10px">Account_ID</label>
           <input id="plex_account_id" type="number" min="1" placeholder="e.g. 1">
 
+          <label style="margin-top:10px">Home PIN (optional)</label>
+          <input id="plex_home_pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 digits">
+          <div class="sub">Only needed if the selected Plex Home user is PIN-protected.</div>
+
           <div class="btnrow">
             <button class="btn" title="Fetch Server URL, Username, Account ID" onclick="plexAuto()">Auto-Fetch</button>
             <button class="btn" title="Load Plex libraries" onclick="refreshPlexLibraries()">Load libraries</button>

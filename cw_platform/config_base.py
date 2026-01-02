@@ -29,13 +29,14 @@ CONFIG.mkdir(parents=True, exist_ok=True)
 DEFAULT_CFG: dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
     "plex": {
-        "server_url": "",                               # http(s)://host:32400 (required for sync & watcher). If empty, we discover & persist.
+        "server_url": "",                               # http(s)://host:32400 (required for sync & watcher).
         "verify_ssl": False,                            # Verify TLS certificates
         "account_token": "",                            # Plex token (a.k.a. authentication token).
         "client_id": "",                                # Set by PIN login; reused for headers.
         "machine_id": "",                               # PMS machineIdentifier (UUID).
-        "username": "",                                 # Preferred Plex Home user/profile. If empty, we detect & persist.
-        "account_id": "",                               # Server-local accountID (int) for the selected user. If empty, we resolve & persist.
+        "username": "",                                 # Preferred Plex Home user/profile.
+        "account_id": "",                               # Server-local accountID (int) for the selected user. 
+        "home_pin": "",                                 # Plex Home PIN for the selected profile (optional).
         "timeout": 10.0,                                # Optional HTTP timeout (seconds).
         "max_retries": 3,                               # Optional retry budget.
         "fallback_GUID": False,                         # Opt-in GUID/Discover fallback for missing library items (history/ratings)
@@ -317,6 +318,8 @@ DEFAULT_CFG: dict[str, Any] = {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
             "provider": "plex",                         # Active watcher either "plex" or "emby" (default: "plex")
             "sink": "trakt",                            # "trakt" | "simkl" | "simkl,trakt"
+            "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
+            "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
@@ -331,7 +334,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "suppress_start_at": 99,                    # Suppress near-end "start" flaps (credits)
             "suppress_autoplay_seconds": 15,            # Plex autoplay when set on 10 sec (increase a few sec)
             "probe_session_progress": True,             # Call GET /status/sessions on your Plex server and match the item by ratingKey/sessionKey
-
+            "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
