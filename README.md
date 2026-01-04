@@ -42,9 +42,7 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautulli** in sync.  
-It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history.  
-CW also includes its own tracker to keep your data safe with snapshots.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
 Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, Trakt, SIMKL and CW internal tracker** <br>
@@ -58,8 +56,8 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 - **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
 - **Unified Watchlist across providers** View all watchlist items in one place.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
-- **Webhooks** (Plex / Jellyfin / Emby to Trakt)  
-- **Watcher** (Plex / Emby to Trakt and/or SIMKL) Plugin-free and subscription-free.
+- **Webhooks** (Plex / Jellyfin / Emby to Trakt) watched history and for Plex also ratings.
+- **Watcher** (Plex / Emby to Trakt and/or SIMKL) Realtime, Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 - **Editor** Inspect and adjust your items and Add or block items. Example: tell Plex to stop sending movie X.
