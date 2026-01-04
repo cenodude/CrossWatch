@@ -258,6 +258,103 @@ def _supports_pair_libs(prov: str) -> bool:
     return str(prov or "").upper() in ("PLEX", "EMBY", "JELLYFIN")
 
 
+_TYPE_TOKEN_MAP: dict[str, str] = {
+    "movie": "movie",
+    "movies": "movie",
+    "show": "show",
+    "shows": "show",
+    "tv": "show",
+    "episode": "episode",
+    "episodes": "episode",
+    "season": "season",
+    "seasons": "season",
+    "anime": "anime",
+    "animes": "anime",
+}
+
+def _item_type(it: dict[str, Any]) -> str:
+    t = str((it or {}).get("type") or "").strip().lower()
+    return _TYPE_TOKEN_MAP.get(t, t)
+
+def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str]]:
+    out: dict[tuple[str, str, str], set[str]] = {}
+
+    def is_on(feat: Any) -> bool:
+        if isinstance(feat, dict) and "enable" in feat:
+            return bool(feat.get("enable"))
+        return bool(feat)
+
+    def norm_types(raw: Any) -> set[str]:
+        if not isinstance(raw, (list, tuple)):
+            return set()
+        out0: set[str] = set()
+        for x in raw:
+            s = str(x or "").strip().lower()
+            if not s:
+                continue
+            out0.add(_TYPE_TOKEN_MAP.get(s, s))
+        return out0
+
+    for pr in cfg.get("pairs") or []:
+        if not isinstance(pr, dict):
+            continue
+        src = str(pr.get("source") or "").upper().strip()
+        dst = str(pr.get("target") or "").upper().strip()
+        if not src or not dst:
+            continue
+        if pr.get("enabled") is False:
+            continue
+
+        mode = str(pr.get("mode") or "one-way").lower()
+        feats = pr.get("features") or {}
+        if not isinstance(feats, dict):
+            continue
+
+        def add_dir(a: str, b: str, feat: str, raw_types: Any) -> None:
+            types0 = norm_types(raw_types)
+            if types0:
+                out[(a, feat, b)] = types0
+
+        for feat in ("history", "watchlist", "ratings"):
+            fcfg = feats.get(feat)
+            if not is_on(fcfg):
+                continue
+            raw_types = fcfg.get("types") if isinstance(fcfg, dict) else None
+            if raw_types is None:
+                continue
+
+            if isinstance(raw_types, dict):
+                add_dir(src, dst, feat, raw_types.get(src) or raw_types.get(src.lower()) or raw_types.get(src.upper()))
+                if mode in ("two-way", "bi", "both", "mirror"):
+                    add_dir(dst, src, feat, raw_types.get(dst) or raw_types.get(dst.lower()) or raw_types.get(dst.upper()))
+            else:
+                add_dir(src, dst, feat, raw_types)
+                if mode in ("two-way", "bi", "both", "mirror"):
+                    add_dir(dst, src, feat, raw_types)
+
+    return out
+
+def _passes_pair_type_filter(
+    pair_types: dict[tuple[str, str, str], set[str]] | None,
+    prov: str,
+    feat: str,
+    dst: str,
+    it: dict[str, Any],
+) -> bool:
+    if not pair_types:
+        return True
+    p = str(prov or "").upper()
+    f = str(feat or "").lower()
+    d = str(dst or "").upper()
+    allowed = pair_types.get((p, f, d))
+    if not allowed:
+        return True
+    t = _item_type(it)
+    if not t:
+        return True
+    return t in allowed
+
+
 def _item_library_id(it: dict[str, Any]) -> str | None:
     if not isinstance(it, dict):
         return None
@@ -362,6 +459,7 @@ def _has_peer_by_pairs(
     item: dict[str, Any],
     idx_cache: dict[tuple[str, str], dict[str, str]],
     pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
+    pair_types: dict[tuple[str, str, str], set[str]] | None = None,
 ) -> bool:
     if feat not in ("history", "watchlist", "ratings"):
         return True
@@ -374,7 +472,7 @@ def _has_peer_by_pairs(
 
     filtered_targets: list[str] = []
     for dst in targets:
-        if _passes_pair_lib_filter(pair_libs, prov, feat, dst, item):
+        if _passes_pair_lib_filter(pair_libs, prov, feat, dst, item) and _passes_pair_type_filter(pair_types, prov, feat, dst, item):
             filtered_targets.append(dst)
     if not filtered_targets:
         return True
@@ -394,7 +492,7 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
     pairs = _pair_map(cfg, s)
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
-
+    pair_types = _pair_type_filters(cfg)
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         for dst in targets:
@@ -405,7 +503,7 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
             for k, v in src_items.items():
                 if v.get("_ignore_missing_peer"):
                     continue
-                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v):
+                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v) or not _passes_pair_type_filter(pair_types, prov, feat, dst, v):
                     continue
 
                 total += 1
@@ -426,6 +524,68 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return stats
+
+
+def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
+    cfg = _cfg()
+    pairs = _pair_map(cfg, s)
+    pair_libs = _pair_lib_filters(cfg)
+    pair_types = _pair_type_filters(cfg)
+    out: list[dict[str, Any]] = []
+
+    for (prov, feat), targets in pairs.items():
+        if not targets:
+            continue
+        src_items = _bucket(s, prov, feat) or {}
+        if not src_items:
+            continue
+
+        for dst in targets:
+            excluded_types: dict[str, int] = {}
+            excluded_libs: dict[str, int] = {}
+
+            for v in src_items.values():
+                if not isinstance(v, dict):
+                    continue
+                if v.get("_ignore_missing_peer"):
+                    continue
+
+                if not _passes_pair_type_filter(pair_types, prov, feat, dst, v):
+                    t = _item_type(v)
+                    if t:
+                        excluded_types[t] = excluded_types.get(t, 0) + 1
+                    continue
+
+                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v):
+                    lid = _item_library_id(v) or "unknown"
+                    excluded_libs[lid] = excluded_libs.get(lid, 0) + 1
+                    continue
+
+            total = sum(excluded_types.values()) + sum(excluded_libs.values())
+            if not total:
+                continue
+
+            rec: dict[str, Any] = {
+                "source": prov,
+                "target": dst,
+                "feature": feat,
+                "excluded_total": total,
+            }
+            if excluded_types:
+                rec["excluded_types"] = excluded_types
+            if excluded_libs:
+                rec["excluded_libraries"] = excluded_libs
+
+            allowed_types = pair_types.get((prov, feat, dst)) if pair_types else None
+            allowed_libs = pair_libs.get((prov, feat, dst)) if pair_libs else None
+            if allowed_types:
+                rec["allowed_types"] = sorted(allowed_types)
+            if allowed_libs:
+                rec["allowed_libraries"] = sorted(allowed_libs)
+
+            out.append(rec)
+
+    return out
 
 def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str, str]]:
     show_sets: dict[str, set[str]] = {}
@@ -783,6 +943,7 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     pairs = _pair_map(cfg, s)
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
+    pair_types = _pair_type_filters(cfg)
     cw_state = _read_cw_state()
     manual = _load_manual_state()
     manual_blocks = _manual_add_blocks(manual)
@@ -841,7 +1002,7 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
             filtered_targets: list[str] = []
             union_targets: list[dict[str, str]] = []
             for t in targets:
-                if _passes_pair_lib_filter(pair_libs, prov, feat, t, v):
+                if _passes_pair_lib_filter(pair_libs, prov, feat, t, v) and _passes_pair_type_filter(pair_types, prov, feat, t, v):
                     filtered_targets.append(t)
                     union_targets.append(idx_cache.get((t, feat)) or {})
 
@@ -1204,6 +1365,7 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
+    pair_types = _pair_type_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(
         s,
         pairs,
@@ -1213,6 +1375,7 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         it,
         idx,
         pair_libs,
+        pair_types,
     )
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
 
@@ -1237,7 +1400,7 @@ def api_state() -> dict[str, Any]:
 @router.get("/analyzer/problems", response_class=JSONResponse)
 def api_problems() -> dict[str, Any]:
     s = _load_state()
-    return {"problems": _problems(s), "pair_stats": _pair_stats(s)}
+    return {"problems": _problems(s), "pair_stats": _pair_stats(s), "pair_exclusions": _pair_exclusions(s)}
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
@@ -1286,6 +1449,7 @@ def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
     pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
+    pair_types = _pair_type_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(
         s,
         pairs,
@@ -1295,6 +1459,7 @@ def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
         it,
         idx,
         pair_libs,
+        pair_types,
     )
     _save_state(s)
     return {"ok": True, "new_key": new_key}
@@ -1349,6 +1514,7 @@ def api_edit(payload: dict[str, Any]) -> dict[str, Any]:
     pairs = _pair_map(cfg, s)
     idx = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
+    pair_types = _pair_type_filters(cfg)
     it["_ignore_missing_peer"] = not _has_peer_by_pairs(
         s,
         pairs,
@@ -1358,6 +1524,7 @@ def api_edit(payload: dict[str, Any]) -> dict[str, Any]:
         it,
         idx,
         pair_libs,
+        pair_types,
     )
     _save_state(s)
     return {"ok": True, "new_key": new}

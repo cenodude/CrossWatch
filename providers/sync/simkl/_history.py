@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal
@@ -25,6 +26,7 @@ BASE = "https://api.simkl.com"
 URL_ALL_ITEMS = f"{BASE}/sync/all-items"
 URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
+URL_TV_EPISODES = f"{BASE}/tv/episodes"
 
 STATE_DIR = Path("/config/.cw_state")
 UNRESOLVED_PATH = str(STATE_DIR / "simkl_history.unresolved.json")
@@ -32,6 +34,8 @@ SHADOW_PATH = str(STATE_DIR / "simkl.history.shadow.json")
 SHOW_MAP_PATH = str(STATE_DIR / "simkl.show.map.json")
 
 ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
+
+_EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 
 def _dedupe_history_movies(out: dict[str, dict[str, Any]]) -> None:
     if not out:
@@ -152,6 +156,93 @@ def _ids_of(obj: Mapping[str, Any]) -> dict[str, Any]:
 def _raw_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
     return dict(item.get("show_ids") or {})
 
+
+
+def _episode_lookup(
+    session: Any,
+    headers: Mapping[str, str],
+    *,
+    timeout: float,
+    show_ids: Mapping[str, Any],
+) -> dict[tuple[int, int], dict[str, Any]]:
+    ids = dict(show_ids or {})
+    candidates = [
+        str(ids.get("simkl") or "").strip(),
+        str(ids.get("tvdb") or "").strip(),
+        str(ids.get("imdb") or "").strip(),
+        str(ids.get("tmdb") or "").strip(),
+    ]
+    candidates = [c for c in candidates if c]
+    if not candidates:
+        return {}
+
+    for cand in candidates:
+        if cand in _EP_LOOKUP_MEMO:
+            return _EP_LOOKUP_MEMO[cand]
+
+    def _pick_title(row: Mapping[str, Any]) -> str | None:
+        for key in ("title", "name", "en_title", "episode_title"):
+            v = row.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return None
+
+    def _extract_ids(row: Mapping[str, Any]) -> dict[str, str]:
+        raw = row.get("ids")
+        d = dict(raw) if isinstance(raw, Mapping) else {}
+        if d.get("simkl_id") and not d.get("simkl"):
+            d["simkl"] = d["simkl_id"]
+        return {k: str(d[k]) for k in ID_KEYS if d.get(k)}
+
+    client_id = str(headers.get("simkl-api-key") or "").strip()
+
+    for cand in candidates:
+        out: dict[tuple[int, int], dict[str, Any]] = {}
+        url = f"{URL_TV_EPISODES}/{cand}"
+        if client_id:
+            url = url + f"?client_id={quote(client_id)}"
+        try:
+            resp = session.get(url, headers=dict(headers), timeout=timeout)
+            if not resp.ok:
+                _log(f"tv/episodes failed id={cand} status={resp.status_code}")
+                _EP_LOOKUP_MEMO[cand] = {}
+                continue
+            body = resp.json() if (resp.text or "").strip() else []
+        except Exception as exc:
+            _log(f"tv/episodes error id={cand}: {exc}")
+            _EP_LOOKUP_MEMO[cand] = {}
+            continue
+
+        if not isinstance(body, list):
+            _log(f"tv/episodes non-list id={cand}")
+            _EP_LOOKUP_MEMO[cand] = {}
+            continue
+        if not body:
+            _log(f"tv/episodes empty id={cand}")
+            _EP_LOOKUP_MEMO[cand] = {}
+            continue
+
+        for row in body:
+            if not isinstance(row, Mapping):
+                continue
+            s_num = _safe_int(row.get("season") or row.get("season_number"))
+            e_num = _safe_int(row.get("episode") or row.get("episode_number") or row.get("number"))
+            if not s_num or not e_num:
+                continue
+            out[(s_num, e_num)] = {
+                "title": _pick_title(row),
+                "ids": _extract_ids(row),
+            }
+
+        if out:
+            for k in candidates:
+                _EP_LOOKUP_MEMO[k] = out
+            _log(f"tv/episodes ok id={cand} episodes={len(out)}")
+            return out
+
+        _EP_LOOKUP_MEMO[cand] = {}
+
+    return {}
 
 def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = _raw_show_ids(item)
@@ -541,12 +632,13 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     for row in movie_rows:
         if not isinstance(row, Mapping):
             continue
-        movie = row.get("movie") or row
         watched_at = (row.get("last_watched_at") or row.get("watched_at") or "").strip()
         ts = _as_epoch(watched_at)
-        if not movie or not ts:
+        if not ts:
             continue
-        movie_norm = simkl_normalize(movie)
+        movie_norm = simkl_normalize(row)
+        if not movie_norm or str(movie_norm.get("type") or "").lower() != "movie":
+            continue
         movie_norm["watched"] = True
         movie_norm["watched_at"] = watched_at
         bucket_key = simkl_key_of(movie_norm)
@@ -570,10 +662,15 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             show = row.get("show") or row
             if not show:
                 continue
-            base = simkl_normalize(show)
+            base = simkl_normalize(row)
             show_ids = _ids_of(base) or _ids_of(show)
             if not show_ids:
                 continue
+            show_title = str(
+                base.get("title") or (show.get("title") if isinstance(show, Mapping) else "") or "",
+            ).strip()
+            show_year = base.get("year") or (show.get("year") if isinstance(show, Mapping) else None)
+            ep_meta = _episode_lookup(session, headers, timeout=timeout, show_ids=show_ids)
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
                 s_num = int((season.get("number") or season.get("season") or 0))
@@ -584,13 +681,20 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     ts = _as_epoch(watched_at)
                     if not ts or not s_num or not e_num:
                         continue
+                    meta = ep_meta.get((s_num, e_num)) if isinstance(ep_meta, Mapping) else None
+                    ep_title = meta.get("title") if isinstance(meta, Mapping) else None
+                    ep_ids = meta.get("ids") if isinstance(meta, Mapping) else None
+                    ids_for_key = ep_ids if isinstance(ep_ids, Mapping) and ep_ids else show_ids
                     ep = {
                         "type": "episode",
                         "season": s_num,
                         "episode": e_num,
-                        "ids": show_ids,
-                        "title": base.get("title"),
-                        "year": base.get("year"),
+                        "ids": dict(ids_for_key),
+                        "title": (str(ep_title).strip() if isinstance(ep_title, str) and ep_title.strip() else f"S{s_num:02d}E{e_num:02d}"),
+                        "year": None,
+                        "series_title": show_title or (base.get("title") or None),
+                        "series_year": show_year,
+                        "show_ids": dict(show_ids),
                         "watched": True,
                         "watched_at": watched_at,
                     }

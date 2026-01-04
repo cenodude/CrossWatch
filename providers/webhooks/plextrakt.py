@@ -992,8 +992,9 @@ def _plex_rating_to_trakt(v: Any) -> int | None:
         return None
     if f <= 0:
         return 0
-    if f <= 5.0:
-        f = f * 2.0
+ 
+    if f <= 5.0 and not float(f).is_integer():
+        f *= 2.0
     n = int(round(f))
     return max(1, min(10, n))
 
@@ -1223,6 +1224,8 @@ def process_webhook(
 
     now = time.time()
     st = _SCROBBLE_STATE.get(sess) or {}
+    first_seen = float(st.get("first_seen") or now)
+    st = {**st, "first_seen": first_seen}
 
     if st.get("last_event") == event and (now - float(st.get("ts", 0))) < 1.0:
         return {"ok": True, "dedup": True}
@@ -1243,6 +1246,9 @@ def process_webhook(
             or (float(st.get("prog", 0.0)) >= force_stop_at)
         )
     )
+
+    if fresh_start:
+        st["first_seen"] = now
 
     last_prog = float(st.get("prog", 0.0))
     tol_pts = max(0.0, regress_tol)
@@ -1269,22 +1275,21 @@ def process_webhook(
 
     fast_cancel_stop = False
     if event == "media.stop" and prog < force_stop_at:
-        dt = now - float(st.get("ts", 0))
+        age = now - float(st.get("first_seen", now))
         last_evt = str(st.get("last_event") or "")
         last_sk = str(st.get("sk") or "")
         last_p = float(st.get("prog", 0.0) or 0.0)
         fast_cancel = (
-            dt < 2.0
+            age < 2.0
             and last_evt in ("media.play", "media.resume")
             and last_p <= 5.0
             and (not sk_current or not last_sk or sk_current == last_sk)
         )
         fast_cancel_stop = bool(fast_cancel)
 
-        if dt < 2.0 and not fast_cancel:
-            _emit(logger, f"drop stop due to debounce dt={dt:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
-            _SCROBBLE_STATE[sess] = {
-                "ts": now,
+        if age < 2.0 and not fast_cancel:
+            _emit(logger, f"drop stop due to debounce age={age:.2f}s p={prog:.1f}% (<{force_stop_at}%)", "DEBUG")
+            _SCROBBLE_STATE[sess] = {**st,                "ts": now,
                 "last_event": event,
                 "prog": prog,
                 "sk": sk_current,
@@ -1298,8 +1303,7 @@ def process_webhook(
 
     path = _map_event(event)
     if not path:
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
             "sk": sk_current,
@@ -1309,8 +1313,7 @@ def process_webhook(
 
     if path == "/scrobble/start" and prog >= suppress_start_at:
         _emit(logger, f"suppress start at {prog:.1f}% (>= {suppress_start_at}%)", "DEBUG")
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
             "sk": sk_current,
@@ -1340,8 +1343,7 @@ def process_webhook(
 
     if event == "media.stop" and st.get("last_event") == "media.stop" and abs((st.get("prog", 0.0)) - prog) <= 1.0:
         _emit(logger, "suppress duplicate stop", "DEBUG")
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
             "sk": sk_current,
@@ -1353,8 +1355,7 @@ def process_webhook(
         fin = _LAST_FINISH_BY_ACC.get(acc_key)
         if fin and str(fin.get("rk") or "") == str(rk or "") and (now - float(fin.get("ts", 0))) <= 180:
             _emit(logger, "suppress duplicate finish (stop<->scrobble)", "DEBUG")
-            _SCROBBLE_STATE[sess] = {
-                "ts": now,
+            _SCROBBLE_STATE[sess] = {**st,                "ts": now,
                 "last_event": event,
                 "last_pause_ts": st.get("last_pause_ts", 0),
                 "prog": prog,
@@ -1423,8 +1424,7 @@ def process_webhook(
     body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
     if not body:
         _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
             "sk": sk_current,
@@ -1469,8 +1469,7 @@ def process_webhook(
                     st = {**st, "wl_removed": True}
                 except Exception:
                     pass
-            _SCROBBLE_STATE[sess] = {
-                "ts": now,
+            _SCROBBLE_STATE[sess] = {**st,                "ts": now,
                 "last_event": event,
                 "last_pause_ts": st.get("last_pause_ts", 0),
                 "prog": prog,
@@ -1488,8 +1487,7 @@ def process_webhook(
                 st = {**st, "wl_removed": True}
             except Exception:
                 pass
-        _SCROBBLE_STATE[sess] = {
-            "ts": now,
+        _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
             "prog": prog,
@@ -1510,8 +1508,7 @@ def process_webhook(
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
     _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
-    _SCROBBLE_STATE[sess] = {
-        "ts": now,
+    _SCROBBLE_STATE[sess] = {**st,        "ts": now,
         "last_event": event,
         "last_pause_ts": st.get("last_pause_ts", 0),
         "prog": prog,

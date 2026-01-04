@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-__VERSION__ = "3.0.0"
+__VERSION__ = "3.1.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:

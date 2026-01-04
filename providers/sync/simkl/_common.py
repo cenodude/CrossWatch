@@ -15,7 +15,7 @@ START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
 UA = os.getenv("CW_UA", "CrossWatch/3.0 (SIMKL)")
 
-# state (watermarks)
+
 _STATE_DIR = Path("/config/.cw_state")
 _WATERMARK_PATH = _STATE_DIR / "simkl.watermarks.json"
 
@@ -76,7 +76,7 @@ def coalesce_date_from(
             return _iso_z(candidate)
     return hard_default
 
-# time helpers
+
 def _iso_ok(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
@@ -108,7 +108,7 @@ def _max_iso(a: str | None, b: str | None) -> str | None:
     return _iso_z(a if dt_a >= dt_b else b)
 
 
-# headers
+
 def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dict[str, str]:
     target = cfg.get("simkl") or cfg
     api_key = str(target.get("api_key") or target.get("client_id") or "").strip()
@@ -126,9 +126,6 @@ def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dic
         headers.pop("If-None-Match", None)
     return headers
 
-
-# activities + rate limits
-# memo: (unix_ts, data, rate)
 _ACT_MEMO: tuple[float, dict[str, Any] | None, dict[str, Any]] = (0.0, None, {})
 
 
@@ -206,7 +203,7 @@ def extract_latest_ts(activities: Mapping[str, Any], paths: Iterable[Sequence[st
     return latest
 
 
-# ids + normalization
+
 def _fix_imdb(ids: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = dict(ids or {})
     imdb = out.get("imdb")
@@ -253,7 +250,8 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if obj_type == "anime":
         obj_type = "show"
     if obj_type not in ("movie", "show"):
-        obj_type = "movie"
+        return id_minimal({})
+
     ids = _fix_imdb(payload.get("ids") or {})
     base = {
         "type": obj_type,
@@ -265,4 +263,6 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def key_of(item: Mapping[str, Any]) -> str:
-    return canonical_key(normalize(item))
+    m = normalize(item)
+    k = canonical_key(m)
+    return k or ""

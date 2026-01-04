@@ -10,14 +10,15 @@ import time
 import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
+from threading import RLock
 from typing import Any, Iterable, Mapping
 
 import requests
 
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
-except ImportError:  # flat tests
-    from _id_map import canonical_key, minimal as id_minimal, ids_from_guid  # type: ignore
+except ImportError:
+    from _id_map import minimal as id_minimal, ids_from_guid  # type: ignore
 
 _PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None}
 
@@ -56,6 +57,12 @@ def _emit(evt: dict[str, Any]) -> None:
     except Exception:
         pass
 
+def key_of(item: Mapping[str, Any]) -> str:
+    try:
+        m = normalize(item)
+    except Exception:
+        m = id_minimal(item)
+    return canonical_key(m) or ""
 
 def plex_headers(token: str) -> dict[str, str]:
     return {
@@ -151,7 +158,7 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
     return None
 
 
-_FBGUID_MEMO: dict[str, Any] = {}  # key -> dict (success) or "__NOHIT__"
+_FBGUID_MEMO: dict[str, Any] = {}
 _FBGUID_NOHIT = "__NOHIT__"
 _FBGUID_CACHE_PATH = "/config/.cw_state/plex_fallback_memo.json"
 
@@ -289,6 +296,7 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
 
 _GUID_CACHE: dict[str, dict[str, str]] = {}
 _HYDRATE_404: set[str] = set()
+_HYDRATE_LOCK: RLock = RLock()
 
 
 def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
@@ -325,24 +333,22 @@ def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
 def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str, str]:
     if not token or not rating_key:
         return {}
-    rk = str(rating_key)
-    if rk in _GUID_CACHE:
-        return _GUID_CACHE[rk]
-    if rk in _HYDRATE_404:
+    rk = str(rating_key).strip()
+    if not rk:
         return {}
-    url = f"{METADATA}/library/metadata/{rk}"
-    try:
-        r = requests.get(url, headers=plex_headers(token), timeout=10)
-        if r.status_code == 401:
-            raise RuntimeError("Unauthorized (bad Plex token)")
-        if not r.ok:
-            _log(f"hydrate {rk} -> {r.status_code}")
-            _emit({"feature": "common", "event": "hydrate", "action": "miss", "rk": rk, "status": r.status_code})
-            if r.status_code == 404:
-                _HYDRATE_404.add(rk)
-            _GUID_CACHE[rk] = {}
+    with _HYDRATE_LOCK:
+        if rk in _GUID_CACHE:
+            return _GUID_CACHE[rk]
+        if rk in _HYDRATE_404:
             return {}
-        _emit({"feature": "common", "event": "hydrate", "action": "ok", "rk": rk})
+
+    headers = plex_headers(token)
+    base = str(_PLEX_CTX.get("baseurl") or "").strip().rstrip("/")
+
+    meta_status: int | None = None
+    last_err: str | None = None
+
+    def _parse_response(r: requests.Response) -> dict[str, str]:
         ctype = (r.headers.get("content-type") or "").lower()
         ids: dict[str, str] = {}
         if "application/json" in ctype:
@@ -363,15 +369,44 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
                     gid = gg.get("id")
                     if gid:
                         ids.update(ids_from_guid(str(gid)))
-        ids = {k: v for k, v in ids.items() if v}
-        _GUID_CACHE[rk] = ids
-        return ids
-    except Exception as e:
-        _log(f"hydrate error rk={rk}: {e}")
-        _HYDRATE_404.add(rk)
-        _GUID_CACHE[rk] = {}
+        return {k: v for k, v in ids.items() if v}
+
+    urls: list[tuple[str, str]] = []
+    if base:
+        urls.append((f"{base}/library/metadata/{rk}", "pms"))
+    urls.append((f"{METADATA}/library/metadata/{rk}", "meta"))
+
+    for url, kind in urls:
+        try:
+            r = requests.get(url, headers=headers, params={"includeGuids": 1}, timeout=10)
+            if kind == "meta":
+                meta_status = r.status_code
+            if r.status_code == 401:
+                raise RuntimeError("Unauthorized (bad Plex token)")
+            if not r.ok:
+                if kind == "meta":
+                    _log(f"hydrate {rk} -> {r.status_code}")
+                    _emit({"feature": "common", "event": "hydrate", "action": "miss", "rk": rk, "status": r.status_code})
+                continue
+            ids = _parse_response(r)
+            with _HYDRATE_LOCK:
+                _GUID_CACHE[rk] = ids
+            return ids
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    if meta_status == 404:
+        with _HYDRATE_LOCK:
+            _HYDRATE_404.add(rk)
+            _GUID_CACHE[rk] = {}
         return {}
 
+    with _HYDRATE_LOCK:
+        _GUID_CACHE[rk] = {}
+    if last_err:
+        _log(f"hydrate error rk={rk}: {last_err}")
+    return {}
 
 def normalize(obj: Any) -> dict[str, Any]:
     t = type_of(obj)
@@ -428,10 +463,6 @@ def normalize(obj: Any) -> dict[str, Any]:
     return res
 
 
-def key_of(obj: Any) -> str:
-    return canonical_key(normalize(obj))
-
-
 def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
     ids: dict[str, str] = {}
     g = row.get("guid")
@@ -448,11 +479,6 @@ def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
     if rk:
         ids["plex"] = str(rk)
     return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
-
-
-def rating_key_from_discover_row(row: Mapping[str, Any]) -> str | None:
-    rk = row.get("ratingKey")
-    return str(rk) if rk is not None else None
 
 
 def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) -> dict[str, Any]:
@@ -556,58 +582,13 @@ def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
     if tvdb:
         add(f"tvdb://{tvdb}")
         add(f"com.plexapp.agents.thetvdb://{tvdb}")
+        add(f"com.plexapp.agents.thetvdb://{tvdb}?lang=en")
+        add(f"com.plexapp.agents.thetvdb://{tvdb}?lang=en-US")
+
     g = it.get("guid")
     if g:
         add(str(g))
     return out
-
-
-def meta_guids(meta_obj: Any) -> list[str]:
-    vals: list[str] = []
-    try:
-        if getattr(meta_obj, "guid", None):
-            vals.append(str(meta_obj.guid))
-        for gg in getattr(meta_obj, "guids", []) or []:
-            gid = getattr(gg, "id", None)
-            if gid:
-                vals.append(str(gid))
-    except Exception:
-        pass
-    return vals
-
-
-def meta_idset(meta_obj: Any) -> set[tuple[str, str]]:
-    s: set[tuple[str, str]] = set()
-    try:
-        g = getattr(meta_obj, "guid", None)
-        if g:
-            for k, v in ids_from_guid(str(g)).items():
-                if k in ("imdb", "tmdb", "tvdb") and v:
-                    s.add((k, v))
-        for gg in getattr(meta_obj, "guids", []) or []:
-            gid = getattr(gg, "id", None)
-            if gid:
-                for k, v in ids_from_guid(str(gid)).items():
-                    if k in ("imdb", "tmdb", "tvdb") and v:
-                        s.add((k, v))
-    except Exception:
-        pass
-    return s
-
-
-def resolve_discover_metadata(acct: Any, it: Mapping[str, Any]) -> None:
-    return None
-
-
-def section_find_by_guid(sec: Any, candidates: Iterable[str]) -> Any | None:
-    for g in candidates or []:
-        try:
-            hits = sec.search(guid=g) or []
-            if hits:
-                return hits[0]
-        except Exception:
-            continue
-    return None
 
 
 def _iso8601_any(v: Any) -> str | None:

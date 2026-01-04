@@ -249,15 +249,18 @@ def run_one_way_feature(
             pass
         return False
 
+    pair_providers = {src: src_ops, dst: dst_ops}
+
     snaps = build_snapshots_for_feature(
         feature=feature,
         config=cfg,
-        providers=provs,
+        providers=pair_providers,
         snap_cache=ctx.snap_cache,
         snap_ttl_sec=ctx.snap_ttl_sec,
         dbg=dbg,
         emit_info=ctx.emit_info,
     )
+
     src_cur = snaps.get(src) or {}
     dst_cur = snaps.get(dst) or {}
 

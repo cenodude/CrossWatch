@@ -19,25 +19,36 @@ SnapCache = dict[tuple[str, str], tuple[float, SnapIndex]]
 
 def allowed_providers_for_feature(config: Mapping[str, Any], feature: str) -> set[str]:
     allowed: set[str] = set()
+    feat = str(feature or "").strip().lower()
+
     try:
         pairs = list((config.get("pairs") or []) or [])
     except Exception:
         pairs = []
 
-    def _feat_enabled(fmap: dict[str, Any], name: str) -> bool:
-        v = (fmap or {}).get(name)
-        if isinstance(v, bool):
-            return bool(v)
-        if isinstance(v, dict):
-            return bool(v.get("enable", v.get("add", True)))
-        return False
+    def _pair_runs_feature(pair: Mapping[str, Any]) -> bool:
+        selector = str(pair.get("feature") or "").strip().lower()
+        if selector and selector != "multi":
+            return selector == feat
+
+        fmap = pair.get("features")
+        if isinstance(fmap, Mapping) and fmap:
+            if feat not in fmap:
+                return False
+            v = fmap.get(feat)
+            if isinstance(v, bool):
+                return bool(v)
+            if isinstance(v, Mapping):
+                return bool(v.get("enable", v.get("enabled", True)))
+            return True
+
+        return True
 
     for p in pairs:
         try:
             if not p.get("enabled", True):
                 continue
-            fmap = dict(p.get("features") or {})
-            if not _feat_enabled(fmap, feature):
+            if not _pair_runs_feature(p):
                 continue
             s = str(p.get("source") or p.get("src") or "").strip().upper()
             t = str(p.get("target") or p.get("dst") or "").strip().upper()
@@ -47,6 +58,7 @@ def allowed_providers_for_feature(config: Mapping[str, Any], feature: str) -> se
                 allowed.add(t)
         except Exception:
             continue
+
     return allowed
 
 

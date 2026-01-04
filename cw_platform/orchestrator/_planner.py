@@ -2,10 +2,12 @@
 # planner helpers for orchestrator.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
 
 from ..id_map import minimal
+
 
 # Presence helpers
 def diff(
@@ -25,7 +27,12 @@ def diff(
 
     return add, rem
 
+
 # Ratings helpers
+def _round_half_up(f: float) -> int:
+    return int(f + 0.5) if f >= 0 else int(f - 0.5)
+
+
 def _norm_rating(v: Any) -> int | None:
     if v is None:
         return None
@@ -37,22 +44,24 @@ def _norm_rating(v: Any) -> int | None:
         except Exception:
             return None
 
-    # Plex 0–100 → 1–10 (SIMKL/Trakt use 1..10)
+    if f <= 0:
+        return None
+
     if 10 < f <= 100:
         f = f / 10.0
 
-    n = int(round(f))
+    n = _round_half_up(f)
     return n if 1 <= n <= 10 else None
+
 
 def _pick_rating(d: Any) -> int | None:
     if not isinstance(d, dict):
         return None
-    return _norm_rating(
-        d.get("rating")
-        or d.get("user_rating")
-        or d.get("score")
-        or d.get("value")
-    )
+
+    for k in ("rating", "user_rating", "score", "value"):
+        if k in d and d.get(k) is not None:
+            return _norm_rating(d.get(k))
+    return None
 
 
 def _pick_rated_at(d: Any) -> str | None:

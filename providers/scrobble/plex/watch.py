@@ -520,11 +520,13 @@ class WatchService:
                     ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp})
                     self._dbg(f"demote stop→pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
                 else:
-                    elapsed = now - self._last_seen.get(skd, 0.0)
+                    first = self._first_seen.get(skd)
+                    age = (now - first) if first else 999.0
                     fstop = _force_stop_at(cfg)
-                    if ev.progress < fstop and elapsed < 2.0:
-                        self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={fstop} dt={elapsed:.2f}s")
+                    if ev.progress < fstop and age < 2.0:
+                        self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={fstop} age={age:.2f}s")
                         return
+
             if ev.session_key:
                 self._last_seen[str(ev.session_key)] = time.time()
             if sk:
@@ -622,7 +624,7 @@ def autostart_from_config() -> WatchService | None:
     _AUTO_WATCH.start_async()
     return _AUTO_WATCH
 
-# --- Plex webhook for ratings (watch mode only) ------------------------------
+
 
 _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
@@ -774,10 +776,11 @@ def _plex_rating_to_10(v: Any) -> int | None:
         return None
     if f <= 0:
         return 0
-    if f <= 5.0:
-        f *= 2.0
+
     n = int(round(f))
-    return max(1, min(10, n))
+    if n <= 0:
+        n = 1
+    return max(0, min(10, n))
 
 
 def _ids_from_guids_simple(guids: Any) -> dict[str, Any]:

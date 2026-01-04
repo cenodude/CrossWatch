@@ -103,17 +103,38 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 # shadow
 def _shadow_load() -> dict[str, Any]:
     try:
-        return json.loads(SHADOW_PATH.read_text("utf-8"))
+        data = json.loads(SHADOW_PATH.read_text("utf-8"))
+        if isinstance(data, dict):
+            if "buckets_seen" not in data or not isinstance(data.get("buckets_seen"), dict):
+                data["buckets_seen"] = {}
+            if "items" not in data or not isinstance(data.get("items"), dict):
+                data["items"] = {}
+            data.setdefault("ts", None)
+            return data
+        return {"ts": None, "items": {}, "buckets_seen": {}}
     except Exception:
-        return {"ts": None, "items": {}}
+        return {"ts": None, "items": {}, "buckets_seen": {}}
 
 
-def _shadow_save(ts: str | None, items: Mapping[str, Any]) -> None:
+def _shadow_save(
+    ts: str | None,
+    items: Mapping[str, Any],
+    buckets_seen: Mapping[str, Any] | None = None,
+) -> None:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = SHADOW_PATH.with_suffix(".tmp")
         tmp.write_text(
-            json.dumps({"ts": ts, "items": dict(items)}, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                {
+                    "ts": ts,
+                    "items": dict(items),
+                    "buckets_seen": dict(buckets_seen or {}),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "utf-8",
         )
         os.replace(tmp, SHADOW_PATH)
@@ -273,8 +294,21 @@ def _bucket_present(items: Mapping[str, Mapping[str, Any]], bucket: str) -> bool
     return False
 
 
-def _has_all_buckets(items: Mapping[str, Mapping[str, Any]]) -> bool:
-    return all(_bucket_present(items, bucket) for bucket in WATCHLIST_BUCKETS)
+def _bucket_ready(
+    items: Mapping[str, Mapping[str, Any]],
+    bucket: str,
+    buckets_seen: Mapping[str, Any],
+) -> bool:
+    if _bucket_present(items, bucket):
+        return True
+    return bool((buckets_seen or {}).get(bucket))
+
+
+def _has_all_buckets(
+    items: Mapping[str, Mapping[str, Any]],
+    buckets_seen: Mapping[str, Any],
+) -> bool:
+    return all(_bucket_ready(items, bucket, buckets_seen) for bucket in WATCHLIST_BUCKETS)
 
 
 # JIT enrichment
@@ -439,7 +473,7 @@ def _shadow_add_items(items: Iterable[Mapping[str, Any]]) -> None:
         patch[key] = mapped
     if patch:
         _merge_upsert(current, patch)
-        _shadow_save(shadow.get("ts"), current)
+        _shadow_save(shadow.get("ts"), current, shadow.get("buckets_seen"))
 
 
 def _shadow_remove_keys(keys: Iterable[str]) -> None:
@@ -451,7 +485,7 @@ def _shadow_remove_keys(keys: Iterable[str]) -> None:
             del current[key]
             changed = True
     if changed:
-        _shadow_save(shadow.get("ts"), current)
+        _shadow_save(shadow.get("ts"), current, shadow.get("buckets_seen"))
 
 
 # fetchers
@@ -557,6 +591,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             pass
 
     shadow = _shadow_load()
+    buckets_seen: dict[str, Any] = dict(shadow.get("buckets_seen") or {})
     raw_items = shadow.get("items") or {}
     items: dict[str, dict[str, Any]] = {}
     if isinstance(raw_items, Mapping):
@@ -569,7 +604,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 continue
             items[key] = dict(value)
 
-    if comp_ts and shadow.get("ts") == comp_ts and _has_all_buckets(items):
+    if comp_ts and shadow.get("ts") == comp_ts and _has_all_buckets(items, buckets_seen):
         age = _shadow_age_seconds()
         ttl = _shadow_ttl_seconds()
         if age <= ttl:
@@ -594,7 +629,9 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 limit=limit,
                 force_refresh=True,
             )
+            buckets_seen[bucket] = True
             _merge_upsert(items, snap)
+            buckets_seen[bucket] = True
             cnt = len(snap)
             if cnt and prog:
                 try:
@@ -604,7 +641,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 except Exception:
                     pass
 
-        _shadow_save(comp_ts, items)
+        _shadow_save(comp_ts, items, buckets_seen)
         if prog:
             try:
                 final_total = len(items)
@@ -617,7 +654,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     force_all = force_present in ("1", "true", "all")
 
     for bucket in WATCHLIST_BUCKETS:
-        have_bucket = _bucket_present(items, bucket)
+        have_bucket = _bucket_ready(items, bucket, buckets_seen)
         ptw_ts = ts_map[bucket]["ptw"]
         rm_ts = ts_map[bucket]["rm"]
         rm_key = f"watchlist_removed:{bucket}"
@@ -637,7 +674,9 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 limit=limit,
                 force_refresh=True,
             )
+            buckets_seen[bucket] = True
             _merge_upsert(items, fresh)
+            buckets_seen[bucket] = True
             cnt = len(fresh)
             if cnt and prog:
                 try:
@@ -646,7 +685,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(done, total=total_known, force=(done == cnt))
                 except Exception:
                     pass
-            have_bucket = _bucket_present(items, bucket)
+            have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
         elif rm_ts and rm_ts != prev_rm:
             if have_bucket:
@@ -670,7 +709,9 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 limit=limit,
                 force_refresh=True,
             )
+            buckets_seen[bucket] = True
             _merge_upsert(items, fresh)
+            buckets_seen[bucket] = True
             save_watermark(rm_key, rm_ts)
             _log(f"{bucket}: rebuilt via ids_only ({len(fresh)})")
             cnt = len(fresh)
@@ -681,7 +722,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(done, total=total_known, force=(done == cnt))
                 except Exception:
                     pass
-            have_bucket = _bucket_present(items, bucket)
+            have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
         df_key = f"watchlist:{bucket}"
         date_from = coalesce_date_from(df_key)
@@ -695,6 +736,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 limit=limit,
                 force_refresh=False,
             )
+            buckets_seen[bucket] = True
             if not inc:
                 _log(f"{bucket}: incremental returned 0; fallback to present ids_only")
                 df_full = coalesce_date_from(
@@ -709,8 +751,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     limit=limit,
                     force_refresh=True,
                 )
+                buckets_seen[bucket] = True
 
             _merge_upsert(items, inc)
+            buckets_seen[bucket] = True
             save_watermark(df_key, ptw_ts)
             _log(f"{bucket}: incremental {len(inc)} from {date_from or 'baseline'}")
 
@@ -722,7 +766,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(done, total=total_known, force=(done == cnt))
                 except Exception:
                     pass
-            have_bucket = _bucket_present(items, bucket)
+            have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
         if not have_bucket:
             _log(f"{bucket}: missing in shadow; forcing FULL snapshot")
@@ -738,6 +782,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 limit=limit,
                 force_refresh=True,
             )
+            buckets_seen[bucket] = True
             if not snap:
                 snap = _pull_bucket(
                     adapter,
@@ -747,8 +792,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     limit=limit,
                     force_refresh=True,
                 )
+                buckets_seen[bucket] = True
 
             _merge_upsert(items, snap)
+            buckets_seen[bucket] = True
 
             cnt = len(snap)
             if cnt and prog:
@@ -766,7 +813,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     _jit_enrich_missing(adapter, items)
     _unfreeze_if_present(items.keys())
-    _shadow_save(comp_ts, items)
+    _shadow_save(comp_ts, items, buckets_seen)
 
     candidates: list[str] = [
         t

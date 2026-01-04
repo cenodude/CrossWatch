@@ -613,7 +613,7 @@ class TraktSink(ScrobbleSink):
             self._p_sess[(sk, mk)] = p_send
             return
 
-        if comp and p_send >= comp and action != "stop":
+        if comp and p_send >= comp and action not in ("stop", "start"):
             action = "stop"
 
         if ev.action == "stop":

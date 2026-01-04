@@ -241,6 +241,7 @@ export default {
     let PAIRS = [];
     let PAIR_FILTER = new Set();
     let PAIR_STATS = [];
+    let PAIR_EXCLUSIONS = [];
     let PAIR_SCOPE_KEYS = new Set();
     let UNSYNCED = new Set();
     let UNSYNCED_META = new Map();
@@ -800,7 +801,90 @@ export default {
       bindManualIds(provider, feature, key, it);
     }
 
-    function renderPairs() {
+    
+
+function _isTwoWayMode(mode) {
+  const m = String(mode || "one-way").toLowerCase();
+  return m === "two-way" || m === "bi" || m === "both" || m === "mirror";
+}
+
+function renderScopeExclusions() {
+  const dirs = new Set();
+  const list = (PAIRS || []).filter(
+    p =>
+      p &&
+      p.enabled &&
+      (!PAIR_FILTER.size || PAIR_FILTER.has(String(p.id)))
+  );
+  for (const p of list) {
+    const src = String(p.source || "").toUpperCase();
+    const dst = String(p.target || "").toUpperCase();
+    dirs.add(`${src}::${dst}`);
+    if (_isTwoWayMode(p.mode)) dirs.add(`${dst}::${src}`);
+  }
+
+  const scoped = (PAIR_EXCLUSIONS || []).filter(e =>
+    dirs.has(
+      `${String(e.source || "").toUpperCase()}::${String(
+        e.target || ""
+      ).toUpperCase()}`
+    )
+  );
+  if (!scoped.length) return "";
+
+  const typeLabel = t => {
+    const x = String(t || "").toLowerCase();
+    if (x === "episode") return "episodes";
+    if (x === "season") return "seasons";
+    if (x === "movie") return "movies";
+    if (x === "show") return "shows";
+    return x ? `${x}s` : "items";
+  };
+
+  const typeOrder = { season: 0, episode: 1, show: 2, movie: 3, anime: 4 };
+
+  const lines = scoped
+    .map(e => {
+      const src = String(e.source || "").toUpperCase();
+      const dst = String(e.target || "").toUpperCase();
+      const feat = String(e.feature || "").toLowerCase();
+      const types = e.excluded_types || {};
+      const entries = Object.entries(types)
+        .filter(([, c]) => typeof c === "number" && c > 0)
+        .sort((a, b) => {
+          const oa = typeOrder[String(a[0] || "").toLowerCase()] ?? 99;
+          const ob = typeOrder[String(b[0] || "").toLowerCase()] ?? 99;
+          if (oa !== ob) return oa - ob;
+          return (b[1] || 0) - (a[1] || 0);
+        });
+
+      if (!entries.length) return "";
+
+      const countStr = entries
+        .map(([t, c]) => `${c} ${typeLabel(t)}`)
+        .join(", ");
+
+      const allowed = Array.isArray(e.allowed_types) && e.allowed_types.length
+        ? ` (allowed: ${e.allowed_types.join(", ")})`
+        : "";
+
+      return `<div class="mono" style="opacity:.78;margin-top:6px">${escHtml(
+        `${src} → ${dst} • ${feat}: ${countStr}${allowed}`
+      )}</div>`;
+    })
+    .filter(Boolean)
+    .join("");
+
+  if (!lines) return "";
+
+  return `<div class="issue">
+    <div class="h">Out of scope (pair setup)</div>
+    <div style="opacity:.85">These won't sync because the selected pair config excludes them.</div>
+    ${lines}
+  </div>`;
+}
+
+function renderPairs() {
       if (!pairBar) return;
       const list = (PAIRS || []).filter(p => p && p.enabled);
       if (!PAIR_FILTER.size && list.length) {
@@ -990,6 +1074,7 @@ export default {
       ]);
 
       PAIR_STATS = meta.pair_stats || [];
+      PAIR_EXCLUSIONS = meta.pair_exclusions || [];
       PAIR_SCOPE_KEYS = new Set(pairMap ? Array.from(pairMap.keys()) : []);
       renderPairs();
 
@@ -1156,11 +1241,12 @@ export default {
       filter(search.value || "");
 
       if (!keep.length) {
+        const notes = renderScopeExclusions();
         if (NORMALIZATION && NORMALIZATION.length) {
-          issues.innerHTML = renderNormalizationPanel(NORMALIZATION);
+          issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + notes;
         } else {
-          issues.innerHTML =
-            `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+          const ok = `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+          issues.innerHTML = notes + ok;
         }
         if (!silent) hideWait();
         return;

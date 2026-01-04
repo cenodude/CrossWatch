@@ -568,7 +568,7 @@ def _bucketize(
     *,
     unrate: bool = False,
 ) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
-    body: dict[str, list[dict[str, Any]]] = {"movies": [], "shows": []}
+    body: dict[str, list[dict[str, Any]]] = {"movies": []}
     accepted: list[dict[str, Any]] = []
 
     seen: dict[str, int] = {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0}
@@ -582,16 +582,25 @@ def _bucketize(
         "missing_show_ids": 0,
     }
 
-    shows: dict[str, dict[str, Any]] = {}
+    shows_nested: dict[str, dict[str, Any]] = {}
+    shows_plain: dict[str, dict[str, Any]] = {}
     seasons_index: dict[tuple[str, int], dict[str, Any]] = {}
 
-    def ensure_show(ids: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def ensure_show_nested(ids: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         sk = _show_key(ids)
-        grp = shows.get(sk)
+        grp = shows_nested.get(sk)
         if not grp:
             grp = {"ids": ids}
-            shows[sk] = grp
+            shows_nested[sk] = grp
         return sk, grp
+
+    def ensure_show_plain(ids: dict[str, Any]) -> dict[str, Any]:
+        sk = _show_key(ids)
+        grp = shows_plain.get(sk)
+        if not grp:
+            grp = {"ids": ids}
+            shows_plain[sk] = grp
+        return grp
 
     for item in items or []:
         kind = _pick_kind(item)
@@ -641,11 +650,11 @@ def _bucketize(
                 skip["invalid_rating"] += 1
                 continue
 
-            sk, grp = ensure_show(ids)
+            grp_plain = ensure_show_plain(ids)
             if not unrate and rating is not None:
-                grp["rating"] = rating
+                grp_plain["rating"] = rating
                 if rated_at:
-                    grp["rated_at"] = rated_at
+                    grp_plain["rated_at"] = rated_at
 
             acc2: dict[str, Any] = {"type": "show", "ids": ids}
             if not unrate:
@@ -663,7 +672,7 @@ def _bucketize(
                 skip["missing_season"] += 1
                 continue
 
-            sk, grp = ensure_show(ids)
+            sk, grp = ensure_show_nested(ids)
             s = int(s_raw)
 
             sp: dict[str, Any] | None = seasons_index.get((sk, s))
@@ -692,14 +701,13 @@ def _bucketize(
             kept["seasons"] += 1
             continue
 
-        # episodes
         s_raw = item.get("season")
         e_raw = item.get("number") if item.get("number") is not None else item.get("episode")
         if s_raw is None or e_raw is None:
             skip["missing_episode"] += 1
             continue
 
-        sk, grp = ensure_show(ids)
+        sk, grp = ensure_show_nested(ids)
         s = int(s_raw)
         e = int(e_raw)
 
@@ -735,32 +743,35 @@ def _bucketize(
 
         kept["episodes"] += 1
 
-    if shows:
-        for grp in shows.values():
+    if shows_nested:
+        for grp in shows_nested.values():
             seasons_list3 = grp.get("seasons")
             if isinstance(seasons_list3, list):
-                grp["seasons"] = sorted(
-                    seasons_list3,
-                    key=lambda x: int(x.get("number") or 0),
-                )
+                grp["seasons"] = sorted(seasons_list3, key=lambda x: int(x.get("number") or 0))
                 for sp3 in grp["seasons"]:
                     episodes_list3 = sp3.get("episodes")
                     if isinstance(episodes_list3, list):
-                        sp3["episodes"] = sorted(
-                            episodes_list3,
-                            key=lambda x: int(x.get("number") or 0),
-                        )
-        body["shows"] = list(shows.values())
+                        sp3["episodes"] = sorted(episodes_list3, key=lambda x: int(x.get("number") or 0))
+        body["shows_nested"] = list(shows_nested.values())
+
+    if shows_plain:
+        body["shows_plain"] = list(shows_plain.values())
 
     body = {k: v for k, v in body.items() if v}
     out_sizes = {k: len(v) for k, v in body.items()}
 
     _log(f"aggregate seen={seen} attach={attach} skip={skip} out_sizes={out_sizes} unrate={unrate}")
 
-    if body.get("shows"):
+    if body.get("shows_nested"):
         try:
-            sample = body["shows"][0]
+            sample = body["shows_nested"][0]
             _log(f"shows.sample ids={sample.get('ids')} seasons={len(sample.get('seasons', []))}")
+        except Exception:
+            pass
+    if body.get("shows_plain"):
+        try:
+            sample2 = body["shows_plain"][0]
+            _log("shows.sample_plain ids=%s seasons=0" % (sample2.get("ids"),))
         except Exception:
             pass
 
@@ -801,12 +812,19 @@ def _write(
     ok = 0
     unresolved: list[dict[str, Any]] = []
 
-    for bucket in ("movies", "shows"):
-        rows = body.get(bucket) or []
+    stages: list[tuple[str, str]] = [
+        ("movies", "movies"),
+        ("shows_nested", "shows"),
+        ("shows_plain", "shows"),
+    ]
+
+    for body_key, bucket in stages:
+        rows = body.get(body_key) or []
         if not rows:
             continue
 
-        _log(f"{'UNRATE' if unrate else 'UPSERT'} bucket={bucket} rows={len(rows)} chunk={chunk_size}")
+        stage = "" if body_key == bucket else f" stage={body_key}"
+        _log(f"{'UNRATE' if unrate else 'UPSERT'} bucket={bucket}{stage} rows={len(rows)} chunk={chunk_size}")
 
         for part in _chunk(rows, chunk_size):
             payload = {bucket: part}
@@ -839,17 +857,14 @@ def _write(
 
                     if r.status_code == 204:
                         ok += len(part)
-                        _log(
-                            f"{'UNRATE' if unrate else 'UPSERT'} ok "
-                            f"bucket={bucket} (204) count={len(part)}"
-                        )
+                        _log(f"{'UNRATE' if unrate else 'UPSERT'} ok bucket={bucket}{stage} (204) count={len(part)}")
                     else:
                         if unrate:
                             removed = d.get("removed") or {}
                             n = sum(int(removed.get(k) or 0) for k in kinds)
                             if n <= 0:
                                 n = len(part)
-                            _log(f"UNRATE ok bucket={bucket} removed={removed} counted={n}")
+                            _log(f"UNRATE ok bucket={bucket}{stage} removed={removed} counted={n}")
                             ok += n
                         else:
                             updated = d.get("updated") or {}
@@ -862,7 +877,7 @@ def _write(
                             if n <= 0:
                                 n = len(part)
                             _log(
-                                f"UPSERT ok bucket={bucket} updated={updated} "
+                                f"UPSERT ok bucket={bucket}{stage} updated={updated} "
                                 f"added={added} existing={existing} counted={n}"
                             )
                             ok += n
@@ -873,7 +888,7 @@ def _write(
                 if r.status_code in (429, 503):
                     _log(
                         f"{'UNRATE' if unrate else 'UPSERT'} throttled {r.status_code} "
-                        f"bucket={bucket} attempt={attempt} backoff_ms={backoff}: {(r.text or '')[:180]}"
+                        f"bucket={bucket}{stage} attempt={attempt} backoff_ms={backoff}: {(r.text or '')[:180]}"
                     )
                     time.sleep(min(max_backoff_ms, backoff) / 1000.0)
                     attempt += 1
@@ -883,15 +898,12 @@ def _write(
 
                 _log(
                     f"{'UNRATE' if unrate else 'UPSERT'} failed {r.status_code} "
-                    f"bucket={bucket}: {(r.text or '')[:200]}"
+                    f"bucket={bucket}{stage}: {(r.text or '')[:200]}"
                 )
                 try:
                     sample = part[0]
                     if bucket == "shows":
-                        _log(
-                            f"payload.sample shows.ids={sample.get('ids')} "
-                            f"seasons={len(sample.get('seasons', []))}"
-                        )
+                        _log(f"payload.sample shows.ids={sample.get('ids')} seasons={len(sample.get('seasons', []))}")
                     else:
                         _log(f"payload.sample movies.ids={sample.get('ids')}")
                 except Exception:
@@ -900,9 +912,7 @@ def _write(
                 for x in part:
                     iid = x.get("ids") or {}
                     t = "show" if bucket == "shows" else "movie"
-                    unresolved.append(
-                        {"item": id_minimal({"type": t, "ids": iid}), "hint": f"http:{r.status_code}"}
-                    )
+                    unresolved.append({"item": id_minimal({"type": t, "ids": iid}), "hint": f"http:{r.status_code}"})
                 break
 
     if ok > 0 and not unresolved and not unrate:

@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._planner import diff, diff_ratings
+from ._planner import diff_ratings
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
-    def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]: return idx
+    def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
+        return idx
 
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
@@ -115,6 +116,19 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_un
 
     return out
 
+def _minimal_keep_rating(it: Mapping[str, Any]) -> dict[str, Any]:
+    out = _minimal(it)
+    try:
+        if "rating" in it:
+            out["rating"] = it.get("rating")
+        ra = (it.get("rated_at") or it.get("ratedAt") or it.get("user_rated_at") or "")
+        ra = ra.strip() if isinstance(ra, str) else ""
+        if ra:
+            out["rated_at"] = ra
+    except Exception:
+        pass
+    return out
+
 def _confirmed(res: dict) -> int:
     return int((res or {}).get("confirmed", (res or {}).get("count", 0)) or 0)
 
@@ -215,8 +229,10 @@ def _two_way_sync(
 
     emit("two:start", a=a, b=b, feature=feature, removals=allow_removals)
 
+    pair_providers = {a: aops, b: bops}
+
     snaps = build_snapshots_for_feature(
-        feature=feature, config=cfg, providers=provs,
+        feature=feature, config=cfg, providers=pair_providers,
         snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
         dbg=dbg, emit_info=info,
     )
@@ -251,7 +267,8 @@ def _two_way_sync(
             suspect_debug=bool((cfg.get("runtime") or {}).get("suspect_debug", True)),
             emit=emit, emit_info=info, prev_cp=prev_cp_A, now_cp=now_cp_A,
         )
-        if A_suspect: dbg("snapshot.guard", provider=a, feature=feature, reason=A_reason)
+        if A_suspect:
+            dbg("snapshot.guard", provider=a, feature=feature, reason=A_reason)
         B_eff_guard, B_suspect, B_reason = coerce_suspect_snapshot(
             provider=b, ops=bops, prev_idx=prevB, cur_idx=B_cur, feature=feature,
             suspect_min_prev=int((cfg.get("runtime") or {}).get("suspect_min_prev", 20)),
@@ -259,7 +276,8 @@ def _two_way_sync(
             suspect_debug=bool((cfg.get("runtime") or {}).get("suspect_debug", True)),
             emit=emit, emit_info=info, prev_cp=prev_cp_B, now_cp=now_cp_B,
         )
-        if B_suspect: dbg("snapshot.guard", provider=b, feature=feature, reason=B_reason)
+        if B_suspect:
+            dbg("snapshot.guard", provider=b, feature=feature, reason=B_reason)
     else:
         emit("drop_guard:skipped", a=a, b=b, feature=feature)
         A_eff_guard, A_suspect = dict(A_cur), False
@@ -293,7 +311,6 @@ def _two_way_sync(
         B_cur = _filter_index_by_libraries(B_cur, libs_B, allow_unknown=allow_unknown_B)
         B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_B)
 
-
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600
@@ -309,8 +326,10 @@ def _two_way_sync(
     obsA: set[str] = set()
     obsB: set[str] = set()
     if not bootstrap:
-        if include_obs_A and not A_suspect: obsA = {k for k in prevA.keys() if k not in (A_cur or {})}
-        if include_obs_B and not B_suspect: obsB = {k for k in prevB.keys() if k not in (B_cur or {})}
+        if include_obs_A and not A_suspect:
+            obsA = {k for k in prevA.keys() if k not in (A_cur or {})}
+        if include_obs_B and not B_suspect:
+            obsB = {k for k in prevB.keys() if k not in (B_cur or {})}
         newly = (obsA | obsB) - tomb
 
         if newly:
@@ -348,9 +367,11 @@ def _two_way_sync(
     shrinkA = {k for k in prevA.keys() if k not in (A_cur or {})}
     shrinkB = {k for k in prevB.keys() if k not in (B_cur or {})}
 
-    for k in list(obsA): A_eff.pop(k, None)
-    for k in list(obsB): B_eff.pop(k, None)
-    
+    for k in list(obsA):
+        A_eff.pop(k, None)
+    for k in list(obsB):
+        B_eff.pop(k, None)
+
     if manual_adds_A:
         A_eff = _merge_manual_adds(A_eff, manual_adds_A)
     if manual_adds_B:
@@ -361,28 +382,35 @@ def _two_way_sync(
         for ck, it in (idx or {}).items():
             ids = (it.get("ids") or {})
             for k, v in (ids or {}).items():
-                if v is None or str(v) == "": continue
+                if v is None or str(v) == "":
+                    continue
                 m[f"{k}:{str(v).lower()}"] = ck
         return m
 
     def _present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
-        if ck in idx: return True
+        if ck in idx:
+            return True
         ids = (it.get("ids") or {})
         try:
             for k, v in (ids or {}).items():
-                if v is None or str(v) == "": continue
-                if f"{k}:{str(v).lower()}" in alias: return True
-        except Exception: pass
+                if v is None or str(v) == "":
+                    continue
+                if f"{k}:{str(v).lower()}" in alias:
+                    return True
+        except Exception:
+            pass
         return False
 
     def _tokens(it: Mapping[str, Any]) -> set[str]:
         toks: set[str] = set()
         try:
             ck = _ck(it)
-            if ck: toks.add(ck)
+            if ck:
+                toks.add(ck)
             for k, v in ((it.get("ids") or {}) or {}).items():
-                if v is None or str(v) == "": continue
+                if v is None or str(v) == "":
+                    continue
                 toks.add(f"{str(k).lower()}:{str(v).lower()}")
         except Exception:
             pass
@@ -397,23 +425,30 @@ def _two_way_sync(
     try:
         for _tok in list(tomb):
             _ckA = A_alias.get(_tok)
-            if _ckA: tombX.add(_ckA)
+            if _ckA:
+                tombX.add(_ckA)
             _ckB = B_alias.get(_tok)
-            if _ckB: tombX.add(_ckB)
+            if _ckB:
+                tombX.add(_ckB)
             _ckPA = prevA_alias.get(_tok)
-            if _ckPA: tombX.add(_ckPA)
+            if _ckPA:
+                tombX.add(_ckPA)
             _ckPB = prevB_alias.get(_tok)
-            if _ckPB: tombX.add(_ckPB)
+            if _ckPB:
+                tombX.add(_ckPB)
     except Exception:
         tombX = set(tomb)
 
     def _prev_had(prev_idx: dict[str, Any], prev_alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
-        if ck in prev_idx: return True
+        if ck in prev_idx:
+            return True
         try:
             for k, v in ((it.get("ids") or {}) or {}).items():
-                if v is None or str(v) == "": continue
-                if f"{str(k).lower()}:{str(v).lower()}" in prev_alias: return True
+                if v is None or str(v) == "":
+                    continue
+                if f"{str(k).lower()}:{str(v).lower()}" in prev_alias:
+                    return True
         except Exception:
             pass
         return False
@@ -427,45 +462,105 @@ def _two_way_sync(
         A_f = _rate_filter(A_eff, fcfg)
         B_f = _rate_filter(B_eff, fcfg)
 
-        # A → B
-        up_B, unrate_B = diff_ratings(
-            A_f,
-            B_f,
-            propagate_timestamp_updates=True,
-        )
+        up_B, unrate_B = diff_ratings(A_f, B_f, propagate_timestamp_updates=False)
+        up_A, unrate_A = diff_ratings(B_f, A_f, propagate_timestamp_updates=False)
 
-        # B → A
-        up_A, unrate_A = diff_ratings(
-            B_f,
-            A_f,
-            propagate_timestamp_updates=True,
-        )
+        def _rated_epoch(it: Mapping[str, Any]) -> int | None:
+            from datetime import datetime
+            for key in ("rated_at", "ratedAt", "user_rated_at", "userRatedAt"):
+                v = it.get(key)
+                if isinstance(v, str) and v.strip():
+                    try:
+                        return int(datetime.fromisoformat(v.strip().replace("Z", "+00:00")).timestamp())
+                    except Exception:
+                        return None
+            return None
 
-        add_to_A = [_minimal(it) for it in up_A] if allow_adds else []
-        add_to_B = [_minimal(it) for it in up_B] if allow_adds else []
+        bi = sync_cfg.get("bidirectional") or {}
+        sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
+        prefer = sot if sot in (a, b) else a
 
+        upB = {k: it for it in up_B if (k := _ck(it))}
+        upA = {k: it for it in up_A if (k := _ck(it))}
+        unA = {k: it for it in unrate_A if (k := _ck(it))}
+        unB = {k: it for it in unrate_B if (k := _ck(it))}
+
+        addA: list[dict[str, Any]] = []
+        addB: list[dict[str, Any]] = []
+        remA: list[dict[str, Any]] = []
+        remB: list[dict[str, Any]] = []
+
+        for k in (set(upA) | set(upB) | set(unA) | set(unB)):
+            a_it = A_f.get(k) or upB.get(k) or {}
+            b_it = B_f.get(k) or upA.get(k) or {}
+
+            if k in upA and k in upB:
+                ta = _rated_epoch(a_it)
+                tb = _rated_epoch(b_it)
+                if ta is not None and tb is not None and ta != tb:
+                    win = a if ta > tb else b
+                else:
+                    win = prefer
+                if win == a:
+                    addB.append(_minimal_keep_rating(upB[k]))
+                else:
+                    addA.append(_minimal_keep_rating(upA[k]))
+                continue
+
+            if k in upB and k in unA:
+                if allow_removals and ((_tokens(a_it) & tombX) or (k in tombX)):
+                    remA.append(_minimal(unA[k]))
+                else:
+                    addB.append(_minimal_keep_rating(upB[k]))
+                continue
+
+            if k in upA and k in unB:
+                if allow_removals and ((_tokens(b_it) & tombX) or (k in tombX)):
+                    remB.append(_minimal(unB[k]))
+                else:
+                    addA.append(_minimal_keep_rating(upA[k]))
+                continue
+
+            if k in upB:
+                addB.append(_minimal_keep_rating(upB[k]))
+            elif k in upA:
+                addA.append(_minimal_keep_rating(upA[k]))
+            elif allow_removals and k in unA:
+                remA.append(_minimal(unA[k]))
+            elif allow_removals and k in unB:
+                remB.append(_minimal(unB[k]))
+
+        add_to_A = addA if allow_adds else []
+        add_to_B = addB if allow_adds else []
         if allow_removals:
-            rem_from_A.extend(_minimal(it) for it in unrate_A)
-            rem_from_B.extend(_minimal(it) for it in unrate_B)
+            rem_from_A.extend(remA)
+            rem_from_B.extend(remB)
     else:
         for _k, v in A_eff.items():
-            if _present(B_eff, B_alias, v): continue
+            if _present(B_eff, B_alias, v):
+                continue
             if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
                 rem_from_A.append(_minimal(v))
             else:
                 add_to_B.append(_minimal(v))
         for _k, v in B_eff.items():
-            if _present(A_eff, A_alias, v): continue
+            if _present(A_eff, A_alias, v):
+                continue
             if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
                 rem_from_B.append(_minimal(v))
             else:
                 add_to_A.append(_minimal(v))
 
-    if not allow_adds: add_to_A.clear(); add_to_B.clear()
-    if not allow_removals: rem_from_A.clear(); rem_from_B.clear()
+    if not allow_adds:
+        add_to_A.clear()
+        add_to_B.clear()
+    if not allow_removals:
+        rem_from_A.clear()
+        rem_from_B.clear()
 
     if bootstrap and allow_removals:
-        rem_from_A.clear(); rem_from_B.clear()
+        rem_from_A.clear()
+        rem_from_B.clear()
         dbg("bootstrap.no-delete", a=a, b=b)
 
     try:
@@ -490,9 +585,8 @@ def _two_way_sync(
     if feature != "watchlist":
         add_to_A = apply_blocklist(ctx.state_store, add_to_A, dst=a, feature=feature, pair_key=pair_key, emit=emit)
         add_to_B = apply_blocklist(ctx.state_store, add_to_B, dst=b, feature=feature, pair_key=pair_key, emit=emit)
-        
+
     manual_blocked = 0
-    # blocks apply to the DESTINATION provider
     if manual_blocks_A:
         pre_add, pre_rem = len(add_to_A), len(rem_from_A)
         add_to_A = _filter_manual_block(add_to_A, manual_blocks_A)
@@ -500,7 +594,7 @@ def _two_way_sync(
         blk = (pre_add - len(add_to_A)) + (pre_rem - len(rem_from_A))
         if blk:
             emit("debug", msg="blocked.counts", feature=feature, dst=a, pair=f"{a}-{b}",
-                blocked_manual=int(blk), blocked_total=int(blk))
+                 blocked_manual=int(blk), blocked_total=int(blk))
         manual_blocked += blk
 
     if manual_blocks_B:
@@ -510,7 +604,7 @@ def _two_way_sync(
         blk = (pre_add - len(add_to_B)) + (pre_rem - len(rem_from_B))
         if blk:
             emit("debug", msg="blocked.counts", feature=feature, dst=b, pair=f"{a}-{b}",
-                blocked_manual=int(blk), blocked_total=int(blk))
+                 blocked_manual=int(blk), blocked_total=int(blk))
         manual_blocked += blk
 
     if manual_blocked:
@@ -711,7 +805,8 @@ def _two_way_sync(
             if eff_add_A and not dry_run_flag:
                 for k in confirmed_A[:eff_add_A]:
                     v = k2i_A.get(k)
-                    if v: A_eff[k] = v
+                    if v:
+                        A_eff[k] = v
                 _bust_snapshot(a)
 
             emit("two:apply:add:A:done", dst=a, feature=feature,
@@ -781,7 +876,8 @@ def _two_way_sync(
             if eff_add_B and not dry_run_flag:
                 for k in confirmed_B[:eff_add_B]:
                     v = k2i_B.get(k)
-                    if v: B_eff[k] = v
+                    if v:
+                        B_eff[k] = v
                 _bust_snapshot(b)
 
             emit("two:apply:add:B:done", dst=b, feature=feature,
@@ -815,8 +911,10 @@ def _two_way_sync(
             pf["baseline"] = {"items": {k: _minimal(v) for k, v in (items or {}).items()}}
 
         def _commit_checkpoint(pmap, prov, feat, chk):
-            if not chk: return
-            pf = _ensure_pf(pmap, prov, feat); pf["checkpoint"] = chk
+            if not chk:
+                return
+            pf = _ensure_pf(pmap, prov, feat)
+            pf["checkpoint"] = chk
 
         _commit_baseline(provs_block, a, feature, A_eff)
         _commit_baseline(provs_block, b, feature, B_eff)
@@ -835,8 +933,8 @@ def _two_way_sync(
 
     skipped_total = int(resA_add.get("skipped", 0)) + int(resB_add.get("skipped", 0)) + \
                     int(resA_rem.get("skipped", 0)) + int(resB_rem.get("skipped", 0))
-    errors_total  = int(resA_add.get("errors", 0))  + int(resB_add.get("errors", 0))  + \
-                    int(resA_rem.get("errors", 0))  + int(resB_rem.get("errors", 0))
+    errors_total = int(resA_add.get("errors", 0)) + int(resB_add.get("errors", 0)) + \
+                   int(resA_rem.get("errors", 0)) + int(resB_rem.get("errors", 0))
     unresolved_total = int(unresolved_new_A_total) + int(unresolved_new_B_total)
 
     return {
@@ -868,18 +966,9 @@ def run_two_way_feature(
     Hs = health_map.get(str(src).upper()) or {}
     Hd = health_map.get(str(dst).upper()) or {}
 
-    ops_src = ctx.providers.get(str(src).upper())
-    ops_dst = ctx.providers.get(str(dst).upper())
-
-    caps_off = False
-    try:
-        caps_off = ((ops_src and (ops_src.capabilities() or {}).get("observed_deletes") is False) or
-                    (ops_dst and (ops_dst.capabilities() or {}).get("observed_deletes") is False))
-    except Exception:
-        caps_off = False
-
-    include_obs_override = False if (_health_status(Hs) == "down"
-                                    or _health_status(Hd) == "down") else None
+    include_obs_override = None
+    if _health_status(Hs) == "down" or _health_status(Hd) == "down":
+        include_obs_override = False
 
     emit("feature:start", src=str(src).upper(), dst=str(dst).upper(), feature=feature)
     res = _two_way_sync(

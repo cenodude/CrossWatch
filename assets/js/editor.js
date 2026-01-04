@@ -1485,6 +1485,15 @@
       pad(d.getMinutes())
     );
   }
+  function formatSxxEyy(season, episode) {
+    const s = season == null ? NaN : parseInt(String(season), 10);
+    if (!Number.isFinite(s)) return "";
+    const pad = n => String(n).padStart(2, "0");
+    const e = episode == null ? NaN : parseInt(String(episode), 10);
+    if (Number.isFinite(e)) return `S${pad(s)}E${pad(e)}`;
+    return `S${pad(s)}`;
+  }
+
 
   function updateExtraDisplay(row, el) {
     let label = "";
@@ -2394,7 +2403,10 @@
       if ((subType === "episode" || subType === "season") && row.raw && row.raw.series_title) {
         const sub = document.createElement("div");
         sub.className = "cw-title-sub";
-        sub.textContent = row.raw.series_title;
+        let label = row.raw.series_title;
+        const code = subType === "episode" ? formatSxxEyy(row.raw.season, row.raw.episode) : formatSxxEyy(row.raw.season, null);
+        if (code) label += " - " + code;
+        sub.textContent = label;
         titleCell.appendChild(sub);
       }
       tr.appendChild(cell(titleCell));

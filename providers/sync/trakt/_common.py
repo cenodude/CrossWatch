@@ -82,15 +82,19 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, str]:
         has_scope = item.get("season") is not None and item.get("episode") is not None
         if has_scope and not item.get("show_ids"):
             return {}
+
         show_ids = dict(item.get("show_ids") or {})
         for key in list(ids.keys()):
             if key in show_ids and str(ids.get(key)) == str(show_ids.get(key)):
                 ids.pop(key, None)
-        for key in ("imdb", "tmdb", "trakt", "tvdb"):
+
+        out: dict[str, str] = {}
+        for key in ("trakt", "tvdb", "tmdb", "imdb"):
             v = ids.get(key)
             if v:
-                return {key: str(v)}
-        return {}
+                out[key] = str(v)
+        return out
+
     return {k: str(v) for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
 
 

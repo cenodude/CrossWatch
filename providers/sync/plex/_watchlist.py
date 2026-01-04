@@ -14,7 +14,7 @@ from typing import Any, Iterable, Mapping
 
 import requests
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 from .._mod_common import request_with_retries
 
 UNRESOLVED_PATH = "/config/.cw_state/plex_watchlist.unresolved.json"
@@ -761,21 +761,6 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
         if g in src:
             return src[g]
     return None
-
-
-# Hydration cache
-_HYDRATE_CACHE: dict[str, dict[str, Any]] = {}
-
-
-def _hydrate_ids_cached(token: str, rk: str) -> dict[str, Any]:
-    m = _HYDRATE_CACHE.get(rk)
-    if m is None:
-        try:
-            m = hydrate_external_ids(token, rk) or {}
-        except Exception:
-            m = {}
-        _HYDRATE_CACHE[rk] = m
-    return m
 
 
 # Index build

@@ -96,7 +96,7 @@ def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = ("trakt", "tmdb", "tvdb") if kind in ("seasons", "episodes") else ("trakt", "imdb", "tmdb", "tvdb")
+    allowed = ("trakt", "tmdb", "tvdb", "imdb") if kind == "episodes" else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "imdb", "tmdb", "tvdb")
     out: dict[str, Any] = {}
     for k in allowed:
         v = ids.get(k)
@@ -136,10 +136,13 @@ def _accepted_minimal_for_cache(
     if rated_at:
         m["rated_at"] = rated_at
 
+    keep_show_ids: dict[str, Any] | None = None
     show_ids = src.get("show_ids")
     if t in ("season", "episode") and isinstance(show_ids, Mapping) and show_ids:
-        m["show_ids"] = dict(show_ids)
+        keep_show_ids = dict(show_ids)
+        m["show_ids"] = keep_show_ids
 
+    season = None
     if t in ("season", "episode"):
         season = src.get("season")
         if season is None:
@@ -147,6 +150,7 @@ def _accepted_minimal_for_cache(
         if season is not None:
             m["season"] = season
 
+    ep = None
     if t == "episode":
         ep = src.get("episode")
         if ep is None:
@@ -154,7 +158,14 @@ def _accepted_minimal_for_cache(
         if ep is not None:
             m["episode"] = ep
 
-    return id_minimal(m)
+    res = id_minimal(m)
+    if keep_show_ids:
+        res["show_ids"] = keep_show_ids
+    if season is not None and t in ("season", "episode"):
+        res["season"] = season
+    if ep is not None and t == "episode":
+        res["episode"] = ep
+    return res
 
 
 def _fetch_bucket(
@@ -192,30 +203,45 @@ def _fetch_bucket(
                         elif t == "season" and isinstance(row.get("season"), dict):
                             se = row["season"]
                             show = row.get("show") or {}
+                            show_ids = show.get("ids") or {}
+                            season_no = se.get("number")
                             m = id_minimal(
                                 {
                                     "type": "season",
                                     "ids": se.get("ids") or {},
-                                    "show_ids": show.get("ids") or {},
-                                    "season": se.get("number"),
+                                    "show_ids": show_ids,
+                                    "season": season_no,
                                     "series_title": show.get("title"),
                                     "title": show.get("title"),
                                 }
                             )
+                            if isinstance(show_ids, Mapping) and show_ids:
+                                m["show_ids"] = dict(show_ids)
+                            if season_no is not None:
+                                m["season"] = season_no
                         elif t == "episode" and isinstance(row.get("episode"), dict):
                             ep = row["episode"]
                             show = row.get("show") or {}
+                            show_ids = show.get("ids") or {}
+                            season_no = ep.get("season")
+                            ep_no = ep.get("number")
                             m = id_minimal(
                                 {
                                     "type": "episode",
                                     "ids": ep.get("ids") or {},
-                                    "show_ids": show.get("ids") or {},
-                                    "season": ep.get("season"),
-                                    "episode": ep.get("number"),
+                                    "show_ids": show_ids,
+                                    "season": season_no,
+                                    "episode": ep_no,
                                     "series_title": show.get("title"),
                                     "title": ep.get("title") or show.get("title"),
                                 }
                             )
+                            if isinstance(show_ids, Mapping) and show_ids:
+                                m["show_ids"] = dict(show_ids)
+                            if season_no is not None:
+                                m["season"] = season_no
+                            if ep_no is not None:
+                                m["episode"] = ep_no
                         else:
                             continue
 
@@ -325,10 +351,12 @@ def _bucketize_for_upsert(
         if rating is None:
             continue
 
+        t_raw = str(it.get("type") or "").strip().lower()
+        if t_raw not in {"movie", "show", "season", "episode", "series", "tv"}:
+            continue
         kind = (pick_trakt_kind(it) or "").lower()
-        if not kind:
-            t = (it.get("type") or "").lower()
-            kind = {"movie": "movies", "show": "shows", "season": "seasons", "episode": "episodes"}.get(t, "movies")
+        if kind not in {"movies", "shows", "seasons", "episodes"}:
+            continue
 
         ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
         if not ids:
@@ -348,14 +376,15 @@ def _bucketize_for_upsert(
         elif kind == "seasons":
             push("seasons", obj)
             t = "season"
-        else:
+        elif kind == "episodes":
             push("episodes", obj)
             t = "episode"
+        else:
+            continue
 
         accepted.append(_accepted_minimal_for_cache(t, ids, it, rating=rating, rated_at=str(ra) if ra else None))
 
     return body, accepted
-
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
@@ -405,7 +434,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         buckets.setdefault(bucket, []).append(obj)
 
     for it in items or []:
+        t_raw = str(it.get("type") or "").strip().lower()
+        if t_raw not in {"movie", "show", "season", "episode", "series", "tv"}:
+            continue
         kind = (pick_trakt_kind(it) or "").lower()
+        if kind not in {"movies", "shows", "seasons", "episodes"}:
+            continue
+
         ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
         if not ids:
             continue
@@ -418,9 +453,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         elif kind == "seasons":
             push("seasons", {"ids": ids})
             t = "season"
-        else:
+        elif kind == "episodes":
             push("episodes", {"ids": ids})
             t = "episode"
+        else:
+            continue
+        
         accepted_minimals.append(_accepted_minimal_for_cache(t, ids, it))
 
     if not buckets:
