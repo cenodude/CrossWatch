@@ -552,21 +552,38 @@ def _probe_session_progress(cfg: dict[str, Any], rating_key: Any, session_key: A
         if r.status_code != 200:
             return None
         root = ET.fromstring(r.text or "")
-        rk_str = str(rating_key) if rating_key is not None else ""
+
+        def _pct(v: Any) -> int | None:
+            d = int(v.get("duration") or "0") or 0
+            vo = int(v.get("viewOffset") or "0") or 0
+            if d <= 0:
+                return None
+            return int(round(100.0 * max(0, min(vo, d)) / float(d)))
+
         sk_str = str(session_key) if session_key is not None else ""
+        if sk_str:
+            for v in root.iter("Video"):
+                if (v.get("sessionKey") or "") == sk_str:
+                    return _pct(v)
+            return None
+
+        rk_str = str(rating_key) if rating_key is not None else ""
+        if not rk_str:
+            return None
+
+        hit = None
         for v in root.iter("Video"):
-            rk = v.get("ratingKey") or ""
-            sk = v.get("sessionKey") or ""
-            if (rk_str and rk == rk_str) or (sk_str and sk == sk_str):
-                d = int(v.get("duration") or "0") or 0
-                vo = int(v.get("viewOffset") or "0") or 0
-                if d <= 0:
+            if (v.get("ratingKey") or "") == rk_str:
+                if hit is not None:
                     return None
-                pct = int(round(100.0 * max(0, min(vo, d)) / float(d)))
-                return pct
+                hit = v
+        if hit is None:
+            return None
+        return _pct(hit)
     except Exception:
         return None
     return None
+
 
 
 def _probe_played_status(cfg: dict[str, Any], rating_key: Any) -> bool:
