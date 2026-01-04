@@ -397,18 +397,13 @@ class WatchService:
             sessions = self._plex.sessions()
         except Exception:
             return None
+
         sid = str(ev.session_key or "")
         rk = str((ev.ids or {}).get("plex") or "")
         tgt = None
-        if rk:
-            for v in sessions:
-                try:
-                    if str(getattr(v, "ratingKey", "")) == rk:
-                        tgt = v
-                        break
-                except Exception:
-                    pass
-        elif sid:
+
+        # Prefer sessionKey
+        if sid:
             for v in sessions:
                 try:
                     if str(getattr(v, "sessionKey", "")) == sid:
@@ -416,8 +411,24 @@ class WatchService:
                         break
                 except Exception:
                     pass
+                
+        # Fallback to ratingKey
+        if not tgt and rk:
+            matches = []
+            for v in sessions:
+                try:
+                    if str(getattr(v, "ratingKey", "")) == rk:
+                        matches.append(v)
+                except Exception:
+                    pass
+            if len(matches) == 1:
+                tgt = matches[0]
+            else:
+                return None
+
         if not tgt:
             return None
+
         d = getattr(tgt, "duration", None)
         vo = getattr(tgt, "viewOffset", None)
         try:
@@ -495,7 +506,7 @@ class WatchService:
                 if isinstance(prev, int):
                     best = prev
             if best != want and best is not None:
-                self._dbg(f"probe correction: {want}% → {best}%")
+                self._dbg(f"probe correction: {want}% - {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
@@ -518,7 +529,7 @@ class WatchService:
                 maxp = self._max_seen.get(skd, ev.progress)
                 if ev.progress >= 98 and maxp < thr:
                     ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp})
-                    self._dbg(f"demote stop→pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
+                    self._dbg(f"demote stop/pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
                 else:
                     first = self._first_seen.get(skd)
                     age = (now - first) if first else 999.0

@@ -109,7 +109,7 @@ def show(rows: list[dict[str, Any]], cols: list[str], page: int = 25) -> None:
                 break
 
 
-# ---------- client ----------
+#  CLient
 def build_meta(cfg: dict[str, Any]) -> dict[str, Any]:
     b = cfg_block(cfg)
     apikey = str(b.get("api_key") or "").strip()
@@ -162,7 +162,7 @@ def request_json(
     return 0, {}, last_text
 
 
-# ---------- watchlist ----------
+# Watchlist
 def _pick_wl_kind(row: dict[str, Any]) -> str:
     t = str(row.get("mediatype") or row.get("type") or "").strip().lower()
     return "show" if t in ("show", "tv", "series", "shows") else "movie"
@@ -199,9 +199,30 @@ def _wl_to_minimal(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _wl_key(item: dict[str, Any]) -> str:
+    ids = dict(item.get("ids") or {})
+    imdb = str(ids.get("imdb") or "").strip()
+    if imdb:
+        return f"imdb:{imdb}"
+    tmdb = safe_int(ids.get("tmdb"))
+    if tmdb is not None:
+        return f"tmdb:{tmdb}"
+    tvdb = safe_int(ids.get("tvdb"))
+    if tvdb is not None:
+        return f"tvdb:{tvdb}"
+    mdbl = ids.get("mdblist")
+    if mdbl:
+        return f"mdblist:{mdbl}"
+    title = str(item.get("title") or "").strip()
+    year = safe_int(item.get("year"))
+    if title and year:
+        return f"title:{title}|year:{year}"
+    return json.dumps(item, sort_keys=True)
+
+
 def _parse_rows(data: Any) -> tuple[list[dict[str, Any]], Optional[int]]:
     if isinstance(data, dict):
-        total = None
+        total: Optional[int] = None
         for key in ("total_items", "total", "count", "items_total"):
             try:
                 v = int(data.get(key) or 0)
@@ -210,20 +231,43 @@ def _parse_rows(data: Any) -> tuple[list[dict[str, Any]], Optional[int]]:
                     break
             except Exception:
                 pass
+
+        pag = data.get("pagination")
+        if total is None and isinstance(pag, dict):
+            for key in ("total_items", "total", "count", "items_total"):
+                try:
+                    v = int(pag.get(key) or 0)
+                    if v > 0:
+                        total = v
+                        break
+                except Exception:
+                    pass
+
         if "movies" in data or "shows" in data:
-            rows = list(data.get("movies") or []) + list(data.get("shows") or [])
+            rows: list[Any] = []
+            for bucket in ("movies", "shows"):
+                val = data.get(bucket)
+                if isinstance(val, list):
+                    rows.extend(val)
+                elif isinstance(val, dict):
+                    rows.extend(val.get("results") or val.get("items") or [])
             return [r for r in rows if isinstance(r, dict)], total
+
         rows = data.get("results") or data.get("items") or []
         return [r for r in rows if isinstance(r, dict)], total
+
     if isinstance(data, list):
         return [r for r in data if isinstance(r, dict)], None
+
     return [], None
 
 
 def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     offset = 0
     limit = int(meta["wl_page_size"])
+    stagnant = 0
     while True:
         st, data, _ = request_json(
             ses,
@@ -235,14 +279,31 @@ def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[
         )
         if st != 200:
             raise RuntimeError(f"GET watchlist failed: {st}")
-        rows, _total = _parse_rows(data)
+        rows, total = _parse_rows(data)
         if not rows:
             break
+
+        new_unique = 0
         for r in rows:
-            out.append(_wl_to_minimal(r))
-        if len(rows) < limit:
-            break
+            m = _wl_to_minimal(r)
+            k = _wl_key(m)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(m)
+            new_unique += 1
+
         offset += len(rows)
+        if total is not None and len(seen) >= int(total):
+            break
+
+        if new_unique == 0:
+            stagnant += 1
+            if stagnant >= 2:
+                break
+        else:
+            stagnant = 0
+
     return out
 
 
@@ -314,7 +375,7 @@ def write_watchlist(meta: dict[str, Any], ses: requests.Session, action: str, it
     return ok, unresolved
 
 
-# ---------- ratings ----------
+# Ratings
 def _valid_rating(v: Any) -> Optional[int]:
     try:
         i = int(str(v).strip())
@@ -493,10 +554,38 @@ def _merge_item(dst: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
         dst[k] = item
 
 
+def _pag_limit(pag: Any, default: int) -> int:
+    if isinstance(pag, dict):
+        for k in ("limit", "per_page", "page_size"):
+            v = safe_int(pag.get(k))
+            if v and v > 0:
+                return v
+    return default
+
+
+def _pag_total_pages(pag: Any) -> Optional[int]:
+    if isinstance(pag, dict):
+        return safe_int(pag.get("page_count") or pag.get("total_pages") or pag.get("pages"))
+    return None
+
+
+def _pag_has_more(pag: Any, *, page: int, per_page: int, lengths: Iterable[int]) -> bool:
+    if isinstance(pag, dict):
+        hm = pag.get("has_more")
+        if hm is not None:
+            return bool(hm)
+        tp = _pag_total_pages(pag)
+        if tp is not None:
+            return page < tp
+    eff = _pag_limit(pag, per_page)
+    return any(int(x) >= eff for x in lengths)
+
+
 def _collect_ratings_type(meta: dict[str, Any], ses: requests.Session, type_name: str, per_page: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     page = 1
     max_pages = 9999
+    stagnant = 0
     while True:
         st, data, _ = request_json(
             ses,
@@ -513,6 +602,7 @@ def _collect_ratings_type(meta: dict[str, Any], ses: requests.Session, type_name
         rows = data.get(type_name) or []
         if not isinstance(rows, list) or not rows:
             break
+        before = len(out)
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -522,10 +612,14 @@ def _collect_ratings_type(meta: dict[str, Any], ses: requests.Session, type_name
                 m = _row_episode_top(row)
             if m:
                 out.append(m)
+        if len(out) == before:
+            stagnant += 1
+            if stagnant >= 2:
+                break
+        else:
+            stagnant = 0
         pag = data.get("pagination") or {}
-        has_more = pag.get("has_more")
-        if has_more is None:
-            has_more = len(rows) >= per_page
+        has_more = _pag_has_more(pag, page=page, per_page=per_page, lengths=(len(rows),))
         if not bool(has_more) or page >= max_pages:
             break
         page += 1
@@ -537,6 +631,7 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
     page = 1
     per_page = int(meta["rt_per_page"])
     max_pages = 9999
+    stagnant = 0
     while True:
         st, data, _ = request_json(
             ses,
@@ -554,6 +649,8 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
         shows = data.get("shows") or []
         seasons_top = data.get("seasons") or []
         episodes_top = data.get("episodes") or []
+
+        before = len(idx)
 
         for row in movies:
             if isinstance(row, dict):
@@ -625,10 +722,20 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
                 if m:
                     _merge_item(idx, m)
 
+        if len(idx) == before:
+            stagnant += 1
+            if stagnant >= 2:
+                break
+        else:
+            stagnant = 0
+
         pag = data.get("pagination") or {}
-        has_more = pag.get("has_more")
-        if has_more is None:
-            has_more = any(len(x) >= per_page for x in (movies, shows, seasons_top, episodes_top))
+        has_more = _pag_has_more(
+            pag,
+            page=page,
+            per_page=per_page,
+            lengths=(len(movies), len(shows), len(seasons_top), len(episodes_top)),
+        )
         if not bool(has_more) or page >= max_pages:
             break
         page += 1
@@ -826,7 +933,7 @@ def write_ratings(meta: dict[str, Any], ses: requests.Session, *, unrate: bool, 
     return ok
 
 
-# ---------- backup ----------
+# Backup / Restore
 def backup_now(wl: list[dict[str, Any]], ratings: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
     ensure_backup_dir()
     cleanup_old_backups()
@@ -864,7 +971,7 @@ def restore_from_backup(meta: dict[str, Any], ses: requests.Session, b: dict[str
     print("Restore done.")
 
 
-# ---------- menu ----------
+# Menu
 def menu() -> str:
     print("\n=== MDBList Cleanup and Backup/Restore ===")
     print("1. Show MDBList Watchlist")

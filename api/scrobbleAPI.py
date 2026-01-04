@@ -1,4 +1,4 @@
-# _scrobbleAPI.py
+# /api/scrobbleAPI.py
 # CrossWatch - Scrobble API for multiple services
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
@@ -23,13 +23,13 @@ except Exception:
 
 try:
     from _logging import log as BASE_LOG
-except Exception:  # optional
+except Exception:
     BASE_LOG = None
 
 try:
     from plexapi.myplex import MyPlexAccount
     HAVE_PLEXAPI = True
-except Exception:  # optional
+except Exception:
     MyPlexAccount = None  # type: ignore[assignment]
     HAVE_PLEXAPI = False
 
@@ -240,7 +240,7 @@ def _filter_users_with_server_access(
     users: list[dict[str, Any]],
     server_uuid: str,
 ) -> list[dict[str, Any]]:
-    del cfg, server_uuid  # unused
+    del cfg, server_uuid
     if not users:
         return users
     allowed = {"owner", "managed", "friend"}
@@ -1050,7 +1050,7 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
     else:
         log(
             f"plexwatcher-webhook: processed media_type={res.get('media_type')} rating={res.get('rating')}",
-            "DEBUG",
+            "INFO",
         )
 
     return JSONResponse(

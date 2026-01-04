@@ -1,4 +1,4 @@
-# api/maintenanceAPI.py
+# /api/maintenanceAPI.py
 # CrossWatch - Maintenance API for CrossWatch
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations

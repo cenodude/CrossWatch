@@ -1,4 +1,3 @@
-# /providers/sync/simkl/_common.py
 # SIMKL Module for common functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -229,6 +228,9 @@ def _pick_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
     for key in ("item", "entry", "media"):
         if isinstance(row.get(key), Mapping):
             return row[key]
+    for key in ("movie", "show", "anime", "episode", "season"):
+        if isinstance(row.get(key), Mapping):
+            return row[key]
     if "ids" in row or "title" in row:
         return row
     return {}
@@ -249,6 +251,24 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
                 break
     if obj_type == "anime":
         obj_type = "show"
+
+    if obj_type == "episode":
+        ids = _fix_imdb((payload.get("ids") if isinstance(payload, Mapping) else None) or obj.get("ids") or {})
+        def _to_int(v: Any) -> int | None:
+            try:
+                return int(v)
+            except Exception:
+                return None
+        base = {
+            "type": "episode",
+            "title": (payload.get("title") if isinstance(payload, Mapping) else None) or obj.get("title"),
+            "year": (payload.get("year") if isinstance(payload, Mapping) else None) or obj.get("year"),
+            "ids": {k: v for k, v in ids.items() if v},
+            "season": _to_int(obj.get("season") or obj.get("season_number")),
+            "episode": _to_int(obj.get("episode") or obj.get("episode_number")),
+        }
+        return id_minimal(base)
+
     if obj_type not in ("movie", "show"):
         return id_minimal({})
 
@@ -263,6 +283,33 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def key_of(item: Mapping[str, Any]) -> str:
+    if not isinstance(item, Mapping):
+        return ""
+
+    typ = str(item.get("type") or "").lower()
+    if typ == "episode":
+        def _to_int(v: Any) -> int:
+            try:
+                n = int(v)
+                return n if n > 0 else 0
+            except Exception:
+                return 0
+
+        s_num = _to_int(item.get("season") or item.get("season_number"))
+        e_num = _to_int(item.get("episode") or item.get("episode_number") or item.get("number"))
+
+        show_ids_raw = item.get("show_ids")
+        show_ids = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) else {}
+        if not show_ids:
+            ids_raw = item.get("ids")
+            ids = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
+            show_ids = {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "simkl") if ids.get(k)}
+
+        if show_ids and s_num and e_num:
+            show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""
+            if show_key:
+                return f"{show_key}#s{s_num:02d}e{e_num:02d}"
+
     m = normalize(item)
     k = canonical_key(m)
     return k or ""

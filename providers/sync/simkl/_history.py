@@ -1,4 +1,3 @@
-# /providers/sync/simkl/_history.py
 # SIMKL Module for history sync
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -157,6 +156,10 @@ def _raw_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
     return dict(item.get("show_ids") or {})
 
 
+def _thaw_key(item: Mapping[str, Any]) -> str:
+    typ = str(item.get("type") or "").lower()
+    return simkl_key_of(item) if typ == "episode" else simkl_key_of(id_minimal(item))
+
 
 def _episode_lookup(
     session: Any,
@@ -180,11 +183,41 @@ def _episode_lookup(
         if cand in _EP_LOOKUP_MEMO:
             return _EP_LOOKUP_MEMO[cand]
 
+    def _as_title(v: Any) -> str | None:
+        if isinstance(v, str):
+            t = v.strip()
+            return t or None
+        if isinstance(v, Mapping):
+            for k in ("en", "title", "name", "original", "en_title"):
+                t = _as_title(v.get(k))
+                if t:
+                    return t
+            for vv in v.values():
+                t = _as_title(vv)
+                if t:
+                    return t
+        if isinstance(v, list):
+            for it in v:
+                t = _as_title(it)
+                if t:
+                    return t
+        return None
+
     def _pick_title(row: Mapping[str, Any]) -> str | None:
-        for key in ("title", "name", "en_title", "episode_title"):
-            v = row.get(key)
-            if isinstance(v, str) and v.strip():
-                return v.strip()
+        for key in ("title", "name", "en_title", "episode_title", "episodeName", "episodeTitle", "episode_name"):
+            t = _as_title(row.get(key))
+            if t:
+                return t
+        ep = row.get("episode")
+        if isinstance(ep, Mapping):
+            for key in ("title", "name", "en_title", "episode_title"):
+                t = _as_title(ep.get(key))
+                if t:
+                    return t
+        for key in ("titles", "names"):
+            t = _as_title(row.get(key))
+            if t:
+                return t
         return None
 
     def _extract_ids(row: Mapping[str, Any]) -> dict[str, str]:
@@ -199,10 +232,11 @@ def _episode_lookup(
     for cand in candidates:
         out: dict[tuple[int, int], dict[str, Any]] = {}
         url = f"{URL_TV_EPISODES}/{cand}"
+        params: dict[str, str] = {"extended": "full"}
         if client_id:
-            url = url + f"?client_id={quote(client_id)}"
+            params["client_id"] = client_id
         try:
-            resp = session.get(url, headers=dict(headers), timeout=timeout)
+            resp = session.get(url, headers=dict(headers), params=params, timeout=timeout)
             if not resp.ok:
                 _log(f"tv/episodes failed id={cand} status={resp.status_code}")
                 _EP_LOOKUP_MEMO[cand] = {}
@@ -309,7 +343,7 @@ def _freeze(
     ids_sent: Mapping[str, Any],
     watched_at: str | None,
 ) -> None:
-    key = simkl_key_of(id_minimal(item))
+    key = _thaw_key(item)
     data = _load_unresolved()
     row = data.get(key) or {
         "feature": "history",
@@ -347,6 +381,26 @@ def _shadow_save(obj: Mapping[str, Any]) -> None:
     _save_json(SHADOW_PATH, obj)
 
 
+def _shadow_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    typ = str(item.get("type") or "").lower()
+    if typ == "episode":
+        ids = dict(item.get("ids") or {})
+        show_ids = dict(item.get("show_ids") or {})
+        return {
+            "type": "episode",
+            "season": item.get("season"),
+            "episode": item.get("episode"),
+            "title": item.get("title"),
+            "year": item.get("year"),
+            "ids": ids,
+            "show_ids": show_ids,
+            "series_title": item.get("series_title"),
+            "series_year": item.get("series_year"),
+            "watched": item.get("watched"),
+        }
+    return dict(id_minimal(item))
+
+
 def _shadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     items_list = list(items or [])
     if not items_list:
@@ -355,10 +409,10 @@ def _shadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     events: dict[str, Any] = dict(shadow.get("events") or {})
     for item in items_list:
         ts = _as_epoch(item.get("watched_at"))
-        bucket_key = simkl_key_of(id_minimal(item))
+        bucket_key = _thaw_key(item)
         if not ts or not bucket_key:
             continue
-        events[f"{bucket_key}@{ts}"] = {"item": id_minimal(item)}
+        events[f"{bucket_key}@{ts}"] = {"item": _shadow_item(item)}
     shadow["events"] = events
     _shadow_save(shadow)
 
@@ -379,7 +433,7 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
         if isinstance(item, Mapping):
             item_dict: dict[str, Any] = dict(item)
             out[event_key] = item_dict
-            thaw.add(simkl_key_of(id_minimal(item_dict)))
+            thaw.add(_thaw_key(item_dict))
             merged += 1
     if merged:
         _log(f"shadow merged {merged} backfill events")
@@ -684,7 +738,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     meta = ep_meta.get((s_num, e_num)) if isinstance(ep_meta, Mapping) else None
                     ep_title = meta.get("title") if isinstance(meta, Mapping) else None
                     ep_ids = meta.get("ids") if isinstance(meta, Mapping) else None
-                    ids_for_key = ep_ids if isinstance(ep_ids, Mapping) and ep_ids else show_ids
+                    ids_for_key = dict(show_ids)
+                    if isinstance(ep_ids, Mapping):
+                        for k in ID_KEYS:
+                            v = ep_ids.get(k)
+                            if v:
+                                ids_for_key[k] = v
                     ep = {
                         "type": "episode",
                         "season": s_num,
@@ -698,7 +757,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         "watched": True,
                         "watched_at": watched_at,
                     }
-                    bucket_key = simkl_key_of(id_minimal(ep))
+                    bucket_key = simkl_key_of(ep)
                     event_key = f"{bucket_key}@{ts}"
                     if event_key in out:
                         continue
@@ -813,7 +872,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             entry = _movie_add_entry(item)
             if entry:
                 movies.append(entry)
-                thaw_keys.append(simkl_key_of(id_minimal(item)))
+                thaw_keys.append(_thaw_key(item))
                 ev = dict(id_minimal(item))
                 ev["watched_at"] = entry.get("watched_at")
                 if ev.get("watched_at"):
@@ -848,8 +907,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 group["seasons"].append(season)
             season["episodes"].append({"number": e_num, "watched_at": watched_at})
 
-            thaw_keys.append(simkl_key_of(id_minimal(item)))
-            ev = dict(id_minimal(item))
+            thaw_keys.append(_thaw_key(item))
+            ev = dict(item)
+            ev.pop("_adapter", None)
             ev["watched_at"] = watched_at
             shadow_events.append(ev)
             continue
@@ -857,7 +917,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         entry = _show_add_entry(item)
         if entry:
             shows_whole.append(entry)
-            thaw_keys.append(simkl_key_of(id_minimal(item)))
+            thaw_keys.append(_thaw_key(item))
         else:
             unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
 
@@ -936,7 +996,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
                 continue
             movies.append({"ids": ids})
-            thaw_keys.append(simkl_key_of(id_minimal(item)))
+            thaw_keys.append(_thaw_key(item))
             continue
         if typ == "episode":
             show_ids = _show_ids_of_episode(item)
@@ -954,12 +1014,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 season = {"number": s_num, "episodes": []}
                 group["seasons"].append(season)
             season["episodes"].append({"number": e_num})
-            thaw_keys.append(simkl_key_of(id_minimal(item)))
+            thaw_keys.append(_thaw_key(item))
             continue
         ids = _ids_of(item)
         if ids:
             shows_whole.append({"ids": ids})
-            thaw_keys.append(simkl_key_of(id_minimal(item)))
+            thaw_keys.append(_thaw_key(item))
         else:
             unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
     body: dict[str, Any] = {}

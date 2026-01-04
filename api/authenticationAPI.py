@@ -1,4 +1,4 @@
-# api/authenticationAPI.py
+# /api/authenticationAPI.py
 # CrossWatch - Authentication API for multiple services
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -69,7 +69,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception:
             pass
 
-    # ---------- provider registry ----------
+    # provider registry
     try:
         from providers.auth.registry import auth_providers_html, auth_providers_manifests
     except ImportError:
@@ -84,7 +84,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def api_auth_providers_html():
         return HTMLResponse(auth_providers_html())
 
-    # ---------- PLEX ----------
+    # PLEX
     def plex_request_pin() -> dict[str, Any]:
         cfg = load_config(); plex = cfg.setdefault("plex", {})
         cid = plex.get("client_id")
@@ -341,7 +341,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def plex_users():
         return plex_pickusers()
 
-    # ---------- JELLYFIN ----------
+    # JELLYFIN
     @app.post("/api/jellyfin/login", tags=["auth"])
     def api_jellyfin_login(payload: dict[str, Any] = Body(...)) -> JSONResponse:
         if not isinstance(payload, dict):
@@ -390,7 +390,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         jf_ensure_whitelist_defaults()
         return {"libraries": jf_fetch_libraries_from_cfg()}
 
-    # ---------- EMBY ----------
+    # EMBY
     @app.post("/api/emby/login", tags=["auth"])
     def api_emby_login(payload: dict[str, Any] = Body(...)) -> JSONResponse:
         if not isinstance(payload, dict):
@@ -490,7 +490,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         users = [u for u in users if (u or {}).get("username")]
         return {"users": users, "count": len(users)}
     
-    # ---------- MDBLIST ----------
+    # MDBLIST
     @app.post("/api/mdblist/save", tags=["auth"])
     def api_mdblist_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
@@ -516,7 +516,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
             return {"ok": False, "error": str(e)}
         
-    # ---------- TAUTULLI ----------
+    # TAUTULLI
     @app.post("/api/tautulli/save", tags=["auth"])
     def api_tautulli_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         server = str((payload or {}).get("server_url") or (payload or {}).get("server") or "").strip().rstrip("/")
@@ -570,7 +570,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] ERROR disconnect: {e}")
             return {"ok": False, "error": str(e)}
 
-    # ---------- TRAKT ----------
+    # TRAKT
     def trakt_request_pin() -> dict[str, Any]:
         prov = _import_provider("providers.auth._auth_TRAKT")
         if not prov:
@@ -698,7 +698,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR token delete: {e}")
             return {"ok": False, "error": str(e)}
 
-    # ---------- SIMKL ----------
+    # SIMKL
     SIMKL_STATE: dict[str, Any] = {}
 
     @app.post("/api/simkl/authorize", tags=["auth"])

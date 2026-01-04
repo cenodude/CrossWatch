@@ -1,4 +1,4 @@
-# _watchlistAPI.py
+# /api/watchlistAPI.py
 # CrossWatch - Unified watchlist manager for multiple services
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -20,7 +20,7 @@ from services.watchlist import (
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
-# Helper functions
+
 def _norm_key(x: Any) -> str:
     s = str((x.get("key") if isinstance(x, dict) else x) or "").strip()
     return urllib.parse.unquote(s) if "%" in s else s
@@ -290,7 +290,7 @@ def remove_from_plex_by_ids(
     return remove_from_provider_by_ids("PLEX", ids, media_type)
 
 
-# Route handlers
+
 @router.get("", include_in_schema=False)
 @router.get("/")
 def api_watchlist(

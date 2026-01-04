@@ -29,6 +29,7 @@
       .cf-trakt{background:#2b0a0a;color:#ff6470;border-color:rgba(255,100,112,.28)}
       .cf-jellyfin{background:#15102b;color:#9aa5ff;border-color:rgba(154,165,255,.28)}
       .cf-mdblist{background:#0d1926;color:#9fd3ff;border-color:rgba(159,211,255,.28)}
+      .cf-tautulli{background:#0b1f2b;color:#6ee7ff;border-color:rgba(110,231,255,.28)}
       .cf-crosswatch{background:#15102b;color:#d6c8ff;border-color:rgba(124,92,255,.35)}
       .cf-generic{background:#1b1b1b;color:#eaeaea}
       .cf-event.progress{border-color:#0ea5e9}
@@ -63,10 +64,10 @@
   // helpers
   const esc = (s)=>String(s??"").replace(/[&<>]/g,(m)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
   const ICON={start:"▶",pair:"🔗",plan:"📝",add:"➕",remove:"➖",done:"✅",complete:"🏁",unresolved:"⚠️"};
-  const PROV={PLEX:{cls:"cf-plex",logo:"/assets/img/PLEX-log.svg"},SIMKL:{cls:"cf-simkl",logo:"/assets/img/SIMKL-log.svg"},CROSSWATCH:{cls:"cf-crosswatch",logo:"/assets/img/CROSSWATCH-log.svg"},TRAKT:{cls:"cf-trakt",logo:"/assets/img/TRAKT-log.svg"},JELLYFIN:{cls:"cf-jellyfin",logo:"/assets/img/JELLYFIN-log.svg"},MDBLIST:{cls:"cf-mdblist",logo:"/assets/img/MDBLIST-log.svg"}};
+  const PROV={PLEX:{cls:"cf-plex",logo:"/assets/img/PLEX-log.svg"},SIMKL:{cls:"cf-simkl",logo:"/assets/img/SIMKL-log.svg"},CROSSWATCH:{cls:"cf-crosswatch",logo:"/assets/img/CROSSWATCH-log.svg"},TRAKT:{cls:"cf-trakt",logo:"/assets/img/TRAKT-log.svg"},JELLYFIN:{cls:"cf-jellyfin",logo:"/assets/img/JELLYFIN-log.svg"},MDBLIST:{cls:"cf-mdblist",logo:"/assets/img/MDBLIST-log.svg"},TAUTULLI:{cls:"cf-tautulli",logo:"/assets/img/TAUTULLI-log.svg"}};
   const arrowFor=(m)=>String(m||"").toLowerCase().startsWith("two")?"⇄":"→";
   const cap=(s)=>String(s||"").replace(/^./,(c)=>c.toUpperCase());
-  const badge=(name)=>{const key=String(name||"").toUpperCase(),p=PROV[key]||{cls:"cf-generic"};const LABELS={PLEX:"Plex",SIMKL:"SIMKL",TRAKT:"Trakt",JELLYFIN:"Jellyfin",MDBLIST:"MDBlist",CROSSWATCH:"CrossWatch"};const label=LABELS[key]||key;const img=p.logo?`<img src="${p.logo}" alt="" aria-hidden="true">`:"";return `<span class="cf-badge ${p.cls}">${img}${esc(label)}</span>`;};
+  const badge=(name)=>{const key=String(name||"").toUpperCase(),p=PROV[key]||{cls:"cf-generic"};const LABELS={PLEX:"Plex",SIMKL:"SIMKL",TRAKT:"Trakt",JELLYFIN:"Jellyfin",MDBLIST:"MDBlist",CROSSWATCH:"CrossWatch",TAUTULLI:"Tautulli"};const label=LABELS[key]||key;const img=p.logo?`<img src="${p.logo}" alt="" aria-hidden="true">`:"";return `<span class="cf-badge ${p.cls}">${img}${esc(label)}</span>`;};
   const block=(type,titleHTML,metaText,extra)=>`<div class="cf-event ${type} ${(type==="start"?"cf-slide-in cf-pulse":"cf-fade-in")}${extra?(" "+String(extra).replace(/\b(?:cf-)?complete-shimmer\b/g,"").replace(/\s+/g," ").trim()):""}"><span class="cf-ico"></span>${titleHTML}${metaText?`<span class="cf-sep">·</span><span class="cf-meta">${metaText}</span>`:""}</div>`;
 
   // State
