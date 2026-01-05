@@ -109,6 +109,16 @@ class MDBLISTClient:
     def connect(self) -> MDBLISTClient:
         if not self.cfg.api_key:
             raise MDBLISTAuthError("Missing MDBList api_key")
+        try:
+            # Ignore proxy env vars; misconfigured proxies can look like "random timeouts"
+            self.session.trust_env = False
+        except Exception:
+            pass
+        try:
+            self.session.headers.setdefault("Accept", "application/json")
+            self.session.headers.setdefault("User-Agent", f"CrossWatch MDBLIST/{__VERSION__}")
+        except Exception:
+            pass
         _log("MDBList client initialized and ready")
         return self
 
@@ -191,44 +201,74 @@ class MDBLISTModule:
                 "api": {},
             }
 
-        tmo = max(3.0, min(self.cfg.timeout, 15.0))
+        m = dict(self.raw_cfg.get("mdblist") or {})
+        tmo = float(m.get("health_timeout", max(2.0, min(self.cfg.timeout, 8.0))))
+        hr = int(m.get("health_max_retries", 1))
+        hr = max(1, min(hr, self.cfg.max_retries))
+
         base = self.client.BASE
         sess = self.client.session
         start = time.perf_counter()
 
+        def hit(path: str, *, params: dict[str, Any]) -> tuple[bool, int | None, int | None, dict[str, int | None], str | None]:
+            ok = False
+            code: int | None = None
+            retry_after: int | None = None
+            rate: dict[str, int | None] = {"limit": None, "remaining": None, "reset": None}
+            err: str | None = None
+            try:
+                r = request_with_retries(
+                    sess,
+                    "GET",
+                    f"{base}{path}",
+                    params=params,
+                    timeout=tmo,
+                    max_retries=hr,
+                )
+                code = r.status_code
+                if 200 <= r.status_code < 300:
+                    ok = True
+                elif r.status_code == 429:
+                    ra = r.headers.get("Retry-After")
+                    if ra:
+                        try:
+                            retry_after = int(ra)
+                        except Exception:
+                            pass
+                rate = parse_rate_limit(r.headers)
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"
+            return ok, code, retry_after, rate, err
+
+        user_ok, user_code, user_ra, user_rate, user_err = hit("/user", params={"apikey": self.cfg.api_key})
+
         wl_ok = False
         wl_code: int | None = None
-        retry_after: int | None = None
-        rate: dict[str, int | None] = {"limit": None, "remaining": None, "reset": None}
-
-        try:
-            r = request_with_retries(
-                sess,
-                "GET",
-                f"{base}/watchlist/items",
-                params={"apikey": self.cfg.api_key, "limit": 1, "offset": 0, "unified": 1},
-                timeout=tmo,
-                max_retries=self.cfg.max_retries,
+        wl_ra: int | None = None
+        wl_rate: dict[str, int | None] = user_rate
+        wl_err: str | None = None
+        if enabled.get("watchlist"):
+            wl_ok, wl_code, wl_ra, wl_rate, wl_err = hit(
+                "/watchlist/items",
+                params={"apikey": self.cfg.api_key, "limit": 1, "offset": 0},
             )
-            wl_code = r.status_code
-            if 200 <= r.status_code < 300:
-                wl_ok = True
-            elif r.status_code == 429:
-                ra = r.headers.get("Retry-After")
-                if ra:
-                    try:
-                        retry_after = int(ra)
-                    except Exception:
-                        pass
-            rate = parse_rate_limit(r.headers)
-        except Exception:
-            wl_ok = False
+
+        rt_ok = False
+        rt_code: int | None = None
+        rt_ra: int | None = None
+        rt_rate: dict[str, int | None] = user_rate
+        rt_err: str | None = None
+        if enabled.get("ratings"):
+            rt_ok, rt_code, rt_ra, rt_rate, rt_err = hit(
+                "/sync/ratings",
+                params={"apikey": self.cfg.api_key, "page": 1, "limit": 1},
+            )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
         features = {
             "watchlist": wl_ok if enabled.get("watchlist") else False,
-            "ratings": wl_ok if enabled.get("ratings") else False,
+            "ratings": rt_ok if enabled.get("ratings") else False,
             "history": False,
             "playlists": False,
         }
@@ -249,14 +289,31 @@ class MDBLISTModule:
         disabled = [k for k, v in enabled.items() if not v]
         if disabled:
             details["disabled"] = disabled
-        if retry_after is not None:
-            details["retry_after_s"] = retry_after
+        errs: dict[str, str] = {}
+        if user_err:
+            errs["user"] = user_err
+        if wl_err:
+            errs["watchlist"] = wl_err
+        if rt_err:
+            errs["ratings"] = rt_err
+        if errs:
+            details["errors"] = errs
 
         api = {
+            "user": {
+                "status": user_code,
+                "retry_after": user_ra,
+                "rate": user_rate,
+            },
             "watchlist": {
                 "status": wl_code,
-                "retry_after": retry_after,
-                "rate": rate,
+                "retry_after": wl_ra,
+                "rate": wl_rate,
+            },
+            "ratings": {
+                "status": rt_code,
+                "retry_after": rt_ra,
+                "rate": rt_rate,
             },
         }
 

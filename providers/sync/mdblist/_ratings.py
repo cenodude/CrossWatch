@@ -131,7 +131,7 @@ def _key_of(obj: Mapping[str, Any]) -> str:
                 base = f"mdblist:{mdbl}"
 
     if kind in ("season", "episode") and not base:
-        title = str(obj.get("title") or "").strip()
+        title = str(obj.get("series_title") or obj.get("title") or "").strip()
         year_val = obj.get("year")
         base = f"title:{title}|year:{year_val}" if title and year_val else ""
 
@@ -290,7 +290,8 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
         ids = sids or sh_ids
         if not ids:
             return None
-        title = str(show.get("title") or show.get("name") or sv.get("name") or "").strip()
+        show_title = str(show.get("title") or show.get("name") or "").strip()
+        title = show_title or str(sv.get("name") or "").strip()
         y = show.get("year") or show.get("first_air_year")
         if not y:
             fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
@@ -303,6 +304,8 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
         out: dict[str, Any] = {"type": "season", "ids": ids, "rating": rating, "season": sv.get("number")}
         if sh_ids:
             out["show_ids"] = sh_ids
+        if show_title:
+            out["series_title"] = show_title
         if row.get("rated_at"):
             out["rated_at"] = row["rated_at"]
         if title:
@@ -334,7 +337,9 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
         ids = eids or sh_ids
         if not ids:
             return None
-        title = str(show.get("title") or show.get("name") or ev.get("name") or "").strip()
+        show_title = str(show.get("title") or show.get("name") or "").strip()
+        ep_title = str(ev.get("name") or ev.get("title") or "").strip()
+        title = ep_title or show_title
         y = show.get("year") or show.get("first_air_year")
         if not y:
             fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
@@ -354,6 +359,8 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
         }
         if sh_ids:
             out["show_ids"] = sh_ids
+        if show_title:
+            out["series_title"] = show_title
         if row.get("rated_at"):
             out["rated_at"] = row["rated_at"]
         if title:
@@ -369,15 +376,23 @@ def build_index(
     adapter: Any,
     *,
     per_page: int = 1000,
-    max_pages: int = 9999,
+    max_pages: int = 250,
 ) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
+    cached = _load_cache()
     if not apikey:
         _log("missing api_key → empty ratings index")
+        if cached:
+            _log(f"fallback cache (missing api_key) size={len(cached)}")
+            return dict(cached)
         _save_cache({})
         return {}
     per_page = _cfg_int(cfg, "ratings_per_page", per_page)
+    per_page = max(1, min(int(per_page), 5000))
+    max_pages = _cfg_int(cfg, "ratings_max_pages", max_pages)
+    max_pages = max(1, min(int(max_pages), 2000))
+    since = str(cfg.get("ratings_since") or "").strip()
     sess = adapter.client.session
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
@@ -386,16 +401,26 @@ def build_index(
     pages = 0
     _log(f"index.start per_page={per_page} max_pages={max_pages} timeout={timeout} retries={retries}")
     while True:
-        r = request_with_retries(
-            sess,
-            "GET",
-            URL_LIST,
-            params={"apikey": apikey, "page": page, "limit": per_page},
-            timeout=timeout,
-            max_retries=retries,
-        )
+        try:
+            r = request_with_retries(
+                sess,
+                "GET",
+                URL_LIST,
+                params={"apikey": apikey, "page": page, "limit": per_page, **({"since": since} if since else {})},
+                timeout=timeout,
+                max_retries=retries,
+            )
+        except Exception as e:
+            _log(f"GET /sync/ratings page {page} failed: {type(e).__name__}: {e}")
+            if cached:
+                _log(f"fallback cache size={len(cached)}")
+                return dict(cached)
+            raise
         if r.status_code != 200:
             _log(f"GET /sync/ratings page {page} -> {r.status_code}")
+            if cached:
+                _log(f"fallback cache size={len(cached)}")
+                return dict(cached)
             break
         data = r.json() if (r.text or "").strip() else {}
         movies = data.get("movies") or []
@@ -426,7 +451,7 @@ def build_index(
                 }.items()
                 if v
             }
-            title = str(sh.get("title") or sh.get("name") or "").strip()
+            show_title = str(sh.get("title") or sh.get("name") or "").strip()
             y = sh.get("year") or sh.get("first_air_year")
             if not y:
                 fa = str(sh.get("first_air_date") or sh.get("first_aired") or "").strip()
@@ -452,8 +477,9 @@ def build_index(
                     ra = sv.get("rated_at")
                     if ra:
                         sm["rated_at"] = ra
-                    if title:
-                        sm["title"] = title
+                    if show_title:
+                        sm["series_title"] = show_title
+                        sm["title"] = show_title
                     if year:
                         sm["year"] = year
                     minis.append(sm)
@@ -478,8 +504,13 @@ def build_index(
                     rae = ev.get("rated_at")
                     if rae:
                         em["rated_at"] = rae
-                    if title:
-                        em["title"] = title
+                    ep_title = str(ev.get("name") or ev.get("title") or "").strip()
+                    if show_title:
+                        em["series_title"] = show_title
+                    if ep_title:
+                        em["title"] = ep_title
+                    elif show_title:
+                        em["title"] = show_title
                     if year:
                         em["year"] = year
                     minis.append(em)
@@ -503,46 +534,47 @@ def build_index(
             break
         page += 1
 
-    def _fetch_type_pages(type_name: str) -> None:
-        p = 1
-        done = 0
-        while True:
-            r_ = request_with_retries(
-                sess,
-                "GET",
-                URL_LIST,
-                params={"apikey": apikey, "page": p, "limit": per_page, "type": type_name},
-                timeout=timeout,
-                max_retries=retries,
-            )
-            if r_.status_code != 200:
-                _log(f"GET /sync/ratings?type={type_name} page {p} -> {r_.status_code}")
-                break
-            d = r_.json() if (r_.text or "").strip() else {}
-            rows = d.get(type_name) or []
-            if not rows:
-                break
-            if type_name == "seasons":
-                for row_ in rows:
-                    m_ = _row_season(row_)
-                    if m_:
-                        out[_key_of(m_)] = m_
-            elif type_name == "episodes":
-                for row_ in rows:
-                    m_ = _row_episode(row_)
-                    if m_:
-                        out[_key_of(m_)] = m_
-            pag_ = d.get("pagination") or {}
-            done += 1
-            has_more = pag_.get("has_more")
-            if has_more is None:
-                has_more = len(rows) >= per_page
-            if not bool(has_more) or done >= max_pages:
-                break
-            p += 1
-
-    _fetch_type_pages("seasons")
-    _fetch_type_pages("episodes")
+    fetch_types = bool(cfg.get("ratings_fetch_type_pages") in (True, "1", 1))
+    if fetch_types:
+        def _fetch_type_pages(type_name: str) -> None:
+            p = 1
+            done = 0
+            while True:
+                r_ = request_with_retries(
+                    sess,
+                    "GET",
+                    URL_LIST,
+                    params={"apikey": apikey, "page": p, "limit": per_page, "type": type_name, **({"since": since} if since else {})},
+                    timeout=timeout,
+                    max_retries=retries,
+                )
+                if r_.status_code != 200:
+                    _log(f"GET /sync/ratings?type={type_name} page {p} -> {r_.status_code}")
+                    break
+                d = r_.json() if (r_.text or "").strip() else {}
+                rows = d.get(type_name) or []
+                if not rows:
+                    break
+                if type_name == "seasons":
+                    for row_ in rows:
+                        m_ = _row_season(row_)
+                        if m_:
+                            out[_key_of(m_)] = m_
+                elif type_name == "episodes":
+                    for row_ in rows:
+                        m_ = _row_episode(row_)
+                        if m_:
+                            out[_key_of(m_)] = m_
+                pag_ = d.get("pagination") or {}
+                done += 1
+                has_more = pag_.get("has_more")
+                if has_more is None:
+                    has_more = len(rows) >= per_page
+                if not bool(has_more) or done >= max_pages:
+                    break
+                p += 1
+        _fetch_type_pages("seasons")
+        _fetch_type_pages("episodes")
     kinds: dict[str, int] = {"movie": 0, "show": 0, "season": 0, "episode": 0}
     for v in out.values():
         k = str(v.get("type") or "").lower()
@@ -792,6 +824,7 @@ def _write(
 ) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
+    cached = _load_cache()
     if not apikey:
         _log("write abort: missing api_key")
         return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]

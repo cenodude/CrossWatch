@@ -124,7 +124,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_log_rate_limits": True,              # Log X-RateLimit-* and Retry-After when present
         "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
 
-        # Ratings (used by _ratings.py)
+        # Ratings
         "ratings_per_page": 100,                        # Items per page when indexing (10–100; clamped to 100)
         "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
         "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE

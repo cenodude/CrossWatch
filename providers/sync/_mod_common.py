@@ -410,7 +410,10 @@ def request_with_retries(
                 break
     if isinstance(last, requests.Response):
         return last
-    raise requests.RequestException(f"request failed after retries: {method} {url}")
+    msg = f"request failed after retries: {method} {url}"
+    if last is not None:
+        msg = f"{msg} ({type(last).__name__}: {last})"
+    raise requests.RequestException(msg)
 
 
 request_with_retry = request_with_retries
