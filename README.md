@@ -167,8 +167,3 @@ Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</c
 3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble  
 4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
-
-## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
-CW can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
-Have Plex Pass / Emby Premiere? you can use <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>. 
-Personally, I prefer the watcher because it’s real-time.
