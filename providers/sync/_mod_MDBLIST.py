@@ -20,7 +20,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.1.0"
+__VERSION__ = "2.2.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 
@@ -110,7 +110,7 @@ class MDBLISTClient:
         if not self.cfg.api_key:
             raise MDBLISTAuthError("Missing MDBList api_key")
         try:
-            # Ignore proxy env vars; misconfigured proxies can look like "random timeouts"
+ 
             self.session.trust_env = False
         except Exception:
             pass
@@ -119,7 +119,7 @@ class MDBLISTClient:
             self.session.headers.setdefault("User-Agent", f"CrossWatch MDBLIST/{__VERSION__}")
         except Exception:
             pass
-        _log("MDBList client initialized and ready")
+
         return self
 
     def get(self, url: str, **kw: Any):

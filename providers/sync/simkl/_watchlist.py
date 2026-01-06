@@ -32,7 +32,7 @@ STATE_DIR = Path("/config/.cw_state")
 UNRESOLVED_PATH = STATE_DIR / "simkl.watchlist.unresolved.json"
 SHADOW_PATH = STATE_DIR / "simkl.watchlist.shadow.json"
 
-WATCHLIST_BUCKETS = ("movies", "shows")
+WATCHLIST_BUCKETS = ("movies", "shows", "anime")
 
 _ENRICH_MEMO: dict[str, dict[str, Any]] = {}
 
@@ -42,7 +42,7 @@ def _log(msg: str) -> None:
         print(f"[SIMKL:watchlist] {msg}")
 
 
-# unresolved
+
 def _load_unresolved() -> dict[str, Any]:
     try:
         return json.loads(UNRESOLVED_PATH.read_text("utf-8"))
@@ -100,7 +100,7 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
         _save_unresolved(data)
 
 
-# shadow
+
 def _shadow_load() -> dict[str, Any]:
     try:
         data = json.loads(SHADOW_PATH.read_text("utf-8"))
@@ -157,8 +157,7 @@ def _shadow_ttl_seconds() -> float:
         return 300.0
 
 
-# helpers
-_ALLOWED_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
+_ALLOWED_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb")
 
 
 def _ids_filter(ids_in: Mapping[str, Any]) -> dict[str, Any]:
@@ -210,7 +209,7 @@ def _rows_from_data(data: Any, bucket: str) -> list[Any]:
     if isinstance(data, dict):
         if isinstance(data.get("items"), list):
             return data["items"]
-        key = "movies" if bucket == "movies" else "shows"
+        key = "movies" if bucket == "movies" else ("anime" if bucket == "anime" else "shows")
         arr = data.get(key)
         if isinstance(arr, list):
             return arr
@@ -219,7 +218,7 @@ def _rows_from_data(data: Any, bucket: str) -> list[Any]:
 
 def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
     if isinstance(row, Mapping):
-        node = (row.get("movie") or row.get("show") or row or {})
+        node = (row.get("movie") or row.get("show") or row.get("anime") or row or {})
         ids_src = node.get("ids") if isinstance(node.get("ids"), Mapping) else row
         ids = _ids_filter(dict(ids_src or {}))
         title = node.get("title")
@@ -232,7 +231,7 @@ def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
         ids = {}
         title = None
         year = None
-    media_type = "movie" if bucket == "movies" else "show"
+    media_type = "movie" if bucket == "movies" else ("anime" if bucket == "anime" else "show")
     return {
         "type": media_type,
         "title": title,
@@ -263,6 +262,7 @@ def _bucket_ts(acts: Mapping[str, Any]) -> dict[str, dict[str, str | None]]:
     out: dict[str, dict[str, str | None]] = {
         "movies": {"ptw": None, "rm": None},
         "shows": {"ptw": None, "rm": None},
+        "anime": {"ptw": None, "rm": None},
     }
     out["movies"]["ptw"] = _first(
         _acts_get(acts, "movies", "plantowatch"),
@@ -284,9 +284,16 @@ def _bucket_ts(acts: Mapping[str, Any]) -> dict[str, dict[str, str | None]]:
         _acts_get(acts, "tv_shows", "removed_from_list"),
         _acts_get(acts, "tv_shows", "removed"),
     )
+    out["anime"]["ptw"] = _first(
+        _acts_get(acts, "anime", "plantowatch"),
+        _acts_get(acts, "anime", "all"),
+        _acts_get(acts, "watchlist", "anime"),
+    )
+    out["anime"]["rm"] = _first(
+        _acts_get(acts, "anime", "removed_from_list"),
+        _acts_get(acts, "anime", "removed"),
+    )
     return out
-
-
 def _bucket_present(items: Mapping[str, Mapping[str, Any]], bucket: str) -> bool:
     for value in (items or {}).values():
         if isinstance(value, Mapping) and value.get("simkl_bucket") == bucket:
@@ -311,7 +318,7 @@ def _has_all_buckets(
     return all(_bucket_ready(items, bucket, buckets_seen) for bucket in WATCHLIST_BUCKETS)
 
 
-# JIT enrichment
+
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
     headers = build_headers(
         {"simkl": {"api_key": adapter.cfg.api_key, "access_token": adapter.cfg.access_token}},
@@ -323,7 +330,7 @@ def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
 
 
 def _best_id_q(ids: Mapping[str, Any]) -> dict[str, str] | None:
-    order = ("imdb", "tmdb", "tvdb", "simkl")
+    order = ("imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb", "simkl")
     for key in order:
         value = ids.get(key)
         if value:
@@ -418,7 +425,7 @@ def _jit_enrich_missing(
     return enriched
 
 
-# write-response → shadow helpers
+
 def _keys_from_write_resp(body: Any) -> list[str]:
     keys: list[str] = []
     if not isinstance(body, dict):
@@ -488,7 +495,7 @@ def _shadow_remove_keys(keys: Iterable[str]) -> None:
         _shadow_save(shadow.get("ts"), current, shadow.get("buckets_seen"))
 
 
-# fetchers
+
 def _pull_bucket(
     adapter: Any,
     bucket: str,
@@ -502,7 +509,9 @@ def _pull_bucket(
     url_ids = URL_INDEX_IDS.format(bucket=bucket)
     url_full = URL_INDEX_BUCKET.format(bucket=bucket)
     base_params: dict[str, Any] = {"extended": "ids_only" if ids_only else "full"}
-    if not ids_only and bucket == "shows":
+    if bucket == "anime":
+        base_params["extended"] = "full_anime_seasons"
+    if not ids_only and bucket in ("shows", "anime"):
         base_params["episode_watched_at"] = "yes"
     if date_from:
         base_params["date_from"] = date_from
@@ -561,7 +570,7 @@ def _pull_bucket(
     return result
 
 
-# index (with progress-helper)
+
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
@@ -579,6 +588,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             [
                 f"m:{v(tsm['movies']['ptw'])}/{v(tsm['movies']['rm'])}",
                 f"s:{v(tsm['shows']['ptw'])}/{v(tsm['shows']['rm'])}",
+                f"a:{v(tsm['anime']['ptw'])}/{v(tsm['anime']['rm'])}",
             ]
         )
 
@@ -817,7 +827,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     candidates: list[str] = [
         t
-        for t in (ts_map["movies"]["ptw"], ts_map["shows"]["ptw"])
+        for t in (ts_map["movies"]["ptw"], ts_map["shows"]["ptw"], ts_map["anime"]["ptw"])
         if isinstance(t, str)
     ]
     if candidates:
@@ -834,7 +844,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     _log(f"index size: {len(items)}")
     return items
 
-# writes
+
 def _split_buckets(
     items: Iterable[Mapping[str, Any]],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:

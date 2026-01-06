@@ -249,9 +249,6 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
             ):
                 obj_type = key
                 break
-    if obj_type == "anime":
-        obj_type = "show"
-
     if obj_type == "episode":
         ids = _fix_imdb((payload.get("ids") if isinstance(payload, Mapping) else None) or obj.get("ids") or {})
         def _to_int(v: Any) -> int | None:
@@ -269,7 +266,7 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
         }
         return id_minimal(base)
 
-    if obj_type not in ("movie", "show"):
+    if obj_type not in ("movie", "show", "anime"):
         return id_minimal({})
 
     ids = _fix_imdb(payload.get("ids") or {})

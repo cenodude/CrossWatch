@@ -12,7 +12,7 @@ try:
     from _logging import log  # type: ignore
 except Exception:  # pragma: no cover
     def log(msg: str, *, level: str = "INFO", module: str = "META") -> None:
-        # noop fallback
+        
         return
 
 
@@ -66,6 +66,8 @@ def _norm_entity(entity: Optional[str]) -> str:
         "series": "show",
         "tv": "show",
         "shows": "show",
+        "anime": "show",
+        "animes": "show",
         "movies": "movie",
     }
     if e in ("movie", "show"):
@@ -144,7 +146,7 @@ class MetadataManager:
 
         return out
 
-    # Resolve it through providers
+
     def resolve(
         self,
         *,

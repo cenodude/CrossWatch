@@ -934,9 +934,13 @@ def process_rating_webhook(
     if media_type not in ("movie", "show", "episode"):
         return {"ok": True, "ignored": True}
 
-    rating_val = _plex_rating_to_10(md.get("userRating") if "userRating" in md else (payload.get("userRating") or md.get("user_rating") or md.get("rating")))
+    rating_raw = md.get("userRating") if "userRating" in md else None
+    if rating_raw is None:
+        rating_raw = md.get("user_rating") or payload.get("userRating") or payload.get("user_rating")
+    rating_val = _plex_rating_to_10(rating_raw) if rating_raw is not None else 0
     if rating_val is None:
-        return {"ok": True, "ignored": True}
+        rating_val = 0
+
 
     if media_type == "episode" and not enable_trakt:
         return {"ok": True, "ignored": True}

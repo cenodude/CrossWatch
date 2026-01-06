@@ -141,7 +141,7 @@ def _to_ck_and_min(
 
     if not ck:
         ids = d.get("ids") or {}
-        for k in ("imdb", "tmdb", "tvdb", "trakt", "ani", "mal"):
+        for k in ("imdb", "tmdb", "tvdb", "trakt", "ani", "mal", "anilist", "kitsu", "anidb"):
             v = ids.get(k)
             if v:
                 ck = f"{k}:{str(v).lower()}"

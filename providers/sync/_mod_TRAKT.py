@@ -24,10 +24,8 @@ try:
     from .trakt import _ratings as feat_ratings
 except Exception:
     feat_ratings = None
-try:
-    from .trakt import _playlists as feat_playlists
-except Exception:
-    feat_playlists = None
+
+feat_playlists = None
 
 from ._mod_common import (
     build_session,
@@ -42,7 +40,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.0.0"
+__VERSION__ = "3.0.1"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 
@@ -86,7 +84,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": _features_flags(),
+        "features": TRAKTModule.supported_features(),
         "requires": [],
         "capabilities": {
             "bidirectional": True,
@@ -199,7 +197,7 @@ class TRAKTClient:
             r = self._do("GET", f"{self.BASE}/sync/last_activities")
             if r.status_code in (401, 403):
                 raise TRAKTAuthError("Trakt auth failed")
-            _log("Connected to Trakt API")
+            
         except Exception as e:
             raise TRAKTError(f"Trakt connect failed: {e}") from e
         return self

@@ -190,7 +190,7 @@ def _save_cache(items: Mapping[str, Any]) -> None:
         tmp = CACHE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, CACHE_PATH)
-        _log(f"cache.saved -> {CACHE_PATH} ({len(items)})")
+        # _log(f"cache.saved -> {CACHE_PATH} ({len(items)})")
     except Exception as e:
         _log(f"cache.save failed: {e}")
 

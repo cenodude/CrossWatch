@@ -21,7 +21,7 @@ from ._mod_common import (
 )
 from .simkl._common import build_headers, normalize as simkl_normalize, key_of as simkl_key_of
 
-__VERSION__ = "2.5.0"
+__VERSION__ = "3.0.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 if "ctx" not in globals():

@@ -15,6 +15,10 @@ ID_KEYS: tuple[str, ...] = (
     "tvdb",
     "trakt",
     "simkl",
+    "mal",
+    "anilist",
+    "kitsu",
+    "anidb",
     "plex",
     "jellyfin",
     "guid",
@@ -25,6 +29,10 @@ KEY_PRIORITY: tuple[str, ...] = (
     "tmdb",
     "tvdb",
     "trakt",
+    "mal",
+    "anilist",
+    "kitsu",
+    "anidb",
     "simkl",
     "plex",
     "guid",
@@ -80,7 +88,7 @@ def _normalize_id(key: str, val: Any) -> str | None:
     if s.lower() in _CLEAN_SENTINELS:
         return None
 
-    if k in ("tmdb", "tvdb", "trakt", "simkl", "plex", "jellyfin"):
+    if k in ("tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "plex", "jellyfin"):
         digits = re.sub(r"\D+", "", s)
         return digits or None
 
@@ -141,6 +149,14 @@ _JF_MAP: dict[str, str] = {
     "Tvdb": "tvdb",
     "Trakt": "trakt",
     "Simkl": "simkl",
+    "Anidb": "anidb",
+    "AniDB": "anidb",
+    "Anilist": "anilist",
+    "AniList": "anilist",
+    "Kitsu": "kitsu",
+    "Mal": "mal",
+    "MAL": "mal",
+    "MyAnimeList": "mal",
 }
 
 
@@ -205,7 +221,10 @@ def _title_year_key(item: Mapping[str, Any]) -> str | None:
     typ = _norm_type(item.get("type"))
     if not t:
         return None
-    return f"{typ}|title:{t.lower()}|year:{y}"
+    # Prefer stable cross-provider matching when we only have title/year.
+    # Most providers treat anime as "show", so we do the same for this fallback key.
+    typ_key = "show" if typ == "anime" else typ
+    return f"{typ_key}|title:{t.lower()}|year:{y}"
 
 
 def _best_id_key(idmap: Mapping[str, str]) -> str | None:

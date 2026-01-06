@@ -1175,13 +1175,13 @@ def process_webhook(
             _emit(logger, "rating forwarding disabled (webhook.plex_trakt_ratings=false)", "DEBUG")
             return {"ok": True, "ignored": True}
 
-        rating_raw = md.get("userRating")
+        rating_raw = md.get("userRating") if "userRating" in md else None
         if rating_raw is None:
-            rating_raw = payload.get("userRating") or payload.get("rating") or md.get("user_rating")
-        rating_val = _plex_rating_to_trakt(rating_raw)
+            rating_raw = payload.get("userRating") or md.get("user_rating") or payload.get("user_rating")
+        rating_val = _plex_rating_to_trakt(rating_raw) if rating_raw is not None else 0
         if rating_val is None:
-            _emit(logger, "rating event without userRating; ignore", "DEBUG")
-            return {"ok": True, "ignored": True}
+            rating_val = 0
+
 
         acc_key_r = _account_key(payload)
         rk_r = str(md.get("ratingKey") or md.get("ratingkey") or "")

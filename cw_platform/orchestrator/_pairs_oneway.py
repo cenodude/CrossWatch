@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-# Core imports
+
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
     build_snapshots_for_feature,
@@ -19,7 +19,7 @@ from ._unresolved import load_unresolved_keys, record_unresolved
 from ._planner import diff, diff_ratings
 from ._phantoms import PhantomGuard
 
-# Utility imports
+
 from ._pairs_utils import (
     _supports_feature,
     _resolve_flags,
@@ -116,7 +116,7 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_un
 
 # Feature-specific filters
 def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
-    alias = {"movies":"movie","movie":"movie","shows":"show","show":"show",
+    alias = {"movies":"movie","movie":"movie","shows":"show","show":"show","anime":"show","animes":"show",
              "episodes":"episode","episode":"episode","ep":"episode","eps":"episode"}
     types_raw = [str(t).strip().lower() for t in (fcfg.get("types") or []) if isinstance(t, (str, bytes))]
     types = {alias.get(t, t.rstrip("s")) for t in types_raw if t}

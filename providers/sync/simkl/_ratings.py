@@ -126,7 +126,6 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
 
 
 def _is_frozen(item: Mapping[str, Any]) -> bool:
-    # Never run id_minimal() on the caller's object; it may normalize/mutate fields.
     key = simkl_key_of(id_minimal(dict(item)))
     return key in _load_unresolved()
 
@@ -354,8 +353,8 @@ def _media_from_row(kind: str, row: Mapping[str, Any]) -> Mapping[str, Any]:
         raw = row.get("movie")
         if isinstance(raw, Mapping):
             return cast(Mapping[str, Any], raw)
-    if kind == "shows":
-        raw = row.get("show")
+    if kind in ("shows", "anime"):
+        raw = row.get("show") or row.get("anime")
         if isinstance(raw, Mapping):
             return cast(Mapping[str, Any], raw)
 
@@ -401,12 +400,22 @@ def _resolve_by_simkl_id(
     simkl_id: int,
     timeout: float,
 ) -> Mapping[str, Any]:
-    if kind == "movies":
-        url = f"{BASE}/movies/{simkl_id}?extended=full"
+    """Resolve a Simkl ID into a full media object per API blueprint."""
+    client_id = str(hdrs.get("simkl-api-key") or "").strip()
+    params: dict[str, str] = {"extended": "full"}
+    if client_id:
+        params["client_id"] = client_id
+
+    k = str(kind or "").lower()
+    if k == "movies":
+        url = f"{BASE}/movies/{simkl_id}"
+    elif k == "anime":
+        url = f"{BASE}/anime/{simkl_id}"
     else:
-        url = f"{BASE}/tv/{simkl_id}?extended=full"
+        url = f"{BASE}/tv/{simkl_id}"
+
     try:
-        resp = sess.get(url, headers=dict(hdrs), timeout=timeout)
+        resp = sess.get(url, headers=dict(hdrs), params=params, timeout=timeout)
         if resp.status_code != 200:
             return {}
         data = resp.json()
@@ -426,7 +435,7 @@ def _fetch_rows_any(
     df_iso: str,
     timeout: float,
 ) -> list[Mapping[str, Any]]:
-    if kind not in {"movies", "shows"}:
+    if kind not in {"movies", "shows", "anime"}:
         return []
     url = f"{BASE}/sync/ratings/{kind}/{RATINGS_ALL}?date_from={df_iso}"
     try:
@@ -517,11 +526,13 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         if isinstance(acts, Mapping):
             wm_m = get_watermark("ratings:movies") or ""
             wm_s = get_watermark("ratings:shows") or ""
+            wm_a = get_watermark("ratings:anime") or ""
             lm = extract_latest_ts(acts, (("movies", "rated_at"),))
-            ls = extract_latest_ts(acts, (("tv_shows", "rated_at"),))
-            unchanged = (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s)
+            ls = extract_latest_ts(acts, (("tv_shows", "rated_at"), ("shows", "rated_at")))
+            la = extract_latest_ts(acts, (("anime", "rated_at"),))
+            unchanged = (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s) and (la is None or la <= wm_a)
             if unchanged:
-                _log(f"activities unchanged; ratings from shadow (m={lm} s={ls})")
+                _log(f"activities unchanged; ratings from shadow (m={lm} s={ls} a={la})")
                 _rshadow_merge_into(out, thaw)
                 _dedupe_prefer_plex_id(out)
                 if prog:
@@ -541,12 +552,14 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     df_movies = coalesce_date_from("ratings:movies", cfg_date_from=since_iso)
     df_shows = coalesce_date_from("ratings:shows", cfg_date_from=since_iso)
-    df_all = df_movies if df_movies <= df_shows else df_shows
+    df_anime = coalesce_date_from("ratings:anime", cfg_date_from=since_iso)
+    df_all = min(df_movies, df_shows, df_anime)
 
     rows_movies = _fetch_rows_any(sess, hdrs, kind="movies", df_iso=df_movies, timeout=tmo)
     rows_shows = _fetch_rows_any(sess, hdrs, kind="shows", df_iso=df_shows, timeout=tmo)
+    rows_anime = _fetch_rows_any(sess, hdrs, kind="anime", df_iso=df_anime, timeout=tmo)
 
-    grand_total = len(rows_movies) + len(rows_shows)
+    grand_total = len(rows_movies) + len(rows_shows) + len(rows_anime)
 
     if prog:
         try:
@@ -559,9 +572,10 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     done = 0
     max_movies: int | None = None
     max_shows: int | None = None
+    max_anime: int | None = None
 
     def _ingest(kind: str, rows: list[Mapping[str, Any]]) -> int | None:
-        nonlocal done, max_movies, max_shows
+        nonlocal done, max_movies, max_shows, max_anime
         latest: int | None = None
 
         for row in rows:
@@ -579,7 +593,12 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
             m0 = simkl_normalize(cast(Mapping[str, Any], media0)) if media0 else {}
             m = dict(m0) if isinstance(m0, Mapping) else {}
 
-            m["type"] = "movie" if kind == "movies" else "show"
+            if kind == "movies":
+                m["type"] = "movie"
+            elif kind == "anime":
+                m["type"] = "anime"
+            else:
+                m["type"] = "show"
             m["rating"] = rt
             m["rated_at"] = row.get("user_rated_at") or row.get("rated_at") or ""
 
@@ -650,12 +669,15 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
         if kind == "movies":
             max_movies = latest
+        elif kind == "anime":
+            max_anime = latest
         else:
             max_shows = latest
         return latest
 
     _ingest("movies", rows_movies)
     _ingest("shows", rows_shows)
+    _ingest("anime", rows_anime)
 
     _rshadow_merge_into(out, thaw)
     _dedupe_prefer_plex_id(out)

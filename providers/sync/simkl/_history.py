@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
+from itertools import chain
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal
@@ -26,6 +27,7 @@ URL_ALL_ITEMS = f"{BASE}/sync/all-items"
 URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_TV_EPISODES = f"{BASE}/tv/episodes"
+URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
 
 STATE_DIR = Path("/config/.cw_state")
 UNRESOLVED_PATH = str(STATE_DIR / "simkl_history.unresolved.json")
@@ -167,6 +169,7 @@ def _episode_lookup(
     *,
     timeout: float,
     show_ids: Mapping[str, Any],
+    kind: str,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     ids = dict(show_ids or {})
     candidates = [
@@ -179,9 +182,12 @@ def _episode_lookup(
     if not candidates:
         return {}
 
+    base_url = URL_ANIME_EPISODES if str(kind).lower() == "anime" else URL_TV_EPISODES
+
     for cand in candidates:
-        if cand in _EP_LOOKUP_MEMO:
-            return _EP_LOOKUP_MEMO[cand]
+        memo_key = f"{str(kind).lower()}:{cand}"
+        if memo_key in _EP_LOOKUP_MEMO:
+            return _EP_LOOKUP_MEMO[memo_key]
 
     def _as_title(v: Any) -> str | None:
         if isinstance(v, str):
@@ -231,7 +237,7 @@ def _episode_lookup(
 
     for cand in candidates:
         out: dict[tuple[int, int], dict[str, Any]] = {}
-        url = f"{URL_TV_EPISODES}/{cand}"
+        url = f"{base_url}/{cand}"
         params: dict[str, str] = {"extended": "full"}
         if client_id:
             params["client_id"] = client_id
@@ -239,21 +245,21 @@ def _episode_lookup(
             resp = session.get(url, headers=dict(headers), params=params, timeout=timeout)
             if not resp.ok:
                 _log(f"tv/episodes failed id={cand} status={resp.status_code}")
-                _EP_LOOKUP_MEMO[cand] = {}
+                _EP_LOOKUP_MEMO[memo_key] = {}
                 continue
             body = resp.json() if (resp.text or "").strip() else []
         except Exception as exc:
             _log(f"tv/episodes error id={cand}: {exc}")
-            _EP_LOOKUP_MEMO[cand] = {}
+            _EP_LOOKUP_MEMO[memo_key] = {}
             continue
 
         if not isinstance(body, list):
             _log(f"tv/episodes non-list id={cand}")
-            _EP_LOOKUP_MEMO[cand] = {}
+            _EP_LOOKUP_MEMO[memo_key] = {}
             continue
         if not body:
             _log(f"tv/episodes empty id={cand}")
-            _EP_LOOKUP_MEMO[cand] = {}
+            _EP_LOOKUP_MEMO[memo_key] = {}
             continue
 
         for row in body:
@@ -270,11 +276,11 @@ def _episode_lookup(
 
         if out:
             for k in candidates:
-                _EP_LOOKUP_MEMO[k] = out
+                _EP_LOOKUP_MEMO[f"{str(kind).lower()}:{k}"] = out
             _log(f"tv/episodes ok id={cand} episodes={len(out)}")
             return out
 
-        _EP_LOOKUP_MEMO[cand] = {}
+        _EP_LOOKUP_MEMO[memo_key] = {}
 
     return {}
 
@@ -640,7 +646,8 @@ def _fetch_kind(
     since_iso: str,
     timeout: float,
 ) -> list[dict[str, Any]]:
-    params = {"extended": "full", "episode_watched_at": "yes", "date_from": since_iso}
+    ext = "full_anime_seasons" if kind == "anime" else "full"
+    params = {"extended": ext, "episode_watched_at": "yes", "date_from": since_iso}
     resp = session.get(f"{URL_ALL_ITEMS}/{kind}", headers=headers, params=params, timeout=timeout)
     if not resp.ok:
         _log(f"GET {URL_ALL_ITEMS}/{kind} -> {resp.status_code}")
@@ -668,9 +675,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     added = 0
     latest_ts_movies: int | None = None
     latest_ts_shows: int | None = None
+    latest_ts_anime: int | None = None
     cfg_iso = _as_iso(since) if since else None
     df_movies_iso = coalesce_date_from("history:movies", cfg_date_from=cfg_iso)
     df_shows_iso = coalesce_date_from("history:shows", cfg_date_from=cfg_iso)
+    df_anime_iso = coalesce_date_from("history:anime", cfg_date_from=cfg_iso)
     if since:
         since_iso = _as_iso(int(since))
         try:
@@ -709,8 +718,9 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
     if not limit or added < limit:
         show_rows = _fetch_kind(session, headers, kind="shows", since_iso=df_shows_iso, timeout=timeout)
+        anime_rows = _fetch_kind(session, headers, kind="anime", since_iso=df_anime_iso, timeout=timeout)
         eps_cnt = 0
-        for row in show_rows:
+        for row, row_kind in chain(((r, "shows") for r in show_rows), ((r, "anime") for r in anime_rows)):
             if not isinstance(row, Mapping):
                 continue
             show = row.get("show") or row
@@ -724,7 +734,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 base.get("title") or (show.get("title") if isinstance(show, Mapping) else "") or "",
             ).strip()
             show_year = base.get("year") or (show.get("year") if isinstance(show, Mapping) else None)
-            ep_meta = _episode_lookup(session, headers, timeout=timeout, show_ids=show_ids)
+            ep_meta = _episode_lookup(session, headers, timeout=timeout, show_ids=show_ids, kind=row_kind)
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
                 s_num = int((season.get("number") or season.get("season") or 0))
@@ -765,7 +775,10 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     thaw.add(bucket_key)
                     eps_cnt += 1
                     added += 1
-                    latest_ts_shows = max(latest_ts_shows or 0, ts)
+                    if row_kind == "anime":
+                        latest_ts_anime = max(latest_ts_anime or 0, ts)
+                    else:
+                        latest_ts_shows = max(latest_ts_shows or 0, ts)
                     if limit and added >= limit:
                         break
                 if limit and added >= limit:
@@ -773,13 +786,13 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes={eps_cnt} from_movies={df_movies_iso} from_shows={df_shows_iso}",
+            f"movies={movies_cnt} episodes={eps_cnt} from_movies={df_movies_iso} from_shows={df_shows_iso} from_anime={df_anime_iso}",
         )
     else:
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso}",
+            f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso} from_anime={df_anime_iso}",
         )
 
     if latest_ts_movies:
@@ -803,9 +816,24 @@ def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     return {"ids": ids, "watched_at": watched_at}
 
 
+def _is_anime_like(item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
+    typ = str(item.get("type") or "").lower()
+    if typ == "anime":
+        return True
+    for k in ("mal", "anidb", "anilist", "kitsu"):
+        if ids.get(k):
+            return True
+    return False
+
+
 def _show_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = _ids_of(item)
-    return {"ids": ids} if ids else None
+    if not ids:
+        return None
+    entry: dict[str, Any] = {"ids": ids}
+    if _is_anime_like(item, ids):
+        entry["use_tvdb_anime_seasons"] = True
+    return entry
 
 
 def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
@@ -823,6 +851,8 @@ def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str,
         return None
 
     show: dict[str, Any] = {"ids": show_ids}
+    if _is_anime_like(item, show_ids):
+        show["use_tvdb_anime_seasons"] = True
 
     show_title = item.get("series_title") or item.get("title")
     if isinstance(show_title, str) and show_title.strip():

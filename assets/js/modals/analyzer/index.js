@@ -118,11 +118,9 @@ function css() {
   .an-modal .ids-edit-row label span{min-width:52px;text-transform:uppercase;letter-spacing:.03em;color:#9fb4ff}
   .an-modal .ids-edit-row input{flex:1 1 auto;background:#05060c;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:4px 6px;font-size:12px;color:#dbe8ff}
   .an-modal .ids-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
-  .an-modal .an-footer{padding:8px 12px;border-top:1px solid rgba(255,255,255,.12);display:flex;align-items:center;font-size:12px;background:#05060c;gap:12px}
-  .an-modal .an-footer .count-stack{display:flex;flex-direction:column;line-height:1.15}
-  .an-modal .an-footer #an-issues-count{font-weight:600;color:#dbe8ff}
-  .an-modal .an-footer #an-blocked-count{opacity:.75}
-  .an-modal .an-footer .stats{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;opacity:.78}
+  .an-modal .an-footer{padding:8px 12px;border-top:1px solid rgba(255,255,255,.12);display:grid;grid-template-columns:auto 1fr;align-items:center;font-size:12px;background:#05060c;gap:12px}
+  .an-modal .an-footer .count-stack{display:inline-flex;align-items:baseline;gap:8px;line-height:1.15;white-space:nowrap}
+  .an-modal .an-footer .stats{justify-self:end;text-align:right;white-space:nowrap}
   .an-modal .an-footer .stats.empty{opacity:.45}
   .an-modal input[type=search]{background:#05060c;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
   .an-modal #an-search{flex:1 1 420px;min-width:220px;max-width:460px;width:auto}
