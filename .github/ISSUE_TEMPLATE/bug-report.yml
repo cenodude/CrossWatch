@@ -9,21 +9,23 @@ body:
     attributes:
       value: |
         ## Before you hit “Submit”
-        Please do this first — it saves both of us time:
+        Please do this first, it saves both of us time:
 
         1. **Simplify your setup first.**  
            Enable **only the pair that’s causing trouble** and disable/remove the rest.  
-           Less noise in the logs = faster diagnosis.
+
         2. Go to **Settings → Maintenance**  
            Enable **Debug** and **MOD Debug**.
+
+           
         3. **Reproduce the issue again** after enabling debug.
         4. Collect logs from **both places**:
            - **Docker console logs**
            - **CrossWatch Sync Output**
+           
         5. If the issue is “some items don’t sync”:  
            run the **Analyzer** first. It often tells you what’s missing and why.
 
-        **No logs = no diagnosis.**
 
   - type: markdown
     attributes:
