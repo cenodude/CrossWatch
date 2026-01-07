@@ -42,11 +42,11 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBBlist and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
-Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, Trakt, SIMKL and CW internal tracker** <br>
-NOT supported: **Anime** (not yet) and **Multi-users/servers**
+Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, AniList, Trakt, SIMKL and CW internal tracker** <br>
+NOT supported: ***Multi-users/servers**
 
 ## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
@@ -162,7 +162,6 @@ By default <code>CONFIG_BASE</code> will be <code>/config</code> inside the cont
 Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</code>, etc. will all be stored there.
 
 ## Usage
-
 1. Open the web UI  
 2. Connect at least one authentication providers such as: Plex, Jellyfin, Emby, SIMKL, TRAKT etc.
 3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble  
