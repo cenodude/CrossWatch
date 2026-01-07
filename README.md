@@ -50,7 +50,7 @@ NOT supported: **Multi-users/servers**
 
 ## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
-- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
+- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist, AniList) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
 - **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
