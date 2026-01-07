@@ -198,27 +198,14 @@ body:
         `docker logs crosswatch --since=30m > crosswatch.log`
       render: bash
 
-  - type: textarea
-    id: config_json
-    attributes:
-      label: config.json (redacted or raw)
-      description: |
-        Paste only relevant portions or the full file.
-        Redact important fields for you before sharing publicly:
-        server_url, account_token, client_id, client_secret, username, access_token, refresh_token,
-        api_key, user, username_whitelist, server_uuid
-      render: json
-
   - type: checkboxes
     id: tried
     attributes:
       label: Troubleshooting already tried
       description: |
-        Start simple: **Clear Cache**, then retry.
-        Still broken? Do **Clear State + Clear Cache**. That resets CrossWatch’s brain and rebuilds from scratch.
+        Clean Everything in Maintenance. This will reset your state etc.
       options:
-        - label: Settings → Maintenance → Clear cache (then retried)
-        - label: Settings → Maintenance → Clear state (only if cache didn’t help)
+        - label: Settings → Maintenance → Clean Everything
         - label: Retried on latest CrossWatch version
         - label: Re-ran the same pair one-way
         - label: Restarted container  (to rule out transient issues)
