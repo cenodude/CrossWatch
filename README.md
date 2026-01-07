@@ -20,7 +20,7 @@
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 <p align="center">
-  <img width="792" height="232" alt="image" src="https://github.com/user-attachments/assets/478d5af3-58ad-417a-9f43-fe15319f6cb0" />
+  <img width="776" height="314" alt="image" src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" />
 
 </p>
 <p align="center">
