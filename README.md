@@ -42,15 +42,15 @@
   <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
 </p>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, MDBlis and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBBlist and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
-Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, Trakt, SIMKL and CW internal tracker** <br>
-NOT supported: **Anime** (not yet) and **Multi-users/servers**
+Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, AniList, Trakt, SIMKL and CW internal tracker** <br>
+NOT supported: **Multi-users/servers**
 
 ## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
-- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist) in one tool.  
+- **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBlist, AniList) in one tool.  
 - **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.  
 - **Simple and advanced scheduling** From “run once a day” to more detailed, time-based pair schedules
 - **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
@@ -102,6 +102,7 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 <b>Trackers</b><br/>
 <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
 &nbsp;<img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+&nbsp;<img alt="AniList" src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328" />
 &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
 &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
 
@@ -161,14 +162,8 @@ By default <code>CONFIG_BASE</code> will be <code>/config</code> inside the cont
 Your <code>config.json</code>, <code>state.json</code>, <code>statistics.json</code>, etc. will all be stored there.
 
 ## Usage
-
 1. Open the web UI  
 2. Connect at least one authentication providers such as: Plex, Jellyfin, Emby, SIMKL, TRAKT etc.
 3. Create one or more <b>Sync Pairs</b> (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble  
 4. Click <b>Synchronize</b> to start, or enable scheduling in <b>Settings</b>  
 5. Track stats, logs, and history from the UI
-
-## Live Scrobbling (Plex/Jellyfin/Emby to Trakt and/or SIMKL)
-CW can <b>scrobble your real-time Plex, Jellyfin, and Emby playback to Trakt</b>, so episodes and movies you watch are instantly marked as “Watching” or “Watched” on Trakt/SIMKL.  
-Have Plex Pass / Emby Premiere? you can use <b>Webhook</b>. No Pass/Premiere? Use the <b>Watcher</b>. Jellyfin users: use <b>Webhook</b>. 
-Personally, I prefer the watcher because it’s real-time.
