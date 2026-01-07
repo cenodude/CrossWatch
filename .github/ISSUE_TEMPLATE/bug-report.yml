@@ -60,14 +60,17 @@ body:
         - label: Emby
         - label: Jellyfin
         - label: MDBlist
+        - label: Tautulli
+        - label: AniList
         - label: Trakt
         - label: SIMKL
+        - label: CrossWatch Internal Tracker (CW)
 
   - type: input
     id: server_version
     attributes:
       label: Media server version (if applicable)
-      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x"
+      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x / Tautulli 2.x"
 
   - type: checkboxes
     id: areas
@@ -89,7 +92,8 @@ body:
       options:
         - label: Data loss risk (unexpected deletions)
         - label: Wrong data (duplicates/mismatched items)
-        - label: Broken flow (sync/scrobble/scheduler not working)
+        - label: Broken flow (sync/scheduler not working)
+        - label: Scrobble (webhook and/or watcher) issues
         - label: UI issue only
         - label: Performance/timeout
         - label: Other
@@ -118,8 +122,11 @@ body:
         - Emby
         - Jellyfin
         - MDBlist
+        - Tautulli
+        - AniList
         - Trakt
         - SIMKL
+        - CrossWatch Internal Tracker (CW)
 
   - type: dropdown
     id: pair_target
@@ -130,8 +137,11 @@ body:
         - Emby
         - Jellyfin
         - MDBlist
+        - Tautulli
+        - AniList
         - Trakt
         - SIMKL
+        - CrossWatch Internal Tracker (CW)
 
   - type: dropdown
     id: pair_direction
@@ -156,8 +166,8 @@ body:
       label: Additional pairs (optional)
       description: List any other pairs/directions/features involved.
       placeholder: |
-        PLEX → SIMKL (Watchlist)
-        SIMKL ⇄ TRAKT (Ratings)
+        Plex → SIMKL (Watchlist)
+        SIMKL ⇄ Trakt (Ratings)
 
   - type: textarea
     id: steps
