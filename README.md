@@ -46,7 +46,7 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**  <br>
 Supported: **Plex, Emby, Jellyfin, MDBlist, Tautulli, AniList, Trakt, SIMKL and CW internal tracker** <br>
-NOT supported: ***Multi-users/servers**
+NOT supported: **Multi-users/servers**
 
 ## CW in a nutshell:
 - **One brain for all your media syncs** A single place to configure and understand everything.
