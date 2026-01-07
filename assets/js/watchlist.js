@@ -290,13 +290,14 @@
             <input id="wl-q" class="wl-input" placeholder="Search title...">
 
             <label>Type</label>
-            <select id="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option></select>
+            <select id="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select>
 
             <label>Provider</label>
             <select id="wl-provider" class="wl-input">
               <option value="">All</option>
               <option value="PLEX">PLEX</option>
               <option value="SIMKL">SIMKL</option>
+              <option value="ANILIST">ANILIST</option>
               <option value="TRAKT">TRAKT</option>
               <option value="JELLYFIN">JELLYFIN</option>
               <option value="EMBY">EMBY</option>
@@ -335,6 +336,7 @@
                 <option value="CROSSWATCH">CROSSWATCH</option>
                 <option value="PLEX">PLEX</option>
                 <option value="SIMKL">SIMKL</option>
+                <option value="ANILIST">ANILIST</option>
                 <option value="TRAKT">TRAKT</option>
                 <option value="JELLYFIN">JELLYFIN</option>
                 <option value="EMBY">EMBY</option>
@@ -499,7 +501,7 @@
   const providersOf = it => Array.isArray(it.sources) ? it.sources.map(s => String(s).toUpperCase()) : [];
   const metaKey = it => `${(String(it.type || "").toLowerCase() === "movie" ? "movie" : "tv")}:${it.tmdb || it.ids?.tmdb || ""}`;
   const getReleaseIso = it => {
-    const tv = /^(tv|show)$/i.test(String(it.type || ""));
+    const tv = /^(tv|show|anime)$/i.test(String(it.type || ""));
     let iso = tv ? (it.first_air_date || it.firstAired || it.aired) : (it.release_date || it.released);
     iso = iso || it?.release?.date || "";
     if (!iso) {
@@ -668,7 +670,7 @@
     CROSSWATCH:"/assets/img/CROSSWATCH.svg"
   };
 
-  const PROV_LABEL = { CROSSWATCH: "CW" };
+  const PROV_LABEL = { CROSSWATCH: "CW", ANILIST: "AL" };
   const provLabel = p => PROV_LABEL[String(p || "").toUpperCase()] || String(p || "");
 
   const providerChip = name => {
@@ -688,13 +690,14 @@
       EMBY: "movie",
       TRAKT: "featured_play_list",
       SIMKL: "featured_play_list",
+      ANILIST: "featured_play_list",
       MDBLIST: "featured_play_list",
       CROSSWATCH: "save"
     };
     const LABEL = {
       CROSSWATCH: "CW"
     };
-    const ORDER = ["PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
+    const ORDER = ["PLEX","SIMKL","ANILIST","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
 
     const counts = ORDER.reduce((acc, p) => {
       acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
@@ -801,7 +804,8 @@
       if (hiddenSet.has(key) && !document.getElementById("wl-show-hidden")) return false;
 
       const title = String(it.title || "").toLowerCase();
-      const t = ((it.type || "").toLowerCase() === "show") ? "tv" : (it.type || "").toLowerCase();
+      const rawType = String(it.type || "").toLowerCase();
+      const t = (rawType === "show" || rawType === "shows" || rawType === "series") ? "tv" : rawType;
 
       if (q && !title.includes(q)) return false;
       if (ty && t !== ty) return false;
@@ -910,7 +914,7 @@
       <div class="inner" style="position:relative;z-index:1;max-width:unset;margin:0 auto;padding:10px 14px 12px;display:grid;grid-template-columns:116px 1fr 120px;gap:12px;align-items:start">
       <div class="poster-col">
         <img class="poster" src="${poster}" alt="" style="width:108px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.6)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" />
-        <div class="type-pill">${isMovie ? "Movie" : "Show"}</div>
+        <div class="type-pill">${isMovie ? "Movie" : (String(it.type || "").toLowerCase() === "anime" ? "Anime" : "Show")}</div>
       </div>
         <div>
           <div style="display:flex;align-items:center;gap:10px">
@@ -1018,20 +1022,22 @@
 
     rows.forEach(it => {
       const key = normKey(it), tr = document.createElement("tr");
-      const t = ((it.type || "").toLowerCase() === "show") ? "tv" : (it.type || "").toLowerCase();
+      const rawType = String(it.type || "").toLowerCase();
+      const t = (rawType === "show" || rawType === "shows" || rawType === "series") ? "tv" : rawType;
       const typeLabel = t === "movie" ? "Movie" : "Show";
       const thumb = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
       const p = providersOf(it);
       const have = {
         PLEX:p.includes("PLEX"),
         SIMKL:p.includes("SIMKL"),
+        ANILIST:p.includes("ANILIST"),
         TRAKT:p.includes("TRAKT"),
         JELLYFIN:p.includes("JELLYFIN"),
         EMBY:p.includes("EMBY"),
         MDBLIST:p.includes("MDBLIST"),
         CROSSWATCH:p.includes("CROSSWATCH")
       };
-      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}${providerActive("CROSSWATCH",have.CROSSWATCH)}</div>`;
+      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("ANILIST",have.ANILIST)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}${providerActive("CROSSWATCH",have.CROSSWATCH)}</div>`;
       const d = getDerived(it);
 
       tr.innerHTML = `
@@ -1071,7 +1077,7 @@
   function rebuildDeleteProviderOptions(){
     const byKey = mapProvidersByKey(items), union = new Set(), prev = delProv.value;
     for (const k of selected) byKey.get(k)?.forEach?.(p => union.add(p));
-    const ALL = ["CROSSWATCH","PLEX","SIMKL","TRAKT","MDBLIST","JELLYFIN","EMBY"];
+    const ALL = ["CROSSWATCH","PLEX","SIMKL","ANILIST","TRAKT","MDBLIST","JELLYFIN","EMBY"];
     delProv.innerHTML = `<option value="ALL">ALL (default)</option>${ALL.filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
   }
@@ -1223,6 +1229,8 @@
     const active = new Set(["CROSSWATCH"]);
     if (cfg?.plex?.account_token) active.add("PLEX");
     if (cfg?.simkl?.access_token) active.add("SIMKL");
+    const anTok = cfg?.anilist?.access_token || cfg?.anilist?.token || cfg?.auth?.anilist?.access_token || cfg?.auth?.anilist?.token;
+    if (anTok) active.add("ANILIST");
     if (cfg?.trakt?.access_token) active.add("TRAKT");
     if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
     if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");

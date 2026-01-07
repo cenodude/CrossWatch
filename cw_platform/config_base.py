@@ -78,6 +78,13 @@ DEFAULT_CFG: dict[str, Any] = {
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
     },
+    
+    "anilist": {
+        "client_id": "",                                # From your AniList app
+        "client_secret": "",                            # From your AniList app
+        "access_token": "",                             # OAuth access token (saved after auth)
+        "user": {},                                     # Viewer object (id/name)
+    },
 
     "mdblist": {
         "api_key": "",                                  # Your MDBList API key
@@ -93,15 +100,15 @@ DEFAULT_CFG: dict[str, Any] = {
     },
     
      "tautulli": {
-         "server_url": "",                               # http(s)://host:8181
-         "api_key": "",                                  # Tautulli API key
-         "verify_ssl": False,                            # Verify TLS certificates
-         "timeout": 10.0,                                # HTTP timeout (seconds)
-         "max_retries": 3,                               # Retry budget
+         "server_url": "",                              # http(s)://host:8181
+         "api_key": "",                                 # Tautulli API key
+         "verify_ssl": False,                           # Verify TLS certificates
+         "timeout": 10.0,                               # HTTP timeout (seconds)
+         "max_retries": 3,                              # Retry budget
          "history": {
-             "user_id": "",                              # Optional user filter
-             "per_page": 100,                            # Tautulli history page size
-             "max_pages": 5000                           # Safety cap
+             "user_id": "",                             # Optional user filter
+             "per_page": 100,                           # Tautulli history page size
+             "max_pages": 5000                          # Safety cap
          },
      },
 

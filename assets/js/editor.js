@@ -663,7 +663,7 @@
     hasChanges: false,
     page: 0,
     blockedOnly: false,
-    typeFilter: { movie: true, show: true, season: true, episode: true },
+    typeFilter: { movie: true, show: true, anime: true, season: true, episode: true },
     sortKey: "title",
     sortDir: "asc",
   };
@@ -687,7 +687,7 @@
       if (typeof saved.filter === "string") state.filter = saved.filter;
 
       if (saved.typeFilter && typeof saved.typeFilter === "object") {
-        ["movie", "show", "season", "episode"].forEach(t => {
+        ["movie", "show", "anime", "season", "episode"].forEach(t => {
           if (typeof saved.typeFilter[t] === "boolean") state.typeFilter[t] = saved.typeFilter[t];
         });
       }
@@ -734,8 +734,8 @@
                   <th style="width:24%" data-sort="title" class="sortable">Title</th>
                   <th style="width:6%">Year</th>
                   <th style="width:10%">IMDb</th>
-                  <th style="width:10%">TMDB</th>
-                  <th style="width:10%">Trakt</th>
+                  <th style="width:10%" id="cw-col-id-a">TMDB</th>
+                  <th style="width:10%" id="cw-col-id-b">Trakt</th>
                   <th style="width:16%" data-sort="extra" class="sortable">Extra</th>
                 </tr>
               </thead>
@@ -787,6 +787,7 @@
                 <div id="cw-type-filter" class="cw-type-filter">
                   <button type="button" data-type="movie" class="cw-type-chip active">Movies</button>
                   <button type="button" data-type="show" class="cw-type-chip active">Shows</button>
+                  <button type="button" data-type="anime" class="cw-type-chip active">Anime</button>
                   <button type="button" data-type="season" class="cw-type-chip active">S</button>
                   <button type="button" data-type="episode" class="cw-type-chip active">EP</button>
                   <button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked only</button>
@@ -1056,12 +1057,31 @@
   }
 
   function allowedTypesForKind(kind) {
-    return kind === "watchlist" ? ["movie", "show"] : ["movie", "show", "season", "episode"];
+    return kind === "watchlist"
+      ? ["movie", "show", "anime"]
+      : ["movie", "show", "anime", "season", "episode"];
+  }
+  function isAnilistMode() {
+    return state.source === "state" && String(state.snapshot || "").trim().toUpperCase() === "ANILIST";
+  }
+
+  function syncIdColumnHeaders() {
+    const a = $("cw-col-id-a");
+    const b = $("cw-col-id-b");
+    if (!a || !b) return;
+
+    if (isAnilistMode()) {
+      a.textContent = "MAL";
+      b.textContent = "AniList";
+    } else {
+      a.textContent = "TMDB";
+      b.textContent = "Trakt";
+    }
   }
 
   function enforceKindTypeRules() {
     const allowed = allowedTypesForKind(state.kind);
-    for (const t of ["movie", "show", "season", "episode"]) {
+    for (const t of ["movie", "show", "anime", "season", "episode"]) {
       if (!allowed.includes(t)) state.typeFilter[t] = false;
       else if (typeof state.typeFilter[t] !== "boolean") state.typeFilter[t] = true;
     }
@@ -1543,6 +1563,9 @@
     } else if (t === "show") {
       label = "Show";
       icon = "monitoring";
+    } else if (t === "anime") {
+      label = "Anime";
+      icon = "auto_awesome";
     } else if (t === "season") {
       label = "Season";
       icon = "layers";
@@ -1592,6 +1615,8 @@
         imdb: ids.imdb || (type === "season" ? showIds.imdb || imdbFromKey(key) : ""),
         tmdb: ids.tmdb || showIds.tmdb || "",
         trakt: ids.trakt || showIds.trakt || "",
+        mal: ids.mal || "",
+        anilist: ids.anilist || "",
         raw: JSON.parse(JSON.stringify(raw)),
         deleted: false,
         episode: isEpisode,
@@ -1604,16 +1629,17 @@
   function applyFilter(rows) {
     const q = (state.filter || "").trim().toLowerCase();
     const filters = state.typeFilter || {};
-    const hasTypeFilter = filters.movie || filters.show || filters.season || filters.episode;
+    const hasTypeFilter = filters.movie || filters.show || filters.anime || filters.season || filters.episode;
 
     return rows.filter(r => {
       if (hasTypeFilter) {
         const t = (r.type || "").toLowerCase();
-        const known = t === "movie" || t === "show" || t === "season" || t === "episode";
+        const known = t === "movie" || t === "show" || t === "anime" || t === "season" || t === "episode";
         let allowed = true;
         if (known) {
           if (t === "movie") allowed = !!filters.movie;
           else if (t === "show") allowed = !!filters.show;
+          else if (t === "anime") allowed = !!filters.anime;
           else if (t === "season") allowed = !!filters.season;
           else if (t === "episode") allowed = !!filters.episode;
         }
@@ -1634,6 +1660,8 @@
         r.imdb,
         r.tmdb,
         r.trakt,
+        r.mal,
+        r.anilist,
         r.raw && r.raw.series_title ? r.raw.series_title : "",
       ]
         .join(" ")
@@ -1838,13 +1866,13 @@
       bar.appendChild(yearInput);
 
       const typeSelect = document.createElement("select");
-      [["movie", "Movie"], ["show", "Show"]].forEach(([val, label]) => {
+      [["movie", "Movie"], ["show", "Show"], ["anime", "Anime"]].forEach(([val, label]) => {
         const opt = document.createElement("option");
         opt.value = val;
         opt.textContent = label;
         typeSelect.appendChild(opt);
       });
-      typeSelect.value = row.type === "show" || row.type === "episode" ? "show" : "movie";
+      typeSelect.value = row.type === "anime" ? "anime" : row.type === "show" || row.type === "episode" ? "show" : "movie";
       bar.appendChild(typeSelect);
 
       pop.appendChild(bar);
@@ -1883,19 +1911,49 @@
           resultsBox.innerHTML = "";
           return;
         }
-
-        let url = `/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(typeSelect.value)}`;
-        if (!Number.isNaN(yearVal)) url += `&year=${yearVal}`;
+        const typ = String(typeSelect.value || "").toLowerCase();
+        const makeUrl = t => {
+          let u = `/api/metadata/search?q=${encodeURIComponent(q)}&typ=${encodeURIComponent(t)}`;
+          if (!Number.isNaN(yearVal)) u += `&year=${yearVal}`;
+          return u;
+        };
 
         status.textContent = "Searching…";
         resultsBox.innerHTML = "";
         try {
-          const data = await fetchJSON(url);
-          if (!data || data.ok === false) {
-            status.textContent = data && data.error ? data.error : "Search failed.";
-            return;
+          let items = [];
+          if (typ === "anime") {
+            const [showRes, movieRes] = await Promise.all([fetchJSON(makeUrl("show")), fetchJSON(makeUrl("movie"))]);
+
+            const showOk = !!(showRes && showRes.ok !== false);
+            const movieOk = !!(movieRes && movieRes.ok !== false);
+
+            if (!showOk && !movieOk) {
+              const msg = (showRes && showRes.error) || (movieRes && movieRes.error) || "Search failed.";
+              status.textContent = msg;
+              return;
+            }
+
+            const a = showOk && Array.isArray(showRes.results) ? showRes.results : [];
+            const b = movieOk && Array.isArray(movieRes.results) ? movieRes.results : [];
+
+            items = [...a.map(x => ({ ...x, _resolve_entity: "show" })), ...b.map(x => ({ ...x, _resolve_entity: "movie" }))];
+
+            const seen = new Set();
+            items = items.filter(it => {
+              const k = `${String(it.tmdb || "")}:${String(it.type || "")}`;
+              if (!k || seen.has(k)) return false;
+              seen.add(k);
+              return true;
+            });
+          } else {
+            const data = await fetchJSON(makeUrl(typ));
+            if (!data || data.ok === false) {
+              status.textContent = data && data.error ? data.error : "Search failed.";
+              return;
+            }
+            items = Array.isArray(data.results) ? data.results : [];
           }
-          const items = Array.isArray(data.results) ? data.results : [];
           if (!items.length) {
             resultsBox.innerHTML = '<div class="cw-search-empty">No results.</div>';
             status.textContent = "";
@@ -1975,7 +2033,12 @@
                 refs.yearIn.value = row.year;
               }
 
-              const newType = picked.type || "movie";
+              const wantsAnime = String(typeSelect.value || "").toLowerCase() === "anime";
+              const pickedType = String(picked.type || "movie").toLowerCase();
+
+              const newType = wantsAnime ? "anime" : pickedType;
+              const resolveEntity = wantsAnime ? picked._resolve_entity || pickedType || "movie" : newType;
+
               row.type = newType;
               row.raw.type = newType;
               row.episode = false;
@@ -1987,7 +2050,7 @@
                 row.tmdb = tmdbStr;
                 row.raw.ids = row.raw.ids || {};
                 row.raw.ids.tmdb = tmdbId;
-                refs.tmdbIn.value = tmdbStr;
+                if (refs.tmdbIn) refs.tmdbIn.value = tmdbStr;
               }
 
               if (tmdbId != null) {
@@ -1995,7 +2058,7 @@
                   const metaRes = await fetchJSON("/api/metadata/resolve", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ entity: newType, ids: { tmdb: tmdbId } }),
+                    body: JSON.stringify({ entity: resolveEntity, ids: { tmdb: tmdbId } }),
                   });
 
                   if (metaRes && metaRes.ok && metaRes.result && metaRes.result.ids) {
@@ -2017,13 +2080,13 @@
                       const tVal = String(ids.tmdb);
                       row.tmdb = tVal;
                       row.raw.ids.tmdb = ids.tmdb;
-                      refs.tmdbIn.value = tVal;
+                      if (refs.tmdbIn) refs.tmdbIn.value = tVal;
                     }
                     if (ids.trakt) {
                       const trVal = String(ids.trakt);
                       row.trakt = trVal;
                       row.raw.ids.trakt = ids.trakt;
-                      refs.traktIn.value = trVal;
+                      if (refs.traktIn) refs.traktIn.value = trVal;
                     }
                   }
                 } catch (err) {
@@ -2095,6 +2158,7 @@
       const options = [
         { key: "movie", label: "Movie" },
         { key: "show", label: "Show" },
+        { key: "anime", label: "Anime" },
         { key: "season", label: "Season" },
         { key: "episode", label: "Episode" },
       ].filter(o => allowed.includes(o.key));
@@ -2199,6 +2263,7 @@
   function renderRows() {
     closePopup();
     updateSortUI();
+    syncIdColumnHeaders();
 
     let filtered = applyFilter(state.rows);
     const totalFiltered = filtered.length;
@@ -2252,6 +2317,7 @@
     syncBulkBar();
 
     const frag = document.createDocumentFragment();
+    const anilistMode = isAnilistMode();
     rows.forEach(row => {
       const tr = document.createElement("tr");
       const locked = false;
@@ -2352,26 +2418,41 @@
         else delete row.raw.ids.imdb;
         markChanged();
       };
-
-      const tmdbIn = document.createElement("input");
-      tmdbIn.value = row.tmdb || "";
-      tmdbIn.disabled = locked;
-      tmdbIn.oninput = e => {
-        row.tmdb = e.target.value;
+      const idAIn = document.createElement("input");
+      idAIn.value = anilistMode ? (row.mal || "") : (row.tmdb || "");
+      idAIn.placeholder = anilistMode ? "MAL…" : "TMDB…";
+      idAIn.disabled = locked;
+      idAIn.oninput = e => {
+        const v = e.target.value;
         row.raw.ids = row.raw.ids || {};
-        if (e.target.value) row.raw.ids.tmdb = e.target.value;
-        else delete row.raw.ids.tmdb;
+        if (anilistMode) {
+          row.mal = v;
+          if (v) row.raw.ids.mal = v;
+          else delete row.raw.ids.mal;
+        } else {
+          row.tmdb = v;
+          if (v) row.raw.ids.tmdb = v;
+          else delete row.raw.ids.tmdb;
+        }
         markChanged();
       };
 
-      const traktIn = document.createElement("input");
-      traktIn.value = row.trakt || "";
-      traktIn.disabled = locked;
-      traktIn.oninput = e => {
-        row.trakt = e.target.value;
+      const idBIn = document.createElement("input");
+      idBIn.value = anilistMode ? (row.anilist || "") : (row.trakt || "");
+      idBIn.placeholder = anilistMode ? "AniList…" : "Trakt…";
+      idBIn.disabled = locked;
+      idBIn.oninput = e => {
+        const v = e.target.value;
         row.raw.ids = row.raw.ids || {};
-        if (e.target.value) row.raw.ids.trakt = e.target.value;
-        else delete row.raw.ids.trakt;
+        if (anilistMode) {
+          row.anilist = v;
+          if (v) row.raw.ids.anilist = v;
+          else delete row.raw.ids.anilist;
+        } else {
+          row.trakt = v;
+          if (v) row.raw.ids.trakt = v;
+          else delete row.raw.ids.trakt;
+        }
         markChanged();
       };
 
@@ -2392,8 +2473,8 @@
           titleIn,
           yearIn,
           imdbIn,
-          tmdbIn,
-          traktIn,
+          tmdbIn: anilistMode ? null : idAIn,
+          traktIn: anilistMode ? null : idBIn,
           typeBtn,
         });
       };
@@ -2413,8 +2494,8 @@
 
       tr.appendChild(cell(yearIn));
       tr.appendChild(cell(imdbIn));
-      tr.appendChild(cell(tmdbIn));
-      tr.appendChild(cell(traktIn));
+      tr.appendChild(cell(idAIn));
+      tr.appendChild(cell(idBIn));
 
       const extraBtn = document.createElement("button");
       extraBtn.type = "button";

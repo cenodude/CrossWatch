@@ -698,6 +698,159 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR token delete: {e}")
             return {"ok": False, "error": str(e)}
 
+    # ANILIST
+    ANILIST_STATE: dict[str, Any] = {}
+
+    @app.post("/api/anilist/authorize", tags=["auth"])
+    def api_anilist_authorize(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            origin = (payload or {}).get("origin") or ""
+            if not origin:
+                return {"ok": False, "error": "origin missing"}
+
+            cfg = load_config()
+            a = cfg.get("anilist", {}) or {}
+            client_id = str(a.get("client_id") or "").strip()
+            client_secret = str(a.get("client_secret") or "").strip()
+            if not client_id or not client_secret:
+                return {"ok": False, "error": "AniList client_id/client_secret missing"}
+
+            redirect_uri = f"{origin}/callback/anilist"
+            state = secrets.token_urlsafe(16)
+            ANILIST_STATE["state"], ANILIST_STATE["redirect_uri"] = state, redirect_uri
+
+            url = anilist_build_authorize_url(client_id, redirect_uri, state)
+            return {"ok": True, "authorize_url": url}
+        except Exception as e:
+            _safe_log(log_fn, "ANILIST", f"[ANILIST] ERROR: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.get("/callback/anilist", tags=["auth"])
+    def oauth_anilist_callback(request: Request) -> PlainTextResponse:
+        try:
+            params = dict(request.query_params)
+            code = params.get("code")
+            state = params.get("state")
+            if not code or not state:
+                return PlainTextResponse("Missing code or state.", 400)
+            if state != ANILIST_STATE.get("state"):
+                return PlainTextResponse("State mismatch.", 400)
+
+            redirect_uri = str(ANILIST_STATE.get("redirect_uri") or "").strip()
+            if not redirect_uri:
+                return PlainTextResponse("Missing redirect URI.", 400)
+
+            cfg = load_config()
+            a = cfg.setdefault("anilist", {})
+            if not str(a.get("client_id") or "").strip() or not str(a.get("client_secret") or "").strip():
+                return PlainTextResponse("AniList client_id/client_secret missing.", 400)
+
+            tok = anilist_exchange_code_for_token(code=code, redirect_uri=redirect_uri)
+            if not tok or "access_token" not in tok:
+                return PlainTextResponse("AniList token exchange failed.", 400)
+
+            a["access_token"] = tok["access_token"]
+            if tok.get("user"):
+                a["user"] = tok["user"]
+            save_config(cfg)
+
+            _safe_log(log_fn, "ANILIST", "\x1b[92m[ANILIST]\x1b[0m Access token saved.")
+            _probe_bust("anilist")
+            return PlainTextResponse("AniList authorized. You can close this tab and return to the app.", 200)
+        except Exception as e:
+            _safe_log(log_fn, "ANILIST", f"[ANILIST] ERROR: {e}")
+            return PlainTextResponse(f"Error: {e}", 500)
+
+    @app.post("/api/anilist/token/delete", tags=["auth"])
+    def api_anilist_token_delete() -> dict[str, Any]:
+        cfg = load_config()
+        a = cfg.setdefault("anilist", {})
+        a["access_token"] = ""
+        a.pop("user", None)
+        save_config(cfg)
+        _probe_bust("anilist")
+        return {"ok": True}
+
+    def anilist_build_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
+        prov = _import_provider("providers.auth._auth_ANILIST")
+        cfg = load_config()
+        cfg.setdefault("anilist", {})["client_id"] = (client_id or cfg.get("anilist", {}).get("client_id") or "").strip()
+        url = f"https://anilist.co/api/v2/oauth/authorize?response_type=code&client_id={cfg['anilist']['client_id']}&redirect_uri={redirect_uri}"
+        try:
+            if prov:
+                res = prov.start(cfg, redirect_uri=redirect_uri) or {}
+                url = res.get("url") or url
+                save_config(cfg)
+        except Exception:
+            pass
+        if "state=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}state={state}"
+        return url
+
+    def anilist_exchange_code_for_token(*, code: str, redirect_uri: str) -> dict[str, Any] | None:
+        cfg = load_config()
+        prov = _import_provider("providers.auth._auth_ANILIST")
+        try:
+            if prov:
+                prov.finish(cfg, redirect_uri=redirect_uri, code=code)
+                save_config(cfg)
+        except Exception:
+            pass
+
+        a = load_config().get("anilist", {}) or {}
+        access = str(a.get("access_token") or "").strip()
+        user = a.get("user")
+        if access:
+            out: dict[str, Any] = {"access_token": access}
+            if isinstance(user, dict) and user:
+                out["user"] = user
+            return out
+
+        # Fallback: direct exchange
+        client_id = str(a.get("client_id") or "").strip()
+        client_secret = str(a.get("client_secret") or "").strip()
+        if not client_id or not client_secret:
+            return None
+
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "code": code,
+        }
+        headers = {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"}
+
+        r = requests.post("https://anilist.co/api/v2/oauth/token", json=payload, headers=headers, timeout=15)
+        if r.status_code >= 400:
+            r = requests.post("https://anilist.co/api/v2/oauth/token", data=payload, headers=headers, timeout=15)
+        if r.status_code >= 400:
+            return None
+
+        j = r.json() or {}
+        tok = str(j.get("access_token") or "").strip()
+        if not tok:
+            return None
+
+        viewer = None
+        try:
+            vr = requests.post(
+                "https://graphql.anilist.co",
+                json={"query": "query { Viewer { id name } }"},
+                headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "Accept": "application/json"},
+                timeout=15,
+            )
+            if vr.ok:
+                viewer = (vr.json() or {}).get("data", {}).get("Viewer")
+        except Exception:
+            viewer = None
+
+        out = {"access_token": tok}
+        if isinstance(viewer, dict) and viewer:
+            out["user"] = viewer
+        return out
+
     # SIMKL
     SIMKL_STATE: dict[str, Any] = {}
 

@@ -1,4 +1,4 @@
-# cw_platform/orchestration/_pairs_oneway.py
+# cw_platform/orchestrator/_pairs_oneway.py
 # One-way synchronization logic for data pairs.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -49,6 +49,7 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
+    "ANILIST": "anilist",
 }
 
 def _effective_library_whitelist(
@@ -426,8 +427,18 @@ def run_one_way_feature(
     if use_phantoms and adds:
         adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
-    attempted_keys = {_ck(it) for it in adds}
-    key2item = {_ck(it): _minimal(it) for it in adds}
+    attempted_keys: list[str] = []
+    key2item: dict[str, Any] = {}
+    seen: set[str] = set()
+
+    for it in adds:
+        k = _ck(it)
+        if not k:
+            continue
+        if k not in seen:
+            attempted_keys.append(k)
+            seen.add(k)
+        key2item.setdefault(k, _minimal(it))
 
     added_effective = 0
     res_add: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
@@ -465,56 +476,81 @@ def run_one_way_feature(
             }
             new_unresolved = unresolved_after - unresolved_before
             unresolved_new_total += len(new_unresolved)
+            still_unresolved = set(attempted_keys) & unresolved_after
+            
+            prov_confirmed_keys_raw = (add_res or {}).get("confirmed_keys")
+            prov_skipped_keys_raw = (add_res or {}).get("skipped_keys")
 
-            confirmed_keys = [k for k in attempted_keys if k not in new_unresolved]
+            prov_confirmed_keys: list[str] = (
+                [str(x) for x in prov_confirmed_keys_raw if x] if isinstance(prov_confirmed_keys_raw, list) else []
+            )
+            prov_skipped_keys: list[str] = (
+                [str(x) for x in prov_skipped_keys_raw if x] if isinstance(prov_skipped_keys_raw, list) else []
+            )
 
+            skipped_keys_set: set[str] = set(prov_skipped_keys)
+
+            have_exact_keys = bool(prov_confirmed_keys)
+            if have_exact_keys:
+                attempted_set = set(attempted_keys)
+                confirmed_keys = [k for k in prov_confirmed_keys if k in attempted_set]
+            else:
+                confirmed_keys = [k for k in attempted_keys if k not in still_unresolved]
+
+           
             if verify_after_write and _apply_verify_after_write_supported(dst_ops):
                 try:
                     unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
                     confirmed_keys = [k for k in confirmed_keys if k not in unresolved_again]
                 except Exception:
                     pass
-
+            
             prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
-
+            if have_exact_keys:
+                prov_confirmed = min(prov_confirmed or len(confirmed_keys), len(confirmed_keys))
+            
             if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds:
                 try:
                     record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
                     new_unresolved = set(attempted_keys)
                     unresolved_new_total += len(new_unresolved)
-                    confirmed_keys = [k for k in attempted_keys if k not in new_unresolved]
+                    still_unresolved = set(attempted_keys)
+                    confirmed_keys = []
+                    skipped_keys_set = set()
+                    have_exact_keys = False
                 except Exception:
                     pass
-
-            strict_pessimist = (not verify_after_write) and bool(new_unresolved)
-            if strict_pessimist:
+            
+            ambiguous_partial = (not have_exact_keys) and bool(res_add.get("skipped")) and prov_confirmed and (prov_confirmed < len(confirmed_keys))
+            strict_pessimist = (not have_exact_keys) and (not verify_after_write) and bool(still_unresolved)
+            if strict_pessimist or ambiguous_partial:
                 added_effective = 0
             else:
-                added_effective = len(confirmed_keys) if verify_after_write else min(prov_confirmed, len(confirmed_keys))
-
-            if added_effective != prov_confirmed:
+                added_effective = len(confirmed_keys) if (verify_after_write or have_exact_keys) else min(prov_confirmed, len(confirmed_keys))
+            
+            if added_effective != prov_confirmed and not have_exact_keys:
                 dbg("apply:add:corrected", dst=dst, feature=feature,
                     provider_count=prov_confirmed, effective=added_effective,
                     newly_unresolved=len(new_unresolved))
-
-            failed_keys = [k for k in attempted_keys if k not in confirmed_keys]
+            
+            success_keys = confirmed_keys if (verify_after_write or have_exact_keys) else confirmed_keys[:added_effective]
+            failed_keys = [k for k in attempted_keys if k not in set(success_keys) and k not in skipped_keys_set]
             try:
-                if failed_keys:
+                if failed_keys and not ambiguous_partial:
                     record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
-                                    pair=pair_key, cfg=cfg)
+                        pair=pair_key, cfg=cfg)
                     failed_items = [key2item[k] for k in failed_keys if k in key2item]
                     if failed_items:
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
-
-                if confirmed_keys:
-                    record_success(dst, feature, confirmed_keys, pair=pair_key, cfg=cfg)
-                if use_phantoms and guard and added_effective and confirmed_keys:
-                    guard.record_success(confirmed_keys)
+            
+                if success_keys and not ambiguous_partial:
+                    record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
+                if use_phantoms and guard and success_keys and not ambiguous_partial:
+                    guard.record_success(success_keys)
             except Exception:
                 pass
-
-            if added_effective and not dry_run_flag:
-                for k in confirmed_keys[:added_effective]:
+            if success_keys and not dry_run_flag:
+                for k in success_keys:
                     v = key2item.get(k)
                     if v:
                         dst_full[k] = v
@@ -602,7 +638,24 @@ def run_one_way_feature(
 
         def _commit_baseline(pmap, prov, feat, items):
             pf = _ensure_pf(pmap, prov, feat)
-            pf["baseline"] = {"items": {k: _minimal(v) for k, v in (items or {}).items()}}
+            pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
+
+            kept: dict[str, Any] = {}
+            for k, v in (items or {}).items():
+                if not isinstance(v, Mapping):
+                    continue
+
+                if v.get("_cw_persist") is False or v.get("_cw_transient") is True or v.get("_cw_skip_persist") is True:
+                    continue
+
+                pobj = v.get(pkey)
+                if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
+                    continue
+
+                kept[str(k)] = _minimal(v)
+
+            pf["baseline"] = {"items": kept}
+
 
         def _commit_checkpoint(pmap, prov, feat, chk):
             if not chk:

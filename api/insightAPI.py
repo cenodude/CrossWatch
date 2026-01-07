@@ -252,6 +252,7 @@ def register_insights(app: FastAPI) -> None:
         ) -> dict[str, int]:
             movies: set[str] = set()
             shows: set[str] = set()
+            anime: set[str] = set()
             episodes: set[str] = set()
 
             try:
@@ -282,22 +283,11 @@ def register_insights(app: FastAPI) -> None:
                             or rec.get("series_title")
                             or rec.get("show_title")
                         )
-
-                        if typ == "movie" and not has_show_meta:
-                            sig: str | None = None
-                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
-                                v = ids.get(idk)
-                                if v:
-                                    sig = f"{idk}:{str(v).lower()}"
-                                    break
-                            if sig is None:
-                                title = str(
-                                    rec.get("title") or rec.get("name") or ""
-                                ).strip().lower()
-                                y = str(rec.get("year") or "")
-                                sig = f"{title}|year:{y}"
-                            movies.add(sig)
-                            continue
+                        is_anime = bool(
+                            typ == "anime"
+                            or ids.get("anilist") or ids.get("mal")
+                            or show_ids_field.get("anilist") or show_ids_field.get("mal")
+                        )
 
                         if typ == "episode":
                             s = int(rec.get("season") or 0)
@@ -315,11 +305,12 @@ def register_insights(app: FastAPI) -> None:
                                 ).strip().lower()
                                 y = str(rec.get("year") or "")
                                 ep_sig = f"{t}|year:{y}|s{s}e{ep}"
-                            episodes.add(ep_sig)
+                            if ep_sig:
+                                episodes.add(ep_sig)
 
-                            show_ids = show_ids_field
+                            show_ids = show_ids_field or ids
                             show_sig: str | None = None
-                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                            for idk in ("anilist", "mal", "imdb", "tmdb", "tvdb", "slug"):
                                 v = show_ids.get(idk)
                                 if v:
                                     show_sig = f"{idk}:{str(v).lower()}"
@@ -337,7 +328,41 @@ def register_insights(app: FastAPI) -> None:
                                         f"{str(title).strip().lower()}|year:{y}"
                                     )
                             if show_sig:
-                                shows.add(show_sig)
+                                (anime if is_anime else shows).add(show_sig)
+                            continue
+
+                        if is_anime:
+                            sig: str | None = None
+                            ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
+                            for idk in ("anilist", "mal", "tvdb", "tmdb", "imdb", "slug"):
+                                v = ids_anime.get(idk)
+                                if v:
+                                    sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if sig is None:
+                                title = str(
+                                    rec.get("title") or rec.get("name") or ""
+                                ).strip().lower()
+                                y = str(rec.get("year") or "")
+                                sig = f"{title}|year:{y}"
+                            if sig:
+                                anime.add(sig)
+                            continue
+
+                        if typ == "movie" and not has_show_meta:
+                            sig: str | None = None
+                            for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                v = ids.get(idk)
+                                if v:
+                                    sig = f"{idk}:{str(v).lower()}"
+                                    break
+                            if sig is None:
+                                title = str(
+                                    rec.get("title") or rec.get("name") or ""
+                                ).strip().lower()
+                                y = str(rec.get("year") or "")
+                                sig = f"{title}|year:{y}"
+                            movies.add(sig)
                             continue
 
                         if typ == "show" or (typ == "movie" and has_show_meta):
@@ -396,6 +421,7 @@ def register_insights(app: FastAPI) -> None:
             return {
                 "movies": len(movies),
                 "shows": len(shows),
+                "anime": len(anime),
                 "episodes": len(episodes),
             }
 
@@ -800,6 +826,7 @@ def register_insights(app: FastAPI) -> None:
                         providers_mse_by_feature[feat][key] = {
                             "movies": int(per_counts.get("movies") or 0),
                             "shows": int(per_counts.get("shows") or 0),
+                            "anime": int(per_counts.get("anime") or 0),
                             "episodes": int(per_counts.get("episodes") or 0),
                         }
                         continue
@@ -809,7 +836,7 @@ def register_insights(app: FastAPI) -> None:
                     if not recs:
                         continue
 
-                    m = s = e = 0
+                    m = s = a = e = 0
                     for rec in recs:
                         if not isinstance(rec, dict):
                             continue
@@ -822,6 +849,10 @@ def register_insights(app: FastAPI) -> None:
 
                         if typ == "episode":
                             e += 1
+                            continue
+                        
+                        if typ == "anime":
+                            a += 1
                             continue
 
                         if typ == "show" or (typ == "movie" and has_show_meta):
@@ -840,6 +871,7 @@ def register_insights(app: FastAPI) -> None:
                     providers_mse_by_feature[feat][key] = {
                         "movies": m,
                         "shows": s,
+                        "anime": a,
                         "episodes": e,
                     }
         except Exception:
@@ -888,7 +920,6 @@ def register_insights(app: FastAPI) -> None:
             return out
 
         week_tot = _lane_totals(7)
-        # month_tot = _lane_totals(30)
 
         ts_grid = [r["ts"] for r in series_by_feature.get("watchlist", [])]
         if len(ts_grid) < 2:

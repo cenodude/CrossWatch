@@ -1,4 +1,4 @@
-# /api/etaAPI.py
+# /api/metaAPI.py
 # CrossWatch - Metadata API for media information
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -359,7 +359,7 @@ def _resolve_tmdb_cached(
 
 
 def get_meta(
-    api_key: str,  # kept for compatibility, not used directly
+    api_key: str,
     typ: str,
     tmdb_id: str | int,
     cache_dir: Path | str,
@@ -572,7 +572,7 @@ class MetadataResolveIn(BaseModel):
     ids: dict[str, Any]
     locale: str | None = None
     need: dict[str, Any] | None = None
-    strategy: str | None = None  # e.g., first_success
+    strategy: str | None = None
 
 
 @router.get("/api/metadata/search", tags=["metadata"])

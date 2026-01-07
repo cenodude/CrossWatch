@@ -79,6 +79,7 @@ def _normalize_label(pid: str) -> str:
         "PLEX": "Plex",
         "SIMKL": "SIMKL",
         "TRAKT": "Trakt",
+        "ANILIST": "AniList",
         "JELLYFIN": "Jellyfin",
         "EMBY": "Emby",
         "MDBLIST": "MDBList",
@@ -141,6 +142,8 @@ def _norm_type(x: str | None) -> str:
     t = (x or "").strip().lower()
     if t in {"tv", "show", "shows", "series", "season", "episode"}:
         return "tv"
+    if t in {"anime"}:
+        return "anime"
     if t in {"movie", "movies", "film", "films"}:
         return "movie"
     return ""
@@ -161,7 +164,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
-        if k in {"imdb", "tmdb", "tvdb", "trakt", "slug", "jellyfin", "emby"} and v:
+        if k in {"imdb", "tmdb", "tvdb", "trakt", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
             ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
@@ -178,6 +181,8 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
         "slug",
         "jellyfin",
         "emby",
+        "anilist",
+        "mal",
     ):
         v = ids.get(k)
         if v is None:
@@ -189,14 +194,16 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
-    typ = (item.get("type") or "").lower()
-    if typ in {"movie", "tv", "show", "series"}:
-        return "movie" if typ == "movie" else "tv"
+    typ = (item.get("type") or "").lower().strip()
+    if typ == "movie":
+        return "movie"
+    if typ in {"tv", "show", "series", "anime"}:
+        return "tv"
     ids = item.get("ids") or {}
-    if ids.get("tvdb") or ids.get("thetvdb"):
+    if ids.get("tvdb") or ids.get("thetvdb") or ids.get("anilist") or ids.get("mal"):
         return "tv"
     pref = (key or "").split(":", 1)[0].lower().strip()
-    return "tv" if pref in {"tvdb", "thetvdb"} else "movie"
+    return "tv" if pref in {"tvdb", "thetvdb", "anilist", "mal"} else "movie"
 
 
 _SIMKL_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
@@ -392,6 +399,30 @@ def _delete_on_crosswatch_batch(items: list[dict[str, Any]], cfg: dict[str, Any]
         raise RuntimeError(f"CROSSWATCH delete failed: {r.get('error')}")
     if int(r.get("count", 0) or 0) < 1:
         raise RuntimeError("CROSSWATCH delete matched 0 items")
+
+
+def _delete_on_anilist_batch(items: list[dict[str, Any]], cfg: dict[str, Any]) -> None:
+    ops = load_sync_ops("ANILIST")
+    if not ops:
+        raise RuntimeError("ANILIST module not available")
+
+    payload: list[dict[str, Any]] = []
+    for it in items or []:
+        obj = it.get("item") if isinstance(it.get("item"), dict) else {}
+        d = dict(obj or {})
+        ids = _ids_from_key_or_item(str(it.get("key") or ""), d)
+        if ids:
+            existing = d.get("ids")
+            d["ids"] = (dict(existing) | dict(ids)) if isinstance(existing, dict) else dict(ids)
+        if "type" not in d and (ids.get("anilist") or ids.get("mal")):
+            d["type"] = "anime"
+        payload.append(d)
+
+    r = ops.remove(cfg, payload, feature="watchlist", dry_run=False) or {}
+    if not isinstance(r, dict) or not r.get("ok"):
+        raise RuntimeError(f"ANILIST delete failed: {r.get('error')}")
+    if int(r.get("count", 0) or 0) < 1:
+        raise RuntimeError("ANILIST delete matched 0 items")
 
 def _jf_delete(
     base: str,
@@ -647,15 +678,19 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
 
         declared = {_norm_type(it.get("type")) for _, it in candidates if it}
         declared.discard("")
-        if "tv" in declared:
+        if "anime" in declared:
+            typ = "anime"
+        elif "tv" in declared:
             typ = "tv"
         elif "movie" in declared:
             typ = "movie"
         else:
-            ids_ = (info.get("ids") or {}) | {
-                k: info.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "slug")
-            }
-            typ = "tv" if ids_.get("tvdb") else "movie"
+            ids_ = (info.get("ids") or {}) | {k: info.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")}
+            pref = (key or "").split(":", 1)[0].lower().strip()
+            if ids_.get("anilist") or ids_.get("mal") or pref in {"anilist", "mal"}:
+                typ = "anime"
+            else:
+                typ = "tv" if ids_.get("tvdb") else "movie"
 
         title = info.get("title") or info.get("name") or ""
         year = info.get("year") or info.get("release_year")
@@ -1109,6 +1144,7 @@ def delete_watchlist_batch(
 
     handlers: dict[str, Any] = {
         "CROSSWATCH": lambda items: _delete_on_crosswatch_batch(items, cfg),
+        "ANILIST": lambda items: _delete_on_anilist_batch(items, cfg),
         "PLEX": lambda items: _delete_on_plex_batch(items, state, cfg),
         "SIMKL": lambda items: _delete_on_simkl_batch(items, cfg.get("simkl", {}) or {}),
         "TRAKT": lambda items: _delete_on_trakt_batch(items, cfg.get("trakt", {}) or {}),
@@ -1198,6 +1234,11 @@ def delete_watchlist_item(
                 "CROSSWATCH",
                 lambda items: _delete_on_crosswatch_batch(items, cfg),
             )
+        elif prov == "ANILIST":
+            _delete_and_drop(
+                "ANILIST",
+                lambda items: _delete_on_anilist_batch(items, cfg),
+            )
         elif prov == "SIMKL":
             _delete_and_drop(
                 "SIMKL",
@@ -1249,6 +1290,11 @@ def delete_watchlist_item(
                         _delete_and_drop(
                             "CROSSWATCH",
                             lambda items: _delete_on_crosswatch_batch(items, cfg),
+                        )
+                    elif p == "ANILIST":
+                        _delete_and_drop(
+                            "ANILIST",
+                            lambda items: _delete_on_anilist_batch(items, cfg),
                         )
                     elif p == "SIMKL":
                         _delete_and_drop(

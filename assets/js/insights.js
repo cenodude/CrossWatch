@@ -56,6 +56,7 @@
     if (has(cfg?.plex?.account_token)) S.add("plex");
     if (has(cfg?.trakt?.access_token)) S.add("trakt");
     if (has(cfg?.simkl?.access_token)) S.add("simkl");
+    if (has(cfg?.anilist?.access_token) || has(cfg?.anilist?.token)) S.add("anilist");
     if (has(cfg?.jellyfin?.access_token)) S.add("jellyfin");
     if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("emby");
     if (has(cfg?.mdblist?.api_key)) S.add("mdblist");
@@ -269,7 +270,7 @@
       animateNumber(valEl, (+totals[k]||0), 650);
       tile.classList.toggle("inactive", !active[k]);
 
-      // Per-provider movie/show line
+      // Per-provider movie/show/anime line
       let infoEl = tile.querySelector(".mse");
       if (!infoEl) {
         infoEl = d.createElement("div");
@@ -284,10 +285,12 @@
       } else {
         const m = +(per.movies || 0);
         const s = +(per.shows  || 0);
+        const a = +(per.anime  || 0);
 
         const parts = [];
         if (m) parts.push(`M:${m}`);
         if (s) parts.push(`S:${s}`);
+        if (a) parts.push(`A:${a}`);
 
         if (!parts.length) {
           infoEl.textContent = "";
@@ -911,6 +914,9 @@
   #stats-card #stat-providers [data-provider=trakt]{
     --brand:237,28,36;--wm:url("/assets/img/TRAKT.svg");
   }
+  #stats-card #stat-providers [data-provider=anilist]{
+    --brand:36,160,251;--wm:url("/assets/img/ANILIST.svg");
+  }
   #stats-card #stat-providers [data-provider=jellyfin]{
     --brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg");
   }
@@ -919,9 +925,6 @@
   }
   #stats-card #stat-providers [data-provider=mdblist]{
     --brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg");
-  }
-  #stats-card #stat-providers [data-provider=tautulli]{
-    --brand:255,138,0;--wm:url("/assets/img/TAUTULLI.svg");
   }
   #stats-card #stat-providers [data-provider=crosswatch]{
     --brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg");

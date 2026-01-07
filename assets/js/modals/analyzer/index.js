@@ -60,6 +60,8 @@ const ID_FIELDS = [
   "imdb",
   "tmdb",
   "tvdb",
+  "mal",
+  "anilist",
   "trakt",
   "plex",
   "simkl",
@@ -791,16 +793,14 @@ export default {
       const manual = manualIdsBlock(it);
       const normalizationBlock = renderNormalizationPanel(NORMALIZATION);
       const limitBlock = renderLimitPanel(tag);
-      issues.innerHTML = limitBlock + header + normalizationBlock + manual;
-
-
+      const scopeBlock = renderScopeExclusions();
+      issues.innerHTML = limitBlock + header + normalizationBlock + manual + scopeBlock;
       issues.scrollTop = 0;
 
       bindManualIds(provider, feature, key, it);
     }
 
     
-
 function _isTwoWayMode(mode) {
   const m = String(mode || "one-way").toLowerCase();
   return m === "two-way" || m === "bi" || m === "both" || m === "mirror";

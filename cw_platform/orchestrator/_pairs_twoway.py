@@ -52,6 +52,7 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
+    "ANILIST": "anilist",
 }
 
 def _effective_library_whitelist(
@@ -756,9 +757,17 @@ def _two_way_sync(
             emit("two:apply:add:A:start", dst=a, feature=feature, count=len(add_to_A))
             unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
             _ = set(load_blackbox_keys(a, feature, pair=pair_key) or [])
-            keys_A = {_ck(it) for it in add_to_A}
-            k2i_A = {_ck(it): _minimal(it) for it in add_to_A}
-
+            attempted_A: list[str] = []
+            seen_A: set[str] = set()
+            k2i_A: dict[str, Any] = {}
+            for it in add_to_A:
+                k = _ck(_minimal(it))
+                if not k or k in seen_A:
+                    continue
+                seen_A.add(k)
+                attempted_A.append(k)
+                k2i_A[k] = _minimal(it)
+            
             resA_add = apply_add(
                 dst_ops=aops, cfg=cfg, dst_name=a, feature=feature, items=add_to_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
@@ -767,10 +776,32 @@ def _two_way_sync(
             unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
             new_unresolved_A = unresolved_after_A - unresolved_before_A
             unresolved_new_A_total += len(new_unresolved_A)
+            
+            prov_confirmed_keys_A_raw = (resA_add or {}).get("confirmed_keys")
+            prov_skipped_keys_A_raw = (resA_add or {}).get("skipped_keys")
 
-            confirmed_A = [k for k in keys_A if k not in new_unresolved_A]
+            prov_confirmed_keys_A: list[str] = (
+                [str(x) for x in prov_confirmed_keys_A_raw if x] if isinstance(prov_confirmed_keys_A_raw, list) else []
+            )
+            prov_skipped_keys_A: list[str] = (
+                [str(x) for x in prov_skipped_keys_A_raw if x] if isinstance(prov_skipped_keys_A_raw, list) else []
+            )
+
+            skipped_keys_A: set[str] = set(prov_skipped_keys_A)
+
+            have_exact_keys_A = bool(prov_confirmed_keys_A)
+            if have_exact_keys_A:
+                attempted_set_A = set(attempted_A)
+                confirmed_A = [k for k in prov_confirmed_keys_A if k in attempted_set_A]
+            else:
+                confirmed_A = [k for k in attempted_A if k not in new_unresolved_A]
+
+        
             prov_count_A = _confirmed(resA_add)
-
+            if have_exact_keys_A:
+                prov_count_A = min(prov_count_A or len(confirmed_A), len(confirmed_A))
+            
+            ambiguous_partial_A = False
             if verify_after_write and _apply_verify_after_write_supported(aops):
                 try:
                     unresolved_again = set(load_unresolved_keys(a, feature, cross_features=True) or [])
@@ -779,36 +810,37 @@ def _two_way_sync(
                     pass
                 eff_add_A = len(confirmed_A)
             else:
-                eff_add_A = 0 if new_unresolved_A else min(prov_count_A, len(confirmed_A))
-
-            if eff_add_A != prov_count_A:
+                ambiguous_partial_A = (not have_exact_keys_A) and bool((resA_add or {}).get("skipped")) and prov_count_A and (prov_count_A < len(confirmed_A))
+                eff_add_A = 0 if new_unresolved_A or ambiguous_partial_A else min(prov_count_A, len(confirmed_A))
+            
+            if eff_add_A != prov_count_A and not have_exact_keys_A:
                 dbg("two:apply:add:corrected", dst=a, feature=feature,
                     provider_count=prov_count_A, effective=eff_add_A, newly_unresolved=len(new_unresolved_A))
-
+            
+            success_A = confirmed_A if (verify_after_write or have_exact_keys_A) else confirmed_A[:eff_add_A]
             try:
-                failed_A = [k for k in keys_A if k not in confirmed_A]
-                if failed_A:
+                failed_A = [k for k in attempted_A if k not in set(success_A) and k not in skipped_keys_A]
+                if failed_A and not ambiguous_partial_A:
                     record_attempts(a, feature, failed_A,
-                                    reason="two:apply:add:failed", op="add",
-                                    pair=pair_key, cfg=cfg)
+                        reason="two:apply:add:failed", op="add",
+                        pair=pair_key, cfg=cfg)
                     failed_items_A = [k2i_A[k] for k in failed_A if k in k2i_A]
                     if failed_items_A:
                         record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
-
-                if confirmed_A:
-                    record_success(a, feature, confirmed_A, pair=pair_key, cfg=cfg)
-                if use_phantoms and 'guardA' in locals() and guardA and eff_add_A and confirmed_A:
-                    guardA.record_success(set(confirmed_A[:eff_add_A]))
+            
+                if success_A:
+                    record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
+                if use_phantoms and 'guardA' in locals() and guardA and success_A:
+                    guardA.record_success(set(success_A))
             except Exception:
                 pass
-
-            if eff_add_A and not dry_run_flag:
-                for k in confirmed_A[:eff_add_A]:
+            
+            if success_A and not dry_run_flag:
+                for k in success_A:
                     v = k2i_A.get(k)
                     if v:
                         A_eff[k] = v
                 _bust_snapshot(a)
-
             emit("two:apply:add:A:done", dst=a, feature=feature,
                  count=_confirmed(resA_add),
                  attempted=int(resA_add.get("attempted", 0)),
@@ -827,9 +859,17 @@ def _two_way_sync(
             emit("two:apply:add:B:start", dst=b, feature=feature, count=len(add_to_B))
             unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
             _ = set(load_blackbox_keys(b, feature, pair=pair_key) or [])
-            keys_B = {_ck(it) for it in add_to_B}
-            k2i_B = {_ck(it): _minimal(it) for it in add_to_B}
-
+            attempted_B: list[str] = []
+            seen_B: set[str] = set()
+            k2i_B: dict[str, Any] = {}
+            for it in add_to_B:
+                k = _ck(_minimal(it))
+                if not k or k in seen_B:
+                    continue
+                seen_B.add(k)
+                attempted_B.append(k)
+                k2i_B[k] = _minimal(it)
+            
             resB_add = apply_add(
                 dst_ops=bops, cfg=cfg, dst_name=b, feature=feature, items=add_to_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
@@ -838,10 +878,32 @@ def _two_way_sync(
             unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
             new_unresolved_B = unresolved_after_B - unresolved_before_B
             unresolved_new_B_total += len(new_unresolved_B)
+            
+            prov_confirmed_keys_B_raw = (resB_add or {}).get("confirmed_keys")
+            prov_skipped_keys_B_raw = (resB_add or {}).get("skipped_keys")
 
-            confirmed_B = [k for k in keys_B if k not in new_unresolved_B]
+            prov_confirmed_keys_B: list[str] = (
+                [str(x) for x in prov_confirmed_keys_B_raw if x] if isinstance(prov_confirmed_keys_B_raw, list) else []
+            )
+            prov_skipped_keys_B: list[str] = (
+                [str(x) for x in prov_skipped_keys_B_raw if x] if isinstance(prov_skipped_keys_B_raw, list) else []
+            )
+
+            skipped_keys_B: set[str] = set(prov_skipped_keys_B)
+
+            have_exact_keys_B = bool(prov_confirmed_keys_B)
+            if have_exact_keys_B:
+                attempted_set_B = set(attempted_B)
+                confirmed_B = [k for k in prov_confirmed_keys_B if k in attempted_set_B]
+            else:
+                confirmed_B = [k for k in attempted_B if k not in new_unresolved_B]
+
+        
             prov_count_B = _confirmed(resB_add)
-
+            if have_exact_keys_B:
+                prov_count_B = min(prov_count_B or len(confirmed_B), len(confirmed_B))
+            
+            ambiguous_partial_B = False
             if verify_after_write and _apply_verify_after_write_supported(bops):
                 try:
                     unresolved_again = set(load_unresolved_keys(b, feature, cross_features=True) or [])
@@ -850,36 +912,37 @@ def _two_way_sync(
                     pass
                 eff_add_B = len(confirmed_B)
             else:
-                eff_add_B = 0 if new_unresolved_B else min(prov_count_B, len(confirmed_B))
-
-            if eff_add_B != prov_count_B:
+                ambiguous_partial_B = (not have_exact_keys_B) and bool((resB_add or {}).get("skipped")) and prov_count_B and (prov_count_B < len(confirmed_B))
+                eff_add_B = 0 if new_unresolved_B or ambiguous_partial_B else min(prov_count_B, len(confirmed_B))
+            
+            if eff_add_B != prov_count_B and not have_exact_keys_B:
                 dbg("two:apply:add:corrected", dst=b, feature=feature,
                     provider_count=prov_count_B, effective=eff_add_B, newly_unresolved=len(new_unresolved_B))
-
+            
+            success_B = confirmed_B if (verify_after_write or have_exact_keys_B) else confirmed_B[:eff_add_B]
             try:
-                failed_B = [k for k in keys_B if k not in confirmed_B]
-                if failed_B:
+                failed_B = [k for k in attempted_B if k not in set(success_B) and k not in skipped_keys_B]
+                if failed_B and not ambiguous_partial_B:
                     record_attempts(b, feature, failed_B,
-                                    reason="two:apply:add:failed", op="add",
-                                    pair=pair_key, cfg=cfg)
+                        reason="two:apply:add:failed", op="add",
+                        pair=pair_key, cfg=cfg)
                     failed_items_B = [k2i_B[k] for k in failed_B if k in k2i_B]
                     if failed_items_B:
                         record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
-
-                if confirmed_B:
-                    record_success(b, feature, confirmed_B, pair=pair_key, cfg=cfg)
-                if use_phantoms and 'guardB' in locals() and guardB and eff_add_B and confirmed_B:
-                    guardB.record_success(set(confirmed_B[:eff_add_B]))
+            
+                if success_B:
+                    record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
+                if use_phantoms and 'guardB' in locals() and guardB and success_B:
+                    guardB.record_success(set(success_B))
             except Exception:
                 pass
-
-            if eff_add_B and not dry_run_flag:
-                for k in confirmed_B[:eff_add_B]:
+            
+            if success_B and not dry_run_flag:
+                for k in success_B:
                     v = k2i_B.get(k)
                     if v:
                         B_eff[k] = v
                 _bust_snapshot(b)
-
             emit("two:apply:add:B:done", dst=b, feature=feature,
                  count=_confirmed(resB_add),
                  attempted=int(resB_add.get("attempted", 0)),
@@ -908,7 +971,23 @@ def _two_way_sync(
 
         def _commit_baseline(pmap, prov, feat, items):
             pf = _ensure_pf(pmap, prov, feat)
-            pf["baseline"] = {"items": {k: _minimal(v) for k, v in (items or {}).items()}}
+            pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
+
+            kept: dict[str, Any] = {}
+            for k, v in (items or {}).items():
+                if not isinstance(v, Mapping):
+                    continue
+
+                if v.get("_cw_persist") is False or v.get("_cw_transient") is True or v.get("_cw_skip_persist") is True:
+                    continue
+
+                pobj = v.get(pkey)
+                if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
+                    continue
+
+                kept[str(k)] = _minimal(v)
+
+            pf["baseline"] = {"items": kept}
 
         def _commit_checkpoint(pmap, prov, feat, chk):
             if not chk:

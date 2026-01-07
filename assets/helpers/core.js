@@ -3,7 +3,7 @@
 /* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 // Treat anything TV-ish as "tv"
-const isTV = v => /^(tv|show|shows|series|season|episode)$/i.test(String(v||""));
+const isTV = v => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v||""));
 
 function _el(id) {
   return document.getElementById(id);
@@ -80,6 +80,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.plex?.account_token)) S.add("PLEX");
   if (has(cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
   if (has(cfg?.trakt?.access_token || cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
+  if (has(cfg?.anilist?.access_token || cfg?.auth?.anilist?.access_token)) S.add("ANILIST");
   if (has(cfg?.jellyfin?.access_token || cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
   if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
   if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
@@ -107,6 +108,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("PLEX"))  return "PLEX";
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
+  if (alt.includes("ANILIST")) return "ANILIST";
   if (alt.includes("JELLYFIN")) return "JELLYFIN";
   if (alt.includes("TAUTULLI")) return "TAUTULLI";
   if (alt.includes("MDBLIST")) return "MDBLIST";
@@ -119,6 +121,7 @@ function resolveProviderKeyFromNode(node) {
   if (/\bPLEX\b/.test(txt))  return "PLEX";
   if (/\bSIMKL\b/.test(txt)) return "SIMKL";
   if (/\bTRAKT\b/.test(txt)) return "TRAKT";
+  if (/\bANILIST\b/.test(txt)) return "ANILIST";
   if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
   if (/\bEMBY\b/.test(txt)) return "EMBY";
   if (/\bMDBLIST\b/.test(txt)) return "MDBLIST";
@@ -150,8 +153,8 @@ function applySyncVisibility() {
     card.style.display = allowed.has(key) ? "" : "none";
   });
 
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
-  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
+  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
+  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -285,6 +288,7 @@ function normalizeProviders(input) {
     PLEX:    normOne(pick(p, "PLEX")    ?? p.plex_connected),
     SIMKL:   normOne(pick(p, "SIMKL")   ?? p.simkl_connected),
     TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
+    ANILIST: normOne(pick(p, "ANILIST") ?? p.anilist_connected),
     JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
     EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
     MDBLIST:  normOne(pick(p, "MDBLIST")  ?? p.mdblist_connected),
@@ -329,7 +333,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     if (res.ok) pairs = await res.json();
   } catch (_) {}
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
+  const active = { PLEX: false, SIMKL: false, TRAKT: false, ANILIST: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
   for (const p of pairs || []) {
     if (p && p.enabled !== false) {
       const s = String(p.source || "").toUpperCase();
@@ -349,7 +353,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
 
 // Hide/show badges by provider
 function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", ANILIST:"badge-anilist", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
   for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
     if (el) el.classList.toggle("hidden", !active?.[prov]);
@@ -483,6 +487,7 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   const plex    = pickCase(p, "PLEX");
   const simkl   = pickCase(p, "SIMKL");
   const trakt   = pickCase(p, "TRAKT");
+  const anilist = pickCase(p, "ANILIST");
   const jelly   = pickCase(p, "JELLYFIN");
   const emby    = pickCase(p, "EMBY");
   const mdbl  = pickCase(p, "MDBLIST");
@@ -491,6 +496,7 @@ function renderConnectorStatus(providers, { stale = false } = {}) {
   setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
   setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
   setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
+  setBadge("badge-anilist",  "AniList",   connState(anilist ?? false), stale, "ANILIST",  anilist);
   setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
   setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
   setBadge("badge-mdblist",  "MDBlist",  connState(mdbl ?? false), stale, "MDBLIST", mdbl);
@@ -526,6 +532,7 @@ async function refreshStatus(force = false) {
       PLEX:     norm(pick(pRaw, "PLEX"),     (r.plex_connected    ?? r.plex)),
       SIMKL:    norm(pick(pRaw, "SIMKL"),    (r.simkl_connected   ?? r.simkl)),
       TRAKT:    norm(pick(pRaw, "TRAKT"),    (r.trakt_connected   ?? r.trakt)),
+      ANILIST:  norm(pick(pRaw, "ANILIST"),  (r.anilist_connected ?? r.anilist)),
       JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
       EMBY:     norm(pick(pRaw, "EMBY"),     (r.emby_connected    ?? r.emby)),
       MDBLIST:  norm(pick(pRaw, "MDBLIST"),  (r.mdblist_connected  ?? r.mdblist)),
@@ -541,6 +548,7 @@ async function refreshStatus(force = false) {
       plex_connected:     !!(providers.PLEX?.connected     ?? providers.PLEX?.ok),
       simkl_connected:    !!(providers.SIMKL?.connected    ?? providers.SIMKL?.ok),
       trakt_connected:    !!(providers.TRAKT?.connected    ?? providers.TRAKT?.ok),
+      anilist_connected:  !!(providers.ANILIST?.connected  ?? providers.ANILIST?.ok),
       jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
       emby_connected:     !!(providers.EMBY?.connected     ?? providers.EMBY?.ok),
       mdblist_connected:  !!(providers.MDBLIST?.connected  ?? providers.MDBLIST?.ok),
@@ -594,6 +602,7 @@ async function manualRefreshStatus() {
         PLEX:     { connected: !!s.plex_connected },
         SIMKL:    { connected: !!s.simkl_connected },
         TRAKT:    { connected: !!s.trakt_connected },
+        ANILIST:  { connected: !!s.anilist_connected },
         JELLYFIN: { connected: !!s.jellyfin_connected },
         EMBY:     { connected: !!s.emby_connected },
         MDBLIST:  { connected: !!s.mdblist_connected },
@@ -2016,6 +2025,11 @@ async function loadConfig() {
   setRaw("simkl_client_secret", val(cfg.simkl?.client_secret));
   setRaw("simkl_access_token",  val(cfg.simkl?.access_token) || val(cfg.auth?.simkl?.access_token));
 
+  // ANILIST
+  setRaw("anilist_client_id",     val(cfg.anilist?.client_id));
+  setRaw("anilist_client_secret", val(cfg.anilist?.client_secret));
+  setRaw("anilist_access_token",  val(cfg.anilist?.access_token) || val(cfg.auth?.anilist?.access_token));
+
   // TMDB
   setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
 
@@ -2077,6 +2091,8 @@ async function saveSettings() {
     "simkl_client_secret",
     "trakt_client_id",
     "trakt_client_secret",
+    "anilist_client_id",
+    "anilist_client_secret",
     "tmdb_api_key",
     "mdblist_key"
   ]).forEach(id => {
@@ -2122,6 +2138,8 @@ async function saveSettings() {
     const prevDebugHttp = !!serverCfg?.runtime?.debug_http;
     const prevPlex     = norm(serverCfg?.plex?.account_token);
     const prevHomePin  = norm(serverCfg?.plex?.home_pin);
+    const prevAniCid = norm(serverCfg?.anilist?.client_id);
+    const prevAniSec = norm(serverCfg?.anilist?.client_secret);
     const prevCid      = norm(serverCfg?.simkl?.client_id);
     const prevSec      = norm(serverCfg?.simkl?.client_secret);
     const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
@@ -2280,12 +2298,14 @@ async function saveSettings() {
     // Secrets (tokens, keys, client ids/secrets)
     const sPlex     = readSecretSafe("plex_token", prevPlex);
     const sHomePin  = readSecretSafe("plex_home_pin", prevHomePin);
-    const sCid    = readSecretSafe("simkl_client_id", prevCid);
-    const sSec    = readSecretSafe("simkl_client_secret", prevSec);
-    const sTmdb   = readSecretSafe("tmdb_api_key", prevTmdb);
-    const sTrkCid = readSecretSafe("trakt_client_id", prevTraktCid);
-    const sTrkSec = readSecretSafe("trakt_client_secret", prevTraktSec);
-    const sMdbl   = readSecretSafe("mdblist_key", prevMdbl);
+    const sCid      = readSecretSafe("simkl_client_id", prevCid);
+    const sSec      = readSecretSafe("simkl_client_secret", prevSec);
+    const sTmdb     = readSecretSafe("tmdb_api_key", prevTmdb);
+    const sTrkCid   = readSecretSafe("trakt_client_id", prevTraktCid);
+    const sTrkSec   = readSecretSafe("trakt_client_secret", prevTraktSec);
+    const sMdbl     = readSecretSafe("mdblist_key", prevMdbl);
+    const sAniCid   = readSecretSafe("anilist_client_id", prevAniCid);
+    const sAniSec   = readSecretSafe("anilist_client_secret", prevAniSec);
 
     if (sMdbl.changed) {
       cfg.mdblist = cfg.mdblist || {};
@@ -2328,6 +2348,17 @@ async function saveSettings() {
       if (sTmdb.clear) delete cfg.tmdb.api_key; else cfg.tmdb.api_key = sTmdb.set;
       changed = true;
     }
+    if (sAniCid.changed) {
+      cfg.anilist = cfg.anilist || {};
+      if (sAniCid.clear) delete cfg.anilist.client_id; else cfg.anilist.client_id = sAniCid.set;
+      changed = true;
+    }
+    if (sAniSec.changed) {
+      cfg.anilist = cfg.anilist || {};
+      if (sAniSec.clear) delete cfg.anilist.client_secret; else cfg.anilist.client_secret = sAniSec.set;
+      changed = true;
+    }
+
 
     // Jellyfin patch
     try {
@@ -2976,6 +3007,8 @@ function cxBrandInfo(name) {
   const map = {
     PLEX: { cls: "brand-plex", icon: "/assets/img/PLEX.svg" },
     SIMKL: { cls: "brand-simkl", icon: "/assets/img/SIMKL.svg" },
+    TRAKT: { cls: "brand-trakt", icon: "/assets/img/TRAKT.svg" },
+    ANILIST: { cls: "brand-anilist", icon: "/assets/img/ANILIST.svg" },
   };
   return map[key] || { cls: "", icon: "" };
 }
@@ -2986,6 +3019,7 @@ function cxBrandLogo(providerName) {
     PLEX:  "/assets/img/PLEX.svg",
     SIMKL: "/assets/img/SIMKL.svg",
     TRAKT: "/assets/img/TRAKT.svg",
+    ANILIST:"/assets/img/ANILIST.svg",
     TMDB:  "/assets/img/TMDB.svg",
     JELLYFIN: "/assets/img/JELLYFIN.svg",
     EMBY: "/assets/img/EMBY.svg",
@@ -3082,6 +3116,7 @@ async function loadWall() {
       case "plex_only":  return { text: "PLEX",    cls: "p-px" };
       case "simkl_only": return { text: "SIMKL",   cls: "p-sk" };
       case "trakt_only": return { text: "TRAKT",   cls: "p-tr" };
+      case "anilist_only": return { text: "ANILIST", cls: "p-al" };
       case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
       case "crosswatch_only": return { text: "CW", cls: "p-sk" };
       case "cw_only":         return { text: "CW", cls: "p-sk" };
@@ -3356,6 +3391,7 @@ async function mountAuthProviders() {
 
     window.initMDBListAuthUI?.();
     window.initTautulliAuthUI?.();
+    window.initAniListAuthUI?.();
 
     document.getElementById("btn-copy-plex-pin")
       ?.addEventListener("click", (e) => copyInputValue?.("plex_pin", e.currentTarget));
@@ -3490,6 +3526,7 @@ async function loadProviders() {
       if (/\bPLEX\b/.test(s)) return "PLEX";
       if (/\bSIMKL\b/.test(s)) return "SIMKL";
       if (/\bTRAKT\b/.test(s)) return "TRAKT";
+      if (/\bANILIST\b/.test(s)) return "ANILIST";
       if (/\bJELLYFIN\b/.test(s)) return "JELLYFIN";
       if (/\bEMBY\b/.test(s)) return "EMBY";
       return s;

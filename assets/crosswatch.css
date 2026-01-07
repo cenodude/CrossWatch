@@ -40,6 +40,7 @@ code {
   --mdblist-rgb: 59, 122, 189;
   --jellyfin-rgb: 170, 92, 195;
   --tautulli-rgb: 245, 124, 46;
+  --anilist-rgb: 36,160,251;
 }
 
 :root {
@@ -51,10 +52,12 @@ code {
   --mdblist: #3B7ABD;
   --jellyfin: #AA5CC3;
   --tautulli: #F57C2E;
+  --anilist: #24A0FB;
 }
 
 .prov-card.brand-plex   { --brand-color: var(--plex);   --brand-rgb: var(--plex-rgb); }
 .prov-card.brand-simkl  { --brand-color: var(--simkl);  --brand-rgb: var(--simkl-rgb); }
+.prov-card.brand-anilist{ --brand-color: var(--anilist);--brand-rgb: var(--anilist-rgb); }
 .prov-card.brand-trakt  { --brand-color: var(--trakt);  --brand-rgb: 237, 28, 36; }
 .prov-card.brand-emby   { --brand-color: var(--emby); --brand-rgb: var(--emby-rgb); }
 .prov-card.brand-jellyfin { --brand-color: var(--jellyfin); --brand-rgb: var(--jellyfin-rgb); }
@@ -88,6 +91,11 @@ code {
   color: var(--simkl);
   background: rgba(0,183,235,.12);
   border-color: rgba(0,183,235,.35);
+}
+.brand-ico.anilist{
+  color: var(--anilist);
+  background: rgba(var(--anilist-rgb), .12);
+  border-color: rgba(var(--anilist-rgb), .35);
 }
 .brand-ico.tmdb {
   color: var(--tmdb);
@@ -1605,6 +1613,10 @@ select {
   border-left: 3px solid var(--trakt);
   padding-left: 10px
 }
+#sec-anilist > .head {
+  border-left: 3px solid var(--anilist);
+  padding-left: 10px
+}
 #sec-jellyfin > .head {
   border-left: 3px solid var(--jellyfin);
   padding-left: 10px;
@@ -1648,6 +1660,26 @@ select {
   z-index: 50;
   background-color: rgba(0,0,0,.55) !important;
   background-image: url("/assets/img/Plex.svg?v=1") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  border-radius: 8px;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.55));
+}
+
+.prov-card[data-prov="AniList"] .prov-head::after,
+.prov-card[data-prov="ANILIST"] .prov-head::after,
+.prov-card[data-prov="anilist"] .prov-head::after{
+  content: " ";
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: block;
+  z-index: 50;
+  background-color: rgba(0,0,0,.55) !important;
+  background-image: url("/assets/img/ANILIST.svg?v=1") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
   background-size: contain !important;
@@ -3785,7 +3817,8 @@ select {
 
 #tile-plex,
 #tile-simkl,
-#tile-trakt {
+#tile-trakt,
+#tile-anilist {
   margin-top: 90px;
   position: relative;
   z-index: 1;

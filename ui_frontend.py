@@ -263,6 +263,7 @@ def _get_index_html_static() -> str:
               <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="height:18px;width:auto;opacity:.9">
+              <img src="/assets/img/ANILIST-log.svg" alt="AniList" style="height:18px;width:auto;opacity:.9">
               <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
             </span>
           </div>
@@ -467,6 +468,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/auth/auth.emby.js?v=0.2.5-20251014-02" defer></script>
 <script src="/assets/auth/auth.mdblist.js" defer></script>
 <script src="/assets/auth/auth.tautulli.js" defer></script>
+<script src="/assets/auth/auth.anilist.js" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
 
@@ -528,6 +530,7 @@ function isProviderConfigured(key,cfg){
     case 'PLEX':     return !!(c?.plex?.account_token);
     case 'TRAKT':    return !!(c?.trakt?.access_token || c?.auth?.trakt?.access_token);
     case 'SIMKL':    return !!(c?.simkl?.access_token);
+    case 'ANILIST':  return !!(c?.anilist?.access_token || c?.auth?.anilist?.access_token);
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
     case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
     case 'MDBLIST':  return !!(c?.mdblist?.api_key);
@@ -572,6 +575,7 @@ async function refreshAuthDots(force=false){
     ["sec-jellyfin", "JELLYFIN"],
     ["sec-trakt",    "TRAKT"],
     ["sec-simkl",    "SIMKL"],
+    ["sec-anilist",  "ANILIST"],
     ["sec-mdblist",  "MDBLIST"],
     ["sec-tautulli", "TAUTULLI"],
   ];
@@ -713,6 +717,7 @@ function render(payload){
       PLEX: 'Plex',
       TRAKT: 'Trakt',
       SIMKL: 'SIMKL',
+      ANILIST: 'AniList',
       JELLYFIN: 'Jellyfin',
       EMBY: 'Emby',
       MDBLIST: 'MDBlist',
@@ -774,6 +779,10 @@ function render(payload){
         const maxStr  = Number.isFinite(max)  ? max.toLocaleString() : '-';
         const pat = d.patron_status || '';
         detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` — Status: ${pat}` : '');
+      } else if (K.toUpperCase() === 'ANILIST') {
+        const u = (d.user && typeof d.user === 'object') ? d.user : {};
+        const nm = u.name || u.username || u.id;
+        if (nm) detail = `User: ${nm}`;
       }
     }
 

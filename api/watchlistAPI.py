@@ -46,7 +46,13 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
 
 def _type_from_item_or_guess(item: dict[str, Any], key: str = "") -> str:
     t = str(item.get("type") or item.get("media_type") or item.get("entity") or "").lower().strip()
-    if t in ("tv", "show", "shows", "series", "episode", "season"):
+    if t in ("tv", "show", "shows", "series", "episode", "season", "anime"):
+        return "tv"
+    ids = item.get("ids") or {}
+    if isinstance(ids, dict) and (ids.get("anilist") or ids.get("mal")):
+        return "tv"
+    pref = (key or "").split(":", 1)[0].lower().strip()
+    if pref in ("anilist", "mal"):
         return "tv"
     return "movie"
 
@@ -64,18 +70,19 @@ def _item_label(state: dict[str, Any], key: str, prov: str) -> tuple[str, str]:
 
 def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
     keys: list[str] = []
-
-    imdb = ids.get("imdb")
-    if isinstance(imdb, str) and imdb:
-        keys.append(f"imdb:{imdb if imdb.startswith('tt') else 'tt' + imdb}")
-
-    tmdb = ids.get("tmdb")
-    if tmdb not in (None, ""):
-        keys.append(f"tmdb:{tmdb}")
-
-    tvdb = ids.get("tvdb")
-    if tvdb not in (None, ""):
-        keys.append(f"tvdb:{tvdb}")
+    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "anilist", "mal"):
+        v = ids.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        if k == "imdb":
+            if s.isdigit():
+                s = f"tt{s}"
+            elif not s.startswith("tt"):
+                s = f"tt{s}"
+        keys.append(f"{k}:{s}")
 
     seen: set[str] = set()
     out: list[str] = []
@@ -84,7 +91,6 @@ def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
             seen.add(k)
             out.append(k)
     return out
-
 
 def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
     from cw_platform.config_base import load_config

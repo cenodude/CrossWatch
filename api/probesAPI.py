@@ -32,7 +32,7 @@ HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
 STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
-PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tautulli")
+PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "anilist", "jellyfin", "emby", "mdblist", "tautulli")
 
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -41,7 +41,7 @@ PROBE_DETAIL_CACHE: dict[str, tuple[float, bool, str]] = {
     k: (0.0, False, "") for k in PROVIDERS
 }
 _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {
-    k: (0.0, {}) for k in ("plex", "trakt", "emby", "mdblist")
+    k: (0.0, {}) for k in ("plex", "trakt", "anilist", "emby", "mdblist")
 }
 
 UA: dict[str, str] = {
@@ -71,6 +71,38 @@ def _http_get_with_headers(
 def _http_get(url: str, headers: dict[str, str], timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
     code, body, _ = _http_get_with_headers(url, headers=headers, timeout=timeout)
     return code, body
+
+
+
+def _http_post_with_headers(
+    url: str,
+    headers: dict[str, str],
+    data: bytes,
+    timeout: int = HTTP_TIMEOUT,
+) -> tuple[int, bytes, dict[str, str]]:
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+            body = r.read()
+            hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
+            return r.getcode(), body, hdrs
+    except urllib.error.HTTPError as e:
+        body = e.read() if getattr(e, "fp", None) else b""
+        hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
+        return e.code, body, hdrs
+    except Exception:
+        return 0, b"", {}
+
+def _http_post_json(
+    url: str,
+    headers: dict[str, str],
+    payload: Mapping[str, Any],
+    timeout: int = HTTP_TIMEOUT,
+) -> tuple[int, bytes, dict[str, str]]:
+    h = dict(headers or {})
+    h.setdefault("Content-Type", "application/json")
+    data = json.dumps(dict(payload)).encode("utf-8")
+    return _http_post_with_headers(url, headers=h, data=data, timeout=timeout)
 
 def _json_loads(b: bytes) -> dict[str, Any]:
     try:
@@ -222,6 +254,44 @@ def probe_trakt(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     return ok
 
 
+
+def probe_anilist(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
+    ts, ok = PROBE_CACHE["anilist"]
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok
+
+    an = (cfg.get("anilist") or cfg.get("ANILIST") or {}) or {}
+    auth_an = (cfg.get("auth") or {}).get("anilist") or (cfg.get("auth") or {}).get("ANILIST") or {}
+    tok = str(
+        an.get("access_token")
+        or an.get("token")
+        or (an.get("oauth") or {}).get("access_token")
+        or (auth_an.get("access_token") if isinstance(auth_an, dict) else "")
+        or (auth_an.get("token") if isinstance(auth_an, dict) else "")
+        or ((auth_an.get("oauth") or {}).get("access_token") if isinstance(auth_an, dict) else "")
+        or ""
+    ).strip()
+
+    if not tok:
+        PROBE_CACHE["anilist"] = (now, False)
+        return False
+
+    headers = {**UA, "Authorization": f"Bearer {tok}"}
+    code, body, _ = _http_post_json(
+        "https://graphql.anilist.co",
+        headers=headers,
+        payload={"query": "query { Viewer { id } }"},
+        timeout=HTTP_TIMEOUT,
+    )
+    j = _json_loads(body) or {}
+    data = j.get("data") if isinstance(j, dict) else None
+    viewer = (data or {}).get("Viewer") if isinstance(data, dict) else None
+    ok = code == 200 and isinstance(viewer, dict) and bool(viewer.get("id"))
+    PROBE_CACHE["anilist"] = (now, ok)
+    return ok
+
+
 def probe_mdblist(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     ts, ok = PROBE_CACHE["mdblist"]
     now = time.time()
@@ -362,6 +432,67 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     rsn = "" if ok else _reason_http(code, "Trakt")
     PROBE_DETAIL_CACHE["trakt"] = (now, ok, rsn)
     return ok, rsn
+
+
+def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    ts, ok, rsn = PROBE_DETAIL_CACHE["anilist"]
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok, rsn
+
+    an = (cfg.get("anilist") or cfg.get("ANILIST") or {}) or {}
+    auth_an = (cfg.get("auth") or {}).get("anilist") or (cfg.get("auth") or {}).get("ANILIST") or {}
+    tok = str(
+        an.get("access_token")
+        or an.get("token")
+        or (an.get("oauth") or {}).get("access_token")
+        or (auth_an.get("access_token") if isinstance(auth_an, dict) else "")
+        or (auth_an.get("token") if isinstance(auth_an, dict) else "")
+        or ((auth_an.get("oauth") or {}).get("access_token") if isinstance(auth_an, dict) else "")
+        or ""
+    ).strip()
+
+    if not tok:
+        rsn = "AniList: missing access token"
+        PROBE_DETAIL_CACHE["anilist"] = (now, False, rsn)
+        return False, rsn
+
+    headers = {**UA, "Authorization": f"Bearer {tok}"}
+    code, body, _ = _http_post_json(
+        "https://graphql.anilist.co",
+        headers=headers,
+        payload={"query": "query { Viewer { id name } }"},
+        timeout=HTTP_TIMEOUT,
+    )
+
+    if code in (401, 403):
+        ok = False
+        rsn = _reason_http(code, "AniList")
+        PROBE_DETAIL_CACHE["anilist"] = (now, ok, rsn)
+        return ok, rsn
+
+    if code != 200:
+        ok = False
+        rsn = _reason_http(code, "AniList")
+        PROBE_DETAIL_CACHE["anilist"] = (now, ok, rsn)
+        return ok, rsn
+
+    j = _json_loads(body) or {}
+    errs = j.get("errors") if isinstance(j, dict) else None
+    if isinstance(errs, list) and errs:
+        first = errs[0] if errs else {}
+        msg = first.get("message") if isinstance(first, dict) else None
+        rsn = str(msg or "AniList: graphql error")
+        PROBE_DETAIL_CACHE["anilist"] = (now, False, rsn)
+        return False, rsn
+
+    data = j.get("data") if isinstance(j, dict) else None
+    viewer = (data or {}).get("Viewer") if isinstance(data, dict) else None
+    ok = isinstance(viewer, dict) and bool(viewer.get("id"))
+    rsn = "" if ok else "AniList: invalid response"
+    PROBE_DETAIL_CACHE["anilist"] = (now, ok, rsn)
+    return ok, rsn
+
 
 def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]
@@ -712,6 +843,49 @@ def emby_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict
     _USERINFO_CACHE["emby"] = (now, out)
     return out
 
+
+def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    ts, info = _USERINFO_CACHE["anilist"]
+    now = time.time()
+    if now - ts < max_age_sec and isinstance(info, dict):
+        return info
+
+    an = (cfg.get("anilist") or cfg.get("ANILIST") or {}) or {}
+    auth_an = (cfg.get("auth") or {}).get("anilist") or (cfg.get("auth") or {}).get("ANILIST") or {}
+    tok = str(
+        an.get("access_token")
+        or an.get("token")
+        or (an.get("oauth") or {}).get("access_token")
+        or (auth_an.get("access_token") if isinstance(auth_an, dict) else "")
+        or (auth_an.get("token") if isinstance(auth_an, dict) else "")
+        or ((auth_an.get("oauth") or {}).get("access_token") if isinstance(auth_an, dict) else "")
+        or ""
+    ).strip()
+
+    if not tok:
+        _USERINFO_CACHE["anilist"] = (now, {})
+        return {}
+
+    headers = {**UA, "Authorization": f"Bearer {tok}"}
+    code, body, _ = _http_post_json(
+        "https://graphql.anilist.co",
+        headers=headers,
+        payload={"query": "query { Viewer { id name } }"},
+        timeout=HTTP_TIMEOUT,
+    )
+
+    out: dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        data = j.get("data") if isinstance(j, dict) else None
+        viewer = (data or {}).get("Viewer") if isinstance(data, dict) else None
+        if isinstance(viewer, dict) and viewer.get("id"):
+            out = {"user": {"id": viewer.get("id"), "name": viewer.get("name")}}
+
+    _USERINFO_CACHE["anilist"] = (now, out)
+    return out
+
+
 def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
     n = (name or "").strip().lower()
     if n == "plex":
@@ -723,6 +897,11 @@ def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
         )
     if n == "simkl":
         return bool((cfg.get("simkl") or {}).get("access_token"))
+    if n == "anilist":
+        return bool(
+            (cfg.get("anilist") or {}).get("access_token")
+            or (cfg.get("auth") or {}).get("anilist", {}).get("access_token")
+        )
     if n == "jellyfin":
         jf = cfg.get("jellyfin") or {}
         return bool(
@@ -805,6 +984,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "PLEX": _probe_plex_detail,
     "SIMKL": _probe_simkl_detail,
     "TRAKT": _probe_trakt_detail,
+    "ANILIST": _probe_anilist_detail,
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
     "MDBLIST": _probe_mdblist_detail,
@@ -813,6 +993,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
     "TRAKT": trakt_user_info,
+    "ANILIST": anilist_user_info,
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
 }
@@ -854,6 +1035,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         emby_ok, emby_reason = results.get("EMBY", (False, ""))
         mdbl_ok, mdbl_reason = results.get("MDBLIST", (False, ""))
         taut_ok, taut_reason = results.get("TAUTULLI", (False, ""))
+        anilist_ok, anilist_reason = results.get("ANILIST", (False, ""))
 
         debug = bool((cfg.get("runtime") or {}).get("debug"))
 
@@ -862,6 +1044,9 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         )
         info_trakt = (
             _safe_userinfo(trakt_user_info, cfg, max_age_sec=user_age) if trakt_ok else {}
+        )
+        info_anilist = (
+            _safe_userinfo(anilist_user_info, cfg, max_age_sec=user_age) if anilist_ok else {}
         )
         info_emby = (
             _safe_userinfo(emby_user_info, cfg, max_age_sec=user_age) if emby_ok else {}
@@ -905,6 +1090,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             "plex_connected": plex_ok,
             "simkl_connected": simkl_ok,
             "trakt_connected": trakt_ok,
+            "anilist_connected": anilist_ok,
             "jellyfin_connected": jelly_ok,
             "emby_connected": emby_ok,
             "mdblist_connected": mdbl_ok,
@@ -928,6 +1114,15 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "SIMKL": {
                     "connected": simkl_ok,
                     **({} if simkl_ok else {"reason": simkl_reason}),
+                },
+                "ANILIST": {
+                    "connected": anilist_ok,
+                    **({} if anilist_ok else {"reason": anilist_reason}),
+                    **(
+                        {}
+                        if not info_anilist
+                        else {"user": (info_anilist.get("user") or {})}
+                    ),
                 },
                 "TRAKT": trakt_block,
 

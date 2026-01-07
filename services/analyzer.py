@@ -184,7 +184,7 @@ def _alias_keys(obj: dict[str, Any]) -> list[str]:
     if obj.get("_key"):
         out.append(obj["_key"])
 
-    for ns in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "plex", "emby", "guid", "mdblist"):
+    for ns in ("imdb", "tmdb", "tvdb", "mal", "anilist", "trakt", "simkl", "plex", "emby", "guid", "mdblist"):
         v = ids.get(ns)
         if v:
             vs = str(v)
@@ -272,6 +272,15 @@ _TYPE_TOKEN_MAP: dict[str, str] = {
     "animes": "anime",
 }
 
+_PROVIDER_ALLOWED_TYPES: dict[str, set[str]] = {
+    "ANILIST": {"anime"},
+}
+
+def _provider_allowed_types(prov: str, feat: str) -> set[str] | None:
+    _ = feat
+    return _PROVIDER_ALLOWED_TYPES.get(str(prov or "").upper())
+
+
 def _item_type(it: dict[str, Any]) -> str:
     t = str((it or {}).get("type") or "").strip().lower()
     return _TYPE_TOKEN_MAP.get(t, t)
@@ -295,6 +304,17 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
             out0.add(_TYPE_TOKEN_MAP.get(s, s))
         return out0
 
+    def merge_dir(a: str, b: str, feat: str, types0: set[str]) -> None:
+        if not types0:
+            return
+        key = (a, feat, b)
+        if key in out:
+            out[key] = out[key].intersection(types0)
+        else:
+            out[key] = set(types0)
+
+    two_way = ("two-way", "bi", "both", "mirror", "two", "two_way", "two way")
+
     for pr in cfg.get("pairs") or []:
         if not isinstance(pr, dict):
             continue
@@ -310,27 +330,47 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
         if not isinstance(feats, dict):
             continue
 
-        def add_dir(a: str, b: str, feat: str, raw_types: Any) -> None:
-            types0 = norm_types(raw_types)
-            if types0:
-                out[(a, feat, b)] = types0
-
         for feat in ("history", "watchlist", "ratings"):
             fcfg = feats.get(feat)
             if not is_on(fcfg):
                 continue
-            raw_types = fcfg.get("types") if isinstance(fcfg, dict) else None
-            if raw_types is None:
-                continue
 
-            if isinstance(raw_types, dict):
-                add_dir(src, dst, feat, raw_types.get(src) or raw_types.get(src.lower()) or raw_types.get(src.upper()))
-                if mode in ("two-way", "bi", "both", "mirror"):
-                    add_dir(dst, src, feat, raw_types.get(dst) or raw_types.get(dst.lower()) or raw_types.get(dst.upper()))
-            else:
-                add_dir(src, dst, feat, raw_types)
-                if mode in ("two-way", "bi", "both", "mirror"):
-                    add_dir(dst, src, feat, raw_types)
+            raw_types = fcfg.get("types") if isinstance(fcfg, dict) else None
+            if raw_types is not None:
+                if isinstance(raw_types, dict):
+                    merge_dir(
+                        src,
+                        dst,
+                        feat,
+                        norm_types(
+                            raw_types.get(src)
+                            or raw_types.get(src.lower())
+                            or raw_types.get(src.upper())
+                        ),
+                    )
+                    if mode in two_way:
+                        merge_dir(
+                            dst,
+                            src,
+                            feat,
+                            norm_types(
+                                raw_types.get(dst)
+                                or raw_types.get(dst.lower())
+                                or raw_types.get(dst.upper())
+                            ),
+                        )
+                else:
+                    merge_dir(src, dst, feat, norm_types(raw_types))
+                    if mode in two_way:
+                        merge_dir(dst, src, feat, norm_types(raw_types))
+
+            prov_types = _provider_allowed_types(dst, feat)
+            if prov_types:
+                merge_dir(src, dst, feat, prov_types)
+            if mode in two_way:
+                prov_types_rev = _provider_allowed_types(src, feat)
+                if prov_types_rev:
+                    merge_dir(dst, src, feat, prov_types_rev)
 
     return out
 
@@ -544,11 +584,16 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
             excluded_types: dict[str, int] = {}
             excluded_libs: dict[str, int] = {}
 
+            scanned_total = 0
+            accepted_total = 0
+
             for v in src_items.values():
                 if not isinstance(v, dict):
                     continue
                 if v.get("_ignore_missing_peer"):
                     continue
+
+                scanned_total += 1
 
                 if not _passes_pair_type_filter(pair_types, prov, feat, dst, v):
                     t = _item_type(v)
@@ -561,6 +606,7 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
                     excluded_libs[lid] = excluded_libs.get(lid, 0) + 1
                     continue
 
+                accepted_total += 1
             total = sum(excluded_types.values()) + sum(excluded_libs.values())
             if not total:
                 continue
@@ -570,6 +616,8 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
                 "target": dst,
                 "feature": feat,
                 "excluded_total": total,
+                "scanned_total": scanned_total,
+                "accepted_total": accepted_total,
             }
             if excluded_types:
                 rec["excluded_types"] = excluded_types
@@ -1149,7 +1197,7 @@ def _norm(ns: str, v: Any) -> str | None:
     if ns == "imdb":
         m = re.search(r"(\d+)", s)
         return f"tt{m.group(1)}" if m else None
-    if ns in ("tmdb", "tvdb", "trakt", "plex", "simkl"):
+    if ns in ("tmdb", "tvdb", "trakt", "plex", "simkl", "mal", "anilist"):
         m = re.search(r"(\d+)", s)
         return m.group(1) if m else None
     return s or None
