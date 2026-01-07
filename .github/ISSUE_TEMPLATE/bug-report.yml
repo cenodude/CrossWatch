@@ -17,8 +17,8 @@ body:
         2. Go to **Settings → Maintenance**  
            Enable **Debug** and **MOD Debug**.
 
-           
         3. **Reproduce the issue again** after enabling debug.
+        
         4. Collect logs from **both places**:
            - **Docker console logs**
            - **CrossWatch Sync Output**
@@ -26,14 +26,11 @@ body:
         5. If the issue is “some items don’t sync”:  
            run the **Analyzer** first. It often tells you what’s missing and why.
 
-
   - type: markdown
     attributes:
       value: |
         **Please don't paste secrets** (tokens, usernames, API keys, etc.).
-        
-        Redaction rule:
-        - If the field was filled in → replace with `<REDACTED>`
+          If the field was filled in → replace with `<REDACTED>`
 
   - type: input
     id: version
@@ -43,15 +40,6 @@ body:
       placeholder: v0.x.y or 8-char SHA
     validations:
       required: true
-
-  - type: dropdown
-    id: run_mode
-    attributes:
-      label: Run mode
-      options:
-        - Manual run
-        - Scheduled run
-        - Background scrobble
 
   - type: checkboxes
     id: providers
@@ -82,23 +70,12 @@ body:
         - label: Synchronization → Watchlist
         - label: Synchronization → Ratings
         - label: Synchronization → History
+        - label: Scrobble/Webhook
+        - label: Scrobble/Watcher
         - label: Scheduler
         - label: Web UI (modals, pairs, progress)
         - label: Metadata / IDs
         - label: Config / API
-
-  - type: checkboxes
-    id: impact
-    attributes:
-      label: Impact
-      options:
-        - label: Data loss risk (unexpected deletions)
-        - label: Wrong data (duplicates/mismatched items)
-        - label: Broken flow (sync/scheduler not working)
-        - label: Scrobble (webhook and/or watcher) issues
-        - label: UI issue only
-        - label: Performance/timeout
-        - label: Other
 
   - type: textarea
     id: summary
@@ -107,98 +84,6 @@ body:
       placeholder: Clear and concise description of the problem.
     validations:
       required: true
-
-  - type: markdown
-    attributes:
-      value: |
-        **Primary pair (if relevant)**  
-        Pick source/target + direction + feature(s).  
-        If multiple pairs are involved, add them in “Additional pairs”.
-
-  - type: dropdown
-    id: pair_source
-    attributes:
-      label: Source provider
-      options:
-        - Plex
-        - Emby
-        - Jellyfin
-        - MDBlist
-        - Tautulli
-        - AniList
-        - Trakt
-        - SIMKL
-        - CrossWatch Internal Tracker (CW)
-
-  - type: dropdown
-    id: pair_target
-    attributes:
-      label: Target provider
-      options:
-        - Plex
-        - Emby
-        - Jellyfin
-        - MDBlist
-        - Tautulli
-        - AniList
-        - Trakt
-        - SIMKL
-        - CrossWatch Internal Tracker (CW)
-
-  - type: dropdown
-    id: pair_direction
-    attributes:
-      label: Direction
-      options:
-        - Source → Target
-        - Source ⇄ Target
-
-  - type: checkboxes
-    id: pair_features
-    attributes:
-      label: Feature(s)
-      options:
-        - label: Watchlist
-        - label: History
-        - label: Ratings
-
-  - type: textarea
-    id: additional_pairs
-    attributes:
-      label: Additional pairs (optional)
-      description: List any other pairs/directions/features involved.
-      placeholder: |
-        Plex → SIMKL (Watchlist)
-        SIMKL ⇄ Trakt (Ratings)
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      description: Pre-conditions, actions, and what you saw.
-      placeholder: |
-        1) …
-        2) …
-        3) …
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual
-      placeholder: What actually happened (include exact UI messages if any).
-    validations:
-      required: true
-
-  - type: textarea
-    id: examples
-    attributes:
-      label: Example item(s) (helps ID matching)
-      description: Provide 1–3 concrete examples.
-      placeholder: |
-        Title: <Movie/Show S01E02>, Year: <YYYY>
-        IDs: tmdb=<id>, imdb=<tt…>, tvdb=<id>, trakt=<id>, simkl=<id>, plex.ratingKey=<key>
 
   - type: textarea
     id: logs
