@@ -102,6 +102,7 @@ NOT supported: **Anime** (not yet) and **Multi-users/servers**
 <b>Trackers</b><br/>
 <img alt="CrossWatch" src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&logoColor=white" />
 &nbsp;<img alt="SIMKL" src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" />
+&nbsp;<img alt="AniList" src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328" />
 &nbsp;<img alt="Trakt" src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" />
 &nbsp;<img alt="MDBList" src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" />
 
