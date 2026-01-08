@@ -1,4 +1,3 @@
-# CrossWatch
 <p align="center">
   <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
 </p>
