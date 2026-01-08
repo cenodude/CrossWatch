@@ -21,25 +21,33 @@
 <p align="center">
   <img width="776" height="314" alt="image" src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" />
 
-</p>
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
-    <img
-      alt="Latest Release"
+    <img alt="Latest Release"
       src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&sort=semver&logo=github&label=Latest%20Release&style=for-the-badge">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started">
-    <img
-      alt="Must-read: Quick Start"
+    <img alt="Must-read: Quick Start"
       src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
   </a>
-  <a href="https://github.com/cenodude/CrossWatch/wiki">
+
+  <br/>
+
+  <a href="https://hub.docker.com/r/cenodude/crosswatch">
+    <img alt="Docker Pulls"
+      src="https://img.shields.io/docker/pulls/cenodude/crosswatch?style=for-the-badge&logo=docker&label=Docker%20Pulls">
+  </a>
+  <a href="https://hub.docker.com/r/cenodude/crosswatch">
+    <img alt="Image Size"
+      src="https://img.shields.io/docker/image-size/cenodude/crosswatch/latest?style=for-the-badge&logo=docker&label=Image%20Size">
+  </a>
+  <a href="https://hub.docker.com/r/cenodude/crosswatch/tags">
+    <img alt="Docker Version"
+      src="https://img.shields.io/docker/v/cenodude/crosswatch?sort=semver&style=for-the-badge&logo=docker&label=Docker%20Version">
   </a>
 </p>
 
-<p align="center">
-  <sub>At minimum, read the <a href="https://github.com/cenodude/CrossWatch/wiki/Best-Practices"><strong>Best Practices</strong></a> before enabling two-way sync or media server to media server writes.</sub>
-</p>
+
 
 **CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBBlist and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
 
