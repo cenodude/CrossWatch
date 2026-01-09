@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import time
+import re
 import threading
 import urllib.parse
 from typing import Any
@@ -82,6 +83,8 @@ def _watch_kind(w: Any) -> str | None:
         n = name.lower()
         if "emby" in n:
             return "emby"
+        if "jellyfin" in n:
+            return "jellyfin"
         if "plex" in n:
             return "plex"
     except Exception:
@@ -446,7 +449,7 @@ def _ensure_watch_started(
 
     prov = (provider or watch_cfg.get("provider") or "plex").lower().strip()
     sink_cfg = sink or watch_cfg.get("sink") or "trakt"
-    names = [s.strip().lower() for s in str(sink_cfg).split(",") if s and s.strip()]
+    names = [s.strip().lower() for s in re.split(r"[,&+]", str(sink_cfg)) if s and s.strip()]
     want_sinks = sorted(set(names or ["trakt"]))
 
     if w and getattr(w, "is_alive", lambda: False)():
@@ -481,6 +484,10 @@ def _ensure_watch_started(
             from providers.scrobble.simkl.sink import SimklSink
             sinks.append(SimklSink())
             added.add("simkl")
+        elif name == "mdblist" and "mdblist" not in added:
+            from providers.scrobble.mdblist.sink import MDBListSink
+            sinks.append(MDBListSink())
+            added.add("mdblist")
 
     if not sinks:
         from providers.scrobble.trakt.sink import TraktSink
@@ -491,6 +498,13 @@ def _ensure_watch_started(
     if prov == "emby":
         try:
             from providers.scrobble.emby.watch import make_default_watch as _mk
+            make_watch = _mk
+        except Exception:
+            make_watch = None
+
+    elif prov == "jellyfin":
+        try:
+            from providers.scrobble.jellyfin.watch import make_default_watch as _mk
             make_watch = _mk
         except Exception:
             make_watch = None
@@ -1034,6 +1048,10 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
 
     if not isinstance(payload, dict):
         payload = {}
+
+    event = str(payload.get("event") or "")
+    if event and event != "media.rate":
+        return JSONResponse({"ok": True, "ignored": True}, status_code=200)
 
     res = pxw_process(payload, dict(request.headers), raw=raw, logger=log)
 

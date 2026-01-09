@@ -88,6 +88,18 @@
     .sc-subbox .body{padding:12px 14px;border-top:1px solid rgba(255,255,255,.06)}
 
     .sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9;white-space:nowrap}
+	    .cx-toggle{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+	    .cx-toggle input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+	    .cx-toggle-ui{width:46px;height:26px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);transition:background .15s ease,border-color .15s ease,box-shadow .15s ease}
+	    .cx-toggle-ui:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 8px 18px rgba(0,0,0,.35);transition:transform .15s ease,background .15s ease}
+	    .cx-toggle-text{font-size:12px;opacity:.9;white-space:nowrap}
+	    .cx-toggle-state{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);opacity:.85}
+	    .cx-toggle-state:before{content:"Off"}
+	    .cx-toggle:hover .cx-toggle-ui{border-color:rgba(255,255,255,.22)}
+	    .cx-toggle input:checked + .cx-toggle-ui{background:rgba(34,197,94,.28);border-color:rgba(34,197,94,.45)}
+	    .cx-toggle input:checked + .cx-toggle-ui:after{transform:translateX(20px)}
+	    .cx-toggle input:checked ~ .cx-toggle-state:before{content:"On"}
+	    .cx-toggle input:focus-visible + .cx-toggle-ui{box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15),inset 0 0 0 1px rgba(0,0,0,.18)}
 
     .wh-top{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:12px;margin-bottom:8px;position:relative}
     .wh-toggle{display:inline-flex;gap:8px;align-items:center}
@@ -101,6 +113,44 @@
 
     .sc-opt-col{display:flex;flex-direction:column;gap:10px}
     .sc-opt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+    .sc-pillbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .sc-pill{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:rgba(255,255,255,.92);font-size:12px;line-height:1;cursor:pointer;user-select:none;transition:background .15s ease,border-color .15s ease,opacity .15s ease}
+    .sc-pill.off{opacity:.78}
+    .sc-pill.on{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.45);opacity:1}
+    .sc-pill:hover{border-color:rgba(255,255,255,.22)}
+    .sc-pill:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15)}
+    .sc-pill:disabled{cursor:default;opacity:.45}
+
+
+    .sc-user-pop{position:fixed;z-index:9999;width:min(360px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 24px));border-radius:14px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+    .sc-user-pop.hidden{display:none}
+    .sc-user-pop .head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
+    .sc-user-pop .title{font-weight:800}
+    .sc-user-pop .body{padding:10px 12px;display:grid;gap:10px}
+    .sc-user-pop .list{overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:280px}
+    .sc-user-pop .userrow{width:100%;text-align:left;background:transparent;border:0;color:inherit;padding:10px 10px;cursor:pointer}
+    .sc-user-pop .userrow:hover{background:rgba(255,255,255,.05)}
+    .sc-user-pop .row1{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .sc-user-pop .sub{font-size:12px;opacity:.7;padding:10px}
+    .sc-user-pop .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);opacity:.85}
+    .sc-prov-wrap{position:relative;display:inline-block}
+    .sc-prov-btn{width:140px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;cursor:pointer}
+    .sc-prov-left{display:inline-flex;align-items:center;gap:8px;min-width:0}
+    .sc-prov-ico{width:18px;height:18px;object-fit:contain}
+    .sc-prov-caret{opacity:.7}
+    .sc-prov-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:140px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden;z-index:1000}
+    .sc-prov-menu.hidden{display:none}
+    .sc-prov-item{width:100%;display:flex;align-items:center;gap:8px;padding:10px 10px;background:transparent;border:0;color:inherit;cursor:pointer;text-align:left}
+    .sc-prov-item:hover{background:rgba(255,255,255,.05)}
+    .sc-prov-item[aria-selected="true"]{background:rgba(34,197,94,.18)}
+    .sc-prov-btn,.sc-prov-btn *{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}
+    .sc-prov-btn:disabled,.sc-prov-btn:disabled *{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}
+
+    #sc-provider,#sc-sink{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}
+    #sc-provider:disabled,#sc-sink:disabled{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}
+    #sc-provider option,#sc-sink option{color:#fff;background:#111}
+
     `;
     d.head.appendChild(s);
   }
@@ -110,7 +160,7 @@
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5 },
   };
 
-  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [] };
+  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -132,33 +182,227 @@
     try {
       syncHiddenServerInputs();
     } catch {}
+    try {
+      if (!STATE._pfMute && String(p || "").startsWith("scrobble.watch.filters.")) saveCurrentProviderFilters();
+    } catch {}
   }
 
   const asArray = (v) => (Array.isArray(v) ? v.slice() : v == null || v === "" ? [] : [String(v)]);
+
+
+  function pfLoadStore() {
+    if (STATE.pf?.loaded) return;
+    STATE.pf.loaded = true;
+    try {
+      const raw = localStorage.getItem(STATE.pf.key);
+      const obj = raw ? JSON.parse(raw) : {};
+      if (obj && typeof obj === "object") STATE.pf.store = obj;
+    } catch {
+      STATE.pf.store = {};
+    }
+  }
+
+  function pfSaveStore() {
+    try {
+      localStorage.setItem(STATE.pf.key, JSON.stringify(STATE.pf.store || {}));
+    } catch {}
+  }
+
+  function snapshotWatchFilters() {
+    return {
+      username_whitelist: asArray(read("scrobble.watch.filters.username_whitelist", [])),
+      server_uuid: String(read("scrobble.watch.filters.server_uuid", "") || "").trim(),
+      user_id: String(read("scrobble.watch.filters.user_id", "") || "").trim(),
+    };
+  }
+
+  function saveCurrentProviderFilters(provOverride) {
+    pfLoadStore();
+    const prov = String(provOverride || provider() || "plex").toLowerCase().trim();
+    if (!["plex", "emby", "jellyfin"].includes(prov)) return;
+    STATE.pf.store ||= {};
+    STATE.pf.store[prov] = snapshotWatchFilters();
+    pfSaveStore();
+  }
+
+  function applyProviderFilters(provOverride) {
+    pfLoadStore();
+    const prov = String(provOverride || provider() || "plex").toLowerCase().trim();
+    if (!["plex", "emby", "jellyfin"].includes(prov)) return;
+
+    const snap = STATE.pf.store?.[prov] || null;
+    STATE._pfMute = true;
+    try {
+      if (snap) {
+        write("scrobble.watch.filters.username_whitelist", asArray(snap.username_whitelist));
+        if (prov === "plex") {
+          write("scrobble.watch.filters.server_uuid", String(snap.server_uuid || "").trim());
+          write("scrobble.watch.filters.user_id", "");
+        } else {
+          const uid = String(snap.user_id || snap.server_uuid || "").trim();
+          write("scrobble.watch.filters.user_id", uid);
+          write("scrobble.watch.filters.server_uuid", uid);
+        }
+      } else {
+        write("scrobble.watch.filters.username_whitelist", []);
+        write("scrobble.watch.filters.server_uuid", "");
+        write("scrobble.watch.filters.user_id", "");
+      }
+    } finally {
+      STATE._pfMute = false;
+    }
+    saveCurrentProviderFilters(prov);
+  }
   const clamp100 = (n) => Math.min(100, Math.max(1, Math.round(Number(n))));
   const norm100 = (n, dflt) => clamp100(Number.isFinite(+n) ? +n : dflt);
   const provider = () => String(read("scrobble.watch.provider", "plex") || "plex").toLowerCase();
 
+  const PROVIDER_META = {
+    plex: { label: "Plex", icon: "/assets/img/PLEX-log.svg", alt: "Plex" },
+    emby: { label: "Emby", icon: "/assets/img/EMBY-log.svg", alt: "Emby" },
+    jellyfin: { label: "Jellyfin", icon: "/assets/img/JELLYFIN-log.svg", alt: "Jellyfin" },
+  };
+
+  function syncProviderPickerUi() {
+    const sel = $("#sc-provider", STATE.mount);
+    const btn = $("#sc-provider-btn", STATE.mount);
+    const icon = $("#sc-provider-icon", STATE.mount);
+    const label = $("#sc-provider-label", STATE.mount);
+    const menu = $("#sc-provider-menu", STATE.mount);
+    const v = String(sel?.value || provider() || "plex").toLowerCase().trim();
+    const meta = PROVIDER_META[v] || PROVIDER_META.plex;
+
+    if (icon) {
+      icon.src = meta.icon;
+      icon.alt = meta.alt;
+    }
+    if (label) label.textContent = meta.label;
+    if (btn) btn.title = `Pick ${meta.label} provider`;
+
+    if (menu) {
+      $all(".sc-prov-item[data-value]", menu).forEach((it) => {
+        const iv = String(it.getAttribute("data-value") || "").toLowerCase().trim();
+        it.setAttribute("aria-selected", iv === v ? "true" : "false");
+      });
+    }
+  }
+
+  function closeProviderMenu() {
+    const menu = $("#sc-provider-menu", STATE.mount);
+    const btn = $("#sc-provider-btn", STATE.mount);
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleProviderMenu() {
+    const menu = $("#sc-provider-menu", STATE.mount);
+    const btn = $("#sc-provider-btn", STATE.mount);
+    if (!menu || !btn) return;
+    const open = menu.classList.contains("hidden");
+    if (open) {
+      menu.classList.remove("hidden");
+      btn.setAttribute("aria-expanded", "true");
+      syncProviderPickerUi();
+    } else {
+      closeProviderMenu();
+    }
+  }
+  const SINK_ORDER = ["trakt", "simkl", "mdblist"];
+  function normSinkCsv(raw) {
+    const parts = String(raw || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const uniq = [...new Set(parts)];
+    uniq.sort((a, b) => {
+      const ia = SINK_ORDER.indexOf(a);
+      const ib = SINK_ORDER.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+    return uniq.join(",");
+  }
+  function normSinkCsvOrDefault(raw, dflt = "trakt") {
+    const v = normSinkCsv(raw);
+    return v || String(dflt || "trakt").toLowerCase();
+  }
+
+  const SINK_LABELS = { trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" };
+
+  function ensureSinkPillBar(bar) {
+    if (!bar || bar.dataset.scBuilt === "1") return;
+    bar.dataset.scBuilt = "1";
+    bar.innerHTML = SINK_ORDER.map((k) => `<button type="button" class="sc-pill off" data-sink="${k}" aria-pressed="false">${SINK_LABELS[k] || k}</button>`).join("");
+  }
+
+  function csvFromSelect(sel, allowNone = false) {
+    const raw = String(sel?.value || "").toLowerCase().trim();
+    if (allowNone && raw === "none") return "";
+    return normSinkCsv(raw);
+  }
+
+  function syncPillBar(bar, csv) {
+    if (!bar) return;
+    ensureSinkPillBar(bar);
+    const on = new Set(String(csv || "").split(",").filter(Boolean));
+    $all("button[data-sink]", bar).forEach((btn) => {
+      const k = String(btn.getAttribute("data-sink") || "");
+      const active = on.has(k);
+      btn.classList.toggle("on", active);
+      btn.classList.toggle("off", !active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function syncSinkPillsFromSelect() {
+    const sel = $("#sc-sink", STATE.mount);
+    const bar = $("#sc-sink-pills", STATE.mount);
+    if (!sel || !bar) return;
+    syncPillBar(bar, normSinkCsvOrDefault(sel.value, "trakt"));
+  }
+
+  function syncPlexRatingsPillsFromSelect() {
+    const sel = $("#sc-plex-ratings", STATE.mount);
+    const bar = $("#sc-plex-ratings-pills", STATE.mount);
+    if (!sel || !bar) return;
+    syncPillBar(bar, csvFromSelect(sel, true));
+  }
+
+
   const API = {
     cfgGet: () => j("/api/config"),
     users: async () => {
-      if (provider() === "emby") {
-        const x = await j("/api/emby/users");
-        const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
-        return Array.isArray(a) ? a : [];
-      }
-      const x = await j("/api/plex/users");
-      const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
-      return Array.isArray(a) ? a : [];
-    },
-    serverUUID: async () => {
-      if (provider() === "emby") {
-        const x = await j("/api/emby/inspect");
-        const uid = x?.user_id || x?.user?.Id || x?.id || "";
-        return { id: uid };
-      }
-      return j("/api/plex/server_uuid");
-    },
+  const prov = provider();
+  if (prov === "emby") {
+    const x = await j("/api/emby/users");
+    const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+    return Array.isArray(a) ? a : [];
+  }
+  if (prov === "jellyfin") {
+    const x = await j("/api/jellyfin/users");
+    const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+    return Array.isArray(a) ? a : [];
+  }
+  const x = await j("/api/plex/users");
+  const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+  return Array.isArray(a) ? a : [];
+},
+serverUUID: async () => {
+  const prov = provider();
+  if (prov === "emby") {
+    const x = await j("/api/emby/inspect");
+    const uid = x?.user_id || x?.user?.Id || x?.id || "";
+    return { id: uid };
+  }
+  if (prov === "jellyfin") {
+    const x = await j("/api/jellyfin/inspect");
+    const uid = x?.user_id || x?.user?.Id || x?.id || "";
+    return { id: uid };
+  }
+  return j("/api/plex/server_uuid");
+},
     watch: {
       status: () => j("/api/watch/status"),
       start: (prov, sink) => j(`/api/watch/start?provider=${encodeURIComponent(prov)}&sink=${encodeURIComponent(sink)}`, { method: "POST" }),
@@ -207,103 +451,119 @@
   }
 
   function applyModeDisable() {
-    const enabled = !!read("scrobble.enabled", false);
-    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
-    const useWebhook = enabled && mode === "webhook";
-    const useWatch = enabled && mode === "watch";
+  const enabled = !!read("scrobble.enabled", false);
+  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+  const useWebhook = enabled && mode === "webhook";
+  const useWatch = enabled && mode === "watch";
 
-    const webRoot = STATE.webhookHost;
-    const watchRoot = STATE.watcherHost;
-    if (!webRoot || !watchRoot) return;
+  const webRoot = STATE.webhookHost;
+  const watchRoot = STATE.watcherHost;
+  if (!webRoot || !watchRoot) return;
 
-    const wh = $("#sc-enable-webhook", STATE.mount);
-    const wa = $("#sc-enable-watcher", STATE.mount);
+  const wh = $("#sc-enable-webhook", STATE.mount);
+  const wa = $("#sc-enable-watcher", STATE.mount);
 
-    const webhookOn = !!wh?.checked && useWebhook;
-    const watcherOn = !!wa?.checked && useWatch;
+  const webhookOn = !!wh?.checked && useWebhook;
+  const watcherOn = !!wa?.checked && useWatch;
 
-    $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
-      if (n.id !== "sc-enable-webhook") n.disabled = !webhookOn;
-    });
-    $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
-      if (n.id !== "sc-enable-watcher") n.disabled = !watcherOn;
-    });
+  $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
+    if (n.id !== "sc-enable-webhook") n.disabled = !webhookOn;
+  });
+  $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
+    if (n.id !== "sc-enable-watcher") n.disabled = !watcherOn;
+  });
 
-    const prov = provider();
-    const srv = prov === "plex" ? String(read("plex.server_url", "") || "") : String(read("emby.server", "") || "");
-    const lbl = prov === "plex" ? "Plex Server" : "Emby Server";
-    const req = $("#sc-server-required", STATE.mount);
-    if (req) req.style.display = prov === "plex" ? "" : "none";
-    const lab = $("#sc-server-label", STATE.mount);
-    if (lab) lab.textContent = lbl;
+  const prov = provider();
+  const srv =
+    prov === "plex"
+      ? String(read("plex.server_url", "") || "")
+      : prov === "emby"
+      ? String(read("emby.server", "") || "")
+      : String(read("jellyfin.server", "") || "");
+  const lbl = prov === "plex" ? "Plex Server" : prov === "emby" ? "Emby Server" : "Jellyfin Server";
+  const req = $("#sc-server-required", STATE.mount);
+  if (req) req.style.display = prov === "plex" ? "" : "none";
+  const lab = $("#sc-server-label", STATE.mount);
+  if (lab) lab.textContent = lbl;
 
-    const loadBtn = $("#sc-load-users", STATE.mount);
-    if (loadBtn) {
-      loadBtn.style.display = "";
-      loadBtn.textContent = prov === "plex" ? "Load Plex users" : "Load Emby users";
-    }
-    const fetchUuid = $("#sc-fetch-uuid", STATE.mount);
-    if (fetchUuid) fetchUuid.disabled = false;
-    const uuidLabel = $("#sc-uuid-label", STATE.mount);
-    if (uuidLabel) uuidLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
-    const uuidInput = $("#sc-server-uuid", STATE.mount);
-    if (uuidInput) uuidInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
-
-    const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
-    const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
-
-    const sink = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
-    const traktTokenOk = !!String(read("trakt.access_token", "") || "").trim();
-    const simklTokenOk = !!String(read("simkl.access_token", "") || "").trim();
-
-    let sinkOk = true;
-    let sinkErr = "";
-    const wantsTrakt = sink.includes("trakt");
-    const wantsSimkl = sink.includes("simkl");
-
-    if (wantsTrakt && !traktTokenOk && wantsSimkl && !simklTokenOk) {
-      sinkOk = false;
-      sinkErr = "SIMKL and Trakt are not connected. Go to Authentication → SIMKL and Trakt. Or refresh your browser if you already configured it";
-    } else if (wantsTrakt && !traktTokenOk) {
-      sinkOk = false;
-      sinkErr = "Trakt is not connected. Go to Authentication → Trakt. Or refresh your browser if you already configured it";
-    } else if (wantsSimkl && !simklTokenOk) {
-      sinkOk = false;
-      sinkErr = "SIMKL is not connected. Go to Authentication → SIMKL. Or refresh your browser if you already configured it";
-    }
-
-    rebuildPlexRatingsDropdown();
-
-    if (watcherOn) {
-      if (prov === "plex") {
-        if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it", "err");
-        else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
-        else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
-        else setNote("sc-pms-note", `Using ${srv}`);
-      } else {
-        if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it", "err");
-        else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
-        else setNote("sc-pms-note", srv ? `Using ${srv}` : "");
-      }
-    } else setNote("sc-pms-note", "");
-
-    if (loadBtn) {
-      if (prov === "plex" && !plexTokenOk) loadBtn.disabled = true;
-      else if (prov === "emby" && !embyTokenOk) loadBtn.disabled = true;
-      else loadBtn.disabled = !watcherOn;
-    }
-    if (fetchUuid) {
-      if (prov === "plex" && !plexTokenOk) fetchUuid.disabled = true;
-      else if (prov === "emby" && !embyTokenOk) fetchUuid.disabled = true;
-      else fetchUuid.disabled = !watcherOn;
-    }
-
-    const startBtn = $("#sc-watch-start", STATE.mount);
-    if (startBtn) {
-      const providerOk = prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : embyTokenOk;
-      startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
-    }
+  const loadBtn = $("#sc-load-users", STATE.mount);
+  if (loadBtn) {
+    loadBtn.style.display = "";
+    loadBtn.textContent = "Pick";
+    loadBtn.title = prov === "plex" ? "Pick Plex user" : prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user";
   }
+  const fetchUuid = $("#sc-fetch-uuid", STATE.mount);
+  if (fetchUuid) fetchUuid.disabled = false;
+  const uuidLabel = $("#sc-uuid-label", STATE.mount);
+  if (uuidLabel) uuidLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
+  const uuidInput = $("#sc-server-uuid", STATE.mount);
+  if (uuidInput) uuidInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
+
+  const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
+  const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
+  const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
+
+  const sink = normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt");
+  const traktTokenOk = !!String(read("trakt.access_token", "") || "").trim();
+  const simklTokenOk = !!String(read("simkl.access_token", "") || "").trim();
+  const mdblTokenOk = !!String(read("mdblist.api_key", "") || "").trim();
+
+  let sinkOk = true;
+  let sinkErr = "";
+  const wantsTrakt = sink.includes("trakt");
+  const wantsSimkl = sink.includes("simkl");
+  const wantsMDBList = sink.includes("mdblist");
+
+  const missing = [];
+  if (wantsTrakt && !traktTokenOk) missing.push("Trakt");
+  if (wantsSimkl && !simklTokenOk) missing.push("SIMKL");
+  if (wantsMDBList && !mdblTokenOk) missing.push("MDBList");
+
+  if (missing.length) {
+    sinkOk = false;
+    const plural = missing.length > 1 ? "are" : "is";
+    sinkErr = `${missing.join(" and ")} ${plural} not configured. Go to Authentication for Trakt/SIMKL, and set mdblist.api_key in config for MDBList. Or refresh your browser if you already configured it`;
+  }
+  rebuildPlexRatingsDropdown();
+
+  if (watcherOn) {
+    if (prov === "plex") {
+      if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it", "err");
+      else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
+      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else setNote("sc-pms-note", "");
+    } else if (prov === "emby") {
+      if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it", "err");
+      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else setNote("sc-pms-note", "");
+    } else {
+      if (!jellyTokenOk) setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication → Jellyfin, or refresh your browser if you already configured it", "err");
+      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else setNote("sc-pms-note", "");
+    }
+  } else setNote("sc-pms-note", "");
+
+  if (loadBtn) {
+    if (prov === "plex" && !plexTokenOk) loadBtn.disabled = true;
+    else if (prov === "emby" && !embyTokenOk) loadBtn.disabled = true;
+    else if (prov === "jellyfin" && !jellyTokenOk) loadBtn.disabled = true;
+    else loadBtn.disabled = !watcherOn;
+  }
+  if (fetchUuid) {
+    if (prov === "plex" && !plexTokenOk) fetchUuid.disabled = true;
+    else if (prov === "emby" && !embyTokenOk) fetchUuid.disabled = true;
+    else if (prov === "jellyfin" && !jellyTokenOk) fetchUuid.disabled = true;
+    else fetchUuid.disabled = !watcherOn;
+  }
+
+  const startBtn = $("#sc-watch-start", STATE.mount);
+  if (startBtn) {
+    const providerOk =
+      prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : prov === "emby" ? embyTokenOk : jellyTokenOk;
+    startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
+  }
+}
+
 
   function buildAdvField(id, label, tipId, placeholder) {
     return `<div class="field"><label for="${id}">${label}</label>${helpBtn(tipId)}<input id="${id}" class="input" type="number" min="1" max="100" step="1" placeholder="${placeholder}"></div>`;
@@ -316,7 +576,12 @@
       STATE.webhookHost.innerHTML = `
         <div class="wh-top" style="--wh-logo:28px">
           <div class="wh-left">
-            <label class="wh-toggle"><input type="checkbox" id="sc-enable-webhook"><span>Enable</span></label>
+	            <label class="cx-toggle">
+	              <input type="checkbox" id="sc-enable-webhook">
+	              <span class="cx-toggle-ui" aria-hidden="true"></span>
+	              <span class="cx-toggle-text">Enable</span>
+	              <span class="cx-toggle-state" aria-hidden="true"></span>
+	            </label>
           </div>
           <div class="wh-endpoints">
             <div class="codepair right">
@@ -360,7 +625,7 @@
                     <div style="display:flex;gap:8px;margin-top:6px">
                       <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
                       <button id="sc-add-user-webhook" class="btn small">Add</button>
-                      <button id="sc-load-users-webhook" class="btn small">Load Plex users</button>
+                      <button id="sc-load-users-webhook" class="btn small">Pick</button>
                     </div>
                   </div>
                   <div>
@@ -422,68 +687,59 @@
         </style>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-          <label style="display:inline-flex;gap:8px;align-items:center">
-            <input type="checkbox" id="sc-enable-watcher"> Enable
-          </label>
+	          <label class="cx-toggle">
+	            <input type="checkbox" id="sc-enable-watcher">
+	            <span class="cx-toggle-ui" aria-hidden="true"></span>
+	            <span class="cx-toggle-text">Enable</span>
+	            <span class="cx-toggle-state" aria-hidden="true"></span>
+	          </label>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <span style="opacity:.75;font-size:12px">Sink</span>
-            <select id="sc-sink" class="input" style="width:180px">
+            <div id="sc-sink-pills" class="sc-pillbar" role="group" aria-label="Sink"></div>
+            <select id="sc-sink" class="input" style="display:none;width:240px">
               <option value="trakt">Trakt</option>
               <option value="simkl">SIMKL</option>
-              <option value="simkl,trakt">Both (SIMKL + Trakt)</option>
+              <option value="mdblist">MDBList</option>
+              <option value="trakt,simkl">Trakt & SIMKL</option>
+              <option value="trakt,mdblist">Trakt & MDBList</option>
+              <option value="simkl,mdblist">SIMKL & MDBList</option>
+              <option value="trakt,simkl,mdblist">Trakt & SIMKL & MDBList</option>
             </select>
-            <span style="opacity:.75;font-size:12px">Provider</span>
-            <select id="sc-provider" class="input" style="width:140px">
-              <option value="plex">Plex</option>
-              <option value="emby">Emby</option>
-            </select>
+<span style="opacity:.75;font-size:12px">Provider</span>
+            <div class="sc-prov-wrap">
+              <button type="button" id="sc-provider-btn" class="input sc-prov-btn" aria-haspopup="listbox" aria-expanded="false">
+                <span class="sc-prov-left">
+                  <img class="wh-logo sc-prov-ico" id="sc-provider-icon" src="/assets/img/PLEX-log.svg" alt="Plex">
+                  <span id="sc-provider-label">Plex</span>
+                </span>
+                <span class="sc-prov-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="sc-provider-menu" class="sc-prov-menu hidden" role="listbox" aria-label="Provider">
+                <button type="button" class="sc-prov-item" role="option" data-value="plex" aria-selected="true">
+                  <img class="wh-logo sc-prov-ico" src="/assets/img/PLEX-log.svg" alt="Plex">
+                  <span>Plex</span>
+                </button>
+                <button type="button" class="sc-prov-item" role="option" data-value="emby" aria-selected="false">
+                  <img class="wh-logo sc-prov-ico" src="/assets/img/EMBY-log.svg" alt="Emby">
+                  <span>Emby</span>
+                </button>
+                <button type="button" class="sc-prov-item" role="option" data-value="jellyfin" aria-selected="false">
+                  <img class="wh-logo sc-prov-ico" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin">
+                  <span>Jellyfin</span>
+                </button>
+              </div>
+              <select id="sc-provider" class="input" style="display:none">
+                <option value="plex">Plex</option>
+                <option value="emby">Emby</option>
+                <option value="jellyfin">Jellyfin</option>
+              </select>
+            </div>
+
           </div>
         </div>
 
-        <div class="cc-wrap">
-          <div class="cc-card" id="sc-card-server">
-            <div class="cc-head">
-              <div>
-                <span id="sc-server-label">Plex Server</span>
-                <span id="sc-server-required" class="pill req">required</span>
-              </div>
-            </div>
-            <div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div>
-            <div style="margin-top:12px">
-              <div class="muted">Server URL (http(s)://host[:port])</div>
-              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" readonly/>
-            </div>
-            <div style="margin-top:12px">
-              <div class="muted">Options</div>
-              <div class="sc-opt-col" style="margin-top:6px">
-                <span class="cx-switch-wrap">
-                  <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"><span class="one-line">Auto-remove from Watchlists</span></label>
-              ${helpBtn("sc-help-auto-remove")}
-            </span>
-                                <div id="sc-plex-ratings-wrap" style="display:none">
-                  <div class="sc-opt-row">
-                    <div class="muted" style="margin:0">Enable ratings</div>
-                    ${helpBtn("sc-help-watch-plex-ratings")}
-                  </div>
-                  <div class="sc-opt-row" style="margin-top:6px">
-                    <select id="sc-plex-ratings" class="input" style="width:160px">
-                      <option value="none">None</option>
-                      <option value="trakt">Trakt</option>
-                      <option value="simkl">SIMKL</option>
-                      <option value="both">Both (SIMKL + Trakt)</option>
-                    </select>
-                    <div id="sc-plexwatcher-url-wrap" class="codepair" style="display:none">
-                      <code id="sc-plexwatcher-url"></code>
-                      <button id="sc-copy-plexwatcher" class="btn small">Copy</button>
-                    </div>
-                  </div>
-                  <div id="sc-plexwatcher-note" class="micro-note" style="margin-top:6px"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="cc-card" id="sc-card-status">
+	        <div class="cc-wrap">
+	          <div class="cc-card" id="sc-card-status">
             <div class="cc-head">
               <div>Watcher Status</div>
               <span id="sc-status-badge" class="badge is-off">Stopped</span>
@@ -506,10 +762,57 @@
                 <button id="sc-watch-refresh" class="btn small">Refresh</button>
               </div>
               <div class="cc-auto">
-                <label class="sc-toggle"><input type="checkbox" id="sc-autostart"> Autostart on boot</label>
+                <label class="cx-toggle"><input type="checkbox" id="sc-autostart"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Autostart on boot</span><span class="cx-toggle-state" aria-hidden="true"></span></label>
               </div>
             </div>
           </div>
+
+	          <div class="cc-card" id="sc-card-server">
+	            <div class="cc-head">
+	              <div>
+	                <span id="sc-server-label">Media Server</span>
+	                <span id="sc-server-required" class="pill req">required</span>
+	              </div>
+	            </div>
+	            <div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div>
+	            <div style="margin-top:12px">
+	              <div class="muted">Server URL (http(s)://host[:port])</div>
+	              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" readonly/>
+	            </div>
+	            <div style="margin-top:12px">
+	              <div class="muted">Options</div>
+	              <div class="sc-opt-col" style="margin-top:6px">
+	                <span class="cx-switch-wrap">
+	                  <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"><span class="one-line">Auto-remove from Watchlists</span></label>
+	              ${helpBtn("sc-help-auto-remove")}
+	            </span>
+	                                <div id="sc-plex-ratings-wrap" style="display:none">
+	                  <div class="sc-opt-row">
+			                    <div class="muted" style="margin:0">Enable ratings</div>
+			                    ${helpBtn("sc-help-watch-plex-ratings")}
+			                    <div id="sc-plex-ratings-pills" class="sc-pillbar" role="group" aria-label="Ratings"></div>
+			                  </div>
+			                  <div class="sc-opt-row" style="margin-top:6px">
+			                    <select id="sc-plex-ratings" class="input" style="display:none;width:240px">
+                          <option value="none">None</option>
+                          <option value="trakt">Trakt</option>
+                          <option value="simkl">SIMKL</option>
+                          <option value="mdblist">MDBList</option>
+                          <option value="trakt,simkl">Trakt & SIMKL</option>
+                          <option value="trakt,mdblist">Trakt & MDBList</option>
+                          <option value="simkl,mdblist">SIMKL & MDBList</option>
+                          <option value="trakt,simkl,mdblist">Trakt & SIMKL & MDBList</option>
+                        </select>
+<div id="sc-plexwatcher-url-wrap" class="codepair" style="display:none">
+	                      <code id="sc-plexwatcher-url"></code>
+	                      <button id="sc-copy-plexwatcher" class="btn small">Copy</button>
+	                    </div>
+			                  </div>
+			                  <div id="sc-plexwatcher-note" class="micro-note" style="margin-top:6px"></div>
+			                </div>
+	              </div>
+	            </div>
+	          </div>
         </div>
 
         <details id="sc-filters" class="sc-filters sc-box"><summary>Filters (optional)</summary>
@@ -522,7 +825,7 @@
                 <div style="display:flex; gap:8px; margin-top:6px">
                   <input id="sc-user-input" class="input" placeholder="Add username..." style="flex:1">
                   <button id="sc-add-user" class="btn small">Add</button>
-                  <button id="sc-load-users" class="btn small">Load Plex users</button>
+                  <button id="sc-load-users" class="btn small">Pick</button>
                 </div>
               </div>
               <div>
@@ -556,26 +859,35 @@
   }
 
   function ensureHiddenServerInputs() {
-    const form = d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount || d.body);
-    let h1 = d.getElementById("cfg-plex-server-url");
-    if (!h1) {
-      h1 = el("input", { type: "hidden", id: "cfg-plex-server-url", name: "plex.server_url" });
-      form.appendChild(h1);
-    }
-    let h2 = d.getElementById("cfg-emby-server-url");
-    if (!h2) {
-      h2 = el("input", { type: "hidden", id: "cfg-emby-server-url", name: "emby.server" });
-      form.appendChild(h2);
-    }
-    syncHiddenServerInputs();
+  const form = d.querySelector("form#settings, form#settings-form, form[data-settings]") || (STATE.mount || d.body);
+  let h1 = d.getElementById("cfg-plex-server-url");
+  if (!h1) {
+    h1 = el("input", { type: "hidden", id: "cfg-plex-server-url", name: "plex.server_url" });
+    form.appendChild(h1);
   }
+  let h2 = d.getElementById("cfg-emby-server-url");
+  if (!h2) {
+    h2 = el("input", { type: "hidden", id: "cfg-emby-server-url", name: "emby.server" });
+    form.appendChild(h2);
+  }
+  let h3 = d.getElementById("cfg-jellyfin-server-url");
+  if (!h3) {
+    h3 = el("input", { type: "hidden", id: "cfg-jellyfin-server-url", name: "jellyfin.server" });
+    form.appendChild(h3);
+  }
+  syncHiddenServerInputs();
+}
+
 
   function syncHiddenServerInputs() {
-    const h1 = d.getElementById("cfg-plex-server-url");
-    if (h1) h1.value = String(read("plex.server_url", "") || "");
-    const h2 = d.getElementById("cfg-emby-server-url");
-    if (h2) h2.value = String(read("emby.server", "") || "");
-  }
+  const h1 = d.getElementById("cfg-plex-server-url");
+  if (h1) h1.value = String(read("plex.server_url", "") || "");
+  const h2 = d.getElementById("cfg-emby-server-url");
+  if (h2) h2.value = String(read("emby.server", "") || "");
+  const h3 = d.getElementById("cfg-jellyfin-server-url");
+  if (h3) h3.value = String(read("jellyfin.server", "") || "");
+}
+
 
   function restoreDetailsState(sel, def, key) {
     const n = $(sel, STATE.mount);
@@ -672,37 +984,313 @@
       .filter(Boolean);
   }
 
-  function onSelectWatchUser(name) {
-    if (provider() !== "emby") return;
-    const list = Array.isArray(STATE.users) ? STATE.users : [];
-    const hit = list.find((u) => String(u?.username || u?.Name || u?.name || "").toLowerCase() === String(name || "").toLowerCase());
-    const id = hit?.id || hit?.Id;
-    if (id) {
-      const inp = $("#sc-server-uuid", STATE.mount);
-      if (inp) inp.value = id;
-      write("scrobble.watch.filters.server_uuid", id);
-      write("scrobble.watch.filters.user_id", id);
-      setNote("sc-uuid-note", "User ID set from username");
-    } else {
-      setNote("sc-uuid-note", "User not found", "err");
+  const USER_PICK = { mode: "watch", anchor: null, users: [], all: [], prov: "plex" };
+
+  function ensureUserPickerPop() {
+    if (d.getElementById("sc_user_pop")) return;
+    const pop = el("div", { id: "sc_user_pop", className: "sc-user-pop hidden" });
+
+    const head = el("div", { className: "head" });
+    const title = el("div", { className: "title", id: "sc_user_title", textContent: "Pick user" });
+    const closeBtn = el("button", { type: "button", id: "sc_user_close", className: "btn small", textContent: "Close" });
+    head.append(title, closeBtn);
+
+    const body = el("div", { className: "body" });
+    const filter = el("input", { id: "sc_user_filter", className: "input", placeholder: "Filter users..." });
+    const list = el("div", { id: "sc_user_list", className: "list" });
+    body.append(filter, list);
+
+    pop.append(head, body);
+    d.body.appendChild(pop);
+
+    on(closeBtn, "click", (e) => {
+      e.preventDefault();
+      closeUserPicker();
+    });
+    on(filter, "input", () => renderUserPickerList());
+
+    if (!STATE.__scUserAwayBound) {
+      STATE.__scUserAwayBound = true;
+      d.addEventListener("click", (e) => {
+        const p = d.getElementById("sc_user_pop");
+        if (!p || p.classList.contains("hidden")) return;
+        if (p.contains(e.target)) return;
+        const a = USER_PICK.anchor;
+        if (a && (a === e.target || a.contains(e.target))) return;
+        closeUserPicker();
+      });
+      d.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeUserPicker();
+      });
+    }
+    if (!STATE.__scUserPosBound) {
+      STATE.__scUserPosBound = true;
+      let raf = null;
+      const safe = () => {
+        const p = d.getElementById("sc_user_pop");
+        if (!p || p.classList.contains("hidden")) return;
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = null;
+          try {
+            placeUserPickerPop();
+          } catch {}
+        });
+      };
+      w.addEventListener("resize", safe, { passive: true });
+      w.addEventListener("scroll", safe, { passive: true, capture: true });
+      d.addEventListener("scroll", safe, { passive: true, capture: true });
     }
   }
 
+  function placeUserPickerPop() {
+    const pop = d.getElementById("sc_user_pop");
+    const anchor = USER_PICK.anchor;
+    if (!pop || !anchor) return;
+    const r = anchor.getBoundingClientRect();
+    const wPop = pop.offsetWidth || 360;
+    const left = Math.max(12, Math.min(w.innerWidth - wPop - 12, r.left));
+    const hPop = pop.offsetHeight || 320;
+    const preferAbove = r.top - hPop - 8;
+    const minTop = 12;
+    const below = r.bottom + 8;
+    let top = preferAbove >= minTop ? preferAbove : below;
+    top = Math.max(minTop, Math.min(w.innerHeight - hPop - 12, top));
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
+
+  function closeUserPicker() {
+    const pop = d.getElementById("sc_user_pop");
+    if (pop) pop.classList.add("hidden");
+  }
+
+  function userNameFromObj(u) {
+    return String(u?.username || u?.title || u?.Name || u?.name || u?.user?.Name || "").trim();
+  }
+
+  function userIdFromObj(u) {
+    return String(u?.id || u?.Id || u?.user_id || u?.user?.Id || "").trim();
+  }
+
+  function userTagFromObj(u, prov) {
+    if (prov === "plex") return String(u?.type || "").trim();
+    const isAdmin =
+      u?.IsAdministrator === true ||
+      u?.Policy?.IsAdministrator === true ||
+      u?.is_admin === true ||
+      u?.admin === true;
+    const tags = [];
+    if (isAdmin) tags.push("admin");
+    if (u?.IsHidden === true) tags.push("hidden");
+    if (u?.IsDisabled === true) tags.push("disabled");
+    return tags.join(" ");
+  }
+
+  function renderUserPickerList() {
+    const listEl = d.getElementById("sc_user_list");
+    const q = String(d.getElementById("sc_user_filter")?.value || "")
+      .toLowerCase()
+      .trim();
+    if (!listEl) return;
+
+    listEl.innerHTML = "";
+    const items = (USER_PICK.users || []).filter((u) => !q || String(u.name || "").toLowerCase().includes(q));
+    if (!items.length) {
+      listEl.appendChild(el("div", { className: "sub", textContent: "No users found." }));
+      return;
+    }
+
+    for (const u of items) {
+      const btn = el("button", { type: "button", className: "userrow" });
+      const row = el("div", { className: "row1" });
+      const name = el("strong", { textContent: u.name || "" });
+      row.appendChild(name);
+      if (u.tag) row.appendChild(el("span", { className: "tag", textContent: u.tag }));
+      btn.appendChild(row);
+      on(btn, "click", (e) => {
+        e.preventDefault();
+        applyPickedUser(u);
+      });
+      listEl.appendChild(btn);
+    }
+  }
+
+  function addToWhitelist(hostSel, path, name, removeFn, onClick) {
+    const clean = String(name || "").trim();
+    if (!clean) return false;
+    const cur = asArray(read(path, []));
+    if (cur.includes(clean)) return false;
+    const next = [...cur, clean];
+    write(path, next);
+    const host = $(hostSel, STATE.mount);
+    if (host) host.append(chip(clean, removeFn, onClick));
+    return true;
+  }
+
+  function applyPickedUser(u) {
+    const prov = provider();
+    const name = String(u?.name || "").trim();
+    const uid = String(u?.id || "").trim();
+
+    if (USER_PICK.mode === "webhook") {
+      const added = addToWhitelist("#sc-whitelist-webhook", "scrobble.webhook.filters_plex.username_whitelist", name, removeUserWebhook);
+      setNote("sc-users-note-webhook", added ? `Picked ${name}` : `${name} already added`);
+      closeUserPicker();
+      return;
+    }
+
+    const added = addToWhitelist(
+      "#sc-whitelist",
+      "scrobble.watch.filters.username_whitelist",
+      name,
+      removeUserWatch,
+      prov === "emby" || prov === "jellyfin" ? onSelectWatchUser : undefined
+    );
+
+    if ((prov === "emby" || prov === "jellyfin") && uid) {
+      const inp = $("#sc-server-uuid", STATE.mount);
+      if (inp) inp.value = uid;
+      write("scrobble.watch.filters.server_uuid", uid);
+      write("scrobble.watch.filters.user_id", uid);
+      setNote("sc-uuid-note", "User ID set");
+    }
+
+    setNote("sc-users-note", added ? `Picked ${name}` : `${name} already added`);
+    closeUserPicker();
+  }
+
+
+  async function fetchUsersForPicker(mode) {
+    if (mode === "webhook") {
+      const x = await j("/api/plex/users");
+      const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+      return Array.isArray(a) ? a : [];
+    }
+    return API.users();
+  }
+
+  async function openUserPicker(mode, anchorEl) {
+    ensureUserPickerPop();
+    USER_PICK.mode = mode === "webhook" ? "webhook" : "watch";
+    USER_PICK.anchor = anchorEl || null;
+    USER_PICK.prov = USER_PICK.mode === "webhook" ? "plex" : provider();
+
+    const pop = d.getElementById("sc_user_pop");
+    const title = d.getElementById("sc_user_title");
+    const filter = d.getElementById("sc_user_filter");
+    const listEl = d.getElementById("sc_user_list");
+    if (!pop || !title || !filter || !listEl) return;
+
+    const provLabel = USER_PICK.prov === "plex" ? "Plex" : USER_PICK.prov === "emby" ? "Emby" : "Jellyfin";
+    title.textContent = USER_PICK.mode === "webhook" ? "Pick Plex user" : `Pick ${provLabel} user`;
+    filter.value = "";
+    listEl.innerHTML = "";
+    listEl.appendChild(el("div", { className: "sub", textContent: "Loading…" }));
+
+    pop.classList.remove("hidden");
+    try {
+      placeUserPickerPop();
+    } catch {}
+
+    let list = [];
+    try {
+      list = await fetchUsersForPicker(USER_PICK.mode);
+    } catch (e) {
+      console.warn("[scrobbler] users fetch failed:", e);
+      listEl.innerHTML = "";
+      listEl.appendChild(el("div", { className: "sub", textContent: "Couldn’t load users. Check Authentication + logs." }));
+      return;
+    }
+
+    const prov = USER_PICK.prov;
+    const all = Array.isArray(list) ? list : [];
+
+    const prio = (x) => {
+      if (prov === "plex") {
+        const t = String(x?.type || "").toLowerCase().trim();
+        if (t === "owner" || x?.owned === true) return 0;
+        if (t === "managed" || x?.isHomeUser === true) return 1;
+        return 2;
+      }
+      const isAdmin =
+        x?.IsAdministrator === true ||
+        x?.Policy?.IsAdministrator === true ||
+        x?.is_admin === true ||
+        x?.admin === true;
+      return isAdmin ? 0 : 1;
+    };
+
+    const mapped = all
+      .map((raw) => ({
+        raw,
+        name: userNameFromObj(raw),
+        id: userIdFromObj(raw),
+        tag: userTagFromObj(raw, prov),
+        prio: prio(raw),
+        hidden: raw?.IsHidden === true ? 1 : 0,
+        disabled: raw?.IsDisabled === true ? 1 : 0,
+      }))
+      .filter((x) => x.name)
+      .sort(
+        (a, b) =>
+          a.prio - b.prio ||
+          a.disabled - b.disabled ||
+          a.hidden - b.hidden ||
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      );
+
+    USER_PICK.all = all;
+    USER_PICK.users = mapped;
+    STATE.users = USER_PICK.all;
+
+    renderUserPickerList();
+    try {
+      placeUserPickerPop();
+      filter.focus();
+    } catch {}
+  }
+
+
+  function onSelectWatchUser(name) {
+  const prov = provider();
+  if (prov !== "emby" && prov !== "jellyfin") return;
+  const list = Array.isArray(STATE.users) ? STATE.users : [];
+  const hit = list.find((u) => String(u?.username || u?.Name || u?.name || "").toLowerCase() === String(name || "").toLowerCase());
+  const id = hit?.id || hit?.Id;
+  if (id) {
+    const inp = $("#sc-server-uuid", STATE.mount);
+    if (inp) inp.value = id;
+    write("scrobble.watch.filters.server_uuid", id);
+    write("scrobble.watch.filters.user_id", id);
+    setNote("sc-uuid-note", "User ID set from username");
+  } else {
+    setNote("sc-uuid-note", "User not found", "err");
+  }
+}
+
+
+  function normalizeRatingsSelection(v) {
+    const val = String(v || "none").toLowerCase().trim();
+    if (val === "both") return "trakt,simkl";
+    if (val === "none") return "none";
+    return normSinkCsvOrDefault(val, "");
+  }
+
   function getPlexRatingsSelectionFromCfg() {
-    const t = !!read("scrobble.watch.plex_trakt_ratings", false);
-    const s = !!read("scrobble.watch.plex_simkl_ratings", false);
-    if (t && s) return "both";
-    if (t) return "trakt";
-    if (s) return "simkl";
-    return "none";
+    const parts = [];
+    if (!!read("scrobble.watch.plex_trakt_ratings", false)) parts.push("trakt");
+    if (!!read("scrobble.watch.plex_simkl_ratings", false)) parts.push("simkl");
+    if (!!read("scrobble.watch.plex_mdblist_ratings", false)) parts.push("mdblist");
+    return parts.length ? normSinkCsv(parts.join(",")) : "none";
   }
 
   function setPlexRatingsFlagsFromSelection(v) {
-    const val = String(v || "none").toLowerCase();
-    const trakt = val === "trakt" || val === "both";
-    const simkl = val === "simkl" || val === "both";
-    write("scrobble.watch.plex_trakt_ratings", trakt);
-    write("scrobble.watch.plex_simkl_ratings", simkl);
+    const sel = normalizeRatingsSelection(v);
+    const on = sel !== "none";
+    write("scrobble.watch.plex_trakt_ratings", on && sel.includes("trakt"));
+    write("scrobble.watch.plex_simkl_ratings", on && sel.includes("simkl"));
+    write("scrobble.watch.plex_mdblist_ratings", on && sel.includes("mdblist"));
   }
 
   function rebuildPlexRatingsDropdown() {
@@ -714,33 +1302,28 @@
     wrap.style.display = prov === "plex" ? "" : "none";
     if (prov !== "plex") return;
 
-    const sink = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
-    const wantsTrakt = sink.includes("trakt");
-    const wantsSimkl = sink.includes("simkl");
+    const options = [
+      ["none", "None"],
+      ["trakt", "Trakt"],
+      ["simkl", "SIMKL"],
+      ["mdblist", "MDBList"],
+      ["trakt,simkl", "Trakt & SIMKL"],
+      ["trakt,mdblist", "Trakt & MDBList"],
+      ["simkl,mdblist", "SIMKL & MDBList"],
+      ["trakt,simkl,mdblist", "Trakt & SIMKL & MDBList"],
+    ];
 
-    const options = [["none", "None"]];
-    if (wantsTrakt) options.push(["trakt", "Trakt"]);
-    if (wantsSimkl) options.push(["simkl", "SIMKL"]);
-    if (wantsTrakt && wantsSimkl) options.push(["both", "Both (SIMKL + Trakt)"]);
-
-    // Hydration: the DOM default is often "none" even when config has flags set.
-    // Only trust the current select value after the user changed it.
     const cfgSel = getPlexRatingsSelectionFromCfg();
-    const rawSel = String(sel.value || "").toLowerCase();
+    const rawSel = normalizeRatingsSelection(sel.value || "");
     const cur = sel.dataset.cxUserChanged === "1" ? (rawSel || cfgSel) : cfgSel;
+
     sel.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
-
     const allowed = new Set(options.map((o) => o[0]));
-    let next = cur;
-    if (!allowed.has(next)) {
-      if (cur === "both") next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
-      else if (cur === "trakt") next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
-      else if (cur === "simkl") next = wantsSimkl ? "simkl" : wantsTrakt ? "trakt" : "none";
-      else next = wantsTrakt ? "trakt" : wantsSimkl ? "simkl" : "none";
-    }
+    const next = allowed.has(cur) ? cur : "none";
 
-    sel.value = allowed.has(next) ? next : "none";
-    setPlexRatingsFlagsFromSelection(sel.value);
+    sel.value = next;
+    setPlexRatingsFlagsFromSelection(next);
+    try { syncPlexRatingsPillsFromSelect(); } catch {}
 
     try {
       updatePlexWatcherWebhookUrl();
@@ -762,121 +1345,135 @@
     try {
       const fresh = await API.cfgGet();
       if (fresh && typeof fresh === "object") {
+        const backendProv = String(fresh?.scrobble?.watch?.provider || "").toLowerCase().trim();
+        const backendSink = normSinkCsvOrDefault(fresh?.scrobble?.watch?.sink || "", "trakt");
+
         STATE.cfg = fresh;
+
+        const uiProv = String(STATE.ui?.watchProvider || "").toLowerCase().trim();
+        const uiSinkRaw = String(STATE.ui?.watchSink || "").toLowerCase().trim();
+        if (uiProv) {
+          if (backendProv === uiProv) STATE.ui.watchProvider = null;
+          else deepSet(STATE.cfg, "scrobble.watch.provider", uiProv);
+        }
+        if (uiSinkRaw) {
+          const uiSink = normSinkCsvOrDefault(uiSinkRaw, "trakt");
+          if (backendSink === uiSink) STATE.ui.watchSink = null;
+          else deepSet(STATE.cfg, "scrobble.watch.sink", uiSink);
+        }
+
         try {
-          w._cfgCache = fresh;
+          w._cfgCache = STATE.cfg;
         } catch {}
       }
     } catch {}
   }
 
   function populate() {
-    const enabled = !!read("scrobble.enabled", false);
-    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
-    const useWebhook = enabled && mode === "webhook";
-    const useWatch = enabled && mode === "watch";
-    const prov = provider();
+  const enabled = !!read("scrobble.enabled", false);
+  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+  const useWebhook = enabled && mode === "webhook";
+  const useWatch = enabled && mode === "watch";
+  const prov = provider();
 
-    const whEl = $("#sc-enable-webhook", STATE.mount);
-    const waEl = $("#sc-enable-watcher", STATE.mount);
-    const pvSel = $("#sc-provider", STATE.mount);
-    const skSel = $("#sc-sink", STATE.mount);
+  const whEl = $("#sc-enable-webhook", STATE.mount);
+  const waEl = $("#sc-enable-watcher", STATE.mount);
+  const pvSel = $("#sc-provider", STATE.mount);
+  const skSel = $("#sc-sink", STATE.mount);
 
-    if (whEl) whEl.checked = useWebhook;
-    if (waEl) waEl.checked = useWatch;
-    if (pvSel) pvSel.value = prov;
-    if (skSel) skSel.value = String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase();
+  if (whEl) whEl.checked = useWebhook;
+  if (waEl) waEl.checked = useWatch;
+  if (pvSel) pvSel.value = prov;
+  try { syncProviderPickerUi(); } catch {}
+  if (skSel) skSel.value = normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt");
+  try { syncSinkPillsFromSelect(); } catch {}
 
-    let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
-    if (prov === "emby" && wlWatch.length === 0) {
-      const embyUser = String(read("emby.username", read("emby.user", "")) || "").trim();
-      if (embyUser) {
-        wlWatch = [embyUser];
-        write("scrobble.watch.filters.username_whitelist", wlWatch);
-      }
-    }
+  let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
+  
 
-    const hostW = $("#sc-whitelist", STATE.mount);
-    if (hostW) {
-      hostW.innerHTML = "";
-      wlWatch.forEach((u) => hostW.append(chip(u, removeUserWatch, prov === "emby" ? onSelectWatchUser : undefined)));
-    }
-
-    const suWatch = read("scrobble.watch.filters.server_uuid", "");
-    const suInpW = $("#sc-server-uuid", STATE.mount);
-    if (suInpW) suInpW.value = suWatch || "";
-
-    const wlWeb = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
-    const hostWB = $("#sc-whitelist-webhook", STATE.mount);
-    if (hostWB) {
-      hostWB.innerHTML = "";
-      wlWeb.forEach((u) => hostWB.append(chip(u, removeUserWebhook)));
-    }
-
-    const suWeb = read("scrobble.webhook.filters_plex.server_uuid", "");
-    const suInpWB = $("#sc-server-uuid-webhook", STATE.mount);
-    if (suInpWB) suInpWB.value = suWeb || "";
-
-    const base = location.origin;
-    const plexCode = $("#sc-webhook-url-plex", STATE.mount);
-    const jfCode = $("#sc-webhook-url-jf", STATE.mount);
-    const embyCode = $("#sc-webhook-url-emby", STATE.mount);
-    if (plexCode) plexCode.textContent = `${base}/webhook/plextrakt`;
-    if (jfCode) jfCode.textContent = `${base}/webhook/jellyfintrakt`;
-    if (embyCode) embyCode.textContent = `${base}/webhook/embytrakt`;
-
-    const autostart = !!read("scrobble.watch.autostart", false);
-    const auto = $("#sc-autostart", STATE.mount);
-    if (auto) auto.checked = !!autostart;
-
-    const pmsInp = $("#sc-pms-input", STATE.mount);
-    const plexUrl = String(read("plex.server_url", "") || "");
-    const embyUrl = String(read("emby.server", "") || "");
-    if (pmsInp) {
-      pmsInp.value = prov === "plex" ? plexUrl : embyUrl;
-      pmsInp.disabled = true;
-    }
-
-    const set = (id, v) => {
-      const n = $(id, STATE.mount);
-      if (n) n.value = norm100(v, v);
-    };
-
-    set("#sc-pause-debounce", read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
-    set("#sc-suppress-start", read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at));
-    set("#sc-pause-debounce-webhook", read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
-    set("#sc-suppress-start-webhook", read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at));
-    set("#sc-stop-pause", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
-    set("#sc-force-stop", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
-    set("#sc-regress", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
-    set("#sc-stop-pause-webhook", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
-    set("#sc-force-stop-webhook", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
-    set("#sc-regress-webhook", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
-
-    const delEnabled = !!read("scrobble.delete_plex", false);
-    const delWh = $("#sc-delete-plex-webhook", STATE.mount);
-    if (delWh) delWh.checked = delEnabled;
-    const delW = $("#sc-delete-plex-watch", STATE.mount);
-    if (delW) delW.checked = delEnabled;
-
-    const whRat = $("#sc-webhook-plex-ratings", STATE.mount);
-    if (whRat) whRat.checked = !!read("scrobble.webhook.plex_trakt_ratings", false);
-
-    rebuildPlexRatingsDropdown();
-
-    updatePlexWatcherWebhookUrl();
-
-    restoreDetailsState("#sc-filters", false, "sc-filters-open-v2");
-    restoreDetailsState("#sc-advanced", false, "sc-advanced-open-v2");
-
-    restoreDetailsState("#sc-options-webhook", false, "sc-wh-options-open-v1");
-    restoreDetailsState("#sc-plex-specifics-webhook", true, "sc-wh-plexspec-open-v1");
-    restoreDetailsState("#sc-plex-options-webhook", false, "sc-wh-plexopts-open-v1");
-    restoreDetailsState("#sc-advanced-webhook", false, "sc-wh-advanced-open-v1");
-
-    syncHiddenServerInputs();
-    applyModeDisable();
+  const hostW = $("#sc-whitelist", STATE.mount);
+  if (hostW) {
+    hostW.innerHTML = "";
+    wlWatch.forEach((u) => hostW.append(chip(u, removeUserWatch, (prov === "emby" || prov === "jellyfin") ? onSelectWatchUser : undefined)));
   }
+
+  const suWatch = read("scrobble.watch.filters.server_uuid", "");
+  const suInpW = $("#sc-server-uuid", STATE.mount);
+  if (suInpW) suInpW.value = suWatch || "";
+
+  const wlWeb = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+  const hostWB = $("#sc-whitelist-webhook", STATE.mount);
+  if (hostWB) {
+    hostWB.innerHTML = "";
+    wlWeb.forEach((u) => hostWB.append(chip(u, removeUserWebhook)));
+  }
+
+  const suWeb = read("scrobble.webhook.filters_plex.server_uuid", "");
+  const suInpWB = $("#sc-server-uuid-webhook", STATE.mount);
+  if (suInpWB) suInpWB.value = suWeb || "";
+
+  const base = location.origin;
+  const plexCode = $("#sc-webhook-url-plex", STATE.mount);
+  const jfCode = $("#sc-webhook-url-jf", STATE.mount);
+  const embyCode = $("#sc-webhook-url-emby", STATE.mount);
+  if (plexCode) plexCode.textContent = `${base}/webhook/plextrakt`;
+  if (jfCode) jfCode.textContent = `${base}/webhook/jellyfintrakt`;
+  if (embyCode) embyCode.textContent = `${base}/webhook/embytrakt`;
+
+  const autostart = !!read("scrobble.watch.autostart", false);
+  const auto = $("#sc-autostart", STATE.mount);
+  if (auto) auto.checked = !!autostart;
+
+  const pmsInp = $("#sc-pms-input", STATE.mount);
+  const plexUrl = String(read("plex.server_url", "") || "");
+  const embyUrl = String(read("emby.server", "") || "");
+  const jellyUrl = String(read("jellyfin.server", "") || "");
+  if (pmsInp) {
+    pmsInp.value = prov === "plex" ? plexUrl : prov === "emby" ? embyUrl : jellyUrl;
+    pmsInp.disabled = true;
+  }
+
+  const set = (id, v) => {
+    const n = $(id, STATE.mount);
+    if (n) n.value = norm100(v, v);
+  };
+
+  set("#sc-pause-debounce", read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
+  set("#sc-suppress-start", read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at));
+  set("#sc-pause-debounce-webhook", read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
+  set("#sc-suppress-start-webhook", read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at));
+  set("#sc-stop-pause", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
+  set("#sc-force-stop", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
+  set("#sc-regress", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
+  set("#sc-stop-pause-webhook", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
+  set("#sc-force-stop-webhook", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
+  set("#sc-regress-webhook", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
+
+  const delEnabled = !!read("scrobble.delete_plex", false);
+  const delWh = $("#sc-delete-plex-webhook", STATE.mount);
+  if (delWh) delWh.checked = delEnabled;
+  const delW = $("#sc-delete-plex-watch", STATE.mount);
+  if (delW) delW.checked = delEnabled;
+
+  const whRat = $("#sc-webhook-plex-ratings", STATE.mount);
+  if (whRat) whRat.checked = !!read("scrobble.webhook.plex_trakt_ratings", false);
+
+  rebuildPlexRatingsDropdown();
+
+  updatePlexWatcherWebhookUrl();
+
+  restoreDetailsState("#sc-filters", false, "sc-filters-open-v2");
+  restoreDetailsState("#sc-advanced", false, "sc-advanced-open-v2");
+
+  restoreDetailsState("#sc-options-webhook", false, "sc-wh-options-open-v1");
+  restoreDetailsState("#sc-plex-specifics-webhook", true, "sc-wh-plexspec-open-v1");
+  restoreDetailsState("#sc-plex-options-webhook", false, "sc-wh-plexopts-open-v1");
+  restoreDetailsState("#sc-advanced-webhook", false, "sc-wh-advanced-open-v1");
+
+  syncHiddenServerInputs();
+  applyModeDisable();
+}
+
 
   async function refreshWatcher() {
     try {
@@ -887,68 +1484,71 @@
   }
 
   async function onWatchStart() {
-    const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
-      .toLowerCase()
-      .trim();
-    const sink = String($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink", "trakt") || "trakt")
-      .toLowerCase()
-      .trim();
+  const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
+    .toLowerCase()
+    .trim();
+  const sink = normSinkCsvOrDefault($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink", "trakt") || "trakt", "trakt");
 
-    write("scrobble.watch.provider", prov);
-    write("scrobble.watch.sink", sink);
+  write("scrobble.watch.provider", prov);
+  write("scrobble.watch.sink", normSinkCsvOrDefault(sink, "trakt"));
 
-    const srvProv = prov === "plex" ? "plex.server_url" : "emby.server";
-    const srv = String(read(srvProv, "") || "");
-    const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
-    const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
+  const srvProv = prov === "plex" ? "plex.server_url" : prov === "emby" ? "emby.server" : "jellyfin.server";
+  const srv = String(read(srvProv, "") || "");
+  const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
+  const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
+  const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
 
-    if (prov === "plex") {
-      if (!plexTokenOk) return setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex.", "err");
-      if (!isValidServerUrl(srv)) return setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
-    } else {
-      if (!embyTokenOk) return setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby.", "err");
-    }
-
-    try {
-      const nextScrobble = getScrobbleConfig();
-      const rootPatch = getRootPatch();
-
-      const serverCfg = await API.cfgGet();
-      const cfg = typeof structuredClone === "function" ? structuredClone(serverCfg || {}) : JSON.parse(JSON.stringify(serverCfg || {}));
-
-      cfg.scrobble = nextScrobble;
-      cfg.plex = Object.assign({}, cfg.plex || {}, rootPatch.plex || {});
-      cfg.emby = Object.assign({}, cfg.emby || {}, rootPatch.emby || {});
-
-      const r = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify(cfg),
-      });
-      if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
-
-      w._cfgCache = cfg;
-      STATE.cfg = cfg;
-      try {
-        syncHiddenServerInputs();
-      } catch {}
-    } catch (e) {
-      console.warn("[scrobbler] pre-start save failed:", e);
-      return setNote("sc-pms-note", "Couldn’t save settings. Hit Save or check logs.", "err");
-    }
-
-    try {
-      await API.watch.stop();
-    } catch {}
-    try {
-      await API.watch.start(prov, sink);
-    } catch {
-      setNote("sc-pms-note", "Start failed", "err");
-    }
-
-    refreshWatcher();
+  if (prov === "plex") {
+    if (!plexTokenOk) return setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex.", "err");
+    if (!isValidServerUrl(srv)) return setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
+  } else if (prov === "emby") {
+    if (!embyTokenOk) return setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby.", "err");
+  } else {
+    if (!jellyTokenOk) return setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication → Jellyfin.", "err");
   }
+
+  try {
+    const nextScrobble = getScrobbleConfig();
+    const rootPatch = getRootPatch();
+
+    const serverCfg = await API.cfgGet();
+    const cfg = typeof structuredClone === "function" ? structuredClone(serverCfg || {}) : JSON.parse(JSON.stringify(serverCfg || {}));
+
+    cfg.scrobble = nextScrobble;
+    cfg.plex = Object.assign({}, cfg.plex || {}, rootPatch.plex || {});
+    cfg.emby = Object.assign({}, cfg.emby || {}, rootPatch.emby || {});
+    cfg.jellyfin = Object.assign({}, cfg.jellyfin || {}, rootPatch.jellyfin || {});
+
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(cfg),
+    });
+    if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
+
+    w._cfgCache = cfg;
+    STATE.cfg = cfg;
+    try {
+      syncHiddenServerInputs();
+    } catch {}
+  } catch (e) {
+    console.warn("[scrobbler] pre-start save failed:", e);
+    return setNote("sc-pms-note", "Couldn’t save settings. Hit Save or check logs.", "err");
+  }
+
+  try {
+    await API.watch.stop();
+  } catch {}
+  try {
+    await API.watch.start(prov, sink);
+  } catch {
+    setNote("sc-pms-note", "Start failed", "err");
+  }
+
+  refreshWatcher();
+}
+
 
   async function onWatchStop() {
     try {
@@ -960,21 +1560,22 @@
   }
 
   async function fetchServerUUID() {
-    try {
-      const prov = provider();
-      const x = await API.serverUUID();
-      const v = x?.server_uuid || x?.uuid || x?.id || "";
-      const inp = $("#sc-server-uuid", STATE.mount);
-      if (inp && v) {
-        inp.value = v;
-        write("scrobble.watch.filters.server_uuid", v);
-        if (prov === "emby") write("scrobble.watch.filters.user_id", v);
-        setNote("sc-uuid-note", prov === "plex" ? "Server UUID fetched" : "User ID fetched");
-      } else setNote("sc-uuid-note", prov === "plex" ? "No server UUID" : "No user ID", "err");
-    } catch {
-      setNote("sc-uuid-note", "Fetch failed", "err");
-    }
+  try {
+    const prov = provider();
+    const x = await API.serverUUID();
+    const v = x?.server_uuid || x?.uuid || x?.id || "";
+    const inp = $("#sc-server-uuid", STATE.mount);
+    if (inp && v) {
+      inp.value = v;
+      write("scrobble.watch.filters.server_uuid", v);
+      if (prov === "emby" || prov === "jellyfin") write("scrobble.watch.filters.user_id", v);
+      setNote("sc-uuid-note", prov === "plex" ? "Server UUID fetched" : "User ID fetched");
+    } else setNote("sc-uuid-note", prov === "plex" ? "No server UUID" : "No user ID", "err");
+  } catch {
+    setNote("sc-uuid-note", "Fetch failed", "err");
   }
+}
+
 
   function onAddUserWatch() {
     const inp = $("#sc-user-input", STATE.mount);
@@ -984,7 +1585,7 @@
     if (!cur.includes(v)) {
       const next = [...cur, v];
       write("scrobble.watch.filters.username_whitelist", next);
-      $("#sc-whitelist", STATE.mount).append(chip(v, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined));
+      $("#sc-whitelist", STATE.mount).append(chip(v, removeUserWatch, (provider() === "emby" || provider() === "jellyfin") ? onSelectWatchUser : undefined));
       inp.value = "";
     }
   }
@@ -995,12 +1596,12 @@
     write("scrobble.watch.filters.username_whitelist", next);
     const host = $("#sc-whitelist", STATE.mount);
     host.innerHTML = "";
-    next.forEach((v) => host.append(chip(v, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined)));
+    next.forEach((v) => host.append(chip(v, removeUserWatch, (provider() === "emby" || provider() === "jellyfin") ? onSelectWatchUser : undefined)));
   }
 
   async function loadUsers() {
     try {
-      const list = await API.users();
+      const list = await fetchUsersForPicker(USER_PICK.mode);
       const filtered = list.filter(
         (u) =>
           ["managed", "owner"].includes(String(u?.type || "").toLowerCase()) ||
@@ -1018,7 +1619,7 @@
         const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
         if (!cur.includes(n)) {
           write("scrobble.watch.filters.username_whitelist", [...cur, n]);
-          host.append(chip(n, removeUserWatch, provider() === "emby" ? onSelectWatchUser : undefined));
+          host.append(chip(n, removeUserWatch, (provider() === "emby" || provider() === "jellyfin") ? onSelectWatchUser : undefined));
           added++;
         }
       }
@@ -1100,14 +1701,6 @@
         const inp = $("#sc-pms-input", STATE.mount);
         if (inp) inp.value = server;
       }
-      if (username) {
-        const cur = asArray(read("scrobble.watch.filters.username_whitelist", []));
-        if (!cur.includes(username)) {
-          write("scrobble.watch.filters.username_whitelist", [...cur, username]);
-          const host = $("#sc-whitelist", STATE.mount);
-          if (host) host.append(chip(username, removeUserWatch, onSelectWatchUser));
-        }
-      }
       if (uid) {
         const inp = $("#sc-server-uuid", STATE.mount);
         if (inp) inp.value = uid;
@@ -1117,6 +1710,27 @@
       }
     } catch {}
   }
+async function hydrateJellyfin() {
+  try {
+    const info = await j("/api/jellyfin/inspect");
+    const server = String(info?.server || "").trim();
+    const username = String(info?.username || info?.user?.Name || "").trim();
+    const uid = String(info?.user_id || info?.user?.Id || "").trim();
+    if (server) {
+      write("jellyfin.server", server);
+      const inp = $("#sc-pms-input", STATE.mount);
+      if (inp && provider() === "jellyfin") inp.value = server;
+    }
+    if (uid) {
+      const inp = $("#sc-server-uuid", STATE.mount);
+      if (inp) inp.value = uid;
+      write("scrobble.watch.filters.server_uuid", uid);
+      write("scrobble.watch.filters.user_id", uid);
+      setNote("sc-uuid-note", "User ID detected");
+    }
+  } catch {}
+}
+
 
   function wire() {
     ensureHiddenServerInputs();
@@ -1141,8 +1755,9 @@
     });
 
     on($("#sc-add-user", STATE.mount), "click", onAddUserWatch);
-    on($("#sc-load-users", STATE.mount), "click", () => {
-      loadUsers();
+    on($("#sc-load-users", STATE.mount), "click", (e) => {
+      e.preventDefault();
+      openUserPicker("watch", e.currentTarget);
     });
     on($("#sc-watch-start", STATE.mount), "click", onWatchStart);
     on($("#sc-watch-stop", STATE.mount), "click", onWatchStop);
@@ -1158,11 +1773,14 @@
     on($("#sc-server-uuid", STATE.mount), "input", (e) => {
       const v = String(e.target.value || "").trim();
       write("scrobble.watch.filters.server_uuid", v);
-      if (provider() === "emby") write("scrobble.watch.filters.user_id", v);
+      if (provider() === "emby" || provider() === "jellyfin") write("scrobble.watch.filters.user_id", v);
     });
 
     on($("#sc-add-user-webhook", STATE.mount), "click", onAddUserWebhook);
-    on($("#sc-load-users-webhook", STATE.mount), "click", loadUsersWebhook);
+    on($("#sc-load-users-webhook", STATE.mount), "click", (e) => {
+      e.preventDefault();
+      openUserPicker("webhook", e.currentTarget);
+    });
     on($("#sc-fetch-uuid-webhook", STATE.mount), "click", fetchServerUUIDWebhook);
     on($("#sc-server-uuid-webhook", STATE.mount), "input", (e) => write("scrobble.webhook.filters_plex.server_uuid", String(e.target.value || "").trim()));
 
@@ -1182,7 +1800,92 @@
     const wh = $("#sc-enable-webhook", STATE.mount);
     const wa = $("#sc-enable-watcher", STATE.mount);
     const pv = $("#sc-provider", STATE.mount);
+
+    const pvBtn = $("#sc-provider-btn", STATE.mount);
+    const pvMenu = $("#sc-provider-menu", STATE.mount);
+
+    on(pvBtn, "click", (e) => {
+      e.preventDefault();
+      toggleProviderMenu();
+    });
+
+    if (pvMenu) {
+      $all(".sc-prov-item[data-value]", pvMenu).forEach((it) => {
+        on(it, "click", (e) => {
+          e.preventDefault();
+          const v = String(it.getAttribute("data-value") || "").toLowerCase().trim();
+          const sel = $("#sc-provider", STATE.mount);
+          if (sel && v) {
+            sel.value = v;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          closeProviderMenu();
+        });
+      });
+    }
+
+    if (!STATE.__scProvAwayBound) {
+      STATE.__scProvAwayBound = true;
+      d.addEventListener("click", (e) => {
+        const menu = $("#sc-provider-menu", STATE.mount);
+        const btn = $("#sc-provider-btn", STATE.mount);
+        if (!menu || menu.classList.contains("hidden")) return;
+        if (menu.contains(e.target)) return;
+        if (btn && (btn === e.target || btn.contains(e.target))) return;
+        closeProviderMenu();
+      });
+      d.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeProviderMenu();
+      });
+    }
     const sk = $("#sc-sink", STATE.mount);
+
+    const skPills = $("#sc-sink-pills", STATE.mount);
+    if (sk && skPills) {
+      ensureSinkPillBar(skPills);
+      syncPillBar(skPills, normSinkCsvOrDefault(sk.value, "trakt"));
+      on(skPills, "click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("button[data-sink]") : null;
+        if (!btn || btn.disabled) return;
+        const key = String(btn.getAttribute("data-sink") || "").toLowerCase().trim();
+        if (!key) return;
+        const curArr = normSinkCsvOrDefault(sk.value, "trakt").split(",").filter(Boolean);
+        if (curArr.length === 1 && curArr[0] === key) return;
+        const has = curArr.includes(key);
+        const nextArr = has ? curArr.filter((x) => x !== key) : [...curArr, key];
+        const next = normSinkCsv(nextArr.join(","));
+        if (sk.value !== next) {
+          sk.value = next;
+          sk.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          syncPillBar(skPills, next);
+        }
+      });
+    }
+
+    const ratSel = $("#sc-plex-ratings", STATE.mount);
+    const ratPills = $("#sc-plex-ratings-pills", STATE.mount);
+    if (ratSel && ratPills) {
+      ensureSinkPillBar(ratPills);
+      syncPillBar(ratPills, csvFromSelect(ratSel, true));
+      on(ratPills, "click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("button[data-sink]") : null;
+        if (!btn || btn.disabled) return;
+        const key = String(btn.getAttribute("data-sink") || "").toLowerCase().trim();
+        if (!key) return;
+        const curArr = csvFromSelect(ratSel, true).split(",").filter(Boolean);
+        const has = curArr.includes(key);
+        const nextArr = has ? curArr.filter((x) => x !== key) : [...curArr, key];
+        const nextCsv = normSinkCsv(nextArr.join(","));
+        const nextSel = nextCsv ? nextCsv : "none";
+        if (ratSel.value !== nextSel) {
+          ratSel.value = nextSel;
+          ratSel.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          syncPillBar(ratPills, nextCsv);
+        }
+      });
+    }
 
     const syncExclusive = async (src) => {
       try {
@@ -1212,16 +1915,38 @@
 
     on($("#sc-autostart", STATE.mount), "change", (e) => write("scrobble.watch.autostart", !!e.target.checked));
 
-    on(pv, "change", (e) => {
+    on(pv, "change", async (e) => {
+      const prev = provider();
       const val = String(e.target.value || "plex").toLowerCase();
+      try {
+        await API.watch.stop();
+      } catch {}
+      try {
+        refreshWatcher();
+      } catch {}
+      try {
+        saveCurrentProviderFilters(prev);
+      } catch {}
+      STATE.ui.watchProvider = val;
       write("scrobble.watch.provider", val);
+      try {
+        applyProviderFilters(val);
+      } catch {}
+      try {
+        closeUserPicker();
+      } catch {}
       populate();
-      if (val === "emby") hydrateEmby();
+      try { syncProviderPickerUi(); } catch {}
+      if (val === "emby") await hydrateEmby();
+      if (val === "jellyfin") await hydrateJellyfin();
+      applyModeDisable();
     });
 
     on(sk, "change", (e) => {
-      const val = String(e.target.value || "trakt").toLowerCase();
+      const val = normSinkCsvOrDefault(e.target.value || "trakt", "trakt");
+      STATE.ui.watchSink = val;
       write("scrobble.watch.sink", val);
+      try { syncSinkPillsFromSelect(); } catch {}
       rebuildPlexRatingsDropdown();
       applyModeDisable();
     });
@@ -1231,6 +1956,7 @@
       on(ratingsSel, "change", (e) => {
         ratingsSel.dataset.cxUserChanged = "1";
         setPlexRatingsFlagsFromSelection(e.target.value);
+        try { syncPlexRatingsPillsFromSelect(); } catch {}
         try {
           updatePlexWatcherWebhookUrl();
         } catch {}
@@ -1258,71 +1984,78 @@
   }
 
   function getScrobbleConfig() {
-    commitAdvancedInputsWatch();
-    commitAdvancedInputsWebhook();
-    commitAdvancedInputsTrakt();
+  commitAdvancedInputsWatch();
+  commitAdvancedInputsWebhook();
+  commitAdvancedInputsTrakt();
 
-    const enabled = !!read("scrobble.enabled", false);
-    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+  const enabled = !!read("scrobble.enabled", false);
+  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+  const prov = provider();
 
-    const wlWeb = namesFromChips("#sc-whitelist-webhook");
-    const suWeb = String($("#sc-server-uuid-webhook", STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid", "")).trim();
+  const wlWebHost = $("#sc-whitelist-webhook", STATE.mount);
+  const wlWeb = wlWebHost ? namesFromChips("#sc-whitelist-webhook") : asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
+  const suWeb = String($("#sc-server-uuid-webhook", STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid", "")).trim();
 
-    const wlWatch = namesFromChips("#sc-whitelist");
-    const suWatch = String($("#sc-server-uuid", STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid", "")).trim();
-    const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
+  const wlWatchHost = $("#sc-whitelist", STATE.mount);
+  const wlWatch = wlWatchHost ? namesFromChips("#sc-whitelist") : asArray(read("scrobble.watch.filters.username_whitelist", []));
+  const suWatch = String($("#sc-server-uuid", STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid", "")).trim();
+  const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
 
-    const filtersWatch = {
-      username_whitelist: wlWatch.length ? wlWatch : asArray(read("scrobble.watch.filters.username_whitelist", [])),
-    };
+  const filtersWatch = {
+    username_whitelist: wlWatch,
+  };
 
-    if (provider() !== "emby") {
-      filtersWatch.server_uuid = suWatch || "";
-      if (userIdWatch) filtersWatch.user_id = userIdWatch;
-    }
-
-    return {
-      enabled,
-      mode: mode === "watch" ? "watch" : "webhook",
-      delete_plex: !!read("scrobble.delete_plex", false),
-      delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
-
-      webhook: {
-        pause_debounce_seconds: read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
-        suppress_start_at: read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at),
-        plex_trakt_ratings: !!read("scrobble.webhook.plex_trakt_ratings", false),
-        filters_plex: {
-          username_whitelist: wlWeb.length ? wlWeb : asArray(read("scrobble.webhook.filters_plex.username_whitelist", [])),
-          server_uuid: suWeb || "",
-        },
-        filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] },
-      },
-
-      watch: {
-        provider: provider(),
-        sink: String(read("scrobble.watch.sink", "trakt") || "trakt").toLowerCase(),
-        autostart: !!read("scrobble.watch.autostart", false),
-        plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
-        plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),
-        pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
-        suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
-        filters: filtersWatch,
-      },
-
-      trakt: {
-        stop_pause_threshold: read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold),
-        force_stop_at: read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at),
-        regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent),
-      },
-    };
+  if (prov === "plex") {
+    filtersWatch.server_uuid = suWatch || "";
+  } else {
+    const uid = suWatch || userIdWatch || "";
+    if (uid) filtersWatch.user_id = uid;
   }
 
-  const getRootPatch = () => ({
-    plex: { server_url: String(read("plex.server_url", "") || "") },
-    emby: { server: String(read("emby.server", "") || "") },
-  });
+  return {
+    enabled,
+    mode: mode === "watch" ? "watch" : "webhook",
+    delete_plex: !!read("scrobble.delete_plex", false),
+    delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
 
-  async function init(opts = {}) {
+    webhook: {
+      pause_debounce_seconds: read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
+      suppress_start_at: read("scrobble.webhook.suppress_start_at", DEFAULTS.watch.suppress_start_at),
+      plex_trakt_ratings: !!read("scrobble.webhook.plex_trakt_ratings", false),
+      filters_plex: {
+        username_whitelist: wlWeb,
+        server_uuid: suWeb || "",
+      },
+      filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] },
+    },
+
+    watch: {
+      provider: prov,
+      sink: normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt"),
+      autostart: !!read("scrobble.watch.autostart", false),
+      plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
+      plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),
+      plex_mdblist_ratings: !!read("scrobble.watch.plex_mdblist_ratings", false),
+      pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
+      suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
+      filters: filtersWatch,
+    },
+
+    trakt: {
+      stop_pause_threshold: read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold),
+      force_stop_at: read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at),
+      regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent),
+    },
+  };
+}
+
+
+  const getRootPatch = () => ({
+  plex: { server_url: String(read("plex.server_url", "") || "") },
+  emby: { server: String(read("emby.server", "") || "") },
+  jellyfin: { server: String(read("jellyfin.server", "") || "") },
+});
+async function init(opts = {}) {
     STATE.mount = opts.mountId ? d.getElementById(opts.mountId) : d;
     STATE.cfg = opts.cfg || w._cfgCache || {};
     STATE.webhookHost = $("#scrob-webhook", STATE.mount);
@@ -1359,9 +2092,16 @@
     }
 
     await refreshCfgBeforePopulate();
+    try {
+      pfLoadStore();
+      const prov = provider();
+      if (STATE.pf.store?.[prov]) applyProviderFilters(prov);
+      else saveCurrentProviderFilters(prov);
+    } catch {}
     populate();
     await refreshWatcher();
     if (provider() === "emby") await hydrateEmby();
+    if (provider() === "jellyfin") await hydrateJellyfin();
   }
 
   function mountLegacy(targetEl, cfg) {

@@ -1,5 +1,5 @@
-# providers/scrobble/emby/watch.py
-# CrossWatch - Emby Watcher Service
+# providers/scrobble/jellyfin/watch.py
+# CrossWatch - Jellyfin Watcher Service
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -91,8 +91,8 @@ def _is_debug() -> bool:
         return False
 
 
-def _emby_bt(cfg: dict[str, Any]) -> tuple[str, str]:
-    e = cfg.get("emby") or {}
+def _jf_bt(cfg: dict[str, Any]) -> tuple[str, str]:
+    e = cfg.get("jellyfin") or {}
     base = str(e.get("server", "")).strip().rstrip("/")
     tok = str(e.get("access_token", "")).strip()
     if not base or not tok:
@@ -103,7 +103,7 @@ def _emby_bt(cfg: dict[str, Any]) -> tuple[str, str]:
 
 
 def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
-    e = cfg.get("emby") or {}
+    e = cfg.get("jellyfin") or {}
     did = str(e.get("device_id") or "crosswatch")
     return {
         "Accept": "application/json",
@@ -115,7 +115,7 @@ def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
 
 def _get_json(base: str, tok: str, path: str) -> Any:
     cfg = _cfg()
-    e = cfg.get("emby") or {}
+    e = cfg.get("jellyfin") or {}
     r = requests.get(
         f"{base}{path}",
         headers=_hdr(tok, cfg),
@@ -268,6 +268,7 @@ def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger=N
     return {}
 
 
+
 def _show_ids_from_episode_hint(ids_hint: dict[str, Any], cfg: dict[str, Any], logger=None) -> dict[str, Any]:
     cache_key = (
         "show_ids_from_episode_hint",
@@ -327,6 +328,7 @@ def _show_ids_from_episode_hint(ids_hint: dict[str, Any], cfg: dict[str, Any], l
     return {}
 
 
+
 def _enrich_episode_ids(
     item: dict[str, Any],
     sess: dict[str, Any],
@@ -343,8 +345,8 @@ def _enrich_episode_ids(
         show_ids = {}
 
     if not show_ids:
-        base, tok = _emby_bt(cfg)
-        uid = str(root.get("UserId") or "").strip() or str((cfg.get("emby") or {}).get("user_id") or "").strip()
+        base, tok = _jf_bt(cfg)
+        uid = str(root.get("UserId") or "").strip() or str((cfg.get("jellyfin") or {}).get("user_id") or "").strip()
         series_id = item.get("SeriesId") or item.get("ParentId") or item.get("SeriesItemId")
         if base and tok and uid and series_id:
             path = f"/Users/{uid}/Items/{series_id}?format=json"
@@ -352,10 +354,10 @@ def _enrich_episode_ids(
                 info = _get_json(base, tok, path)
                 show_ids = _series_ids_from_payload(info, info) or {}
                 if logger and _is_debug():
-                    logger(f"resolved show ids via Emby {path}: {show_ids}", "DEBUG")
+                    logger(f"resolved show ids via Jellyfin {path}: {show_ids}", "DEBUG")
             except Exception as e:
                 if logger and _is_debug():
-                    logger(f"Emby series lookup failed: {e}", "DEBUG")
+                    logger(f"Jellyfin series lookup failed: {e}", "DEBUG")
 
     for key in ("imdb", "tmdb", "tvdb"):
         val = show_ids.get(key)
@@ -463,9 +465,9 @@ def _normalize_ids(ids: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-class EmbyWatchService:
+class JellyfinWatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 1.5) -> None:
-        self._base, self._tok = _emby_bt(_cfg())
+        self._base, self._tok = _jf_bt(_cfg())
         self._disabled = False
         if not self._base or not self._tok:
             self._disabled = True
@@ -496,12 +498,12 @@ class EmbyWatchService:
             return
         if BASE_LOG is not None:
             try:
-                BASE_LOG(msg, level=lvl, module="EMBY ")
+                BASE_LOG(msg, level=lvl, module="JFIN ")
                 return
             except Exception:
                 pass
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        print(f"[{ts}] [EMBY ] {lvl} {msg}")
+        print(f"[{ts}] [JFIN ] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
@@ -509,7 +511,7 @@ class EmbyWatchService:
     def _scrobble_whitelist(self) -> set[str]:
         try:
             cfg = _cfg() or {}
-            libs = ((((cfg.get("emby") or {}).get("scrobble") or {}).get("libraries")) or [])
+            libs = ((((cfg.get("jellyfin") or {}).get("scrobble") or {}).get("libraries")) or [])
             return _as_set_str(libs)
         except Exception:
             return set()
@@ -670,7 +672,7 @@ class EmbyWatchService:
 
     def _current_sessions(self) -> list[dict[str, Any]]:
         try:
-            e = (_cfg().get("emby") or {})
+            e = (_cfg().get("jellyfin") or {})
             uid = str(e.get("user_id") or "").strip().lower()
             q = "/Sessions?ActiveWithinSeconds=15"
             all_sessions = _get_json(self._base, self._tok, q) or []
@@ -718,7 +720,7 @@ class EmbyWatchService:
                 return
 
         try:
-            _cw_update("emby", ev)
+            _cw_update("jellyfin", ev)
         except Exception:
             pass
 
@@ -847,7 +849,7 @@ class EmbyWatchService:
                     ev_hb = self._build_event(s, "playing", p)
                     if ev_hb and self._passes_filters(ev_hb):
                         try:
-                            _cw_update("emby", ev_hb)
+                            _cw_update("jellyfin", ev_hb)
                         except Exception:
                             pass
                     self._cw_last_heartbeat[sid] = now
@@ -917,7 +919,7 @@ class EmbyWatchService:
     def start(self) -> None:
         self._stop.clear()
         if self._disabled:
-            self._log("Missing emby.server or emby.access_token in config.json", "ERROR")
+            self._log("Missing jellyfin.server or jellyfin.access_token in config.json", "ERROR")
             return
         self._log("Watcher connected", "INFO")
         while not self._stop.is_set():
@@ -926,12 +928,12 @@ class EmbyWatchService:
 
     def stop(self) -> None:
         self._stop.set()
-        self._log("Emby watcher stopping", "INFO")
+        self._log("Jellyfin watcher stopping", "INFO")
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
             return
-        self._bg = threading.Thread(target=self.start, name="EmbyWatch", daemon=True)
+        self._bg = threading.Thread(target=self.start, name="JellyfinWatch", daemon=True)
         self._bg.start()
 
     def is_alive(self) -> bool:
@@ -945,5 +947,5 @@ def mhash(x: Any) -> int:
         return abs(hash(str(x)))
 
 
-def make_default_watch(sinks: Iterable[ScrobbleSink]) -> EmbyWatchService:
-    return EmbyWatchService(sinks=sinks)
+def make_default_watch(sinks: Iterable[ScrobbleSink]) -> JellyfinWatchService:
+    return JellyfinWatchService(sinks=sinks)

@@ -9,6 +9,8 @@ from typing import Any, Iterable, Mapping, Callable
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
 
+import requests
+
 try:
     from _logging import log as BASE_LOG
 except Exception:
@@ -506,7 +508,7 @@ class WatchService:
                 if isinstance(prev, int):
                     best = prev
             if best != want and best is not None:
-                self._dbg(f"probe correction: {want}% - {best}%")
+                self._dbg(f"probe correction: {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
@@ -882,6 +884,76 @@ def _simkl_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: d
     return {"ok": True, "status": r.status_code, "simkl": j}
 
 
+
+def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
+    md_cfg = (cfg.get("mdblist") or {}) if isinstance(cfg, dict) else {}
+    apikey = str(md_cfg.get("api_key") or "").strip()
+    if not apikey:
+        return {"ok": False, "error": "missing_api_key"}
+    if media_type not in ("movie", "show"):
+        return {"ok": True, "ignored": True}
+    bucket = "movies" if media_type == "movie" else "shows"
+    ids2 = _sanitize_ids(ids) or {}
+    ids3: dict[str, Any] = {}
+    for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu"):
+        if ids2.get(k):
+            ids3[k] = ids2[k]
+    if not ids3:
+        return {"ok": False, "error": "no_ids"}
+
+    base = "https://api.mdblist.com"
+    is_remove = int(rating or 0) <= 0
+    url = f"{base}/sync/ratings/remove" if is_remove else f"{base}/sync/ratings"
+
+    item: dict[str, Any] = {"ids": ids3}
+    if not is_remove:
+        item["rating"] = int(rating)
+    body: dict[str, Any] = {bucket: [item]}
+
+    tmo = float(md_cfg.get("timeout") or 10)
+    max_retries = int(md_cfg.get("max_retries") or 3)
+    max_backoff = int(md_cfg.get("ratings_max_backoff_ms") or 8000) / 1000.0
+    backoff = 0.5
+
+    r: requests.Response | None = None
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(url, params={"apikey": apikey}, json=body, timeout=tmo)
+        except Exception as e:
+            if attempt >= max_retries - 1:
+                _emit(logger, f"mdblist rating request failed: {type(e).__name__}: {e}", "ERROR")
+                return {"ok": False, "error": "request_failed"}
+            time.sleep(backoff)
+            backoff = min(backoff * 2.0, max_backoff)
+            continue
+
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    time.sleep(float(ra))
+                except Exception:
+                    time.sleep(backoff)
+            else:
+                time.sleep(backoff)
+            backoff = min(backoff * 2.0, max_backoff)
+            continue
+        break
+
+    if r is None:
+        return {"ok": False, "error": "request_failed"}
+
+    try:
+        j = r.json() if getattr(r, "content", b"") else {}
+    except Exception:
+        j = {"raw": (getattr(r, "text", "") or "")[:200]}
+
+    if r.status_code >= 400:
+        _emit(logger, f"mdblist rating failed {r.status_code} {str(j)[:180]}", "ERROR")
+        return {"ok": False, "status": r.status_code, "resp": j}
+    return {"ok": True, "status": r.status_code, "resp": j}
+
+
 def process_rating_webhook(
     payload: dict[str, Any],
     headers: Mapping[str, str],
@@ -899,7 +971,8 @@ def process_rating_webhook(
 
     enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
     enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
-    if not (enable_trakt or enable_simkl):
+    enable_mdblist = bool(watch_cfg.get("plex_mdblist_ratings"))
+    if not (enable_trakt or enable_simkl or enable_mdblist):
         return {"ok": True, "ignored": True}
 
     secret = str(((cfg.get("plex") or {}).get("webhook_secret") or "")).strip()
@@ -981,4 +1054,6 @@ def process_rating_webhook(
         results["trakt"] = _trakt_send_rating(media_type, ids, rating_val, cfg, logger)
     if enable_simkl and media_type in ("movie", "show"):
         results["simkl"] = _simkl_send_rating(media_type, ids, rating_val, cfg, logger)
+    if enable_mdblist and media_type in ("movie", "show"):
+        results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_val, cfg, logger)
     return results

@@ -390,6 +390,55 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         jf_ensure_whitelist_defaults()
         return {"libraries": jf_fetch_libraries_from_cfg()}
 
+    @app.get("/api/jellyfin/users", tags=["media providers"])
+    def jf_users():
+        cfg = load_config(); jf = (cfg.get("jellyfin") or {})
+        server = str((jf.get("server") or "")).rstrip("/")
+        token = str((jf.get("access_token") or "")).strip()
+        if not server or not token:
+            return JSONResponse({"ok": False, "error": "Not connected to Jellyfin"}, 401)
+
+        timeout = float(jf.get("timeout", 15) or 15)
+        verify = bool(jf.get("verify_ssl", False))
+        devid = str(jf.get("device_id") or "crosswatch").strip() or "crosswatch"
+
+        base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{devid}", Version="1.0"'
+        auth = f'{base}, Token="{token}"'
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "CrossWatch/1.0",
+            "Authorization": auth,
+            "X-Emby-Authorization": auth,
+            "X-MediaBrowser-Token": token,
+        }
+
+        users: list[dict[str, Any]] = []
+        try:
+            r = requests.get(f"{server}/Users", headers=headers, timeout=timeout, verify=verify)
+            if r.ok:
+                data = r.json() or []
+                arr = data.get("Items") if isinstance(data, dict) else data
+                if isinstance(arr, list):
+                    for u in arr:
+                        pol = (u or {}).get("Policy") if isinstance((u or {}).get("Policy"), dict) else {}
+                        users.append({
+                            "id": (u or {}).get("Id") or (u or {}).get("id"),
+                            "username": (u or {}).get("Name") or (u or {}).get("name") or "",
+                            "IsAdministrator": bool((pol or {}).get("IsAdministrator")) if isinstance(pol, dict) else bool((u or {}).get("IsAdministrator") or False),
+                            "IsHidden": bool((pol or {}).get("IsHidden")) if isinstance(pol, dict) else bool((u or {}).get("IsHidden") or False),
+                            "IsDisabled": bool((pol or {}).get("IsDisabled")) if isinstance(pol, dict) else bool((u or {}).get("IsDisabled") or False),
+                        })
+            else:
+                mr = requests.get(f"{server}/Users/Me", headers=headers, timeout=timeout, verify=verify)
+                if mr.ok:
+                    me = mr.json() or {}
+                    users = [{"id": me.get("Id") or me.get("id"), "username": me.get("Name") or me.get("name") or ""}]
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, _status_from_msg(str(e)))
+
+        users = [u for u in users if (u or {}).get("username")]
+        return {"users": users, "count": len(users)}
+
     # EMBY
     @app.post("/api/emby/login", tags=["auth"])
     def api_emby_login(payload: dict[str, Any] = Body(...)) -> JSONResponse:

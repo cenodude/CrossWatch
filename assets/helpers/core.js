@@ -897,7 +897,7 @@ function ensureScrobbler() {
 
   const prov = (typeof getConfiguredProviders === "function") ? getConfiguredProviders() : new Set();
   const srcOk = prov.has("PLEX") || prov.has("EMBY") || prov.has("JELLYFIN");
-  const sinkOk = prov.has("TRAKT") || prov.has("SIMKL");
+  const sinkOk = prov.has("TRAKT") || prov.has("SIMKL") || prov.has("MDBLIST");
   if (!(srcOk && sinkOk)) return;
 
   const start = () => {

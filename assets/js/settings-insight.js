@@ -13,6 +13,15 @@
   }
   const coalesceNextRun = o => o ? (o.next_run_at ?? o.next_run ?? o.next ?? null) : null;
 
+  function prettyWatchProvider(v){
+    const k = String(v || "").toLowerCase().trim();
+    if(!k) return "";
+    if(k === "plex") return "Plex";
+    if(k === "emby") return "Emby";
+    if(k === "jellyfin") return "Jellyfin";
+    return k.toUpperCase();
+  }
+
   // Styles
   const css = `
   #cw-settings-grid{
@@ -242,8 +251,13 @@
   async function getScrobblerSummary(cfg){
     const sc=cfg?.scrobble||{}; const mode=(sc?.mode||"").toLowerCase(); const enabled=!!sc?.enabled;
     let watcher={ alive:false, has_watch:false, stop_set:false };
-    if(enabled && mode==="watch"){ const s=await fetchJSON("/api/watch/status"); watcher={ alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set }; }
-    return { mode: enabled ? (mode||"webhook") : "", enabled, watcher };
+    let watchProvider = "";
+    if(enabled && mode==="watch"){
+      const s=await fetchJSON("/api/watch/status");
+      watcher={ alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set };
+      watchProvider = prettyWatchProvider(s?.provider ?? sc?.watch?.provider);
+    }
+    return { mode: enabled ? (mode||"webhook") : "", enabled, watcher, watchProvider };
   }
 
   // Whitelisting summary
@@ -437,7 +451,8 @@
       data.sched.enabled ? `Enabled | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
     const mode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");
     const status = !data.scrob.enabled ? "" : (data.scrob.mode==="watch" ? (data.scrob.watcher.alive ? "Running" : "Stopped") : "—");
-    body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}`));
+    const watchProv = (data.scrob.enabled && data.scrob.mode === "watch") ? String(data.scrob.watchProvider || "").trim() : "";
+    body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}${watchProv ? " | " + watchProv : ""}`));
   }
 
 

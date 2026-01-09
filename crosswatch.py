@@ -74,6 +74,7 @@ from pydantic import BaseModel
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.simkl.sink import SimklSink
+from providers.scrobble.mdblist.sink import MDBListSink
 from providers.scrobble.plex.watch import WatchService as PlexWatchService
 
 # Watcher: Emby autostart helper
@@ -226,7 +227,7 @@ def _apply_debug_env_from_config() -> None:
 def _build_sinks_from_config(cfg) -> list:
     watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
     sink_cfg = (watch_cfg.get("sink") or "trakt")
-    names = [s.strip().lower() for s in str(sink_cfg).split(",") if s and s.strip()]
+    names = [s.strip().lower() for s in re.split(r"[,&+]", str(sink_cfg)) if s and s.strip()]
     added, sinks = set(), []
     for name in (names or ["trakt"]):
         if name == "trakt" and "trakt" not in added:
@@ -237,6 +238,11 @@ def _build_sinks_from_config(cfg) -> list:
         elif name == "simkl" and "simkl" not in added:
             try:
                 sinks.append(SimklSink()); added.add("simkl")
+            except Exception:
+                pass
+        elif name == "mdblist" and "mdblist" not in added:
+            try:
+                sinks.append(MDBListSink()); added.add("mdblist")
             except Exception:
                 pass
     if not sinks:
@@ -260,8 +266,11 @@ def autostart_from_config():
     try:
         if provider == "emby":
             from providers.scrobble.emby.watch import make_default_watch as _mk
+        elif provider == "jellyfin":
+            from providers.scrobble.jellyfin.watch import make_default_watch as _mk
         else:
             from providers.scrobble.plex.watch import make_default_watch as _mk
+
     except Exception:
         return None
 
@@ -370,7 +379,7 @@ def get_primary_ip() -> str:
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {
     "SYNC": [], "PLEX": [], "JELLYFIN": [], "EMBY": [],
-    "SIMKL": [], "TRBL": [], "TRAKT": []
+    "SIMKL": [], "TRBL": [], "TRAKT": [], "MDBList": []
 }
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
@@ -541,6 +550,8 @@ async def _lifespan(app):
                 prov = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
                 if prov == "emby":
                     from providers.scrobble.emby.watch import make_default_watch as make_default_watch
+                elif prov == "jellyfin":
+                    from providers.scrobble.jellyfin.watch import make_default_watch as make_default_watch
                 else:
                     from providers.scrobble.plex.watch import make_default_watch as make_default_watch
                 sinks_fb = _build_sinks_from_config(cfg)

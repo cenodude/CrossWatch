@@ -246,7 +246,7 @@ try{
 
   if(cur && cur.state && cur.state!=='stopped'){
     const src=String(cur.source||'').toLowerCase();
-    const tgt=(src==='plex'||src==='emby')?W:H;
+    const tgt = W.enabled ? W : (H.enabled ? H : W);
     tgt.title=cur.title||'';
     tgt.media_type=cur.media_type||null;
     tgt.year=cur.year||null;
@@ -279,4 +279,4 @@ document.addEventListener('tab-changed',e=>{const id=e?.detail?.id;if(id==='main
 window.addEventListener('focus',rfr);
 });
 })();
-// EOF
+

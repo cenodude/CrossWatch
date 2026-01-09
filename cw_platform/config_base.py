@@ -327,6 +327,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "sink": "trakt",                            # "trakt" | "simkl" | "simkl,trakt"
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
+            "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
             "pause_debounce_seconds": 5,                # Ignore micro-pauses just after start
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {

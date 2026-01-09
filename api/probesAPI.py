@@ -1176,7 +1176,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         STATUS_CACHE["data"] = data
         return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-    @app.post("/api/debug/clear_probe_cache", tags=["probes"])
+    @app.post("/api/debug/clear_probe_cache", tags=["Probes"])
     def clear_probe_cache() -> dict[str, Any]:
         for k in list(PROBE_CACHE.keys()):
             PROBE_CACHE[k] = (0.0, False)
