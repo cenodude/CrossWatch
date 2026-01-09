@@ -9,29 +9,28 @@ body:
     attributes:
       value: |
         ## Before you hit “Submit”
-        Please do this first — it saves both of us time:
+        Please do this first, it saves both of us time:
 
         1. **Simplify your setup first.**  
            Enable **only the pair that’s causing trouble** and disable/remove the rest.  
-           Less noise in the logs = faster diagnosis.
+
         2. Go to **Settings → Maintenance**  
            Enable **Debug** and **MOD Debug**.
+
         3. **Reproduce the issue again** after enabling debug.
+        
         4. Collect logs from **both places**:
            - **Docker console logs**
            - **CrossWatch Sync Output**
+           
         5. If the issue is “some items don’t sync”:  
            run the **Analyzer** first. It often tells you what’s missing and why.
-
-        **No logs = no diagnosis.**
 
   - type: markdown
     attributes:
       value: |
         **Please don't paste secrets** (tokens, usernames, API keys, etc.).
-        
-        Redaction rule:
-        - If the field was filled in → replace with `<REDACTED>`
+          If the field was filled in → replace with `<REDACTED>`
 
   - type: input
     id: version
@@ -42,15 +41,6 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: run_mode
-    attributes:
-      label: Run mode
-      options:
-        - Manual run
-        - Scheduled run
-        - Background scrobble
-
   - type: checkboxes
     id: providers
     attributes:
@@ -60,14 +50,17 @@ body:
         - label: Emby
         - label: Jellyfin
         - label: MDBlist
+        - label: Tautulli
+        - label: AniList
         - label: Trakt
         - label: SIMKL
+        - label: CrossWatch Internal Tracker (CW)
 
   - type: input
     id: server_version
     attributes:
       label: Media server version (if applicable)
-      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x"
+      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x / Tautulli 2.x"
 
   - type: checkboxes
     id: areas
@@ -77,22 +70,12 @@ body:
         - label: Synchronization → Watchlist
         - label: Synchronization → Ratings
         - label: Synchronization → History
+        - label: Scrobble/Webhook
+        - label: Scrobble/Watcher
         - label: Scheduler
         - label: Web UI (modals, pairs, progress)
         - label: Metadata / IDs
         - label: Config / API
-
-  - type: checkboxes
-    id: impact
-    attributes:
-      label: Impact
-      options:
-        - label: Data loss risk (unexpected deletions)
-        - label: Wrong data (duplicates/mismatched items)
-        - label: Broken flow (sync/scrobble/scheduler not working)
-        - label: UI issue only
-        - label: Performance/timeout
-        - label: Other
 
   - type: textarea
     id: summary
@@ -101,92 +84,6 @@ body:
       placeholder: Clear and concise description of the problem.
     validations:
       required: true
-
-  - type: markdown
-    attributes:
-      value: |
-        **Primary pair (if relevant)**  
-        Pick source/target + direction + feature(s).  
-        If multiple pairs are involved, add them in “Additional pairs”.
-
-  - type: dropdown
-    id: pair_source
-    attributes:
-      label: Source provider
-      options:
-        - Plex
-        - Emby
-        - Jellyfin
-        - MDBlist
-        - Trakt
-        - SIMKL
-
-  - type: dropdown
-    id: pair_target
-    attributes:
-      label: Target provider
-      options:
-        - Plex
-        - Emby
-        - Jellyfin
-        - MDBlist
-        - Trakt
-        - SIMKL
-
-  - type: dropdown
-    id: pair_direction
-    attributes:
-      label: Direction
-      options:
-        - Source → Target
-        - Source ⇄ Target
-
-  - type: checkboxes
-    id: pair_features
-    attributes:
-      label: Feature(s)
-      options:
-        - label: Watchlist
-        - label: History
-        - label: Ratings
-
-  - type: textarea
-    id: additional_pairs
-    attributes:
-      label: Additional pairs (optional)
-      description: List any other pairs/directions/features involved.
-      placeholder: |
-        PLEX → SIMKL (Watchlist)
-        SIMKL ⇄ TRAKT (Ratings)
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      description: Pre-conditions, actions, and what you saw.
-      placeholder: |
-        1) …
-        2) …
-        3) …
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual
-      placeholder: What actually happened (include exact UI messages if any).
-    validations:
-      required: true
-
-  - type: textarea
-    id: examples
-    attributes:
-      label: Example item(s) (helps ID matching)
-      description: Provide 1–3 concrete examples.
-      placeholder: |
-        Title: <Movie/Show S01E02>, Year: <YYYY>
-        IDs: tmdb=<id>, imdb=<tt…>, tvdb=<id>, trakt=<id>, simkl=<id>, plex.ratingKey=<key>
 
   - type: textarea
     id: logs
@@ -198,27 +95,14 @@ body:
         `docker logs crosswatch --since=30m > crosswatch.log`
       render: bash
 
-  - type: textarea
-    id: config_json
-    attributes:
-      label: config.json (redacted or raw)
-      description: |
-        Paste only relevant portions or the full file.
-        Redact important fields for you before sharing publicly:
-        server_url, account_token, client_id, client_secret, username, access_token, refresh_token,
-        api_key, user, username_whitelist, server_uuid
-      render: json
-
   - type: checkboxes
     id: tried
     attributes:
       label: Troubleshooting already tried
       description: |
-        Start simple: **Clear Cache**, then retry.
-        Still broken? Do **Clear State + Clear Cache**. That resets CrossWatch’s brain and rebuilds from scratch.
+        Clean Everything in Maintenance. This will reset your state etc.
       options:
-        - label: Settings → Maintenance → Clear cache (then retried)
-        - label: Settings → Maintenance → Clear state (only if cache didn’t help)
+        - label: Settings → Maintenance → Clean Everything
         - label: Retried on latest CrossWatch version
         - label: Re-ran the same pair one-way
         - label: Restarted container  (to rule out transient issues)
