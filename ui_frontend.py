@@ -303,6 +303,7 @@ def _get_index_html_static() -> str:
             <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
             <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
             <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
+            <img src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="height:18px;width:auto;opacity:.9">
             <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
           </span>
         </div>

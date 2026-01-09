@@ -15,9 +15,11 @@
     const n = d.getElementById(id);
     if (!n) return;
     n.textContent = msg || "";
+    const color = kind === "err" ? "#ff6b6b" : kind === "warn" ? "#f59e0b" : "var(--muted,#a7a7a7)";
     n.style.cssText =
-      "margin:6px 0 2px;font-size:12px;opacity:.9;color:" +
-      (kind === "err" ? "#ff6b6b" : "var(--muted,#a7a7a7)");
+      "margin:6px 0 2px;font-size:12px;opacity:.92;color:" +
+      color +
+      (kind === "warn" ? ";font-weight:700" : "");
   }
 
   const HELP_TEXT = {
@@ -601,6 +603,7 @@ serverUUID: async () => {
             </div>
           </div>
         </div>
+        <div id="sc-webhook-warning" class="micro-note"></div>
         <div id="sc-endpoint-note" class="micro-note"></div>
 
         <details id="sc-options-webhook" class="sc-box"><summary>Options</summary>
@@ -1734,6 +1737,8 @@ async function hydrateJellyfin() {
 
   function wire() {
     ensureHiddenServerInputs();
+
+    setNote("sc-webhook-warning", "These (legacy) webhooks will scrobble only to Trakt and are no longer maintained or supported! Please switch to Watcher ASAP!", "warn");
 
     on($("#sc-copy-plex", STATE.mount), "click", async () => {
       const ok = await copyText(`${location.origin}/webhook/plextrakt`);
