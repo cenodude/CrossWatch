@@ -134,7 +134,7 @@ def html() -> str:
         </div>
         <div id="mdblist_hint" class="msg warn" style="margin-top:8px">
           You need an MDBList API key. Create one at
-          <a href="https://mdblist.com/preferences/" target="_blank" rel="noopener">MDBList Preferences</a>.
+          <a href="https://mdblist.com/preferences/#api" target="_blank" rel="noopener">MDBList Preferences</a>.
         </div>
       </div>
 

@@ -174,7 +174,7 @@
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5 },
   };
 
-  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false };
+  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -424,6 +424,24 @@ serverUUID: async () => {
     },
   };
 
+  async function persistConfigPaths(pairs, noteId) {
+    try {
+      const serverCfg = await API.cfgGet();
+      const cfg = typeof structuredClone === "function" ? structuredClone(serverCfg || {}) : JSON.parse(JSON.stringify(serverCfg || {}));
+      for (const [path, value] of pairs || []) deepSet(cfg, String(path || ""), value);
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(cfg),
+      });
+      if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
+    } catch (e) {
+      console.warn("[scrobbler] save failed:", e);
+      if (noteId) setNote(noteId, "Couldn’t save settings. Hit Save or check logs.", "err");
+    }
+  }
+
   function chip(text, onRemove, onClick) {
     const c = el("span", { className: "chip" });
     const t = el("span", { textContent: text });
@@ -465,6 +483,8 @@ serverUUID: async () => {
   }
 
   const LIVE = {
+    enabled: false,
+    reconnectTimer: null,
     sse: null,
     max: 3,
     items: [],
@@ -529,6 +549,7 @@ serverUUID: async () => {
     msg = msg.replace(/\[WATCH\]\s*/g, "");
     msg = msg.replace(/\s+/g, " ").replace(/^[-–—:]+\s*/, "").trim();
     if (!msg) return null;
+    if (/^autostart_from_config\(\)\s+returned\s+none$/i.test(msg)) msg = "Autostart is disabled";
 
     const time = ts ? String(ts).slice(11) : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     return { src, time, msg, at: Date.now() };
@@ -709,7 +730,7 @@ serverUUID: async () => {
       return;
     }
 
-    // Emby playback events: attach to last known media when close in time
+
     const em = parseEmbyEvent(it.msg);
     if (em) {
       const mediaOk = LIVE.ctx.lastMedia && now - (LIVE.ctx.lastMediaAt || 0) <= LIVE_CTX_MEDIA_TTL_MS;
@@ -719,11 +740,12 @@ serverUUID: async () => {
       return;
     }
 
-    // Anything else: keep it only if it's short and not obviously spammy
+    
     if (it.msg.length <= 64) addLiveLine({ time: it.time, src: it.src, msg: it.msg });
   }
 
   function startWatcherLiveFeed() {
+    if (!LIVE.enabled) return;
     if (LIVE.sse) return;
     try {
       const es = new EventSource("/api/logs/watcher");
@@ -742,9 +764,14 @@ serverUUID: async () => {
       es.addEventListener("ping", () => {});
 
       es.onerror = () => {
+        if (!LIVE.enabled) return;
         if (es.readyState === EventSource.CLOSED) {
           LIVE.sse = null;
-          setTimeout(startWatcherLiveFeed, 1500);
+          if (LIVE.reconnectTimer) return;
+          LIVE.reconnectTimer = setTimeout(() => {
+            LIVE.reconnectTimer = null;
+            startWatcherLiveFeed();
+          }, 1500);
         }
       };
     } catch {
@@ -757,6 +784,51 @@ serverUUID: async () => {
       LIVE.sse?.close();
     } catch {}
     LIVE.sse = null;
+    if (LIVE.reconnectTimer) {
+      try { clearTimeout(LIVE.reconnectTimer); } catch {}
+      LIVE.reconnectTimer = null;
+    }
+  }
+
+  function syncLiveToggleUi() {
+    const btn = $("#sc-live-toggle", STATE.mount);
+    const hint = $("#sc-livehint", STATE.mount);
+    const on = !!LIVE.enabled;
+    if (btn) {
+      btn.classList.toggle("on", on);
+      btn.classList.toggle("off", !on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.textContent = on ? "Live On" : "Live Off";
+      btn.title = on ? "Disable live log stream" : "Enable live log stream";
+    }
+    if (hint) hint.textContent = on ? "INFO only" : "Off";
+  }
+
+  function setLivePlaceholder(msg, force = false) {
+    const list = $("#sc-livelist", STATE.mount);
+    const box = $("#sc-livebox", STATE.mount);
+    if (!list || !box) return;
+    const hasItems = Array.isArray(LIVE.items) && LIVE.items.length;
+    if (hasItems && !force) return;
+    box.classList.add("empty");
+    list.innerHTML = `<div class="sc-line"><span class="sc-msg">${escapeHtml(msg)}</span></div>`;
+  }
+
+  function setLiveFeedEnabled(on, opts = {}) {
+    const next = !!on;
+    if (LIVE.enabled === next && !opts.force) {
+      syncLiveToggleUi();
+      return;
+    }
+    LIVE.enabled = next;
+    if (next) {
+      setLivePlaceholder("Waiting for events…");
+      startWatcherLiveFeed();
+    } else {
+      stopWatcherLiveFeed();
+      setLivePlaceholder("Live is off");
+    }
+    syncLiveToggleUi();
   }
 
 
@@ -780,7 +852,7 @@ serverUUID: async () => {
     if (n.id !== "sc-enable-webhook") n.disabled = !webhookOn;
   });
   $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
-    if (n.id !== "sc-enable-watcher") n.disabled = !watcherOn;
+    if (n.id !== "sc-enable-watcher" && n.id !== "sc-live-toggle") n.disabled = !watcherOn;
   });
 
   const prov = provider();
@@ -992,6 +1064,7 @@ serverUUID: async () => {
           .cc-live{flex:1 1 260px;min-width:0;display:flex;justify-content:flex-end;margin-left:auto}
           .sc-livebox{width:min(440px,100%);display:grid;gap:6px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
           .sc-livehead{display:flex;justify-content:space-between;align-items:center;font-size:11px;opacity:.82}
+          .sc-live-toggle{padding:4px 8px;font-size:11px;line-height:1}
           .sc-linelist{display:grid;gap:4px}
           .sc-line>span{display:inline-block}
           .sc-line{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden;max-height:28px;opacity:.92;transition:opacity .35s ease,transform .35s ease,filter .35s ease,max-height .35s ease,margin .35s ease,padding .35s ease}
@@ -1078,9 +1151,9 @@ serverUUID: async () => {
                 </div>
                 <div class="cc-live">
                   <div class="sc-livebox empty" id="sc-livebox" aria-label="Watcher live info">
-                    <div class="sc-livehead"><span>Live</span><span id="sc-livehint">INFO only</span></div>
+                    <div class="sc-livehead"><span>Live</span><span style="display:flex;gap:8px;align-items:center"><button type="button" id="sc-live-toggle" class="sc-pill sc-live-toggle off" aria-pressed="false">Live Off</button><span id="sc-livehint">Off</span></span></div>
                     <div class="sc-linelist" id="sc-livelist">
-                      <div class="sc-line"><span class="sc-msg">Waiting for events…</span></div>
+                      <div class="sc-line"><span class="sc-msg">Live is off</span></div>
                     </div>
                   </div>
                 </div>
@@ -1685,6 +1758,14 @@ serverUUID: async () => {
 
         const uiProv = String(STATE.ui?.watchProvider || "").toLowerCase().trim();
         const uiSinkRaw = String(STATE.ui?.watchSink || "").toLowerCase().trim();
+        const uiEnabled = STATE.ui?.scrobbleEnabled;
+        const uiModeRaw = String(STATE.ui?.scrobbleMode || "").toLowerCase().trim();
+        const uiAutostart = STATE.ui?.watchAutostart;
+
+        const backendEnabled = !!fresh?.scrobble?.enabled;
+        const backendMode = String(fresh?.scrobble?.mode || "webhook").toLowerCase().trim();
+        const backendAutostart = !!fresh?.scrobble?.watch?.autostart;
+
         if (uiProv) {
           if (backendProv === uiProv) STATE.ui.watchProvider = null;
           else deepSet(STATE.cfg, "scrobble.watch.provider", uiProv);
@@ -1693,6 +1774,18 @@ serverUUID: async () => {
           const uiSink = normSinkCsvOrDefault(uiSinkRaw, "trakt");
           if (backendSink === uiSink) STATE.ui.watchSink = null;
           else deepSet(STATE.cfg, "scrobble.watch.sink", uiSink);
+        }
+        if (typeof uiEnabled === "boolean") {
+          if (backendEnabled === uiEnabled) STATE.ui.scrobbleEnabled = null;
+          else deepSet(STATE.cfg, "scrobble.enabled", uiEnabled);
+        }
+        if (uiModeRaw) {
+          if (backendMode === uiModeRaw) STATE.ui.scrobbleMode = null;
+          else deepSet(STATE.cfg, "scrobble.mode", uiModeRaw);
+        }
+        if (typeof uiAutostart === "boolean") {
+          if (backendAutostart === uiAutostart) STATE.ui.watchAutostart = null;
+          else deepSet(STATE.cfg, "scrobble.watch.autostart", uiAutostart);
         }
 
         try {
@@ -1870,9 +1963,6 @@ serverUUID: async () => {
     return setNote("sc-pms-note", "Couldn’t save settings. Hit Save or check logs.", "err");
   }
 
-  try {
-    await API.watch.stop();
-  } catch {}
   try {
     await API.watch.start(prov, sink);
   } catch {
@@ -2101,6 +2191,10 @@ async function hydrateJellyfin() {
         w.refreshWatchLogs?.();
       } catch {}
     });
+    on($("#sc-live-toggle", STATE.mount), "click", (e) => {
+      e.preventDefault();
+      setLiveFeedEnabled(!LIVE.enabled);
+    });
     on($("#sc-fetch-uuid", STATE.mount), "click", () => {
       fetchServerUUID();
     });
@@ -2222,9 +2316,6 @@ async function hydrateJellyfin() {
     }
 
     const syncExclusive = async (src) => {
-      try {
-        await refreshCfgBeforePopulate();
-      } catch {}
       const webOn = !!wh?.checked;
       const watOn = !!wa?.checked;
       if (src === "webhook" && webOn && wa) wa.checked = false;
@@ -2234,20 +2325,35 @@ async function hydrateJellyfin() {
       write("scrobble.mode", (!!wa?.checked) ? "watch" : "webhook");
 
       if (src === "watch" && !wa.checked) {
-        try {
-          await API.watch.stop();
-        } catch {}
         write("scrobble.watch.autostart", false);
         const auto = $("#sc-autostart", STATE.mount);
         if (auto) auto.checked = false;
       }
       applyModeDisable();
+
+      const enabled = (!!wh?.checked) || (!!wa?.checked);
+      const mode = (!!wa?.checked) ? "watch" : "webhook";
+      const pairs = [
+        ["scrobble.enabled", enabled],
+        ["scrobble.mode", mode],
+      ];
+      if (src === "watch" && !wa.checked) pairs.push(["scrobble.watch.autostart", false]);
+      const noteId = mode === "watch" ? "sc-pms-note" : "sc-endpoint-note";
+      STATE.ui.scrobbleEnabled = enabled;
+      STATE.ui.scrobbleMode = mode;
+      if (src === "watch" && !wa.checked) STATE.ui.watchAutostart = false;
+      await persistConfigPaths(pairs, noteId);
     };
 
     if (wh) on(wh, "change", () => syncExclusive("webhook"));
     if (wa) on(wa, "change", () => syncExclusive("watch"));
 
-    on($("#sc-autostart", STATE.mount), "change", (e) => write("scrobble.watch.autostart", !!e.target.checked));
+    on($("#sc-autostart", STATE.mount), "change", (e) => {
+      const v = !!e.target.checked;
+      write("scrobble.watch.autostart", v);
+      STATE.ui.watchAutostart = v;
+      persistConfigPaths([["scrobble.watch.autostart", v]], "sc-pms-note");
+    });
 
     on(pv, "change", async (e) => {
       const prev = provider();
@@ -2263,6 +2369,7 @@ async function hydrateJellyfin() {
       } catch {}
       STATE.ui.watchProvider = val;
       write("scrobble.watch.provider", val);
+      persistConfigPaths([["scrobble.watch.provider", val]], "sc-pms-note");
       try {
         applyProviderFilters(val);
       } catch {}
@@ -2276,10 +2383,12 @@ async function hydrateJellyfin() {
       applyModeDisable();
     });
 
-    on(sk, "change", (e) => {
+    on(sk, "change", async (e) => {
       const val = normSinkCsvOrDefault(e.target.value || "trakt", "trakt");
+      try { await refreshWatcher(); } catch {}
       STATE.ui.watchSink = val;
       write("scrobble.watch.sink", val);
+      persistConfigPaths([["scrobble.watch.sink", val]], "sc-pms-note");
       try { syncSinkPillsFromSelect(); } catch {}
       rebuildPlexRatingsDropdown();
       applyModeDisable();
@@ -2299,7 +2408,11 @@ async function hydrateJellyfin() {
 
     const whRatings = $("#sc-webhook-plex-ratings", STATE.mount);
     if (whRatings) {
-      on(whRatings, "change", (e) => write("scrobble.webhook.plex_trakt_ratings", !!e.target.checked));
+      on(whRatings, "change", (e) => {
+        const v = !!e.target.checked;
+        write("scrobble.webhook.plex_trakt_ratings", v);
+        persistConfigPaths([["scrobble.webhook.plex_trakt_ratings", v]], "sc-endpoint-note");
+      });
     }
 
     on($("#sc-delete-plex-webhook", STATE.mount), "change", (e) => {
@@ -2307,6 +2420,7 @@ async function hydrateJellyfin() {
       write("scrobble.delete_plex", v);
       const other = $("#sc-delete-plex-watch", STATE.mount);
       if (other) other.checked = v;
+      persistConfigPaths([["scrobble.delete_plex", v]], "sc-endpoint-note");
     });
 
     on($("#sc-delete-plex-watch", STATE.mount), "change", (e) => {
@@ -2314,6 +2428,7 @@ async function hydrateJellyfin() {
       write("scrobble.delete_plex", v);
       const other = $("#sc-delete-plex-webhook", STATE.mount);
       if (other) other.checked = v;
+      persistConfigPaths([["scrobble.delete_plex", v]], "sc-pms-note");
     });
   }
 
@@ -2416,7 +2531,7 @@ async function init(opts = {}) {
     wire();
 
     renderLiveBuffer();
-    startWatcherLiveFeed();
+    setLiveFeedEnabled(false, { force: true });
     if (!STATE.__liveFeedBound) {
       STATE.__liveFeedBound = true;
       w.addEventListener("beforeunload", stopWatcherLiveFeed);
@@ -2427,6 +2542,9 @@ async function init(opts = {}) {
       window.addEventListener("auth-changed", async () => {
         try {
           await refreshCfgBeforePopulate();
+        } catch {}
+        try {
+          await refreshWatcher();
         } catch {}
         applyModeDisable();
       });

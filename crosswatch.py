@@ -61,7 +61,7 @@ try:
     HAVE_PLEXAPI = True
 except Exception:
     HAVE_PLEXAPI = False
-    
+
 try:
     from api.wallAPI import _load_wall_snapshot, refresh_wall
 except Exception:
@@ -101,7 +101,7 @@ except Exception:
 try:
     from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
 except Exception:
-    process_webhook_jellyfin = None 
+    process_webhook_jellyfin = None
 
 __all__ = ["process_webhook", "process_webhook_jellyfin"]
 
@@ -168,7 +168,7 @@ def _is_http_debug_enabled() -> bool:
         return _DEBUG_HTTP_CACHE["val"]
     except Exception:
         return False
-      
+
 def _is_debug_enabled() -> bool:
     try:
         now = time.time()
@@ -179,7 +179,7 @@ def _is_debug_enabled() -> bool:
         return _DEBUG_CACHE["val"]
     except Exception:
         return False
-    
+
 def _is_static_noise(path: str, status: int) -> bool:
     if path.startswith("/assets/") or path.startswith("/favicon"):
         return True
@@ -251,7 +251,7 @@ def _build_sinks_from_config(cfg) -> list:
         except Exception:
             sinks = []
     return sinks
-        
+
 # Watcher: Autostart watch service from config
 def autostart_from_config():
     cfg = load_config()
@@ -259,8 +259,13 @@ def autostart_from_config():
     if not (sc.get("enabled") and (sc.get("mode") or "").lower() == "watch"):
         return None
 
-    provider = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
-    filters = ((sc.get("watch") or {}).get("filters") or {}) if isinstance(sc.get("watch"), dict) else {}
+    watch_cfg = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
+    # Respect config: if autostart is explicitly false, do not start the watcher.
+    if watch_cfg.get("autostart") is False:
+        return None
+
+    provider = (watch_cfg.get("provider") or "plex").lower().strip()
+    filters = (watch_cfg.get("filters") or {}) if isinstance(watch_cfg, dict) else {}
     sinks = _build_sinks_from_config(cfg)
 
     try:
@@ -565,7 +570,13 @@ async def _lifespan(app):
                 level="INFO"
             )
         else:
-            _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
+            cfg2 = load_config() or {}
+            sc2 = (cfg2.get("scrobble") or {})
+            watch2 = (sc2.get("watch") or {}) if isinstance(sc2.get("watch"), dict) else {}
+            if watch2.get("autostart") is False:
+                _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
+            else:
+                _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
     except Exception as e:
         try: _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
         except Exception: pass
@@ -648,7 +659,7 @@ async def _lifespan(app):
             except Exception: pass
 
 app.router.lifespan_context = _lifespan
-    
+
 # Middleware: disable caching for API responses
 @app.middleware("http")
 async def cache_headers_for_api(request: Request, call_next):
@@ -701,7 +712,7 @@ def api_list_files(
         return out
     except Exception:
         return []
-  
+
 # Logging API - TODO: move to api/logging.py
 @app.get("/api/logs/dump", tags=["logging"])
 def logs_dump(channel: str = "TRAKT", n: int = 50):
@@ -853,7 +864,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         _append_log("SYNC", "[SYNC] exit code: 1")
     finally:
         RUNNING_PROCS.pop("SYNC", None)
-        
+
 # Scheduler sync starter
 def _start_sync_from_scheduler() -> bool:
     try:
@@ -899,11 +910,11 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     print(f"  Local:   http://127.0.0.1:{port}")
     print(f"  Docker:  http://{ip}:{port}")
     print(f"  Bind:    {host}:{port}\n")
-    
+
     print(f"  Cache:      {CACHE_DIR}")
     print(f"  CW_STATE:   {CW_STATE_DIR}")
     print(f"  Reports:    {REPORT_DIR}")
-    print(f"  Last Sync:  {LAST_SYNC_PATH} (JSON)") 
+    print(f"  Last Sync:  {LAST_SYNC_PATH} (JSON)")
     print(f"  Tombstones: {TOMBSTONES_PATH} (JSON)")
     print(f"  State:      {STATE_PATH} (JSON)")
     print(f"  Config:     {CONFIG_DIR / 'config.json'} (JSON)\n")
