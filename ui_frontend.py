@@ -193,8 +193,28 @@ def _get_index_html_static() -> str:
     <div id="details" class="details hidden">
       <div class="details-grid">
         <div class="det-left">
-          <div class="title" style="margin-bottom:6px;font-weight:700">Sync output</div>
-          <div id="det-log" class="log"></div>
+          <div class="det-head">
+            <div class="det-title">Output</div>
+            <div class="det-tabs" role="tablist" aria-label="Output tabs">
+              <button id="det-tab-sync" class="det-tab active" type="button"
+                role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">Sync</button>
+              <button id="det-tab-watcher" class="det-tab" type="button"
+                role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">Watcher</button>
+            </div>
+            <div class="det-tools">
+              <button id="det-clear" class="ghost" type="button" title="Clear current output">Clear</button>
+              <button id="det-follow" class="ghost" type="button" title="Toggle auto-follow">Follow</button>
+            </div>
+          </div>
+          <div class="det-panels">
+            <div id="det-panel-sync" class="det-panel" role="tabpanel" aria-labelledby="det-tab-sync">
+              <div id="det-log" class="log"></div>
+            </div>
+            <div id="det-panel-watcher" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-watcher">
+              <div id="det-watch-log" class="log wlog"></div>
+            </div>
+          </div>
+
         </div>
         <div class="det-right">
           <div class="meta-card">

@@ -28,7 +28,7 @@
     "sc-help-webhook-plex-ratings":
       "When enabled, we’ll send ratings to Trakt. Movies, shows, seasons, and episodes are supported.",
     "sc-help-watch-plex-ratings":
-      "When enabled, we’ll send ratings to Trakt and/or SIMKL.\nTrakt: Movies, shows, seasons, and episodes are supported.\nSIMKL: Movies and shows are supported.\nAdd the below webhook to your Plex instance to enable ratings.",
+      "When enabled, we’ll send ratings to Trakt and/or SIMKL.\nTrakt: Movies, shows, seasons, and episodes are supported.\nMDBList: Movies, shows, seasons, and episodes are supported.\nSIMKL: Movies and shows are supported.\nAdd the below webhook to your Plex instance to enable ratings.",
 
     "sc-help-adv-pause":
       "Pause debounce (sec) (default 5) - Ignore rapid, duplicate pause events.",

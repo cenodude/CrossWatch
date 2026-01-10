@@ -1619,11 +1619,236 @@ if (typeof window._detStaleIV === "undefined") window._detStaleIV = null;
 if (typeof window._detRetryTO === "undefined") window._detRetryTO = null;
 if (typeof window._detVisibilityHandler === "undefined") window._detVisibilityHandler = null;
 if (typeof window.detStickBottom === "undefined") window.detStickBottom = true;
+if (typeof window.esWatch === "undefined") window.esWatch = null;
+if (typeof window._watchRetryTO === "undefined") window._watchRetryTO = null;
+if (typeof window._watchStaleIV === "undefined") window._watchStaleIV = null;
+if (typeof window._watchVisibilityHandler === "undefined") window._watchVisibilityHandler = null;
+if (typeof window._watchFlushIV === "undefined") window._watchFlushIV = null;
+if (typeof window.watchStickBottom === "undefined") window.watchStickBottom = true;
+if (typeof window.watchBuf === "undefined") window.watchBuf = [];
+if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
+if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
+if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
+
+function _activeDetailsLogEl() {
+  return window._detailsTab === "watcher"
+    ? document.getElementById("det-watch-log")
+    : document.getElementById("det-log");
+}
+
+function _pruneDetailsLog(el) {
+  const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+  while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
+}
+
+function setDetailsTab(tab) {
+  const t = (tab === "watcher") ? "watcher" : "sync";
+  window._detailsTab = t;
+
+  const syncPanel  = document.getElementById("det-panel-sync");
+  const watchPanel = document.getElementById("det-panel-watcher");
+  const tabSync    = document.getElementById("det-tab-sync");
+  const tabWatch   = document.getElementById("det-tab-watcher");
+  if (!syncPanel || !watchPanel || !tabSync || !tabWatch) return;
+
+  const isWatch = t === "watcher";
+  syncPanel.classList.toggle("hidden", isWatch);
+  watchPanel.classList.toggle("hidden", !isWatch);
+
+  tabSync.classList.toggle("active", !isWatch);
+  tabSync.setAttribute("aria-selected", String(!isWatch));
+  tabWatch.classList.toggle("active", isWatch);
+  tabWatch.setAttribute("aria-selected", String(isWatch));
+
+  if (isWatch) { try { openWatcherLog(); } catch {} }
+}
+
+function initDetailsTabs() {
+  if (window._detailsTabsWired) return;
+  const tabSync  = document.getElementById("det-tab-sync");
+  const tabWatch = document.getElementById("det-tab-watcher");
+  if (!tabSync || !tabWatch) return;
+  window._detailsTabsWired = true;
+
+  tabSync.addEventListener("click", () => setDetailsTab("sync"));
+  tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
+
+  const btnClear = document.getElementById("det-clear");
+  if (btnClear) {
+    btnClear.addEventListener("click", () => {
+      const el = _activeDetailsLogEl();
+      if (el) el.innerHTML = "";
+      if (window._detailsTab === "watcher") window.watchBuf.length = 0;
+    });
+  }
+
+  const btnFollow = document.getElementById("det-follow");
+  if (btnFollow) {
+    btnFollow.addEventListener("click", () => {
+      if (window._detailsTab === "watcher") {
+        window.watchStickBottom = !window.watchStickBottom;
+        const el = document.getElementById("det-watch-log");
+        if (window.watchStickBottom && el) el.scrollTop = el.scrollHeight;
+      } else {
+        window.detStickBottom = !window.detStickBottom;
+        const el = document.getElementById("det-log");
+        if (window.detStickBottom && el) el.scrollTop = el.scrollHeight;
+      }
+    });
+  }
+}
+
+function closeWatcherLog() {
+  try { window.esWatch?.close?.(); } catch {}
+  window.esWatch = null;
+  if (window._watchRetryTO) { clearTimeout(window._watchRetryTO); window._watchRetryTO = null; }
+  if (window._watchStaleIV) { clearInterval(window._watchStaleIV); window._watchStaleIV = null; }
+  if (window._watchFlushIV) { clearInterval(window._watchFlushIV); window._watchFlushIV = null; }
+  if (window._watchVisibilityHandler) {
+    document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
+    window._watchVisibilityHandler = null;
+  }
+  const tabWatch = document.getElementById("det-tab-watcher");
+  tabWatch?.classList.remove("connected", "stale");
+}
+
+async function openWatcherLog() {
+  const el = document.getElementById("det-watch-log");
+  const details = document.getElementById("details");
+  const tabWatch = document.getElementById("det-tab-watcher");
+  if (!el || !details || details.classList.contains("hidden")) return;
+  if (window.esWatch || window._watchOpening) return;
+  window._watchOpening = true;
+
+  try {
+    let cfg = window._cfgCache;
+    if (!cfg) {
+      try {
+        cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+        window._cfgCache = cfg;
+      } catch {}
+    }
+
+    const sc = (cfg && typeof cfg === "object") ? (cfg.scrobble || {}) : {};
+    let watchCfg = (sc && typeof sc === "object" && sc.watch && typeof sc.watch === "object") ? sc.watch : null;
+    if (!watchCfg && cfg && typeof cfg.watch === "object") watchCfg = cfg.watch;
+    watchCfg = watchCfg || {};
+
+    const norm = (t) => {
+      const s = String(t || "").trim().toUpperCase();
+      if (!s) return "";
+      if (s === "JFIN" || s === "JELLY") return "JELLYFIN";
+      return s;
+    };
+
+    const provider = norm(watchCfg.provider || "plex");
+    const sinksRaw = String(watchCfg.sink || "trakt");
+    const sinks = sinksRaw.split(/[,&+]/g).map(norm).filter(Boolean);
+    const tags = [provider, ...sinks].filter(Boolean);
+    const uniq = [];
+    for (const t of tags) if (!uniq.includes(t)) uniq.push(t);
+
+    const url = new URL("/api/logs/watcher", document.baseURI);
+    url.searchParams.set("tail", "200");
+    if (uniq.length) url.searchParams.set("tags", uniq.join(","));
+
+    if (!el.__cwScrollWired) {
+      el.addEventListener("scroll", () => {
+        const pad = 12;
+        window.watchStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
+      }, { passive: true });
+      el.__cwScrollWired = true;
+    }
+
+    window.watchBuf.length = 0;
+    el.innerHTML = "";
+    window.watchStickBottom = true;
+
+    const MAX_LINES = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+    let lastMsgAt = Date.now();
+
+    const enqueue = (tag, html) => {
+      if (!html) return;
+      window.watchBuf.push({ tag, html });
+      lastMsgAt = Date.now();
+    };
+
+    const flush = () => {
+      if (!window.watchBuf.length) return;
+      const frag = document.createDocumentFragment();
+      const items = window.watchBuf.splice(0, window.watchBuf.length);
+      for (const it of items) {
+        const row = document.createElement("div");
+        row.className = "wlog-line";
+
+        const badge = document.createElement("span");
+        badge.className = "wlog-tag";
+        badge.textContent = it.tag;
+
+        const msg = document.createElement("span");
+        msg.className = "wlog-msg";
+        msg.innerHTML = it.html;
+
+        row.appendChild(badge);
+        row.appendChild(msg);
+        frag.appendChild(row);
+      }
+      el.appendChild(frag);
+
+      while (el.childNodes.length > MAX_LINES) el.removeChild(el.firstChild);
+      if (window.watchStickBottom) el.scrollTop = el.scrollHeight;
+    };
+
+    if (window._watchFlushIV) clearInterval(window._watchFlushIV);
+    window._watchFlushIV = setInterval(flush, 120);
+
+    const es = new EventSource(url.toString());
+    window.esWatch = es;
+    tabWatch?.classList.add("connected");
+    tabWatch?.classList.remove("stale");
+
+    for (const t of (uniq.length ? uniq : ["PLEX","JELLYFIN","EMBY","TRAKT","SIMKL","MDBLIST","TRBL"])) {
+      es.addEventListener(t, (ev) => enqueue(t, ev?.data));
+    }
+
+    es.addEventListener("ping", () => { lastMsgAt = Date.now(); });
+
+    es.onerror = () => {
+      tabWatch?.classList.remove("connected");
+      try { window.esWatch?.close?.(); } catch {}
+      window.esWatch = null;
+
+      if (window._watchRetryTO) clearTimeout(window._watchRetryTO);
+      window._watchRetryTO = setTimeout(() => {
+        if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+      }, 1200);
+    };
+
+    if (window._watchStaleIV) clearInterval(window._watchStaleIV);
+    window._watchStaleIV = setInterval(() => {
+      const stale = (Date.now() - lastMsgAt) > 20000;
+      tabWatch?.classList.toggle("stale", stale);
+    }, 1000);
+
+    if (window._watchVisibilityHandler) {
+      document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
+    }
+    window._watchVisibilityHandler = () => {
+      if (document.visibilityState !== "visible") return;
+      if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+    };
+    document.addEventListener("visibilitychange", window._watchVisibilityHandler);
+  } finally {
+    window._watchOpening = false;
+  }
+}
 
 async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
+  const tabSync = document.getElementById("det-tab-sync");
+  try { initDetailsTabs(); } catch {}
 
   try {
     if (typeof window.appDebug === "undefined") {
@@ -1688,9 +1913,12 @@ async function openDetailsLog() {
   const connect = () => {
     try { window.esDet?.close(); } catch (_) {}
     window.esDet = new EventSource("/api/logs/stream?tag=SYNC");
+    window.esDet.onopen = () => { tabSync?.classList.add("connected"); tabSync?.classList.remove("stale"); };
 
     window.esDet.onmessage = (ev) => {
       lastMsgAt = Date.now();
+      tabSync?.classList.add("connected");
+      tabSync?.classList.remove("stale");
       if (!ev?.data) return;
 
       if (ev.data === "::CLEAR::") {
@@ -1709,13 +1937,15 @@ async function openDetailsLog() {
         detBuf = buf;
         for (const tok of tokens) CF.renderInto(el, tok, false);
       }
-
+      _pruneDetailsLog(el);
       if (window.detStickBottom) el.scrollTop = el.scrollHeight;
       updateSlider();
       retryMs = 1000;
     };
 
     window.esDet.onerror = () => {
+        tabSync?.classList.remove("connected");
+        tabSync?.classList.add("stale");
       try { window.esDet?.close(); } catch (_) {}
       window.esDet = null;
 
@@ -1740,6 +1970,7 @@ async function openDetailsLog() {
   connect();
 
   window._detStaleIV = setInterval(() => {
+    tabSync?.classList.toggle("stale", (Date.now() - lastMsgAt) > STALE_MS);
     if (!window.esDet) return;
     if (document.visibilityState !== "visible") return;
     if (Date.now() - lastMsgAt > STALE_MS) {
@@ -1770,6 +2001,7 @@ async function openDetailsLog() {
         } else {
           appendRaw(line);
         }
+        _pruneDetailsLog(el);
         if (window.detStickBottom) el.scrollTop = el.scrollHeight;
         updateSlider();
       } catch (_) {}
@@ -1794,16 +2026,31 @@ function closeDetailsLog() {
   if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
   if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
   if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
+  const tabSync = document.getElementById("det-tab-sync");
+  tabSync?.classList.remove("connected", "stale");
+  const tabWatch = document.getElementById("det-tab-watcher");
+  tabWatch?.classList.remove("connected", "stale");
+  try { closeWatcherLog(); } catch {}
 }
 
 function toggleDetails() {
   const d = document.getElementById("details");
   d.classList.toggle("hidden");
-  if (!d.classList.contains("hidden")) openDetailsLog();
-  else closeDetailsLog();
+  if (!d.classList.contains("hidden")) {
+    try { initDetailsTabs(); } catch {}
+    try { setDetailsTab(window._detailsTab || "sync"); } catch {}
+    openDetailsLog();
+    if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+  } else {
+    closeDetailsLog();
+    closeWatcherLog();
+  }
 }
 
-window.addEventListener("beforeunload", closeDetailsLog);
+window.addEventListener("beforeunload", () => {
+  try { closeDetailsLog(); } catch {}
+  try { closeWatcherLog(); } catch {}
+});
 
 function downloadSummary() {
   window.open("/api/run/summary/file", "_blank");
