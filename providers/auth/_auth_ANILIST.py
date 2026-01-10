@@ -156,7 +156,7 @@ def html() -> str:
   </style>
 
   <div class="head" onclick="toggleSection('sec-anilist')">
-    <span class="chev"></span><strong>AniList</strong>
+    <span class="chev">▶</span><strong>AniList</strong>
   </div>
   <div class="body">
     <div class="grid2">

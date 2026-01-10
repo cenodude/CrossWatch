@@ -200,7 +200,7 @@ def html() -> str:
   </style>
 
   <div class="head" onclick="toggleSection('sec-simkl')">
-    <span class="chev"></span><strong>SIMKL</strong>
+    <span class="chev">▶</span><strong>SIMKL</strong>
   </div>
   <div class="body">
     <div class="grid2">

@@ -108,7 +108,7 @@ def html() -> str:
   </style>
 
   <div class="head" onclick="toggleSection('sec-tautulli')">
-    <span class="chev"></span><strong>Tautulli</strong>
+    <span class="chev">▶</span><strong>Tautulli</strong>
   </div>
 
   <div class="body">

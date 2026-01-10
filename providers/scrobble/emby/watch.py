@@ -20,6 +20,44 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 TRAKT_API = "https://api.trakt.tv"
 _TRAKT_ID_CACHE: dict[tuple, Any] = {}
 _VIEW_CACHE_TTL_SECS = 60.0
+_SERIES_IDS_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any] | None]] = {}
+_SERIES_IDS_CACHE_TTL_SECS = 60 * 60
+_SERIES_IDS_NEG_TTL_SECS = 60
+_SERIES_IDS_CACHE_MAX = 4096
+_SERIES_IDS_CACHE_MISS = object()
+
+
+def _series_ids_cache_get(base: str, uid: str, series_id: str) -> dict[str, Any] | None | object:
+    try:
+        bkey = str(base).rstrip("/").lower()
+        key = (bkey, str(uid), str(series_id))
+        hit = _SERIES_IDS_CACHE.get(key)
+        if not hit:
+            return _SERIES_IDS_CACHE_MISS
+        exp, val = hit
+        if time.time() > float(exp or 0.0):
+            try:
+                _SERIES_IDS_CACHE.pop(key, None)
+            except Exception:
+                pass
+            return _SERIES_IDS_CACHE_MISS
+        return val
+    except Exception:
+        return _SERIES_IDS_CACHE_MISS
+
+
+def _series_ids_cache_put(base: str, uid: str, series_id: str, val: dict[str, Any] | None) -> None:
+    try:
+        if len(_SERIES_IDS_CACHE) > _SERIES_IDS_CACHE_MAX:
+            _SERIES_IDS_CACHE.clear()
+        bkey = str(base).rstrip("/").lower()
+        key = (bkey, str(uid), str(series_id))
+        v = dict(val or {})
+        ttl = _SERIES_IDS_CACHE_TTL_SECS if v else _SERIES_IDS_NEG_TTL_SECS
+        _SERIES_IDS_CACHE[key] = (time.time() + float(ttl), (v or None))
+    except Exception:
+        pass
+
 
 
 def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
@@ -347,15 +385,23 @@ def _enrich_episode_ids(
         uid = str(root.get("UserId") or "").strip() or str((cfg.get("emby") or {}).get("user_id") or "").strip()
         series_id = item.get("SeriesId") or item.get("ParentId") or item.get("SeriesItemId")
         if base and tok and uid and series_id:
-            path = f"/Users/{uid}/Items/{series_id}?format=json"
-            try:
-                info = _get_json(base, tok, path)
-                show_ids = _series_ids_from_payload(info, info) or {}
-                if logger and _is_debug():
-                    logger(f"resolved show ids via Emby {path}: {show_ids}", "DEBUG")
-            except Exception as e:
-                if logger and _is_debug():
-                    logger(f"Emby series lookup failed: {e}", "DEBUG")
+            sid = str(series_id).strip()
+            cached = _series_ids_cache_get(base, uid, sid)
+            if cached is not _SERIES_IDS_CACHE_MISS:
+                if isinstance(cached, dict):
+                    show_ids = dict(cached)
+            else:
+                path = f"/Users/{uid}/Items/{sid}?format=json"
+                try:
+                    info = _get_json(base, tok, path)
+                    show_ids = _series_ids_from_payload(info, info) or {}
+                    _series_ids_cache_put(base, uid, sid, show_ids or None)
+                    if show_ids and logger and _is_debug():
+                        logger(f"resolved show ids via Emby {path}: {show_ids}", "DEBUG")
+                except Exception as e:
+                    _series_ids_cache_put(base, uid, sid, None)
+                    if logger and _is_debug():
+                        logger(f"Emby series lookup failed: {e}", "DEBUG")
 
     for key in ("imdb", "tmdb", "tvdb"):
         val = show_ids.get(key)

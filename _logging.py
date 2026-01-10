@@ -8,7 +8,7 @@ import json
 import sys
 import threading
 import time
-from typing import Any, Mapping, Optional, TextIO
+from typing import Any, Callable, Mapping, Optional, TextIO
 
 RESET = "\033[0m"
 DIM = "\033[90m"
@@ -46,6 +46,8 @@ def _debug_enabled() -> bool:
     return bool(runtime_cfg.get("debug") or runtime_cfg.get("debug_mods"))
 
 
+LogHook = Callable[[dict[str, Any], str, str, str, Mapping[str, Any] | None], None]
+
 class Logger:
     def __init__(
         self,
@@ -60,6 +62,7 @@ class Logger:
         _name: Optional[str] = None,
         _json_stream: Optional[TextIO] = None,
         _lock: Optional[threading.Lock] = None,
+        _hook: Optional[LogHook] = None,
     ) -> None:
         self.stream = stream
         self.level_no = LEVELS.get(level, 20)
@@ -79,6 +82,7 @@ class Logger:
             self._context.setdefault("module", _name)
         self._json_stream: Optional[TextIO] = _json_stream
         self._lock: threading.Lock = _lock or threading.Lock()
+        self._hook: Optional[LogHook] = _hook
 
     # Configuration
     def set_level(self, level: str) -> None:
@@ -92,6 +96,9 @@ class Logger:
 
     def enable_json(self, file_path: str) -> None:
         self._json_stream = open(file_path, "a", encoding="utf-8")
+
+    def set_hook(self, hook: Optional[LogHook]) -> None:
+        self._hook = hook
 
     # Context
     def set_context(self, **ctx: Any) -> None:
@@ -114,6 +121,7 @@ class Logger:
             _name=new_ctx.get("module"),
             _json_stream=self._json_stream,
             _lock=self._lock,
+            _hook=self._hook,
         )
 
     def child(self, name: str) -> Logger:
@@ -175,6 +183,13 @@ class Logger:
                     payload["extra"] = dict(extra)
                 self._json_stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 self._json_stream.flush()
+
+        hook = self._hook
+        if hook:
+            try:
+                hook(dict(self._context or {}), display_level, msg, message_text, extra)
+            except Exception:
+                pass
 
     def _emit(
         self,

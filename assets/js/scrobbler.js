@@ -40,6 +40,10 @@
       "Stop pause ≥ (%) (default 80) - If STOP arrives below this %, treat it as PAUSE.",
     "sc-help-adv-force-stop":
       "Force stop @ (%) (default 80) - If STOP is at or above this %, send /scrobble/stop.",
+    "sc-help-watch-filters":
+      "Don't skip the filtering step! While optional for solo media server users, it becomes essential the moment you share your server with other users. Without filters, the system will scrobble everything",
+    "sc-help-watch-advanced":
+      "Do not alter the Advanced settings unless you fully understand their impact. When in doubt, leave them untouched.",
   };
 
   const helpBtn = (tipId) =>
@@ -51,6 +55,13 @@
       const id = btn.getAttribute("data-tip-id") || "";
       const text = HELP_TEXT[id];
       if (text && !btn.title) btn.title = text;
+
+      if (btn.dataset.cxBound === "1") return;
+      btn.dataset.cxBound = "1";
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
     });
   }
 
@@ -153,6 +164,7 @@
     #sc-provider:disabled,#sc-sink:disabled{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}
     #sc-provider option,#sc-sink option{color:#fff;background:#111}
 
+    #sc-filters>summary,#sc-advanced>summary{display:flex;align-items:center;gap:8px;}
     `;
     d.head.appendChild(s);
   }
@@ -452,6 +464,302 @@ serverUUID: async () => {
     if (up) up.textContent = st?.uptime ? `Up: ${st.uptime}` : "";
   }
 
+  const LIVE = {
+    sse: null,
+    max: 3,
+    items: [],
+    pending: new Map(),
+    dedupe: new Map(),
+    ctx: { lastMedia: "", lastMediaAt: 0 },
+  };
+
+  const LIVE_ORDER = ["EMBY", "PLEX", "JELLYFIN", "TRAKT", "SIMKL", "MDBLIST", "Watcher"];
+  const LIVE_GROUP_WINDOW_MS = 1400;
+  const LIVE_CTX_MEDIA_TTL_MS = 6000;
+
+  const LIVE_NOISE = [/Ensuring Watcher is running/i];
+
+  const LIVE_RATE_LIMIT = [
+    { key: "connected", re: /Watcher connected/i, ms: 120000 },
+    { key: "autostart", re: /\bwatch autostarted\b/i, ms: 300000 },
+    { key: "stopping", re: /watcher stopping/i, ms: 60000 },
+  ];
+
+  const LIVE_ACTION_COOLDOWN_MS = { start: 5000, pause: 12000, stop: 12000, resume: 5000, connected: 120000 };
+
+  function htmlToText(html) {
+    const raw = String(html || "");
+    if (!raw) return "";
+    try {
+      const tmp = d.createElement("div");
+      tmp.innerHTML = raw;
+      return String(tmp.textContent || "").replace(/\u00a0/g, " ");
+    } catch {
+      return raw.replace(/<[^>]*>/g, " ").replace(/\u00a0/g, " ");
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function parseInfoLine(text, fallbackSrc) {
+    const s0 = String(text || "").trim();
+    if (!s0) return null;
+    if (!/\bINFO\b/.test(s0)) return null;
+
+    const levelMatch = s0.match(/\b(INFO|WARN|WARNING|ERROR|DEBUG)\b/);
+    const level = (levelMatch ? levelMatch[1] : "INFO").toUpperCase();
+    if (level !== "INFO") return null;
+
+    const parts = [...s0.matchAll(/\[([^\]]+)\]/g)].map((m) => String(m[1] || ""));
+    const ts = parts.find((p) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(p)) || "";
+    const srcGuess = parts.find((p) => /^[A-Za-z]+$/.test(p) && p.toUpperCase() !== "WATCH") || "";
+    const src = String(fallbackSrc || srcGuess || "Watcher").trim();
+
+    let msg = s0;
+    if (ts) msg = msg.replace(`[${ts}]`, "");
+    if (srcGuess) msg = msg.replace(`[${srcGuess}]`, "");
+    msg = msg.replace(/\bINFO\b/, "");
+    msg = msg.replace(/\[WATCH\]\s*/g, "");
+    msg = msg.replace(/\s+/g, " ").replace(/^[-–—:]+\s*/, "").trim();
+    if (!msg) return null;
+
+    const time = ts ? String(ts).slice(11) : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return { src, time, msg, at: Date.now() };
+  }
+
+  function primarySourceLabel(sources) {
+    const arr = Array.from(sources || []);
+    if (!arr.length) return "Watcher";
+    for (const k of LIVE_ORDER) if (arr.includes(k)) return k;
+    return arr[0];
+  }
+
+  function formatSourceBadge(sources) {
+    const arr = Array.from(sources || []);
+    const primary = primarySourceLabel(arr);
+    const extra = Math.max(0, arr.length - 1);
+    return extra ? `${primary}+${extra}` : primary;
+  }
+
+  function cooldownFor(action) {
+    const a = String(action || "").toLowerCase();
+    return LIVE_ACTION_COOLDOWN_MS[a] ?? 6000;
+  }
+
+  function isRateLimited(msg, now) {
+    for (const r of LIVE_RATE_LIMIT) {
+      if (!r.re.test(msg)) continue;
+      const k = `rl:${r.key}`;
+      const last = LIVE.dedupe.get(k) || 0;
+      if (now - last < r.ms) return true;
+      LIVE.dedupe.set(k, now);
+      return false;
+    }
+    return false;
+  }
+
+  function shouldDropMsg(msg, now) {
+    for (const re of LIVE_NOISE) if (re.test(msg)) return true;
+    if (isRateLimited(msg, now)) return true;
+    return false;
+  }
+
+  function parseScrobble(msg) {
+    const m = msg.match(/user='[^']+'\s+(start|pause|stop|resume)\s+([0-9.]+)%\s+•\s+(.+)/i);
+    if (!m) return null;
+    const action = String(m[1] || "").toLowerCase();
+    const prog = Number(m[2] || 0);
+    const media = String(m[3] || "").trim();
+    if (!media) return null;
+    const p = Number.isFinite(prog) ? Math.round(prog * 10) / 10 : null;
+    const pStr = p === null ? "" : `${p}%`;
+    return { action, media, pretty: `${action} ${pStr} • ${media}`.replace(/\s+/g, " ").trim() };
+  }
+
+  function parseEmbyEvent(msg) {
+    const m = msg.match(/^event\s+(start|pause|stop)\b/i);
+    if (!m) return null;
+    const action = String(m[1] || "").toLowerCase();
+    return { action };
+  }
+
+  function trimLiveList(list, max) {
+    const nodes = Array.from(list.children);
+    for (const n of nodes.slice(max)) {
+      if (n.classList.contains("out")) continue;
+      n.classList.add("out");
+      setTimeout(() => {
+        try {
+          n.remove();
+        } catch {}
+      }, 420);
+    }
+  }
+
+  function addLiveLine(it) {
+    const list = $("#sc-livelist", STATE.mount);
+    const box = $("#sc-livebox", STATE.mount);
+    if (!list || !box) {
+      LIVE.items = [it, ...(LIVE.items || [])].slice(0, LIVE.max);
+      return;
+    }
+
+    if (box.classList.contains("empty")) list.innerHTML = "";
+    box.classList.remove("empty");
+
+    const line = el("div", {
+      className: "sc-line new",
+      innerHTML: `<span class="sc-time">${escapeHtml(it.time)}</span><span class="sc-src">${escapeHtml(it.src)}</span><span class="sc-msg">${escapeHtml(it.msg)}</span>`,
+    });
+    list.prepend(line);
+    requestAnimationFrame(() => line.classList.remove("new"));
+
+    trimLiveList(list, LIVE.max);
+    LIVE.items = [it, ...(LIVE.items || [])].slice(0, LIVE.max);
+  }
+
+  function renderLiveBuffer() {
+    const list = $("#sc-livelist", STATE.mount);
+    const box = $("#sc-livebox", STATE.mount);
+    if (!list || !box) return;
+    const items = Array.isArray(LIVE.items) ? LIVE.items.slice(0, LIVE.max) : [];
+    if (!items.length) return;
+    box.classList.remove("empty");
+    list.innerHTML = "";
+    for (const it of items) {
+      const line = el("div", {
+        className: "sc-line",
+        innerHTML: `<span class="sc-time">${escapeHtml(it.time)}</span><span class="sc-src">${escapeHtml(it.src)}</span><span class="sc-msg">${escapeHtml(it.msg)}</span>`,
+      });
+      list.append(line);
+    }
+    trimLiveList(list, LIVE.max);
+  }
+
+
+  function flushGroup(key) {
+    const g = LIVE.pending.get(key);
+    if (!g) return;
+    LIVE.pending.delete(key);
+
+    const now = Date.now();
+    const cd = cooldownFor(g.action || "");
+    const last = LIVE.dedupe.get(`emit:${key}`) || 0;
+    if (now - last < cd) return;
+    LIVE.dedupe.set(`emit:${key}`, now);
+
+    addLiveLine({
+      time: g.time,
+      src: formatSourceBadge(g.sources),
+      msg: g.msg,
+    });
+  }
+
+  function queueGrouped(key, it) {
+    const now = it.at || Date.now();
+    const existing = LIVE.pending.get(key);
+    if (existing && now - existing.createdAt <= LIVE_GROUP_WINDOW_MS) {
+      existing.sources.add(it.src);
+      if (it.msg && it.msg.length >= existing.msg.length) existing.msg = it.msg;
+      existing.time = it.time || existing.time;
+      return;
+    }
+
+    if (existing) flushGroup(key);
+
+    const g = {
+      createdAt: now,
+      time: it.time,
+      msg: it.msg,
+      sources: new Set([it.src]),
+      action: it.action || "",
+    };
+    LIVE.pending.set(key, g);
+    setTimeout(() => flushGroup(key), LIVE_GROUP_WINDOW_MS + 10);
+  }
+
+  function handleLiveInfo(it) {
+    const now = it.at || Date.now();
+    if (shouldDropMsg(it.msg, now)) return;
+
+    // Status / lifecycle
+    if (/Watcher connected/i.test(it.msg)) {
+      addLiveLine({ time: it.time, src: it.src, msg: "Connected" });
+      return;
+    }
+    if (/watcher stopping/i.test(it.msg)) {
+      addLiveLine({ time: it.time, src: it.src, msg: "Stopping" });
+      return;
+    }
+
+    // Scrobble-like INFO from sinks
+    const sc = parseScrobble(it.msg);
+    if (sc) {
+      LIVE.ctx.lastMedia = sc.media;
+      LIVE.ctx.lastMediaAt = now;
+      const key = `scrobble:${sc.action}:${sc.media}`;
+      queueGrouped(key, { ...it, msg: sc.pretty, action: sc.action });
+      return;
+    }
+
+    // Emby playback events: attach to last known media when close in time
+    const em = parseEmbyEvent(it.msg);
+    if (em) {
+      const mediaOk = LIVE.ctx.lastMedia && now - (LIVE.ctx.lastMediaAt || 0) <= LIVE_CTX_MEDIA_TTL_MS;
+      if (!mediaOk) return;
+      const key = `scrobble:${em.action}:${LIVE.ctx.lastMedia}`;
+      queueGrouped(key, { ...it, msg: `${em.action} • ${LIVE.ctx.lastMedia}`, action: em.action });
+      return;
+    }
+
+    // Anything else: keep it only if it's short and not obviously spammy
+    if (it.msg.length <= 64) addLiveLine({ time: it.time, src: it.src, msg: it.msg });
+  }
+
+  function startWatcherLiveFeed() {
+    if (LIVE.sse) return;
+    try {
+      const es = new EventSource("/api/logs/watcher");
+      LIVE.sse = es;
+
+      const handler = (src) => (e) => {
+        if (!e || !e.data) return;
+        const txt = htmlToText(e.data).replace(/\s+/g, " ").trim();
+        const base = parseInfoLine(txt, src);
+        if (!base) return;
+        handleLiveInfo(base);
+      };
+
+      ["EMBY", "PLEX", "JELLYFIN", "TRAKT", "SIMKL", "MDBLIST"].forEach((k) => es.addEventListener(k, handler(k)));
+      es.onmessage = handler("Watcher");
+      es.addEventListener("ping", () => {});
+
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) {
+          LIVE.sse = null;
+          setTimeout(startWatcherLiveFeed, 1500);
+        }
+      };
+    } catch {
+      LIVE.sse = null;
+    }
+  }
+
+  function stopWatcherLiveFeed() {
+    try {
+      LIVE.sse?.close();
+    } catch {}
+    LIVE.sse = null;
+  }
+
+
   function applyModeDisable() {
   const enabled = !!read("scrobble.enabled", false);
   const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -676,11 +984,25 @@ serverUUID: async () => {
           .cc-card{padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
           .cc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
           .cc-body{display:grid;gap:14px}
-          .cc-gauge{width:100%;min-height:68px;display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+          .cc-gauge{width:100%;min-height:68px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
           .cc-state{display:flex;flex-direction:column;line-height:1.15}
           .cc-state .lbl{font-size:12px;opacity:.75}
           .cc-state .val{font-size:22px;font-weight:800;letter-spacing:.2px}
           .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85}
+          .cc-live{flex:1 1 260px;min-width:0;display:flex;justify-content:flex-end;margin-left:auto}
+          .sc-livebox{width:min(440px,100%);display:grid;gap:6px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+          .sc-livehead{display:flex;justify-content:space-between;align-items:center;font-size:11px;opacity:.82}
+          .sc-linelist{display:grid;gap:4px}
+          .sc-line>span{display:inline-block}
+          .sc-line{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden;max-height:28px;opacity:.92;transition:opacity .35s ease,transform .35s ease,filter .35s ease,max-height .35s ease,margin .35s ease,padding .35s ease}
+          .sc-linelist .sc-line:nth-child(2){opacity:.82}
+          .sc-linelist .sc-line:nth-child(3){opacity:.72}
+          .sc-line.new{opacity:0;transform:translateY(-6px)}
+          .sc-line.out{opacity:0;transform:translateY(6px);filter:blur(2px);max-height:0;margin:0;padding:0}
+          .sc-src{font-size:10px;line-height:1;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);opacity:.86;flex:none}
+          .sc-time{font-size:10px;opacity:.65;flex:none}
+          .sc-msg{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+          .sc-livebox.empty .sc-linelist{opacity:.65}
           .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
           .cc-auto{display:flex;justify-content:center;margin-top:2px}
           .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor}
@@ -754,6 +1076,14 @@ serverUUID: async () => {
                   <span class="lbl">Status</span>
                   <span id="sc-status-text" class="val">Inactive</span>
                 </div>
+                <div class="cc-live">
+                  <div class="sc-livebox empty" id="sc-livebox" aria-label="Watcher live info">
+                    <div class="sc-livehead"><span>Live</span><span id="sc-livehint">INFO only</span></div>
+                    <div class="sc-linelist" id="sc-livelist">
+                      <div class="sc-line"><span class="sc-msg">Waiting for events…</span></div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="cc-meta">
                 <span id="sc-status-last" class="micro-note"></span>
@@ -818,7 +1148,7 @@ serverUUID: async () => {
 	          </div>
         </div>
 
-        <details id="sc-filters" class="sc-filters sc-box"><summary>Filters (optional)</summary>
+        <details id="sc-filters" class="sc-filters sc-box"><summary>Filters ${helpBtn("sc-help-watch-filters")}</summary>
           <div class="body">
             <div class="sc-filter-grid">
               <div>
@@ -843,7 +1173,7 @@ serverUUID: async () => {
           </div>
         </details>
 
-        <details class="sc-advanced sc-box" id="sc-advanced"><summary>Advanced</summary>
+        <details class="sc-advanced sc-box" id="sc-advanced"><summary>Advanced ${helpBtn("sc-help-watch-advanced")}</summary>
           <div class="body">
             <div class="sc-adv-grid">
               ${buildAdvField("sc-pause-debounce", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
@@ -1737,8 +2067,7 @@ async function hydrateJellyfin() {
 
   function wire() {
     ensureHiddenServerInputs();
-
-    setNote("sc-webhook-warning", "These (legacy) webhooks will scrobble only to Trakt and are no longer maintained or supported! Please switch to Watcher ASAP!", "warn");
+    setNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt and will be removed in a future release; they’re no longer maintained or supported, please switch to Watcher ASAP.", "warn");
 
     on($("#sc-copy-plex", STATE.mount), "click", async () => {
       const ok = await copyText(`${location.origin}/webhook/plextrakt`);
@@ -2085,6 +2414,13 @@ async function init(opts = {}) {
 
     buildUI();
     wire();
+
+    renderLiveBuffer();
+    startWatcherLiveFeed();
+    if (!STATE.__liveFeedBound) {
+      STATE.__liveFeedBound = true;
+      w.addEventListener("beforeunload", stopWatcherLiveFeed);
+    }
 
     if (!STATE.__authChangedBound) {
       STATE.__authChangedBound = true;

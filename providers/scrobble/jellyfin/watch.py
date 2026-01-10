@@ -20,6 +20,40 @@ from providers.scrobble.currently_watching import update_from_event as _cw_updat
 TRAKT_API = "https://api.trakt.tv"
 _TRAKT_ID_CACHE: dict[tuple, Any] = {}
 _VIEW_CACHE_TTL_SECS = 60.0
+_SERIES_ID_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any] | None]] = {}
+_SERIES_ID_CACHE_TTL_SECS = 60 * 60
+_SERIES_ID_NEG_TTL_SECS = 60
+_SERIES_ID_CACHE_MAX = 4096
+_SERIES_ID_CACHE_MISS = object()
+
+
+def _series_cache_get(key: tuple[str, str, str]) -> dict[str, Any] | None | object:
+    try:
+        hit = _SERIES_ID_CACHE.get(key)
+        if not hit:
+            return _SERIES_ID_CACHE_MISS
+        exp, val = hit
+        if time.time() > float(exp or 0.0):
+            try:
+                _SERIES_ID_CACHE.pop(key, None)
+            except Exception:
+                pass
+            return _SERIES_ID_CACHE_MISS
+        return val
+    except Exception:
+        return _SERIES_ID_CACHE_MISS
+
+
+def _series_cache_put(key: tuple[str, str, str], val: dict[str, Any] | None) -> None:
+    try:
+        if len(_SERIES_ID_CACHE) > _SERIES_ID_CACHE_MAX:
+            _SERIES_ID_CACHE.clear()
+        v = dict(val or {})
+        ttl = _SERIES_ID_CACHE_TTL_SECS if v else _SERIES_ID_NEG_TTL_SECS
+        _SERIES_ID_CACHE[key] = (time.time() + float(ttl), (v or None))
+    except Exception:
+        pass
+
 
 
 def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
@@ -349,15 +383,25 @@ def _enrich_episode_ids(
         uid = str(root.get("UserId") or "").strip() or str((cfg.get("jellyfin") or {}).get("user_id") or "").strip()
         series_id = item.get("SeriesId") or item.get("ParentId") or item.get("SeriesItemId")
         if base and tok and uid and series_id:
-            path = f"/Users/{uid}/Items/{series_id}?format=json"
-            try:
-                info = _get_json(base, tok, path)
-                show_ids = _series_ids_from_payload(info, info) or {}
-                if logger and _is_debug():
-                    logger(f"resolved show ids via Jellyfin {path}: {show_ids}", "DEBUG")
-            except Exception as e:
-                if logger and _is_debug():
-                    logger(f"Jellyfin series lookup failed: {e}", "DEBUG")
+            bkey = str(base).rstrip("/").lower()
+            skey = str(series_id).strip()
+            ck = (bkey, uid, skey)
+            cached = _series_cache_get(ck)
+            if cached is not _SERIES_ID_CACHE_MISS:
+                if isinstance(cached, dict):
+                    show_ids = dict(cached)
+            else:
+                path = f"/Users/{uid}/Items/{skey}?format=json"
+                try:
+                    info = _get_json(base, tok, path)
+                    show_ids = _series_ids_from_payload(info, info) or {}
+                    _series_cache_put(ck, show_ids or None)
+                    if logger and _is_debug():
+                        logger(f"resolved show ids via Jellyfin {path}: {show_ids}", "DEBUG")
+                except Exception as e:
+                    _series_cache_put(ck, None)
+                    if logger and _is_debug():
+                        logger(f"Jellyfin series lookup failed: {e}", "DEBUG")
 
     for key in ("imdb", "tmdb", "tvdb"):
         val = show_ids.get(key)

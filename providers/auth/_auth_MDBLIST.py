@@ -121,7 +121,7 @@ def html() -> str:
   </style>
 
   <div class="head" onclick="toggleSection('sec-mdblist')">
-    <span class="chev"></span><strong>MDBList</strong>
+    <span class="chev">▶</span><strong>MDBList</strong>
   </div>
 
   <div class="body">

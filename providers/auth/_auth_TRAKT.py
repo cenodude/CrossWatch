@@ -163,7 +163,7 @@ class _TraktProvider:
 
     </style>
     <div class="head" onclick="toggleSection('sec-trakt')">
-        <span class="chev"></span><strong>Trakt</strong>
+        <span class="chev">▶</span><strong>Trakt</strong>
     </div>
     <div class="body">
 

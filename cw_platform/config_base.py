@@ -323,8 +323,8 @@ DEFAULT_CFG: dict[str, Any] = {
         # Watcher settings
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
-            "provider": "plex",                         # Active watcher either "plex" or "emby" (default: "plex")
-            "sink": "trakt",                            # "trakt" | "simkl" | "simkl,trakt"
+            "provider": "plex",                         # Active watcher either "plex|emby|Jellyfin" (default: "plex")
+            "sink": "trakt",                            # "trakt" | "simkl" | "mdblist"
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
@@ -350,9 +350,9 @@ DEFAULT_CFG: dict[str, Any] = {
             }
         },
 
-        # Trakt sink rules (progress decisions)
+        # Trakt sink rules (progress decisions) used by Trakt|SIMKL|MDblist
         "trakt": {
-            "stop_pause_threshold": 85,                 # <85% STOP → send as PAUSE (your “watched” bar)
+            "stop_pause_threshold": 85,                 # <85% STOP-send as PAUSE (your “watched” bar)
             "force_stop_at": 95,                        # ≥85% always STOP (bypass debounces)
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }

@@ -102,12 +102,20 @@ def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
         return 85
 
 
-def _complete_at(cfg: dict[str, Any]) -> int:
+def _force_stop_at(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
         return int((s.get("trakt") or {}).get("force_stop_at", 95))
     except Exception:
         return 95
+
+
+def _complete_at(cfg: dict[str, Any]) -> int:
+    try:
+        s = cfg.get("scrobble") or {}
+        return int((s.get("trakt") or {}).get("complete_at", 0))
+    except Exception:
+        return 0
 
 
 def _regress_tolerance_percent(cfg: dict[str, Any]) -> int:
@@ -130,6 +138,15 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> int:
         return int(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
     except Exception:
         return 99
+
+
+
+def _clamp(p: Any) -> int:
+    try:
+        v = int(float(p))
+    except Exception:
+        v = 0
+    return max(0, min(100, v))
 
 
 def _resolve_enabled(cfg: dict[str, Any]) -> bool:
@@ -282,7 +299,12 @@ def _show_ids(ev: Any) -> dict[str, Any]:
 
 def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, Any]:
     mt = _norm_type(media_type)
-    order = ("trakt", "tmdb", "tvdb", "imdb", "kitsu", "mdblist") if mt == "show" else ("trakt", "tmdb", "imdb", "kitsu", "mdblist")
+    if mt == "show":
+        order = ("imdb", "trakt", "tmdb", "tvdb", "mdblist")
+    else:
+        order = ("imdb", "tmdb", "trakt", "mdblist")
+
+    out: dict[str, Any] = {}
     for k in order:
         v = ids.get(k)
         if v is None or v == "" or v == 0:
@@ -290,17 +312,17 @@ def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, An
         if k == "imdb":
             sane = _imdb_id_sane(v)
             if sane:
-                return {"imdb": sane}
+                out["imdb"] = sane
             continue
-        if k in ("trakt", "tmdb", "tvdb", "kitsu"):
+        if k in ("trakt", "tmdb", "tvdb"):
             try:
-                return {k: int(v)}
+                out[k] = int(v)
             except Exception:
                 continue
-        return {k: str(v)}
-    return {}
+            continue
+        out[k] = str(v)
 
-
+    return out
 def _mdblist_media_info_ids(provider: str, media_type: str, media_id: Any, api_key: str, cfg: dict[str, Any]) -> dict[str, Any] | None:
     try:
         r = requests.get(
@@ -696,28 +718,37 @@ def _payload_ids_keys(body: dict[str, Any]) -> list[str]:
     return sorted([str(k) for k, v in (ids or {}).items() if v])
 
 
-def _ids_desc_map(ids: dict[str, Any]) -> str:
-    for k in ("imdb", "trakt", "tmdb", "tvdb", "kitsu", "mdblist"):
+def _ids_desc_map(ids: dict[str, Any], order: tuple[str, ...]) -> str:
+    for k in order:
         v = ids.get(k)
-        if v is not None:
+        if v is not None and v != "" and v != 0:
             return f"{k}:{v}"
     return "title/year"
 
 
 def _body_ids_desc(b: dict[str, Any]) -> str:
-    ids = (
-        (b.get("movie") or {}).get("ids")
-        or (b.get("show") or {}).get("ids")
-        or (b.get("episode") or {}).get("ids")
-        or {}
-    )
-    return _ids_desc_map(ids if isinstance(ids, dict) else {})
+    if "show" in b:
+        ids = ((b.get("show") or {}).get("ids") or {})
+        order = ("imdb", "trakt", "tmdb", "tvdb", "mdblist")
+    elif "movie" in b:
+        ids = ((b.get("movie") or {}).get("ids") or {})
+        order = ("imdb", "tmdb", "trakt", "mdblist")
+    else:
+        ids = (
+            (b.get("movie") or {}).get("ids")
+            or (b.get("show") or {}).get("ids")
+            or (b.get("episode") or {}).get("ids")
+            or {}
+        )
+        order = ("imdb", "tmdb", "trakt", "tvdb", "mdblist")
+    return _ids_desc_map(ids if isinstance(ids, dict) else {}, order)
 
 
 class MDBListSink(ScrobbleSink):
     def __init__(self) -> None:
         self._last_sent: dict[str, float] = {}
         self._p_glob: dict[str, int] = {}
+        self._p_sess: dict[tuple[str, str], int] = {}
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_key = False
@@ -751,12 +782,13 @@ class MDBListSink(ScrobbleSink):
         return self._mkey(ev)
 
     def _debounced(self, session_key: str | None, action: str, debounce_s: int) -> bool:
+        if action == "start":
+            return False
+        k = f"{session_key or '?'}:{action}"
         now = time.time()
-        key = f"{action}:{session_key or '_'}"
-        last = self._last_sent.get(key, 0.0)
-        if (now - last) < max(0.5, debounce_s):
+        if now - self._last_sent.get(k, 0.0) < max(1, int(debounce_s)):
             return True
-        self._last_sent[key] = now
+        self._last_sent[k] = now
         return False
 
     def _should_log_intent(self, key: str, path: str, prog: int) -> bool:
@@ -846,45 +878,78 @@ class MDBListSink(ScrobbleSink):
                 self._warn_no_key = True
             return
 
-        action = (getattr(ev, "action", "") or "").lower()
-        p_raw = float(getattr(ev, "progress", 0) or 0)
-        p_raw = max(0.0, min(100.0, p_raw))
-        if action == "start" and p_raw < 2.0:
-            p_raw = 2.0
+        action_in = (getattr(ev, "action", "") or "").lower().strip()
+        action = action_in if action_in in ("start", "pause", "stop") else "stop"
 
-        thr = _stop_pause_threshold(cfg)
-        comp = _complete_at(cfg)
-        comp_thr = max(thr, comp)
-        suppress_at = _watch_suppress_start_at(cfg)
+        sk = str(getattr(ev, "session_key", None) or "?")
+        mk = self._mkey(ev)
+        p_now = _clamp(getattr(ev, "progress", 0) or 0)
+        tol = _regress_tolerance_percent(cfg)
+        p_sess = self._p_sess.get((sk, mk), -1)
+        p_glob = self._p_glob.get(mk, -1)
+
         name = _media_name(ev)
         key = self._ckey(ev)
 
-        p_send = round(float(p_raw), 2)
+        if action == "start":
+            if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
+                _log("Restart detected: align start floor to 2% (no 0%)", "DEBUG")
+                p_send = 2
+                self._p_glob[mk] = max(2, p_glob if p_glob >= 0 else 2)
+                self._p_sess[(sk, mk)] = 2
+            else:
+                if p_now == 0 and p_glob > 0:
+                    p_send = max(2, p_glob)
+                elif p_glob >= 0 and (p_glob - p_now) > 0 and (p_glob - p_now) <= tol and p_now > 2:
+                    p_send = p_glob
+                else:
+                    p_send = max(2, p_now)
+        else:
+            p_base = p_now
+            if action == "pause" and p_base >= 98 and p_sess >= 0 and p_sess < 95:
+                _log(f"Clamp suspicious pause 100% → {p_sess}%", "DEBUG")
+                p_base = p_sess
+            if p_sess < 0 or p_base >= p_sess or (p_sess - p_base) >= tol:
+                p_send = p_base
+            else:
+                p_send = p_sess
+
+        thr = _stop_pause_threshold(cfg)
+        last_sess = p_sess
+        comp = _complete_at(cfg)
+        suppress_at = float(_watch_suppress_start_at(cfg))
 
         if action == "start" and p_send >= suppress_at:
-            if p_send > (self._p_glob.get(key, -1) if key else -1):
-                self._p_glob[key] = int(p_send)
+            _log(f"suppress start at {p_send}% (>= {suppress_at}%)", "DEBUG")
+            if p_send > (p_glob if p_glob >= 0 else -1):
+                self._p_glob[mk] = p_send
+            self._p_sess[(sk, mk)] = p_send
             return
 
         if comp and p_send >= comp and action not in ("stop", "start"):
             action = "stop"
 
-        sess = getattr(ev, "session_key", None) or getattr(ev, "session", None)
-        if action == "pause" and self._debounced(sess, action, _watch_pause_debounce(cfg)):
-            return
+        if action_in == "stop":
+            if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
+                action = "stop"
+            elif p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+                _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
+                action = "pause"
+                p_send = last_sess
+            elif p_send < thr:
+                action = "pause"
 
-        tol = _regress_tolerance_percent(cfg)
-        p_glob = self._p_glob.get(key, -1)
-        if p_glob >= 0 and p_raw < max(0, p_glob - tol) and action != "start":
-            return
-        self._p_glob[key] = max(p_glob, int(p_raw))
+        if p_send != p_sess:
+            self._p_sess[(sk, mk)] = p_send
+        if p_send > (p_glob if p_glob >= 0 else -1):
+            self._p_glob[mk] = p_send
 
-        if action == "start":
-            path = "/scrobble/start"
-        elif action == "pause":
-            path = "/scrobble/pause"
-        else:
-            path = "/scrobble/stop"
+        comp_thr = max(_force_stop_at(cfg), comp or 0)
+        if not (action == "stop" and p_send >= comp_thr):
+            if self._debounced(sk, action, _watch_pause_debounce(cfg)):
+                return
+
+        path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
 
         mt = getattr(ev, "media_type", "") or ""
         attempted_resolve = False
@@ -929,7 +994,8 @@ class MDBListSink(ScrobbleSink):
                         self._enriched_keys.add(ek)
                         attempted_enrich = _try_enrich_event_ids(ev, "movie", api_key, cfg) or attempted_enrich
 
-        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, p_send)]
+        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
+        sent_ok = False
 
         for body in bodies:
             intent_prog = int(float(body.get("progress") or p_send))
@@ -945,7 +1011,7 @@ class MDBListSink(ScrobbleSink):
                         ok, cached_negative = _try_resolve_ids_for_mdblist(ev, "movie", api_key, cfg)
                     attempted_resolve = True
                     if ok:
-                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, p_send)]
+                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
                         body = retry_bodies[0]
                         res = self._send_http(path, body, api_key, cfg)
                     elif cached_negative:
@@ -958,7 +1024,7 @@ class MDBListSink(ScrobbleSink):
                     else:
                         enriched_ok = _try_enrich_event_ids(ev, "movie", api_key, cfg)
                     if enriched_ok:
-                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, p_send)]
+                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
                         body = retry_bodies[0]
                         res = self._send_http(path, body, api_key, cfg)
 
@@ -966,6 +1032,8 @@ class MDBListSink(ScrobbleSink):
             if not res.get("ok"):
                 _log(f"{path} failed for {name}: {res}", "WARN")
                 continue
+
+            sent_ok = True
 
             try:
                 act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
@@ -979,5 +1047,5 @@ class MDBListSink(ScrobbleSink):
             except Exception:
                 pass
 
-        if action == "stop" and int(p_send) >= comp_thr:
+        if sent_ok and action == "stop" and int(p_send) >= comp_thr:
             _auto_remove_across(ev, cfg)

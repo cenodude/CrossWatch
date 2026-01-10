@@ -168,9 +168,9 @@ def _clamp(p: Any) -> int:
 
 def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
     try:
-        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80))
+        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 85))
     except Exception:
-        return 80
+        return 85
 
 
 def _force_stop_at(cfg: dict[str, Any]) -> int:

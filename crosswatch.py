@@ -379,7 +379,7 @@ def get_primary_ip() -> str:
 MAX_LOG_LINES = 3000
 LOG_BUFFERS: Dict[str, List[str]] = {
     "SYNC": [], "PLEX": [], "JELLYFIN": [], "EMBY": [],
-    "SIMKL": [], "TRBL": [], "TRAKT": [], "MDBList": []
+    "SIMKL": [], "TRBL": [], "TRAKT": [], "MDBLIST": []
 }
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
@@ -392,6 +392,14 @@ def _escape_html(s: str) -> str:
 
 def strip_ansi(s: str) -> str:
     return ANSI_STRIP.sub("", s)
+
+def _norm_log_tag(tag: str) -> str:
+    t = (tag or "").strip().upper()
+    if t in {"JFIN", "JELLY"}:
+        return "JELLYFIN"
+    if not t:
+        return "SYNC"
+    return t
 
 def ansi_to_html(line: str) -> str:
     out, pos = [], 0
@@ -442,11 +450,31 @@ def ansi_to_html(line: str) -> str:
     return "".join(out)
 
 def _append_log(tag: str, raw_line: str) -> None:
+    tag = _norm_log_tag(tag)
     html = ansi_to_html(raw_line.rstrip("\n"))
     buf = LOG_BUFFERS.setdefault(tag, [])
     buf.append(html)
     if len(buf) > MAX_LOG_LINES:
         LOG_BUFFERS[tag] = buf[-MAX_LOG_LINES:]
+
+def _install_ui_log_forwarder() -> None:
+    try:
+        from _logging import log as BASE_LOG  # type: ignore
+    except Exception:
+        return
+
+    def _hook(ctx: dict[str, Any], level: str, msg: str, line: str, extra: Any | None) -> None:
+        try:
+            tag = str((ctx or {}).get("module") or "")
+            _append_log(tag, line)
+        except Exception:
+            pass
+
+    try:
+        if hasattr(BASE_LOG, "set_hook"):
+            BASE_LOG.set_hook(_hook)
+    except Exception:
+        pass
 
 register_api(app, load_config, log_fn=_append_log)
 register_services(app, load_config)
@@ -509,6 +537,7 @@ def _json_safe(obj: Any) -> Any:
 async def _lifespan(app):
     app.state.watch = None
     _apply_debug_env_from_config()
+    _install_ui_log_forwarder()
 
     try:
         fn = globals().get("_on_startup")
@@ -676,11 +705,12 @@ def api_list_files(
 # Logging API - TODO: move to api/logging.py
 @app.get("/api/logs/dump", tags=["logging"])
 def logs_dump(channel: str = "TRAKT", n: int = 50):
+    channel = _norm_log_tag(channel)
     return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
 
 @app.get("/api/logs/stream", tags=["logging"])
 async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
-    tag = (tag or "SYNC").upper()
+    tag = _norm_log_tag(tag)
 
     async def agen():
         buf = LOG_BUFFERS.get(tag, [])
@@ -699,6 +729,70 @@ async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
             if time.time() - last > 15:
                 yield "event: ping\ndata: 1\n\n"
                 last = time.time()
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+
+@app.get("/api/logs/watcher", tags=["logging"])
+async def api_logs_watcher(
+    request: Request,
+    tail: int = Query(200, ge=1, le=3000),
+    tags: str = Query("", description="Optional CSV override"),
+):
+    cfg = load_config() or {}
+    if tags and tags.strip():
+        sel = [_norm_log_tag(t) for t in tags.split(",") if t and t.strip()]
+    else:
+        watch_cfg: dict[str, Any] = {}
+        sc = cfg.get("scrobble") or {}
+        if isinstance(sc, dict) and isinstance(sc.get("watch"), dict):
+            watch_cfg = sc.get("watch") or {}
+        if not watch_cfg and isinstance(cfg.get("watch"), dict):
+            watch_cfg = cfg.get("watch") or {}
+
+        provider = _norm_log_tag(str(watch_cfg.get("provider") or "plex"))
+        sinks_raw = str(watch_cfg.get("sink") or "trakt")
+        sinks = [_norm_log_tag(s) for s in re.split(r"[,&+]", sinks_raw) if s and str(s).strip()]
+        sel = [provider, *sinks]
+
+    out: List[str] = []
+    for t in sel:
+        if t and t not in out:
+            out.append(t)
+    tags_sel = out or ["SYNC"]
+
+    async def agen():
+        idx: Dict[str, int] = {}
+
+        for t in tags_sel:
+            buf = LOG_BUFFERS.get(t, [])
+            start = max(0, len(buf) - int(tail))
+            for line in buf[start:]:
+                safe = (line or "").replace("\n", " ")
+                yield f"event: {t}\ndata: {safe}\n\n"
+            idx[t] = len(buf)
+
+        last = time.time()
+        while True:
+            if await request.is_disconnected():
+                break
+
+            for t in tags_sel:
+                buf = LOG_BUFFERS.get(t, [])
+                i = idx.get(t, 0)
+                if i > len(buf):
+                    i = len(buf)
+                while i < len(buf):
+                    safe = (buf[i] or "").replace("\n", " ")
+                    yield f"event: {t}\ndata: {safe}\n\n"
+                    last = time.time()
+                    i += 1
+                idx[t] = i
+
+            if time.time() - last > 15:
+                yield "event: ping\ndata: 1\n\n"
+                last = time.time()
+
             await asyncio.sleep(0.25)
 
     return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})

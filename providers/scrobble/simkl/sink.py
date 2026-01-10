@@ -95,12 +95,20 @@ def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
         return 85
 
 
-def _complete_at(cfg: dict[str, Any]) -> int:
+def _force_stop_at(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
         return int((s.get("trakt") or {}).get("force_stop_at", 95))
     except Exception:
         return 95
+
+
+def _complete_at(cfg: dict[str, Any]) -> int:
+    try:
+        s = cfg.get("scrobble") or {}
+        return int((s.get("trakt") or {}).get("complete_at", 0))
+    except Exception:
+        return 0
 
 
 def _regress_tolerance_percent(cfg: dict[str, Any]) -> int:
@@ -116,6 +124,21 @@ def _watch_pause_debounce(cfg: dict[str, Any]) -> int:
         return int(((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds", 5))
     except Exception:
         return 5
+
+
+def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
+    try:
+        return float(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
+    except Exception:
+        return 99.0
+
+
+def _clamp(p: Any) -> int:
+    try:
+        v = int(float(p))
+    except Exception:
+        v = 0
+    return max(0, min(100, v))
 
 
 def _ar_state_file() -> Path:
@@ -364,12 +387,13 @@ class SimklSink(ScrobbleSink):
         return self._mkey(ev)
 
     def _debounced(self, session_key: str | None, action: str, debounce_s: int) -> bool:
+        if action == "start":
+            return False
+        k = f"{session_key or '?'}:{action}"
         now = time.time()
-        key = f"{action}:{session_key or '_'}"
-        last = self._last_sent.get(key, 0.0)
-        if (now - last) < max(0.5, debounce_s):
+        if (now - self._last_sent.get(k, 0.0)) < max(1, int(debounce_s)):
             return True
-        self._last_sent[key] = now
+        self._last_sent[k] = now
         return False
 
     def _should_log_intent(self, key: str, path: str, prog: int) -> bool:
@@ -399,35 +423,80 @@ class SimklSink(ScrobbleSink):
                 self._warn_no_token = True
             return
 
-        action = (getattr(ev, "action", "") or "").lower()
-        p_raw = float(getattr(ev, "progress", 0) or 0)
-        p_raw = max(0.0, min(100.0, p_raw))
-        if action == "start" and p_raw < 2.0:
-            p_raw = 2.0
+        action_in = (getattr(ev, "action", "") or "").lower().strip()
+        action = action_in if action_in in ("start", "pause", "stop") else "stop"
+        sess = getattr(ev, "session_key", None) or getattr(ev, "session", None)
+        sk = str(sess or "?")
+        mk = self._mkey(ev)
 
-        comp_thr = max(_stop_pause_threshold(cfg), _complete_at(cfg))
+        p_now = _clamp(getattr(ev, "progress", 0) or 0)
+        tol = _regress_tolerance_percent(cfg)
+        p_sess = self._p_sess.get((sk, mk), -1)
+        p_glob = self._p_glob.get(mk, -1)
+
         name = _media_name(ev)
         key = self._ckey(ev)
 
-        sess = getattr(ev, "session_key", None) or getattr(ev, "session", None)
-        if action == "pause" and self._debounced(sess, action, _watch_pause_debounce(cfg)):
-            return
-
-        tol = _regress_tolerance_percent(cfg)
-        p_glob = self._p_glob.get(key, -1)
-        if p_glob >= 0 and p_raw < max(0, p_glob - tol) and action != "start":
-            return
-        self._p_glob[key] = max(p_glob, int(p_raw))
-
         if action == "start":
-            path = "/scrobble/start"
-        elif action == "pause":
-            path = "/scrobble/pause"
+            if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
+                p_send = 2
+                self._p_glob[mk] = max(2, p_glob if p_glob >= 0 else 2)
+                self._p_sess[(sk, mk)] = 2
+            else:
+                if p_now == 0 and p_glob > 0:
+                    p_send = max(2, p_glob)
+                elif p_glob >= 0 and (p_glob - p_now) > 0 and (p_glob - p_now) <= tol and p_now > 2:
+                    p_send = p_glob
+                else:
+                    p_send = max(2, p_now)
         else:
-            path = "/scrobble/stop"
+            p_base = p_now
+            if action == "pause" and p_base >= 98 and p_sess >= 0 and p_sess < 95:
+                _log(f"Clamp suspicious pause 100% → {p_sess}%", "DEBUG")
+                p_base = p_sess
+            if p_sess < 0 or p_base >= p_sess or (p_sess - p_base) >= tol:
+                p_send = p_base
+            else:
+                p_send = p_sess
 
-        p_send = round(float(p_raw), 2)
-        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, p_send)]
+        thr = _stop_pause_threshold(cfg)
+        last_sess = p_sess
+        comp = _complete_at(cfg)
+        suppress_at = _watch_suppress_start_at(cfg)
+
+        if action == "start" and p_send >= suppress_at:
+            _log(f"suppress start at {p_send}% (>= {suppress_at}%)", "DEBUG")
+            if p_send > (p_glob if p_glob >= 0 else -1):
+                self._p_glob[mk] = p_send
+            self._p_sess[(sk, mk)] = p_send
+            return
+
+        if comp and p_send >= comp and action not in ("stop", "start"):
+            action = "stop"
+
+        if action_in == "stop":
+            if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
+                action = "stop"
+            elif p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+                _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
+                action = "pause"
+                p_send = last_sess
+            elif p_send < thr:
+                action = "pause"
+
+        if p_send != p_sess:
+            self._p_sess[(sk, mk)] = p_send
+        if p_send > (p_glob if p_glob >= 0 else -1):
+            self._p_glob[mk] = p_send
+
+        comp_thr = max(_force_stop_at(cfg), comp or 0)
+        if not (action == "stop" and p_send >= comp_thr):
+            if self._debounced(sk, action, _watch_pause_debounce(cfg)):
+                return
+
+        path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
+
+        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
 
         last_err: dict[str, Any] | None = None
         for body in bodies:

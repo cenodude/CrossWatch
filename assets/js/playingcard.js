@@ -102,8 +102,8 @@
   const sourceLabel = (src) => {
     const s = String(src || "").toLowerCase();
     if (!s) return "";
-    if (s === "plex") return "PLEX · watcher";
-    if (s === "emby") return "EMBY · watcher";
+    if (s === "plex") return "PLEX";
+    if (s === "emby") return "EMBY";
     if (s === "jellyfin") return "Jellyfin";
     if (s === "plextrakt") return "PLEX · webhook";
     if (s === "embytrakt") return "EMBY · webhook";
