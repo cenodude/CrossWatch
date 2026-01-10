@@ -445,8 +445,8 @@ def _get_index_html_static() -> str:
               <select id="debug">
                 <option value="off">off</option>
                 <option value="on">on</option>
-                <option value="mods">on — including MOD debug</option>
-                <option value="full">on — full</option>
+                <option value="mods">on - including MOD debug</option>
+                <option value="full">on - full</option>
               </select>
             </div>
             <div class="chiprow">
@@ -754,7 +754,7 @@ function render(payload){
     } else {
       if (K.toUpperCase() === 'PLEX') {
         vip = !!(d.plexpass || d.subscription?.plan);
-        if (vip) detail = `Plex Pass — ${d.subscription?.plan || 'Active'}`;
+        if (vip) detail = `Plex Pass - ${d.subscription?.plan || 'Active'}`;
       } else if (K.toUpperCase() === 'TRAKT') {
         vip = !!d.vip;
 
@@ -765,7 +765,7 @@ function render(payload){
         const parts = [];
 
         if (vip) {
-          parts.push('VIP status — Enabled');
+          parts.push('VIP status');
         } else {
           parts.push('Free account');
         }
@@ -799,7 +799,7 @@ function render(payload){
         const usedStr = Number.isFinite(used) ? used.toLocaleString() : '-';
         const maxStr  = Number.isFinite(max)  ? max.toLocaleString() : '-';
         const pat = d.patron_status || '';
-        detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` — Status: ${pat}` : '');
+        detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` - Status: ${pat}` : '');
       } else if (K.toUpperCase() === 'ANILIST') {
         const u = (d.user && typeof d.user === 'object') ? d.user : {};
         const nm = u.name || u.username || u.id;
