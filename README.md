@@ -63,8 +63,7 @@ NOT supported: **Multi-users/servers**
 - **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
 - **Unified Watchlist across providers** View all watchlist items in one place.
 - **Back-to-the-Future (Fallback GUID)** Revives items that left your Plex library but still exist in your server database.
-- **Webhooks** (Plex / Jellyfin / Emby to Trakt) watched history and for Plex also ratings.
-- **Watcher** (Plex / Emby to Trakt and/or SIMKL) Realtime, Plugin-free and subscription-free.
+- **Watcher** (Plex / Emby / Jellyfin to Trakt/SIMKL/MDBList. Realtime, Plugin-free and subscription-free.
 - **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish. 
 - **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 - **Editor** Inspect and adjust your items and Add or block items. Example: tell Plex to stop sending movie X.
@@ -87,7 +86,7 @@ NOT supported: **Multi-users/servers**
 
 <ul>
   <li>Sync watchlists (one-/two-way)</li>
-  <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL)</li>
+  <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL/MDBList)</li>
   <li>Sync ratings (one-/two-way)</li>
   <li>Sync history (one-/two-way)</li>
   <li>Keep snapshots with CW tracker</li>
