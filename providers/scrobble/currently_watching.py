@@ -79,8 +79,7 @@ def update_from_event(
         state = state_map.get(action, "unknown")
 
         if clear_on_stop and state == "stopped":
-            _write_raw(None)
-            return
+            pass
 
         media_type = (ev.media_type or "").lower()
         if media_type not in ("movie", "episode"):
