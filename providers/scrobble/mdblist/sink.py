@@ -621,14 +621,19 @@ class MDBListSink(ScrobbleSink):
                 action = "pause"
                 
         step = _progress_step(cfg)
-        p_send = _quantize_progress(int(p_send), step, action)
-        
-        if action == "start" and p_sess >= 0 and int(p_send) == int(p_sess):
-            return
-              
-
-        if p_send != p_sess:
-            self._p_sess[(sk, mk)] = p_send
+        p_gate = int(float(p_send))
+        if action == "start" and step > 1:
+            p_i = int(float(p_send))
+            bucket = (p_i // step) * step
+            if p_sess >= 0 and bucket <= int(p_sess):
+                return
+            if p_i % step == 0:
+                p_gate = bucket
+            else:
+                p_gate = (bucket + step) if bucket > 0 else step
+        p_gate = max(1, min(100, int(p_gate)))
+        if p_gate != p_sess:
+            self._p_sess[(sk, mk)] = p_gate
         if p_send > (p_glob if p_glob >= 0 else -1):
             self._p_glob[mk] = p_send
 

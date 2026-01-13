@@ -209,7 +209,11 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
 
 def _trakt_progress_step(cfg: dict[str, Any]) -> int:
     try:
-        step = int((cfg.get("trakt") or {}).get("progress_step", 5))
+        s = (cfg.get("scrobble") or {}).get("trakt") or {}
+        step = s.get("progress_step")
+        if step is None:
+            step = (cfg.get("trakt") or {}).get("progress_step", 5)
+        step = int(step)
     except Exception:
         step = 5
     return max(1, min(25, step))
@@ -643,8 +647,20 @@ class TraktSink(ScrobbleSink):
             elif p_send < thr:
                 action = "pause"
 
-        if p_send != p_sess:
-            self._p_sess[(sk, mk)] = p_send
+        step = _trakt_progress_step(cfg)
+        p_gate = int(float(p_send))
+        if action == "start" and step > 1:
+            p_i = int(float(p_send))
+            bucket = (p_i // step) * step
+            if p_sess >= 0 and bucket <= int(p_sess):
+                return
+            if p_i % step == 0:
+                p_gate = bucket
+            else:
+                p_gate = (bucket + step) if bucket > 0 else step
+        p_gate = max(1, min(100, int(p_gate)))
+        if p_gate != p_sess:
+            self._p_sess[(sk, mk)] = p_gate
         if p_send > (p_glob if p_glob >= 0 else -1):
             self._p_glob[mk] = p_send
 
