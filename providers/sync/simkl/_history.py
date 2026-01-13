@@ -17,6 +17,7 @@ from ._common import (
     build_headers,
     coalesce_date_from,
     get_watermark,
+    normalize_flat_watermarks,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
@@ -677,6 +678,7 @@ def _fetch_kind(
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     session = adapter.client.session
     timeout = adapter.cfg.timeout
+    normalize_flat_watermarks()
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
 
@@ -686,20 +688,18 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     latest_ts_shows: int | None = None
     latest_ts_anime: int | None = None
     cfg_iso = _as_iso(since) if since else None
-    df_movies_iso = coalesce_date_from("history:movies", cfg_date_from=cfg_iso)
-    df_shows_iso = coalesce_date_from("history:shows", cfg_date_from=cfg_iso)
-    df_anime_iso = coalesce_date_from("history:anime", cfg_date_from=cfg_iso)
+    df_iso = coalesce_date_from("history", cfg_date_from=cfg_iso)
     if since:
         since_iso = _as_iso(int(since))
         try:
-            sm = max(_as_epoch(df_movies_iso) or 0, _as_epoch(since_iso) or 0)
-            ss = max(_as_epoch(df_shows_iso) or 0, _as_epoch(since_iso) or 0)
-            df_movies_iso = _as_iso(sm)
-            df_shows_iso = _as_iso(ss)
+            sm = max(_as_epoch(df_iso) or 0, _as_epoch(since_iso) or 0)
+            ss = max(_as_epoch(df_iso) or 0, _as_epoch(since_iso) or 0)
+            df_iso = _as_iso(sm)
+            df_iso = _as_iso(ss)
         except Exception:
             pass
 
-    movie_rows = _fetch_kind(session, headers, kind="movies", since_iso=df_movies_iso, timeout=timeout)
+    movie_rows = _fetch_kind(session, headers, kind="movies", since_iso=df_iso, timeout=timeout)
     movies_cnt = 0
     for row in movie_rows:
         if not isinstance(row, Mapping):
@@ -726,8 +726,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             break
 
     if not limit or added < limit:
-        show_rows = _fetch_kind(session, headers, kind="shows", since_iso=df_shows_iso, timeout=timeout)
-        anime_rows = _fetch_kind(session, headers, kind="anime", since_iso=df_anime_iso, timeout=timeout)
+        show_rows = _fetch_kind(session, headers, kind="shows", since_iso=df_iso, timeout=timeout)
+        anime_rows = _fetch_kind(session, headers, kind="anime", since_iso=df_iso, timeout=timeout)
         eps_cnt = 0
         for row, row_kind in chain(((r, "shows") for r in show_rows), ((r, "anime") for r in anime_rows)):
             if not isinstance(row, Mapping):
@@ -795,19 +795,18 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes={eps_cnt} from_movies={df_movies_iso} from_shows={df_shows_iso} from_anime={df_anime_iso}",
+            f"movies={movies_cnt} episodes={eps_cnt} from={df_iso}",
         )
     else:
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes=0 from_movies={df_movies_iso} from_shows={df_shows_iso} from_anime={df_anime_iso}",
+            f"movies={movies_cnt} episodes=0 from={df_iso}",
         )
 
-    if latest_ts_movies:
-        update_watermark_if_new("history:movies", _as_iso(latest_ts_movies))
-    if latest_ts_shows:
-        update_watermark_if_new("history:shows", _as_iso(latest_ts_shows))
+    latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
+    if latest_any is not None:
+        update_watermark_if_new("history", _as_iso(latest_any))
 
     _unfreeze(thaw)
     try:

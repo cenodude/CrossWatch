@@ -18,6 +18,7 @@ from ._common import (
     extract_latest_ts,
     fetch_activities,
     get_watermark,
+    normalize_flat_watermarks,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
@@ -521,6 +522,7 @@ def _search_id_enrich(
 def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict[str, Any]]:
     sess = adapter.client.session
     tmo = adapter.cfg.timeout
+    normalize_flat_watermarks()
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("ratings") if callable(prog_mk) else None
 
@@ -530,13 +532,11 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     if since_iso is None:
         acts, _rate = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
         if isinstance(acts, Mapping):
-            wm_m = get_watermark("ratings:movies") or ""
-            wm_s = get_watermark("ratings:shows") or ""
-            wm_a = get_watermark("ratings:anime") or ""
+            wm = get_watermark("ratings") or ""
             lm = extract_latest_ts(acts, (("movies", "rated_at"),))
             ls = extract_latest_ts(acts, (("tv_shows", "rated_at"), ("shows", "rated_at")))
             la = extract_latest_ts(acts, (("anime", "rated_at"),))
-            unchanged = (lm is None or lm <= wm_m) and (ls is None or ls <= wm_s) and (la is None or la <= wm_a)
+            unchanged = (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
             if unchanged:
                 _log(f"activities unchanged; ratings from shadow (m={lm} s={ls} a={la})")
                 _rshadow_merge_into(out, thaw)
@@ -556,14 +556,11 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     hdrs = _headers(adapter, force_refresh=True)
 
-    df_movies = coalesce_date_from("ratings:movies", cfg_date_from=since_iso)
-    df_shows = coalesce_date_from("ratings:shows", cfg_date_from=since_iso)
-    df_anime = coalesce_date_from("ratings:anime", cfg_date_from=since_iso)
-    df_all = min(df_movies, df_shows, df_anime)
+    df_all = coalesce_date_from("ratings", cfg_date_from=since_iso)
 
-    rows_movies = _fetch_rows_any(sess, hdrs, kind="movies", df_iso=df_movies, timeout=tmo)
-    rows_shows = _fetch_rows_any(sess, hdrs, kind="shows", df_iso=df_shows, timeout=tmo)
-    rows_anime = _fetch_rows_any(sess, hdrs, kind="anime", df_iso=df_anime, timeout=tmo)
+    rows_movies = _fetch_rows_any(sess, hdrs, kind="movies", df_iso=df_all, timeout=tmo)
+    rows_shows = _fetch_rows_any(sess, hdrs, kind="shows", df_iso=df_all, timeout=tmo)
+    rows_anime = _fetch_rows_any(sess, hdrs, kind="anime", df_iso=df_all, timeout=tmo)
 
     grand_total = len(rows_movies) + len(rows_shows) + len(rows_anime)
 
@@ -694,13 +691,9 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         except Exception:
             pass
 
-    _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} from={df_movies}|{df_shows}")
+    _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_all}")
 
-    if max_movies is not None:
-        update_watermark_if_new("ratings:movies", _as_iso(max_movies))
-    if max_shows is not None:
-        update_watermark_if_new("ratings:shows", _as_iso(max_shows))
-    latest_any = max([t for t in (max_movies, max_shows) if isinstance(t, int)], default=None)
+    latest_any = max([t for t in (max_movies, max_shows, max_anime) if isinstance(t, int)], default=None)
     if latest_any is not None:
         update_watermark_if_new("ratings", _as_iso(latest_any))
 

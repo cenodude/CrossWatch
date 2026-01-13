@@ -1,6 +1,7 @@
 # SIMKL Module for common functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+
 import json
 import os
 import time
@@ -14,9 +15,8 @@ START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
 UA = os.getenv("CW_UA", "CrossWatch/3.0 (SIMKL)")
 
-
 STATE_DIR = Path("/config/.cw_state")
-WATERMARK_PATH = STATE_DIR / "simkl.watermarks.json"  # legacy (do not use)
+
 
 def _pair_scope() -> str | None:
     for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
@@ -25,12 +25,14 @@ def _pair_scope() -> str | None:
             return str(v).strip()
     return None
 
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
     while "__" in s:
         s = s.replace("__", "_")
     return s[:96] if s else "default"
+
 
 def state_file(name: str) -> Path:
     scope = _pair_scope()
@@ -40,12 +42,14 @@ def state_file(name: str) -> Path:
         return STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
     return STATE_DIR / f"{name}.{safe}"
 
+
 def scoped_state_path(name: str) -> Path:
     return state_file(name)
 
+
 def _watermark_path() -> Path:
-    # Always pair-scoped (or unscoped when no pair env is present).
     return state_file("simkl.watermarks.json")
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
@@ -57,7 +61,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_name(f"{path.name}.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, path)
     except Exception:
@@ -89,13 +93,45 @@ def update_watermark_if_new(feature: str, iso_ts: str | None) -> str | None:
     return new
 
 
+def normalize_flat_watermarks() -> None:
+    p = _watermark_path()
+    raw = _read_json(p)
+    if not isinstance(raw, dict) or not raw:
+        return
+    data: dict[str, Any] = {str(k): v for k, v in raw.items() if isinstance(k, str)}
+    changed = False
+
+    def _fold(base_key: str, prefix: str) -> None:
+        nonlocal changed
+        candidates: list[str] = []
+        for k, v in list(data.items()):
+            if not k.startswith(prefix):
+                continue
+            if _iso_ok(v):
+                candidates.append(_iso_z(str(v)))
+            data.pop(k, None)
+            changed = True
+        if _iso_ok(data.get(base_key)):
+            return
+        if candidates:
+            data[base_key] = max(candidates)
+            changed = True
+
+    _fold("watchlist", "watchlist:")
+    _fold("watchlist_removed", "watchlist_removed:")
+    _fold("ratings", "ratings:")
+    _fold("history", "history:")
+
+    if changed:
+        _write_json(p, data)
+
+
 def coalesce_date_from(
     feature: str,
     cfg_date_from: str | None = None,
     *,
     hard_default: str = START_OF_TIME_ISO,
 ) -> str:
-
     env_any = os.getenv("SIMKL_DATE_FROM")
     env_feature = os.getenv(f"SIMKL_{feature.upper()}_DATE_FROM")
     for candidate in (get_watermark(feature), env_feature, env_any, cfg_date_from, hard_default):
@@ -135,7 +171,6 @@ def _max_iso(a: str | None, b: str | None) -> str | None:
     return _iso_z(a if dt_a >= dt_b else b)
 
 
-
 def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dict[str, str]:
     target = cfg.get("simkl") or cfg
     api_key = str(target.get("api_key") or target.get("client_id") or "").strip()
@@ -153,6 +188,7 @@ def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dic
         headers.pop("If-None-Match", None)
     return headers
 
+
 _ACT_MEMO: tuple[float, dict[str, Any] | None, dict[str, Any]] = (0.0, None, {})
 
 
@@ -162,12 +198,12 @@ def fetch_activities(
     *,
     timeout: float = 8.0,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-
     global _ACT_MEMO
     now = time.time()
     ts, cached, rate_cached = _ACT_MEMO
     if cached is not None and (now - ts) < 10.0:
         return cached, rate_cached
+
     url = "https://api.simkl.com/sync/activities"
     rate: dict[str, Any] = {}
     try:
@@ -177,13 +213,6 @@ def fetch_activities(
             data = resp.json() if (resp.text or "").strip() else {}
             _ACT_MEMO = (now, data, rate)
             return data, rate
-        if resp.status_code in (404, 405):
-            resp2 = session.get(url, headers=dict(headers), timeout=timeout)
-            rate = parse_rate_limit(resp2.headers) or rate
-            if 200 <= resp2.status_code < 300:
-                data = resp2.json() if (resp2.text or "").strip() else {}
-                _ACT_MEMO = (now, data, rate)
-                return data, rate
         return None, rate
     except Exception:
         return None, rate
@@ -195,22 +224,11 @@ def parse_rate_limit(headers: Mapping[str, str]) -> dict[str, Any]:
             return int(value) if value is not None else None
         except Exception:
             return None
+
     return {
-        "limit": _to_int(
-            headers.get("X-RateLimit-Limit")
-            or headers.get("RateLimit-Limit")
-            or headers.get("Ratelimit-Limit")
-        ),
-        "remaining": _to_int(
-            headers.get("X-RateLimit-Remaining")
-            or headers.get("RateLimit-Remaining")
-            or headers.get("Ratelimit-Remaining")
-        ),
-        "reset_ts": _to_int(
-            headers.get("X-RateLimit-Reset")
-            or headers.get("RateLimit-Reset")
-            or headers.get("Ratelimit-Reset")
-        ),
+        "limit": _to_int(headers.get("X-RateLimit-Limit") or headers.get("RateLimit-Limit") or headers.get("Ratelimit-Limit")),
+        "remaining": _to_int(headers.get("X-RateLimit-Remaining") or headers.get("RateLimit-Remaining") or headers.get("Ratelimit-Remaining")),
+        "reset_ts": _to_int(headers.get("X-RateLimit-Reset") or headers.get("RateLimit-Reset") or headers.get("Ratelimit-Reset")),
     }
 
 
@@ -228,7 +246,6 @@ def extract_latest_ts(activities: Mapping[str, Any], paths: Iterable[Sequence[st
         if ok and isinstance(current, str) and _iso_ok(current):
             latest = _max_iso(latest, current)
     return latest
-
 
 
 def _fix_imdb(ids: Mapping[str, Any]) -> dict[str, Any]:
@@ -277,13 +294,16 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
             ):
                 obj_type = key
                 break
+
     if obj_type == "episode":
         ids = _fix_imdb((payload.get("ids") if isinstance(payload, Mapping) else None) or obj.get("ids") or {})
+
         def _to_int(v: Any) -> int | None:
             try:
                 return int(v)
             except Exception:
                 return None
+
         base = {
             "type": "episode",
             "title": (payload.get("title") if isinstance(payload, Mapping) else None) or obj.get("title"),
@@ -313,6 +333,7 @@ def key_of(item: Mapping[str, Any]) -> str:
 
     typ = str(item.get("type") or "").lower()
     if typ == "episode":
+
         def _to_int(v: Any) -> int:
             try:
                 n = int(v)
@@ -335,16 +356,15 @@ def key_of(item: Mapping[str, Any]) -> str:
             if show_key:
                 return f"{show_key}#s{s_num:02d}e{e_num:02d}"
 
-    m = normalize(item)
-    k = canonical_key(m)
+    k = canonical_key(normalize(item))
     return k or ""
+
 
 __all__ = [
     "START_OF_TIME_ISO",
     "DEFAULT_DATE_FROM",
     "UA",
     "STATE_DIR",
-    "WATERMARK_PATH",
     "state_file",
     "scoped_state_path",
     "load_watermarks",
@@ -360,4 +380,5 @@ __all__ = [
     "id_minimal",
     "key_of",
     "normalize",
+    "normalize_flat_watermarks",
 ]

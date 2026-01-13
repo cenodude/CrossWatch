@@ -16,6 +16,7 @@ from ._common import (
     coalesce_date_from,
     fetch_activities,
     get_watermark,
+    normalize_flat_watermarks,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     save_watermark,
@@ -586,6 +587,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     headers = _headers(adapter)
     acts, _rate = fetch_activities(session, headers, timeout=adapter.cfg.timeout)
     ts_map = _bucket_ts(acts or {})
+    normalize_flat_watermarks()
 
     def _composite_ts(tsm: Mapping[str, Mapping[str, str | None]]) -> str:
         def v(x: str | None) -> str:
@@ -636,7 +638,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
         _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) → ids_only verify")
         for bucket in WATCHLIST_BUCKETS:
-            df = coalesce_date_from(f"watchlist:{bucket}", cfg_date_from="1970-01-01T00:00:00Z")
+            df = coalesce_date_from("watchlist", cfg_date_from="1970-01-01T00:00:00Z")
             snap = _pull_bucket(
                 adapter,
                 bucket,
@@ -673,13 +675,13 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         have_bucket = _bucket_ready(items, bucket, buckets_seen)
         ptw_ts = ts_map[bucket]["ptw"]
         rm_ts = ts_map[bucket]["rm"]
-        rm_key = f"watchlist_removed:{bucket}"
+        rm_key = "watchlist_removed"
         prev_rm = get_watermark(rm_key)
 
         if force_all or force_present == bucket:
             _log(f"{bucket}: forced present ids_only reconcile")
             df_force = coalesce_date_from(
-                f"watchlist:{bucket}",
+                "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
             )
             fresh = _pull_bucket(
@@ -703,7 +705,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     pass
             have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
-        elif rm_ts and rm_ts != prev_rm:
+        elif rm_ts and (not prev_rm or rm_ts > prev_rm):
             if have_bucket:
                 drop = [
                     key
@@ -714,13 +716,13 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     items.pop(key, None)
 
             df_full = coalesce_date_from(
-                f"watchlist:{bucket}",
+                "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
             )
             fresh = _pull_bucket(
                 adapter,
                 bucket,
-                date_from=df_full,
+                date_from=None,
                 ids_only=True,
                 limit=limit,
                 force_refresh=True,
@@ -728,7 +730,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             buckets_seen[bucket] = True
             _merge_upsert(items, fresh)
             buckets_seen[bucket] = True
-            save_watermark(rm_key, rm_ts)
             _log(f"{bucket}: rebuilt via ids_only ({len(fresh)})")
             cnt = len(fresh)
             if cnt and prog:
@@ -740,10 +741,11 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     pass
             have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
-        df_key = f"watchlist:{bucket}"
+        df_key = "watchlist"
         date_from = coalesce_date_from(df_key)
 
-        if ptw_ts and ptw_ts != get_watermark(df_key):
+        wm = get_watermark(df_key)
+        if ptw_ts and (wm is None or ptw_ts > wm):
             inc = _pull_bucket(
                 adapter,
                 bucket,
@@ -771,7 +773,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
             _merge_upsert(items, inc)
             buckets_seen[bucket] = True
-            save_watermark(df_key, ptw_ts)
             _log(f"{bucket}: incremental {len(inc)} from {date_from or 'baseline'}")
 
             cnt = len(inc)
@@ -787,7 +788,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         if not have_bucket:
             _log(f"{bucket}: missing in shadow; forcing FULL snapshot")
             df_full = coalesce_date_from(
-                f"watchlist:{bucket}",
+                "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
             )
             snap = _pull_bucket(
@@ -822,11 +823,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 except Exception:
                     pass
 
-            if ts_map[bucket]["ptw"]:
-                ptw_value = ts_map[bucket]["ptw"]
-                if isinstance(ptw_value, str):
-                    save_watermark(df_key, ptw_value)
-
     _jit_enrich_missing(adapter, items)
     _unfreeze_if_present(items.keys())
     _shadow_save(comp_ts, items, buckets_seen)
@@ -839,6 +835,15 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     if candidates:
         latest_any = max(candidates)
         save_watermark("watchlist", latest_any)
+
+    rm_candidates: list[str] = [
+        t
+        for t in (ts_map["movies"]["rm"], ts_map["shows"]["rm"], ts_map["anime"]["rm"])
+        if isinstance(t, str)
+    ]
+    if rm_candidates:
+        latest_rm = max(rm_candidates)
+        save_watermark("watchlist_removed", latest_rm)
 
     if prog:
         try:

@@ -643,6 +643,8 @@
     source: "state",
     kind: "watchlist",
     snapshot: "",
+    pair: "",
+    pairs: [],
     baselineItems: {},
     manualAdds: {},
     manualBlocks: [],
@@ -675,7 +677,7 @@
       if (!raw) return;
       const saved = JSON.parse(raw);
 
-      const sources = ["tracker", "state"];
+      const sources = ["tracker", "pair", "state"];
       if (saved.source && sources.includes(saved.source)) state.source = saved.source;
 
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
@@ -684,6 +686,8 @@
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
 
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
+
+      if (typeof saved.pair === "string") state.pair = saved.pair;
       if (typeof saved.filter === "string") state.filter = saved.filter;
 
       if (saved.typeFilter && typeof saved.typeFilter === "object") {
@@ -764,6 +768,7 @@
                 <label>Data</label>
                 <select id="cw-source" class="cw-select">
                   <option value="tracker">CW Tracker</option>
+                  <option value="pair">Pair Cache</option>
                   <option value="state">Current State</option>
                 </select>
 
@@ -773,6 +778,10 @@
                   <option value="history">History</option>
                   <option value="ratings">Ratings</option>
                 </select>
+
+
+                <label id="cw-pair-label" style="display:none">Pair</label>
+                <select id="cw-pair" class="cw-select" style="display:none"></select>
 
                 <label id="cw-snapshot-label">Snapshot</label>
                 <select id="cw-snapshot" class="cw-select">
@@ -970,6 +979,8 @@
   const $ = id => document.getElementById(id);
   const sourceSel = $("cw-source");
   const kindSel = $("cw-kind");
+  const pairLabel = $("cw-pair-label");
+  const pairSel = $("cw-pair");
   const snapLabel = $("cw-snapshot-label");
   const snapSel = $("cw-snapshot");
   const filterInput = $("cw-filter");
@@ -1286,6 +1297,7 @@
         source: state.source,
         kind: state.kind,
         snapshot: state.snapshot,
+        pair: state.pair,
         filter: state.filter,
         typeFilter: state.typeFilter,
         blockedOnly: state.blockedOnly,
@@ -1384,8 +1396,11 @@
 
   function syncSourceUI() {
     const isState = state.source === "state";
+    const isPair = state.source === "pair";
     if (sourceSel) sourceSel.value = state.source;
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+    if (pairLabel) pairLabel.style.display = isPair ? "" : "none";
+    if (pairSel) pairSel.style.display = isPair ? "" : "none";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
     if (backupCard) backupCard.style.display = isState ? "none" : "";
     if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
     if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
@@ -1404,6 +1419,12 @@
     if (mode === "tracker") {
       stateHint.innerHTML =
         "<strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.";
+      stateHint.style.display = "block";
+      return;
+    }
+    if (mode === "pair") {
+      stateHint.innerHTML =
+        "<strong>No pair cache found.</strong> Run a CrossWatch sync once to generate .cw_state pair indexes. Then select a Pair and Dataset here.";
       stateHint.style.display = "block";
       return;
     }
@@ -2562,9 +2583,10 @@
   function rebuildSnapshots() {
     if (!snapSel) return;
     const isState = state.source === "state";
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Snapshot";
+    const isPair = state.source === "pair";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
 
-    if (isState) {
+    if (isState || isPair) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
       const options = list.map(p => `<option value="${p}">${p}</option>`).join("");
       snapSel.innerHTML = options;
@@ -2586,6 +2608,40 @@
     snapSel.value = state.snapshot || "";
   }
 
+
+  function rebuildPairs() {
+    if (!pairSel) return;
+    const isPair = state.source === "pair";
+    if (!isPair) return;
+    const list = Array.isArray(state.pairs) ? state.pairs : [];
+    const esc = s => String(s || "").replace(/[&<>\"\']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "\'": "&#39;" }[c] || c));
+    const options = list
+      .map(p => {
+        const scope = p && p.scope ? String(p.scope) : "";
+        const label = p && p.label ? String(p.label) : scope;
+        return `<option value="${esc(scope)}">${esc(label)}</option>`;
+      })
+      .join("");
+    pairSel.innerHTML = options || `<option value="">No pairs</option>`;
+    const opts = Array.from(pairSel.options).map(o => o.value);
+    const next = opts.includes(state.pair) ? state.pair : opts[0] || "";
+    if (next !== state.pair) state.pair = next;
+    pairSel.value = state.pair || "";
+  }
+
+  async function loadPairs() {
+    try {
+      const data = await fetchJSON("/api/editor/pairs");
+      state.pairs = Array.isArray(data && data.pairs) ? data.pairs : [];
+      if (!state.pair) state.pair = (data && data.default) ? String(data.default) : "";
+      rebuildPairs();
+    } catch (e) {
+      console.error(e);
+      state.pairs = [];
+      rebuildPairs();
+    }
+  }
+
   async function fetchJSON(url, opts) {
     const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
     if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -2594,6 +2650,28 @@
 
   async function loadSnapshots() {
     try {
+      if (state.source === "pair") {
+        if (!state.pair || !Array.isArray(state.pairs) || !state.pairs.length) await loadPairs();
+        rebuildPairs();
+        if (!state.pair) {
+          state.snapshots = [];
+          rebuildSnapshots();
+          showStateHint("pair");
+          return;
+        }
+        const data = await fetchJSON(`/api/editor/pairs/datasets?kind=${encodeURIComponent(state.kind)}&pair=${encodeURIComponent(state.pair)}`);
+        const dsets = Array.isArray(data && data.datasets) ? data.datasets : [];
+        state.snapshots = dsets.map(d => (d && d.name ? String(d.name) : "")).filter(Boolean);
+        const defDs = data && data.default_dataset ? String(data.default_dataset) : "";
+        rebuildSnapshots();
+        const opts = state.snapshots;
+        const next = opts.includes(state.snapshot) ? state.snapshot : (defDs && opts.includes(defDs) ? defDs : (opts[0] || ""));
+        if (next !== state.snapshot) state.snapshot = next;
+        if (snapSel) snapSel.value = state.snapshot || "";
+        if (!state.snapshots.length) showStateHint("pair");
+        else showStateHint(null);
+        return;
+      }
       if (state.source === "state") {
         const data = await fetchJSON(`/api/editor/state/providers`);
         state.snapshots = Array.isArray(data.providers) ? data.providers : [];
@@ -2698,6 +2776,10 @@
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
       if (state.source === "state" && state.snapshot) params.set("provider", state.snapshot);
+      if (state.source === "pair") {
+        if (state.pair) params.set("pair", state.pair);
+        if (state.snapshot) params.set("dataset", state.snapshot);
+      }
 
       const data = await fetchJSON(`/api/editor?${params.toString()}`);
       if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
@@ -2858,6 +2940,10 @@
       }
 
       const payload = { kind: state.kind, source: state.source, items };
+      if (state.source === "pair") {
+        payload.pair = state.pair;
+        payload.dataset = state.snapshot;
+      }
       if (state.source === "state") {
         payload.provider = state.snapshot;
         payload.blocks = blocks;
@@ -3051,7 +3137,8 @@
       clearSelection();
       if (state.source === "state") await loadImportProviders();
       else if (importRow) syncImportUI();
-      if (state.source !== "state") await loadTrackerCounts();
+      if (state.source === "pair") await loadPairs();
+      if (state.source === "tracker") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
     });
@@ -3249,8 +3336,9 @@
   (async () => {
     syncSourceUI();
     await loadImportProviders();
-    setTag("warn", state.source === "state" ? "Loading current state…" : "Loading tracker state…");
-    if (state.source !== "state") await loadTrackerCounts();
+    setTag("warn", state.source === "state" ? "Loading current state…" : state.source === "pair" ? "Loading pair cache…" : "Loading tracker state…");
+    if (state.source === "pair") await loadPairs();
+    if (state.source === "tracker") await loadTrackerCounts();
     await loadSnapshots();
     await loadState();
   })();

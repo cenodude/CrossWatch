@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any, IO, Literal, cast
+import os
+import re
 import json
 import shutil
 import zipfile
@@ -346,3 +348,167 @@ def import_tracker_upload(
         return import_tracker_json(payload, name)
     except Exception as e:
         raise ValueError("Unsupported file type; expected a ZIP or JSON file") from e
+
+_PAIR_SCOPE_RE = re.compile(r"^(?P<mode>[^_]+)_(?P<link>[^_]+)_pair_(?P<pid>.+)$")
+
+def _cw_state_dir() -> Path:
+    return Path(CONFIG) / ".cw_state"
+
+def _safe_name(name: str) -> str:
+    return PurePosixPath(str(name or "")).name
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+def _pair_meta_from_scope(scope: str) -> dict[str, Any]:
+    scope_s = str(scope or "").strip()
+    mode = None
+    src = None
+    dst = None
+    pair_id = None
+    m = _PAIR_SCOPE_RE.match(scope_s)
+    if m:
+        mode = m.group("mode") or None
+        link = m.group("link") or ""
+        if "-" in link:
+            a, b = link.split("-", 1)
+            src = a or None
+            dst = b or None
+        else:
+            src = link or None
+        pair_id = m.group("pid") or None
+    label = scope_s
+    if mode and src and dst:
+        label = f"{mode} {src}→{dst}"
+    return {"mode": mode, "src": src, "dst": dst, "pair_id": pair_id, "label": label}
+
+def list_pairs() -> dict[str, Any]:
+    root = _cw_state_dir()
+    if not root.exists():
+        return {"pairs": [], "default": ""}
+
+    bucket: dict[str, dict[str, Any]] = {}
+    for p in root.glob("*.json"):
+        name = p.name
+        if ".index." not in name:
+            continue
+        try:
+            scope = name.split(".index.", 1)[1].rsplit(".json", 1)[0]
+        except Exception:
+            continue
+        if "pair_" not in scope:
+            continue
+
+        try:
+            ts = int(p.stat().st_mtime)
+        except Exception:
+            ts = 0
+
+        cur = bucket.get(scope)
+        if not cur or ts > int(cur.get("ts") or 0):
+            meta = _pair_meta_from_scope(scope)
+            bucket[scope] = {"scope": scope, "ts": ts, **meta}
+
+    pairs = sorted(bucket.values(), key=lambda x: int(x.get("ts") or 0), reverse=True)
+    default = str(pairs[0]["scope"]) if pairs else ""
+    return {"pairs": pairs, "default": default}
+
+def list_pair_datasets(kind: Kind, pair: str) -> list[dict[str, Any]]:
+    root = _cw_state_dir()
+    if not root.exists():
+        return []
+
+    scope = str(pair or "").strip()
+    if not scope:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for p in root.glob(f"*_{kind}.index.{scope}.json"):
+        try:
+            prefix = p.name.split(f"_{kind}.index.", 1)[0]
+        except Exception:
+            prefix = p.stem
+        try:
+            ts = int(p.stat().st_mtime)
+            size = int(p.stat().st_size)
+        except Exception:
+            ts = 0
+            size = 0
+        out.append({"name": p.name, "provider": prefix.upper(), "ts": ts, "size": size})
+
+    out.sort(key=lambda x: int(x.get("ts") or 0), reverse=True)
+    return out
+
+def _resolve_pair_file(kind: Kind, pair: str, dataset: str | None) -> Path | None:
+    root = _cw_state_dir()
+    if not root.exists():
+        return None
+
+    if dataset:
+        name = _safe_name(dataset)
+        if not name:
+            return None
+        p = root / name
+        return p if p.exists() else None
+
+    dsets = list_pair_datasets(kind, pair)
+    if not dsets:
+        return None
+    return root / str(dsets[0]["name"])
+
+def load_pair_state(kind: Kind, pair: str, dataset: str | None = None) -> dict[str, Any]:
+    scope = str(pair or "").strip()
+    if not scope:
+        raise ValueError("Missing pair scope")
+
+    path = _resolve_pair_file(kind, scope, dataset)
+    if not path:
+        return {"items": {}, "ts": int(datetime.now(timezone.utc).timestamp()), "file": None, "pair": scope}
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+    items = {}
+    if isinstance(data, dict):
+        items = data.get("items") or {}
+    if not isinstance(items, dict):
+        items = {}
+
+    try:
+        ts = int(path.stat().st_mtime)
+    except Exception:
+        ts = int(datetime.now(timezone.utc).timestamp())
+
+    return {"items": items, "ts": ts, "file": path.name, "pair": scope}
+
+def save_pair_state(kind: Kind, pair: str, dataset: str | None, items: dict[str, Any]) -> dict[str, Any]:
+    scope = str(pair or "").strip()
+    if not scope:
+        raise ValueError("Missing pair scope")
+
+    path = _resolve_pair_file(kind, scope, dataset)
+    if not path:
+        raise ValueError("No dataset found for this pair/kind")
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+    data["items"] = dict(items or {})
+    data["edited_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    _atomic_write_json(path, data)
+
+    try:
+        ts = int(path.stat().st_mtime)
+    except Exception:
+        ts = int(datetime.now(timezone.utc).timestamp())
+    return {"items": data["items"], "ts": ts, "file": path.name, "pair": scope}

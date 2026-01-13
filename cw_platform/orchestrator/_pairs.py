@@ -51,18 +51,44 @@ def _collect_health_for_run(ctx) -> dict[str, Any]:
             needed.add(t)
 
     health_map: dict[str, Any] = {}
+
+    @contextmanager
+    def _health_env(provider: str):
+        key = f"health:{str(provider).upper()}"
+        new = {
+            "CW_PAIR_KEY": key,
+            "CW_PAIR_SCOPE": key,
+            "CW_SYNC_PAIR": key,
+            "CW_PAIR": key,
+            "CW_PAIR_SRC": str(provider).upper(),
+            "CW_PAIR_DST": str(provider).upper(),
+            "CW_PAIR_MODE": "health",
+            "CW_PAIR_FEATURE": "health",
+        }
+        old = {k: os.environ.get(k) for k in new.keys()}
+        try:
+            for k, v in new.items():
+                os.environ[k] = str(v)
+            yield
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
     for name in sorted(n for n in needed):
         ops = provs.get(name)
         if not ops:
             continue
 
-        inject_ctx_into_provider(ops, ctx)
-        try:
-            h = ops.health(ctx.config, emit=emit) or {}
-        except TypeError:
-            h = ops.health(ctx.config) or {}
-        except Exception as e:
-            h = {"ok": False, "status": "down", "details": f"health exception: {e}"}
+        with _health_env(name):
+            inject_ctx_into_provider(ops, ctx)
+            try:
+                h = ops.health(ctx.config, emit=emit) or {}
+            except TypeError:
+                h = ops.health(ctx.config) or {}
+            except Exception as e:
+                h = {"ok": False, "status": "down", "details": f"health exception: {e}"}
 
         health_map[name] = h
         emit(
@@ -132,6 +158,9 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
     key = _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
     new = {
         "CW_PAIR_KEY": key,
+        "CW_PAIR_SCOPE": key,
+        "CW_SYNC_PAIR": key,
+        "CW_PAIR": key,
         "CW_PAIR_SRC": str(src).upper(),
         "CW_PAIR_DST": str(dst).upper(),
         "CW_PAIR_MODE": str(mode or "").strip().lower(),
@@ -227,38 +256,40 @@ def run_pairs(ctx) -> dict[str, Any]:
             emit_info(f"[!] Missing provider ops for {src}→{dst}")
             continue
 
-        inject_ctx_into_provider(sops, ctx)
-        inject_ctx_into_provider(dops, ctx)
-
         ss = health_status(health_map.get(src) or {})
         sd = health_status(health_map.get(dst) or {})
         if ss == "auth_failed" or sd == "auth_failed":
             emit("pair:skip", src=src, dst=dst, reason="auth_failed", src_status=ss, dst_status=sd)
             continue
 
+        injected = False
+
         for feature in features:
             fcfg = feat_map.get(feature) or {}
             if isinstance(fcfg, dict) and not bool(fcfg.get("enable", True)):
                 continue
 
-            if (not supports_feature(sops, feature)) or (not supports_feature(dops, feature)) \
-               or (not health_feature_ok(health_map.get(src), feature)) \
-               or (not health_feature_ok(health_map.get(dst), feature)):
-                emit(
-                    "feature:unsupported",
-                    src=src,
-                    dst=dst,
-                    feature=feature,
-                    src_supported=supports_feature(sops, feature)
-                    and health_feature_ok(health_map.get(src), feature),
-                    dst_supported=supports_feature(dops, feature)
-                    and health_feature_ok(health_map.get(dst), feature),
-                )
-                continue
-
-            features_ran.add(feature)
-
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
+                if not injected:
+                    inject_ctx_into_provider(sops, ctx)
+                    inject_ctx_into_provider(dops, ctx)
+                    injected = True
+
+                src_ok = supports_feature(sops, feature) and health_feature_ok(health_map.get(src), feature)
+                dst_ok = supports_feature(dops, feature) and health_feature_ok(health_map.get(dst), feature)
+                if (not src_ok) or (not dst_ok):
+                    emit(
+                        "feature:unsupported",
+                        src=src,
+                        dst=dst,
+                        feature=feature,
+                        src_supported=src_ok,
+                        dst_supported=dst_ok,
+                    )
+                    continue
+
+                features_ran.add(feature)
+
                 if mode == "two-way":
                     res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
                     added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
@@ -285,7 +316,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                     unresolved_total += int(res.get("unresolved", 0))
                     skipped_total += int(res.get("skipped", 0))
                     errors_total += int(res.get("errors", 0))
-    
+
     if "watchlist" in features_ran:
         try:
             from ._tombstones import cascade_removals

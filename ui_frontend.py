@@ -616,7 +616,6 @@ function watchAuthMount(){
   const host = document.getElementById("auth-providers");
   if (!host) return;
 
-  // Initial paint
   refreshAuthDots(true).catch(()=>{});
 
   if (__authMo) return;
@@ -834,32 +833,50 @@ function render(payload){
   putRefreshBeforeTrakt();
 }
 
-async function fetchAndRender(e){
+async function fetchAndRender(e, opts){
   e?.preventDefault?.();
-  const btn=e?.currentTarget||document.getElementById('btn-status-refresh'); if(!btn) return;
-  if(btn.dataset.busy==='1') return;
 
-  btn.dataset.busy='1'; btn.classList.add('spinning'); btn.setAttribute('aria-busy','true'); btn.disabled=true;
-  const minSpin=new Promise(r=>setTimeout(r,600));
-  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),4500);
+  const btn = e?.currentTarget || document.getElementById('btn-status-refresh');
+  if (!btn) return;
 
-  try{
+  if (btn.dataset.busy === '1') return;
+
+  const fresh = opts?.fresh === true;
+
+  btn.dataset.busy='1';
+  btn.classList.add('spinning');
+  btn.setAttribute('aria-busy','true');
+  btn.disabled=true;
+
+  const minSpin = new Promise(r => setTimeout(r, 600));
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 4500);
+
+  try {
     await getConfig(true);
     refreshAuthDots(false).catch(()=>{});
-    const r=await fetch('/api/status?fresh=1',{cache:'no-store',signal:ctl.signal});
-    const d=r.ok?await r.json():null;
-    render(d?.providers?d:{providers:{}});
-  }catch(err){
-    console.error('Status refresh failed:',err);
-    render({providers:{}});
-  }finally{
+
+    const url = fresh ? '/api/status?fresh=1' : '/api/status';
+    const r = await fetch(url, { cache:'no-store', signal: ctl.signal });
+
+    const d = r.ok ? await r.json() : null;
+    render(d?.providers ? d : { providers:{} });
+  } catch (err) {
+    console.error('Status refresh failed:', err);
+    render({ providers:{} });
+  } finally {
     clearTimeout(t);
     await minSpin;
-    btn.classList.remove('spinning'); btn.removeAttribute('aria-busy'); btn.disabled=false; delete btn.dataset.busy;
+    btn.classList.remove('spinning');
+    btn.removeAttribute('aria-busy');
+    btn.disabled=false;
+    delete btn.dataset.busy;
     placeRefreshTopRight?.();
   }
 }
-window.manualRefreshStatus=fetchAndRender;
+
+window.manualRefreshStatus = (e) => fetchAndRender(e, { fresh: true });
+
 
 async function init(){
   if(typeof putRefreshBeforeTrakt==='function') putRefreshBeforeTrakt();
@@ -871,11 +888,11 @@ async function init(){
     try {
       if (await refreshAuthDots(false)) return;
     } catch {}
-    if (++tries < 50) setTimeout(retryDots, 200); // ~10s
+    if (++tries < 50) setTimeout(retryDots, 200);
   };
   retryDots();
 
-  fetchAndRender();
+  fetchAndRender(null, { fresh: false });
 }
 
 document.readyState==='loading'

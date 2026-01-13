@@ -40,6 +40,8 @@
       "Stop pause ≥ (%) (default 80) - If STOP arrives below this %, treat it as PAUSE.",
     "sc-help-adv-force-stop":
       "Force stop @ (%) (default 80) - If STOP is at or above this %, send /scrobble/stop.",
+    "sc-help-adv-progress-step":
+      "Progress updates in percentages, which can significantly reduce or increase the number of API calls required. When in doubt, default to 5% increments.",
     "sc-help-watch-filters":
       "Don't skip the filtering step! While optional for solo media server users, it becomes essential the moment you share your server with other users. Without filters, the system will scrobble everything",
     "sc-help-watch-advanced":
@@ -85,8 +87,10 @@
     .sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
     .sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
-    .sc-adv-grid .field{display:grid;grid-template-columns:auto 26px 1fr;align-items:center;gap:8px}
-    .sc-adv-grid .field label{white-space:nowrap;font-size:12px;opacity:.8}
+    .sc-adv-grid .field{display:flex;align-items:center;gap:8px}
+    .sc-adv-grid .field label{flex:0 0 auto;white-space:nowrap;font-size:12px;opacity:.8}
+    .sc-adv-grid .field .cx-help{flex:0 0 auto}
+    .sc-adv-grid .field input{flex:0 0 auto;width:64px;max-width:100%;margin-left:0}
     .sc-adv-grid .field input{width:64px;max-width:100%;justify-self:end}
     @media (max-width:1100px){.sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
     @media (max-width:640px){.sc-adv-grid{grid-template-columns:1fr;}}
@@ -171,7 +175,7 @@
 
   const DEFAULTS = {
     watch: { pause_debounce_seconds: 5, suppress_start_at: 99 },
-    trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5 },
+    trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 5 },
   };
 
   const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false };
@@ -269,6 +273,8 @@
   }
   const clamp100 = (n) => Math.min(100, Math.max(1, Math.round(Number(n))));
   const norm100 = (n, dflt) => clamp100(Number.isFinite(+n) ? +n : dflt);
+  const clampRange = (n, min, max) => Math.min(max, Math.max(min, Math.round(Number(n))));
+  const normRange = (n, dflt, min, max) => clampRange(Number.isFinite(+n) ? +n : dflt, min, max);
   const provider = () => String(read("scrobble.watch.provider", "plex") || "plex").toLowerCase();
 
   const PROVIDER_META = {
@@ -904,22 +910,23 @@ serverUUID: async () => {
   if (missing.length) {
     sinkOk = false;
     const plural = missing.length > 1 ? "are" : "is";
-    sinkErr = `${missing.join(" and ")} ${plural} not configured. Go to Authentication for Trakt/SIMKL, and set mdblist.api_key in config for MDBList. Or refresh your browser if you already configured it`;
+    sinkErr = `${missing.join(" and ")} ${plural} not configured. Go to Authentication and configure it, or refresh your browser if you already configured it.`;
   }
+
   rebuildPlexRatingsDropdown();
 
   if (watcherOn) {
     if (prov === "plex") {
-      if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex, or refresh your browser if you already configured it", "err");
+      if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication - Plex, or refresh your browser if you already configured it", "err");
       else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
       else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     } else if (prov === "emby") {
-      if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby, or refresh your browser if you already configured it", "err");
+      if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication - Emby, or refresh your browser if you already configured it", "err");
       else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     } else {
-      if (!jellyTokenOk) setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication → Jellyfin, or refresh your browser if you already configured it", "err");
+      if (!jellyTokenOk) setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication - Jellyfin, or refresh your browser if you already configured it", "err");
       else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     }
@@ -947,9 +954,13 @@ serverUUID: async () => {
 }
 
 
-  function buildAdvField(id, label, tipId, placeholder) {
-    return `<div class="field"><label for="${id}">${label}</label>${helpBtn(tipId)}<input id="${id}" class="input" type="number" min="1" max="100" step="1" placeholder="${placeholder}"></div>`;
+  function buildAdvField(id, label, tipId, placeholder, opts = {}) {
+    const min = Number.isFinite(+opts.min) ? +opts.min : 1;
+    const max = Number.isFinite(+opts.max) ? +opts.max : 100;
+    const step = Number.isFinite(+opts.step) ? +opts.step : 1;
+    return `<div class="field"><label for="${id}">${label}</label>${helpBtn(tipId)}<input id="${id}" class="input" type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" placeholder="${placeholder}"></div>`;
   }
+  
 
   function buildUI() {
     injectStyles();
@@ -1177,13 +1188,13 @@ serverUUID: async () => {
 	            <div class="cc-head">
 	              <div>
 	                <span id="sc-server-label">Media Server</span>
-	                <span id="sc-server-required" class="pill req">required</span>
+	                <span id="sc-server-required" class="pill req"></span>
 	              </div>
 	            </div>
 	            <div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div>
 	            <div style="margin-top:12px">
 	              <div class="muted">Server URL (http(s)://host[:port])</div>
-	              <input id="sc-pms-input" class="input" placeholder="https://192.168.1.10:32400" readonly/>
+	              <input id="sc-pms-input" class="input" placeholder="http://192.168.1.10:32400" readonly/>
 	            </div>
 	            <div style="margin-top:12px">
 	              <div class="muted">Options</div>
@@ -1255,7 +1266,10 @@ serverUUID: async () => {
               ${buildAdvField("sc-stop-pause", "Stop pause ≥", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}
               ${buildAdvField("sc-force-stop", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}
             </div>
-            <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
+            <div class="sc-adv-grid" style="grid-template-columns:repeat(1,minmax(0,1fr));margin-top:10px">
+              ${buildAdvField("sc-progress-step", "Progress step", "sc-help-adv-progress-step", DEFAULTS.trakt.progress_step, { min: 1, max: 25, step: 1 })}
+            </div>
+            <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Percent fields are 1–100. Progress step is 1–25.</div>
           </div>
         </details>
       `;
@@ -1281,6 +1295,26 @@ serverUUID: async () => {
     h3 = el("input", { type: "hidden", id: "cfg-jellyfin-server-url", name: "jellyfin.server" });
     form.appendChild(h3);
   }
+  let h4 = d.getElementById("cfg-trakt-progress-step");
+  if (!h4) {
+    h4 = el("input", { type: "hidden", id: "cfg-trakt-progress-step", name: "scrobble.trakt.progress_step" });
+    form.appendChild(h4);
+  }
+  let h5 = d.getElementById("cfg-trakt-stop-pause-threshold");
+  if (!h5) {
+    h5 = el("input", { type: "hidden", id: "cfg-trakt-stop-pause-threshold", name: "scrobble.trakt.stop_pause_threshold" });
+    form.appendChild(h5);
+  }
+  let h6 = d.getElementById("cfg-trakt-force-stop-at");
+  if (!h6) {
+    h6 = el("input", { type: "hidden", id: "cfg-trakt-force-stop-at", name: "scrobble.trakt.force_stop_at" });
+    form.appendChild(h6);
+  }
+  let h7 = d.getElementById("cfg-trakt-regress-tolerance");
+  if (!h7) {
+    h7 = el("input", { type: "hidden", id: "cfg-trakt-regress-tolerance", name: "scrobble.trakt.regress_tolerance_percent" });
+    form.appendChild(h7);
+  }
   syncHiddenServerInputs();
 }
 
@@ -1292,8 +1326,15 @@ serverUUID: async () => {
   if (h2) h2.value = String(read("emby.server", "") || "");
   const h3 = d.getElementById("cfg-jellyfin-server-url");
   if (h3) h3.value = String(read("jellyfin.server", "") || "");
+  const h4 = d.getElementById("cfg-trakt-progress-step");
+  if (h4) h4.value = String(read("scrobble.trakt.progress_step", DEFAULTS.trakt.progress_step) ?? DEFAULTS.trakt.progress_step);
+  const h5 = d.getElementById("cfg-trakt-stop-pause-threshold");
+  if (h5) h5.value = String(read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold) ?? DEFAULTS.trakt.stop_pause_threshold);
+  const h6 = d.getElementById("cfg-trakt-force-stop-at");
+  if (h6) h6.value = String(read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at) ?? DEFAULTS.trakt.force_stop_at);
+  const h7 = d.getElementById("cfg-trakt-regress-tolerance");
+  if (h7) h7.value = String(read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent) ?? DEFAULTS.trakt.regress_tolerance_percent);
 }
-
 
   function restoreDetailsState(sel, def, key) {
     const n = $(sel, STATE.mount);
@@ -1312,8 +1353,17 @@ serverUUID: async () => {
   }
 
   const readNum = (sel, dflt) => {
-    const raw = String($(sel, STATE.mount)?.value ?? "").trim();
+    const n = $(sel, STATE.mount);
+    if (!n) return null;
+    const raw = String(n.value ?? "").trim();
     return raw === "" ? clamp100(dflt) : norm100(raw, dflt);
+  };
+
+  const readRange = (sel, dflt, min, max) => {
+    const n = $(sel, STATE.mount);
+    if (!n) return null;
+    const raw = String(n.value ?? "").trim();
+    return raw === "" ? clampRange(dflt, min, max) : normRange(raw, dflt, min, max);
   };
 
   async function copyText(s) {
@@ -1336,28 +1386,51 @@ serverUUID: async () => {
   }
 
   function commitAdvancedInputsWatch() {
-    write("scrobble.watch.pause_debounce_seconds", readNum("#sc-pause-debounce", DEFAULTS.watch.pause_debounce_seconds));
-    write("scrobble.watch.suppress_start_at", readNum("#sc-suppress-start", DEFAULTS.watch.suppress_start_at));
+    const pd = readNum("#sc-pause-debounce", DEFAULTS.watch.pause_debounce_seconds);
+    if (pd != null) write("scrobble.watch.pause_debounce_seconds", pd);
+    const ss = readNum("#sc-suppress-start", DEFAULTS.watch.suppress_start_at);
+    if (ss != null) write("scrobble.watch.suppress_start_at", ss);
   }
 
   function commitAdvancedInputsWebhook() {
-    write("scrobble.webhook.pause_debounce_seconds", readNum("#sc-pause-debounce-webhook", DEFAULTS.watch.pause_debounce_seconds));
-    write("scrobble.webhook.suppress_start_at", readNum("#sc-suppress-start-webhook", DEFAULTS.watch.suppress_start_at));
+    const pd = readNum("#sc-pause-debounce-webhook", DEFAULTS.watch.pause_debounce_seconds);
+    if (pd != null) write("scrobble.webhook.pause_debounce_seconds", pd);
+    const ss = readNum("#sc-suppress-start-webhook", DEFAULTS.watch.suppress_start_at);
+    if (ss != null) write("scrobble.webhook.suppress_start_at", ss);
   }
 
   function commitAdvancedInputsTrakt() {
-    const keys = [
-      ["#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
-      ["#sc-force-stop", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
-      ["#sc-regress", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
-      ["#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
-      ["#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
-      ["#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
-    ];
+    const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+    const preferWebhook = mode === "webhook";
+    const keys = preferWebhook
+      ? [
+          ["#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+          ["#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+          ["#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+          ["#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+          ["#sc-force-stop", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+          ["#sc-regress", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+        ]
+      : [
+          ["#sc-stop-pause", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+          ["#sc-force-stop", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+          ["#sc-regress", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+          ["#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold],
+          ["#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at],
+          ["#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent],
+        ];
+
+    const wrote = new Set();
     for (const [sel, path, dflt] of keys) {
+      if (wrote.has(path)) continue;
       const v = readNum(sel, dflt);
+      if (v == null) continue;
       write(path, v);
+      wrote.add(path);
     }
+
+    const ps = readRange("#sc-progress-step", DEFAULTS.trakt.progress_step, 1, 25);
+    if (ps != null) write("scrobble.trakt.progress_step", ps);
   }
 
   function bindPercentInput(sel, path, dflt) {
@@ -1381,6 +1454,29 @@ serverUUID: async () => {
     on(n, "change", () => set(n.value, true));
     on(n, "blur", () => set(n.value, true));
   }
+
+  function bindRangeInput(sel, path, dflt, min, max) {
+    const n = $(sel, STATE.mount);
+    if (!n) return;
+    const set = (val, commitEmpty = false) => {
+      const raw = String(val ?? n.value ?? "").trim();
+      if (raw === "") {
+        if (commitEmpty) {
+          const v = clampRange(dflt, min, max);
+          write(path, v);
+          n.value = v;
+        }
+        return;
+      }
+      const v = normRange(raw, dflt, min, max);
+      write(path, v);
+      n.value = v;
+    };
+    on(n, "input", () => set(n.value, false));
+    on(n, "change", () => set(n.value, true));
+    on(n, "blur", () => set(n.value, true));
+  }
+
 
   function namesFromChips(hostId) {
     const host = $(hostId, STATE.mount);
@@ -1864,6 +1960,11 @@ serverUUID: async () => {
     if (n) n.value = norm100(v, v);
   };
 
+  const setRange = (id, v, dflt, min, max) => {
+    const n = $(id, STATE.mount);
+    if (n) n.value = normRange(v, dflt, min, max);
+  };
+
   set("#sc-pause-debounce", read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
   set("#sc-suppress-start", read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at));
   set("#sc-pause-debounce-webhook", read("scrobble.webhook.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds));
@@ -1874,6 +1975,7 @@ serverUUID: async () => {
   set("#sc-stop-pause-webhook", read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold));
   set("#sc-force-stop-webhook", read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at));
   set("#sc-regress-webhook", read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent));
+  setRange("#sc-progress-step", read("scrobble.trakt.progress_step", DEFAULTS.trakt.progress_step), DEFAULTS.trakt.progress_step, 1, 25);
 
   const delEnabled = !!read("scrobble.delete_plex", false);
   const delWh = $("#sc-delete-plex-webhook", STATE.mount);
@@ -2224,6 +2326,7 @@ async function hydrateJellyfin() {
     bindPercentInput("#sc-stop-pause-webhook", "scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold);
     bindPercentInput("#sc-force-stop-webhook", "scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at);
     bindPercentInput("#sc-regress-webhook", "scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent);
+    bindRangeInput("#sc-progress-step", "scrobble.trakt.progress_step", DEFAULTS.trakt.progress_step, 1, 25);
 
     const wh = $("#sc-enable-webhook", STATE.mount);
     const wa = $("#sc-enable-watcher", STATE.mount);
@@ -2491,6 +2594,7 @@ async function hydrateJellyfin() {
     },
 
     trakt: {
+      progress_step: read("scrobble.trakt.progress_step", DEFAULTS.trakt.progress_step),
       stop_pause_threshold: read("scrobble.trakt.stop_pause_threshold", DEFAULTS.trakt.stop_pause_threshold),
       force_stop_at: read("scrobble.trakt.force_stop_at", DEFAULTS.trakt.force_stop_at),
       regress_tolerance_percent: read("scrobble.trakt.regress_tolerance_percent", DEFAULTS.trakt.regress_tolerance_percent),

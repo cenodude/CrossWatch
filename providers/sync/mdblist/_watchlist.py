@@ -38,10 +38,12 @@ URL_LIST = f"{BASE}/watchlist/items"
 URL_MODIFY = f"{BASE}/watchlist/items/{{action}}"
 URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 
-SHADOW = state_file("mdblist_watchlist.shadow.json")
-UNRESOLVED_PATH = state_file("mdblist_watchlist.unresolved.json")
+def _shadow_path() -> Path:
+    return state_file("mdblist_watchlist.shadow.json")
 
 
+def _unresolved_path() -> Path:
+    return state_file("mdblist_watchlist.unresolved.json")
 
 _log = make_logger("watchlist")
 _cfg = cfg_section
@@ -56,28 +58,31 @@ _now_iso = now_iso
 
 
 def _shadow_load() -> dict[str, Any]:
+    p = _shadow_path()
     try:
-        return json.loads(SHADOW.read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {"ts": 0, "items": {}}
 
 
 def _shadow_save(items: Mapping[str, Any]) -> None:
+    p = _shadow_path()
     try:
-        tmp = SHADOW.with_suffix(".tmp")
+        tmp = p.with_name(f"{p.name}.tmp")
         tmp.write_text(
             json.dumps({"ts": int(time.time()), "items": dict(items)}, ensure_ascii=False),
             "utf-8",
         )
-        os.replace(tmp, SHADOW)
+        os.replace(tmp, p)
     except Exception:
         pass
 
 
 def _shadow_bust() -> None:
+    p = _shadow_path()
     try:
-        if SHADOW.exists():
-            SHADOW.unlink()
+        if p.exists():
+            p.unlink()
             _log("shadow.bust - file removed")
     except Exception:
         pass
@@ -117,18 +122,20 @@ def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries
 
 
 def _load_unresolved() -> dict[str, Any]:
+    p = _unresolved_path()
     try:
-        return json.loads(UNRESOLVED_PATH.read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
+    p = _unresolved_path()
     try:
-        UNRESOLVED_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = UNRESOLVED_PATH.with_suffix(".tmp")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"{p.name}.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, UNRESOLVED_PATH)
+        os.replace(tmp, p)
     except Exception as e:
         _log(f"unresolved.save failed: {e}")
 
@@ -351,6 +358,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     if acts_ts and (not wm) and cached:
         save_watermark("watchlist", acts_ts)
+        save_watermark("watchlist_removed", acts_ts)
         _log(f"baseline watermark set to {acts_ts} (using cached shadow)")
         return cached
 
@@ -421,6 +429,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     if acts_ts:
         save_watermark("watchlist", acts_ts)
+        save_watermark("watchlist_removed", acts_ts)
+        save_watermark("watchlist_removed", acts_ts)
 
     if prog:
         try:

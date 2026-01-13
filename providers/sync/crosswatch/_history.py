@@ -11,6 +11,8 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
+from ._common import scoped_file, scoped_snapshots_dir
+
 
 def _log(msg: str) -> None:
     if os.getenv("CW_DEBUG") or os.getenv("CW_CROSSWATCH_DEBUG"):
@@ -27,19 +29,19 @@ def _root(adapter: Any) -> Path:
 
 
 def _history_path(adapter: Any) -> Path:
-    return _root(adapter) / "history.json"
+    return scoped_file(_root(adapter), "history.json")
 
 
 def _snapshot_dir(adapter: Any) -> Path:
-    return _root(adapter) / "snapshots"
+    return scoped_snapshots_dir(_root(adapter))
 
 
 def _unresolved_path(adapter: Any) -> Path:
-    return _root(adapter) / "history.unresolved.json"
+    return scoped_file(_root(adapter), "history.unresolved.json")
 
 
 def _restore_state_path(adapter: Any) -> Path:
-    return _root(adapter) / "history.restore_state.json"
+    return scoped_file(_root(adapter), "history.restore_state.json")
 
 
 def _load_state(adapter: Any) -> dict[str, Any]:
@@ -87,7 +89,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     return {"ts": 0, "items": {}}
 
 
-def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
+def _atomic_write(path: Path, payload: Any) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")

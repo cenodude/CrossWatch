@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,7 @@ PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "anilist", "jellyfin", "
 
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
+STATUS_LOCK = threading.Lock()
 PROBE_CACHE: dict[str, tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS}
 PROBE_DETAIL_CACHE: dict[str, tuple[float, bool, str]] = {
     k: (0.0, False, "") for k in PROVIDERS
@@ -1008,184 +1010,166 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
         if not fresh and cached and age < STATUS_TTL:
             return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
-        cfg = load_config_fn() or {}
-        pairs = cfg.get("pairs") or []
-        any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
+        with STATUS_LOCK:
+            now = time.time()
+            cached = STATUS_CACHE["data"]
+            age = (now - STATUS_CACHE["ts"]) if cached else 1e9
+            if not fresh and cached and age < STATUS_TTL:
+                return JSONResponse(cached, headers={"Cache-Control": "no-store"})
 
-        probe_age = 0 if fresh else PROBE_TTL
-        user_age = USERINFO_TTL
+            cfg = load_config_fn() or {}
+            pairs = cfg.get("pairs") or []
+            any_pair_ready = any(_pair_ready(cfg, p) for p in pairs)
 
-        with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
-            futs = {
-                ex.submit(_safe_probe_detail, fn, cfg, probe_age): name
-                for name, fn in DETAIL_PROBES.items()
-            }
-            results: dict[str, tuple[bool, str]] = {}
-            for f in as_completed(futs):
-                name = futs[f]
-                try:
-                    results[name] = f.result()
-                except Exception as e:
-                    results[name] = (False, f"probe failed: {e}")
+            probe_age = 0 if fresh else PROBE_TTL
+            user_age = USERINFO_TTL
 
-        plex_ok, plex_reason = results.get("PLEX", (False, ""))
-        simkl_ok, simkl_reason = results.get("SIMKL", (False, ""))
-        trakt_ok, trakt_reason = results.get("TRAKT", (False, ""))
-        jelly_ok, jelly_reason = results.get("JELLYFIN", (False, ""))
-        emby_ok, emby_reason = results.get("EMBY", (False, ""))
-        mdbl_ok, mdbl_reason = results.get("MDBLIST", (False, ""))
-        taut_ok, taut_reason = results.get("TAUTULLI", (False, ""))
-        anilist_ok, anilist_reason = results.get("ANILIST", (False, ""))
-
-        debug = bool((cfg.get("runtime") or {}).get("debug"))
-
-        info_plex = (
-            _safe_userinfo(plex_user_info, cfg, max_age_sec=user_age) if plex_ok else {}
-        )
-        info_trakt = (
-            _safe_userinfo(trakt_user_info, cfg, max_age_sec=user_age) if trakt_ok else {}
-        )
-        info_anilist = (
-            _safe_userinfo(anilist_user_info, cfg, max_age_sec=user_age) if anilist_ok else {}
-        )
-        info_emby = (
-            _safe_userinfo(emby_user_info, cfg, max_age_sec=user_age) if emby_ok else {}
-        )
-        info_mdbl = (
-            _safe_userinfo(mdblist_user_info, cfg, max_age_sec=user_age) if mdbl_ok else {}
-        )
-        
-        trakt_block: dict[str, Any] = {"connected": trakt_ok}
-        if not trakt_ok:
-            trakt_block["reason"] = trakt_reason
-        if info_trakt:
-            trakt_block["vip"] = bool(info_trakt.get("vip"))
-            trakt_block["vip_type"] = info_trakt.get("vip_type")
-
-            limits_info = info_trakt.get("limits") or {}
-            if isinstance(limits_info, dict) and limits_info:
-                watchlist = limits_info.get("watchlist") or {}
-                collection = limits_info.get("collection") or {}
-                if watchlist or collection:
-                    trakt_block["limits"] = {}
-                    if watchlist:
-                        trakt_block["limits"]["watchlist"] = {
-                            "item_count": int((watchlist.get("item_count") or 0)),
-                            "used": int((watchlist.get("used") or 0)),
-                        }
-                    if collection:
-                        trakt_block["limits"]["collection"] = {
-                            "item_count": int((collection.get("item_count") or 0)),
-                            "used": int((collection.get("used") or 0)),
-                        }
-
-            last_err = info_trakt.get("last_limit_error")
-            if isinstance(last_err, dict) and last_err.get("feature") and last_err.get("ts"):
-                trakt_block["last_limit_error"] = {
-                    "feature": str(last_err.get("feature")),
-                    "ts": str(last_err.get("ts")),
+            with ThreadPoolExecutor(max_workers=len(DETAIL_PROBES)) as ex:
+                futs = {
+                    ex.submit(_safe_probe_detail, fn, cfg, probe_age): name
+                    for name, fn in DETAIL_PROBES.items()
                 }
+                results: dict[str, tuple[bool, str]] = {}
+                for f in as_completed(futs):
+                    name = futs[f]
+                    try:
+                        results[name] = f.result()
+                    except Exception as e:
+                        results[name] = (False, f"probe failed: {e}")
 
-        data: dict[str, Any] = {
-            "plex_connected": plex_ok,
-            "simkl_connected": simkl_ok,
-            "trakt_connected": trakt_ok,
-            "anilist_connected": anilist_ok,
-            "jellyfin_connected": jelly_ok,
-            "emby_connected": emby_ok,
-            "mdblist_connected": mdbl_ok,
-            "tautulli_connected": taut_ok,
-            "debug": debug,
-            "can_run": bool(any_pair_ready),
-            "ts": int(now),
-            "providers": {
-                "PLEX": {
-                    "connected": plex_ok,
-                    **({} if plex_ok else {"reason": plex_reason}),
-                    **(
-                        {}
-                        if not info_plex
-                        else {
-                            "plexpass": bool(info_plex.get("plexpass")),
-                            "subscription": info_plex.get("subscription") or {},
-                        }
-                    ),
-                },
-                "SIMKL": {
-                    "connected": simkl_ok,
-                    **({} if simkl_ok else {"reason": simkl_reason}),
-                },
-                "ANILIST": {
-                    "connected": anilist_ok,
-                    **({} if anilist_ok else {"reason": anilist_reason}),
-                    **(
-                        {}
-                        if not info_anilist
-                        else {"user": (info_anilist.get("user") or {})}
-                    ),
-                },
-                "TRAKT": trakt_block,
+            plex_ok, plex_reason = results.get("PLEX", (False, ""))
+            simkl_ok, simkl_reason = results.get("SIMKL", (False, ""))
+            trakt_ok, trakt_reason = results.get("TRAKT", (False, ""))
+            jelly_ok, jelly_reason = results.get("JELLYFIN", (False, ""))
+            emby_ok, emby_reason = results.get("EMBY", (False, ""))
+            mdbl_ok, mdbl_reason = results.get("MDBLIST", (False, ""))
+            taut_ok, taut_reason = results.get("TAUTULLI", (False, ""))
+            anilist_ok, anilist_reason = results.get("ANILIST", (False, ""))
 
-                "JELLYFIN": {
-                    "connected": jelly_ok,
-                    **({} if jelly_ok else {"reason": jelly_reason}),
-                },
-                "EMBY": {
-                    "connected": emby_ok,
-                    **({} if emby_ok else {"reason": emby_reason}),
-                    **(
-                        {}
-                        if not info_emby
-                        else {"premiere": bool(info_emby.get("premiere"))}
-                    ),
-                },
-                 "TAUTULLI": {
-                     "connected": taut_ok,
-                     **({} if taut_ok else {"reason": taut_reason}),
-                 },
-                "MDBLIST": {
-                    "connected": mdbl_ok,
-                    **({} if mdbl_ok else {"reason": mdbl_reason}),
-                    **(
-                        {}
-                        if not info_mdbl
-                        else {
-                            "vip": bool(info_mdbl.get("vip")),
-                            "vip_type": info_mdbl.get("vip_type"),
-                            "patron_status": info_mdbl.get("patron_status"),
-                            "limits": {
-                                "api_requests": int(
-                                    ((info_mdbl.get("limits") or {}).get("api_requests") or 0)
-                                ),
-                                "api_requests_count": int(
-                                    (
-                                        (info_mdbl.get("limits") or {}).get(
-                                            "api_requests_count"
-                                        )
-                                        or 0
-                                    )
-                                ),
-                            },
-                        }
-                    ),
-                },
-            },
-        }
+            debug = bool((cfg.get("runtime") or {}).get("debug"))
 
-        STATUS_CACHE["ts"] = now
-        STATUS_CACHE["data"] = data
-        return JSONResponse(data, headers={"Cache-Control": "no-store"})
+            info_plex = _safe_userinfo(plex_user_info, cfg, max_age_sec=user_age) if plex_ok else {}
+            info_trakt = _safe_userinfo(trakt_user_info, cfg, max_age_sec=user_age) if trakt_ok else {}
+            info_anilist = _safe_userinfo(anilist_user_info, cfg, max_age_sec=user_age) if anilist_ok else {}
+            info_emby = _safe_userinfo(emby_user_info, cfg, max_age_sec=user_age) if emby_ok else {}
+            info_mdbl = _safe_userinfo(mdblist_user_info, cfg, max_age_sec=user_age) if mdbl_ok else {}
+
+            trakt_block: dict[str, Any] = {"connected": trakt_ok}
+            if not trakt_ok:
+                trakt_block["reason"] = trakt_reason
+            if info_trakt:
+                trakt_block["vip"] = bool(info_trakt.get("vip"))
+                trakt_block["vip_type"] = info_trakt.get("vip_type")
+
+                limits_info = info_trakt.get("limits") or {}
+                if isinstance(limits_info, dict) and limits_info:
+                    watchlist = limits_info.get("watchlist") or {}
+                    collection = limits_info.get("collection") or {}
+                    if watchlist or collection:
+                        trakt_block["limits"] = {}
+                        if watchlist:
+                            trakt_block["limits"]["watchlist"] = {
+                                "item_count": int((watchlist.get("item_count") or 0)),
+                                "used": int((watchlist.get("used") or 0)),
+                            }
+                        if collection:
+                            trakt_block["limits"]["collection"] = {
+                                "item_count": int((collection.get("item_count") or 0)),
+                                "used": int((collection.get("used") or 0)),
+                            }
+
+                last_err = info_trakt.get("last_limit_error")
+                if isinstance(last_err, dict) and last_err.get("feature") and last_err.get("ts"):
+                    trakt_block["last_limit_error"] = {
+                        "feature": str(last_err.get("feature")),
+                        "ts": str(last_err.get("ts")),
+                    }
+
+            data: dict[str, Any] = {
+                "plex_connected": plex_ok,
+                "simkl_connected": simkl_ok,
+                "trakt_connected": trakt_ok,
+                "anilist_connected": anilist_ok,
+                "jellyfin_connected": jelly_ok,
+                "emby_connected": emby_ok,
+                "mdblist_connected": mdbl_ok,
+                "tautulli_connected": taut_ok,
+                "debug": debug,
+                "can_run": bool(any_pair_ready),
+                "ts": int(now),
+                "providers": {
+                    "PLEX": {
+                        "connected": plex_ok,
+                        **({} if plex_ok else {"reason": plex_reason}),
+                        **(
+                            {}
+                            if not info_plex
+                            else {
+                                "plexpass": bool(info_plex.get("plexpass")),
+                                "subscription": info_plex.get("subscription") or {},
+                            }
+                        ),
+                    },
+                    "SIMKL": {
+                        "connected": simkl_ok,
+                        **({} if simkl_ok else {"reason": simkl_reason}),
+                    },
+                    "ANILIST": {
+                        "connected": anilist_ok,
+                        **({} if anilist_ok else {"reason": anilist_reason}),
+                        **({} if not info_anilist else {"user": (info_anilist.get("user") or {})}),
+                    },
+                    "TRAKT": trakt_block,
+                    "JELLYFIN": {
+                        "connected": jelly_ok,
+                        **({} if jelly_ok else {"reason": jelly_reason}),
+                    },
+                    "EMBY": {
+                        "connected": emby_ok,
+                        **({} if emby_ok else {"reason": emby_reason}),
+                        **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))}),
+                    },
+                    "TAUTULLI": {
+                        "connected": taut_ok,
+                        **({} if taut_ok else {"reason": taut_reason}),
+                    },
+                    "MDBLIST": {
+                        "connected": mdbl_ok,
+                        **({} if mdbl_ok else {"reason": mdbl_reason}),
+                        **(
+                            {}
+                            if not info_mdbl
+                            else {
+                                "vip": bool(info_mdbl.get("vip")),
+                                "vip_type": info_mdbl.get("vip_type"),
+                                "patron_status": info_mdbl.get("patron_status"),
+                                "limits": {
+                                    "api_requests": int(((info_mdbl.get("limits") or {}).get("api_requests") or 0)),
+                                    "api_requests_count": int(
+                                        ((info_mdbl.get("limits") or {}).get("api_requests_count") or 0)
+                                    ),
+                                },
+                            }
+                        ),
+                    },
+                },
+            }
+
+            STATUS_CACHE["ts"] = now
+            STATUS_CACHE["data"] = data
+            return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/debug/clear_probe_cache", tags=["Probes"])
     def clear_probe_cache() -> dict[str, Any]:
-        for k in list(PROBE_CACHE.keys()):
-            PROBE_CACHE[k] = (0.0, False)
-        for k in list(PROBE_DETAIL_CACHE.keys()):
-            PROBE_DETAIL_CACHE[k] = (0.0, False, "")
-        STATUS_CACHE["ts"] = 0.0
-        STATUS_CACHE["data"] = None
-        for k in list(_USERINFO_CACHE.keys()):
-            _USERINFO_CACHE[k] = (0.0, {})
+        with STATUS_LOCK:
+            for k in list(PROBE_CACHE.keys()):
+                PROBE_CACHE[k] = (0.0, False)
+            for k in list(PROBE_DETAIL_CACHE.keys()):
+                PROBE_DETAIL_CACHE[k] = (0.0, False, "")
+            STATUS_CACHE["ts"] = 0.0
+            STATUS_CACHE["data"] = None
+            for k in list(_USERINFO_CACHE.keys()):
+                _USERINFO_CACHE[k] = (0.0, {})
         return {"ok": True}
 
     app.state.PROBE_CACHE = PROBE_CACHE

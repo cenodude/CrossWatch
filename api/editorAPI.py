@@ -26,6 +26,10 @@ from services.editor import (
     list_snapshots,
     load_state,
     save_state,
+    list_pairs,
+    list_pair_datasets,
+    load_pair_state,
+    save_pair_state,
 )
 
 router = APIRouter(prefix="/api/editor", tags=["editor"])
@@ -562,6 +566,8 @@ def api_editor_get_state(
     snapshot: str | None = Query(None),
     source: str = Query("tracker"),
     provider: str | None = Query(None),
+    pair: str | None = Query(None),
+    dataset: str | None = Query(None),
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
     src = (source or "tracker").strip().lower()
@@ -579,6 +585,26 @@ def api_editor_get_state(
             "count": len(items),
             "items": items,
         }
+
+    if src in ("pair", "pair-cache", "cache"):
+        scope = (pair or "").strip()
+        if not scope:
+            raise HTTPException(status_code=400, detail="Missing pair for source=pair")
+        ds = (dataset or snapshot or "").strip() or None
+        state = load_pair_state(k, scope, dataset=ds)
+        items = state.get("items") or {}
+        if not isinstance(items, dict):
+            items = {}
+        return {
+            "kind": k,
+            "source": "pair",
+            "pair": scope,
+            "dataset": state.get("file"),
+            "ts": state.get("ts"),
+            "count": len(items),
+            "items": items,
+        }
+
     if src in ("state", "current"):
         raw_state = _load_current_state()
         raw_policy = _load_policy()
@@ -629,6 +655,24 @@ def api_editor_get_state(
             "manual_blocks": manual_blocks,
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
+
+@router.get("/pairs")
+def api_editor_list_pairs() -> dict[str, Any]:
+    return list_pairs()
+
+@router.get("/pairs/datasets")
+def api_editor_pair_datasets(
+    kind: str = Query("watchlist"),
+    pair: str = Query(""),
+) -> dict[str, Any]:
+    k = _normalize_kind(kind)
+    scope = str(pair or "").strip()
+    if not scope:
+        raise HTTPException(status_code=400, detail="Missing pair")
+    dsets = list_pair_datasets(k, scope)
+    default_dataset = str(dsets[0]["name"]) if dsets else ""
+    return {"kind": k, "pair": scope, "datasets": dsets, "default_dataset": default_dataset}
+
 @router.get("/snapshots")
 def api_editor_list_snapshots(
     kind: str = Query("watchlist"),
