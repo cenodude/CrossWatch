@@ -15,9 +15,37 @@ DEFAULT_DATE_FROM = START_OF_TIME_ISO
 UA = os.getenv("CW_UA", "CrossWatch/3.0 (SIMKL)")
 
 
-_STATE_DIR = Path("/config/.cw_state")
-_WATERMARK_PATH = _STATE_DIR / "simkl.watermarks.json"
+STATE_DIR = Path("/config/.cw_state")
+WATERMARK_PATH = STATE_DIR / "simkl.watermarks.json"  # legacy (do not use)
 
+def _pair_scope() -> str | None:
+    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+        v = os.getenv(k)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
+
+def _safe_scope(value: str) -> str:
+    s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
+    s = s.strip("_ ")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s[:96] if s else "default"
+
+def state_file(name: str) -> Path:
+    scope = _pair_scope()
+    safe = _safe_scope(scope) if scope else "unscoped"
+    p = Path(name)
+    if p.suffix:
+        return STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
+    return STATE_DIR / f"{name}.{safe}"
+
+def scoped_state_path(name: str) -> Path:
+    return state_file(name)
+
+def _watermark_path() -> Path:
+    # Always pair-scoped (or unscoped when no pair env is present).
+    return state_file("simkl.watermarks.json")
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
@@ -28,7 +56,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
     try:
-        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, path)
@@ -37,14 +65,14 @@ def _write_json(path: Path, data: Mapping[str, Any]) -> None:
 
 
 def load_watermarks() -> dict[str, str]:
-    data = _read_json(_WATERMARK_PATH)
+    data = _read_json(_watermark_path())
     return {k: str(v) for k, v in (data or {}).items() if isinstance(v, str) and v.strip()}
 
 
 def save_watermark(feature: str, iso_ts: str) -> None:
     data = load_watermarks()
     data[feature] = iso_ts
-    _write_json(_WATERMARK_PATH, data)
+    _write_json(_watermark_path(), data)
 
 
 def get_watermark(feature: str) -> str | None:
@@ -310,3 +338,26 @@ def key_of(item: Mapping[str, Any]) -> str:
     m = normalize(item)
     k = canonical_key(m)
     return k or ""
+
+__all__ = [
+    "START_OF_TIME_ISO",
+    "DEFAULT_DATE_FROM",
+    "UA",
+    "STATE_DIR",
+    "WATERMARK_PATH",
+    "state_file",
+    "scoped_state_path",
+    "load_watermarks",
+    "save_watermark",
+    "get_watermark",
+    "update_watermark_if_new",
+    "coalesce_date_from",
+    "build_headers",
+    "fetch_activities",
+    "parse_rate_limit",
+    "extract_latest_ts",
+    "canonical_key",
+    "id_minimal",
+    "key_of",
+    "normalize",
+]

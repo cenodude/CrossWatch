@@ -132,6 +132,26 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
     except Exception:
         return 99.0
 
+def _progress_step(cfg: dict[str, Any]) -> int:
+    try:
+        s = cfg.get("scrobble") or {}
+        step = (s.get("simkl") or {}).get("progress_step")
+        if step is None:
+            step = (s.get("trakt") or {}).get("progress_step", 5)
+        step_i = int(step)
+    except Exception:
+        step_i = 5
+    return max(1, min(25, step_i))
+
+
+def _quantize_progress(p: int, step: int, action: str) -> int:
+    v = _clamp(p)
+    if step <= 1 or action == "stop":
+        return v
+    if v < step:
+        return max(1, v)
+    q = (v // step) * step
+    return max(1, min(100, q))
 
 def _clamp(p: Any) -> int:
     try:
@@ -270,6 +290,14 @@ def _ids_desc_map(ids: dict[str, Any]) -> str:
         if v is not None:
             return f"{k}:{v}"
     return "title/year"
+
+
+def _extract_skeleton_from_body(b: dict[str, Any]) -> dict[str, Any]:
+    out = dict(b)
+    out.pop("progress", None)
+    out.pop("app_version", None)
+    out.pop("app_date", None)
+    return out
 
 
 def _body_ids_desc(b: dict[str, Any]) -> str:
@@ -483,6 +511,12 @@ class SimklSink(ScrobbleSink):
                 p_send = last_sess
             elif p_send < thr:
                 action = "pause"
+                
+        step = _progress_step(cfg)
+        p_send = _quantize_progress(int(p_send), step, action)
+        
+        if action == "start" and p_sess >= 0 and int(p_send) == int(p_sess):
+            return
 
         if p_send != p_sess:
             self._p_sess[(sk, mk)] = p_send
@@ -493,16 +527,32 @@ class SimklSink(ScrobbleSink):
         if not (action == "stop" and p_send >= comp_thr):
             if self._debounced(sk, action, _watch_pause_debounce(cfg)):
                 return
-
         path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
 
+        best = self._best.get(key)
+        best_skel: dict[str, Any] | None = None
+        best_desc = "title/year"
+        if isinstance(best, dict):
+            sk = best.get("skeleton")
+            if isinstance(sk, dict):
+                best_skel = sk
+                bd = best.get("ids_desc")
+                if isinstance(bd, str):
+                    best_desc = bd
+
         bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
+        if best_skel is not None:
+            b0 = {"progress": float(p_send), **best_skel, **_app_meta(cfg)}
+            if self._should_log_intent(key, path, int(float(b0.get("progress") or p_send))):
+                _log(f"simkl intent {path} using cached {best_desc}, prog={b0.get('progress')}", "DEBUG")
+            bodies = [b0] + [b for b in bodies if _body_ids_desc(b) != best_desc]
 
         last_err: dict[str, Any] | None = None
-        for body in bodies:
-            intent_prog = int(float(body.get("progress") or p_send))
-            if self._should_log_intent(key, path, intent_prog):
-                _log(f"simkl intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
+        for i, body in enumerate(bodies):
+            if not (best_skel is not None and i == 0):
+                intent_prog = int(float(body.get("progress") or p_send))
+                if self._should_log_intent(key, path, intent_prog):
+                    _log(f"simkl intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
             if res.get("ok"):
                 try:
@@ -510,6 +560,11 @@ class SimklSink(ScrobbleSink):
                 except Exception:
                     act = path.rsplit("/", 1)[-1]
                 _log(f"simkl {path} -> {res['status']} action={act}", "DEBUG")
+                self._best[key] = {
+                    "skeleton": _extract_skeleton_from_body(body),
+                    "ids_desc": _body_ids_desc(body),
+                    "ts": time.time(),
+                }
                 try:
                     acc = getattr(ev, "account", None)
                     prog_val = float(body.get("progress") or p_send)

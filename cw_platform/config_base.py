@@ -90,13 +90,29 @@ DEFAULT_CFG: dict[str, Any] = {
         "api_key": "",                                  # Your MDBList API key
         "timeout": 10,                                  # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget
+
+        # Watchlist
         "watchlist_shadow_ttl_hours": 0,                # Shadow TTL (hours); 0 = disabled
         "watchlist_shadow_validate": True,              # Validate shadow on every run
+        "watchlist_page_size": 200,                     # GET page size for /watchlist/items
+        "watchlist_batch_size": 100,                    # Batch size for add/remove writes
+        "watchlist_freeze_details": True,               # Store extra details for "not_found" freezes
+
+        # Ratings
         "ratings_per_page": 200,                        # Items per page when indexing
-        "ratings_max_pages": 50,                        # Max pages per type
+        "ratings_max_pages": 50,                        # Max pages to fetch (safety cap)
         "ratings_chunk_size": 25,                       # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
-        "ratings_max_backoff_ms": 8000                  # Max backoff time for retries
+        "ratings_max_backoff_ms": 8000,                 # Max backoff time for retries
+        "ratings_since": "1970-01-01T00:00:00Z",        # First-run baseline; watermark overrides after
+
+        # History
+        "history_per_page": 1000,                       # Items per page for /sync/watched delta
+        "history_max_pages": 250,                       # Max pages to fetch (safety cap)
+        "history_chunk_size": 25,                       # Batch size for watched/unwatched writes
+        "history_write_delay_ms": 600,                  # Optional pacing between writes
+        "history_max_backoff_ms": 8000,                 # Max backoff time for retries
+        "history_since": "1970-01-01T00:00:00Z"         # First-run baseline; watermark overrides after
     },
     
      "tautulli": {
@@ -352,6 +368,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # Trakt sink rules (progress decisions) used by Trakt|SIMKL|MDblist
         "trakt": {
+            "progress_step": 5,                         # Send scrobble progress in % steps (1=every %, 5=every 5%)
             "stop_pause_threshold": 85,                 # <85% STOP-send as PAUSE (your “watched” bar)
             "force_stop_at": 95,                        # ≥85% always STOP (bypass debounces)
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated

@@ -1,53 +1,104 @@
 # /providers/sync/mdblist/_ratings.py
-# MDBList ratings sync module
+# MDBList ratings sync module (activity-gated delta)
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, TypeGuard
 
 from cw_platform.id_map import minimal as id_minimal
 
 from .._mod_common import request_with_retries
 
+from ._common import (
+    STATE_DIR,
+    state_file,
+    as_epoch,
+    as_iso,
+    cfg_int,
+    cfg_section,
+    coalesce_since,
+    get_watermark,
+    iso_ok,
+    iso_z,
+    make_logger,
+    max_iso,
+    now_iso,
+    pad_since_iso,
+    save_watermark,
+    update_watermark_if_new,
+    START_OF_TIME_ISO,
+)
+
+
 BASE = "https://api.mdblist.com"
 URL_LIST = f"{BASE}/sync/ratings"
 URL_UPSERT = f"{BASE}/sync/ratings"
 URL_UNRATE = f"{BASE}/sync/ratings/remove"
+URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 
-CACHE_PATH = Path("/config/.cw_state/mdblist_ratings.index.json")
-CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+CACHE_PATH = state_file("mdblist_ratings.index.json")
+
+_log = make_logger("ratings")
+_cfg = cfg_section
+_cfg_int = cfg_int
+_iso_ok = iso_ok
+_iso_z = iso_z
+_as_epoch = as_epoch
+_as_iso = as_iso
+_max_iso = max_iso
+_pad_since_iso = pad_since_iso
+_now_iso = now_iso
 
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_MDBLIST_DEBUG"):
-        print(f"[MDBLIST:ratings] {msg}")
-
-
-def _cfg(adapter: Any) -> Mapping[str, Any]:
-    cfg = getattr(adapter, "config", {}) or {}
-    if isinstance(cfg, dict) and isinstance(cfg.get("mdblist"), dict):
-        return cfg["mdblist"]
+def _load_cache() -> dict[str, Any]:
     try:
-        runtime_cfg = getattr(getattr(adapter, "cfg", None), "config", {}) or {}
-        if isinstance(runtime_cfg, dict) and isinstance(runtime_cfg.get("mdblist"), dict):
-            return runtime_cfg["mdblist"]
+        if not CACHE_PATH.exists():
+            return {}
+        doc = json.loads(CACHE_PATH.read_text("utf-8") or "{}")
+        return dict(doc.get("items") or {})
+    except Exception:
+        return {}
+
+
+def _save_cache(items: Mapping[str, Any]) -> None:
+    try:
+        doc = {"generated_at": _now_iso(), "items": dict(items)}
+        tmp = CACHE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
+        os.replace(tmp, CACHE_PATH)
+    except Exception as e:
+        _log(f"cache.save failed: {e}")
+
+
+def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries: int) -> dict[str, Any] | None:
+    try:
+        client = getattr(adapter, "client", None)
+        if client and hasattr(client, "last_activities"):
+            data = client.last_activities()
+            if isinstance(data, Mapping) and "error" not in data and "status" not in data:
+                return dict(data)
     except Exception:
         pass
-    return {}
-
-
-def _cfg_int(data: Mapping[str, Any], key: str, default: int) -> int:
-    raw = data.get(key)
-    if raw is None:
-        return default
     try:
-        return int(raw)
+        r = request_with_retries(
+            adapter.client.session,
+            "GET",
+            URL_LAST_ACTIVITIES,
+            params={"apikey": apikey},
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if 200 <= r.status_code < 300:
+            data = r.json() if (r.text or "").strip() else {}
+            return dict(data) if isinstance(data, Mapping) else None
     except Exception:
-        return default
+        return None
+    return None
 
 
 def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -81,13 +132,15 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def _pick_kind(item: Mapping[str, Any]) -> str:
     t = str(item.get("type") or item.get("mediatype") or "").strip().lower()
-    if t in ("movie", "movies"):
+    if t.endswith("s") and t in ("movies", "shows", "seasons", "episodes"):
+        t = t[:-1]
+    if t == "movie":
         return "movies"
-    if t in ("show", "tv", "series", "shows"):
+    if t == "show":
         return "shows"
-    if t in ("season", "seasons"):
+    if t == "season":
         return "seasons"
-    if t in ("episode", "episodes"):
+    if t == "episode":
         return "episodes"
     if str(item.get("movie") or "").lower() == "true":
         return "movies"
@@ -96,9 +149,9 @@ def _pick_kind(item: Mapping[str, Any]) -> str:
     return "movies"
 
 
+
 def _key_of(obj: Mapping[str, Any]) -> str:
     kind = str(obj.get("type") or "").lower()
-
     ids_src: Any = obj.get("ids") or obj
     if kind in ("season", "episode"):
         show_ids = obj.get("show_ids")
@@ -170,64 +223,30 @@ def _valid_rating(value: Any) -> int | None:
         return None
 
 
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _load_cache() -> dict[str, Any]:
-    try:
-        if not CACHE_PATH.exists():
-            return {}
-        doc = json.loads(CACHE_PATH.read_text("utf-8") or "{}")
-        return dict(doc.get("items") or {})
-    except Exception:
-        return {}
-
-
-def _save_cache(items: Mapping[str, Any]) -> None:
-    try:
-        doc = {"generated_at": _now_iso(), "items": dict(items)}
-        tmp = CACHE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, CACHE_PATH)
-        # _log(f"cache.saved -> {CACHE_PATH} ({len(items)})")
-    except Exception as e:
-        _log(f"cache.save failed: {e}")
-
-
-def _merge_by_key(dst: dict[str, Any], src: Iterable[Mapping[str, Any]]) -> None:
-    for m in src or []:
-        key = _key_of(m)
-        cur = dst.get(key)
-        if not cur:
-            dst[key] = dict(m)
-        else:
-            rated_new = str(m.get("rated_at") or "")
-            rated_old = str(cur.get("rated_at") or "")
-            if rated_new >= rated_old:
-                dst[key] = dict(m)
-
-
 def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
-        rating = _valid_rating(row.get("rating"))
-        if rating is None:
-            return None
         mv = row.get("movie") or {}
-        ids_raw = mv.get("ids") or {}
-        ids = {"imdb": ids_raw.get("imdb"), "tmdb": ids_raw.get("tmdb"), "tvdb": ids_raw.get("tvdb")}
-        ids = {k: v for k, v in ids.items() if v}
+        ids = _ids_for_mdblist(mv.get("ids") or mv)
         if not ids:
             return None
+
+        rating = _valid_rating(row.get("rating"))
+        rated_at = row.get("rated_at")
+
+        out: dict[str, Any] = {"type": "movie", "ids": ids}
+        if rating is None:
+            out["_removed"] = True
+        else:
+            out["rating"] = rating
+        if rated_at:
+            out["rated_at"] = rated_at
+
         title = str(mv.get("title") or mv.get("name") or "").strip()
         y = mv.get("year") or mv.get("release_year")
         try:
             year = int(y) if y is not None else None
         except Exception:
             year = None
-        out: dict[str, Any] = {"type": "movie", "ids": ids, "rating": rating}
-        if row.get("rated_at"):
-            out["rated_at"] = row["rated_at"]
         if title:
             out["title"] = title
         if year:
@@ -239,15 +258,22 @@ def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _row_show(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
-        rating = _valid_rating(row.get("rating"))
-        if rating is None:
-            return None
         sh = row.get("show") or {}
-        ids_raw = sh.get("ids") or {}
-        ids = {"imdb": ids_raw.get("imdb"), "tmdb": ids_raw.get("tmdb"), "tvdb": ids_raw.get("tvdb")}
-        ids = {k: v for k, v in ids.items() if v}
+        ids = _ids_for_mdblist(sh.get("ids") or sh)
         if not ids:
             return None
+
+        rating = _valid_rating(row.get("rating"))
+        rated_at = row.get("rated_at")
+
+        out: dict[str, Any] = {"type": "show", "ids": ids}
+        if rating is None:
+            out["_removed"] = True
+        else:
+            out["rating"] = rating
+        if rated_at:
+            out["rated_at"] = rated_at
+
         title = str(sh.get("title") or sh.get("name") or "").strip()
         y = sh.get("year") or sh.get("first_air_year")
         if not y:
@@ -258,9 +284,6 @@ def _row_show(row: Mapping[str, Any]) -> dict[str, Any] | None:
             year = int(y) if y is not None else None
         except Exception:
             year = None
-        out: dict[str, Any] = {"type": "show", "ids": ids, "rating": rating}
-        if row.get("rated_at"):
-            out["rated_at"] = row["rated_at"]
         if title:
             out["title"] = title
         if year:
@@ -272,26 +295,31 @@ def _row_show(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
-        rating = _valid_rating(row.get("rating"))
-        if rating is None:
-            return None
         sv = row.get("season") or {}
         show = sv.get("show") or {}
-        sids_raw = sv.get("ids") or {}
-        sids = {"tmdb": sids_raw.get("tmdb"), "tvdb": sids_raw.get("tvdb")}
-        sids = {k: v for k, v in sids.items() if v}
-        sh_ids_raw = show.get("ids") or {}
-        sh_ids = {
-            "imdb": sh_ids_raw.get("imdb"),
-            "tmdb": sh_ids_raw.get("tmdb"),
-            "tvdb": sh_ids_raw.get("tvdb"),
-        }
-        sh_ids = {k: v for k, v in sh_ids.items() if v}
-        ids = sids or sh_ids
+        sh_ids = _ids_for_mdblist(show.get("ids") or show)
+        ids = _ids_for_mdblist(sv.get("ids") or sv) or sh_ids
         if not ids:
             return None
+
+        rating = _valid_rating(row.get("rating"))
+        rated_at = row.get("rated_at")
+
+        out: dict[str, Any] = {"type": "season", "ids": ids, "season": sv.get("number")}
+        if sh_ids:
+            out["show_ids"] = sh_ids
+        if rating is None:
+            out["_removed"] = True
+        else:
+            out["rating"] = rating
+        if rated_at:
+            out["rated_at"] = rated_at
+
         show_title = str(show.get("title") or show.get("name") or "").strip()
-        title = show_title or str(sv.get("name") or "").strip()
+        if show_title:
+            out["series_title"] = show_title
+            out["title"] = show_title
+
         y = show.get("year") or show.get("first_air_year")
         if not y:
             fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
@@ -301,15 +329,6 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
             year = int(y) if y is not None else None
         except Exception:
             year = None
-        out: dict[str, Any] = {"type": "season", "ids": ids, "rating": rating, "season": sv.get("number")}
-        if sh_ids:
-            out["show_ids"] = sh_ids
-        if show_title:
-            out["series_title"] = show_title
-        if row.get("rated_at"):
-            out["rated_at"] = row["rated_at"]
-        if title:
-            out["title"] = title
         if year:
             out["year"] = year
         return out
@@ -319,27 +338,41 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
-        rating = _valid_rating(row.get("rating"))
-        if rating is None:
-            return None
         ev = row.get("episode") or {}
         show = ev.get("show") or {}
-        eids_raw = ev.get("ids") or {}
-        eids = {"tmdb": eids_raw.get("tmdb"), "tvdb": eids_raw.get("tvdb")}
-        eids = {k: v for k, v in eids.items() if v}
-        sh_ids_raw = show.get("ids") or {}
-        sh_ids = {
-            "imdb": sh_ids_raw.get("imdb"),
-            "tmdb": sh_ids_raw.get("tmdb"),
-            "tvdb": sh_ids_raw.get("tvdb"),
-        }
-        sh_ids = {k: v for k, v in sh_ids.items() if v}
-        ids = eids or sh_ids
+        sh_ids = _ids_for_mdblist(show.get("ids") or show)
+        ids = _ids_for_mdblist(ev.get("ids") or ev) or sh_ids
         if not ids:
             return None
+
+        rating = _valid_rating(row.get("rating"))
+        rated_at = row.get("rated_at")
+
+        num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
+        out: dict[str, Any] = {
+            "type": "episode",
+            "ids": ids,
+            "season": ev.get("season"),
+            "episode": num,
+        }
+        if sh_ids:
+            out["show_ids"] = sh_ids
+        if rating is None:
+            out["_removed"] = True
+        else:
+            out["rating"] = rating
+        if rated_at:
+            out["rated_at"] = rated_at
+
         show_title = str(show.get("title") or show.get("name") or "").strip()
         ep_title = str(ev.get("name") or ev.get("title") or "").strip()
-        title = ep_title or show_title
+        if show_title:
+            out["series_title"] = show_title
+        if ep_title:
+            out["title"] = ep_title
+        elif show_title:
+            out["title"] = show_title
+
         y = show.get("year") or show.get("first_air_year")
         if not y:
             fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
@@ -349,22 +382,6 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
             year = int(y) if y is not None else None
         except Exception:
             year = None
-        num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
-        out: dict[str, Any] = {
-            "type": "episode",
-            "ids": ids,
-            "rating": rating,
-            "season": ev.get("season"),
-            "episode": num,
-        }
-        if sh_ids:
-            out["show_ids"] = sh_ids
-        if show_title:
-            out["series_title"] = show_title
-        if row.get("rated_at"):
-            out["rated_at"] = row["rated_at"]
-        if title:
-            out["title"] = title
         if year:
             out["year"] = year
         return out
@@ -381,149 +398,182 @@ def build_index(
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
     cached = _load_cache()
+
     if not apikey:
-        _log("missing api_key → empty ratings index")
-        if cached:
-            _log(f"fallback cache (missing api_key) size={len(cached)}")
-            return dict(cached)
-        _save_cache({})
-        return {}
+        _log("missing api_key - ratings index from cache only")
+        return dict(cached) if cached else {}
+
     per_page = _cfg_int(cfg, "ratings_per_page", per_page)
     per_page = max(1, min(int(per_page), 5000))
     max_pages = _cfg_int(cfg, "ratings_max_pages", max_pages)
     max_pages = max(1, min(int(max_pages), 2000))
-    since = str(cfg.get("ratings_since") or "").strip()
-    sess = adapter.client.session
+
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
+
+    acts = _fetch_last_activities(adapter, apikey=apikey, timeout=timeout, retries=retries) or {}
+    acts_ts_raw = acts.get("rated_at") if isinstance(acts, Mapping) else None
+    acts_ts = _iso_z(acts_ts_raw) if _iso_ok(acts_ts_raw) else None
+    force_full = False
+
+    wm = get_watermark("ratings")
+    if acts_ts and wm:
+        a = _as_epoch(acts_ts) or 0
+        b = _as_epoch(wm) or 0
+        if a <= b:
+            if cached:
+                _log(f"no-op (rated_at={acts_ts} <= watermark={wm}) - using cached snapshot")
+                return dict(cached)
+            _log(f"no-op (rated_at={acts_ts} <= watermark={wm}) but no cached snapshot - forcing refresh")
+            force_full = True
+
+    if acts_ts and (not wm) and cached:
+        save_watermark("ratings", acts_ts)
+        _log(f"baseline watermark set to {acts_ts} (using cached snapshot)")
+        return dict(cached)
+    cfg_since = str(cfg.get("ratings_since") or "").strip() or None
+    if force_full:
+        env_since = str(os.getenv("MDBLIST_RATINGS_SINCE") or "").strip() or None
+        since_base = cfg_since or env_since or START_OF_TIME_ISO
+    else:
+        since_base = coalesce_since("ratings", cfg_since, env_any="MDBLIST_RATINGS_SINCE")
+    since_req = _pad_since_iso(since_base)
+
+    sess = adapter.client.session
     out: dict[str, dict[str, Any]] = {}
     page = 1
     pages = 0
-    _log(f"index.start per_page={per_page} max_pages={max_pages} timeout={timeout} retries={retries}")
+    latest_seen: str | None = None
+
+    _log(f"delta.start since={since_req} per_page={per_page} max_pages={max_pages} timeout={timeout} retries={retries}")
     while True:
-        try:
-            r = request_with_retries(
-                sess,
-                "GET",
-                URL_LIST,
-                params={"apikey": apikey, "page": page, "limit": per_page, **({"since": since} if since else {})},
-                timeout=timeout,
-                max_retries=retries,
-            )
-        except Exception as e:
-            _log(f"GET /sync/ratings page {page} failed: {type(e).__name__}: {e}")
-            if cached:
-                _log(f"fallback cache size={len(cached)}")
-                return dict(cached)
-            raise
+        r = request_with_retries(
+            sess,
+            "GET",
+            URL_LIST,
+            params={"apikey": apikey, "page": page, "limit": per_page, "since": since_req},
+            timeout=timeout,
+            max_retries=retries,
+        )
         if r.status_code != 200:
-            _log(f"GET /sync/ratings page {page} -> {r.status_code}")
-            if cached:
-                _log(f"fallback cache size={len(cached)}")
-                return dict(cached)
-            break
+            _log(f"GET /sync/ratings page {page} -> {r.status_code}: {(r.text or '')[:160]}")
+            return dict(cached)
+
         data = r.json() if (r.text or "").strip() else {}
         movies = data.get("movies") or []
         shows = data.get("shows") or []
         seasons_top = data.get("seasons") or []
         episodes_top = data.get("episodes") or []
-        _log(
-            f"page {page} -> movies:{len(movies)} shows:{len(shows)} "
-            f"seasons:{len(seasons_top)} episodes:{len(episodes_top)}"
-        )
+
         minis: list[dict[str, Any]] = []
         for row in movies:
-            m = _row_movie(row)
+            m = _row_movie(row) if isinstance(row, Mapping) else None
             if m:
                 minis.append(m)
         for row in shows:
-            m = _row_show(row)
+            m = _row_show(row) if isinstance(row, Mapping) else None
             if m:
                 minis.append(m)
-            sh = row.get("show") or {}
-            sh_ids_raw = sh.get("ids") or {}
-            ids_sh = {
-                k: v
-                for k, v in {
-                    "imdb": sh_ids_raw.get("imdb"),
-                    "tmdb": sh_ids_raw.get("tmdb"),
-                    "tvdb": sh_ids_raw.get("tvdb"),
-                }.items()
-                if v
-            }
-            show_title = str(sh.get("title") or sh.get("name") or "").strip()
-            y = sh.get("year") or sh.get("first_air_year")
-            if not y:
-                fa = str(sh.get("first_air_date") or sh.get("first_aired") or "").strip()
-                if len(fa) >= 4 and fa[:4].isdigit():
-                    y = int(fa[:4])
-            try:
-                year = int(y) if y is not None else None
-            except Exception:
-                year = None
-            for sv in row.get("seasons") or []:
-                sr = _valid_rating(sv.get("rating"))
-                sids_raw = sv.get("ids") or {}
-                sids = {k: sids_raw.get(k) for k in ("tmdb", "tvdb") if sids_raw.get(k)}
-                ids_for_season = sids or {k: ids_sh.get(k) for k in ("tmdb", "tvdb") if ids_sh.get(k)}
-                if sr is not None and ids_for_season:
-                    sm: dict[str, Any] = {
-                        "type": "season",
-                        "ids": ids_for_season,
-                        "show_ids": ids_sh,
-                        "rating": sr,
-                        "season": sv.get("number"),
-                    }
-                    ra = sv.get("rated_at")
-                    if ra:
-                        sm["rated_at"] = ra
-                    if show_title:
-                        sm["series_title"] = show_title
-                        sm["title"] = show_title
-                    if year:
-                        sm["year"] = year
-                    minis.append(sm)
-                for ev in sv.get("episodes") or []:
-                    er = _valid_rating(ev.get("rating"))
-                    if er is None:
-                        continue
-                    eids_raw = ev.get("ids") or {}
-                    eids = {k: eids_raw.get(k) for k in ("tmdb", "tvdb") if eids_raw.get(k)}
-                    ids_for_episode = eids or ids_sh
-                    if not ids_for_episode:
-                        continue
-                    num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
-                    em: dict[str, Any] = {
-                        "type": "episode",
-                        "ids": ids_for_episode,
-                        "show_ids": ids_sh,
-                        "rating": er,
-                        "season": sv.get("number"),
-                        "episode": num,
-                    }
-                    rae = ev.get("rated_at")
-                    if rae:
-                        em["rated_at"] = rae
-                    ep_title = str(ev.get("name") or ev.get("title") or "").strip()
-                    if show_title:
-                        em["series_title"] = show_title
-                    if ep_title:
-                        em["title"] = ep_title
-                    elif show_title:
-                        em["title"] = show_title
-                    if year:
-                        em["year"] = year
-                    minis.append(em)
+
+            # Optional nested season/episode payloads under show rows (kept for backwards-compat)
+            if isinstance(row, Mapping) and isinstance(row.get("seasons"), list):
+                sh = row.get("show") or {}
+                sh_ids_raw = sh.get("ids") or {}
+                ids_sh = {
+                    k: v
+                    for k, v in {
+                        "imdb": sh_ids_raw.get("imdb"),
+                        "tmdb": sh_ids_raw.get("tmdb"),
+                        "tvdb": sh_ids_raw.get("tvdb"),
+                    }.items()
+                    if v
+                }
+                show_title = str(sh.get("title") or sh.get("name") or "").strip()
+                y = sh.get("year") or sh.get("first_air_year")
+                if not y:
+                    fa = str(sh.get("first_air_date") or sh.get("first_aired") or "").strip()
+                    if len(fa) >= 4 and fa[:4].isdigit():
+                        y = int(fa[:4])
+                try:
+                    year = int(y) if y is not None else None
+                except Exception:
+                    year = None
+
+                for sv in row.get("seasons") or []:
+                    sr = _valid_rating(sv.get("rating"))
+                    sids_raw = sv.get("ids") or {}
+                    sids = {k: sids_raw.get(k) for k in ("tmdb", "tvdb") if sids_raw.get(k)}
+                    ids_for_season = sids or {k: ids_sh.get(k) for k in ("tmdb", "tvdb") if ids_sh.get(k)}
+                    if ids_for_season:
+                        sm: dict[str, Any] = {
+                            "type": "season",
+                            "ids": ids_for_season,
+                            "show_ids": ids_sh,
+                            "season": sv.get("number"),
+                        }
+                        if sr is None:
+                            sm["_removed"] = True
+                        else:
+                            sm["rating"] = sr
+                        ra = sv.get("rated_at")
+                        if ra:
+                            sm["rated_at"] = ra
+                        if show_title:
+                            sm["series_title"] = show_title
+                            sm["title"] = show_title
+                        if year:
+                            sm["year"] = year
+                        minis.append(sm)
+
+                    for ev in sv.get("episodes") or []:
+                        er = _valid_rating(ev.get("rating"))
+                        eids_raw = ev.get("ids") or {}
+                        eids = {k: eids_raw.get(k) for k in ("tmdb", "tvdb") if eids_raw.get(k)}
+                        ids_for_episode = eids or ids_sh
+                        if not ids_for_episode:
+                            continue
+                        num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
+                        em: dict[str, Any] = {
+                            "type": "episode",
+                            "ids": ids_for_episode,
+                            "show_ids": ids_sh,
+                            "season": sv.get("number"),
+                            "episode": num,
+                        }
+                        if er is None:
+                            em["_removed"] = True
+                        else:
+                            em["rating"] = er
+                        rae = ev.get("rated_at")
+                        if rae:
+                            em["rated_at"] = rae
+                        ep_title = str(ev.get("name") or ev.get("title") or "").strip()
+                        if show_title:
+                            em["series_title"] = show_title
+                        if ep_title:
+                            em["title"] = ep_title
+                        elif show_title:
+                            em["title"] = show_title
+                        if year:
+                            em["year"] = year
+                        minis.append(em)
+
         for row in seasons_top:
-            m = _row_season(row)
+            m = _row_season(row) if isinstance(row, Mapping) else None
             if m:
                 minis.append(m)
         for row in episodes_top:
-            m = _row_episode(row)
+            m = _row_episode(row) if isinstance(row, Mapping) else None
             if m:
                 minis.append(m)
+
         for m in minis:
-            out[_key_of(m)] = m
+            k = _key_of(m)
+            out[k] = m
+            ra = m.get("rated_at")
+            if _iso_ok(ra):
+                latest_seen = _max_iso(latest_seen, ra)
+
         pag = data.get("pagination") or {}
         has_more = pag.get("has_more")
         if has_more is None:
@@ -533,56 +583,19 @@ def build_index(
         if not bool(has_more) or pages >= max_pages:
             break
         page += 1
+    merged = dict(cached)
+    if out:
+        for k, v in out.items():
+            if v.get("_removed") or v.get("rating") is None:
+                merged.pop(k, None)
+            else:
+                merged[k] = v
+        _save_cache(merged)
 
-    fetch_types = bool(cfg.get("ratings_fetch_type_pages") in (True, "1", 1))
-    if fetch_types:
-        def _fetch_type_pages(type_name: str) -> None:
-            p = 1
-            done = 0
-            while True:
-                r_ = request_with_retries(
-                    sess,
-                    "GET",
-                    URL_LIST,
-                    params={"apikey": apikey, "page": p, "limit": per_page, "type": type_name, **({"since": since} if since else {})},
-                    timeout=timeout,
-                    max_retries=retries,
-                )
-                if r_.status_code != 200:
-                    _log(f"GET /sync/ratings?type={type_name} page {p} -> {r_.status_code}")
-                    break
-                d = r_.json() if (r_.text or "").strip() else {}
-                rows = d.get(type_name) or []
-                if not rows:
-                    break
-                if type_name == "seasons":
-                    for row_ in rows:
-                        m_ = _row_season(row_)
-                        if m_:
-                            out[_key_of(m_)] = m_
-                elif type_name == "episodes":
-                    for row_ in rows:
-                        m_ = _row_episode(row_)
-                        if m_:
-                            out[_key_of(m_)] = m_
-                pag_ = d.get("pagination") or {}
-                done += 1
-                has_more = pag_.get("has_more")
-                if has_more is None:
-                    has_more = len(rows) >= per_page
-                if not bool(has_more) or done >= max_pages:
-                    break
-                p += 1
-        _fetch_type_pages("seasons")
-        _fetch_type_pages("episodes")
-    kinds: dict[str, int] = {"movie": 0, "show": 0, "season": 0, "episode": 0}
-    for v in out.values():
-        k = str(v.get("type") or "").lower()
-        if k in kinds:
-            kinds[k] += 1
-    _save_cache(out)
-    _log(f"index size: {len(out)} by-kind {kinds}")
-    return out
+    update_watermark_if_new("ratings", _max_iso(latest_seen, acts_ts))
+
+    _log(f"delta size: {len(out)} latest_seen={latest_seen or '-'} watermark={get_watermark('ratings') or '-'}")
+    return merged
 
 
 def _show_key(ids: Mapping[str, Any]) -> str:
@@ -603,20 +616,22 @@ def _bucketize(
     body: dict[str, list[dict[str, Any]]] = {"movies": []}
     accepted: list[dict[str, Any]] = []
 
-    seen: dict[str, int] = {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0}
-    kept: dict[str, int] = {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0}
-    attach: dict[str, int] = {"season_to_show": 0, "episode_to_season": 0}
-    skip: dict[str, int] = {
-        "invalid_rating": 0,
-        "missing_ids": 0,
-        "missing_season": 0,
-        "missing_episode": 0,
-        "missing_show_ids": 0,
-    }
-
     shows_nested: dict[str, dict[str, Any]] = {}
     shows_plain: dict[str, dict[str, Any]] = {}
     seasons_index: dict[tuple[str, int], dict[str, Any]] = {}
+    
+    def _carry_meta(src: Mapping[str, Any], dst: dict[str, Any]) -> None:
+        for k in ("title", "series_title", "year"):
+            v = src.get(k)
+            if v is None or v == "":
+                continue
+            if k == "year":
+                try:
+                    dst[k] = int(v)
+                except Exception:
+                    continue
+            else:
+                dst[k] = v
 
     def ensure_show_nested(ids: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         sk = _show_key(ids)
@@ -636,20 +651,16 @@ def _bucketize(
 
     for item in items or []:
         kind = _pick_kind(item)
-        if kind in seen:
-            seen[kind] += 1
 
         if kind in ("seasons", "episodes"):
             ids = _ids_for_mdblist(item.get("show_ids") or {})
             if not ids:
                 ids = _ids_for_mdblist(item)
             if not ids:
-                skip["missing_show_ids"] += 1
                 continue
         else:
             ids = _ids_for_mdblist(item)
             if not ids:
-                skip["missing_ids"] += 1
                 continue
 
         rating = _valid_rating(item.get("rating"))
@@ -657,9 +668,7 @@ def _bucketize(
 
         if kind == "movies":
             if rating is None and not unrate:
-                skip["invalid_rating"] += 1
                 continue
-
             obj: dict[str, Any] = {"ids": ids}
             if not unrate:
                 obj["rating"] = rating
@@ -672,16 +681,13 @@ def _bucketize(
                 acc["rating"] = rating
                 if rated_at:
                     acc["rated_at"] = rated_at
+            _carry_meta(item, acc)
             accepted.append(acc)
-
-            kept["movies"] += 1
             continue
 
         if kind == "shows":
             if rating is None and not unrate:
-                skip["invalid_rating"] += 1
                 continue
-
             grp_plain = ensure_show_plain(ids)
             if not unrate and rating is not None:
                 grp_plain["rating"] = rating
@@ -693,20 +699,17 @@ def _bucketize(
                 acc2["rating"] = rating
                 if rated_at:
                     acc2["rated_at"] = rated_at
+            _carry_meta(item, acc2)
             accepted.append(acc2)
-
-            kept["shows"] += 1
             continue
 
         if kind == "seasons":
             s_raw = item.get("season") or item.get("number")
             if s_raw is None:
-                skip["missing_season"] += 1
                 continue
-
-            sk, grp = ensure_show_nested(ids)
             s = int(s_raw)
 
+            sk, grp = ensure_show_nested(ids)
             sp: dict[str, Any] | None = seasons_index.get((sk, s))
             if sp is None:
                 sp = {"number": s}
@@ -716,7 +719,6 @@ def _bucketize(
                     seasons_list = []
                     grp["seasons"] = seasons_list
                 seasons_list.append(sp)
-                attach["season_to_show"] += 1
 
             if not unrate and rating is not None:
                 sp["rating"] = rating
@@ -728,15 +730,15 @@ def _bucketize(
                 acc3["rating"] = rating
                 if rated_at:
                     acc3["rated_at"] = rated_at
+            if isinstance(item.get("show_ids"), Mapping):
+                acc3["show_ids"] = _ids_for_mdblist(item.get("show_ids") or {}) or acc3.get("show_ids")
+            _carry_meta(item, acc3)
             accepted.append(acc3)
-
-            kept["seasons"] += 1
             continue
 
         s_raw = item.get("season")
         e_raw = item.get("number") if item.get("number") is not None else item.get("episode")
         if s_raw is None or e_raw is None:
-            skip["missing_episode"] += 1
             continue
 
         sk, grp = ensure_show_nested(ids)
@@ -752,7 +754,6 @@ def _bucketize(
                 seasons_list2 = []
                 grp["seasons"] = seasons_list2
             seasons_list2.append(sp2)
-            attach["season_to_show"] += 1
 
         ep: dict[str, Any] = {"number": e}
         if not unrate and rating is not None:
@@ -764,16 +765,16 @@ def _bucketize(
             episodes_list = []
             sp2["episodes"] = episodes_list
         episodes_list.append(ep)
-        attach["episode_to_season"] += 1
 
         acc4: dict[str, Any] = {"type": "episode", "ids": ids, "season": s, "episode": e}
-        if not unrate:
+        if not unrate and rating is not None:
             acc4["rating"] = rating
             if rated_at:
                 acc4["rated_at"] = rated_at
+        if isinstance(item.get("show_ids"), Mapping):
+            acc4["show_ids"] = _ids_for_mdblist(item.get("show_ids") or {}) or acc4.get("show_ids")
+        _carry_meta(item, acc4)
         accepted.append(acc4)
-
-        kept["episodes"] += 1
 
     if shows_nested:
         for grp in shows_nested.values():
@@ -790,23 +791,6 @@ def _bucketize(
         body["shows_plain"] = list(shows_plain.values())
 
     body = {k: v for k, v in body.items() if v}
-    out_sizes = {k: len(v) for k, v in body.items()}
-
-    _log(f"aggregate seen={seen} attach={attach} skip={skip} out_sizes={out_sizes} unrate={unrate}")
-
-    if body.get("shows_nested"):
-        try:
-            sample = body["shows_nested"][0]
-            _log(f"shows.sample ids={sample.get('ids')} seasons={len(sample.get('seasons', []))}")
-        except Exception:
-            pass
-    if body.get("shows_plain"):
-        try:
-            sample2 = body["shows_plain"][0]
-            _log("shows.sample_plain ids=%s seasons=0" % (sample2.get("ids"),))
-        except Exception:
-            pass
-
     return body, accepted
 
 
@@ -824,7 +808,6 @@ def _write(
 ) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
-    cached = _load_cache()
     if not apikey:
         _log("write abort: missing api_key")
         return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
@@ -890,14 +873,10 @@ def _write(
 
                     if r.status_code == 204:
                         ok += len(part)
-                        _log(f"{'UNRATE' if unrate else 'UPSERT'} ok bucket={bucket}{stage} (204) count={len(part)}")
                     else:
                         if unrate:
                             removed = d.get("removed") or {}
-                            n = sum(int(removed.get(k) or 0) for k in kinds)
-                            if n <= 0:
-                                n = len(part)
-                            _log(f"UNRATE ok bucket={bucket}{stage} removed={removed} counted={n}")
+                            n = sum(int(removed.get(k) or 0) for k in kinds) or len(part)
                             ok += n
                         else:
                             updated = d.get("updated") or {}
@@ -907,13 +886,7 @@ def _write(
                             n += sum(int(updated.get(k) or 0) for k in kinds)
                             n += sum(int(added.get(k) or 0) for k in kinds)
                             n += sum(int(existing.get(k) or 0) for k in kinds)
-                            if n <= 0:
-                                n = len(part)
-                            _log(
-                                f"UPSERT ok bucket={bucket}{stage} updated={updated} "
-                                f"added={added} existing={existing} counted={n}"
-                            )
-                            ok += n
+                            ok += n or len(part)
 
                     time.sleep(max(0.0, delay_ms / 1000.0))
                     break
@@ -933,36 +906,22 @@ def _write(
                     f"{'UNRATE' if unrate else 'UPSERT'} failed {r.status_code} "
                     f"bucket={bucket}{stage}: {(r.text or '')[:200]}"
                 )
-                try:
-                    sample = part[0]
-                    if bucket == "shows":
-                        _log(f"payload.sample shows.ids={sample.get('ids')} seasons={len(sample.get('seasons', []))}")
-                    else:
-                        _log(f"payload.sample movies.ids={sample.get('ids')}")
-                except Exception:
-                    pass
-
                 for x in part:
                     iid = x.get("ids") or {}
                     t = "show" if bucket == "shows" else "movie"
                     unresolved.append({"item": id_minimal({"type": t, "ids": iid}), "hint": f"http:{r.status_code}"})
                 break
 
-    if ok > 0 and not unresolved and not unrate:
+    if ok > 0 and not unresolved:
         cache = _load_cache()
-        _merge_by_key(cache, accepted)
+        if unrate:
+            for it in accepted:
+                cache.pop(_key_of(it), None)
+        else:
+            for it in accepted:
+                cache[_key_of(it)] = dict(it)
         _save_cache(cache)
-
-    if ok > 0 and not unresolved and unrate:
-        cache2 = _load_cache()
-        for it in accepted:
-            cache2.pop(_key_of(it), None)
-        _save_cache(cache2)
-
-    if unresolved:
-        _log(f"unresolved count={len(unresolved)}")
-    else:
-        _log("all writes resolved")
+        update_watermark_if_new("ratings", _now_iso())
 
     return ok, unresolved
 

@@ -21,6 +21,7 @@ from ._common import (
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
+    state_file,
 )
 
 BASE = "https://api.simkl.com"
@@ -28,9 +29,14 @@ URL_ADD = f"{BASE}/sync/ratings"
 URL_REMOVE = f"{BASE}/sync/ratings/remove"
 URL_SEARCH_ID = f"{BASE}/search/id"
 
-STATE_DIR = Path("/config/.cw_state")
-UNRESOLVED_PATH = str(STATE_DIR / "simkl_ratings.unresolved.json")
-R_SHADOW_PATH = str(STATE_DIR / "simkl.ratings.shadow.json")
+
+def _unresolved_path() -> str:
+    return str(state_file("simkl_ratings.unresolved.json"))
+
+
+def _shadow_path() -> str:
+    return str(state_file("simkl.ratings.shadow.json"))
+
 
 ID_KEYS = ("imdb", "tmdb", "tvdb", "simkl")
 
@@ -108,7 +114,7 @@ def _save_json(path: str, data: Mapping[str, Any]) -> None:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    data = _load_json(UNRESOLVED_PATH)
+    data = _load_json(_unresolved_path())
     if not isinstance(data, dict):
         return {}
     cleaned = False
@@ -117,12 +123,12 @@ def _load_unresolved() -> dict[str, Any]:
             data.pop(k, None)
             cleaned = True
     if cleaned:
-        _save_json(UNRESOLVED_PATH, data)
+        _save_json(_unresolved_path(), data)
     return data
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    _save_json(UNRESOLVED_PATH, data)
+    _save_json(_unresolved_path(), data)
 
 
 def _is_frozen(item: Mapping[str, Any]) -> bool:
@@ -166,7 +172,7 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 
 
 def _rshadow_load() -> dict[str, Any]:
-    sh = _load_json(R_SHADOW_PATH) or {"items": {}}
+    sh = _load_json(_shadow_path()) or {"items": {}}
     if not isinstance(sh, dict):
         sh = {"items": {}}
     store = sh.get("items")
@@ -179,12 +185,12 @@ def _rshadow_load() -> dict[str, Any]:
             cleaned = True
     if cleaned:
         sh["items"] = store
-        _save_json(R_SHADOW_PATH, sh)
+        _save_json(_shadow_path(), sh)
     return sh
 
 
 def _rshadow_save(obj: Mapping[str, Any]) -> None:
-    _save_json(R_SHADOW_PATH, obj)
+    _save_json(_shadow_path(), obj)
 
 
 def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:

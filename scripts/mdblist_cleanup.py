@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# MDBList cleanup + backup/restore (watchlist + ratings).
+# MDBList cleanup + backup/restore (watchlist + ratings + history).
 from __future__ import annotations
 
 import gzip
@@ -23,8 +23,11 @@ RT_LIST = f"{BASE}/sync/ratings"
 RT_UPSERT = f"{BASE}/sync/ratings"
 RT_REMOVE = f"{BASE}/sync/ratings/remove"
 
+HIST_LIST = f"{BASE}/sync/watched"
+HIST_UPSERT = f"{BASE}/sync/watched"
+HIST_REMOVE = f"{BASE}/sync/watched/remove"
 
-# ---------- utils ----------
+
 def jload(p: Path) -> dict[str, Any]:
     try:
         return json.loads(p.read_text("utf-8"))
@@ -47,6 +50,22 @@ def safe_int(v: Any) -> Optional[int]:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def iso_ok(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except Exception:
+        return False
+
+
+def iso_z(value: str) -> str:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def retry_sleep(attempt: int) -> None:
@@ -125,6 +144,10 @@ def build_meta(cfg: dict[str, Any]) -> dict[str, Any]:
         "rt_chunk_size": int(b.get("ratings_chunk_size", 25) or 25),
         "rt_delay_ms": int(b.get("ratings_write_delay_ms", 600) or 600),
         "rt_max_backoff_ms": int(b.get("ratings_max_backoff_ms", 8000) or 8000),
+        "hist_per_page": int(b.get("history_per_page", 1000) or 1000),
+        "hist_chunk_size": int(b.get("history_chunk_size", 25) or 25),
+        "hist_delay_ms": int(b.get("history_write_delay_ms", 600) or 600),
+        "hist_max_backoff_ms": int(b.get("history_max_backoff_ms", 8000) or 8000),
     }
 
 
@@ -565,7 +588,10 @@ def _pag_limit(pag: Any, default: int) -> int:
 
 def _pag_total_pages(pag: Any) -> Optional[int]:
     if isinstance(pag, dict):
-        return safe_int(pag.get("page_count") or pag.get("total_pages") or pag.get("pages"))
+        for k in ("page_count", "pageCount", "total_pages", "totalPages", "pages", "pagecount", "totalpages"):
+            v = safe_int(pag.get(k))
+            if v is not None:
+                return v
     return None
 
 
@@ -578,7 +604,13 @@ def _pag_has_more(pag: Any, *, page: int, per_page: int, lengths: Iterable[int])
         if tp is not None:
             return page < tp
     eff = _pag_limit(pag, per_page)
-    return any(int(x) >= eff for x in lengths)
+    total = 0
+    for x in lengths:
+        try:
+            total += int(x)
+        except Exception:
+            continue
+    return total >= eff
 
 
 def _collect_ratings_type(meta: dict[str, Any], ses: requests.Session, type_name: str, per_page: int) -> list[dict[str, Any]]:
@@ -933,20 +965,435 @@ def write_ratings(meta: dict[str, Any], ses: requests.Session, *, unrate: bool, 
     return ok
 
 
+# History
+def _hist_row_movie(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    try:
+        mv = row.get("movie") or {}
+        ids = _ids_from_obj(mv)
+        if not ids:
+            return None
+        w = row.get("watched_at") or row.get("last_watched_at")
+        if not iso_ok(w):
+            return None
+        out: dict[str, Any] = {"type": "movie", "ids": ids, "watched_at": iso_z(str(w))}
+        title = str(mv.get("title") or mv.get("name") or "").strip()
+        if title:
+            out["title"] = title
+        y = mv.get("year") or mv.get("release_year")
+        year = safe_int(y)
+        if year:
+            out["year"] = year
+        plays = row.get("plays") or row.get("times_watched")
+        try:
+            if plays is not None:
+                out["plays"] = int(plays)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return None
+
+
+def _hist_row_show(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    try:
+        sh = row.get("show") or {}
+        ids = _ids_from_obj(sh)
+        if not ids:
+            return None
+        w = row.get("watched_at") or row.get("last_watched_at")
+        if not iso_ok(w):
+            return None
+        out: dict[str, Any] = {"type": "show", "ids": ids, "watched_at": iso_z(str(w))}
+        title = str(sh.get("title") or sh.get("name") or "").strip()
+        if title:
+            out["title"] = title
+        y = sh.get("year") or sh.get("first_air_year")
+        if not y:
+            fa = str(sh.get("first_air_date") or sh.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit():
+                y = int(fa[:4])
+        year = safe_int(y)
+        if year:
+            out["year"] = year
+        plays = row.get("plays") or row.get("times_watched")
+        try:
+            if plays is not None:
+                out["plays"] = int(plays)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return None
+
+
+def _hist_row_season(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    try:
+        sv = row.get("season") or {}
+        show = sv.get("show") or {}
+        show_ids = _ids_from_obj(show)
+        if not show_ids:
+            return None
+        s_num = safe_int(sv.get("number"))
+        if s_num is None:
+            return None
+        w = row.get("watched_at") or row.get("last_watched_at")
+        if not iso_ok(w):
+            return None
+        out: dict[str, Any] = {"type": "season", "show_ids": show_ids, "season": s_num, "watched_at": iso_z(str(w))}
+        show_title = str(show.get("title") or show.get("name") or "").strip()
+        if show_title:
+            out["series_title"] = show_title
+        y = show.get("year") or show.get("first_air_year")
+        if not y:
+            fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit():
+                y = int(fa[:4])
+        year = safe_int(y)
+        if year:
+            out["year"] = year
+        plays = row.get("plays") or row.get("times_watched")
+        try:
+            if plays is not None:
+                out["plays"] = int(plays)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return None
+
+
+def _hist_row_episode(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    try:
+        ev = row.get("episode") or {}
+        show = ev.get("show") or {}
+        show_ids = _ids_from_obj(show)
+        if not show_ids:
+            return None
+        s_num = safe_int(ev.get("season"))
+        e_num = safe_int(ev.get("number") if ev.get("number") is not None else ev.get("episode"))
+        if s_num is None or e_num is None:
+            return None
+        w = row.get("watched_at") or row.get("last_watched_at")
+        if not iso_ok(w):
+            return None
+        out: dict[str, Any] = {"type": "episode", "show_ids": show_ids, "season": s_num, "episode": e_num, "watched_at": iso_z(str(w))}
+        show_title = str(show.get("title") or show.get("name") or "").strip()
+        if show_title:
+            out["series_title"] = show_title
+        title = str(ev.get("name") or ev.get("title") or "").strip()
+        if title:
+            out["title"] = title
+        y = show.get("year") or show.get("first_air_year")
+        if not y:
+            fa = str(show.get("first_air_date") or show.get("first_aired") or "").strip()
+            if len(fa) >= 4 and fa[:4].isdigit():
+                y = int(fa[:4])
+        year = safe_int(y)
+        if year:
+            out["year"] = year
+        plays = row.get("plays") or row.get("times_watched")
+        try:
+            if plays is not None:
+                out["plays"] = int(plays)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return None
+
+
+def collect_history(meta: dict[str, Any], ses: requests.Session) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    page = 1
+    per_page = int(meta.get("hist_per_page") or 1000)
+    max_pages = 9999
+    stagnant = 0
+
+    while True:
+        st, data, _ = request_json(
+            ses,
+            "GET",
+            HIST_LIST,
+            params={"apikey": meta["apikey"], "page": page, "limit": per_page},
+            timeout=meta["timeout"],
+            retries=meta["retries"],
+        )
+        if st != 200:
+            raise RuntimeError(f"GET history failed: {st}")
+        if not isinstance(data, dict):
+            break
+
+        movies = data.get("movies") or []
+        shows = data.get("shows") or []
+        seasons = data.get("seasons") or []
+        episodes = data.get("episodes") or []
+
+        before = len(out)
+
+        for row in movies:
+            if isinstance(row, dict):
+                m = _hist_row_movie(row)
+                if m:
+                    out.append(m)
+
+        for row in shows:
+            if isinstance(row, dict):
+                m = _hist_row_show(row)
+                if m:
+                    out.append(m)
+
+        for row in seasons:
+            if isinstance(row, dict):
+                m = _hist_row_season(row)
+                if m:
+                    out.append(m)
+
+        for row in episodes:
+            if isinstance(row, dict):
+                m = _hist_row_episode(row)
+                if m:
+                    out.append(m)
+
+        if len(out) == before:
+            stagnant += 1
+            if stagnant >= 2:
+                break
+        else:
+            stagnant = 0
+
+        pag = data.get("pagination") or {}
+        has_more = _pag_has_more(
+            pag,
+            page=page,
+            per_page=per_page,
+            lengths=(len(movies), len(shows), len(seasons), len(episodes)),
+        )
+        if not bool(has_more) or page >= max_pages:
+            break
+        page += 1
+
+    return out
+
+
+def _stable_show_key(ids: dict[str, Any]) -> str:
+    keep: dict[str, Any] = {}
+    for k in ("imdb", "tmdb", "tvdb", "trakt", "mdblist"):
+        v = ids.get(k)
+        if v is not None:
+            keep[k] = v
+    return json.dumps(keep, sort_keys=True)
+
+
+def bucketize_history(items: Iterable[dict[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    movies: list[dict[str, Any]] = []
+    shows_nested: dict[str, dict[str, Any]] = {}
+    shows_plain: dict[str, dict[str, Any]] = {}
+    unresolved: list[dict[str, Any]] = []
+
+    for raw in items:
+        it = dict(raw or {})
+        typ_raw = it.get("type")
+        typ = str(typ_raw or "movie").strip().lower()
+        if typ.endswith("s") and typ in ("movies", "shows", "seasons", "episodes"):
+            typ = typ[:-1]
+        if typ not in ("movie", "show", "season", "episode"):
+            unresolved.append({"item": raw, "hint": f"unknown_type:{typ_raw}"})
+            continue
+
+        ids = _ids_from_obj(it.get("ids") or {})
+        show_ids = _ids_from_obj(it.get("show_ids") or {})
+
+        watched_at = it.get("watched_at") or it.get("last_watched_at")
+        watched_iso = iso_z(str(watched_at)) if iso_ok(watched_at) else None
+        if not watched_iso and not unwatch:
+            unresolved.append({"item": raw, "hint": "missing_watched_at"})
+            continue
+
+        if typ == "movie":
+            if not ids:
+                unresolved.append({"item": raw, "hint": "missing_ids"})
+                continue
+            row: dict[str, Any] = {"ids": ids}
+            if watched_iso:
+                row["watched_at"] = watched_iso
+            movies.append(row)
+            continue
+
+        if typ == "show":
+            if not ids:
+                unresolved.append({"item": raw, "hint": "missing_ids"})
+                continue
+            key = _stable_show_key(ids)
+            sh = shows_plain.get(key) or {"ids": ids}
+            if watched_iso:
+                sh["watched_at"] = watched_iso
+            shows_plain[key] = sh
+            continue
+
+        season_num = it.get("season")
+        s_num = safe_int(season_num)
+        if s_num is None:
+            unresolved.append({"item": raw, "hint": "missing_season"})
+            continue
+
+        sh_ids = show_ids or ids
+        if not sh_ids:
+            unresolved.append({"item": raw, "hint": "missing_show_ids"})
+            continue
+
+        skey = _stable_show_key(sh_ids)
+        grp: dict[str, Any] = shows_nested.get(skey) or {"ids": sh_ids, "seasons": []}
+        seasons_raw = grp.get("seasons")
+        seasons_list: list[dict[str, Any]] = [x for x in seasons_raw if isinstance(x, dict)] if isinstance(seasons_raw, list) else []
+        grp["seasons"] = seasons_list
+
+        season_obj: dict[str, Any] | None = next((x for x in seasons_list if safe_int(x.get("number")) == s_num), None)
+        if season_obj is None:
+            season_obj = {"number": s_num}
+            seasons_list.append(season_obj)
+
+        if typ == "season":
+            if watched_iso:
+                season_obj["watched_at"] = watched_iso
+            shows_nested[skey] = grp
+            continue
+
+        ep_num = it.get("episode") if it.get("episode") is not None else it.get("number")
+        e_num = safe_int(ep_num)
+        if e_num is None:
+            unresolved.append({"item": raw, "hint": "missing_episode"})
+            continue
+
+        ep: dict[str, Any] = {"number": e_num}
+        if watched_iso:
+            ep["watched_at"] = watched_iso
+        eps = season_obj.get("episodes")
+        if not isinstance(eps, list):
+            eps = []
+            season_obj["episodes"] = eps
+        eps.append(ep)
+        shows_nested[skey] = grp
+
+    body: dict[str, Any] = {}
+    if movies:
+        body["movies"] = movies
+    if shows_nested:
+        for grp in shows_nested.values():
+            sl = grp.get("seasons")
+            if isinstance(sl, list):
+                sl2 = [x for x in sl if isinstance(x, dict)]
+                grp["seasons"] = sorted(sl2, key=lambda x: safe_int(x.get("number")) or 0)
+                for sp in grp["seasons"]:
+                    el = sp.get("episodes")
+                    if isinstance(el, list):
+                        el2 = [x for x in el if isinstance(x, dict)]
+                        sp["episodes"] = sorted(el2, key=lambda x: safe_int(x.get("number")) or 0)
+        body["shows_nested"] = list(shows_nested.values())
+    if shows_plain:
+        body["shows_plain"] = list(shows_plain.values())
+    body = {k: v for k, v in body.items() if v}
+    return body, unresolved
+
+
+def write_history(
+    meta: dict[str, Any],
+    ses: requests.Session,
+    *,
+    unwatch: bool,
+    items: list[dict[str, Any]],
+) -> tuple[int, list[dict[str, Any]]]:
+    body, unresolved = bucketize_history(items, unwatch=unwatch)
+    if not body:
+        return 0, unresolved
+
+    chunk_size = int(meta.get("hist_chunk_size") or 25)
+    delay_ms = int(meta.get("hist_delay_ms") or 600)
+    max_backoff_ms = int(meta.get("hist_max_backoff_ms") or 8000)
+    url = HIST_REMOVE if unwatch else HIST_UPSERT
+
+    ok = 0
+    stages: list[tuple[str, str]] = [
+        ("movies", "movies"),
+        ("shows_nested", "shows"),
+        ("shows_plain", "shows"),
+    ]
+
+    for body_key, bucket in stages:
+        rows = body.get(body_key) or []
+        if not rows:
+            continue
+        for part in _chunk(list(rows), chunk_size):
+            payload = {bucket: part}
+            attempt = 0
+            backoff_ms = delay_ms
+            while True:
+                st, data, text = request_json(
+                    ses,
+                    "POST",
+                    url,
+                    params={"apikey": meta["apikey"]},
+                    body=payload,
+                    timeout=meta["timeout"],
+                    retries=1,
+                )
+
+                if st in (200, 201, 204):
+                    if st == 204 or not isinstance(data, dict):
+                        ok += len(part)
+                        time.sleep(max(0.0, delay_ms / 1000.0))
+                        break
+
+                    kinds = ("movies", "shows", "seasons", "episodes")
+                    if unwatch:
+                        removed = data.get("removed") or data.get("deleted") or data.get("unwatched") or {}
+                        n = sum(int(removed.get(k) or 0) for k in kinds)
+                        ok += n if n > 0 else len(part)
+                    else:
+                        updated = data.get("updated") or {}
+                        added = data.get("added") or {}
+                        existing = data.get("existing") or {}
+                        n = 0
+                        n += sum(int(updated.get(k) or 0) for k in kinds)
+                        n += sum(int(added.get(k) or 0) for k in kinds)
+                        n += sum(int(existing.get(k) or 0) for k in kinds)
+                        ok += n if n > 0 else len(part)
+
+                    time.sleep(max(0.0, delay_ms / 1000.0))
+                    break
+
+                if st in (429, 503):
+                    if os.getenv("CW_MDBLIST_DEBUG"):
+                        print(
+                            f"[MDBLIST:history] throttled {st} attempt={attempt} backoff_ms={backoff_ms}: {(text or '')[:160]}"
+                        )
+                    time.sleep(min(max_backoff_ms, backoff_ms) / 1000.0)
+                    attempt += 1
+                    backoff_ms = min(max_backoff_ms, int(backoff_ms * 1.6) + 200)
+                    if attempt <= 4:
+                        continue
+
+                if os.getenv("CW_MDBLIST_DEBUG"):
+                    print(f"[MDBLIST:history] failed {st}: {(text or '')[:200]}")
+                break
+
+    return ok, unresolved
+
+
 # Backup / Restore
-def backup_now(wl: list[dict[str, Any]], ratings: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
+def backup_now(wl: list[dict[str, Any]], ratings: list[dict[str, Any]], history: list[dict[str, Any]], meta: dict[str, Any]) -> Path:
     ensure_backup_dir()
     cleanup_old_backups()
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     path = BACKUP_DIR / f"mdblist_backup_{ts}.json.gz"
     payload = {
-        "schema": 1,
+        "schema": 2,
         "provider": "mdblist",
         "created_at": now_iso(),
-        "counts": {"watchlist": len(wl), "ratings": len(ratings)},
+        "counts": {"watchlist": len(wl), "ratings": len(ratings), "history": len(history)},
         "watchlist": wl,
         "ratings": ratings,
-        "note": "ratings include movie/show/season/episode entries; seasons/episodes use show_ids for restore/remove",
+        "history": history,
+        "note": "ratings include movie/show/season/episode entries; history includes movie/show/season/episode watched entries",
         "meta": {"timeout": meta["timeout"], "retries": meta["retries"]},
     }
     with gzip.open(path, "wt", encoding="utf-8") as f:
@@ -957,8 +1404,9 @@ def backup_now(wl: list[dict[str, Any]], ratings: list[dict[str, Any]], meta: di
 def restore_from_backup(meta: dict[str, Any], ses: requests.Session, b: dict[str, Any]) -> None:
     wl = b.get("watchlist") or []
     ratings = b.get("ratings") or []
-    print(f"\nBackup: {b.get('created_at')}  wl={len(wl)} ratings={len(ratings)}")
-    c = input("Restore [w]atchlist / [r]atings / [b]oth: ").strip().lower()
+    history = b.get("history") or []
+    print(f"\nBackup: {b.get('created_at')}  wl={len(wl)} ratings={len(ratings)} history={len(history)}")
+    c = input("Restore [w]atchlist / [r]atings / [h]istory / [b]oth: ").strip().lower()
 
     if c in ("w", "b") and wl:
         n, unr = write_watchlist(meta, ses, "add", wl)
@@ -967,6 +1415,10 @@ def restore_from_backup(meta: dict[str, Any], ses: requests.Session, b: dict[str
     if c in ("r", "b") and ratings:
         n2 = write_ratings(meta, ses, unrate=False, items=list(ratings))
         print(f"Ratings restore: ok={n2}")
+    
+    if c in ("h", "b") and history:
+        n3, unr3 = write_history(meta, ses, unwatch=False, items=list(history))
+        print(f"History restore: ok={n3}, unresolved={len(unr3)}")
 
     print("Restore done.")
 
@@ -976,11 +1428,13 @@ def menu() -> str:
     print("\n=== MDBList Cleanup and Backup/Restore ===")
     print("1. Show MDBList Watchlist")
     print("2. Show MDBList Ratings")
-    print("3. Remove MDBList Watchlist")
-    print("4. Remove MDBList Ratings")
-    print("5. Backup MDBList (watchlist + ratings)")
-    print("6. Restore MDBList from Backup")
-    print("7. Clean MDBList (watchlist + ratings)")
+    print("3. Show MDBList History")
+    print("4. Remove MDBList Watchlist")
+    print("5. Remove MDBList Ratings")
+    print("6. Remove MDBList History")
+    print("7. Backup MDBList (watchlist + ratings + history)")
+    print("8. Restore MDBList from Backup")
+    print("9. Clean MDBList (watchlist + ratings + history)")
     print("0. Exit")
     return input("Select: ").strip()
 
@@ -1007,6 +1461,11 @@ def main() -> None:
                 show(rats, ["type", "title", "year", "rating", "rated_at"])
 
             elif ch == "3":
+                hist = collect_history(meta, ses)
+                print(f"\nMDBList history entries: {len(hist)}")
+                show(hist, ["type", "series_title", "title", "year", "season", "episode", "watched_at", "plays"])
+
+            elif ch == "4":
                 wl = collect_watchlist(meta, ses)
                 print(f"\nFound {len(wl)} watchlist items.")
                 if input("Type YES to continue: ").strip().upper() != "YES":
@@ -1014,7 +1473,7 @@ def main() -> None:
                 n, unr = write_watchlist(meta, ses, "remove", wl)
                 print(f"Done. Removed {n} watchlist items. Unresolved={len(unr)}")
 
-            elif ch == "4":
+            elif ch == "5":
                 rats = collect_ratings(meta, ses)
                 print(f"\nFound {len(rats)} ratings entries.")
                 if input("Type YES to continue: ").strip().upper() != "YES":
@@ -1022,28 +1481,42 @@ def main() -> None:
                 n2 = write_ratings(meta, ses, unrate=True, items=rats)
                 print(f"Done. Removed ratings count={n2} (server-reported).")
 
-            elif ch == "5":
+            elif ch == "6":
+                hist = collect_history(meta, ses)
+                print(f"\nFound {len(hist)} history entries.")
+                if input("Type YES to continue: ").strip().upper() != "YES":
+                    continue
+                n3, unr3 = write_history(meta, ses, unwatch=True, items=hist)
+                print(f"Done. Removed history count={n3} (server-reported). Unresolved={len(unr3)}")
+
+            elif ch == "7":
                 wl = collect_watchlist(meta, ses)
                 rats = collect_ratings(meta, ses)
-                p = backup_now(wl, rats, meta)
+                hist = collect_history(meta, ses)
+                p = backup_now(wl, rats, hist, meta)
                 print(f"Backup written: {p}")
 
-            elif ch == "6":
+            elif ch == "8":
                 p = choose_backup()
                 if not p:
                     continue
                 restore_from_backup(meta, ses, load_backup(p))
 
-            elif ch == "7":
+            elif ch == "9":
                 wl = collect_watchlist(meta, ses)
                 rats = collect_ratings(meta, ses)
-                print(f"\nWatchlist={len(wl)} | Ratings={len(rats)}")
+                hist = collect_history(meta, ses)
+                print(f"\nWatchlist={len(wl)} | Ratings={len(rats)} | History={len(hist)}")
                 if input("Type YES to continue: ").strip().upper() != "YES":
                     continue
                 print("Cleaning...")
                 nw, unr = write_watchlist(meta, ses, "remove", wl)
                 nr = write_ratings(meta, ses, unrate=True, items=rats)
-                print(f"Done. Cleared watchlist={nw} (unresolved={len(unr)}), ratings_removed={nr}.")
+                nh, unrh = write_history(meta, ses, unwatch=True, items=hist)
+                print(
+                    f"Done. Cleared watchlist={nw} (unresolved={len(unr)}), "
+                    f"ratings_removed={nr}, history_removed={nh} (unresolved={len(unrh)})."
+                )
 
             else:
                 print("Unknown option.")

@@ -207,6 +207,28 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
     except Exception:
         return 99.0
 
+def _trakt_progress_step(cfg: dict[str, Any]) -> int:
+    try:
+        step = int((cfg.get("trakt") or {}).get("progress_step", 5))
+    except Exception:
+        step = 5
+    return max(1, min(25, step))
+
+
+def _quantize_progress(prog: float | int, step: int, action: str) -> int:
+    try:
+        p = int(float(prog))
+    except Exception:
+        p = 0
+    if step <= 1 or action == "stop":
+        return max(0, min(100, p))
+    if p < step:
+        return max(1, min(100, p))
+    q = (p // step) * step
+    if q <= 0:
+        q = 1
+    return max(1, min(100, q))
+
 
 def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | None:
     ids = ev.ids or {}
@@ -389,7 +411,6 @@ class TraktSink(ScrobbleSink):
         self._p_sess: dict[tuple[str, str], int] = {}
         self._p_glob: dict[str, int] = {}
         self._best: dict[str, dict[str, Any]] = {}
-        self._ids_logged: set[str] = set()
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_token = False
@@ -570,11 +591,7 @@ class TraktSink(ScrobbleSink):
         p_glob = self._p_glob.get(mk, -1)
 
         name = _media_name(ev)
-        ids_now = _ids(ev)
         key = self._ckey(ev)
-        if key not in self._ids_logged:
-            _log(f"ids resolved: {name} -> {_ids_desc_map(ids_now)}", "DEBUG")
-            self._ids_logged.add(key)
 
         if ev.action == "start":
             if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
@@ -682,7 +699,6 @@ class TraktSink(ScrobbleSink):
                 except Exception:
                     act = path.rsplit("/", 1)[-1]
                 _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
-                _log(f"{path} {res['status']}", "DEBUG")
                 skeleton = _extract_skeleton_from_body(body)
                 self._best[key] = {
                     "skeleton": skeleton,
@@ -726,7 +742,6 @@ class TraktSink(ScrobbleSink):
                     except Exception:
                         act = path.rsplit("/", 1)[-1]
                     _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
-                    _log(f"{path} {res['status']}", "DEBUG")
                     skeleton = _extract_skeleton_from_body(body)
                     self._best[key] = {
                         "skeleton": skeleton,

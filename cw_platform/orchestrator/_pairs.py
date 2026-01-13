@@ -4,6 +4,8 @@
 from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
+from contextlib import contextmanager
+import os
 
 from ._pairs_utils import (
     inject_ctx_into_provider,
@@ -106,6 +108,50 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
         return out
     return ["watchlist", "ratings", "history", "playlists"]
 
+
+
+def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str) -> str:
+    mode_norm = str(mode or "one-way").strip().lower()
+    if mode_norm == "two-way":
+        base = "-".join(sorted([str(src).upper(), str(dst).upper()]))
+        mode_norm = "two-way"
+    else:
+        base = f"{str(src).upper()}-{str(dst).upper()}"
+        mode_norm = "one-way"
+
+    raw_id = pair.get("id") or pair.get("pair_id") or pair.get("name") or pair.get("label") or ""
+    pid = str(raw_id).strip() if raw_id else ""
+    if not pid:
+        pid = str(i)
+
+    return f"{mode_norm}:{base}:{pid}"
+
+
+@contextmanager
+def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str):
+    key = _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
+    new = {
+        "CW_PAIR_KEY": key,
+        "CW_PAIR_SRC": str(src).upper(),
+        "CW_PAIR_DST": str(dst).upper(),
+        "CW_PAIR_MODE": str(mode or "").strip().lower(),
+        "CW_PAIR_FEATURE": str(feature or "").strip().lower(),
+    }
+
+    old = {k: os.environ.get(k) for k in new.keys()}
+    try:
+        for k, v in new.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = str(v)
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 def run_pairs(ctx) -> dict[str, Any]:
     cfg: dict[str, Any] = ctx.config or {}
@@ -212,33 +258,34 @@ def run_pairs(ctx) -> dict[str, Any]:
 
             features_ran.add(feature)
 
-            if mode == "two-way":
-                res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
-                removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
-                unresolved_total += (
-                    int(res.get("unresolved", 0))
-                    + int(res.get("unresolved_to_A", 0))
-                    + int(res.get("unresolved_to_B", 0))
-                )
-                skipped_total += (
-                    int(res.get("skipped", 0))
-                    + int(res.get("skipped_to_A", 0))
-                    + int(res.get("skipped_to_B", 0))
-                )
-                errors_total += (
-                    int(res.get("errors", 0))
-                    + int(res.get("errors_to_A", 0))
-                    + int(res.get("errors_to_B", 0))
-                )
-            else:
-                res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                added_total += int(res.get("added", 0))
-                removed_total += int(res.get("removed", 0))
-                unresolved_total += int(res.get("unresolved", 0))
-                skipped_total += int(res.get("skipped", 0))
-                errors_total += int(res.get("errors", 0))
-
+            with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
+                if mode == "two-way":
+                    res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                    added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
+                    removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
+                    unresolved_total += (
+                        int(res.get("unresolved", 0))
+                        + int(res.get("unresolved_to_A", 0))
+                        + int(res.get("unresolved_to_B", 0))
+                    )
+                    skipped_total += (
+                        int(res.get("skipped", 0))
+                        + int(res.get("skipped_to_A", 0))
+                        + int(res.get("skipped_to_B", 0))
+                    )
+                    errors_total += (
+                        int(res.get("errors", 0))
+                        + int(res.get("errors_to_A", 0))
+                        + int(res.get("errors_to_B", 0))
+                    )
+                else:
+                    res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                    added_total += int(res.get("added", 0))
+                    removed_total += int(res.get("removed", 0))
+                    unresolved_total += int(res.get("unresolved", 0))
+                    skipped_total += int(res.get("skipped", 0))
+                    errors_total += int(res.get("errors", 0))
+    
     if "watchlist" in features_ran:
         try:
             from ._tombstones import cascade_removals

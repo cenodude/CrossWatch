@@ -19,6 +19,7 @@ from ._common import (
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     save_watermark,
+    state_file,
 )
 
 BASE = "https://api.simkl.com"
@@ -28,9 +29,14 @@ URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_SEARCH_ID = f"{BASE}/search/id"
 
-STATE_DIR = Path("/config/.cw_state")
-UNRESOLVED_PATH = STATE_DIR / "simkl.watchlist.unresolved.json"
-SHADOW_PATH = STATE_DIR / "simkl.watchlist.shadow.json"
+
+def _unresolved_path() -> Path:
+    return state_file("simkl.watchlist.unresolved.json")
+
+
+def _shadow_path() -> Path:
+    return state_file("simkl.watchlist.shadow.json")
+
 
 WATCHLIST_BUCKETS = ("movies", "shows", "anime")
 
@@ -45,20 +51,20 @@ def _log(msg: str) -> None:
 
 def _load_unresolved() -> dict[str, Any]:
     try:
-        return json.loads(UNRESOLVED_PATH.read_text("utf-8"))
+        return json.loads(_unresolved_path().read_text("utf-8"))
     except Exception:
         return {}
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = UNRESOLVED_PATH.with_suffix(".tmp")
+        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _unresolved_path().with_suffix(".tmp")
         tmp.write_text(
             json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
             "utf-8",
         )
-        os.replace(tmp, UNRESOLVED_PATH)
+        os.replace(tmp, _unresolved_path())
     except Exception as exc:
         _log(f"unresolved.save failed: {exc}")
 
@@ -103,7 +109,7 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 
 def _shadow_load() -> dict[str, Any]:
     try:
-        data = json.loads(SHADOW_PATH.read_text("utf-8"))
+        data = json.loads(_shadow_path().read_text("utf-8"))
         if isinstance(data, dict):
             if "buckets_seen" not in data or not isinstance(data.get("buckets_seen"), dict):
                 data["buckets_seen"] = {}
@@ -122,8 +128,8 @@ def _shadow_save(
     buckets_seen: Mapping[str, Any] | None = None,
 ) -> None:
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = SHADOW_PATH.with_suffix(".tmp")
+        _shadow_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _shadow_path().with_suffix(".tmp")
         tmp.write_text(
             json.dumps(
                 {
@@ -137,14 +143,14 @@ def _shadow_save(
             ),
             "utf-8",
         )
-        os.replace(tmp, SHADOW_PATH)
+        os.replace(tmp, _shadow_path())
     except Exception:
         pass
 
 
 def _shadow_age_seconds() -> float:
     try:
-        return max(0.0, time.time() - SHADOW_PATH.stat().st_mtime)
+        return max(0.0, time.time() - _shadow_path().stat().st_mtime)
     except Exception:
         return 1e9
 
@@ -596,7 +602,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     if os.getenv("CW_SIMKL_WATCHLIST_CLEAR") == "1":
         try:
-            SHADOW_PATH.unlink(missing_ok=True)
+            _shadow_path().unlink(missing_ok=True)
         except Exception:
             pass
 

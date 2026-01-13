@@ -508,7 +508,7 @@ class WatchService:
                 if isinstance(prev, int):
                     best = prev
             if best != want and best is not None:
-                self._dbg(f"probe correction: {best}%")
+                self._dbg(f"progress normalized: {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})

@@ -233,7 +233,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     etag = r.headers.get("ETag")
 
     if r.status_code == 304 and use_etag:
-        _log("304 Not Modified → shadow")
+        _log("304 Not Modified - shadow")
         idx = dict(sh.get("items") or {})
         total = len(idx)
         _tick(prog, 0, total=total, force=True)

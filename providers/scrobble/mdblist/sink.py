@@ -18,12 +18,6 @@ except Exception:
     BASE_LOG = None
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
-
-try:
-    from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
-except ImportError:
-    _rm_across_api = None  # type: ignore
-
 try:
     from providers.scrobble.scrobble import ScrobbleSink, ScrobbleEvent  # type: ignore
 except ImportError:
@@ -139,6 +133,26 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> int:
     except Exception:
         return 99
 
+def _progress_step(cfg: dict[str, Any]) -> int:
+    try:
+        s = cfg.get("scrobble") or {}
+        step = (s.get("mdblist") or {}).get("progress_step")
+        if step is None:
+            step = (s.get("trakt") or {}).get("progress_step", 5)
+        step_i = int(step)
+    except Exception:
+        step_i = 5
+    return max(1, min(25, step_i))
+
+
+def _quantize_progress(prog: int, step: int, action: str) -> int:
+    p = _clamp(prog)
+    if step <= 1 or action == "stop":
+        return p
+    if p < step:
+        return max(1, p)
+    q = (p // step) * step
+    return max(1, min(100, q))
 
 
 def _clamp(p: Any) -> int:
@@ -147,40 +161,6 @@ def _clamp(p: Any) -> int:
     except Exception:
         v = 0
     return max(0, min(100, v))
-
-
-def _resolve_enabled(cfg: dict[str, Any]) -> bool:
-    try:
-        m = cfg.get("mdblist") or {}
-        v = m.get("resolve")
-        return True if v is None else bool(v)
-    except Exception:
-        return True
-
-
-def _resolve_ttl(cfg: dict[str, Any]) -> int:
-    try:
-        m = cfg.get("mdblist") or {}
-        return int(m.get("resolve_ttl_seconds", _RESOLVE_TTL_S))
-    except Exception:
-        return _RESOLVE_TTL_S
-
-
-def _resolve_neg_ttl(cfg: dict[str, Any]) -> int:
-    try:
-        m = cfg.get("mdblist") or {}
-        return int(m.get("resolve_negative_ttl_seconds", _RESOLVE_NEG_TTL_S))
-    except Exception:
-        return _RESOLVE_NEG_TTL_S
-
-
-def _resolve_enrich_enabled(cfg: dict[str, Any]) -> bool:
-    try:
-        m = cfg.get("mdblist") or {}
-        v = m.get("resolve_enrich")
-        return True if v is None else bool(v)
-    except Exception:
-        return True
 
 
 def _state_dir() -> Path:
@@ -210,7 +190,6 @@ def _imdb_id_sane(v: Any) -> str | None:
     if len(tail) < 6:
         return None
     return s
-
 
 
 def _tvdb_show_id_sane(v: Any) -> int | None:
@@ -262,8 +241,6 @@ def _ids(ev: Any) -> dict[str, Any]:
     return out
 
 
-
-
 def _show_ids(ev: Any) -> dict[str, Any]:
     ids = getattr(ev, "ids", {}) or {}
     m: dict[str, Any] = {}
@@ -295,8 +272,6 @@ def _show_ids(ev: Any) -> dict[str, Any]:
     return m
 
 
-
-
 def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, Any]:
     mt = _norm_type(media_type)
     if mt == "show":
@@ -323,122 +298,6 @@ def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, An
         out[k] = str(v)
 
     return out
-def _mdblist_media_info_ids(provider: str, media_type: str, media_id: Any, api_key: str, cfg: dict[str, Any]) -> dict[str, Any] | None:
-    try:
-        r = requests.get(
-            f"{MDBLIST_API}/{provider}/{media_type}/{media_id}",
-            params={"apikey": api_key},
-            timeout=_timeout(cfg),
-            headers={"Accept": "application/json", "User-Agent": APP_AGENT},
-        )
-    except Exception:
-        return None
-    if r.status_code != 200:
-        return None
-    try:
-        j = r.json() or {}
-    except Exception:
-        return None
-    ids = (j.get("ids") or {}) if isinstance(j, dict) else {}
-    if not isinstance(ids, dict):
-        return None
-    out: dict[str, Any] = {}
-    imdb = _imdb_id_sane(ids.get("imdb"))
-    if imdb:
-        out["imdb"] = imdb
-    if ids.get("tmdb") is not None:
-        try:
-            out["tmdb"] = int(ids["tmdb"])
-        except Exception:
-            pass
-    if ids.get("trakt") is not None:
-        try:
-            out["trakt"] = int(ids["trakt"])
-        except Exception:
-            pass
-    if _norm_type(media_type) == "show" and ids.get("tvdb") is not None:
-        sane = _tvdb_show_id_sane(ids.get("tvdb"))
-        if sane is not None:
-            out["tvdb"] = sane
-    if ids.get("kitsu") is not None:
-        try:
-            out["kitsu"] = int(ids["kitsu"])
-        except Exception:
-            pass
-    if ids.get("mdblist"):
-        out["mdblist"] = str(ids["mdblist"])
-    return out or None
-
-
-def _enrich_ids_via_info(media_type: str, base_ids: dict[str, Any], api_key: str, cfg: dict[str, Any]) -> dict[str, Any]:
-    if not base_ids or not _resolve_enrich_enabled(cfg):
-        return dict(base_ids or {})
-    mt = _norm_type(media_type)
-    info_type = "show" if mt == "show" else "movie"
-    for prov in ("trakt", "tmdb", "imdb", "tvdb", "mdblist"):
-        if not base_ids.get(prov):
-            continue
-        got = _mdblist_media_info_ids(prov, info_type, base_ids[prov], api_key, cfg)
-        if not got:
-            continue
-        merged = dict(got)
-        for k, v in (base_ids or {}).items():
-            if v and k not in merged:
-                merged[k] = v
-        return merged
-    return dict(base_ids or {})
-
-
-def _try_enrich_event_ids(ev: Any, media_type: str, api_key: str, cfg: dict[str, Any]) -> bool:
-    ids = getattr(ev, "ids", None)
-    if not isinstance(ids, dict):
-        return False
-
-    mt = _norm_type(media_type)
-    if mt == "show":
-        sh = _show_ids(ev)
-        if not sh or sh.get("trakt"):
-            return False
-        enriched = _enrich_ids_via_info("show", sh, api_key, cfg)
-        if not enriched or enriched == sh:
-            return False
-        if enriched.get("imdb"):
-            sane = _imdb_id_sane(enriched.get("imdb"))
-            if sane:
-                ids["imdb_show"] = sane
-        if enriched.get("tmdb") is not None:
-            ids["tmdb_show"] = int(enriched["tmdb"])
-        if enriched.get("trakt") is not None:
-            ids["trakt_show"] = int(enriched["trakt"])
-        if enriched.get("tvdb") is not None:
-            sane = _tvdb_show_id_sane(enriched.get("tvdb"))
-            if sane is not None:
-                ids["tvdb_show"] = sane
-        if enriched.get("mdblist"):
-            ids["mdblist_show"] = str(enriched["mdblist"])
-        return True
-
-    mo = _ids(ev)
-    if not mo or mo.get("trakt"):
-        return False
-    enriched = _enrich_ids_via_info("movie", mo, api_key, cfg)
-    if not enriched or enriched == mo:
-        return False
-    if enriched.get("imdb"):
-        sane = _imdb_id_sane(enriched.get("imdb"))
-        if sane:
-            ids["imdb"] = sane
-    if enriched.get("tmdb") is not None:
-        ids["tmdb"] = int(enriched["tmdb"])
-    if enriched.get("trakt") is not None:
-        ids["trakt"] = int(enriched["trakt"])
-    if enriched.get("kitsu") is not None:
-        ids["kitsu"] = int(enriched["kitsu"])
-    if enriched.get("mdblist"):
-        ids["mdblist"] = str(enriched["mdblist"])
-    return True
-
-
 def _ar_key(ids: dict[str, Any], media_type: str) -> str:
     parts = [media_type]
     for k in ("imdb", "tmdb", "tvdb", "trakt", "kitsu", "mdblist"):
@@ -493,13 +352,6 @@ def _auto_remove_across(ev: Any, cfg: dict[str, Any]) -> None:
         return
     try:
         _rm_across(ids, mt)
-        return
-    except Exception:
-        pass
-    try:
-        if _rm_across_api:
-            _rm_across_api(ids, mt)  # type: ignore[misc]
-            return
     except Exception:
         pass
 
@@ -513,7 +365,6 @@ def _media_name(ev: Any) -> str:
     t = getattr(ev, "title", None) or "?"
     y = getattr(ev, "year", None)
     return f"{t} ({y})" if y else t
-
 
 
 def _bodies(ev: Any, progress: float) -> list[dict[str, Any]]:
@@ -547,183 +398,20 @@ def _bodies(ev: Any, progress: float) -> list[dict[str, Any]]:
     return [{"movie": movie, "progress": progress}]
 
 
-def _resolve_state_file() -> Path:
-    return _state_dir() / "mdblist_resolve_cache.json"
-
-
-def _resolve_load() -> dict[str, Any]:
-    p = _resolve_state_file()
-    try:
-        return json.loads(p.read_text("utf-8")) or {}
-    except Exception:
-        return {}
-
-
-def _resolve_save(data: dict[str, Any]) -> None:
-    p = _resolve_state_file()
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    try:
-        tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        tmp.replace(p)
-    except Exception:
-        try:
-            p.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        except Exception:
-            pass
-
-
-def _resolve_key(media_type: str, title: str, year: Any) -> str:
-    y = int(year) if str(year).isdigit() else 0
-    return f"{_norm_type(media_type)}|{(title or '').strip().lower()}|{y}"
-
-
-def _resolve_prune(cache: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-    now = time.time()
-    ttl = max(60, _resolve_ttl(cfg))
-    neg_ttl = max(60, _resolve_neg_ttl(cfg))
-    out: dict[str, Any] = {}
-    for k, v in (cache or {}).items():
-        if not isinstance(v, dict):
-            continue
-        ts = float(v.get("_ts", 0) or 0)
-        ids = v.get("ids") or {}
-        live = (now - ts) < (ttl if ids else neg_ttl)
-        if live:
-            out[k] = v
-    return out
-
-
-def _mdblist_search(media_type: str, title: str, year: Any, api_key: str, cfg: dict[str, Any]) -> dict[str, Any] | None:
-    if not (title or "").strip():
-        return None
-
-    def fetch(mt: str) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"apikey": api_key, "query": title, "limit": 10, "sort_by_score": True}
-        if str(year).isdigit():
-            params["year"] = int(year)
-        try:
-            r = requests.get(
-                f"{MDBLIST_API}/search/{mt}",
-                params=params,
-                timeout=_timeout(cfg),
-                headers={"Accept": "application/json", "User-Agent": APP_AGENT},
-            )
-        except Exception:
-            return []
-        if r.status_code != 200:
-            return []
-        try:
-            j = r.json() or {}
-        except Exception:
-            return []
-        items = j.get("search") or []
-        return items if isinstance(items, list) else []
-
-    want = _norm_type(media_type)
-    items = fetch(want)
-    if not items:
-        any_items = fetch("any")
-        items = [x for x in any_items if _norm_type(str(x.get("type") or "")) == want]
-
-    if not items:
-        return None
-
-    best = items[0]
-    ids = (best.get("ids") or {})
-    out: dict[str, Any] = {}
-    imdb = _imdb_id_sane(ids.get("imdbid"))
-    if imdb:
-        out["imdb"] = imdb
-    if ids.get("tmdbid") is not None:
-        out["tmdb"] = int(ids["tmdbid"])
-    if ids.get("traktid") is not None:
-        out["trakt"] = int(ids["traktid"])
-    if want == "show" and ids.get("tvdbid") is not None:
-        sane = _tvdb_show_id_sane(ids.get("tvdbid"))
-        if sane is not None:
-            out["tvdb"] = sane
-    return out or None
-
-
-def _try_resolve_ids_for_mdblist(ev: Any, media_type: str, api_key: str, cfg: dict[str, Any]) -> tuple[bool, bool]:
-    ids = getattr(ev, "ids", None)
-    if not isinstance(ids, dict):
-        return False, False
-
-    title = (getattr(ev, "title", None) or "").strip()
-    year = getattr(ev, "year", None)
-    if not title:
-        return False, False
-
-    cache = _resolve_load()
-    cache = _resolve_prune(cache, cfg)
-    ck = _resolve_key(media_type, title, year)
-    hit = cache.get(ck) if isinstance(cache, dict) else None
-
-    if isinstance(hit, dict):
-        resolved = dict(hit.get("ids") or {})
-        if not resolved:
-            return False, True
-    else:
-        resolved = _mdblist_search(media_type, title, year, api_key, cfg) or {}
-        cache[ck] = {"_ts": time.time(), "ids": resolved}
-        _resolve_save(cache)
-        if not resolved:
-            return False, True
-
-
-    if resolved:
-        enriched = _enrich_ids_via_info(media_type, resolved, api_key, cfg)
-        if enriched and enriched != resolved:
-            resolved = dict(enriched)
-            cache[ck] = {"_ts": time.time(), "ids": resolved}
-            _resolve_save(cache)
-
-    if _norm_type(media_type) == "show":
-        if resolved.get("imdb"):
-            sane = _imdb_id_sane(resolved.get("imdb"))
-            if sane:
-                ids["imdb_show"] = sane
-        if resolved.get("tmdb") is not None:
-            ids["tmdb_show"] = int(resolved["tmdb"])
-        if resolved.get("trakt") is not None:
-            ids["trakt_show"] = int(resolved["trakt"])
-        if resolved.get("tvdb") is not None:
-            sane = _tvdb_show_id_sane(resolved.get("tvdb"))
-            if sane is not None:
-                ids["tvdb_show"] = sane
-        if resolved.get("mdblist"):
-            ids["mdblist_show"] = str(resolved["mdblist"])
-    else:
-        if resolved.get("imdb"):
-            sane = _imdb_id_sane(resolved.get("imdb"))
-            if sane:
-                ids["imdb"] = sane
-        if resolved.get("tmdb") is not None:
-            ids["tmdb"] = int(resolved["tmdb"])
-        if resolved.get("trakt") is not None:
-            ids["trakt"] = int(resolved["trakt"])
-        if resolved.get("mdblist"):
-            ids["mdblist"] = str(resolved["mdblist"])
-    return True, False
-
-
-def _payload_ids_keys(body: dict[str, Any]) -> list[str]:
-    if "show" in body:
-        ids = ((body.get("show") or {}).get("ids") or {})
-    elif "movie" in body:
-        ids = ((body.get("movie") or {}).get("ids") or {})
-    else:
-        ids = {}
-    return sorted([str(k) for k, v in (ids or {}).items() if v])
-
-
 def _ids_desc_map(ids: dict[str, Any], order: tuple[str, ...]) -> str:
     for k in order:
         v = ids.get(k)
         if v is not None and v != "" and v != 0:
             return f"{k}:{v}"
     return "title/year"
+
+
+def _extract_skeleton_from_body(b: dict[str, Any]) -> dict[str, Any]:
+    out = dict(b)
+    out.pop("progress", None)
+    out.pop("app_version", None)
+    out.pop("app_date", None)
+    return out
 
 
 def _body_ids_desc(b: dict[str, Any]) -> str:
@@ -749,11 +437,10 @@ class MDBListSink(ScrobbleSink):
         self._last_sent: dict[str, float] = {}
         self._p_glob: dict[str, int] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
+        self._best: dict[str, dict[str, Any]] = {}
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_key = False
-        self._no_match_logged: dict[str, float] = {}
-        self._enriched_keys: set[str] = set()
 
     def _mkey(self, ev: Any) -> str:
         ids = getattr(ev, "ids", {}) or {}
@@ -859,13 +546,7 @@ class MDBListSink(ScrobbleSink):
 
         return {"ok": False, "status": 0, "error": last_err or "unknown"}
 
-    def _log_no_match(self, key: str, msg: str) -> None:
-        now = time.time()
-        last = self._no_match_logged.get(key, 0.0)
-        if (now - last) < 60.0:
-            return
-        self._no_match_logged[key] = now
-        _log(msg, "WARN")
+
 
     def send(self, ev: ScrobbleEvent) -> None:
         cfg = _cfg()
@@ -938,6 +619,13 @@ class MDBListSink(ScrobbleSink):
                 p_send = last_sess
             elif p_send < thr:
                 action = "pause"
+                
+        step = _progress_step(cfg)
+        p_send = _quantize_progress(int(p_send), step, action)
+        
+        if action == "start" and p_sess >= 0 and int(p_send) == int(p_sess):
+            return
+              
 
         if p_send != p_sess:
             self._p_sess[(sk, mk)] = p_send
@@ -951,89 +639,43 @@ class MDBListSink(ScrobbleSink):
 
         path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
 
-        mt = getattr(ev, "media_type", "") or ""
-        attempted_resolve = False
-        attempted_enrich = False
+        key0 = key
+        key = self._ckey(ev) or key0
 
-        if _resolve_enabled(cfg):
-            if mt == "episode" and not _show_ids(ev):
-                ok, cached_negative = _try_resolve_ids_for_mdblist(ev, "show", api_key, cfg)
-                attempted_resolve = attempted_resolve or ok or cached_negative
-                if cached_negative and not ok and not _show_ids(ev):
-                    self._log_no_match(key, f"mdblist resolve: no match for show '{name}' — skipping scrobble")
-                    return
-            if mt != "episode" and not _ids(ev):
-                ok, cached_negative = _try_resolve_ids_for_mdblist(ev, "movie", api_key, cfg)
-                attempted_resolve = attempted_resolve or ok or cached_negative
-                if cached_negative and not ok and not _ids(ev):
-                    self._log_no_match(key, f"mdblist resolve: no match for movie '{name}' — skipping scrobble")
-                    return
-
-
-        if _resolve_enabled(cfg) and _resolve_enrich_enabled(cfg):
-            if mt == "episode":
-                sh = _show_ids(ev)
-                if sh and not sh.get("trakt"):
-                    ek_parts: list[str] = []
-                    for k in ("trakt", "tmdb", "imdb", "tvdb", "mdblist"):
-                        if sh.get(k):
-                            ek_parts.append(f"{k}:{sh[k]}")
-                    ek = "show|" + ("|".join(ek_parts) if ek_parts else (getattr(ev, "title", "") or "").strip().lower())
-                    if ek and ek not in self._enriched_keys:
-                        self._enriched_keys.add(ek)
-                        attempted_enrich = _try_enrich_event_ids(ev, "show", api_key, cfg) or attempted_enrich
-            else:
-                mo = _ids(ev)
-                if mo and not mo.get("trakt"):
-                    ek_parts: list[str] = []
-                    for k in ("trakt", "tmdb", "imdb", "mdblist", "kitsu"):
-                        if mo.get(k):
-                            ek_parts.append(f"{k}:{mo[k]}")
-                    ek = "movie|" + ("|".join(ek_parts) if ek_parts else (getattr(ev, "title", "") or "").strip().lower())
-                    if ek and ek not in self._enriched_keys:
-                        self._enriched_keys.add(ek)
-                        attempted_enrich = _try_enrich_event_ids(ev, "movie", api_key, cfg) or attempted_enrich
+        best = self._best.get(key) or self._best.get(key0)
+        best_skel: dict[str, Any] | None = None
+        best_desc = "title/year"
+        if isinstance(best, dict):
+            skel = best.get("skeleton")
+            if isinstance(skel, dict):
+                best_skel = skel
+                bd = best.get("ids_desc")
+                if isinstance(bd, str):
+                    best_desc = bd
 
         bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
-        sent_ok = False
+        if best_skel is not None:
+            b0 = {"progress": float(p_send), **best_skel, **_app_meta(cfg)}
+            if self._should_log_intent(key, path, int(float(b0.get("progress") or p_send))):
+                _log(f"mdblist intent {path} using cached {best_desc}, prog={b0.get('progress')}", "DEBUG")
+            bodies = [b0] + [b for b in bodies if _body_ids_desc(b) != best_desc]
 
-        for body in bodies:
-            intent_prog = int(float(body.get("progress") or p_send))
-            if self._should_log_intent(key, path, intent_prog):
-                _log(f"mdblist intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
+        sent_ok = False
+        for i, body in enumerate(bodies):
+            if not (best_skel is not None and i == 0):
+                intent_prog = int(float(body.get("progress") or p_send))
+                if self._should_log_intent(key, path, intent_prog):
+                    _log(f"mdblist intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
 
             res = self._send_http(path, body, api_key, cfg)
-            if not res.get("ok") and res.get("status") == 404 and _resolve_enabled(cfg):
-                if not attempted_resolve:
-                    if mt == "episode":
-                        ok, cached_negative = _try_resolve_ids_for_mdblist(ev, "show", api_key, cfg)
-                    else:
-                        ok, cached_negative = _try_resolve_ids_for_mdblist(ev, "movie", api_key, cfg)
-                    attempted_resolve = True
-                    if ok:
-                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
-                        body = retry_bodies[0]
-                        res = self._send_http(path, body, api_key, cfg)
-                    elif cached_negative:
-                        self._log_no_match(key, f"mdblist resolve: no match for '{name}' — skipping scrobble")
-                        return
-                elif not attempted_enrich and _resolve_enrich_enabled(cfg):
-                    attempted_enrich = True
-                    if mt == "episode":
-                        enriched_ok = _try_enrich_event_ids(ev, "show", api_key, cfg)
-                    else:
-                        enriched_ok = _try_enrich_event_ids(ev, "movie", api_key, cfg)
-                    if enriched_ok:
-                        retry_bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
-                        body = retry_bodies[0]
-                        res = self._send_http(path, body, api_key, cfg)
-
-
             if not res.get("ok"):
                 _log(f"{path} failed for {name}: {res}", "WARN")
                 continue
 
             sent_ok = True
+            item = {"skeleton": _extract_skeleton_from_body(body), "ids_desc": _body_ids_desc(body), "ts": time.time()}
+            self._best[key] = item
+            self._best[key0] = item
 
             try:
                 act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]

@@ -20,6 +20,7 @@ from ._common import (
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     update_watermark_if_new,
+    state_file,
 )
 
 BASE = "https://api.simkl.com"
@@ -29,10 +30,18 @@ URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_TV_EPISODES = f"{BASE}/tv/episodes"
 URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
 
-STATE_DIR = Path("/config/.cw_state")
-UNRESOLVED_PATH = str(STATE_DIR / "simkl_history.unresolved.json")
-SHADOW_PATH = str(STATE_DIR / "simkl.history.shadow.json")
-SHOW_MAP_PATH = str(STATE_DIR / "simkl.show.map.json")
+
+def _unresolved_path() -> str:
+    return str(state_file("simkl_history.unresolved.json"))
+
+
+def _shadow_path() -> str:
+    return str(state_file("simkl.history.shadow.json"))
+
+
+def _show_map_path() -> str:
+    return str(state_file("simkl.show.map.json"))
+
 
 ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
 
@@ -334,11 +343,11 @@ def _is_null_env(row: Any) -> bool:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    return _load_json(UNRESOLVED_PATH)
+    return _load_json(_unresolved_path())
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    _save_json(UNRESOLVED_PATH, data)
+    _save_json(_unresolved_path(), data)
 
 
 def _freeze(
@@ -380,11 +389,11 @@ def _unfreeze(keys: Iterable[str]) -> None:
 
 
 def _shadow_load() -> dict[str, Any]:
-    return _load_json(SHADOW_PATH) or {"events": {}}
+    return _load_json(_shadow_path()) or {"events": {}}
 
 
 def _shadow_save(obj: Mapping[str, Any]) -> None:
-    _save_json(SHADOW_PATH, obj)
+    _save_json(_shadow_path(), obj)
 
 
 def _shadow_item(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -450,11 +459,11 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
 _RESOLVE_CACHE: dict[str, dict[str, str]] = {}
 
 def _load_show_map() -> dict[str, Any]:
-    return _load_json(SHOW_MAP_PATH) or {"map": {}}
+    return _load_json(_show_map_path()) or {"map": {}}
 
 
 def _save_show_map(obj: Mapping[str, Any]) -> None:
-    _save_json(SHOW_MAP_PATH, obj)
+    _save_json(_show_map_path(), obj)
 
 
 def _persist_show_map(key: str, ids: Mapping[str, Any]) -> None:

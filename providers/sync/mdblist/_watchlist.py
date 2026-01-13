@@ -1,5 +1,5 @@
 # /providers/sync/mdblist/_watchlist.py
-# MDBList watchlist sync module
+# MDBList watchlist sync module (activity-gated)
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 
 from __future__ import annotations
@@ -7,64 +7,52 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, TypeGuard
 
 from cw_platform.id_map import minimal as id_minimal
 
 from .._mod_common import request_with_retries
 
+from ._common import (
+    STATE_DIR,
+    state_file,
+    as_epoch,
+    cfg_bool,
+    cfg_int,
+    cfg_section,
+    get_watermark,
+    iso_ok,
+    iso_z,
+    make_logger,
+    now_iso,
+    read_json,
+    save_watermark,
+    write_json,
+)
+
 
 BASE = "https://api.mdblist.com"
 URL_LIST = f"{BASE}/watchlist/items"
 URL_MODIFY = f"{BASE}/watchlist/items/{{action}}"
+URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 
-STATE_DIR = Path("/config/.cw_state")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-SHADOW = STATE_DIR / "mdblist_watchlist.shadow.json"
-UNRESOLVED_PATH = STATE_DIR / "mdblist_watchlist.unresolved.json"
-
-
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_MDBLIST_DEBUG"):
-        print(f"[MDBLIST:watchlist] {msg}")
+SHADOW = state_file("mdblist_watchlist.shadow.json")
+UNRESOLVED_PATH = state_file("mdblist_watchlist.unresolved.json")
 
 
-def _cfg(adapter: Any) -> Mapping[str, Any]:
-    cfg = getattr(adapter, "config", {}) or {}
-    if isinstance(cfg, dict) and isinstance(cfg.get("mdblist"), dict):
-        return cfg["mdblist"]
-    cfg_obj = getattr(adapter, "cfg", None)
-    if cfg_obj:
-        try:
-            runtime_cfg = getattr(cfg_obj, "config", {}) or {}
-            if isinstance(runtime_cfg, dict) and isinstance(runtime_cfg.get("mdblist"), dict):
-                return runtime_cfg["mdblist"]
-        except Exception:
-            pass
-    return {}
 
-
-def _cfg_int(data: Mapping[str, Any], key: str, default: int) -> int:
-    raw = data.get(key)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except Exception:
-        return default
-
-
-def _cfg_bool(data: Mapping[str, Any], key: str, default: bool) -> bool:
-    raw = data.get(key, default)
-    if isinstance(raw, bool):
-        return raw
-    s = str(raw).strip().lower()
-    if s in ("1", "true", "yes", "on"):
-        return True
-    if s in ("0", "false", "no", "off"):
-        return False
-    return default
+_log = make_logger("watchlist")
+_cfg = cfg_section
+_cfg_int = cfg_int
+_cfg_bool = cfg_bool
+_read_json = read_json
+_write_json = write_json
+_iso_ok = iso_ok
+_iso_z = iso_z
+_as_epoch = as_epoch
+_now_iso = now_iso
 
 
 def _shadow_load() -> dict[str, Any]:
@@ -90,13 +78,42 @@ def _shadow_bust() -> None:
     try:
         if SHADOW.exists():
             SHADOW.unlink()
-            _log("shadow.bust → file removed")
+            _log("shadow.bust - file removed")
     except Exception:
         pass
 
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+
+
+def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries: int) -> dict[str, Any] | None:
+    try:
+        client = getattr(adapter, "client", None)
+        if client and hasattr(client, "last_activities"):
+            data = client.last_activities()
+            if isinstance(data, Mapping) and "error" not in data and "status" not in data:
+                return dict(data)
+    except Exception:
+        pass
+
+    try:
+        r = request_with_retries(
+            adapter.client.session,
+            "GET",
+            URL_LAST_ACTIVITIES,
+            params={"apikey": apikey},
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if 200 <= r.status_code < 300:
+            data = r.json() if (r.text or "").strip() else {}
+            return dict(data) if isinstance(data, Mapping) else None
+    except Exception:
+        return None
+    return None
 
 
 def _load_unresolved() -> dict[str, Any]:
@@ -179,10 +196,6 @@ def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
             changed = True
     if changed:
         _save_unresolved(data)
-
-
-def _is_frozen(item: Mapping[str, Any]) -> bool:
-    return _key_of(id_minimal(item)) in _load_unresolved()
 
 
 def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -311,49 +324,63 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     ttl_h = _cfg_int(cfg, "watchlist_shadow_ttl_hours", 24)
     validate_shadow = _cfg_bool(cfg, "watchlist_shadow_validate", False)
     limit = _cfg_int(cfg, "watchlist_page_size", 200)
+
     apikey = str(cfg.get("api_key") or "").strip()
-    if not apikey:
-        shadow = _shadow_load()
-        return dict(shadow.get("items") or {})
-    prog_factory = getattr(adapter, "progress_factory", None)
-    prog: Any = prog_factory("watchlist") if callable(prog_factory) else None
     shadow = _shadow_load()
-    if ttl_h > 0 and shadow.get("ts"):
-        age = int(time.time()) - int(shadow.get("ts", 0))
-        cached: dict[str, dict[str, Any]] = dict(shadow.get("items") or {})
-        if age <= ttl_h * 3600 and cached:
-            stale = False
-            if validate_shadow:
-                k0, total_live = _peek_live(
-                    adapter,
-                    apikey,
-                    adapter.cfg.timeout,
-                    adapter.cfg.max_retries,
-                )
-                cached_count = len(cached)
-                if total_live is not None and int(total_live) != cached_count:
-                    stale = True
-                    _log(f"shadow invalid: live_total={total_live} != cached={cached_count}")
-                elif k0 and (k0 not in cached):
-                    stale = True
-                    _log("shadow invalid: first live item not in cache")
-            if not stale:
-                if prog:
-                    try:
-                        total = len(cached)
-                        prog.tick(0, total=total, force=True)
-                        prog.tick(total, total=total)
-                    except Exception:
-                        pass
-                _unfreeze_keys_if_present(cached.keys())
-                return cached
-            _log("shadow → rebuild due to validation")
-    sess = adapter.client.session
+    cached: dict[str, dict[str, Any]] = dict(shadow.get("items") or {})
+
+    if not apikey:
+        return cached
+
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
+
+    acts = _fetch_last_activities(adapter, apikey=apikey, timeout=timeout, retries=retries) or {}
+    acts_ts_raw = acts.get("watchlisted_at") if isinstance(acts, Mapping) else None
+    acts_ts = _iso_z(acts_ts_raw) if _iso_ok(acts_ts_raw) else None
+
+    wm = get_watermark("watchlist")
+    if acts_ts and wm:
+        a = _as_epoch(acts_ts) or 0
+        b = _as_epoch(wm) or 0
+        if a <= b:
+            if cached:
+                _log(f"no-op (watchlisted_at={acts_ts} <= watermark={wm}) - using cached shadow")
+                return cached
+            _log(f"no-op (watchlisted_at={acts_ts} <= watermark={wm}) but no cached shadow - forcing refresh")
+
+    if acts_ts and (not wm) and cached:
+        save_watermark("watchlist", acts_ts)
+        _log(f"baseline watermark set to {acts_ts} (using cached shadow)")
+        return cached
+
+    if acts_ts:
+        _log(f"watchlist changed (watchlisted_at={acts_ts} watermark={wm or '-'}) - refresh")
+    else:
+        if ttl_h > 0 and shadow.get("ts") and cached:
+            age = int(time.time()) - int(shadow.get("ts", 0))
+            if age <= ttl_h * 3600:
+                stale = False
+                if validate_shadow:
+                    k0, total_live = _peek_live(adapter, apikey, timeout, retries)
+                    cached_count = len(cached)
+                    if total_live is not None and int(total_live) != cached_count:
+                        stale = True
+                        _log(f"shadow invalid: live_total={total_live} != cached={cached_count}")
+                    elif k0 and (k0 not in cached):
+                        stale = True
+                        _log("shadow invalid: first live item not in cache")
+                if not stale:
+                    return cached
+
+    prog_factory = getattr(adapter, "progress_factory", None)
+    prog: Any = prog_factory("watchlist") if callable(prog_factory) else None
+
+    sess = adapter.client.session
     collected: dict[str, dict[str, Any]] = {}
     offset = 0
     total_tick = 0
+
     while True:
         params = {"apikey": apikey, "limit": limit, "offset": offset, "unified": 1}
         r = request_with_retries(
@@ -387,15 +414,21 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if batch_len < limit:
             break
         offset += batch_len
+
     if collected:
         _shadow_save(collected)
         _unfreeze_keys_if_present(collected.keys())
+
+    if acts_ts:
+        save_watermark("watchlist", acts_ts)
+
     if prog:
         try:
             total = len(collected)
             prog.tick(total, total=total)
         except Exception:
             pass
+
     _log(f"index size: {len(collected)}")
     return collected
 
@@ -406,9 +439,7 @@ def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
         yield seq[i : i + n]
 
 
-def _batch_payload(
-    items: Iterable[Mapping[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     frozen = _load_unresolved()
@@ -468,21 +499,20 @@ def _freeze_not_found(
             _freeze_item(minimal, action=action, reasons=[f"{action}:not-found"], details=details)
 
 
-def _write(
-    adapter: Any,
-    action: str,
-    items: Iterable[Mapping[str, Any]],
-) -> tuple[int, list[dict[str, Any]]]:
+def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
     if not apikey:
         return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
+
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
+
     sess = adapter.client.session
     accepted, unresolved = _batch_payload(items)
     if not accepted:
         return 0, unresolved
+
     ok = 0
     for sl in _chunk(accepted, batch):
         payload = _payload_from_accepted(sl)
@@ -491,6 +521,7 @@ def _write(
                 minimal = id_minimal({"type": x["type"], "ids": x["ids"]})
                 unresolved.append({"item": minimal, "hint": "missing imdb/tmdb"})
             continue
+
         r = request_with_retries(
             sess,
             "POST",
@@ -500,11 +531,13 @@ def _write(
             timeout=adapter.cfg.timeout,
             max_retries=adapter.cfg.max_retries,
         )
+
         if r.status_code in (200, 201):
             d = r.json() if (r.text or "").strip() else {}
             added = d.get("added") or {}
             existing = d.get("existing") or {}
             removed = d.get("deleted") or d.get("removed") or {}
+
             if action == "add":
                 ok += int(added.get("movies") or 0)
                 ok += int(added.get("shows") or 0)
@@ -539,8 +572,10 @@ def _write(
                 unresolved.append({"item": minimal, "hint": f"http:{r.status_code}"})
                 details = {"status": r.status_code} if freeze_details else None
                 _freeze_item(minimal, action=action, reasons=[f"http:{r.status_code}"], details=details)
+
     if ok > 0:
         _shadow_bust()
+
     return ok, unresolved
 
 
