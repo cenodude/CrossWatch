@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, cast
 
 from ._common import (
+    read_json,
+    state_file,
+    write_json,
     configure_plex_context,
     normalize as plex_normalize,
     normalize_discover_row,
@@ -22,7 +25,7 @@ from ._common import (
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
-UNRESOLVED_PATH = "/config/.cw_state/plex_ratings.unresolved.json"
+UNRESOLVED_PATH = state_file("plex_ratings.unresolved.json")
 
 
 def _log(msg: str) -> None:
@@ -202,20 +205,12 @@ def _has_ext_ids(m: Mapping[str, Any]) -> bool:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    return read_json(UNRESOLVED_PATH)
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        tmp = UNRESOLVED_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, UNRESOLVED_PATH)
+        write_json(UNRESOLVED_PATH, data)
     except Exception as e:
         _log(f"unresolved.save failed: {e}")
 
@@ -660,7 +655,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 m["type"] = str(m.get("type") or type_hint.get(tnum) or "movie").lower()
 
                 if m["type"] in ("season", "episode") and not m.get("show_ids"):
-                    # Align canonical keys with Trakt: seasons/episodes are keyed by show ids.
+       
                     show_rk = row.get("parentRatingKey") if m["type"] == "season" else row.get("grandparentRatingKey")
                     if show_rk is None:
                         show_rk = row.get("grandparentRatingKey") or row.get("parentRatingKey")

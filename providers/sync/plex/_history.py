@@ -13,6 +13,9 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 from ._common import (
+    read_json,
+    state_file,
+    write_json,
     normalize as plex_normalize,
     minimal_from_history_row,
     server_find_rating_key_by_guid,
@@ -20,8 +23,8 @@ from ._common import (
     sort_guid_candidates,
 )
 
-UNRESOLVED_PATH = "/config/.cw_state/plex_history.unresolved.json"
-SHADOW_PATH = "/config/.cw_state/plex_history.shadow.json"
+UNRESOLVED_PATH = state_file("plex_history.unresolved.json")
+SHADOW_PATH = state_file("plex_history.shadow.json")
 
 
 def _log(msg: str) -> None:
@@ -139,20 +142,12 @@ def _row_section_id(h: Any) -> str | None:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    return read_json(UNRESOLVED_PATH)
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        tmp = UNRESOLVED_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, UNRESOLVED_PATH)
+        write_json(UNRESOLVED_PATH, data)
     except Exception as e:
         _log(f"unresolved.save failed: {e}")
 
@@ -195,22 +190,11 @@ def _is_frozen(item: Mapping[str, Any]) -> bool:
 
 
 def _load_shadow() -> dict[str, Any]:
-    try:
-        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    return read_json(SHADOW_PATH)
 
 
 def _save_shadow(data: Mapping[str, Any]) -> None:
-    try:
-        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
-        tmp = SHADOW_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, SHADOW_PATH)
-    except Exception:
-        pass
+    write_json(SHADOW_PATH, data)
 
 
 def _shadow_add(item: Mapping[str, Any]) -> None:

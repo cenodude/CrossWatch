@@ -10,9 +10,9 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-from ._common import normalize as emby_normalize, provider_index, resolve_item_id
+from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file
 
-UNRESOLVED_PATH = "/config/.cw_state/emby_ratings.unresolved.json"
+UNRESOLVED_PATH = state_file("emby_ratings.unresolved.json")
 
 
 def _dbg_on() -> bool:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 
@@ -31,10 +32,23 @@ def scope_safe() -> str:
 def scoped_file(root: Path, name: str) -> Path:
     safe = scope_safe()
     p = Path(name)
-    if p.suffix:
-        return root / f"{p.stem}.{safe}{p.suffix}"
-    return root / f"{name}.{safe}"
 
+    if p.suffix:
+        scoped = root / f"{p.stem}.{safe}{p.suffix}"
+        legacy = root / f"{p.stem}{p.suffix}"
+    else:
+        scoped = root / f"{name}.{safe}"
+        legacy = root / name
+
+    # Auto-migrate legacy unscoped state to scoped file
+    if not scoped.exists() and legacy.exists():
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, scoped)
+        except Exception:
+            pass
+
+    return scoped
 
 
 def scoped_snapshots_dir(root: Path) -> Path:

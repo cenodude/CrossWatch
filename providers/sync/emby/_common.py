@@ -4,11 +4,57 @@
 from __future__ import annotations
 from typing import Any, Iterable, Mapping, Sequence
 from datetime import datetime
+from pathlib import Path
 import json
 import os
 import re
+import shutil
 import time
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+
+_STATE_DIR = Path("/config/.cw_state")
+
+
+def _pair_scope() -> str | None:
+    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+        v = os.getenv(k)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
+
+
+def _safe_scope(value: str) -> str:
+    s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
+    s = s.strip("_ ")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s[:96] if s else "default"
+
+
+def scope_safe() -> str:
+    scope = _pair_scope()
+    return _safe_scope(scope) if scope else "unscoped"
+
+
+def state_file(name: str) -> str:
+    safe = scope_safe()
+    p = Path(name)
+    if p.suffix:
+        scoped = _STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
+        legacy = _STATE_DIR / f"{p.stem}{p.suffix}"
+    else:
+        scoped = _STATE_DIR / f"{name}.{safe}"
+        legacy = _STATE_DIR / name
+
+    # Auto-migrate legacy unscoped state to scoped file
+    if not scoped.exists() and legacy.exists():
+        try:
+            _STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, scoped)
+        except Exception:
+            pass
+
+    return str(scoped)
 
 _IMDB_PAT = re.compile(r"(?:tt)?(\d{5,9})$")
 _NUM_PAT = re.compile(r"(\d{1,10})$")
@@ -1338,3 +1384,4 @@ def sleep_ms(ms: int) -> None:
     m = int(ms or 0)
     if m > 0:
         time.sleep(m / 1000.0)
+        

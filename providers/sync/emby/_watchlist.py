@@ -7,6 +7,7 @@ import os
 from typing import Any, Iterable, Mapping
 
 from ._common import (
+    state_file,
     normalize as emby_normalize,
     key_of as emby_key_of,
     mark_favorite,
@@ -33,7 +34,7 @@ from ._common import (
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
-UNRESOLVED_PATH = "/config/.cw_state/emby_watchlist.unresolved.json"
+UNRESOLVED_PATH = state_file("emby_watchlist.unresolved.json")
 
 
 def _log(msg: str) -> None:

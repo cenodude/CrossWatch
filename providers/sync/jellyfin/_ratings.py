@@ -9,14 +9,15 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from ._common import (
+    state_file,
     jf_get_library_roots,
     jf_resolve_library_id,
     jf_scope_ratings,
     normalize as jelly_normalize,
 )
 
-UNRESOLVED_PATH = "/config/.cw_state/jellyfin_ratings.unresolved.json"
-SHADOW_PATH = "/config/.cw_state/jellyfin_ratings.shadow.json"
+UNRESOLVED_PATH = str(state_file("jellyfin_ratings.unresolved.json"))
+SHADOW_PATH = str(state_file("jellyfin_ratings.shadow.json"))
 
 
 # shadow 

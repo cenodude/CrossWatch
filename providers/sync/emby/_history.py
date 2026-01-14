@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from ._common import (
+    state_file,
     chunked,
     emby_scope_history,
     normalize as emby_normalize,
@@ -18,9 +19,9 @@ from ._common import (
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-UNRESOLVED_PATH = "/config/.cw_state/emby_history.unresolved.json"
-SHADOW_PATH = "/config/.cw_state/emby_history.shadow.json"
-BLACKBOX_PATH = "/config/.cw_state/emby_history.emby.blackbox.json"
+UNRESOLVED_PATH = state_file("emby_history.unresolved.json")
+SHADOW_PATH = state_file("emby_history.shadow.json")
+BLACKBOX_PATH = state_file("emby_history.emby.blackbox.json")
 
 
 def _log(msg: str) -> None:

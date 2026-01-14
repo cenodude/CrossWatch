@@ -6,14 +6,87 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
 
 import requests
+
+STATE_DIR = Path("/config/.cw_state")
+
+
+def _pair_scope() -> str | None:
+    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+        v = os.getenv(k)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
+
+
+def _safe_scope(value: str) -> str:
+    s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
+    s = s.strip("_ ")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s[:96] if s else "default"
+
+
+def scope_safe() -> str:
+    scope = _pair_scope()
+    return _safe_scope(scope) if scope else "unscoped"
+
+
+def state_file(name: str) -> Path:
+    safe = scope_safe()
+    p = Path(name)
+    scoped = STATE_DIR / (f"{p.stem}.{safe}{p.suffix}" if p.suffix else f"{name}.{safe}")
+    legacy = STATE_DIR / (f"{p.stem}{p.suffix}" if p.suffix else name)
+    if not scoped.exists() and legacy.exists():
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, scoped)
+        except Exception:
+            pass
+    return scoped
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text("utf-8") or "{}")
+    except Exception:
+        return {}
+
+
+def write_json(
+    path: Path,
+    data: Mapping[str, Any],
+    *,
+    indent: int = 2,
+    sort_keys: bool = True,
+    separators: tuple[str, str] | None = None,
+) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(
+            json.dumps(
+                dict(data),
+                ensure_ascii=False,
+                indent=indent,
+                sort_keys=sort_keys,
+                separators=separators,
+            ),
+            "utf-8",
+        )
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
 
 try:
     from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
@@ -160,7 +233,7 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
 
 _FBGUID_MEMO: dict[str, Any] = {}
 _FBGUID_NOHIT = "__NOHIT__"
-_FBGUID_CACHE_PATH = "/config/.cw_state/plex_fallback_memo.json"
+_FBGUID_CACHE_PATH = state_file("plex_fallback_memo.json")
 
 
 def _fb_key_from_row(row: Any) -> str:
@@ -217,11 +290,9 @@ def _fb_cache_load() -> dict[str, Any]:
     if _FBGUID_MEMO:
         return _FBGUID_MEMO
     try:
-        if os.path.exists(_FBGUID_CACHE_PATH):
-            with open(_FBGUID_CACHE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
-                if isinstance(data, dict):
-                    _FBGUID_MEMO.update(data)
+        data = read_json(_FBGUID_CACHE_PATH)
+        if isinstance(data, dict):
+            _FBGUID_MEMO.update(data)
     except Exception:
         pass
     return _FBGUID_MEMO
@@ -229,11 +300,7 @@ def _fb_cache_load() -> dict[str, Any]:
 
 def _fb_cache_save() -> None:
     try:
-        os.makedirs(os.path.dirname(_FBGUID_CACHE_PATH), exist_ok=True)
-        tmp = _FBGUID_CACHE_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_FBGUID_MEMO, f, ensure_ascii=False, indent=0, separators=(",", ":"))
-        os.replace(tmp, _FBGUID_CACHE_PATH)
+        write_json(_FBGUID_CACHE_PATH, _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
     except Exception:
         pass
 

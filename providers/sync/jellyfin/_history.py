@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from ._common import (
+    state_file,
     chunked,
     jf_get_library_roots,
     jf_resolve_library_id,
@@ -19,9 +20,9 @@ from ._common import (
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-UNRESOLVED_PATH = "/config/.cw_state/jellyfin_history.unresolved.json"
-SHADOW_PATH = "/config/.cw_state/jellyfin_history.shadow.json"
-BLACKBOX_PATH = "/config/.cw_state/jellyfin_history.jellyfin-plex.blackbox.json"
+UNRESOLVED_PATH = str(state_file("jellyfin_history.unresolved.json"))
+SHADOW_PATH = str(state_file("jellyfin_history.shadow.json"))
+BLACKBOX_PATH = str(state_file("jellyfin_history.jellyfin-plex.blackbox.json"))
 
 
 def _log(msg: str) -> None:
@@ -69,7 +70,7 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
         _unres_save(data)
 
 
-# shadow (simple write echo)
+# shadow
 def _shadow_load() -> dict[str, int]:
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
@@ -88,7 +89,7 @@ def _shadow_save(d: Mapping[str, int]) -> None:
         pass
 
 
-# blackbox (planner presence hints)
+# blackbox
 def _bb_load() -> dict[str, Any]:
     try:
         with open(BLACKBOX_PATH, "r", encoding="utf-8") as f:
@@ -255,7 +256,7 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
         return False, 0
 
 
-# event index (watched_at) + presence merge
+# event index (watched_at)
 def build_index(
     adapter: Any,
     since: Any | None = None,
@@ -446,7 +447,7 @@ def build_index(
     return out
 
 
-# writes (event → present in Jellyfin)
+# writes
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
     uid = adapter.cfg.user_id

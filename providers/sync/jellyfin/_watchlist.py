@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from ._common import (
+    state_file,
     chunked,
     collection_add_items,
     collection_remove_items,
@@ -28,7 +29,7 @@ from ._common import (
     normalize as jelly_normalize,
 )
 
-UNRESOLVED_PATH = "/config/.cw_state/jellyfin_watchlist.unresolved.json"
+UNRESOLVED_PATH = str(state_file("jellyfin_watchlist.unresolved.json"))
 
 
 def _log(msg: str) -> None:
