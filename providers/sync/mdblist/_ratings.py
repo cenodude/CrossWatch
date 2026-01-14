@@ -28,6 +28,8 @@ from ._common import (
     make_logger,
     max_iso,
     now_iso,
+    read_json,
+    write_json,
     pad_since_iso,
     save_watermark,
     update_watermark_if_new,
@@ -59,9 +61,9 @@ _now_iso = now_iso
 def _load_cache() -> dict[str, Any]:
     try:
         p = _cache_path()
-        if not p.exists():
+        doc = read_json(p)
+        if not isinstance(doc, dict):
             return {}
-        doc = json.loads(p.read_text("utf-8") or "{}")
         return dict(doc.get("items") or {})
     except Exception:
         return {}
@@ -70,10 +72,7 @@ def _load_cache() -> dict[str, Any]:
 def _save_cache(items: Mapping[str, Any]) -> None:
     try:
         doc = {"generated_at": _now_iso(), "items": dict(items)}
-        p = _cache_path()
-        tmp = p.with_name(f"{p.name}.tmp")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, p)
+        write_json(_cache_path(), doc)
     except Exception as e:
         _log(f"cache.save failed: {e}")
 
@@ -478,7 +477,6 @@ def build_index(
             if m:
                 minis.append(m)
 
-            # Optional nested season/episode payloads under show rows (kept for backwards-compat)
             if isinstance(row, Mapping) and isinstance(row.get("seasons"), list):
                 sh = row.get("show") or {}
                 sh_ids_raw = sh.get("ids") or {}

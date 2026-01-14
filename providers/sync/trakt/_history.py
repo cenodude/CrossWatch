@@ -63,6 +63,30 @@ def _log(msg: str) -> None:
         print(f"[TRAKT:history] {msg}")
 
 
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -142,8 +166,10 @@ def _history_collection_enabled(adapter: Any) -> bool:
 
 
 def _load_unresolved() -> dict[str, Any]:
+    p = _unresolved_path()
+    _migrate_legacy_json(p)
     try:
-        return json.loads(_unresolved_path().read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
 
@@ -160,9 +186,11 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
 
 def _load_cache_doc() -> dict[str, Any]:
     try:
-        if not _cache_path().exists():
+        p = _cache_path()
+        _migrate_legacy_json(p)
+        if not p.exists():
             return {}
-        return json.loads(_cache_path().read_text("utf-8") or "{}")
+        return json.loads(p.read_text("utf-8") or "{}")
     except Exception:
         return {}
 

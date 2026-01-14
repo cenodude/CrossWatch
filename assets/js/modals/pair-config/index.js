@@ -282,6 +282,13 @@ function setFeatureLibraries(state,feature,provider,values){
 }
 
 let pairServerCfgPromise=null;
+let pairServerCfgAt=0;
+const PAIR_CFG_TTL_MS=30000;
+
+function invalidatePairServerCfg(){
+  pairServerCfgPromise=null;
+  pairServerCfgAt=0;
+}
 
 function fetchServerLibraries(kind){
   let url=null;
@@ -296,7 +303,9 @@ function fetchServerLibraries(kind){
 }
 
 function fetchPairServerConfig(){
-  if(pairServerCfgPromise) return pairServerCfgPromise;
+  const now=Date.now();
+  if(pairServerCfgPromise && (now-pairServerCfgAt)<PAIR_CFG_TTL_MS) return pairServerCfgPromise;
+  pairServerCfgAt=now;
   pairServerCfgPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{}).catch(()=>({}));
   return pairServerCfgPromise;
 }
@@ -366,6 +375,7 @@ function renderPairLibChips(state,kind,feature,libs){
 }
 
 function initPairLibraryUI(state){
+  if(!state._libsAutoload) state._libsAutoload = {};
   const hasPL=hasPlex(state);
   const hasJF=hasJelly(state);
   const hasEM=hasEmby(state);
@@ -396,7 +406,7 @@ function initPairLibraryUI(state){
       btn.__wired=true;
       btn.addEventListener("click",load);
     }
-    load();
+    if(!state._libsAutoload.PLEX){ state._libsAutoload.PLEX=true; load(); }
   }else{
     const btn=ID("plx-libs-load");
     if(btn) btn.disabled=true;
@@ -422,7 +432,7 @@ function initPairLibraryUI(state){
       btn.__wired=true;
       btn.addEventListener("click",load);
     }
-    load();
+    if(!state._libsAutoload.JELLYFIN){ state._libsAutoload.JELLYFIN=true; load(); }
   }else{
     const btn=ID("jf-libs-load");
     if(btn) btn.disabled=true;
@@ -448,7 +458,7 @@ function initPairLibraryUI(state){
       btn.__wired=true;
       btn.addEventListener("click",load);
     }
-    load();
+    if(!state._libsAutoload.EMBY){ state._libsAutoload.EMBY=true; load(); }
   }else{
     const btn=ID("em-libs-load");
     if(btn) btn.disabled=true;

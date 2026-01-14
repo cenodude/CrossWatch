@@ -49,10 +49,36 @@ def _log(msg: str) -> None:
         print(f"[SIMKL:watchlist] {msg}")
 
 
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 
 def _load_unresolved() -> dict[str, Any]:
+    p = _unresolved_path()
+    _migrate_legacy_json(p)
     try:
-        return json.loads(_unresolved_path().read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
 
@@ -109,8 +135,10 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 
 
 def _shadow_load() -> dict[str, Any]:
+    p = _shadow_path()
+    _migrate_legacy_json(p)
     try:
-        data = json.loads(_shadow_path().read_text("utf-8"))
+        data = json.loads(p.read_text("utf-8"))
         if isinstance(data, dict):
             if "buckets_seen" not in data or not isinstance(data.get("buckets_seen"), dict):
                 data["buckets_seen"] = {}

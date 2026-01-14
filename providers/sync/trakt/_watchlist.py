@@ -58,6 +58,30 @@ def _log(msg: str) -> None:
         print(f"[TRAKT:watchlist] {msg}")
 
 
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 # Config helpers
 def _cfg(adapter: Any) -> Mapping[str, Any]:
     c = getattr(adapter, "config", {}) or {}
@@ -112,8 +136,10 @@ def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = Fals
 
 # Shadow cache
 def _shadow_load() -> dict[str, Any]:
+    p = _shadow_path()
+    _migrate_legacy_json(p)
     try:
-        return json.loads(_shadow_path().read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {"etag": None, "ts": 0, "items": {}}
 
@@ -137,8 +163,10 @@ def _now_iso() -> str:
 
 
 def _load_unresolved() -> dict[str, Any]:
+    p = _unresolved_path()
+    _migrate_legacy_json(p)
     try:
-        return json.loads(_unresolved_path().read_text("utf-8"))
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
 

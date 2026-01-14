@@ -59,10 +59,13 @@ _now_iso = now_iso
 
 def _shadow_load() -> dict[str, Any]:
     p = _shadow_path()
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
+    doc = read_json(p)
+    if not isinstance(doc, dict):
         return {"ts": 0, "items": {}}
+    doc.setdefault("ts", 0)
+    if not isinstance(doc.get("items"), dict):
+        doc["items"] = {}
+    return doc
 
 
 def _shadow_save(items: Mapping[str, Any]) -> None:
@@ -123,10 +126,8 @@ def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries
 
 def _load_unresolved() -> dict[str, Any]:
     p = _unresolved_path()
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
+    doc = read_json(p)
+    return doc if isinstance(doc, dict) else {}
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:

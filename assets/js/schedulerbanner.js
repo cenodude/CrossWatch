@@ -114,11 +114,51 @@ wrap.innerHTML=`<div class="sched" id="chip-sched" aria-live="polite"><span clas
 /* Helpers */
 const tClock=s=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,d=new Date(ms);return isNaN(+d)?'—':d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 
+/* Polling policy */
+const SCROBBLE_POLL_WATCH_MS=15000;
+const SCROBBLE_POLL_WEBHOOK_MS=60000;
+
 /* State */
 let S={enabled:false,running:false,next:0,busy:false},
     W={enabled:false,alive:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null},
     H={enabled:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null};
-let _pend=false; function rfr(){ if(_pend) return; _pend=true; setTimeout(()=>{_pend=false;fetchSched();fetchScrobble();},120) }
+
+let _cfgMemo=null, _cfgAt=0, _cfgBusy=null;
+const CFG_TTL_MS=60000;
+function invalidateCfg(){ _cfgMemo=null; _cfgAt=0; _cfgBusy=null; }
+async function readCfg(force=false){
+  const now=Date.now();
+  if(!force && _cfgMemo && (now-_cfgAt)<CFG_TTL_MS) return _cfgMemo;
+  if(_cfgBusy) return _cfgBusy;
+  _cfgBusy = fetch('/api/config?t='+now,{cache:'no-store'})
+    .then(r=>r.ok?r.json():null)
+    .catch(()=>null)
+    .finally(()=>{ _cfgBusy=null; });
+  const v = await _cfgBusy;
+  if(v && typeof v === 'object'){
+    _cfgMemo = v;
+    _cfgAt = Date.now();
+    return _cfgMemo;
+  }
+
+  if(!_cfgMemo) _cfgMemo = {};
+  _cfgAt = Date.now();
+  return _cfgMemo;
+}
+
+let _pend=false, _forceCfg=false;
+function rfr(forceCfg=false){
+  if(forceCfg) _forceCfg = true;
+  if(_pend) return;
+  _pend=true;
+  setTimeout(()=>{
+    _pend=false;
+    const f=_forceCfg; _forceCfg=false;
+    fetchSched();
+    fetchScrobble(f);
+    ensureScrobbleLoop(f);
+  },120);
+}
 
 /* Render */
 function renderSched(){
@@ -165,10 +205,7 @@ function renderWatch(){
   }else{
     try{
       window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{
-          source:'watcher',
-          state:'stopped'
-        }
+        detail:{ source:'watcher', state:'stopped' }
       }));
     }catch(e){}
   }
@@ -206,10 +243,7 @@ function renderHook(){
   }else{
     try{
       window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{
-          source:'webhook',
-          state:'stopped'
-        }
+        detail:{ source:'webhook', state:'stopped' }
       }));
     }catch(e){}
   }
@@ -217,27 +251,36 @@ function renderHook(){
 
 /* Fetch */
 async function fetchSched(){ if(S.busy) return; S.busy=true;
-try{const r=await fetch('/api/scheduling/status?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0; const j=await r.json();
-S.enabled=!!(j?.config?.enabled); S.running=!!j?.running; S.next=+(j?.next_run_at||0)||0 }catch{ S.enabled=false; S.running=false; S.next=0 }
+try{
+  if(document.hidden){ S.busy=false; return; }
+  const r=await fetch('/api/scheduling/status?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0; const j=await r.json();
+  S.enabled=!!(j?.config?.enabled); S.running=!!j?.running; S.next=+(j?.next_run_at||0)||0
+}catch{ S.enabled=false; S.running=false; S.next=0 }
 S.busy=false; renderSched() }
 
 /* Read scrobble once and derive both Watcher and Webhook states */
-async function fetchScrobble(){ if(W.busy||H.busy) return; W.busy=H.busy=true;
+async function fetchScrobble(forceCfg=false){ if(W.busy||H.busy) return; W.busy=H.busy=true;
 try{
-  const c=await fetch('/api/config?t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():{}).catch(()=>({}));
+  if(document.hidden){ W.busy=H.busy=false; return; }
+
+  const c=await readCfg(!!forceCfg);
   const mode=String(c?.scrobble?.mode||'').toLowerCase();
   const enabled=!!c?.scrobble?.enabled;
 
   W.enabled=enabled && mode==='watch';
+  H.enabled=enabled && mode==='webhook';
+
+  // Reset details
+  W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null;
+  H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null;
+
   if(W.enabled){
     const s=await fetch('/api/watch/status?t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():{}).catch(()=>({}));
     W.alive=!!s?.alive;
   } else { W.alive=false }
 
-  H.enabled=enabled && mode==='webhook';
-
-  W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null;
-  H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null;
+  // If scrobble is off, don't hit currently_watching at all
+  if(!(W.enabled || H.enabled)) throw 0;
 
   const cw = await fetch('/api/watch/currently_watching?t='+Date.now(), {cache:'no-store'})
     .then(r => r.ok ? r.json() : null)
@@ -246,7 +289,11 @@ try{
 
   if(cur && cur.state && cur.state!=='stopped'){
     const src=String(cur.source||'').toLowerCase();
-    const tgt = W.enabled ? W : (H.enabled ? H : W);
+    const tgt =
+      (src.includes('webhook') && H.enabled) ? H :
+      ((src.includes('watch') || src.includes('watcher')) && W.enabled) ? W :
+      (W.enabled ? W : H);
+
     tgt.title=cur.title||'';
     tgt.media_type=cur.media_type||null;
     tgt.year=cur.year||null;
@@ -262,6 +309,38 @@ try{
 }
 W.busy=H.busy=false; renderWatch(); renderHook() }
 
+/* Adaptive scrobble polling */
+async function scrobblePollMs(forceCfg=false){
+  const c=await readCfg(!!forceCfg);
+  const enabled=!!c?.scrobble?.enabled;
+  if(!enabled) return 0;
+  const mode=String(c?.scrobble?.mode||'').toLowerCase();
+  if(mode==='watch') return SCROBBLE_POLL_WATCH_MS;
+  if(mode==='webhook') return SCROBBLE_POLL_WEBHOOK_MS;
+  return 0;
+}
+function stopScrobbleLoop(){
+  if(window._scrobPollT){ clearTimeout(window._scrobPollT); window._scrobPollT=null; }
+  window._scrobPollMs = 0;
+}
+function scheduleScrobbleLoop(ms){
+  if(!ms){ stopScrobbleLoop(); return; }
+  if(window._scrobPollT && window._scrobPollMs === ms) return;
+  stopScrobbleLoop();
+  window._scrobPollMs = ms;
+  window._scrobPollT = setTimeout(async ()=>{
+    window._scrobPollT = null;
+    if(document.hidden){ scheduleScrobbleLoop(window._scrobPollMs||ms); return; }
+    await fetchScrobble(false);
+    const next = await scrobblePollMs(false);
+    scheduleScrobbleLoop(next);
+  }, ms);
+}
+async function ensureScrobbleLoop(forceCfg=false){
+  const ms = await scrobblePollMs(!!forceCfg);
+  scheduleScrobbleLoop(ms);
+}
+
 /* API */
 window.refreshSchedulingBanner=rfr;
 
@@ -272,11 +351,11 @@ function bootOnce(){
   window.__SCHED_BANNER_STARTED__ = true;
 
   fetchSched();
-  fetchScrobble();
+  fetchScrobble(true);
+  ensureScrobbleLoop(true);
 
   if(!window._schedPoll) window._schedPoll = setInterval(fetchSched, 3e4);
   if(!window._schedTick) window._schedTick = setInterval(()=>{renderSched();renderWatch();renderHook()}, 1e3);
-  if(!window._scrobPoll) window._scrobPoll = setInterval(fetchScrobble, 1e4);
 
   try{window.dispatchEvent(new Event('sched-banner-ready'))}catch{}
 }
@@ -292,7 +371,14 @@ document.addEventListener('DOMContentLoaded',()=>{
   },300);
 
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)rfr()},{passive:true});
-  document.addEventListener('config-saved',e=>{const sec=e?.detail?.section;if(!sec||sec==='scrobble'||sec==='scheduling')rfr()});
+
+  document.addEventListener('config-saved',e=>{
+    const sec=e?.detail?.section;
+    if(!sec||sec==='scrobble'||sec==='scheduling'){
+      invalidateCfg();
+      rfr(true);
+    }
+  });
   document.addEventListener('scheduling-status-refresh',rfr);
   document.addEventListener('watcher-status-refresh',rfr);
   document.addEventListener('tab-changed',e=>{const id=e?.detail?.id;if(id==='main'||id==='settings')rfr()});

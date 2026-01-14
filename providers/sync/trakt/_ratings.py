@@ -44,6 +44,30 @@ def _log(msg: str) -> None:
         print(f"[TRAKT:ratings] {msg}")
 
 
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -76,6 +100,7 @@ def _chunk_iter(lst: list[dict[str, Any]], size: int) -> Iterable[list[dict[str,
 def _load_cache_doc() -> dict[str, Any]:
     try:
         p = _cache_path()
+        _migrate_legacy_json(p)
         if not p.exists():
             return {}
         return json.loads(p.read_text("utf-8") or "{}")

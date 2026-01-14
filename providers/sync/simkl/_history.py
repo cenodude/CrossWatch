@@ -321,9 +321,35 @@ def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
 
     return {}
 
-def _load_json(path: str) -> dict[str, Any]:
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
     try:
-        return json.loads(Path(path).read_text("utf-8"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _load_json(path: str) -> dict[str, Any]:
+    p = Path(path)
+    _migrate_legacy_json(p)
+    try:
+        return json.loads(p.read_text("utf-8"))
     except Exception:
         return {}
 

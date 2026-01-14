@@ -2,6 +2,9 @@
 (function (w, d) {
   "use strict";
 
+  if (w.__CW_SETTINGS_INSIGHT_STARTED__) return;
+  w.__CW_SETTINGS_INSIGHT_STARTED__ = 1;
+
   // Helpers
   const $  = (sel, root) => (root || d).querySelector(sel);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -197,16 +200,12 @@
     return { count: list.length };
   }
 
-  async function getMetadataSummary() {
-    const [cfg, mansRaw] = await Promise.all([
-      fetchJSON("/api/config?t=" + Date.now()),
-      fetchJSON("/api/metadata/providers?t=" + Date.now())
-    ]);
-
+  async function getMetadataSummary(cfg) {
+    const mansRaw = await fetchJSON("/api/metadata/providers?t=" + Date.now());
     const mans = Array.isArray(mansRaw) ? mansRaw : [];
-    let detected = mans.length;
 
-    const rawKey     = String(cfg?.tmdb?.api_key ?? "").trim();
+    let detected = mans.length;
+    const rawKey = String(cfg?.tmdb?.api_key ?? "").trim();
     const isMasked   = rawKey.length > 0 && /^[•]+$/.test(rawKey);
     const hasTmdbKey = rawKey.length > 0 || isMasked;
 
@@ -468,24 +467,44 @@
   // Main loop
   let _loopTimer = null;
 
-  async function tick(){
-    const nodes=ensureCard(); if(!nodes){ _loopTimer = setTimeout(tick,1200); return; }
-    const page=$("#page-settings"); const visible=!!(page && !page.classList.contains("hidden"));
-    if(visible){
-      const cfg=await readConfig();
-      const [auth,pairs,meta,sched,scrob]=await Promise.all([
-        getAuthSummary(cfg), getPairsSummary(cfg), getMetadataSummary(), getSchedulingSummary(), getScrobblerSummary(cfg)
-      ]);
-      const whitelist = getWhitelistingSummary(cfg);
-      render({auth,pairs,meta,sched,scrob,whitelist});
-      syncHeight();
-      if (_loopTimer) clearTimeout(_loopTimer);
-      _loopTimer = setTimeout(tick, 10000);
-    }else{
-      if (_loopTimer) clearTimeout(_loopTimer);
-      _loopTimer = setTimeout(tick, 3000);
+let _tickBusy = false;
+
+function _scheduleTick(ms) {
+  if (_loopTimer) clearTimeout(_loopTimer);
+  _loopTimer = setTimeout(tick, ms);
+}
+
+  async function tick() {
+    if (_tickBusy) return;
+    _tickBusy = true;
+    try {
+      const nodes = ensureCard();
+      if (!nodes) { _scheduleTick(1200); return; }
+
+      const page = $("#page-settings");
+      const visible = !!(page && !page.classList.contains("hidden"));
+
+      if (visible) {
+        const cfg = await readConfig();
+        const [auth, pairs, meta, sched, scrob] = await Promise.all([
+          getAuthSummary(cfg),
+          getPairsSummary(cfg),
+          getMetadataSummary(cfg),
+          getSchedulingSummary(),
+          getScrobblerSummary(cfg),
+        ]);
+        const whitelist = getWhitelistingSummary(cfg);
+        render({ auth, pairs, meta, sched, scrob, whitelist });
+        syncHeight();
+        _scheduleTick(10000);
+      } else {
+        _scheduleTick(3000);
+      }
+    } finally {
+      _tickBusy = false;
     }
   }
+
   // Bootstrapping
   (async function boot(){
     if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
@@ -494,10 +513,11 @@
 
     d.addEventListener("config-saved", (e) => {
       const sec = e?.detail?.section;
-      if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections") {
+      if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections" || sec === "scrobble") {
         tick();
       }
     });
+
     d.addEventListener("scheduling-status-refresh", () => tick());
     d.addEventListener("visibilitychange", () => { if (!d.hidden) tick(); });
     w.addEventListener("focus", () => tick());

@@ -1,5 +1,27 @@
 // assets/js/modals/about.js
 const get = async (url) => { try { const r = await fetch(url,{cache:"no-store"}); return r.ok ? r.json() : null; } catch { return null; } };
+const ABOUT_TTL_MS = 60_000;
+let _aboutCacheAt = 0;
+let _aboutCache = null;
+let _aboutInflight = null;
+
+async function loadAboutData(force=false){
+  const now = Date.now();
+  if(!force && _aboutCache && (now - _aboutCacheAt) < ABOUT_TTL_MS) return _aboutCache;
+  if(_aboutInflight) return _aboutInflight;
+
+  _aboutInflight = Promise.all([
+    get("/api/version"),
+    get("/api/modules/versions")
+  ])
+    .then(([ver, mods]) => ({ ver: ver || {}, mods: mods || {} }))
+    .finally(() => { _aboutInflight = null; });
+
+  const data = await _aboutInflight;
+  _aboutCache = data;
+  _aboutCacheAt = Date.now();
+  return data;
+}
 
 function isNewer(a,b){ if(!a||!b) return false; const clean=s=>String(s).replace(/^v/i,"").split("-")[0];
   const A=clean(a).split(".").map(n=>parseInt(n,10)||0), B=clean(b).split(".").map(n=>parseInt(n,10)||0);
@@ -42,8 +64,9 @@ function wireHostedFolds(root){
 }
 
 async function renderHostedAbout(hostEl){
-  const ver  = await get("/api/version") || {};
-  const mods = await get("/api/modules/versions") || {};
+  // Parallel fetch + TTL cache
+  const { ver, mods } = await loadAboutData(false);
+
   const info = { current: ver.current||ver.version, latest: ver.latest, html_url: ver.html_url || "https://github.com/cenodude/CrossWatch/releases" };
   const hasUpdate = isNewer(info.latest, info.current);
 
@@ -89,7 +112,7 @@ async function renderHostedAbout(hostEl){
     #about-host .note{padding:10px 12px;font-size:12.5px;opacity:.9}
     #about-host .foot{display:flex;justify-content:flex-end;padding:10px 14px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
     #about-host .btn{appearance:none;border:1px solid #7aa0ff66;border-radius:12px;padding:9px 14px;font-weight:800;background:linear-gradient(135deg,#4c7dff,#8ab0ff);color:#fff}
-    /* Buy Me A Coffee — compact, anchored inside modal */
+    /* Buy Me A Coffee */
     #about-host .bmc{position:absolute;left:12px;bottom:12px;z-index:5}
     #about-host .bmc a{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:12px;font-weight:700;font-size:12px;letter-spacing:.2px;background:linear-gradient(135deg,#1f2937,#0b1220);border:1px solid rgba(255,255,255,.10);box-shadow:0 4px 14px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.05);color:#f8fafc;position:relative;overflow:hidden;text-decoration:none}
     #about-host .bmc a:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.08)}
@@ -134,15 +157,15 @@ async function renderHostedAbout(hostEl){
         ${foldCard("fold-auth","Authentication Providers", rowsFromGroup(mods.groups?.AUTH))}
         ${foldCard("fold-sync","Synchronization Providers", rowsFromGroup(mods.groups?.SYNC))}
         <div class="card">
-  <div class="note">
-    <b>Disclaimer.</b> This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, Tautulli, AniList or MDList. Use at your own risk.
-    <ul style="margin:.5em 0 0 1.25em;">
-      <li>All product names, logos, and brands are property of their respective owners and used for identification only.</li>
-      <li>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</li>
-      <li>Provided “as is,” without warranties or guarantees.</li>
-    </ul>
-  </div>
-</div>
+          <div class="note">
+            <b>Disclaimer.</b> This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, Tautulli, AniList or MDList. Use at your own risk.
+            <ul style="margin:.5em 0 0 1.25em;">
+              <li>All product names, logos, and brands are property of their respective owners and used for identification only.</li>
+              <li>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</li>
+              <li>Provided “as is,” without warranties or guarantees.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
 

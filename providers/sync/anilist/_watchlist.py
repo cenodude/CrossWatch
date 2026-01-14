@@ -4,17 +4,23 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from pathlib import Path
+
 from cw_platform.id_map import minimal as id_minimal
 
+from ._common import make_logger, read_json, state_file, write_json
 
-SHADOW_PATH = "/config/.cw_state/anilist_watchlist_shadow.json"
+
+_log = make_logger("watchlist")
+
+LEGACY_SHADOW_PATH = Path("/config/.cw_state/anilist_watchlist_shadow.json")
+SHADOW_PATH = state_file("anilist_watchlist_shadow.json")
 
 GQL_VIEWER = "query { Viewer { id name } }"
 
@@ -103,27 +109,20 @@ query ($search: String!, $page: Int = 1) {
 _WS = re.compile(r"\s+")
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_ANILIST_DEBUG"):
-        print(f"[ANILIST:watchlist] {msg}")
-
-
 def _shadow_load() -> dict[str, dict[str, Any]]:
-    try:
-        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f) or {}
-            return dict(raw) if isinstance(raw, dict) else {}
-    except Exception:
-        return {}
+    data = read_json(SHADOW_PATH)
+    if isinstance(data, dict) and data:
+        return data
+    if SHADOW_PATH != LEGACY_SHADOW_PATH and LEGACY_SHADOW_PATH.exists():
+        legacy = read_json(LEGACY_SHADOW_PATH)
+        if isinstance(legacy, dict) and legacy:
+            write_json(SHADOW_PATH, legacy)
+            return dict(legacy)
+    return {}
 
 
 def _shadow_save(d: Mapping[str, Any]) -> None:
-    try:
-        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
-        with open(SHADOW_PATH, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2, sort_keys=True)
-    except Exception:
-        pass
+    write_json(SHADOW_PATH, d)
 
 
 def _pick_title(t: Mapping[str, Any] | None) -> str:

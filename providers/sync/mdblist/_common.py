@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
 STATE_DIR = Path("/config/.cw_state")
-WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"  # legacy (global) watermark store
+WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"
 START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -93,7 +93,32 @@ def cfg_bool(data: Mapping[str, Any], key: str, default: bool) -> bool:
     return default
 
 
+def _legacy_path(path: Path) -> Path | None:
+    parts = path.stem.split(".")
+    if len(parts) < 2:
+        return None
+    legacy_name = ".".join(parts[:-1]) + path.suffix
+    legacy = path.with_name(legacy_name)
+    return None if legacy == path else legacy
+
+
+def _migrate_legacy_json(path: Path) -> None:
+    if path.exists():
+        return
+    legacy = _legacy_path(path)
+    if not legacy or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_bytes(legacy.read_bytes())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def read_json(path: Path) -> dict[str, Any]:
+    _migrate_legacy_json(path)
     try:
         return json.loads(path.read_text("utf-8") or "{}")
     except Exception:
