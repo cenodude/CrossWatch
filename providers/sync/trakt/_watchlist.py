@@ -13,6 +13,9 @@ from ._common import (
     ids_for_trakt,
     pick_trakt_kind,
     build_watchlist_body,
+    fetch_last_activities,
+    update_watermarks_from_last_activities,
+    state_file,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
@@ -21,16 +24,23 @@ BASE = "https://api.trakt.tv"
 URL_ALL = f"{BASE}/sync/watchlist"
 URL_REMOVE = f"{BASE}/sync/watchlist/remove"
 
-STATE_DIR = Path("/config/.cw_state")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-SHADOW = STATE_DIR / "trakt_watchlist.shadow.json"
-UNRESOLVED_PATH = STATE_DIR / "trakt_watchlist.unresolved.json"
-LAST_LIMIT_PATH = STATE_DIR / "trakt_last_limit_error.json"
+def _shadow_path() -> Path:
+    return state_file("trakt_watchlist.shadow.json")
+
+
+def _unresolved_path() -> Path:
+    return state_file("trakt_watchlist.unresolved.json")
+
+
+def _last_limit_path() -> Path:
+    return state_file("trakt_last_limit_error.json")
+
+
 
 def _record_limit_error(feature: str) -> None:
     try:
-        LAST_LIMIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = LAST_LIMIT_PATH.with_suffix(".tmp")
+        _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _last_limit_path().with_suffix(".tmp")
         tmp.write_text(
             json.dumps(
                 {"feature": feature, "ts": _now_iso()},
@@ -39,7 +49,7 @@ def _record_limit_error(feature: str) -> None:
             ),
             "utf-8",
         )
-        os.replace(tmp, LAST_LIMIT_PATH)
+        os.replace(tmp, _last_limit_path())
     except Exception as e:
         _log(f"limit_error.save failed: {e}")
 
@@ -103,19 +113,20 @@ def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = Fals
 # Shadow cache
 def _shadow_load() -> dict[str, Any]:
     try:
-        return json.loads(SHADOW.read_text("utf-8"))
+        return json.loads(_shadow_path().read_text("utf-8"))
     except Exception:
         return {"etag": None, "ts": 0, "items": {}}
 
 
 def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
     try:
-        tmp = SHADOW.with_suffix(".tmp")
+        _shadow_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _shadow_path().with_suffix(".tmp")
         tmp.write_text(
             json.dumps({"etag": etag, "ts": int(time.time()), "items": dict(items)}, ensure_ascii=False),
             "utf-8",
         )
-        os.replace(tmp, SHADOW)
+        os.replace(tmp, _shadow_path())
     except Exception:
         pass
 
@@ -127,17 +138,17 @@ def _now_iso() -> str:
 
 def _load_unresolved() -> dict[str, Any]:
     try:
-        return json.loads(UNRESOLVED_PATH.read_text("utf-8"))
+        return json.loads(_unresolved_path().read_text("utf-8"))
     except Exception:
         return {}
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        UNRESOLVED_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = UNRESOLVED_PATH.with_suffix(".tmp")
+        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _unresolved_path().with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, UNRESOLVED_PATH)
+        os.replace(tmp, _unresolved_path())
     except Exception as e:
         _log(f"unresolved.save failed: {e}")
 
@@ -210,6 +221,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     headers = build_headers(
         {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
     )
+
+    acts = fetch_last_activities(
+        sess,
+        headers,
+        timeout=float(getattr(adapter.cfg, "timeout", 15.0) or 15.0),
+        max_retries=int(getattr(adapter.cfg, "max_retries", 3) or 3),
+    )
+    update_watermarks_from_last_activities(acts)
 
     sh = _shadow_load()
     if use_etag and sh.get("etag"):

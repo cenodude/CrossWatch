@@ -9,7 +9,16 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from ._common import build_headers, key_of, ids_for_trakt, pick_trakt_kind
+from ._common import (
+    build_headers,
+    key_of,
+    ids_for_trakt,
+    pick_trakt_kind,
+    fetch_last_activities,
+    update_watermarks_from_last_activities,
+    extract_latest_ts,
+    state_file,
+)
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
@@ -20,13 +29,23 @@ URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_COLL_ADD = f"{BASE}/sync/collection"
 
-UNRESOLVED_PATH = "/config/.cw_state/trakt_history.unresolved.json"
-LAST_LIMIT_PATH = Path("/config/.cw_state/trakt_last_limit_error.json")
+def _unresolved_path() -> Path:
+    return state_file("trakt_history.unresolved.json")
+
+
+def _last_limit_path() -> Path:
+    return state_file("trakt_last_limit_error.json")
+
+
+def _cache_path() -> Path:
+    return state_file("trakt_history.index.json")
+
+
 
 def _record_limit_error(feature: str) -> None:
     try:
-        LAST_LIMIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = LAST_LIMIT_PATH.with_suffix(".tmp")
+        _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _last_limit_path().with_suffix(".tmp")
         tmp.write_text(
             json.dumps(
                 {"feature": feature, "ts": _now_iso()},
@@ -35,7 +54,7 @@ def _record_limit_error(feature: str) -> None:
             ),
             "utf-8",
         )
-        os.replace(tmp, LAST_LIMIT_PATH)
+        os.replace(tmp, _last_limit_path())
     except Exception as e:
         _log(f"limit_error.save failed: {e}")
 
@@ -124,20 +143,39 @@ def _history_collection_enabled(adapter: Any) -> bool:
 
 def _load_unresolved() -> dict[str, Any]:
     try:
-        return json.loads(Path(UNRESOLVED_PATH).read_text("utf-8"))
+        return json.loads(_unresolved_path().read_text("utf-8"))
     except Exception:
         return {}
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        p = Path(UNRESOLVED_PATH)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
+        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _unresolved_path().with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, p)
+        os.replace(tmp, _unresolved_path())
     except Exception as e:
         _log(f"unresolved.save failed: {e}")
+
+
+def _load_cache_doc() -> dict[str, Any]:
+    try:
+        if not _cache_path().exists():
+            return {}
+        return json.loads(_cache_path().read_text("utf-8") or "{}")
+    except Exception:
+        return {}
+
+
+def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
+    try:
+        _cache_path().parent.mkdir(parents=True, exist_ok=True)
+        doc = {"generated_at": _now_iso(), "items": dict(items), "wm": {"watched_at": watched_at or ""}}
+        tmp = _cache_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
+        os.replace(tmp, _cache_path())
+    except Exception as e:
+        _log(f"cache.save failed: {e}")
 
 
 def _freeze_item_if_enabled(adapter: Any, item: Mapping[str, Any], *, action: str, reasons: list[str]) -> None:
@@ -321,6 +359,39 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
     cfg_max_pages = int(_cfg_num(adapter, "history_max_pages", max_pages, int))
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages
+
+    doc = _load_cache_doc()
+    cached_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
+    cached_wm = str((doc.get("wm") or {}).get("watched_at") or "").strip()
+
+    acts = fetch_last_activities(sess, headers, timeout=timeout, max_retries=retries)
+    update_watermarks_from_last_activities(acts)
+    remote_wm = extract_latest_ts(acts or {}, (("movies", "watched_at"), ("episodes", "watched_at"))) if acts else None
+
+    if cached_items and remote_wm and cached_wm:
+        a = _as_epoch(_iso8601(remote_wm) or "")
+        b = _as_epoch(_iso8601(cached_wm) or "")
+        if a is not None and b is not None and a <= b:
+            _log(f"index (cache, activities unchanged): {len(cached_items)}")
+            if prog:
+                try:
+                    prog.tick(0, total=len(cached_items), force=True)
+                    prog.tick(len(cached_items), total=len(cached_items))
+                    prog.done(ok=True, total=len(cached_items))
+                except Exception:
+                    pass
+            return cached_items
+    elif cached_items and not remote_wm:
+        _log(f"index (cache, activities unavailable): {len(cached_items)}")
+        if prog:
+            try:
+                prog.tick(0, total=len(cached_items), force=True)
+                prog.tick(len(cached_items), total=len(cached_items))
+                prog.done(ok=True, total=len(cached_items))
+            except Exception:
+                pass
+        return cached_items
+
     total_mov = _preflight_total(
         sess,
         headers,
@@ -422,6 +493,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         f"index size: {len(idx)} (movies={len(movies)}, episodes={len(episodes)}; "
         f"per_page={cfg_per_page}, max_pages={cfg_max_pages})"
     )
+    _save_cache_doc(idx, remote_wm or cached_wm)
     return idx
 
 

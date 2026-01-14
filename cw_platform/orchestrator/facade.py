@@ -180,12 +180,6 @@ class Orchestrator:
 
             summary = _run_pairs(self.context)
 
-            try:
-                enabled_feats = self._enabled_features()
-                if enabled_feats:
-                    self._persist_feature_baselines(features=enabled_feats)
-            except Exception:
-                pass
 
             try:
                 self._persist_state_wall(feature="watchlist")

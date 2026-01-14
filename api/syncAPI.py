@@ -264,47 +264,87 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     LOG_BUFFERS["SYNC"] = []
     _sync_progress_ui("::CLEAR::")
     _sync_progress_ui(f"SYNC start: orchestrator pairs run_id={run_id}")
-    with _scope_env("ui_run", mode="run", feature="run", src="SYNCAPI", dst="SYNCAPI"):
 
-        def _totals_from_log(buf: list[str]) -> dict:
-            t = {"attempted": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "blocked": 0}
-            for line in buf or []:
-                s = strip_ansi(line).strip()
-                if not s.startswith("{"):
-                    continue
-                try:
-                    o = json.loads(s)
-                except Exception:
-                    continue
+    # If someone explicitly set a scope (manual/debug), respect it.
+    pair_scope = (
+        os.getenv("CW_PAIR_KEY")
+        or os.getenv("CW_PAIR_SCOPE")
+        or os.getenv("CW_SYNC_PAIR")
+        or os.getenv("CW_PAIR")
+    )
+    pair_src = os.getenv("CW_PAIR_SRC") or "SYNCAPI"
+    pair_dst = os.getenv("CW_PAIR_DST") or "SYNCAPI"
+    pair_mode = (os.getenv("CW_PAIR_MODE") or "run").strip().lower()
 
-                ev = str(o.get("event") or "")
-                if ev == "apply:add:done":
-                    t["attempted"] += int(o.get("attempted", 0))
-                    t["skipped"] += int(o.get("skipped", 0))
-                    t["unresolved"] += int(o.get("unresolved", 0))
-                    t["errors"] += int(o.get("errors", 0))
-                    t["added"] += int(o.get("added", o.get("count", 0)) or 0)
+    @contextmanager
+    def _orch_scope_env():
+        if pair_scope:
+            with _scope_env(pair_scope, mode=pair_mode, feature="run", src=pair_src, dst=pair_dst):
+                yield
+            return
 
-                elif ev == "apply:remove:done":
-                    t["attempted"] += int(o.get("attempted", 0))
-                    t["skipped"] += int(o.get("skipped", 0))
-                    t["unresolved"] += int(o.get("unresolved", 0))
-                    t["errors"] += int(o.get("errors", 0))
-                    t["removed"] += int(o.get("removed", o.get("count", 0)) or 0)
-
-                elif ev == "debug":
-                    msg = str(o.get("msg") or "")
-                    if msg == "manual.blocks":
-                        t["blocked"] += int(o.get("adds_blocked", 0) or 0) + int(o.get("removes_blocked", 0) or 0)
-                    elif msg == "blocked.manual":
-                        t["blocked"] += int(o.get("blocked_items", o.get("blocked_keys", 0)) or 0)
-
-                elif ev == "run:done":
-                    t["blocked"] = max(t["blocked"], int(o.get("blocked", 0) or 0))
-
-            return t
-
+        # Critical: do NOT force ui_run. Clear scope so orchestrator sets real per-pair scope.
+        keys = (
+            "CW_PAIR_KEY",
+            "CW_PAIR_SCOPE",
+            "CW_SYNC_PAIR",
+            "CW_PAIR",
+            "CW_PAIR_SRC",
+            "CW_PAIR_DST",
+            "CW_PAIR_MODE",
+            "CW_PAIR_FEATURE",
+        )
+        old = {k: os.environ.get(k) for k in keys}
         try:
+            for k in keys:
+                os.environ.pop(k, None)
+            yield
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def _totals_from_log(buf: list[str]) -> dict:
+        t = {"attempted": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "blocked": 0}
+        for line in buf or []:
+            s = strip_ansi(line).strip()
+            if not s.startswith("{"):
+                continue
+            try:
+                o = json.loads(s)
+            except Exception:
+                continue
+
+            ev = str(o.get("event") or "")
+            if ev == "apply:add:done":
+                t["attempted"] += int(o.get("attempted", 0))
+                t["skipped"] += int(o.get("skipped", 0))
+                t["unresolved"] += int(o.get("unresolved", 0))
+                t["errors"] += int(o.get("errors", 0))
+                t["added"] += int(o.get("added", o.get("count", 0)) or 0)
+
+            elif ev == "apply:remove:done":
+                t["attempted"] += int(o.get("attempted", 0))
+                t["skipped"] += int(o.get("skipped", 0))
+                t["unresolved"] += int(o.get("unresolved", 0))
+                t["errors"] += int(o.get("errors", 0))
+                t["removed"] += int(o.get("removed", o.get("count", 0)) or 0)
+
+            elif ev == "debug":
+                msg = str(o.get("msg") or "")
+                if msg == "manual.blocks":
+                    t["blocked"] += int(o.get("adds_blocked", 0) or 0) + int(o.get("removes_blocked", 0) or 0)
+                elif msg == "blocked.manual":
+                    t["blocked"] += int(o.get("blocked_items", o.get("blocked_keys", 0)) or 0)
+
+            elif ev == "run:done":
+                t["blocked"] = max(t["blocked"], int(o.get("blocked", 0) or 0))
+        return t
+
+    try:
+        with _orch_scope_env():
             orch_mod = importlib.import_module("cw_platform.orchestrator")
             try:
                 orch_mod = importlib.reload(orch_mod)
@@ -315,7 +355,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             load_config, _save = _env()
             cfg = load_config()
 
-            # Ensure pair defaults
             def _pair_has_enabled_features(p: dict) -> bool:
                 fmap = p.get("features") or {}
                 for _, fcfg in (fmap.items() or []):
@@ -333,8 +372,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                     dst = pair.get("target") or "?"
                     pid = pair.get("id") or ""
                     _sync_progress_ui(
-                        f"[!] Pair {src} → {dst} ({pid}) has no enabled features; "
-                        f"it will not transfer any data."
+                        f"[!] Pair {src} → {dst} ({pid}) has no enabled features; it will not transfer any data."
                     )
 
             mgr = OrchestratorClass(config=cfg)
@@ -346,67 +384,67 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 state_path=STATE_PATH,
                 use_snapshot=True,
             )
-            added_res = int(result.get("added", 0))
-            removed_res = int(result.get("removed", 0))
-            try:
-                state = _load_state()
-                if state:
-                    _STATS = _rt()[5]
-                    _STATS.refresh_from_state(state)
-                    _STATS.record_summary(added_res, removed_res)
-                    try:
-                        counts = _counts_from_state(state)
-                        if counts is None:
-                            _append_log("SYNC", "[!] Provider-counts: state malformed; falling back to live snapshots")
-                            counts = _counts_from_orchestrator(cfg)
-                        if counts:
-                            _PROVIDER_COUNTS_CACHE["ts"] = time.time()
-                            _PROVIDER_COUNTS_CACHE["data"] = counts
-                    except Exception as e:
-                        _append_log("SYNC", f"[!] Provider-counts cache warm failed: {e}")
-                else:
-                    _append_log("SYNC", "[!] No state found after sync; stats not updated.")
-            except Exception as e:
-                _append_log("SYNC", f"[!] Stats update failed: {e}")
 
-            totals = _totals_from_log(list(LOG_BUFFERS.get("SYNC") or []))
-
-            def _merge_total(key: str) -> int:
-                v_result = int(result.get(key) or 0)
-                v_log = int(totals.get(key) or 0)
-                return max(v_result, v_log)
-
-            added = _merge_total("added")
-            removed = _merge_total("removed")
-            skipped = _merge_total("skipped")
-            unresolved = _merge_total("unresolved")
-            errors = _merge_total("errors")
-            blocked = _merge_total("blocked")
-            extra = f", Total blocked: {blocked}"
-        
-            _sync_progress_ui(
-                f"[i] Done. Total added: {added}, Total removed: {removed}, "
-                f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
-            )
-
-            _sync_progress_ui("[SYNC] exit code: 0")
+        added_res = int(result.get("added", 0))
+        removed_res = int(result.get("removed", 0))
+        try:
+            state = _load_state()
+            if state:
+                _STATS = _rt()[5]
+                _STATS.refresh_from_state(state)
+                _STATS.record_summary(added_res, removed_res)
+                try:
+                    counts = _counts_from_state(state)
+                    if counts is None:
+                        _append_log("SYNC", "[!] Provider-counts: state malformed; keeping last known counts")
+                        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
+                    if counts:
+                        _PROVIDER_COUNTS_CACHE["ts"] = time.time()
+                        _PROVIDER_COUNTS_CACHE["data"] = counts
+                except Exception as e:
+                    _append_log("SYNC", f"[!] Provider-counts cache warm failed: {e}")
+            else:
+                _append_log("SYNC", "[!] No state found after sync; stats not updated.")
         except Exception as e:
-            _sync_progress_ui(f"[!] Sync error: {e}")
-            _sync_progress_ui("[SYNC] exit code: 1")
-        finally:
-            try:
-                load_config, _ = _env()
-                cfg2 = load_config()
-                state2 = _load_state()
-                counts2 = _counts_from_state(state2) if state2 else None
-                if counts2 is None:
-                    counts2 = _counts_from_orchestrator(cfg2)
-                if counts2:
-                    _PROVIDER_COUNTS_CACHE["ts"] = time.time()
-                    _PROVIDER_COUNTS_CACHE["data"] = counts2
-            except Exception:
-                pass
-            RUNNING_PROCS.pop("SYNC", None)
+            _append_log("SYNC", f"[!] Stats update failed: {e}")
+
+        totals = _totals_from_log(list(LOG_BUFFERS.get("SYNC") or []))
+
+        def _merge_total(key: str) -> int:
+            v_result = int(result.get(key) or 0)
+            v_log = int(totals.get(key) or 0)
+            return max(v_result, v_log)
+
+        added = _merge_total("added")
+        removed = _merge_total("removed")
+        skipped = _merge_total("skipped")
+        unresolved = _merge_total("unresolved")
+        errors = _merge_total("errors")
+        blocked = _merge_total("blocked")
+        extra = f", Total blocked: {blocked}"
+
+        _sync_progress_ui(
+            f"[i] Done. Total added: {added}, Total removed: {removed}, "
+            f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
+        )
+        _sync_progress_ui("[SYNC] exit code: 0")
+    except Exception as e:
+        _sync_progress_ui(f"[!] Sync error: {e}")
+        _sync_progress_ui("[SYNC] exit code: 1")
+    finally:
+        try:
+            load_config, _ = _env()
+            cfg2 = load_config()
+            state2 = _load_state()
+            counts2 = _counts_from_state(state2) if state2 else None
+            if counts2 is None:
+                counts2 = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
+            if counts2:
+                _PROVIDER_COUNTS_CACHE["ts"] = time.time()
+                _PROVIDER_COUNTS_CACHE["data"] = counts2
+        except Exception:
+            pass
+        RUNNING_PROCS.pop("SYNC", None)
 
     # Lane stats computation
 def _parse_epoch(v: Any) -> int:
@@ -1503,9 +1541,8 @@ def _counts_from_state(state: dict | None) -> dict | None:
     return out
 
 
-# Scope helpers (prevents providers from writing *.unscoped.json during UI snapshot/index passes)
+
 def _sanitize_scope(v: str) -> str:
-    # Keep filenames Windows-safe: no ':' or other special chars.
     s = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(v or "").strip())
     s = s.strip("_ ")
     return s or "ui"
@@ -1555,7 +1592,7 @@ def _provider_counts_fast(cfg: dict, *, max_age: int = 30, force: bool = False) 
         return dict(_PROVIDER_COUNTS_CACHE["data"])
     counts = _counts_from_state(_load_state())
     if counts is None:
-        counts = _counts_from_orchestrator(cfg)
+        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
     _PROVIDER_COUNTS_CACHE["ts"] = now
     _PROVIDER_COUNTS_CACHE["data"] = counts
     return counts
@@ -1564,15 +1601,15 @@ def _provider_counts_fast(cfg: dict, *, max_age: int = 30, force: bool = False) 
 def api_provider_counts(
     max_age: int = 30,
     force: bool = False,
-    source: str = "auto",
+    source: str = "state",
 ) -> dict:
+    # UI should not trigger provider snapshot rebuilds. Counts come from the last written state.
+    src = (source or "state").lower().strip()
+    if src in ("state", "auto"):
+        return _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+    # Keep a compatibility path, but still do NOT fall back to live snapshot building here.
     load_config, _ = _env()
     cfg = load_config()
-
-    src = (source or "auto").lower().strip()
-    if src == "state":
-        counts = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
-        return counts
     return _provider_counts_fast(cfg, max_age=max_age, force=bool(force))
 
 # Trigger sync run endpoint
@@ -1698,6 +1735,12 @@ def api_run_summary() -> JSONResponse:
         tl["post"] = True
         tl["pre"] = True
         snap["timeline"] = tl
+
+
+    try:
+        snap["provider_counts"] = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+    except Exception:
+        snap["provider_counts"] = {k: 0 for k in _PROVIDER_ORDER}
 
     return JSONResponse(snap)
 

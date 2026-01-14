@@ -6,15 +6,23 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Iterable, Mapping
 from pathlib import Path
+from collections.abc import Iterable, Mapping
 from typing import Any
 
-from ._common import build_headers, ids_for_trakt, key_of, normalize_watchlist_row, pick_trakt_kind
+from ._common import (
+    build_headers,
+    ids_for_trakt,
+    key_of,
+    normalize_watchlist_row,
+    pick_trakt_kind,
+    fetch_last_activities,
+    update_watermarks_from_last_activities,
+    state_file,
+)
 from cw_platform.id_map import minimal as id_minimal
 
 BASE = "https://api.trakt.tv"
-URL_ACT = f"{BASE}/sync/last_activities"
 URL_RAT_MOV = f"{BASE}/sync/ratings/movies"
 URL_RAT_SHO = f"{BASE}/sync/ratings/shows"
 URL_RAT_SEA = f"{BASE}/sync/ratings/seasons"
@@ -22,7 +30,10 @@ URL_RAT_EPI = f"{BASE}/sync/ratings/episodes"
 URL_UPSERT = f"{BASE}/sync/ratings"
 URL_UNRATE = f"{BASE}/sync/ratings/remove"
 
-CACHE_PATH = "/config/.cw_state/trakt_ratings.index.json"
+def _cache_path() -> Path:
+    return state_file("trakt_ratings.index.json")
+
+
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_BACKOFF_SECONDS = 30
@@ -64,7 +75,7 @@ def _chunk_iter(lst: list[dict[str, Any]], size: int) -> Iterable[list[dict[str,
 
 def _load_cache_doc() -> dict[str, Any]:
     try:
-        p = Path(CACHE_PATH)
+        p = _cache_path()
         if not p.exists():
             return {}
         return json.loads(p.read_text("utf-8") or "{}")
@@ -74,7 +85,7 @@ def _load_cache_doc() -> dict[str, Any]:
 
 def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
     try:
-        p = Path(CACHE_PATH)
+        p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         doc = {"generated_at": _now_iso(), "items": dict(items), "wm": dict(wm or {})}
         tmp = p.with_suffix(".tmp")
@@ -86,10 +97,8 @@ def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
 
 
 def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
-    r = acts.get("ratings") or acts or {}
-
     def g(k: str) -> str:
-        v = r.get(k) or {}
+        v = acts.get(k) or {}
         return str(v.get("rated_at") or "")
 
     return {"movies": g("movies"), "shows": g("shows"), "seasons": g("seasons"), "episodes": g("episodes")}
@@ -302,15 +311,9 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
     cached_items = dict(doc.get("items") or {})
     cached_wm = dict(doc.get("wm") or {})
 
-    wm_remote: dict[str, str] | None = None
-    try:
-        r = sess.get(URL_ACT, headers=headers, timeout=tmo)
-        if r.status_code == 200:
-            wm_remote = _extract_ratings_wm(r.json() or {})
-        else:
-            _log(f"activities fetch failed -> {r.status_code}: {(r.text or '')[:200]}")
-    except Exception as e:
-        _log(f"activities fetch failed: {e}")
+    acts = fetch_last_activities(sess, headers, timeout=tmo, max_retries=rr)
+    update_watermarks_from_last_activities(acts)
+    wm_remote = _extract_ratings_wm(acts or {}) if acts else None
 
     if wm_remote and cached_items:
         for k in ("movies", "shows", "seasons", "episodes"):
