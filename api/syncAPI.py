@@ -1,6 +1,6 @@
 # /api/syncAPI.py
 # CrossWatch - Synchronization API for multiple services
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from typing import Any, cast
@@ -265,7 +265,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     _sync_progress_ui("::CLEAR::")
     _sync_progress_ui(f"SYNC start: orchestrator pairs run_id={run_id}")
 
-    # If someone explicitly set a scope (manual/debug), respect it.
     pair_scope = (
         os.getenv("CW_PAIR_KEY")
         or os.getenv("CW_PAIR_SCOPE")
@@ -283,7 +282,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 yield
             return
 
-        # Critical: do NOT force ui_run. Clear scope so orchestrator sets real per-pair scope.
         keys = (
             "CW_PAIR_KEY",
             "CW_PAIR_SCOPE",
@@ -1603,11 +1601,9 @@ def api_provider_counts(
     force: bool = False,
     source: str = "state",
 ) -> dict:
-    # UI should not trigger provider snapshot rebuilds. Counts come from the last written state.
     src = (source or "state").lower().strip()
     if src in ("state", "auto"):
         return _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
-    # Keep a compatibility path, but still do NOT fall back to live snapshot building here.
     load_config, _ = _env()
     cfg = load_config()
     return _provider_counts_fast(cfg, max_age=max_age, force=bool(force))
@@ -1620,7 +1616,7 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
     with SYNC_PROC_LOCK:
         if _is_sync_running():
             return {"ok": False, "error": "Sync already running"}
-        cfg = _env()[0]()  # load_config
+        cfg = _env()[0]()
         pairs = list((cfg or {}).get("pairs") or [])
         if not any(p.get("enabled", True) for p in pairs):
             _summary_reset()

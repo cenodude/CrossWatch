@@ -266,17 +266,36 @@ W.busy=H.busy=false; renderWatch(); renderHook() }
 window.refreshSchedulingBanner=rfr;
 
 /* Boot */
-document.addEventListener('DOMContentLoaded',()=>{const wait=setInterval(()=>{if(findBox()){clearInterval(wait);fetchSched();fetchScrobble();
-clearInterval(window._schedPoll);window._schedPoll=setInterval(fetchSched,3e4);
-clearInterval(window._schedTick);window._schedTick=setInterval(()=>{renderSched();renderWatch();renderHook()},1e3);
-clearInterval(window._scrobPoll);window._scrobPoll=setInterval(fetchScrobble,1e4);
-try{window.dispatchEvent(new Event('sched-banner-ready'))}catch{}}},300);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)rfr()},{passive:true});
-document.addEventListener('config-saved',e=>{const sec=e?.detail?.section;if(!sec||sec==='scrobble'||sec==='scheduling')rfr()});
-document.addEventListener('scheduling-status-refresh',rfr);
-document.addEventListener('watcher-status-refresh',rfr);
-document.addEventListener('tab-changed',e=>{const id=e?.detail?.id;if(id==='main'||id==='settings')rfr()});
-window.addEventListener('focus',rfr);
+function bootOnce(){
+  // Hard guard: prevent runaway intervals if this script is injected multiple times
+  if(window.__SCHED_BANNER_STARTED__) return;
+  window.__SCHED_BANNER_STARTED__ = true;
+
+  fetchSched();
+  fetchScrobble();
+
+  if(!window._schedPoll) window._schedPoll = setInterval(fetchSched, 3e4);
+  if(!window._schedTick) window._schedTick = setInterval(()=>{renderSched();renderWatch();renderHook()}, 1e3);
+  if(!window._scrobPoll) window._scrobPoll = setInterval(fetchScrobble, 1e4);
+
+  try{window.dispatchEvent(new Event('sched-banner-ready'))}catch{}
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  if(window.__SCHED_BANNER_WAIT__) { clearInterval(window.__SCHED_BANNER_WAIT__); window.__SCHED_BANNER_WAIT__ = null; }
+  window.__SCHED_BANNER_WAIT__ = setInterval(()=>{
+    if(findBox()){
+      clearInterval(window.__SCHED_BANNER_WAIT__);
+      window.__SCHED_BANNER_WAIT__ = null;
+      bootOnce();
+    }
+  },300);
+
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)rfr()},{passive:true});
+  document.addEventListener('config-saved',e=>{const sec=e?.detail?.section;if(!sec||sec==='scrobble'||sec==='scheduling')rfr()});
+  document.addEventListener('scheduling-status-refresh',rfr);
+  document.addEventListener('watcher-status-refresh',rfr);
+  document.addEventListener('tab-changed',e=>{const id=e?.detail?.id;if(id==='main'||id==='settings')rfr()});
+  window.addEventListener('focus',rfr);
 });
 })();
-

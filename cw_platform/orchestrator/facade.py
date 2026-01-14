@@ -33,7 +33,7 @@ from ._applier import apply_add as _apply_add, apply_remove as _apply_remove
 __all__ = ["Orchestrator"]
 
 # config
-try:  # pragma: no cover - optional import
+try:
     from .. import config_base as _config_base_mod  # type: ignore[import]
     config_base: Any = _config_base_mod
 except Exception:  # pragma: no cover
@@ -59,8 +59,6 @@ class Orchestrator:
     files: StateStore | None = field(init=False, default=None)
     providers: dict[str, InventoryOps] = field(init=False, default_factory=dict)
     stats: Stats = field(init=False)
-
-    # internal fields (set in __post_init__)
     debug: bool = field(init=False, default=False)
     emitter: Emitter = field(init=False)
     warn_thresholds: dict[str, int] = field(init=False, default_factory=dict)
@@ -278,7 +276,6 @@ class Orchestrator:
         prov_name = str(provider).upper()
         ops = self.providers.get(prov_name)
         if ops is None:
-            # nothing to coerce against; treat as non-suspect
             return dict(cur_idx), False, "provider:missing"
 
         prev_cp = self.prev_checkpoint(provider, feature)
@@ -384,7 +381,7 @@ class Orchestrator:
         features: Sequence[str] = ("watchlist",),
     ) -> dict[str, Any]:
         import time as _t
-        from typing import Mapping as _MappingType, Dict as _DictType  # for fallback types
+        from typing import Mapping as _MappingType, Dict as _DictType
 
         try:
             from ..id_map import minimal
@@ -430,7 +427,7 @@ class Orchestrator:
         providers = dict(state.get("providers") or {})
         wall: list[dict[str, Any]] = []
 
-        from typing import Mapping as _MappingType, Dict as _DictType  # for fallback types
+        from typing import Mapping as _MappingType, Dict as _DictType
 
         try:
             from ..id_map import minimal, canonical_key
