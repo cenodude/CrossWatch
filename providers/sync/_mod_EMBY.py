@@ -15,7 +15,7 @@ from .emby._common import normalize as emby_normalize, key_of as emby_key_of
 from .emby import _watchlist as feat_watchlist
 from .emby import _history as feat_history
 from .emby import _ratings as feat_ratings
-from .emby import _playlists as feat_playlists
+
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -44,7 +44,6 @@ _FEATURES: dict[str, Any] = {
     "watchlist": feat_watchlist,
     "history": feat_history,
     "ratings": feat_ratings,
-    "playlists": feat_playlists,
 }
 
 _HEALTH_SHADOW = "/config/.cw_state/emby.health.shadow.json"

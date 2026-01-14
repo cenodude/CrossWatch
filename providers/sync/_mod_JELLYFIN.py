@@ -15,7 +15,6 @@ from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
-from .jellyfin import _playlists as feat_playlists
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -38,7 +37,6 @@ _FEATURES: dict[str, Any] = {
     "watchlist": feat_watchlist,
     "history": feat_history,
     "ratings": feat_ratings,
-    "playlists": feat_playlists,
 }
 
 _HEALTH_SHADOW = "/config/.cw_state/jellyfin.health.shadow.json"
