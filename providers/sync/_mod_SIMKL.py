@@ -19,7 +19,7 @@ from ._mod_common import (
     parse_rate_limit,
     request_with_retries,
 )
-from .simkl._common import build_headers, normalize as simkl_normalize, key_of as simkl_key_of
+from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, normalize as simkl_normalize, key_of as simkl_key_of, state_file
 
 __VERSION__ = "3.0.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
@@ -65,9 +65,6 @@ def _log(msg: str) -> None:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
         print(f"[SIMKL] {msg}")
 
-
-STATE_DIR = "/config/.cw_state"
-ACTIVITIES_SHADOW = f"{STATE_DIR}/simkl.activities.shadow.json"
 
 
 def _json_load(path: str) -> dict[str, Any]:
@@ -305,13 +302,14 @@ class SIMKLModule:
             },
         }
 
-        try:
-            _json_save(
-                ACTIVITIES_SHADOW,
-                {"ts": int(time.time()), "data": {"status": core_code}},
-            )
-        except Exception:
-            pass
+        if simkl_pair_scope():
+            try:
+                _json_save(
+                    str(state_file("simkl.activities.shadow.json")),
+                    {"ts": int(time.time()), "data": {"status": core_code}},
+                )
+            except Exception:
+                pass
 
         _log(
             f"health status={status} ok={ok} latency_ms={latency_ms} "

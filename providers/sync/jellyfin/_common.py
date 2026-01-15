@@ -39,8 +39,12 @@ def _safe_scope(value: str) -> str:
 
 def state_file(name: str) -> Path:
     scope = _pair_scope()
-    safe = _safe_scope(scope) if scope else "unscoped"
     p = Path(name)
+    if not scope:
+        if p.suffix:
+            return STATE_DIR / f"{p.stem}{p.suffix}"
+        return STATE_DIR / name
+    safe = _safe_scope(scope)
     if p.suffix:
         scoped = STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
         legacy = STATE_DIR / f"{p.stem}{p.suffix}"

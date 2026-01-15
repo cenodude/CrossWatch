@@ -29,7 +29,7 @@ from ._common import (
     now_iso,
     read_json,
     save_watermark,
-    write_json,
+    write_json,    _pair_scope,
 )
 
 
@@ -69,6 +69,8 @@ def _shadow_load() -> dict[str, Any]:
 
 
 def _shadow_save(items: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     p = _shadow_path()
     try:
         tmp = p.with_name(f"{p.name}.tmp")
@@ -131,6 +133,8 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     p = _unresolved_path()
     try:
         p.parent.mkdir(parents=True, exist_ok=True)

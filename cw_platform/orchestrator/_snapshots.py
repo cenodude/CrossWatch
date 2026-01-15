@@ -8,6 +8,9 @@ from typing import Any, Callable
 
 import json
 import os
+from pathlib import Path
+
+from ._scope import scoped_file
 import time
 import datetime as _dt
 
@@ -319,7 +322,10 @@ def _eventish_count(feature: str, idx: Mapping[str, Any]) -> int:
         )
     return len(idx)
 
-_ANILIST_SHADOW_PATH = "/config/.cw_state/anilist_watchlist_shadow.json"
+_STATE_DIR = Path("/config/.cw_state")
+
+def _anilist_shadow_path() -> Path:
+    return scoped_file(_STATE_DIR, "anilist_watchlist_shadow.json")
 
 def _tokens_for_item(ck: str, it: Mapping[str, Any]) -> set[str]:
     toks: set[str] = set()
@@ -336,18 +342,20 @@ def _tokens_for_item(ck: str, it: Mapping[str, Any]) -> set[str]:
             pass
     return toks
 
-def _load_json_dict(path: str) -> dict[str, Any]:
+def _load_json_dict(path: str | Path) -> dict[str, Any]:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        p = Path(path)
+        with open(p, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return dict(raw) if isinstance(raw, dict) else {}
     except Exception:
         return {}
 
-def _save_json_dict(path: str, obj: Mapping[str, Any]) -> None:
+def _save_json_dict(path: str | Path, obj: Mapping[str, Any]) -> None:
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -381,7 +389,7 @@ def _maybe_backfill_anilist_shadow(
     if not tok_best:
         return
 
-    shadow = _load_json_dict(_ANILIST_SHADOW_PATH)
+    shadow = _load_json_dict(_anilist_shadow_path())
     changed_shadow = False
     rekeyed = 0
     enriched = 0
@@ -502,7 +510,7 @@ def _maybe_backfill_anilist_shadow(
                 pass
 
     if changed_shadow:
-        _save_json_dict(_ANILIST_SHADOW_PATH, shadow)
+        _save_json_dict(_anilist_shadow_path(), shadow)
 
     if rekeyed or enriched:
         dbg(

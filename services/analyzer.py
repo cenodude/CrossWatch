@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Iterable
+from pathlib import Path
 import json
 import re
 import threading
@@ -46,14 +47,127 @@ def _trakt_headers() -> dict[str, str]:
     return h
 
 
-def _load_state() -> dict[str, Any]:
-    if not STATE_PATH.exists():
-        raise HTTPException(404, "state.json not found")
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        raise HTTPException(500, "Failed to parse state.json")
+def _safe_scope(value: str) -> str:
+    s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
+    s = s.strip("_ ")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s[:96] if s else "default"
 
+
+def _parse_pairs_raw(pairs_raw: str | None) -> list[str]:
+    if not pairs_raw:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in str(pairs_raw).split(","):
+        v = str(part or "").strip()
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def _state_candidates(token: str) -> list[Path]:
+    return [
+        CONFIG_DIR / f"state.{token}.json",
+        CWS_DIR / f"state.{token}.json",
+    ]
+
+
+def _pick_existing(paths: list[Path]) -> Path | None:
+    for p in paths:
+        if p.exists():
+            return p
+    return None
+
+
+def _load_state_at(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise HTTPException(404, f"{path.name} not found")
+    except Exception:
+        raise HTTPException(500, f"Failed to parse {path.name}")
+
+
+def _load_state_handles(pairs_raw: str | None) -> list[dict[str, Any]]:
+    pairs = _parse_pairs_raw(pairs_raw)
+    handles: list[dict[str, Any]] = []
+    if pairs:
+        for pid in pairs:
+            safe = _safe_scope(pid)
+            cand = _state_candidates(safe)
+            if safe != str(pid):
+                cand += _state_candidates(str(pid))
+            path = _pick_existing(cand)
+            if path is None:
+                continue
+            handles.append({"pair": pid, "safe": safe, "path": path, "state": _load_state_at(path)})
+        if handles:
+            return handles
+
+    if STATE_PATH.exists():
+        return [{"pair": None, "safe": None, "path": STATE_PATH, "state": _load_state_at(STATE_PATH)}]
+    raise HTTPException(404, "No analyzer state found")
+
+
+def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {"providers": {}}
+    for h in handles:
+        s = h.get("state") or {}
+        provs = s.get("providers") if isinstance(s, dict) else None
+        if not isinstance(provs, dict):
+            continue
+        for prov, pv in provs.items():
+            mpv = merged["providers"].setdefault(prov, {})  # type: ignore[index]
+            if not isinstance(pv, dict):
+                continue
+            for feat, fv in pv.items():
+                if feat not in ("history", "watchlist", "ratings"):
+                    continue
+                items = (((fv or {}).get("baseline") or {}).get("items") or {})
+                if not isinstance(items, dict):
+                    continue
+                mb = mpv.setdefault(feat, {}).setdefault("baseline", {}).setdefault("items", {})
+                if not isinstance(mb, dict):
+                    continue
+                for k, it in items.items():
+                    if k not in mb:
+                        mb[k] = dict(it or {})
+                        continue
+         
+                    a = mb[k]
+                    if not isinstance(a, dict) or not isinstance(it, dict):
+                        continue
+                    ida = dict(a.get("ids") or {})
+                    idb = dict(it.get("ids") or {})
+                    for ns, vv in idb.items():
+                        if ns not in ida and vv:
+                            ida[ns] = vv
+                    if ida:
+                        a["ids"] = ida
+                    for fld in ("title", "year", "type"):
+                        if fld not in a and fld in it:
+                            a[fld] = it.get(fld)
+    return merged
+
+
+def _load_state(pairs_raw: str | None = None) -> dict[str, Any]:
+    handles = _load_state_handles(pairs_raw)
+    return _merge_states(handles)
+
+
+def _save_state_at(path: Path, s: dict[str, Any]) -> None:
+    with _LOCK:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+
+
+def _save_state(s: dict[str, Any]) -> None:
+    _save_state_at(STATE_PATH, s)
 
 
 def _load_manual_state() -> dict[str, Any]:
@@ -83,13 +197,6 @@ def _manual_add_blocks(manual: dict[str, Any]) -> dict[tuple[str, str], set[str]
                 continue
             out[(str(prov).upper(), str(feat).lower())] = set(str(x) for x in blocks if x)
     return out
-
-def _save_state(s: dict[str, Any]) -> None:
-    with _LOCK:
-        tmp = STATE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(STATE_PATH)
-
 
 def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, Any]]]:
     for prov, pv in (s.get("providers") or {}).items():
@@ -163,11 +270,16 @@ _ID_RX: dict[str, re.Pattern[str]] = {
 }
 
 
-def _read_cw_state() -> dict[str, Any]:
+def _read_cw_state(allowed_scopes: set[str] | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if not (CWS_DIR.exists() and CWS_DIR.is_dir()):
         return out
+
+    scopes = set(allowed_scopes or [])
     for p in sorted(CWS_DIR.glob("*.json")):
+        if scopes:
+            if not any(p.name.endswith(f".{safe}.json") for safe in scopes):
+                continue
         try:
             out[p.name] = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
@@ -983,7 +1095,7 @@ def _missing_peer_show_hints(
 
     return out
 
-def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
+def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     core = ("imdb", "tmdb", "tvdb")
 
@@ -992,7 +1104,7 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
     pair_types = _pair_type_filters(cfg)
-    cw_state = _read_cw_state()
+    cw_state = _read_cw_state(allowed_scopes)
     manual = _load_manual_state()
     manual_blocks = _manual_add_blocks(manual)
     unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
@@ -1002,16 +1114,32 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if not name.endswith(".json"):
             continue
-        base = name[:-5]
-        if "_" not in base:
+
+        stem = name[:-5]
+        if allowed_scopes:
+            for safe in sorted(allowed_scopes, key=len, reverse=True):
+                suf = f".{safe}"
+                if stem.endswith(suf):
+                    stem = stem[: -len(suf)]
+                    break
+
+        kind: str | None = None
+        for knd in ("unresolved", "shadow"):
+            if stem.endswith(f".{knd}"):
+                kind = knd
+                stem = stem[: -len(knd) - 1]
+                break
+            if stem.endswith(f"_{knd}"):
+                kind = knd
+                stem = stem[: -len(knd) - 1]
+                break
+        if kind is None:
             continue
-        prov_raw, rest = base.split("_", 1)
-        if "." in rest:
-            feat_raw, suffix = rest.split(".", 1)
-        else:
-            feat_raw, suffix = rest, ""
-        if suffix not in ("unresolved", "shadow"):
+
+        if "_" not in stem:
             continue
+        prov_raw, feat_raw = stem.split("_", 1)
+
         prov_key = prov_raw.upper()
         feat_key = feat_raw.lower()
         key = (prov_key, feat_key)
@@ -1030,13 +1158,14 @@ def _problems(s: dict[str, Any]) -> list[dict[str, Any]]:
             aks = _alias_keys(vv)
             if not aks:
                 continue
-            meta: dict[str, Any] = {"file": name, "kind": suffix}
+            meta: dict[str, Any] = {"file": name, "kind": kind}
             reasons = rec.get("reasons")
             if isinstance(reasons, list):
                 meta["reasons"] = reasons
             for ak in aks:
                 lst = idx.setdefault(ak, [])
                 lst.append(meta)
+
 
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
@@ -1434,9 +1563,10 @@ def _suggest(s: dict[str, Any], prov: str, feat: str, key: str) -> dict[str, Any
     return {"suggestions": [], "needs": []}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
-def api_state() -> dict[str, Any]:
+def api_state(pairs: str | None = None) -> dict[str, Any]:
     try:
-        s = _load_state()
+        handles = _load_state_handles(pairs)
+        s = _merge_states(handles)
     except HTTPException as e:
         if e.status_code == 404:
             s = {}
@@ -1446,147 +1576,203 @@ def api_state() -> dict[str, Any]:
 
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
-def api_problems() -> dict[str, Any]:
-    s = _load_state()
-    return {"problems": _problems(s), "pair_stats": _pair_stats(s), "pair_exclusions": _pair_exclusions(s)}
+def api_problems(pairs: str | None = None) -> dict[str, Any]:
+    handles = _load_state_handles(pairs)
+    s = _merge_states(handles)
+    scopes = {h.get("safe") for h in handles if h.get("safe")}
+    allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+    return {
+        "problems": _problems(s, allowed),
+        "pair_stats": _pair_stats(s),
+        "pair_exclusions": _pair_exclusions(s),
+    }
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
-def api_ratings_audit() -> dict[str, Any]:
-    s = _load_state()
+def api_ratings_audit(pairs: str | None = None) -> dict[str, Any]:
+    s = _load_state(pairs)
     return _ratings_audit(s)
 
 @router.get("/analyzer/cw-state", response_class=JSONResponse)
-def api_cw_state() -> dict[str, Any]:
-    return _read_cw_state()
+def api_cw_state(pairs: str | None = None) -> dict[str, Any]:
+    try:
+        handles = _load_state_handles(pairs)
+        scopes = {h.get("safe") for h in handles if h.get("safe")}
+        allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+    except HTTPException:
+        allowed = None
+    return _read_cw_state(allowed)
 
 @router.post("/analyzer/patch", response_class=JSONResponse)
-def api_patch(payload: dict[str, Any]) -> dict[str, Any]:
+def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
     for f in ("provider", "feature", "key", "ids"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state()
-    b, it = _find_item(s, payload["provider"], payload["feature"], payload["key"])
-    if b is None or it is None:
-        raise HTTPException(404, "Item not found")
 
-    ids = dict(it.get("ids") or {})
-    for k_any, v in (payload.get("ids") or {}).items():
-        k = str(k_any)
-        nv = _norm(k, v)
-        if nv is None:
-            ids.pop(k, None)
-        else:
-            ids[k] = nv
+    handles = _load_state_handles(pairs)
+    new_key = str(payload["key"])
+    touched = 0
 
-    it["ids"] = ids
+    for h in handles:
+        s = h["state"]
+        b, it = _find_item(s, payload["provider"], payload["feature"], payload["key"])
+        if b is None or it is None:
+            continue
 
-    if payload.get("merge_peer_ids"):
-        peer_ids = _peer_ids(s, it)
-        for k, v in peer_ids.items():
-            if k not in ids and v:
-                ids[k] = v
+        ids = dict(it.get("ids") or {})
+        for k_any, v in (payload.get("ids") or {}).items():
+            k = str(k_any)
+            nv = _norm(k, v)
+            if nv is None:
+                ids.pop(k, None)
+            else:
+                ids[k] = nv
+
         it["ids"] = ids
 
-    old_key = payload["key"]
-    new_key = old_key
-    if payload.get("rekey"):
-        new_key = _rekey(b, old_key, it)
+        if payload.get("merge_peer_ids"):
+            peer_ids = _peer_ids(s, it)
+            for k, v in peer_ids.items():
+                if k not in ids and v:
+                    ids[k] = v
+            it["ids"] = ids
 
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
-    idx = _indices_for(s)
-    pair_libs = _pair_lib_filters(cfg)
-    pair_types = _pair_type_filters(cfg)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
-        s,
-        pairs,
-        payload["provider"],
-        payload["feature"],
-        new_key,
-        it,
-        idx,
-        pair_libs,
-        pair_types,
-    )
-    _save_state(s)
+        old_key = str(payload["key"])
+        if payload.get("rekey"):
+            new_key = _rekey(b, old_key, it)
+
+        cfg = _cfg()
+        pairs_map = _pair_map(cfg, s)
+        idx = _indices_for(s)
+        pair_libs = _pair_lib_filters(cfg)
+        pair_types = _pair_type_filters(cfg)
+        it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+            s,
+            pairs_map,
+            payload["provider"],
+            payload["feature"],
+            new_key,
+            it,
+            idx,
+            pair_libs,
+            pair_types,
+        )
+
+        _save_state_at(h["path"], s)
+        touched += 1
+
+    if touched == 0:
+        raise HTTPException(404, "Item not found")
     return {"ok": True, "new_key": new_key}
 
 @router.post("/analyzer/suggest", response_class=JSONResponse)
-def api_suggest(payload: dict[str, Any]) -> dict[str, Any]:
+def api_suggest(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state()
+    s = _load_state(pairs)
     return _suggest(s, payload["provider"], payload["feature"], payload["key"])
 
 
 @router.post("/analyzer/fix", response_class=JSONResponse)
-def api_fix(payload: dict[str, Any]) -> dict[str, Any]:
+def api_fix(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
     for f in ("type", "provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state()
-    r = _apply_fix(s, payload)
-    _save_state(s)
-    return r
 
+    handles = _load_state_handles(pairs)
+    touched = 0
+    out: dict[str, Any] | None = None
+
+    for h in handles:
+        s = h["state"]
+        try:
+            r = _apply_fix(s, payload)
+        except HTTPException:
+            continue
+        _save_state_at(h["path"], s)
+        touched += 1
+        if out is None:
+            out = r
+
+    if touched == 0:
+        raise HTTPException(404, "Item not found")
+    return out or {"ok": True}
 
 @router.patch("/analyzer/item", response_class=JSONResponse)
-def api_edit(payload: dict[str, Any]) -> dict[str, Any]:
+def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
     for f in ("provider", "feature", "key", "updates"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state()
-    b = _bucket(s, payload["provider"], payload["feature"])
-    if not b or payload["key"] not in b:
+
+    handles = _load_state_handles(pairs)
+    new_key = str(payload["key"])
+    touched = 0
+
+    for h in handles:
+        s = h["state"]
+        b = _bucket(s, payload["provider"], payload["feature"])
+        if not b or payload["key"] not in b:
+            continue
+
+        it = b[payload["key"]]
+        up = payload["updates"]
+
+        if "title" in up:
+            it["title"] = up["title"]
+        if "year" in up:
+            it["year"] = up["year"]
+        if "ids" in up and isinstance(up["ids"], dict):
+            ids = it.setdefault("ids", {})
+            for k, v in up["ids"].items():
+                if v is None:
+                    ids.pop(k, None)
+                elif v != "":
+                    ids[k] = v
+
+        new_key = _rekey(b, payload["key"], it)
+        cfg = _cfg()
+        pairs_map = _pair_map(cfg, s)
+        idx = _indices_for(s)
+        pair_libs = _pair_lib_filters(cfg)
+        pair_types = _pair_type_filters(cfg)
+        it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+            s,
+            pairs_map,
+            payload["provider"],
+            payload["feature"],
+            new_key,
+            it,
+            idx,
+            pair_libs,
+            pair_types,
+        )
+        _save_state_at(h["path"], s)
+        touched += 1
+
+    if touched == 0:
         raise HTTPException(404, "Item not found")
-
-    it = b[payload["key"]]
-    up = payload["updates"]
-
-    if "title" in up:
-        it["title"] = up["title"]
-    if "year" in up:
-        it["year"] = up["year"]
-    if "ids" in up and isinstance(up["ids"], dict):
-        ids = it.setdefault("ids", {})
-        for k, v in up["ids"].items():
-            if v is None:
-                ids.pop(k, None)
-            elif v != "":
-                ids[k] = v
-
-    new = _rekey(b, payload["key"], it)
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
-    idx = _indices_for(s)
-    pair_libs = _pair_lib_filters(cfg)
-    pair_types = _pair_type_filters(cfg)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
-        s,
-        pairs,
-        payload["provider"],
-        payload["feature"],
-        new,
-        it,
-        idx,
-        pair_libs,
-        pair_types,
-    )
-    _save_state(s)
-    return {"ok": True, "new_key": new}
-
+    return {"ok": True, "new_key": new_key}
 
 @router.delete("/analyzer/item", response_class=JSONResponse)
-def api_delete(payload: dict[str, Any]) -> dict[str, Any]:
+def api_delete(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]:
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state()
-    b = _bucket(s, payload["provider"], payload["feature"])
-    if not b or payload["key"] not in b:
+
+    handles = _load_state_handles(pairs)
+    touched = 0
+
+    for h in handles:
+        s = h["state"]
+        b = _bucket(s, payload["provider"], payload["feature"])
+        if not b or payload["key"] not in b:
+            continue
+        b.pop(payload["key"], None)
+        _save_state_at(h["path"], s)
+        touched += 1
+
+    if touched == 0:
         raise HTTPException(404, "Item not found")
-    b.pop(payload["key"], None)
-    _save_state(s)
     return {"ok": True}
+

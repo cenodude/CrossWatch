@@ -23,6 +23,7 @@ from ._common import (
     normalize as simkl_normalize,
     update_watermark_if_new,
     state_file,
+    _pair_scope,
 )
 
 BASE = "https://api.simkl.com"
@@ -108,6 +109,8 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
+    if _pair_scope() is None:
+        return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
         return
@@ -121,6 +124,8 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def _load_json(path: str) -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     p = Path(path)
     _migrate_legacy_json(p)
     try:
@@ -130,6 +135,8 @@ def _load_json(path: str) -> dict[str, Any]:
 
 
 def _save_json(path: str, data: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

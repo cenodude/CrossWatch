@@ -105,6 +105,8 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
+    if _pair_scope() is None:
+        return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
         return
@@ -118,6 +120,8 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     _migrate_legacy_json(path)
     try:
         return json.loads(path.read_text("utf-8") or "{}")
@@ -126,6 +130,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int | None = 2, sort_keys: bool = True) -> None:
+    if _pair_scope() is None:
+        return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -196,6 +202,8 @@ def pad_since_iso(iso_ts: str, *, seconds: int = 2) -> str:
 
 
 def get_watermark(feature: str, *, path: Path = WATERMARK_PATH) -> str | None:
+    if _pair_scope() is None:
+        return None
     p = _scoped_watermark_path(path)
     data = read_json(p)
     v = data.get(feature)
@@ -203,6 +211,8 @@ def get_watermark(feature: str, *, path: Path = WATERMARK_PATH) -> str | None:
 
 
 def save_watermark(feature: str, iso_ts: str, *, path: Path = WATERMARK_PATH) -> None:
+    if _pair_scope() is None:
+        return
     p = _scoped_watermark_path(path)
     data = read_json(p)
     data[feature] = iso_z(iso_ts)

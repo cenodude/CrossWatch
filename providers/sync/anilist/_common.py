@@ -38,6 +38,8 @@ def state_file(name: str) -> Path:
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         return json.loads(path.read_text("utf-8") or "{}")
     except Exception:
@@ -45,6 +47,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_keys: bool = True) -> None:
+    if _pair_scope() is None:
+        return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.tmp")

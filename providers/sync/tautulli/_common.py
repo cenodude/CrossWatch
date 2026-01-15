@@ -31,7 +31,9 @@ def _safe_scope(value: str) -> str:
 
 def state_file(name: str) -> Path:
     scope = _pair_scope()
-    safe = _safe_scope(scope) if scope else "unscoped"
+    if not scope:
+        return STATE_DIR / name
+    safe = _safe_scope(scope)
     p = Path(name)
 
     if p.suffix:
@@ -41,7 +43,7 @@ def state_file(name: str) -> Path:
         scoped = STATE_DIR / f"{name}.{safe}"
         legacy = STATE_DIR / name
 
-    # Auto-migrate legacy unscoped state to scoped file
+    # Auto-migrate legacy state to scoped file
     if not scoped.exists() and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,6 +55,8 @@ def state_file(name: str) -> Path:
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         return json.loads(path.read_text("utf-8") or "{}")
     except Exception:
@@ -60,6 +64,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_keys: bool = True) -> None:
+    if _pair_scope() is None:
+        return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.tmp")

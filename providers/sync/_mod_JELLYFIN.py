@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
-from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of
+from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of, _pair_scope as _jf_pair_scope, state_file as _jf_state_file
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
@@ -39,7 +39,7 @@ _FEATURES: dict[str, Any] = {
     "ratings": feat_ratings,
 }
 
-_HEALTH_SHADOW = "/config/.cw_state/jellyfin.health.shadow.json"
+_HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
 
 
 def _log(msg: str) -> None:
@@ -48,12 +48,15 @@ def _log(msg: str) -> None:
 
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
+    if _jf_pair_scope() is None:
+        return
     try:
-        os.makedirs(os.path.dirname(_HEALTH_SHADOW), exist_ok=True)
-        tmp = f"{_HEALTH_SHADOW}.tmp"
+        path = str(_jf_state_file(_HEALTH_SHADOW_NAME))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, _HEALTH_SHADOW)
+        os.replace(tmp, path)
     except Exception:
         pass
 

@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping
 import requests
 
 from .emby._common import normalize as emby_normalize, key_of as emby_key_of
+from .emby._common import _pair_scope as _emby_pair_scope, state_file as _emby_state_file
 from .emby import _watchlist as feat_watchlist
 from .emby import _history as feat_history
 from .emby import _ratings as feat_ratings
@@ -46,7 +47,7 @@ _FEATURES: dict[str, Any] = {
     "ratings": feat_ratings,
 }
 
-_HEALTH_SHADOW = "/config/.cw_state/emby.health.shadow.json"
+_HEALTH_SHADOW_NAME = "emby.health.shadow.json"
 
 
 def _present_flags() -> dict[str, bool]:
@@ -54,12 +55,15 @@ def _present_flags() -> dict[str, bool]:
 
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
+    if _emby_pair_scope() is None:
+        return
     try:
-        os.makedirs(os.path.dirname(_HEALTH_SHADOW), exist_ok=True)
-        tmp = f"{_HEALTH_SHADOW}.tmp"
+        path = _emby_state_file(_HEALTH_SHADOW_NAME)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, _HEALTH_SHADOW)
+        os.replace(tmp, path)
     except Exception:
         pass
 

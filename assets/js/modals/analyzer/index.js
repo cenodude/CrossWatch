@@ -252,6 +252,27 @@ export default {
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
 
+    function selectedPairIds() {
+      const all = (PAIRS || [])
+        .map(p => String((p && p.id) || ""))
+        .filter(Boolean);
+      if (PAIR_FILTER && PAIR_FILTER.size) {
+        const sel = Array.from(PAIR_FILTER)
+          .map(x => String(x || ""))
+          .filter(id => id && all.includes(id));
+        return sel.length ? sel : all;
+      }
+      return all;
+    }
+
+    function withPairs(url) {
+      const ids = selectedPairIds();
+      if (!ids.length) return url;
+      const q = `pairs=${encodeURIComponent(ids.join(","))}`;
+      return url.includes("?") ? `${url}&${q}` : `${url}?${q}`;
+    }
+
+
     function applySplit(top, total) {
       const bar = 8;
       const min = 140;
@@ -670,7 +691,7 @@ export default {
             rekey: true,
             merge_peer_ids: false
           };
-          const res = await fjson("/api/analyzer/patch", {
+          const res = await fjson(withPairs("/api/analyzer/patch"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body)
@@ -1033,16 +1054,18 @@ function renderPairs() {
     async function load() {
       restoreSplit();
       dragY();
-      showWait("Reading state.json…");
+      showWait("Loading pairs…");
+      await getActivePairMap();
+      setWaitText("Reading scoped state…");
       let s;
       try {
-        s = await fjson("/api/analyzer/state");
+        s = await fjson(withPairs("/api/analyzer/state"));
       } catch {
         s = { counts: {}, items: [] };
         issues.innerHTML = `
           <div class="issue">
-            <div class="h">No state.json yet</div>
-            <div>Run a sync to generate a baseline, then reopen Analyzer.</div>
+            <div class="h">No scoped state yet</div>
+            <div>Run a sync for the selected pair(s), then reopen Analyzer.</div>
           </div>`;
       }
       ITEMS = s.items || [];
@@ -1064,9 +1087,9 @@ function renderPairs() {
 
     async function analyze(silent = false) {
       if (!silent) showWait("Analyzing…");
-      const [pairMap, meta, status] = await Promise.all([
-        getActivePairMap(),
-        fjson("/api/analyzer/problems").catch(() => ({ problems: [] })),
+      const pairMap = await getActivePairMap();
+      const [meta, status] = await Promise.all([
+        fjson(withPairs("/api/analyzer/problems")).catch(() => ({ problems: [] })),
         fjson("/api/status").catch(() => null),
         refreshBlocked().catch(() => null)
       ]);

@@ -11,6 +11,8 @@ import time
 
 STATE_DIR = Path("/config/.cw_state")
 
+from ._scope import scoped_file, scope_safe
+
 try:
     from ..id_map import canonical_key as _ck, minimal as _minimal  # type: ignore[attr-defined]
 except Exception:
@@ -45,7 +47,7 @@ def _atomic_write(path: Path, data: Mapping[str, Any]) -> None:
 def _blocking_path(dst: str, feature: str) -> Path:
     dst_lower = str(dst).strip().lower()
     feat_lower = str(feature).strip().lower()
-    return STATE_DIR / f"{dst_lower}_{feat_lower}.unresolved.json"
+    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.json")
 
 
 def _pending_path(dst: str, feature: str) -> Path:
@@ -66,6 +68,7 @@ def load_unresolved_keys(
         return keys
 
     dst_lower = str(dst).strip().lower()
+    scope = scope_safe()
 
     if feature and not cross_features:
         p = _blocking_path(dst_lower, feature)
@@ -78,11 +81,14 @@ def load_unresolved_keys(
 
     prefix = f"{dst_lower}_"
     suffix = ".unresolved.json"
+    scoped1 = f".unresolved.{scope}.json"
+    scoped2 = f".{scope}.unresolved.json"
     for p in STATE_DIR.iterdir():
         if p.is_file():
             name = p.name
-            if name.startswith(prefix) and name.endswith(suffix):
-                keys |= set(_read_json(p).keys())
+            if name.startswith(prefix) and (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix)):
+                rp = scoped_file(STATE_DIR, name) if name.endswith(suffix) and not (name.endswith(scoped1) or name.endswith(scoped2)) else p
+                keys |= set(_read_json(rp).keys())
     return keys
 
 
@@ -97,6 +103,7 @@ def load_unresolved_map(
         return out
 
     dst_lower = str(dst).strip().lower()
+    scope = scope_safe()
 
     if feature and not cross_features:
         p = _blocking_path(dst_lower, feature)
@@ -111,10 +118,12 @@ def load_unresolved_map(
 
     prefix = f"{dst_lower}_"
     suffix = ".unresolved.json"
+    scoped1 = f".unresolved.{scope}.json"
+    scoped2 = f".{scope}.unresolved.json"
     for p in STATE_DIR.iterdir():
         if p.is_file():
             name = p.name
-            if name.startswith(prefix) and name.endswith(suffix):
+            if name.startswith(prefix) and (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix)):
                 data = _read_json(p)
                 for k, v in (data or {}).items():
                     out[str(k)] = v if isinstance(v, dict) else {}
@@ -192,7 +201,6 @@ def record_unresolved(
             data["keys"].append(ck)
             existing.add(ck)
             if min_item is not None:
-                # items is typed as dict[str, Any]
                 data["items"][ck] = min_item
             added += 1
 

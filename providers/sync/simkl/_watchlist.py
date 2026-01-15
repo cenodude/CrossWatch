@@ -21,6 +21,7 @@ from ._common import (
     normalize as simkl_normalize,
     save_watermark,
     state_file,
+    _pair_scope,
 )
 
 BASE = "https://api.simkl.com"
@@ -61,6 +62,8 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
+    if _pair_scope() is None:
+        return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
         return
@@ -75,6 +78,8 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def _load_unresolved() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     p = _unresolved_path()
     _migrate_legacy_json(p)
     try:
@@ -84,6 +89,8 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _unresolved_path().with_suffix(".tmp")
@@ -135,6 +142,8 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 
 
 def _shadow_load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {"ts": None, "items": {}, "buckets_seen": {}}
     p = _shadow_path()
     _migrate_legacy_json(p)
     try:
@@ -156,6 +165,8 @@ def _shadow_save(
     items: Mapping[str, Any],
     buckets_seen: Mapping[str, Any] | None = None,
 ) -> None:
+    if _pair_scope() is None:
+        return
     try:
         _shadow_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _shadow_path().with_suffix(".tmp")

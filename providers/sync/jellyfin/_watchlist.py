@@ -27,6 +27,7 @@ from ._common import (
     update_userdata,
     key_of as jelly_key_of,
     normalize as jelly_normalize,
+    _pair_scope,
 )
 
 UNRESOLVED_PATH = str(state_file("jellyfin_watchlist.unresolved.json"))
@@ -38,6 +39,8 @@ def _log(msg: str) -> None:
 
 
 def _load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -46,6 +49,8 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
         tmp = UNRESOLVED_PATH + ".tmp"

@@ -16,6 +16,7 @@ from ._common import (
     emby_scope_history,
     normalize as emby_normalize,
     resolve_item_id,
+    _pair_scope,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -117,6 +118,8 @@ def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int:
 
 # unresolved tracking
 def _unres_load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -125,6 +128,8 @@ def _unres_load() -> dict[str, Any]:
 
 
 def _unres_save(obj: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
         with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
@@ -157,6 +162,8 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
 
 # shadow + blackbox
 def _shadow_load() -> dict[str, int]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
@@ -166,6 +173,8 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
         with open(SHADOW_PATH, "w", encoding="utf-8") as f:
@@ -190,6 +199,8 @@ def _bb_paths() -> list[str]:
 
 
 def _bb_load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     merged: dict[str, Any] = {}
     for p in _bb_paths():
         try:
@@ -203,6 +214,8 @@ def _bb_load() -> dict[str, Any]:
 
 
 def _bb_save(d: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     os.makedirs(os.path.dirname(BLACKBOX_PATH), exist_ok=True)
     for p in _bb_paths():
         try:

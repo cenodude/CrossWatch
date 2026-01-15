@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file
+from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file, _pair_scope
 
 UNRESOLVED_PATH = state_file("emby_ratings.unresolved.json")
 
@@ -25,6 +25,8 @@ def _log(msg: str) -> None:
 
 
 def _load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -33,6 +35,8 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
         with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:

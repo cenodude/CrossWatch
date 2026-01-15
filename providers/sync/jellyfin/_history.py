@@ -17,6 +17,7 @@ from ._common import (
     normalize as jelly_normalize,
     resolve_item_id,
     sleep_ms,
+    _pair_scope,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -32,6 +33,8 @@ def _log(msg: str) -> None:
 
 # unresolved
 def _unres_load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -40,6 +43,8 @@ def _unres_load() -> dict[str, Any]:
 
 
 def _unres_save(obj: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
         with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
@@ -72,6 +77,8 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
 
 # shadow
 def _shadow_load() -> dict[str, int]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
@@ -81,6 +88,8 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
         with open(SHADOW_PATH, "w", encoding="utf-8") as f:
@@ -91,6 +100,8 @@ def _shadow_save(d: Mapping[str, int]) -> None:
 
 # blackbox
 def _bb_load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(BLACKBOX_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -99,6 +110,8 @@ def _bb_load() -> dict[str, Any]:
 
 
 def _bb_save(d: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(BLACKBOX_PATH), exist_ok=True)
         with open(BLACKBOX_PATH, "w", encoding="utf-8") as f:

@@ -6,6 +6,9 @@ from pathlib import Path
 from collections.abc import Mapping, Iterable
 from typing import Any
 import json, time
+import shutil
+
+from ._scope import scope_safe
 
 STATE_DIR = Path("/config/.cw_state")
 
@@ -27,15 +30,30 @@ def _write_json(p: Path, obj: dict[str, Any]) -> None:
 def _bb_path(dst: str, feature: str, pair: str | None = None) -> Path:
     dst = str(dst).strip().lower()
     feature = str(feature).strip().lower()
-    if pair:
-        pair = str(pair).strip().lower()
-        return STATE_DIR / f"{dst}_{feature}.{pair}.blackbox.json"
-    return STATE_DIR / f"{dst}_{feature}.blackbox.json"
+    scope = str(pair).strip().lower() if pair else scope_safe()
+    scoped = STATE_DIR / f"{dst}_{feature}.{scope}.blackbox.json"
+    legacy = STATE_DIR / f"{dst}_{feature}.blackbox.json"
+    if not scoped.exists() and legacy.exists():
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, scoped)
+        except Exception:
+            pass
+    return scoped
 
-def _flap_path(dst: str, feature: str) -> Path:
+def _flap_path(dst: str, feature: str, pair: str | None = None) -> Path:
     dst = str(dst).strip().lower()
     feature = str(feature).strip().lower()
-    return STATE_DIR / f"{dst}_{feature}.flap.json"
+    scope = str(pair).strip().lower() if pair else scope_safe()
+    scoped = STATE_DIR / f"{dst}_{feature}.{scope}.flap.json"
+    legacy = STATE_DIR / f"{dst}_{feature}.flap.json"
+    if not scoped.exists() and legacy.exists():
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, scoped)
+        except Exception:
+            pass
+    return scoped
 
 _DEFAULT_BB: dict[str, Any] = {
     "enabled": True,

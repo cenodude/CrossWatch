@@ -18,6 +18,7 @@ from ._common import (
     update_watermarks_from_last_activities,
     extract_latest_ts,
     state_file,
+    _pair_scope,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -43,6 +44,8 @@ def _cache_path() -> Path:
 
 
 def _record_limit_error(feature: str) -> None:
+    if _pair_scope() is None:
+        return
     try:
         _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _last_limit_path().with_suffix(".tmp")
@@ -74,6 +77,8 @@ def _legacy_path(path: Path) -> Path | None:
 
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
+        return
+    if _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -166,6 +171,8 @@ def _history_collection_enabled(adapter: Any) -> bool:
 
 
 def _load_unresolved() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     p = _unresolved_path()
     _migrate_legacy_json(p)
     try:
@@ -175,6 +182,8 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _unresolved_path().with_suffix(".tmp")
@@ -185,6 +194,8 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
 
 
 def _load_cache_doc() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         p = _cache_path()
         _migrate_legacy_json(p)
@@ -196,6 +207,8 @@ def _load_cache_doc() -> dict[str, Any]:
 
 
 def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
+    if _pair_scope() is None:
+        return
     try:
         _cache_path().parent.mkdir(parents=True, exist_ok=True)
         doc = {"generated_at": _now_iso(), "items": dict(items), "wm": {"watched_at": watched_at or ""}}

@@ -6,18 +6,36 @@ from pathlib import Path
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeVar
 import json, os, time
+import shutil
+
+from ._scope import scope_safe
 
 _DIR = "/config/.cw_state"
 T = TypeVar("T", bound=Mapping[str, Any])
 
 class PhantomGuard:
     def __init__(self, src: str, dst: str, feature: str, ttl_days: int | None = None, enabled: bool = True):
-        base = f"{feature.lower()}.{src.lower()}-{dst.lower()}"
+        legacy_base = f"{feature.lower()}.{src.lower()}-{dst.lower()}"
+        scope = scope_safe()
+        base = f"{legacy_base}.{scope}"
         self._pf = Path(_DIR) / f"{base}.phantoms.json"
         self._lf = Path(_DIR) / f"{base}.last_success.json"
+        legacy_pf = Path(_DIR) / f"{legacy_base}.phantoms.json"
+        legacy_lf = Path(_DIR) / f"{legacy_base}.last_success.json"
+        if not self._pf.exists() and legacy_pf.exists():
+            try:
+                Path(_DIR).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(legacy_pf, self._pf)
+            except Exception:
+                pass
+        if not self._lf.exists() and legacy_lf.exists():
+            try:
+                Path(_DIR).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(legacy_lf, self._lf)
+            except Exception:
+                pass
         self._ttl = int(ttl_days) if ttl_days else None
         self._enabled = bool(enabled)
-
     def _now(self) -> int: return int(time.time())
 
     def _read_keys(self, p: Path) -> set[str]:
@@ -118,3 +136,4 @@ class PhantomGuard:
         for k in successful_keys or []:
             cur[str(k)] = now
         self._write_map(self._lf, cur)
+        

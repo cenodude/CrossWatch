@@ -14,6 +14,7 @@ from ._common import (
     jf_resolve_library_id,
     jf_scope_ratings,
     normalize as jelly_normalize,
+    _pair_scope,
 )
 
 UNRESOLVED_PATH = str(state_file("jellyfin_ratings.unresolved.json"))
@@ -22,6 +23,8 @@ SHADOW_PATH = str(state_file("jellyfin_ratings.shadow.json"))
 
 # shadow 
 def _shadow_load() -> dict[str, int]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(SHADOW_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
@@ -31,6 +34,8 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
         with open(SHADOW_PATH, "w", encoding="utf-8") as f:
@@ -51,6 +56,8 @@ def _log(msg: str) -> None:
 
 # unresolved store
 def _load() -> dict[str, Any]:
+    if _pair_scope() is None:
+        return {}
     try:
         with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -59,6 +66,8 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
+    if _pair_scope() is None:
+        return
     try:
         os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
         with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
