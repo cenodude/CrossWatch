@@ -636,8 +636,13 @@
   };
   ensureStyle("editor-styles", css);
 
-  const host = document.getElementById("page-editor");
-  if (!host) return;
+  let cwEditorBooted = false;
+
+  function bootEditor() {
+    if (cwEditorBooted) return;
+    const host = document.getElementById("page-editor");
+    if (!host) return;
+    cwEditorBooted = true;
 
   const state = {
     source: "state",
@@ -3222,10 +3227,22 @@
     });
   }
 
+  if (pairSel) {
+    pairSel.addEventListener("change", async () => {
+      state.pair = pairSel.value || "";
+      state.snapshot = "";
+      state.page = 0;
+      persistUIState();
+      await loadSnapshots();
+      await loadState();
+    });
+  }
+
   if (reloadBtn) {
     reloadBtn.addEventListener("click", async () => {
       state.snapshot = (snapSel && snapSel.value) ? snapSel.value : "";
       state.page = 0;
+      if (state.source === "pair") await loadPairs();
       if (state.source !== "state") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
@@ -3342,4 +3359,26 @@
     await loadSnapshots();
     await loadState();
   })();
+  }
+
+  function bootWhenReady() {
+    if (cwEditorBooted) return;
+    if (document.getElementById("page-editor")) {
+      bootEditor();
+      return;
+    }
+    const obs = new MutationObserver(() => {
+      if (!document.getElementById("page-editor")) return;
+      obs.disconnect();
+      bootEditor();
+    });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootWhenReady, { once: true });
+  } else {
+    bootWhenReady();
+  }
+
 })();

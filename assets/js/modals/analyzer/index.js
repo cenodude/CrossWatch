@@ -69,6 +69,33 @@ const ID_FIELDS = [
   "mdblist"
 ];
 
+function buildPairScopeKeys(pairMap) {
+  const out = new Set();
+  if (!pairMap || !pairMap.size) return out;
+  for (const [k, targets] of pairMap.entries()) {
+    const key = String(k || "");
+    if (!key) continue;
+    out.add(key);
+
+    const parts = key.split("::");
+    const feat = String(parts[1] || "").toLowerCase();
+    if (!feat) continue;
+
+    if (targets && typeof targets.forEach === "function") {
+      targets.forEach(t => {
+        const prov = String(t || "").toUpperCase();
+        if (prov) out.add(`${prov}::${feat}`);
+      });
+    } else if (Array.isArray(targets)) {
+      for (const t of targets) {
+        const prov = String(t || "").toUpperCase();
+        if (prov) out.add(`${prov}::${feat}`);
+      }
+    }
+  }
+  return out;
+}
+
 function css() {
   if (Q("#an-css")) return;
   const el = document.createElement("style");
@@ -1096,7 +1123,7 @@ function renderPairs() {
 
       PAIR_STATS = meta.pair_stats || [];
       PAIR_EXCLUSIONS = meta.pair_exclusions || [];
-      PAIR_SCOPE_KEYS = new Set(pairMap ? Array.from(pairMap.keys()) : []);
+      PAIR_SCOPE_KEYS = buildPairScopeKeys(pairMap);
       renderPairs();
 
       const all = meta.problems || [];
