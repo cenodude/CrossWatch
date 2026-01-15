@@ -713,6 +713,21 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
             "count": len(items),
             "ts": state.get("ts"),
         }
+    if src in ("pair", "pair-cache", "cache"):
+        scope = str(payload.get("pair") or "").strip()
+        if not scope:
+            raise HTTPException(status_code=400, detail="Missing pair for source=pair")
+        ds = str(payload.get("dataset") or payload.get("snapshot") or "").strip() or None
+        state = save_pair_state(kind, scope, ds, items)
+        return {
+            "ok": True,
+            "kind": kind,
+            "source": "pair",
+            "pair": scope,
+            "dataset": state.get("file"),
+            "count": len(items),
+            "ts": state.get("ts"),
+        }
     if src in ("state", "current"):
         provider = str(payload.get("provider") or "").strip()
         if not provider:

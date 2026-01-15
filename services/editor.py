@@ -350,6 +350,11 @@ def import_tracker_upload(
         raise ValueError("Unsupported file type; expected a ZIP or JSON file") from e
 
 _PAIR_SCOPE_RE = re.compile(r"^(?P<mode>[^_]+)_(?P<link>[^_]+)_pair_(?P<pid>.+)$")
+_PAIR_DATASET_RE = re.compile(
+    r"^(?P<prefix>.+)[._-](?P<kind>watchlist|history|ratings)\.(?P<variant>index|shadow)\.(?P<scope>.+)\.json$",
+    re.IGNORECASE,
+)
+
 
 def _cw_state_dir() -> Path:
     return Path(CONFIG) / ".cw_state"
@@ -393,13 +398,19 @@ def list_pairs() -> dict[str, Any]:
     bucket: dict[str, dict[str, Any]] = {}
     for p in root.glob("*.json"):
         name = p.name
-        if ".index." not in name:
-            continue
-        try:
-            scope = name.split(".index.", 1)[1].rsplit(".json", 1)[0]
-        except Exception:
-            continue
-        if "pair_" not in scope:
+        scope = None
+
+        m = _PAIR_DATASET_RE.match(name)
+        if m:
+            scope = str(m.group("scope") or "").strip()
+        elif ".index." in name or ".shadow." in name:
+            sep = ".index." if ".index." in name else ".shadow."
+            try:
+                scope = name.split(sep, 1)[1].rsplit(".json", 1)[0]
+            except Exception:
+                scope = None
+
+        if not scope or "pair_" not in scope:
             continue
 
         try:
@@ -426,18 +437,34 @@ def list_pair_datasets(kind: Kind, pair: str) -> list[dict[str, Any]]:
         return []
 
     out: list[dict[str, Any]] = []
-    for p in root.glob(f"*_{kind}.index.{scope}.json"):
-        try:
-            prefix = p.name.split(f"_{kind}.index.", 1)[0]
-        except Exception:
-            prefix = p.stem
+    for p in root.glob("*.json"):
+        m = _PAIR_DATASET_RE.match(p.name)
+        if not m:
+            continue
+        if (m.group("kind") or "").lower() != str(kind).lower():
+            continue
+        if str(m.group("scope") or "").strip() != scope:
+            continue
+
+        prefix = str(m.group("prefix") or "").strip() or p.stem
+        variant = str(m.group("variant") or "").lower() or None
+
         try:
             ts = int(p.stat().st_mtime)
             size = int(p.stat().st_size)
         except Exception:
             ts = 0
             size = 0
-        out.append({"name": p.name, "provider": prefix.upper(), "ts": ts, "size": size})
+
+        out.append(
+            {
+                "name": p.name,
+                "provider": prefix.upper(),
+                "variant": variant,
+                "ts": ts,
+                "size": size,
+            }
+        )
 
     out.sort(key=lambda x: int(x.get("ts") or 0), reverse=True)
     return out
