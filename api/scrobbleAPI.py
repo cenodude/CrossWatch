@@ -10,7 +10,7 @@ import threading
 import urllib.parse
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
@@ -448,7 +448,14 @@ def _ensure_watch_started(
     watch_cfg = (scrobble.get("watch") or {}) or {}
 
     prov = (provider or watch_cfg.get("provider") or "plex").lower().strip()
-    sink_cfg = sink or watch_cfg.get("sink") or "trakt"
+
+    if sink is not None:
+        sink_cfg = sink
+    else:
+        sink_cfg = (watch_cfg.get("sink") or "") if ("sink" in watch_cfg) else "trakt"
+    if not str(sink_cfg).strip():
+        raise HTTPException(status_code=400, detail="No sinks configured")
+
     names = [s.strip().lower() for s in re.split(r"[,&+]", str(sink_cfg)) if s and s.strip()]
     want_sinks = sorted(set(names or ["trakt"]))
 
@@ -543,7 +550,6 @@ def debug_watch_start(
             _reset_currently_watching()
         except Exception:
             pass
-
     w = _ensure_watch_started(request, provider, sink)
     alive = bool(getattr(w, "is_alive", lambda: False)())
     meta = getattr(request.app.state, "watch_meta", None) or {}

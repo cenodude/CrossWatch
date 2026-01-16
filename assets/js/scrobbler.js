@@ -178,7 +178,7 @@
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 5 },
   };
 
-  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false };
+  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false, _noSinkAutostartFixApplied: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -380,7 +380,7 @@
     const sel = $("#sc-sink", STATE.mount);
     const bar = $("#sc-sink-pills", STATE.mount);
     if (!sel || !bar) return;
-    syncPillBar(bar, normSinkCsvOrDefault(sel.value, "trakt"));
+    syncPillBar(bar, normSinkCsv(sel.value));
   }
 
   function syncPlexRatingsPillsFromSelect() {
@@ -837,7 +837,6 @@ serverUUID: async () => {
     syncLiveToggleUi();
   }
 
-
   function applyModeDisable() {
   const enabled = !!read("scrobble.enabled", false);
   const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -891,46 +890,60 @@ serverUUID: async () => {
   const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
   const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
 
-  const sink = normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt");
+  const sinkRaw = read("scrobble.watch.sink", "trakt");
+  const sink = normSinkCsv(sinkRaw == null ? "trakt" : sinkRaw);
+  const hasSink = !!sink;
+
   const traktTokenOk = !!String(read("trakt.access_token", "") || "").trim();
   const simklTokenOk = !!String(read("simkl.access_token", "") || "").trim();
   const mdblTokenOk = !!String(read("mdblist.api_key", "") || "").trim();
 
   let sinkOk = true;
   let sinkErr = "";
-  const wantsTrakt = sink.includes("trakt");
-  const wantsSimkl = sink.includes("simkl");
-  const wantsMDBList = sink.includes("mdblist");
 
-  const missing = [];
-  if (wantsTrakt && !traktTokenOk) missing.push("Trakt");
-  if (wantsSimkl && !simklTokenOk) missing.push("SIMKL");
-  if (wantsMDBList && !mdblTokenOk) missing.push("MDBList");
-
-  if (missing.length) {
+  if (!hasSink) {
     sinkOk = false;
-    const plural = missing.length > 1 ? "are" : "is";
-    sinkErr = `${missing.join(" and ")} ${plural} not configured. Go to Authentication and configure it, or refresh your browser if you already configured it.`;
+  } else {
+    const wantsTrakt = sink.includes("trakt");
+    const wantsSimkl = sink.includes("simkl");
+    const wantsMDBList = sink.includes("mdblist");
+
+    const missing = [];
+    if (wantsTrakt && !traktTokenOk) missing.push("Trakt");
+    if (wantsSimkl && !simklTokenOk) missing.push("SIMKL");
+    if (wantsMDBList && !mdblTokenOk) missing.push("MDBList");
+
+    if (missing.length) {
+      sinkOk = false;
+      const plural = missing.length > 1 ? "are" : "is";
+      sinkErr = `${missing.join(" and ")} ${plural} not configured. Go to Authentication and configure it, or refresh your browser if you already configured it.`;
+    }
   }
 
   rebuildPlexRatingsDropdown();
+
+  if (watcherOn && !hasSink) setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
+  else setNote("sc-note", "");
 
   if (watcherOn) {
     if (prov === "plex") {
       if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication - Plex, or refresh your browser if you already configured it", "err");
       else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
-      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else if (hasSink && !sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     } else if (prov === "emby") {
       if (!embyTokenOk) setNote("sc-pms-note", "Not connected to Emby. Go to Authentication - Emby, or refresh your browser if you already configured it", "err");
-      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else if (hasSink && !sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     } else {
       if (!jellyTokenOk) setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication - Jellyfin, or refresh your browser if you already configured it", "err");
-      else if (!sinkOk) setNote("sc-pms-note", sinkErr, "err");
+      else if (hasSink && !sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     }
-  } else setNote("sc-pms-note", "");
+  } else {
+    setNote("sc-pms-note", "");
+    setNote("sc-note", "");
+  }
 
   if (loadBtn) {
     if (prov === "plex" && !plexTokenOk) loadBtn.disabled = true;
@@ -945,10 +958,27 @@ serverUUID: async () => {
     else fetchUuid.disabled = !watcherOn;
   }
 
+  const auto = $("#sc-autostart", STATE.mount);
+  if (auto) {
+    if (watcherOn && !hasSink) {
+      auto.checked = false;
+      auto.disabled = true;
+      if (!!read("scrobble.watch.autostart", false)) {
+        write("scrobble.watch.autostart", false);
+        STATE.ui.watchAutostart = false;
+        if (!STATE._noSinkAutostartFixApplied) {
+          STATE._noSinkAutostartFixApplied = true;
+          persistConfigPaths([["scrobble.watch.autostart", false]], "sc-pms-note");
+        }
+      }
+    } else {
+      auto.disabled = !watcherOn;
+    }
+  }
+
   const startBtn = $("#sc-watch-start", STATE.mount);
   if (startBtn) {
-    const providerOk =
-      prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : prov === "emby" ? embyTokenOk : jellyTokenOk;
+    const providerOk = prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : prov === "emby" ? embyTokenOk : jellyTokenOk;
     startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
   }
 }
@@ -1106,6 +1136,7 @@ serverUUID: async () => {
             <span style="opacity:.75;font-size:12px">Sink</span>
             <div id="sc-sink-pills" class="sc-pillbar" role="group" aria-label="Sink"></div>
             <select id="sc-sink" class="input" style="display:none;width:240px">
+              <option value="">None</option>
               <option value="trakt">Trakt</option>
               <option value="simkl">SIMKL</option>
               <option value="mdblist">MDBList</option>
@@ -1146,6 +1177,8 @@ serverUUID: async () => {
 
           </div>
         </div>
+
+        <div id="sc-note" class="micro-note" style="margin:6px 0 10px"></div>
 
 	        <div class="cc-wrap">
 	          <div class="cc-card" id="sc-card-status">
@@ -1848,12 +1881,13 @@ serverUUID: async () => {
       const fresh = await API.cfgGet();
       if (fresh && typeof fresh === "object") {
         const backendProv = String(fresh?.scrobble?.watch?.provider || "").toLowerCase().trim();
-        const backendSink = normSinkCsvOrDefault(fresh?.scrobble?.watch?.sink || "", "trakt");
+        const backendSinkRaw = fresh?.scrobble?.watch?.sink;
+        const backendSink = normSinkCsv(backendSinkRaw == null ? "trakt" : backendSinkRaw);
 
         STATE.cfg = fresh;
 
         const uiProv = String(STATE.ui?.watchProvider || "").toLowerCase().trim();
-        const uiSinkRaw = String(STATE.ui?.watchSink || "").toLowerCase().trim();
+        const uiSinkRaw = STATE.ui?.watchSink;
         const uiEnabled = STATE.ui?.scrobbleEnabled;
         const uiModeRaw = String(STATE.ui?.scrobbleMode || "").toLowerCase().trim();
         const uiAutostart = STATE.ui?.watchAutostart;
@@ -1866,8 +1900,8 @@ serverUUID: async () => {
           if (backendProv === uiProv) STATE.ui.watchProvider = null;
           else deepSet(STATE.cfg, "scrobble.watch.provider", uiProv);
         }
-        if (uiSinkRaw) {
-          const uiSink = normSinkCsvOrDefault(uiSinkRaw, "trakt");
+        if (uiSinkRaw != null) {
+          const uiSink = normSinkCsv(uiSinkRaw);
           if (backendSink === uiSink) STATE.ui.watchSink = null;
           else deepSet(STATE.cfg, "scrobble.watch.sink", uiSink);
         }
@@ -1907,7 +1941,10 @@ serverUUID: async () => {
   if (waEl) waEl.checked = useWatch;
   if (pvSel) pvSel.value = prov;
   try { syncProviderPickerUi(); } catch {}
-  if (skSel) skSel.value = normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt");
+  if (skSel) {
+    const raw = read("scrobble.watch.sink", "trakt");
+    skSel.value = normSinkCsv(raw == null ? "trakt" : raw);
+  }
   try { syncSinkPillsFromSelect(); } catch {}
 
   let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
@@ -2015,10 +2052,31 @@ serverUUID: async () => {
   const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
     .toLowerCase()
     .trim();
-  const sink = normSinkCsvOrDefault($("#sc-sink", STATE.mount)?.value || read("scrobble.watch.sink", "trakt") || "trakt", "trakt");
+
+  const sinkRawUi = $("#sc-sink", STATE.mount)?.value;
+  const sinkRawCfg = read("scrobble.watch.sink", "trakt");
+  const sink = normSinkCsv(sinkRawUi != null ? sinkRawUi : (sinkRawCfg == null ? "trakt" : sinkRawCfg));
 
   write("scrobble.watch.provider", prov);
-  write("scrobble.watch.sink", normSinkCsvOrDefault(sink, "trakt"));
+  write("scrobble.watch.sink", sink);
+
+  if (!sink) {
+    write("scrobble.watch.autostart", false);
+    STATE.ui.watchAutostart = false;
+    const auto = $("#sc-autostart", STATE.mount);
+    if (auto) {
+      auto.checked = false;
+      auto.disabled = true;
+    }
+    setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
+    try { await API.watch.stop(); } catch {}
+    try { await persistConfigPaths([["scrobble.watch.sink", ""], ["scrobble.watch.autostart", false]], "sc-pms-note"); } catch {}
+    applyModeDisable();
+    refreshWatcher();
+    return;
+  }
+
+  setNote("sc-note", "");
 
   const srvProv = prov === "plex" ? "plex.server_url" : prov === "emby" ? "emby.server" : "jellyfin.server";
   const srv = String(read(srvProv, "") || "");
@@ -2374,14 +2432,13 @@ async function hydrateJellyfin() {
     const skPills = $("#sc-sink-pills", STATE.mount);
     if (sk && skPills) {
       ensureSinkPillBar(skPills);
-      syncPillBar(skPills, normSinkCsvOrDefault(sk.value, "trakt"));
+      syncPillBar(skPills, normSinkCsv(sk.value));
       on(skPills, "click", (e) => {
         const btn = e.target && e.target.closest ? e.target.closest("button[data-sink]") : null;
         if (!btn || btn.disabled) return;
         const key = String(btn.getAttribute("data-sink") || "").toLowerCase().trim();
         if (!key) return;
-        const curArr = normSinkCsvOrDefault(sk.value, "trakt").split(",").filter(Boolean);
-        if (curArr.length === 1 && curArr[0] === key) return;
+        const curArr = normSinkCsv(sk.value || "").split(",").filter(Boolean);
         const has = curArr.includes(key);
         const nextArr = has ? curArr.filter((x) => x !== key) : [...curArr, key];
         const next = normSinkCsv(nextArr.join(","));
@@ -2487,11 +2544,26 @@ async function hydrateJellyfin() {
     });
 
     on(sk, "change", async (e) => {
-      const val = normSinkCsvOrDefault(e.target.value || "trakt", "trakt");
+      const val = normSinkCsv(e.target?.value ?? "");
       try { await refreshWatcher(); } catch {}
       STATE.ui.watchSink = val;
       write("scrobble.watch.sink", val);
-      persistConfigPaths([["scrobble.watch.sink", val]], "sc-pms-note");
+
+      const pairs = [["scrobble.watch.sink", val]];
+      if (!val) {
+        write("scrobble.watch.autostart", false);
+        STATE.ui.watchAutostart = false;
+        pairs.push(["scrobble.watch.autostart", false]);
+        const auto = $("#sc-autostart", STATE.mount);
+        if (auto) auto.checked = false;
+        setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
+        try { await API.watch.stop(); } catch {}
+        try { await refreshWatcher(); } catch {}
+      } else {
+        setNote("sc-note", "");
+      }
+
+      await persistConfigPaths(pairs, "sc-pms-note");
       try { syncSinkPillsFromSelect(); } catch {}
       rebuildPlexRatingsDropdown();
       applyModeDisable();
@@ -2583,7 +2655,7 @@ async function hydrateJellyfin() {
 
     watch: {
       provider: prov,
-      sink: normSinkCsvOrDefault(read("scrobble.watch.sink", "trakt"), "trakt"),
+      sink: normSinkCsv(read("scrobble.watch.sink", "trakt")),
       autostart: !!read("scrobble.watch.autostart", false),
       plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
       plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),

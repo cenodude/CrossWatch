@@ -225,11 +225,16 @@ def _apply_debug_env_from_config() -> None:
 
 # Watcher: Sink builder
 def _build_sinks_from_config(cfg) -> list:
-    watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
-    sink_cfg = (watch_cfg.get("sink") or "trakt")
-    names = [s.strip().lower() for s in re.split(r"[,&+]", str(sink_cfg)) if s and s.strip()]
+    sc = cfg.get("scrobble") or {}
+    watch_cfg = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
+    sink_cfg = "trakt" if "sink" not in watch_cfg else (watch_cfg.get("sink") or "")
+    raw = str(sink_cfg).strip()
+    if not raw:
+        return []
+
+    names = [s.strip().lower() for s in re.split(r"[,&+]", raw) if s and s.strip()]
     added, sinks = set(), []
-    for name in (names or ["trakt"]):
+    for name in names:
         if name == "trakt" and "trakt" not in added:
             try:
                 sinks.append(TraktSink()); added.add("trakt")
@@ -245,6 +250,7 @@ def _build_sinks_from_config(cfg) -> list:
                 sinks.append(MDBListSink()); added.add("mdblist")
             except Exception:
                 pass
+
     if not sinks:
         try:
             sinks = [TraktSink()]
@@ -255,18 +261,32 @@ def _build_sinks_from_config(cfg) -> list:
 # Watcher: Autostart watch service from config
 def autostart_from_config():
     cfg = load_config()
-    sc = (cfg.get("scrobble") or {})
+    sc = cfg.get("scrobble")
+    if not isinstance(sc, dict):
+        sc = {}; cfg["scrobble"] = sc
+
     if not (sc.get("enabled") and (sc.get("mode") or "").lower() == "watch"):
         return None
 
-    watch_cfg = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
-    # Respect config: if autostart is explicitly false, do not start the watcher.
+    watch_cfg = sc.get("watch")
+    if not isinstance(watch_cfg, dict):
+        watch_cfg = {}; sc["watch"] = watch_cfg
+
     if watch_cfg.get("autostart") is False:
         return None
 
     provider = (watch_cfg.get("provider") or "plex").lower().strip()
     filters = (watch_cfg.get("filters") or {}) if isinstance(watch_cfg, dict) else {}
     sinks = _build_sinks_from_config(cfg)
+
+    if not sinks:
+        if watch_cfg.get("autostart") is not False:
+            watch_cfg["autostart"] = False
+            try:
+                save_config(cfg)
+            except Exception:
+                pass
+        return None
 
     try:
         if provider == "emby":

@@ -80,9 +80,15 @@
       .prov-card.brand-crosswatch{border-color: rgba(124,92,255,.55); box-shadow:inset 0 0 0 1px rgba(124,92,255,.25), 0 0 24px rgba(124,92,255,.20);}
 
       .prov-caps{display:flex;gap:6px;margin:8px 0}
-      .prov-caps .dot{width:8px;height:8px;border-radius:50%;background:#444}
-      .prov-caps .dot.on{background:#5ad27a}
+      .prov-caps .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#555}
       .prov-caps .dot.off{background:#555}
+      .prov-caps .dot.on{background:#5ad27a} /* fallback */
+
+      /* Feature colors (match pairs overlay) */
+      .prov-caps .dot.wl.on{background:#00ffa3; box-shadow:0 0 6px #00ffa3,0 0 12px #00ffa3aa}
+      .prov-caps .dot.rt.on{background:#ffc400; box-shadow:0 0 6px #ffc400,0 0 12px #ffc40099}
+      .prov-caps .dot.hi.on{background:#2de2ff; box-shadow:0 0 6px #2de2ff,0 0 12px #2de2ffaa}
+      .prov-caps .dot.pl.on{background:#ff00e5; box-shadow:0 0 6px #ff00e5,0 0 12px #ff00e599}
 
       .btn.neon{
         display:inline-block;padding:8px 14px;border-radius:12px;
@@ -235,10 +241,10 @@
             pl = cap(p, "playlists");
 
       const caps = `<div class="prov-caps">
-        <span class="dot ${wl ? "on" : "off"}"   title="Watchlist"></span>
-        <span class="dot ${rat ? "on" : "off"}"  title="Ratings"></span>
-        <span class="dot ${hist ? "on" : "off"}" title="History"></span>
-        <span class="dot ${pl ? "on" : "off"}"   title="Playlists"></span>
+        <span class="dot wl ${wl ? "on" : "off"}"   title="Watchlist"></span>
+        <span class="dot rt ${rat ? "on" : "off"}"  title="Ratings"></span>
+        <span class="dot hi ${hist ? "on" : "off"}" title="History"></span>
+        <span class="dot pl ${pl ? "on" : "off"}"   title="Playlists"></span>
       </div>`;
 
       const wmStyle = brand.icon ? ` style="--wm:url('${brand.icon}')" ` : "";

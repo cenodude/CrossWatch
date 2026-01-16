@@ -675,7 +675,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             _log(f"unchanged via activities (reuse shadow) size={len(items)} age={int(age)}s")
             return items
 
-        _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) → ids_only verify")
+        _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) - ids_only verify")
         for bucket in WATCHLIST_BUCKETS:
             df = coalesce_date_from("watchlist", cfg_date_from="1970-01-01T00:00:00Z")
             snap = _pull_bucket(
