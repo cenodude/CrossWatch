@@ -340,7 +340,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
             "provider": "plex",                         # Active watcher either "plex|emby|Jellyfin" (default: "plex")
-            "sink": "trakt",                            # "trakt" | "simkl" | "mdblist"
+            "sink": "",                                 # "trakt" | "simkl" | "mdblist"
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
