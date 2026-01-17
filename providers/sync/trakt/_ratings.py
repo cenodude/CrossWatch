@@ -22,6 +22,7 @@ from ._common import (
     _pair_scope,
 )
 from cw_platform.id_map import minimal as id_minimal
+from .._log import log as cw_log
 
 BASE = "https://api.trakt.tv"
 URL_RAT_MOV = f"{BASE}/sync/ratings/movies"
@@ -40,9 +41,22 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_BACKOFF_SECONDS = 30
 
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
-        print(f"[TRAKT:ratings] {msg}")
+_PROVIDER = "TRAKT"
+_FEATURE = "ratings"
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "debug", event, **fields)
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "info", event, **fields)
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "warn", event, **fields)
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "error", event, **fields)
+
 
 
 def _legacy_path(path: Path) -> Path | None:
@@ -123,9 +137,9 @@ def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, p)
-        _log(f"cache.saved -> {p} ({len(items)})")
+        _dbg("cache_saved", path=str(p), count=len(items))
     except Exception as e:
-        _log(f"cache.save failed: {e}")
+        _warn("cache_save_failed", error=str(e))
 
 
 def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
@@ -296,19 +310,19 @@ def _fetch_bucket(
                     break
 
                 if r.status_code in _RETRYABLE_STATUS and attempt < rr:
-                    _log(f"GET {url} page={page} -> {r.status_code} (retry {attempt + 1}/{rr})")
+                    _warn("http_retry", url=url, page=page, status=r.status_code, attempt=attempt + 1, max_attempts=rr)
                     _sleep_backoff(attempt, r.headers.get("Retry-After"))
                     continue
 
-                _log(f"GET {url} page={page} failed -> {r.status_code}: {(r.text or '')[:200]}")
+                _warn("http_failed", url=url, page=page, status=r.status_code, body=((r.text or "")[:200]))
                 return out
 
             except Exception as e:
                 if attempt < rr:
-                    _log(f"GET {url} page={page} error: {e} (retry {attempt + 1}/{rr})")
+                    _warn("http_error_retry", url=url, page=page, error=str(e), attempt=attempt + 1, max_attempts=rr)
                     _sleep_backoff(attempt, None)
                     continue
-                _log(f"GET {url} page={page} error: {e}")
+                _warn("http_error", url=url, page=page, error=str(e))
                 return out
 
         if last_status is not None and last_status != 200:
@@ -352,10 +366,10 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
             if str(wm_remote.get(k, "")) > str(cached_wm.get(k, "")):
                 break
         else:
-            _log(f"index (cache, activities unchanged): {len(cached_items)}")
+            _info("index_cache_hit", reason="activities_unchanged", count=len(cached_items))
             return cached_items
     elif cached_items and not wm_remote:
-        _log(f"index (cache, activities unavailable): {len(cached_items)}")
+        _info("index_cache_hit", reason="activities_unavailable", count=len(cached_items))
         return cached_items
 
     movies = _fetch_bucket(sess, headers, URL_RAT_MOV, "movie", per_page, max_pages, tmo, rr)
@@ -364,9 +378,9 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
     episodes = _fetch_bucket(sess, headers, URL_RAT_EPI, "episode", per_page, max_pages, tmo, rr)
 
     all_items = movies + shows + seasons + episodes
-    _log(f"fetched: {len(all_items)}")
+    _dbg("fetch_done", count=len(all_items))
     idx = _dedupe_canonical(all_items)
-    _log(f"index size: {len(idx)} (m={len(movies)}, sh={len(shows)}, se={len(seasons)}, ep={len(episodes)})")
+    _info("index_done", count=len(idx), movies=len(movies), shows=len(shows), seasons=len(seasons), episodes=len(episodes))
 
     _save_cache_doc(idx, wm_remote or cached_wm)
     return idx
@@ -446,7 +460,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 ok_total += sum(int(added.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
                 ok_total += sum(int(updated.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             else:
-                _log(f"UPSERT failed {r.status_code}: {(r.text or '')[:200]}")
+                _warn("write_failed", action="upsert", status=r.status_code, body=((r.text or "")[:200]))
 
     if ok_total > 0:
         doc = _load_cache_doc()
@@ -513,7 +527,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 deleted = d.get("deleted") or d.get("removed") or {}
                 ok_total += sum(int(deleted.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             else:
-                _log(f"UNRATE failed {r.status_code}: {(r.text or '')[:200]}")
+                _warn("write_failed", action="unrate", status=r.status_code, body=((r.text or "")[:200]))
 
     if ok_total > 0:
         doc = _load_cache_doc()

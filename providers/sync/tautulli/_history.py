@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any
 import re
+from typing import Any
 
 from cw_platform.id_map import canonical_key, ids_from_guid
 
 from ._common import make_logger
+
 
 _EXT_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "simkl")
 _log = make_logger("history")
@@ -149,6 +150,7 @@ def _merge_ids(dst: dict[str, str], src: Mapping[str, str]) -> None:
         if v and not dst.get(k):
             dst[k] = str(v)
 
+
 def _first_text(*vals: Any) -> str | None:
     for v in vals:
         if v is None:
@@ -176,7 +178,6 @@ def _series_title(row: Mapping[str, Any], meta: Mapping[str, Any] | None, show_m
         sm.get("grandparent_title"),
         sm.get("grandparentTitle"),
     )
-
 
 
 def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
@@ -229,12 +230,20 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages
 
+    _log("index start", per_page=cfg_per_page, max_pages=cfg_max_pages, has_user_id=bool(user_id))
+
     out: dict[str, dict[str, Any]] = {}
     meta_cache: dict[str, Mapping[str, Any] | None] = {}
     start = 0
     pages = 0
     prev_sig = ""
     repeats = 0
+
+    rows_seen = 0
+    rows_kept = 0
+    skipped_type = 0
+    skipped_no_time = 0
+    skipped_no_ids = 0
 
     def _page_sig(rows: list[dict[str, Any]]) -> str:
         if not rows:
@@ -255,7 +264,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             return meta_cache[rk]
         try:
             meta = client.call("get_metadata", rating_key=rk) or None
-        except Exception:
+        except Exception as e:
+            _log("metadata fetch failed", level="debug", rating_key=rk, error=str(e))
             meta = None
         meta_cache[rk] = meta if isinstance(meta, Mapping) else None
         return meta_cache[rk]
@@ -263,6 +273,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     while True:
         pages += 1
         if pages > cfg_max_pages:
+            _log("max pages reached", level="warn", pages=pages, max_pages=cfg_max_pages)
             break
 
         params: dict[str, Any] = {"start": start, "length": cfg_per_page, "order_column": "date", "order_dir": "desc"}
@@ -290,6 +301,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         if sig and sig == prev_sig:
             repeats += 1
             if repeats >= 2:
+                _log("page repeat", level="warn", pages=pages, start=start, sig=sig)
                 break
         else:
             repeats = 0
@@ -298,20 +310,24 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         for row in rows:
             if not isinstance(row, Mapping):
                 continue
+            rows_seen += 1
 
             mtype = (row.get("media_type") or row.get("mediaType") or "").lower()
             if mtype not in ("movie", "episode"):
+                skipped_type += 1
                 continue
 
             ts = _as_epoch(row.get("date") or row.get("started") or row.get("time"))
             watched_at = _iso_z(ts)
             if not watched_at:
+                skipped_no_time += 1
                 continue
 
             ids, show_ids = _row_ids(row)
             ep_meta: Mapping[str, Any] | None = None
             show_meta: Mapping[str, Any] | None = None
             if not _has_any_ids(ids, show_ids):
+                skipped_no_ids += 1
                 continue
 
             if ids.get("plex") and (not _has_ext_ids(ids) or (mtype == "episode" and not _has_ext_ids(show_ids))):
@@ -361,6 +377,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             ck = canonical_key(item)
             if ck and ck not in out:
                 out[ck] = item
+                rows_kept += 1
 
         start += cfg_per_page
         total_i = _to_int_total(total)
@@ -369,14 +386,27 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         if len(rows) < cfg_per_page:
             break
 
+    _log(
+        "index done",
+        count=len(out),
+        pages=pages,
+        rows_seen=rows_seen,
+        rows_kept=rows_kept,
+        skipped_type=skipped_type,
+        skipped_no_time=skipped_no_time,
+        skipped_no_ids=skipped_no_ids,
+        meta_cache=len(meta_cache),
+    )
     return out
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     _ = (adapter, items, dry_run)
+    _log("write not supported", level="warn", op="add")
     return {"ok": False, "error": "Tautulli is read-only (history can only be sourced).", "count": 0}
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     _ = (adapter, items, dry_run)
+    _log("write not supported", level="warn", op="remove")
     return {"ok": False, "error": "Tautulli is read-only (history can only be sourced).", "count": 0}

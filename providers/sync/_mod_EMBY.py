@@ -11,6 +11,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
+from ._log import log as cw_log
+
 from .emby._common import normalize as emby_normalize, key_of as emby_key_of
 from .emby._common import _pair_scope as _emby_pair_scope, state_file as _emby_state_file
 from .emby import _watchlist as feat_watchlist
@@ -36,9 +38,23 @@ __all__ = ["get_manifest", "EMBYModule", "OPS"]
 _DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
-        print(f"[EMBY] {msg}")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "core", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "core", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "core", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "core", "error", msg, **fields)
+    
+def _health(status: str, ok: bool, latency_ms: int) -> None:
+    cw_log("EMBY", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
 
 
 _FEATURES: dict[str, Any] = {
@@ -427,10 +443,8 @@ class EMBYModule:
         except Exception:
             pass
 
-        _log(
-            f"health status={status} ok={ok} latency_ms={latency_ms} "
-            f"reason={details.get('reason') if 'reason' in details else None}"
-        )
+        _health(status, ok, latency_ms)
+
 
         return {
             "ok": ok,
@@ -448,7 +462,7 @@ class EMBYModule:
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"build_index skipped: feature disabled: {f}")
+            _dbg("feature_disabled", op="build_index", feature=f)
             return {}
         mod = _FEATURES.get(f)
         if not mod:
@@ -468,7 +482,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"add skipped: feature disabled: {f}")
+            _dbg("feature_disabled", op="add", feature=f)
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
@@ -495,7 +509,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"remove skipped: feature disabled: {f}")
+            _dbg("feature_disabled", op="remove", feature=f)
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)

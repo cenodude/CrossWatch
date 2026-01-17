@@ -13,6 +13,8 @@ from typing import Any, Iterable, Mapping, TypeGuard
 
 from cw_platform.id_map import minimal as id_minimal
 
+from .._log import log as cw_log
+
 from .._mod_common import request_with_retries
 
 from ._common import (
@@ -25,7 +27,6 @@ from ._common import (
     get_watermark,
     iso_ok,
     iso_z,
-    make_logger,
     now_iso,
     read_json,
     save_watermark,
@@ -38,6 +39,26 @@ URL_LIST = f"{BASE}/watchlist/items"
 URL_MODIFY = f"{BASE}/watchlist/items/{{action}}"
 URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "watchlist", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "watchlist", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "watchlist", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "watchlist", "error", msg, **fields)
+
+
+def _log(msg: str, **fields: Any) -> None:
+    # Back-compat alias; treat as debug.
+    _dbg(msg, **fields)
 def _shadow_path() -> Path:
     return state_file("mdblist_watchlist.shadow.json")
 
@@ -45,7 +66,6 @@ def _shadow_path() -> Path:
 def _unresolved_path() -> Path:
     return state_file("mdblist_watchlist.unresolved.json")
 
-_log = make_logger("watchlist")
 _cfg = cfg_section
 _cfg_int = cfg_int
 _cfg_bool = cfg_bool
@@ -142,7 +162,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, p)
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", error=str(e))
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:

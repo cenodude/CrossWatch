@@ -109,6 +109,8 @@ def load_watermarks() -> dict[str, str]:
 def save_watermark(feature: str, iso_ts: str) -> None:
     if _pair_scope() is None:
         return
+    if (_pair_scope() or "").startswith("health:"):
+        return
     data = load_watermarks()
     data[feature] = iso_ts
     _write_json(_watermark_path(), data)

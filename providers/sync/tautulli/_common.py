@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .._log import log as cw_log
+
 
 STATE_DIR = Path("/config/.cw_state")
 
@@ -75,9 +77,8 @@ def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_key
         pass
 
 
-def make_logger(tag: str) -> Callable[[str], None]:
-    def _log(msg: str) -> None:
-        if os.getenv("CW_DEBUG") or os.getenv("CW_TAUTULLI_DEBUG"):
-            print(f"[TAUTULLI:{tag}] {msg}")
+def make_logger(tag: str) -> Callable[..., None]:
+    def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
+        cw_log("TAUTULLI", str(tag), str(level), str(msg), **fields)
 
     return _log

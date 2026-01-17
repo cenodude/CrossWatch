@@ -10,10 +10,14 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 from ._mod_common import build_session, make_snapshot_progress, request_with_retries
+from ._log import log as cw_log
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 __VERSION__ = "0.1.0"
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
+
+def _health(status: str, ok: bool, latency_ms: int) -> None:
+    cw_log("ANILIST", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
 
 
 if "ctx" not in globals():
@@ -28,8 +32,16 @@ try:
     from .anilist import _watchlist as feat_watchlist
 except Exception as e:
     feat_watchlist = None
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_ANILIST_DEBUG"):
-        print(f"[ANILIST] failed to import watchlist: {e}")
+    # NOTE: 'feature' is reserved in cw_log; use a different field key.
+    cw_log(
+        "ANILIST",
+        "module",
+        "warn",
+        "feature_import_failed",
+        import_feature="watchlist",
+        error_type=e.__class__.__name__,
+        error=str(e),
+    )
 
 
 GQL_URL = "https://graphql.anilist.co"
@@ -44,9 +56,17 @@ class ANILISTAuthError(ANILISTError):
     pass
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_ANILIST_DEBUG"):
-        print(f"[ANILIST] {msg}")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "module", "debug", msg, **fields)
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "module", "info", msg, **fields)
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "module", "warn", msg, **fields)
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "module", "error", msg, **fields)
 
 
 def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
@@ -293,7 +313,7 @@ class ANILISTModule:
         if retry_after is not None:
             details["retry_after_s"] = retry_after
 
-        _log(f"health status={status} ok={ok} latency_ms={latency_ms} reason={reason or '-'}")
+        _health(status, bool(ok), int(latency_ms))
         return {
             "ok": bool(ok),
             "status": status,

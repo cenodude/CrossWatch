@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import sys
 import threading
 import time
-from typing import Any, Callable, Mapping, Optional, TextIO
+from collections.abc import Callable, Mapping
+from typing import Any, Optional, TextIO
 
 RESET = "\033[0m"
 DIM = "\033[90m"
@@ -25,7 +27,6 @@ LEVELS: dict[str, int] = {
     "debug": 10,
 }
 
-# runtime debug
 _CFG_CACHE: dict[str, Any] | None = None
 _CFG_TS: float = 0.0
 _CFG_TTL: float = 5.0
@@ -46,7 +47,27 @@ def _debug_enabled() -> bool:
     return bool(runtime_cfg.get("debug") or runtime_cfg.get("debug_mods"))
 
 
+def _decide_use_color(requested: bool) -> bool:
+    if not requested:
+        return False
+    if os.getenv("NO_COLOR") is not None:
+        return False
+
+    fmt = (os.getenv("CW_LOG_FORMAT") or "").strip().lower()
+    if fmt == "json":
+        return False
+
+    mode = (os.getenv("CW_LOG_COLOR") or "auto").strip().lower()
+    if mode in ("0", "false", "no", "off"):
+        return False
+    if mode in ("1", "true", "yes", "on"):
+        return True
+
+    return True
+
+
 LogHook = Callable[[dict[str, Any], str, str, str, Mapping[str, Any] | None], None]
+
 
 class Logger:
     def __init__(
@@ -63,10 +84,14 @@ class Logger:
         _json_stream: Optional[TextIO] = None,
         _lock: Optional[threading.Lock] = None,
         _hook: Optional[LogHook] = None,
+        _color_requested: Optional[bool] = None,
     ) -> None:
         self.stream = stream
         self.level_no = LEVELS.get(level, 20)
-        self.use_color = use_color
+
+        self._color_requested = use_color if _color_requested is None else _color_requested
+        self.use_color = _decide_use_color(self._color_requested)
+
         self.show_time = show_time
         self.time_fmt = time_fmt
         self.tag_color_map: dict[str, str] = tag_color_map or {
@@ -84,12 +109,12 @@ class Logger:
         self._lock: threading.Lock = _lock or threading.Lock()
         self._hook: Optional[LogHook] = _hook
 
-    # Configuration
     def set_level(self, level: str) -> None:
         self.level_no = LEVELS.get(level, self.level_no)
 
     def enable_color(self, on: bool = True) -> None:
-        self.use_color = on
+        self._color_requested = on
+        self.use_color = _decide_use_color(on)
 
     def enable_time(self, on: bool = True) -> None:
         self.show_time = on
@@ -100,7 +125,6 @@ class Logger:
     def set_hook(self, hook: Optional[LogHook]) -> None:
         self._hook = hook
 
-    # Context
     def set_context(self, **ctx: Any) -> None:
         self._context.update(ctx)
 
@@ -113,7 +137,7 @@ class Logger:
         return Logger(
             stream=self.stream,
             level=self.level_name,
-            use_color=self.use_color,
+            use_color=self._color_requested,
             show_time=self.show_time,
             time_fmt=self.time_fmt,
             tag_color_map=dict(self.tag_color_map),
@@ -122,12 +146,12 @@ class Logger:
             _json_stream=self._json_stream,
             _lock=self._lock,
             _hook=self._hook,
+            _color_requested=self._color_requested,
         )
 
     def child(self, name: str) -> Logger:
         return self.bind(module=name)
 
-    # Formatting
     @property
     def level_name(self) -> str:
         for k, v in LEVELS.items():
@@ -139,7 +163,7 @@ class Logger:
         self,
         display_level: str,
         *parts: Any,
-        extra: Optional[Mapping[str, Any]] = None,  # kept for compatibility
+        extra: Optional[Mapping[str, Any]] = None,
     ) -> str:
         module_name = (self._context.get("module") or "").strip()
         lvl = display_level
@@ -205,6 +229,9 @@ class Logger:
         else:
             if self.level_no > sev_no:
                 return
+
+        self.use_color = _decide_use_color(bool(self._color_requested))
+
         line = self._fmt_text(display_level, *parts, extra=extra)
         self._write_sinks(
             display_level,
@@ -213,7 +240,6 @@ class Logger:
             extra=extra,
         )
 
-    # API
     def debug(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:
         self._emit("debug", "DEBUG", *parts, extra=extra)
 
@@ -258,6 +284,7 @@ class Logger:
             logger.info(message, extra=extra)
         else:
             logger._emit("info", lvl_in, message, extra=extra)
+
 
 log = Logger()
 

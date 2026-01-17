@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from .trakt._common import build_headers, normalize as trakt_normalize, key_of as trakt_key_of
+from ._log import log as cw_log
 
 try:
     from ..auth._auth_TRAKT import PROVIDER as AUTH_TRAKT  # token refresh hook
@@ -52,9 +53,21 @@ class TRAKTAuthError(TRAKTError):
     pass
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_TRAKT_DEBUG"):
-        print(f"[TRAKT] {msg}")
+_PROVIDER = "TRAKT"
+
+
+def _dbg(feature: str, event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, str(feature or "module"), "debug", event, **fields)
+
+def _info(feature: str, event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, str(feature or "module"), "info", event, **fields)
+
+def _warn(feature: str, event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, str(feature or "module"), "warn", event, **fields)
+
+def _error(feature: str, event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, str(feature or "module"), "error", event, **fields)
+
 
 
 _FEATURES: dict[str, Any] = {}
@@ -142,7 +155,7 @@ class TRAKTClient:
         if tok and tok != (self.cfg.access_token or ""):
             self.cfg.access_token = tok
             self._apply_headers(tok)
-            _log("TRAKT: applied refreshed token")
+            _info("auth", "token_refreshed")
         return tok
 
     def _about_to_expire(self, threshold: int = 120) -> bool:
@@ -160,10 +173,10 @@ class TRAKTClient:
             if ok:
                 self._reload_token_from_cfg()
             else:
-                _log(f"TRAKT: token refresh failed ({res!r})")
+                _warn("auth", "token_refresh_failed", result=repr(res))
             return ok
         except Exception as e:
-            _log(f"TRAKT: token refresh error: {e}")
+            _warn("auth", "token_refresh_error", error=str(e))
             return False
 
     def _preflight(self) -> None:
@@ -396,10 +409,7 @@ class TRAKTModule:
             },
         }
 
-        _log(
-            f"health status={status} ok={ok} latency_ms={latency_ms} "
-            f"reasons={details.get('reason')}"
-        )
+        _info("health", "health", status=status, ok=ok, latency_ms=latency_ms)
         return {
             "ok": ok,
             "status": status,
@@ -414,7 +424,7 @@ class TRAKTModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            _dbg(feature, "feature_disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -430,13 +440,13 @@ class TRAKTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"add skipped: feature disabled or missing: {feature}")
+            _dbg(feature, "feature_disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"add skipped: feature module missing: {feature}")
+            _dbg(feature, "feature_module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -455,13 +465,13 @@ class TRAKTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"remove skipped: feature disabled or missing: {feature}")
+            _dbg(feature, "feature_disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"remove skipped: feature module missing: {feature}")
+            _dbg(feature, "feature_module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)

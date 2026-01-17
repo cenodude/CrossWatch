@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from ._scope import scoped_file
+from ._scope import pair_scope, scoped_file
 import time
 import datetime as _dt
 
@@ -324,8 +324,14 @@ def _eventish_count(feature: str, idx: Mapping[str, Any]) -> int:
 
 _STATE_DIR = Path("/config/.cw_state")
 
-def _anilist_shadow_path() -> Path:
-    return scoped_file(_STATE_DIR, "anilist_watchlist_shadow.json")
+def _anilist_shadow_path() -> Path | None:
+    raw = pair_scope()
+    if not raw:
+        return None
+    s = str(raw).strip().lower()
+    if not s or s in ("unscoped", "default", "none") or s.startswith("health:"):
+        return None
+    return scoped_file(_STATE_DIR, "anilist_watchlist_shadow.json", migrate=False)
 
 def _tokens_for_item(ck: str, it: Mapping[str, Any]) -> set[str]:
     toks: set[str] = set()
@@ -342,7 +348,9 @@ def _tokens_for_item(ck: str, it: Mapping[str, Any]) -> set[str]:
             pass
     return toks
 
-def _load_json_dict(path: str | Path) -> dict[str, Any]:
+def _load_json_dict(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
     try:
         p = Path(path)
         with open(p, "r", encoding="utf-8") as f:
@@ -351,7 +359,9 @@ def _load_json_dict(path: str | Path) -> dict[str, Any]:
     except Exception:
         return {}
 
-def _save_json_dict(path: str | Path, obj: Mapping[str, Any]) -> None:
+def _save_json_dict(path: str | Path | None, obj: Mapping[str, Any]) -> None:
+    if not path:
+        return
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -389,7 +399,8 @@ def _maybe_backfill_anilist_shadow(
     if not tok_best:
         return
 
-    shadow = _load_json_dict(_anilist_shadow_path())
+    shadow_path = _anilist_shadow_path()
+    shadow = _load_json_dict(shadow_path)
     changed_shadow = False
     rekeyed = 0
     enriched = 0
@@ -441,7 +452,7 @@ def _maybe_backfill_anilist_shadow(
         except Exception:
             aid = None
 
-        if aid:
+        if aid and shadow_path is not None:
             ent: dict[str, Any] = dict(shadow.get(best_key) or {})
             ent.pop("ignored", None)
             ent.pop("ignore_reason", None)
@@ -509,8 +520,8 @@ def _maybe_backfill_anilist_shadow(
             except Exception:
                 pass
 
-    if changed_shadow:
-        _save_json_dict(_anilist_shadow_path(), shadow)
+    if changed_shadow and shadow_path is not None:
+        _save_json_dict(shadow_path, shadow)
 
     if rekeyed or enriched:
         dbg(

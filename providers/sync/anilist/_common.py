@@ -8,15 +8,22 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .._log import log as cw_log
 
 STATE_DIR = Path("/config/.cw_state")
 
 
 def _pair_scope() -> str | None:
-    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+    for k in ("CW_PAIR_SCOPE", "CW_PAIR_KEY", "CW_SYNC_PAIR", "CW_PAIR"):
         v = os.getenv(k)
-        if v and str(v).strip():
-            return str(v).strip()
+        if not v:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        if s.lower() in ("unscoped", "default", "none"):
+            continue
+        return s
     return None
 
 
@@ -30,14 +37,18 @@ def _safe_scope(value: str) -> str:
 
 def state_file(name: str) -> Path:
     scope = _pair_scope()
-    safe = _safe_scope(scope) if scope else "unscoped"
     p = Path(name)
+    if not scope:
+        return STATE_DIR / p.name
+    safe = _safe_scope(scope)
     if p.suffix:
         return STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
     return STATE_DIR / f"{name}.{safe}"
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    if ".unscoped." in path.name:
+        return {}
     if _pair_scope() is None:
         return {}
     try:
@@ -47,6 +58,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_keys: bool = True) -> None:
+    if ".unscoped." in path.name:
+        return
     if _pair_scope() is None:
         return
     try:
@@ -58,8 +71,7 @@ def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_key
         pass
 
 
-def make_logger(tag: str) -> Callable[[str], None]:
-    def _log(msg: str) -> None:
-        if os.getenv("CW_DEBUG") or os.getenv("CW_ANILIST_DEBUG"):
-            print(f"[ANILIST:{tag}] {msg}")
+def make_logger(feature: str) -> Callable[..., None]:
+    def _log(msg: str, level: str = "debug", **fields: Any) -> None:
+        cw_log("ANILIST", str(feature), str(level), str(msg), **fields)
     return _log

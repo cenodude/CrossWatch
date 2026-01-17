@@ -11,6 +11,9 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
+from pathlib import Path
+
+from .._log import log as cw_log
 
 from ._common import read_json, state_file, write_json
 
@@ -19,7 +22,9 @@ import requests
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 from .._mod_common import request_with_retries
 
-UNRESOLVED_PATH = state_file("plex_watchlist.unresolved.json")
+def _unresolved_path() -> Path:
+    return state_file("plex_watchlist.unresolved.json")
+
 
 DISCOVER = "https://discover.provider.plex.tv"
 METADATA = "https://metadata.provider.plex.tv"
@@ -53,9 +58,24 @@ def _safe_int(v: Any) -> int | None:
         return None
 
 
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "watchlist", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "watchlist", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "watchlist", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "watchlist", "error", event, **fields)
+
+
 def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX:watchlist] {msg}")
+    _dbg(msg)
 
 
 def _now_iso() -> str:
@@ -341,31 +361,27 @@ def _get_container(
                     else:
                         safe_headers[k] = str(v)
                 snippet = body.replace("\n", " ")[:300]
-                _log(
-                    f"GET {req_url} -> {r.status_code} "
-                    f"ctype={ctype or 'n/a'} headers={json.dumps(safe_headers, sort_keys=True)} "
-                    f"body={snippet!r}"
-                )
+                _warn("http_non_ok", method="GET", url=req_url, status=r.status_code, ctype=(ctype or "n/a"), headers=safe_headers, body_snippet=snippet)
             except Exception:
-                _log(f"GET {url} -> {r.status_code}")
+                _warn("http_non_ok", method="GET", url=url, status=r.status_code)
             return None
 
         if "application/json" in ctype:
             try:
                 return r.json()
             except Exception:
-                _log("json parse failed; trying xml")
+                _dbg("parse_json_failed_fallback_xml")
 
         if "xml" in ctype or body.lstrip().startswith("<"):
             try:
                 return _xml_to_container(body)
             except Exception as e:
-                _log(f"xml parse failed: {e}")
+                _warn("parse_xml_failed", error=str(e))
 
-        _log(f"unknown payload: ctype={ctype or 'n/a'}")
+        _warn("parse_unknown_payload", ctype=(ctype or "n/a"))
         return None
     except Exception as e:
-        _log(f"GET error: {e}")
+        _warn("http_request_failed", method="GET", url=url, error=str(e))
         return None
 
 def _iter_meta_rows(container: Mapping[str, Any] | None):
@@ -495,11 +511,11 @@ def _metadata_match_by_ids(
                 continue
             row_ids = ids_from_discover_row(row) if isinstance(row, Mapping) else {}
             if row_ids.get(key) and str(row_ids.get(key)) == v:
-                _log(f"resolve rk={rk} via METADATA.matches key={key}")
+                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches", key=key)
                 return rk
             ext = hydrate_external_ids(token, rk) if rk else {}
             if ext.get(key) and str(ext.get(key)) == v:
-                _log(f"resolve rk={rk} via METADATA.matches(hydrate) key={key}")
+                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches_hydrate", key=key)
                 return rk
     return None
 
@@ -593,10 +609,10 @@ def _discover_resolve_rating_key(
             if not rk:
                 continue
             if ids_match(rk, row):
-                _log(f"resolve rk={rk} via DISCOVER/search query={q}")
+                _dbg("resolve_rating_key", rating_key=rk, source="discover_search", query=q)
                 return rk
         if not any_row:
-            _log(f"discover.search empty for query={q}")
+            _dbg("discover_search_empty", query=q)
         _sleep_ms(random.randint(5, 40))
     return None
 
@@ -651,11 +667,11 @@ def _discover_write_by_rk(
             if ra:
                 try:
                     wait = max(0.0, float(ra))
-                    _log(f"429 Retry-After={wait}s")
+                    _warn("rate_limit", retry_after_s=wait)
                     time.sleep(min(wait, 5.0))
                 except Exception:
                     pass
-        _log(f"discover.{action} rk={rating_key} -> {status} {body!r}")
+        _info("discover_write", action=action, rating_key=rating_key, status=status, ok=ok, already_ok=already_ok, transient=transient, body_snippet=body)
         return ok, status, body, transient
     except Exception as e:
         return False, 0, str(e), True
@@ -663,14 +679,14 @@ def _discover_write_by_rk(
 
 # Unresolved items store
 def _load_unresolved() -> dict[str, Any]:
-    return read_json(UNRESOLVED_PATH)
+    return read_json(_unresolved_path())
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        write_json(UNRESOLVED_PATH, data)
+        write_json(_unresolved_path(), data)
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", path=str(_unresolved_path()), error=str(e))
 
 
 def _freeze_item(
@@ -743,9 +759,9 @@ def _build_guid_index(adapter: Any) -> tuple[dict[str, Any], dict[str, Any]]:
                 except Exception:
                     continue
         except Exception as e:
-            _log(f"GUID index build error in '{getattr(sec, 'title', None)}': {e}")
+            _warn("guid_index_build_failed", library=(getattr(sec, "title", None)), error=str(e))
             continue
-    _log(f"GUID index: movies={len(gi_m)}, shows={len(gi_s)}")
+    _info("guid_index_done", movies=len(gi_m), shows=len(gi_s))
     return gi_m, gi_s
 
 
@@ -842,7 +858,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         start += len(rows)
 
     _unfreeze_keys_if_present(out.keys())
-    _log(f"index size: {len(out)} raw={raw} coll={coll} types={typ}")
+    _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)
     return out
 
 
@@ -883,7 +899,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         seen.add(ck)
 
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
 
         guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
@@ -914,7 +930,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _log(f"PMS add failed: {e}")
+                    _warn("pms_write_failed", op="add", error=str(e))
 
         rk = _discover_resolve_rating_key(
             session,
@@ -950,7 +966,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if transient:
                 unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                 continue
-            _log(f"discover.add failed rk={rk} status={status} body={body!r}")
+            _warn("discover_write_failed", op="add", rating_key=rk, status=status, body_snippet=body)
 
         if not pms_first and pms_enabled:
             chosen = _pms_find_in_index(libtype, guids)
@@ -968,7 +984,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _log(f"PMS add failed: {e}")
+                    _warn("pms_write_failed", op="add", error=str(e))
                     unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                     continue
 
@@ -983,7 +999,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             guids_tried=guids,
         )
 
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 # Remove
@@ -1023,7 +1039,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         seen.add(ck)
 
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
 
         guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
@@ -1054,7 +1070,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _log(f"PMS remove failed: {e}")
+                    _warn("pms_write_failed", op="remove", error=str(e))
 
         rk = _discover_resolve_rating_key(
             session,
@@ -1090,7 +1106,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             if transient:
                 unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                 continue
-            _log(f"discover.remove failed rk={rk} status={status} body={body!r}")
+            _warn("discover_write_failed", op="remove", rating_key=rk, status=status, body_snippet=body)
 
         if not pms_first and pms_enabled:
             chosen = _pms_find_in_index(libtype, guids)
@@ -1108,7 +1124,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _log(f"PMS remove failed: {e}")
+                    _warn("pms_write_failed", op="remove", error=str(e))
                     unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                     continue
 
@@ -1123,5 +1139,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             guids_tried=guids,
         )
 
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

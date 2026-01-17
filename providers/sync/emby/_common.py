@@ -11,6 +11,7 @@ import re
 import shutil
 import time
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from .._log import log as cw_log
 
 _STATE_DIR = Path("/config/.cw_state")
 
@@ -76,19 +77,30 @@ def _debug_level() -> str:
         return "summary"
     return "off"
 
+def _bootstrap_log_level() -> None:
+    """Back-compat: map CW_EMBY_DEBUG_LEVEL to the unified CW_*_LOG_LEVEL."""
+    if os.environ.get('CW_EMBY_LOG_LEVEL') or os.environ.get('CW_LOG_LEVEL'):
+        return
+    dl = _debug_level()
+    if dl == 'summary':
+        os.environ.setdefault('CW_EMBY_LOG_LEVEL', 'debug')
+    elif dl == 'verbose':
+        os.environ.setdefault('CW_EMBY_LOG_LEVEL', 'trace')
+
+
+_bootstrap_log_level()
+
 
 def _log_summary(msg: str) -> None:
-    if _debug_level() in ("summary", "verbose"):
-        print(f"[EMBY:common] {msg}")
+    cw_log("EMBY", "common", "debug", msg)
 
 
 def _log_detail(msg: str) -> None:
-    if _debug_level() == "verbose":
-        print(f"[EMBY:common] {msg}")
+    cw_log("EMBY", "common", "trace", msg)
 
 
 def _log(msg: str) -> None:
-    _log_summary(msg)
+    cw_log("EMBY", "common", "debug", msg)
 
 
 # Config helpers

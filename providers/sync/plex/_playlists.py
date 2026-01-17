@@ -6,19 +6,36 @@ from __future__ import annotations
 import os
 from typing import Any, Iterable, Mapping
 
+from .._log import log as cw_log
+
 from ._common import normalize as plex_normalize
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "playlists", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "playlists", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "playlists", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "playlists", "error", event, **fields)
+
+
 def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX:playlists] {msg}")
+    _dbg(msg)
 
 
 def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(adapter.client, "server", None)
     if not srv:
-        _log("no PMS bound (account-only) → empty playlists index")
+        _info("no_server", reason="account_only")
         return {}
 
     prog_mk = getattr(adapter, "progress_factory", None)
@@ -43,7 +60,7 @@ def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str
             work.append((pl, items))
             total += len(items)
     except Exception as e:
-        _log(f"index error (pre-scan): {e}")
+        _warn("index_error", stage="pre_scan", error=str(e))
         work, total = [], 0
 
     if prog is not None:
@@ -58,7 +75,7 @@ def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str
                 prog.done(ok=True, total=0)
             except Exception:
                 pass
-        _log("index size: 0")
+        _info("index_done", count=0)
         return out
 
     done = 0
@@ -78,7 +95,7 @@ def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str
                     except Exception:
                         pass
     except Exception as e:
-        _log(f"index error (ingest): {e}")
+        _warn("index_error", stage="ingest", error=str(e))
 
     if prog is not None:
         try:
@@ -86,7 +103,7 @@ def build_index(adapter, include_names: Iterable[str] | None = None) -> dict[str
         except Exception:
             pass
 
-    _log(f"index size: {len(out)}")
+    _info("index_done", count=len(out))
     return out
 
 
@@ -95,7 +112,7 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
         if unresolved:
-            _log("add skipped: no PMS bound")
+            _info("write_skipped", op="add", reason="no_server")
         return 0, unresolved
 
     ok = 0
@@ -116,10 +133,10 @@ def add(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str
             pl.addItems([obj])
             ok += 1
         except Exception as e:
-            _log(f"add failed: {e}")
+            _warn("write_failed", op="add", error=str(e))
             unresolved.append({"item": id_minimal(it), "hint": "add_failed"})
 
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -128,7 +145,7 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[
     if not srv:
         unresolved = [{"item": id_minimal(it), "hint": "no_plex_server"} for it in items]
         if unresolved:
-            _log("remove skipped: no PMS bound")
+            _info("write_skipped", op="remove", reason="no_server")
         return 0, unresolved
 
     ok = 0
@@ -149,10 +166,10 @@ def remove(adapter, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[
             pl.removeItems([obj])
             ok += 1
         except Exception as e:
-            _log(f"remove failed: {e}")
+            _warn("write_failed", op="remove", error=str(e))
             unresolved.append({"item": id_minimal(it), "hint": "remove_failed"})
 
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 

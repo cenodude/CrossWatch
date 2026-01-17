@@ -33,18 +33,33 @@ from ._common import (
 )
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from .._log import log as cw_log
 
-UNRESOLVED_PATH = state_file("emby_watchlist.unresolved.json")
+def _unresolved_path() -> str:
+    return state_file("emby_watchlist.unresolved.json")
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
-        print(f"[EMBY:watchlist] {msg}")
+
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "watchlist", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "watchlist", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "watchlist", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "watchlist", "error", msg, **fields)
 
 
 def _load() -> dict[str, Any]:
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -52,11 +67,11 @@ def _load() -> dict[str, Any]:
 
 def _save(obj: Mapping[str, Any]) -> None:
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        tmp = UNRESOLVED_PATH + ".tmp"
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        tmp = _unresolved_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, UNRESOLVED_PATH)
+        os.replace(tmp, _unresolved_path())
     except Exception:
         pass
 
@@ -93,7 +108,7 @@ def _get_playlist_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     pid = create_playlist(http, uid, name, is_public=False)
     if pid:
-        _log(f"created playlist '{name}' -> {pid}")
+        _info("playlist_created", name=name, playlist_id=pid)
     return pid
 
 
@@ -125,15 +140,15 @@ def _get_collection_id(adapter: Any, *, create_if_missing: bool) -> str | None:
 
     created = create_collection(http, name, [seed] if seed else None)
     if created:
-        _log(f"created collection '{name}' -> {created}")
+        _info("collection_created", name=name, collection_id=created)
         return created
 
     cid = find_collection_id_by_name(http, uid, name)
     if cid:
-        _log(f"created collection '{name}' (post-lookup) -> {cid}")
+        _info("collection_created_post_lookup", name=name, collection_id=cid)
         return cid
 
-    _log(f"create collection failed for '{name}' (no id returned)")
+    _warn("collection_create_failed", name=name)
     return None
 
 
@@ -172,7 +187,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 progress=prog,
             )
         _thaw_if_present(out.keys())
-        _log(f"index size: {len(out)} (playlist:{name})")
+        _info("index_done", count=len(out), mode="playlist", name=name)
         return out
 
     if _is_collections_mode(cfg):
@@ -210,7 +225,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     except Exception:
                         pass
         _thaw_if_present(out.keys())
-        _log(f"index size: {len(out)} (collections:{name})")
+        _info("index_done", count=len(out), mode="collections", name=name)
         return out
 
     # Favorites mode
@@ -271,7 +286,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             break
 
     _thaw_if_present(out.keys())
-    _log(f"index size: {len(out)} (favorites)")
+    _info("index_done", count=len(out), mode="favorites")
     return out
 
 # Write helpers
@@ -305,10 +320,7 @@ def _verify_favorite(
             if getattr(r, "status_code", 0) == 200:
                 ud = (r.json() or {}).get("UserData") or {}
                 val = bool(ud.get("IsFavorite"))
-                _log(
-                    f"verify item={iid} IsFavorite={val} expect={expect} "
-                    f"(attempt {attempt + 1})"
-                )
+                _dbg("verify_favorite", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
                 if val is expect:
                     return True
             else:
@@ -319,19 +331,12 @@ def _verify_favorite(
                 if getattr(r2, "status_code", 0) == 200:
                     arr = (r2.json() or {}).get("Items") or []
                     if not arr and expect is False:
-                        _log(
-                            "verify fallback: no item returned, "
-                            "treating as not-favorite OK"
-                        )
+                        _dbg("verify_favorite_fallback_missing_ok", item_id=iid, expect=expect, attempt=attempt + 1)
                         return True
                     if arr:
                         ud = arr[0].get("UserData") or {}
                         val = bool(ud.get("IsFavorite"))
-                        _log(
-                            "verify fallback item="
-                            f"{iid} IsFavorite={val} expect={expect} "
-                            f"(attempt {attempt + 1})"
-                        )
+                        _dbg("verify_favorite_fallback", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
                         if val is expect:
                             return True
         except Exception:
@@ -443,7 +448,7 @@ def _remove_favorites(
 
         if not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
-            _log(f"force-unfavorite item={iid} forced={forced}")
+            _dbg("force_unfavorite", item_id=iid, forced=forced)
             if not forced:
                 unresolved.append(
                     {"item": id_minimal(it), "hint": "verify_failed"},
@@ -761,10 +766,7 @@ def add(
         ok, unresolved = _add_collections(adapter, items)
     else:
         ok, unresolved = _add_favorites(adapter, items)
-    _log(
-        f"add done: +{ok} / unresolved {len(unresolved)} "
-        f"(mode={cfg.watchlist_mode})"
-    )
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved
 
 
@@ -779,8 +781,5 @@ def remove(
         ok, unresolved = _remove_collections(adapter, items)
     else:
         ok, unresolved = _remove_favorites(adapter, items)
-    _log(
-        f"remove done: -{ok} / unresolved {len(unresolved)} "
-        f"(mode={cfg.watchlist_mode})"
-    )
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved

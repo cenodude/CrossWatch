@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from .._log import log as cw_log
+
 import json
 import os
 from typing import Any, Iterable, Mapping
@@ -30,19 +32,33 @@ from ._common import (
     _pair_scope,
 )
 
-UNRESOLVED_PATH = str(state_file("jellyfin_watchlist.unresolved.json"))
+def _unresolved_path() -> str:
+    return str(state_file("jellyfin_watchlist.unresolved.json"))
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
-        print(f"[JELLYFIN:watchlist] {msg}")
+
+
+def _trc(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "watchlist", "trace", msg, **fields)
+
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "watchlist", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "watchlist", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "watchlist", "warn", msg, **fields)
 
 
 def _load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -52,11 +68,11 @@ def _save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        tmp = UNRESOLVED_PATH + ".tmp"
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        tmp = _unresolved_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, UNRESOLVED_PATH)
+        os.replace(tmp, _unresolved_path())
     except Exception:
         pass
 
@@ -95,7 +111,7 @@ def _get_playlist_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     pid = create_playlist(http, uid, name, is_public=False)
     if pid:
-        _log(f"created playlist '{name}' -> {pid}")
+        _info("playlist created", name=name, playlist_id=pid)
     return pid
 
 
@@ -111,7 +127,7 @@ def _get_collection_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     cid = create_collection(http, name)
     if cid:
-        _log(f"created collection '{name}' -> {cid}")
+        _info("collection created", name=name, collection_id=cid)
     return cid
 
 
@@ -171,7 +187,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         pass
 
         _thaw_if_present(out.keys())
-        _log(f"index size: {len(out)} (playlist:{name})")
+        _info("index done", mode="playlist", name=name, count=len(out))
         return out
 
     # Collection mode
@@ -211,7 +227,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         pass
 
         _thaw_if_present(out.keys())
-        _log(f"index size: {len(out)} (collection:{name})")
+        _info("index done", mode="collection", name=name, count=len(out))
         return out
 
     # Favorites mode
@@ -271,7 +287,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             break
 
     _thaw_if_present(out.keys())
-    _log(f"index size: {len(out)} (favorites)")
+    _info("index done", mode="favorites", count=len(out))
     return out
 
 # writes
@@ -304,7 +320,7 @@ def _verify_favorite(
             if getattr(r, "status_code", 0) == 200:
                 ud = (r.json() or {}).get("UserData") or {}
                 val = bool(ud.get("IsFavorite"))
-                _log(f"verify item={iid} IsFavorite={val} expect={expect} (attempt {attempt + 1})")
+                _trc("favorite verify", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
                 if val is expect:
                     return True
             else:
@@ -315,15 +331,12 @@ def _verify_favorite(
                 if getattr(r2, "status_code", 0) == 200:
                     arr = (r2.json() or {}).get("Items") or []
                     if not arr and expect is False:
-                        _log("verify fallback: no item returned, treating as not-favorite OK")
+                        _dbg("favorite verify fallback empty", item_id=iid, expect=expect)
                         return True
                     if arr:
                         ud = arr[0].get("UserData") or {}
                         val = bool(ud.get("IsFavorite"))
-                        _log(
-                            f"verify fallback item={iid} IsFavorite={val} "
-                            f"expect={expect} (attempt {attempt + 1})"
-                        )
+                        _trc("favorite verify fallback", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
                         if val is expect:
                             return True
         except Exception:
@@ -370,7 +383,7 @@ def _add_favorites(
 
         if not _verify_favorite(http, uid, iid, True):
             forced = update_userdata(http, uid, iid, {"IsFavorite": True})
-            _log(f"force-favorite item={iid} forced={forced}")
+            _warn("favorite force userdata", item_id=iid, forced=forced)
             if not forced:
                 unresolved.append({"item": id_minimal(it), "hint": "verify_failed"})
                 _freeze(it, reason="verify_or_userdata_failed")
@@ -411,7 +424,7 @@ def _remove_favorites(
 
         if not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
-            _log(f"force-unfavorite item={iid} forced={forced}")
+            _warn("unfavorite force userdata", item_id=iid, forced=forced)
             if not forced:
                 unresolved.append({"item": id_minimal(it), "hint": "verify_failed"})
                 _freeze(it, reason="verify_or_userdata_failed")
@@ -633,7 +646,7 @@ def add(
         ok, unresolved = _add_collection(adapter, items)
     else:
         ok, unresolved = _add_favorites(adapter, items)
-    _log(f"add done: +{ok} / unresolved {len(unresolved)} (mode={cfg.watchlist_mode})")
+    _info("add done", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved
 
 
@@ -648,5 +661,5 @@ def remove(
         ok, unresolved = _remove_collection(adapter, items)
     else:
         ok, unresolved = _remove_favorites(adapter, items)
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)} (mode={cfg.watchlist_mode})")
+    _info("remove done", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved

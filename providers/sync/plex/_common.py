@@ -15,6 +15,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
 
+from .._log import log as cw_log
+
 import requests
 
 STATE_DIR = Path("/config/.cw_state")
@@ -115,22 +117,35 @@ CLIENT_ID = (
 )
 
 
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "common", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "common", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "common", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "common", "error", event, **fields)
+
+
 def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX:common] {msg}")
+    _dbg(msg)
 
 
 def _emit(evt: dict[str, Any]) -> None:
     try:
-        feature = str(evt.get("feature") or "common")
-        head = []
-        if "event" in evt:
-            head.append(f"event={evt['event']}")
-        if "action" in evt:
-            head.append(f"action={evt['action']}")
-        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
-        line = " ".join(head + tail)
-        print(f"[PLEX:{feature}] {line}", flush=True)
+        feat = str(evt.get("feature") or "common")
+        event = str(evt.get("event") or "event")
+        action = evt.get("action")
+        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
+        if action is not None:
+            fields["action"] = action
+        cw_log("PLEX", feat, "info", event, **fields)
     except Exception:
         pass
 
@@ -237,7 +252,9 @@ def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None
 
 _FBGUID_MEMO: dict[str, Any] = {}
 _FBGUID_NOHIT = "__NOHIT__"
-_FBGUID_CACHE_PATH = state_file("plex_fallback_memo.json")
+def _fbguid_cache_path() -> Path:
+    return state_file("plex_fallback_memo.json")
+
 
 
 def _fb_key_from_row(row: Any) -> str:
@@ -294,7 +311,7 @@ def _fb_cache_load() -> dict[str, Any]:
     if _FBGUID_MEMO:
         return _FBGUID_MEMO
     try:
-        data = read_json(_FBGUID_CACHE_PATH)
+        data = read_json(_fbguid_cache_path())
         if isinstance(data, dict):
             _FBGUID_MEMO.update(data)
     except Exception:
@@ -304,7 +321,7 @@ def _fb_cache_load() -> dict[str, Any]:
 
 def _fb_cache_save() -> None:
     try:
-        write_json(_FBGUID_CACHE_PATH, _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
+        write_json(_fbguid_cache_path(), _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
     except Exception:
         pass
 
@@ -360,7 +377,7 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
         _SHOW_PMS_GUID_CACHE[rk] = ids
         return ids
     except Exception as e:
-        _log(f"hydrate show via PMS rk={rk} error: {e}")
+        _warn("hydrate_show_pms_failed", rk=rk, error=str(e))
         _SHOW_PMS_GUID_CACHE[rk] = {}
         return {}
 
@@ -456,7 +473,7 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
                 raise RuntimeError("Unauthorized (bad Plex token)")
             if not r.ok:
                 if kind == "meta":
-                    _log(f"hydrate {rk} -> {r.status_code}")
+                    _dbg("hydrate_miss", rk=rk, status=r.status_code, source=kind)
                     _emit({"feature": "common", "event": "hydrate", "action": "miss", "rk": rk, "status": r.status_code})
                 continue
             ids = _parse_response(r)
@@ -476,7 +493,7 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
     with _HYDRATE_LOCK:
         _GUID_CACHE[rk] = {}
     if last_err:
-        _log(f"hydrate error rk={rk}: {last_err}")
+        _warn("hydrate_failed", rk=rk, error=last_err, meta_status=meta_status)
     return {}
 
 def normalize(obj: Any) -> dict[str, Any]:

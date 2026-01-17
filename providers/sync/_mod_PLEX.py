@@ -11,6 +11,31 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from ._log import log as cw_log
+
+def _health(status: str, ok: bool, latency_ms: int) -> None:
+    cw_log("PLEX", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "module", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "module", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "module", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "module", "error", event, **fields)
+
+
+def _log(msg: str) -> None:
+    _dbg(msg)
+
 __VERSION__ = "3.1.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
@@ -51,28 +76,28 @@ try:
 except Exception as e:
     feat_watchlist = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX] failed to import watchlist: {e}")
+        _warn("feature_import_failed", feature="watchlist", error=str(e))
 
 try:
     from .plex import _history as feat_history
 except Exception as e:
     feat_history = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX] failed to import history: {e}")
+        _warn("feature_import_failed", feature="history", error=str(e))
 
 try:
     from .plex import _ratings as feat_ratings
 except Exception as e:
     feat_ratings = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX] failed to import ratings: {e}")
+        _warn("feature_import_failed", feature="ratings", error=str(e))
 
 try:
     from .plex import _playlists as feat_playlists
 except Exception as e:
     feat_playlists = None
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX] failed to import playlists: {e}")
+        _warn("feature_import_failed", feature="playlists", error=str(e))
 
 
 class PLEXError(RuntimeError):
@@ -85,11 +110,6 @@ class PLEXAuthError(PLEXError):
 
 class PLEXNotFound(PLEXError):
     pass
-
-
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX] {msg}")
 
 
 def _as_int(v: Any) -> int | None:
@@ -354,7 +374,7 @@ class PLEXClient:
                     if self._pms_baseurl:
                         configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
                 except Exception as e:
-                    _log(f"PMS baseurl connect failed: {e}; continuing account-only")
+                    _warn("pms_connect_failed", baseurl=str(self.cfg.baseurl or ""), error=str(e), mode="account_only")
                     self._post_connect_user_scope(token)
                     return self
 
@@ -369,7 +389,7 @@ class PLEXClient:
                 if self._pms_baseurl:
                     configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
             except Exception as e:
-                _log(f"No PMS resource bound: {e}; continuing account-only")
+                _warn("pms_resource_connect_failed", error=str(e), mode="account_only")
                 self._post_connect_user_scope(token)
                 return self
 
@@ -440,7 +460,7 @@ class PLEXClient:
             self.user_username = sel_uname or token_uname
             self.user_account_id = sel_aid or token_aid
         elif srv and (sel_aid is not None or sel_uname):
-            _log(f"user scope selection set (token stays {token_uname}@{token_aid}; selected {sel_uname}@{sel_aid})")
+            _info("user_scope_selected", token_user=f"{token_uname}@{token_aid}", selected=f"{sel_uname}@{sel_aid}")
 
     def can_home_switch(self) -> bool:
         return bool(self.home_users())
@@ -456,7 +476,7 @@ class PLEXClient:
         try:
             users = _plex_tv_home_users(token, client_id, timeout=float(self.cfg.timeout))
         except Exception as e:
-            _log(f"home users fetch failed: {e}")
+            _warn("home_users_fetch_failed", error=str(e))
             users = []
         self._home_users_cache = users
         self._home_users_cache_ts = now
@@ -488,7 +508,7 @@ class PLEXClient:
         protected = str(picked.get("protected") or "").strip().lower() in {"1", "true"}
         use_pin = (pin or "").strip() or None
         if protected and not use_pin:
-            _log(f"switchHomeUser requires PIN (target={picked.get('title') or target_username or user_id})")
+            _info("home_switch_requires_pin", target=(picked.get("title") or target_username or user_id))
             return False
 
         client_id = _plex_tv_client_id(self.cfg)
@@ -496,7 +516,7 @@ class PLEXClient:
             user_token = _plex_tv_switch_user(token, client_id, user_id=user_id, pin=use_pin, timeout=float(self.cfg.timeout))
         except Exception as e:
             hint = " (PIN?)" if use_pin else ""
-            _log(f"switchHomeUser failed (target={picked.get('title') or target_username or user_id}){hint}: {e}")
+            _warn("home_switch_failed", target=(picked.get("title") or target_username or user_id), hint=("PIN?" if use_pin else None), error=str(e))
             return False
 
         if not user_token:
@@ -518,7 +538,7 @@ class PLEXClient:
                 machine_id = None
 
         if not machine_id:
-            _log("home scope failed: missing PMS machineIdentifier")
+            _warn("home_scope_failed", reason="missing_machine_identifier")
             return False
 
         pms_user_token = user_token
@@ -560,17 +580,17 @@ class PLEXClient:
         try:
             rr = request_with_retries(self.session, "GET", srv.url("/library/sections"), timeout=float(self.cfg.timeout), max_retries=1)
             if rr.status_code in (401, 403):
-                _log("home scope token rejected by PMS (/library/sections)")
+                _warn("home_scope_failed", reason="token_rejected")
                 self.exit_home_user_scope()
                 return False
         except Exception as e:
-            _log(f"home scope verify failed: {e}")
+            _warn("home_scope_verify_failed", error=str(e))
             self.exit_home_user_scope()
             return False
 
         self.user_username = (str(picked.get("title") or "").strip() or target_username)
         self.user_account_id = _as_int(picked.get("id")) or target_account_id
-        _log(f"home scope entered -> {self.user_username}@{self.user_account_id}")
+        _info("home_scope_entered", user=str(self.user_username), account_id=self.user_account_id)
         return True
 
     def exit_home_user_scope(self) -> None:
@@ -601,7 +621,7 @@ class PLEXClient:
                 pass
         self.user_username = prev_uname
         self.user_account_id = prev_aid
-        _log("home scope exited -> back to token user")
+        _info("home_scope_exited")
 
     def account(self) -> MyPlexAccount:
         if not self._account:
@@ -868,10 +888,7 @@ class PLEXModule:
             "pms": {"status": pms_code if lib_needed else None},
         }
 
-        _log(
-            f"health status={status} ok={ok} latency_ms={latency_ms} "
-            f"user={self.client.user_username}@{self.client.user_account_id}"
-        )
+        _health(status, ok, latency_ms)
         return {
             "ok": ok,
             "status": status,
@@ -886,7 +903,7 @@ class PLEXModule:
 
     def build_index(self, feature: str, **kwargs) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            _info("feature_skipped", op="build_index", feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -902,13 +919,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"add skipped: feature disabled or missing: {feature}")
+            _info("feature_skipped", op="add", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"add skipped: feature module missing: {feature}")
+            _warn("feature_missing", op="add", feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -927,13 +944,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"remove skipped: feature disabled or missing: {feature}")
+            _info("feature_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"remove skipped: feature module missing: {feature}")
+            _warn("feature_missing", op="remove", feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)

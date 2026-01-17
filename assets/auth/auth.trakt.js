@@ -3,21 +3,17 @@
   if (window._traktPatched) return;
   window._traktPatched = true;
 
-  // --- Utils -----------------------------------------------------------------
+  // Utils
   function _notify(msg) { try { if (typeof window.notify === "function") window.notify(msg); } catch (_) {} }
-  /** Get element by id. */
   function _el(id) { return document.getElementById(id); }
-  /** Set the value of an input by id (empty string for null/undefined). */
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
-  /** Trim a string value or return empty string. */
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
 
-  // Show/hide the "success" message
+  // Show/hide success message
   function setTraktSuccess(show) {
     try { var el = _el("trakt_msg"); if (el) el.classList.toggle("hidden", !show); } catch (_) {}
   }
 
-  // Fetch the current config from the backend (no-cache)
   async function fetchConfig() {
     try {
       var r = await fetch("/api/config", { cache: "no-store" });
@@ -29,7 +25,7 @@
     }
   }
 
-  // --- Hydration -------------------------------------------------------------
+  // Hydrate
   async function hydratePlexFromConfigRaw() {
     var cfg = await fetchConfig(); if (!cfg) return;
     var tok = _str(cfg.plex && cfg.plex.account_token);
@@ -65,7 +61,7 @@
     try { await hydrateAuthFromConfig(); } catch (_) {}
   }
 
-  // --- Trakt hint -----------------------------------------------------------
+  // Hint
   function updateTraktHint() {
     try {
       var cid  = _str((_el("trakt_client_id")    || {}).value);
@@ -78,7 +74,7 @@
     } catch (_) {}
   }
 
-  // Copy helpers + auto-bind for copy buttons
+  // Copy helpers
   async function _copyText(text, btn) {
     if (!text) return false;
     try {
@@ -106,27 +102,24 @@
     }
   }
 
-  /** Copy the value of an input by id to the clipboard. */
   window.copyInputValue = async function (inputId, btn) {
     var el = document.getElementById(inputId);
     if (!el) return;
     await _copyText(el.value || "", btn);
   };
 
-  /** Copy the Trakt PIN to the clipboard. */
   window.copyTraktRedirect = async function () {
     var code = document.getElementById("trakt_redirect_uri_preview");
     var text = (code && code.textContent ? code.textContent : "urn:ietf:wg:oauth:2.0:oob").trim();
     await _copyText(text);
   };
-  /** Copy the generic Redirect URI preview to the clipboard. */
+
   window.copyRedirect = async function () {
     var code = document.getElementById("redirect_uri_preview");
     var text = ((code && code.textContent) || (code && code.value) || "").trim();
     await _copyText(text);
   };
 
-  // Bind listeners in case inline onclicks are off or 'self' was used somewhere
   document.addEventListener("DOMContentLoaded", function () {
     [
       ["btn-copy-trakt-pin",   "trakt_pin"],
@@ -143,7 +136,7 @@
     });
   });
 
-  // --- Flush Trakt credentials ----------------------------------------------
+  // Flush Trakt credentials
   async function flushTraktCreds() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -180,9 +173,8 @@
     }
   }
 
-  // --- Trakt: device pollers ------------------------------------------------
+  // Device code poller
   function startTraktDevicePoll(maxMs) {
-    // Avoid hitting the SIMKL loopback mini-server (has no backend routes)
     try { if (String(location.port || "") === "8787") return; } catch (_) {}
 
     try { if (window._traktPoll) clearTimeout(window._traktPoll); } catch (_){}
@@ -240,7 +232,7 @@
     window._traktPollCfg = setTimeout(poll, 1000);
   }
 
-  // --- Trakt: PIN request ---------------------------------------------------
+  // Pin request flow
   async function requestTraktPin() {
     setTraktSuccess(false);
 
@@ -264,6 +256,7 @@
     } catch (e) {
       console.warn("[trakt] pin fetch failed", e);
       _notify("Failed to request code");
+      try { if (win && !win.closed) win.close(); } catch (_) {}
       return;
     }
 
@@ -273,9 +266,9 @@
       const status = (data && data.status) ? ` (HTTP ${data.status})` : "";
       const body   = (data && data.body) ? `: ${String(data.body).slice(0, 180)}` : "";
       _notify(((data && data.error) || "Code request failed") + status + body);
+      try { if (win && !win.closed) win.close(); } catch (_) {}
       return;
     }
-
 
     var code = _str(data.user_code);
     var url  = _str(data.verification_url) || "https://trakt.tv/activate";
@@ -292,13 +285,14 @@
 
       if (code) {
         try { await navigator.clipboard.writeText(code); } catch (_) {}
-        // Start backend device poll (primary) + config poll (fallback)
         try { startTraktDevicePoll(); } catch (_) {}
         try { startTraktTokenPoll(); } catch (_) {}
       }
 
       if (win && !win.closed) {
         try { win.location.href = url; win.focus(); } catch (_) {}
+      } else {
+        _notify("Popup blocked - allow popups and try again");
       }
     } catch (e) {
       console.warn("[trakt] ui update failed", e);
@@ -332,7 +326,7 @@
     }
   }
 
-  // --- Wire up + lifecycle --------------------------------------------------
+  // Lifecycle
   document.addEventListener("DOMContentLoaded", function () {
     try {
       var idEl  = _el("trakt_client_id");
@@ -342,19 +336,16 @@
 
       updateTraktHint();
       hydrateAllSecretsRaw();
-      // begin background poll in case user already activated (legacy path)
       startTraktTokenPoll();
     } catch (e) {
       console.warn("[trakt] DOMContentLoaded init failed", e);
     }
   });
 
-  // Also (re)hydrate when switching to the Settings tab
   document.addEventListener("tab-changed", function (ev) {
     try {
       var id = ev && ev.detail ? ev.detail.id : "";
       if (id === "settings") {
-        // run shortly after the settings DOM is rendered (and after providers mount)
         setTimeout(function () {
           hydrateAllSecretsRaw();
           startTraktTokenPoll();

@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from .._log import log as cw_log
+
 import json
 import os
 from datetime import datetime, timezone
@@ -21,14 +23,32 @@ from ._common import (
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-UNRESOLVED_PATH = str(state_file("jellyfin_history.unresolved.json"))
-SHADOW_PATH = str(state_file("jellyfin_history.shadow.json"))
-BLACKBOX_PATH = str(state_file("jellyfin_history.jellyfin-plex.blackbox.json"))
+def _unresolved_path() -> str:
+    return str(state_file("jellyfin_history.unresolved.json"))
+
+def _shadow_path() -> str:
+    return str(state_file("jellyfin_history.shadow.json"))
+
+def _blackbox_path() -> str:
+    return str(state_file("jellyfin_history.jellyfin-plex.blackbox.json"))
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
-        print(f"[JELLYFIN:history] {msg}")
+
+
+def _trc(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "history", "trace", msg, **fields)
+
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "history", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "history", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "history", "warn", msg, **fields)
 
 
 # unresolved
@@ -36,7 +56,7 @@ def _unres_load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -46,8 +66,8 @@ def _unres_save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        with open(_unresolved_path(), "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -80,7 +100,7 @@ def _shadow_load() -> dict[str, int]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
+        with open(_shadow_path(), "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return {str(k): int(v) for k, v in raw.items()}
     except Exception:
@@ -91,8 +111,8 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
-        with open(SHADOW_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_shadow_path()), exist_ok=True)
+        with open(_shadow_path(), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -103,7 +123,7 @@ def _bb_load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(BLACKBOX_PATH, "r", encoding="utf-8") as f:
+        with open(_blackbox_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -113,8 +133,8 @@ def _bb_save(d: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(BLACKBOX_PATH), exist_ok=True)
-        with open(BLACKBOX_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_blackbox_path()), exist_ok=True)
+        with open(_blackbox_path(), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -301,7 +321,7 @@ def build_index(
 
     roots = jf_get_library_roots(adapter)
     if roots:
-        _log(f"library_roots: {sorted(roots.keys())}")
+        _dbg("library roots", roots=list(sorted(roots.keys())))
 
     start = 0
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
@@ -420,7 +440,7 @@ def build_index(
             out.setdefault(k, {"watched": True})
             added += 1
         if added:
-            _log(f"shadow merged: +{added}")
+            _dbg("shadow merged", added=added)
 
     bb = _bb_load()
     if bb:
@@ -436,7 +456,7 @@ def build_index(
                     out.setdefault(k, {"watched": True})
                     added += 1
         if added:
-            _log(f"blackbox presence merged: +{added}")
+            _dbg("blackbox presence merged", added=added)
 
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
         try:
@@ -454,9 +474,9 @@ def build_index(
             s = str(lid)
             lib_counts[s] = lib_counts.get(s, 0) + 1
 
-        _log(f"history index libs cfg={cfg_libs} distribution={lib_counts}")
+        _trc("library distribution", cfg_libraries=cfg_libs, distribution=lib_counts)
 
-    _log(f"index size: {len(out)} (events+presence)")
+    _info("index done", count=len(out), mode="events+presence")
     return out
 
 
@@ -527,7 +547,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _log(f"resolve exception: {e}")
+            _warn("resolve exception", err=repr(e))
             iid = None
 
         if iid:
@@ -551,7 +571,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     total = len(mids)
     if total:
-        _log(f"apply:add:start dst=JELLYFIN feature=history count={total}")
+        _info("add start", count=total)
 
     processed = 0
     for chunk in chunked(mids, qlim):
@@ -572,10 +592,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 stats["skip_newer"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _log(
-                        f"apply:add:progress done={processed}/{total} "
-                        f"ok={ok} unresolved={len(unresolved)}"
-                    )
+                    _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -584,10 +601,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 stats["skip_played_untimed"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _log(
-                        f"apply:add:progress done={processed}/{total} "
-                        f"ok={ok} unresolved={len(unresolved)}"
-                    )
+                    _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -603,23 +617,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             processed += 1
             if (processed % 25) == 0:
-                _log(
-                    f"apply:add:progress done={processed}/{total} "
-                    f"ok={ok} unresolved={len(unresolved)}"
-                )
+                _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
     _shadow_save(shadow)
     _bb_save(bb)
     if ok:
         _thaw_if_present([k for k, _ in mids])
-    _log(
-        "add done: "
-        f"+{ok} / unresolved {len(unresolved)} | "
-        f"wrote={stats['wrote']} forced={stats['forced']} backdated={stats['backdated']} "
-        f"skip_newer={stats['skip_newer']} skip_played_untimed={stats['skip_played_untimed']} "
-        f"skip_missing_date={stats['skip_missing_date']} fail_mark={stats['fail_mark']}"
-    )
+    _info("add done", ok=ok, unresolved=len(unresolved), **stats)
     return ok, unresolved
 
 
@@ -689,7 +694,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _log(f"resolve exception: {e}")
+            _warn("resolve exception", err=repr(e))
             iid = None
 
         if iid:
@@ -717,5 +722,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     _shadow_save(shadow)
     if ok:
         _thaw_if_present([k for k, _ in mids])
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("remove done", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

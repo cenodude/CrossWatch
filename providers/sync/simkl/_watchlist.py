@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal
 
+from .._log import log as cw_log
 from ._common import (
     build_headers,
     coalesce_date_from,
@@ -45,9 +46,8 @@ WATCHLIST_BUCKETS = ("movies", "shows", "anime")
 _ENRICH_MEMO: dict[str, dict[str, Any]] = {}
 
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL:watchlist] {msg}")
+def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
+    cw_log("SIMKL", "watchlist", level, msg, **fields)
 
 
 def _legacy_path(path: Path) -> Path | None:

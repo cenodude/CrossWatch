@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
+from .._log import log as cw_log
+
 STATE_DIR = Path("/config/.cw_state")
 WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"
 START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
@@ -52,9 +54,9 @@ def state_file(name: str) -> Path:
 
 
 def make_logger(tag: str) -> Callable[[str], None]:
+    # Back-compat helper. Prefer using cw_log directly with structured fields.
     def _log(msg: str) -> None:
-        if os.getenv("CW_DEBUG") or os.getenv("CW_MDBLIST_DEBUG"):
-            print(f"[MDBLIST:{tag}] {msg}")
+        cw_log("MDBLIST", tag, "debug", msg)
     return _log
 
 

@@ -19,15 +19,34 @@ from ._common import (
     _pair_scope,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from .._log import log as cw_log
 
-UNRESOLVED_PATH = state_file("emby_history.unresolved.json")
-SHADOW_PATH = state_file("emby_history.shadow.json")
-BLACKBOX_PATH = state_file("emby_history.emby.blackbox.json")
+def _unresolved_path() -> str:
+    return state_file("emby_history.unresolved.json")
+
+def _shadow_path() -> str:
+    return state_file("emby_history.shadow.json")
+
+def _blackbox_path() -> str:
+    return state_file("emby_history.emby.blackbox.json")
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
-        print(f"[EMBY:history] {msg}")
+
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "history", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "history", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "history", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "history", "error", msg, **fields)
 
 
 def sleep_ms(ms: int) -> None:
@@ -121,7 +140,7 @@ def _unres_load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -131,8 +150,8 @@ def _unres_save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        with open(_unresolved_path(), "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -165,7 +184,7 @@ def _shadow_load() -> dict[str, int]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
+        with open(_shadow_path(), "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return {str(k): int(v) for k, v in raw.items()}
     except Exception:
@@ -176,15 +195,15 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
-        with open(SHADOW_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_shadow_path()), exist_ok=True)
+        with open(_shadow_path(), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
 
 
 def _bb_paths() -> list[str]:
-    base = BLACKBOX_PATH
+    base = _blackbox_path()
     paths: list[str] = [base]
     try:
         d = os.path.dirname(base) or "."
@@ -216,7 +235,7 @@ def _bb_load() -> dict[str, Any]:
 def _bb_save(d: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
-    os.makedirs(os.path.dirname(BLACKBOX_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(_blackbox_path()), exist_ok=True)
     for p in _bb_paths():
         try:
             with open(p, "w", encoding="utf-8") as f:
@@ -386,7 +405,7 @@ def _emby_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
     except Exception:
         pass
     if (os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG")) and roots:
-        _log(f"library_roots: {sorted(roots.keys())}")
+        _dbg("library_roots", roots=sorted(roots.keys()))
     return roots
 
 
@@ -427,7 +446,7 @@ def _write_userdata(http: Any, uid: str, item_id: str, *, date_iso: str | None) 
     r = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
     ok = getattr(r, "status_code", 0) in (200, 204)
     if not ok:
-        _log(f"userData write failed id={item_id} status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
+        _warn("userdata_write_failed", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
     return ok
 
 
@@ -444,19 +463,19 @@ def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | No
         )
         if getattr(r, "status_code", 0) in (200, 204):
             return True
-        _log(f"mark_played[A] failed id={item_id} status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
+        _warn("mark_played_failed", phase="A", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
         r2 = http.post(
             f"/Users/{uid}/PlayedItems/{item_id}",
             json={"DatePlayed": date_param} if date_param else {},
         )
         if getattr(r2, "status_code", 0) in (200, 204):
             return True
-        _log(f"mark_played[B] failed id={item_id} status={getattr(r2,'status_code',None)} body={_resp_snip(r2)}")
+        _warn("mark_played_failed", phase="B", item_id=item_id, status=getattr(r2, 'status_code', None), body=_resp_snip(r2))
         if _write_userdata(http, uid, item_id, date_iso=date_played_iso):
             return True
         return False
     except Exception as e:
-        _log(f"mark_played exception id={item_id} err={e}")
+        _warn("mark_played_exception", item_id=item_id, error=str(e))
         return False
 
 
@@ -465,10 +484,10 @@ def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
         r = http.delete(f"/Users/{uid}/PlayedItems/{item_id}")
         ok = getattr(r, "status_code", 0) in (200, 204)
         if not ok:
-            _log(f"unmark_played failed id={item_id} status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
+            _warn("unmark_played_failed", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
         return ok
     except Exception as e:
-        _log(f"unmark_played exception id={item_id} err={e}")
+        _warn("unmark_played_exception", item_id=item_id, error=str(e))
         return False
 
 
@@ -482,7 +501,7 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
             },
         )
         if getattr(r, "status_code", 0) != 200:
-            _log(f"dst_user_state: GET /Users/{uid}/Items/{iid} -> {getattr(r, 'status_code', None)}")
+            _dbg("dst_user_state_http", user_id=uid, item_id=iid, status=getattr(r, 'status_code', None))
             return False, 0
         data = r.json() or {}
         ud = data.get("UserData") or {}
@@ -492,10 +511,10 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
         ts = _parse_iso_to_epoch(raw_ts) or 0
         played = bool(played_flag or play_count > 0)
         if os.environ.get("CW_EMBY_DEBUG"):
-            _log(f"dst_user_state: iid={iid} played={played} ts={ts} raw={ud}")
+            _dbg("dst_user_state", item_id=iid, played=played, ts=ts)
         return played, ts
     except Exception as e:
-        _log(f"dst_user_state exception id={iid} err={e}")
+        _dbg("dst_user_state_exception", item_id=iid, error=str(e))
         return False, 0
 
 
@@ -615,14 +634,14 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
 
             r = http.get(f"/Users/{uid}/Items", params=params)
             if getattr(r, "status_code", 0) != 200:
-                _log(f"history: query failed status={getattr(r,'status_code',None)} body={_resp_snip(r)}")
+                _warn("query_failed", status=getattr(r, 'status_code', None), body=_resp_snip(r))
                 break
 
             try:
                 body = r.json() or {}
                 rows = body.get("Items") or []
             except Exception as e:
-                _log(f"history: json parse failed; treating page as empty; err={e}")
+                _warn("json_parse_failed", error=str(e))
                 rows = []
 
             if not rows:
@@ -764,7 +783,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 break
 
         if skipped_untimed:
-            _log(f"history: skipped untimed played items (no date): {skipped_untimed}")
+            _dbg("skipped_untimed_items", count=skipped_untimed)
         return added_events, added_presence, skipped_untimed
 
     _scan("Movie,Video", allow_scope=True, drop_parentid=True, filter_row=_is_movieish)
@@ -803,7 +822,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             out.setdefault(k, {"watched": True})
             added += 1
         if added:
-            _log(f"shadow merged: +{added}")
+            _dbg("shadow_merged", added=added)
 
     bb = _bb_load()
     if bb:
@@ -815,7 +834,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 out.setdefault(k, {"watched": True})
                 added += 1
         if added:
-            _log(f"blackbox presence merged: +{added}")
+            _dbg("blackbox_presence_merged", added=added)
 
     if presence_keys:
         added = 0
@@ -825,7 +844,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             out.setdefault(k, {"watched": True})
             added += 1
         if added:
-            _log(f"presence merged: +{added}")
+            _dbg("presence_merged", added=added)
 
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         try:
@@ -841,9 +860,9 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             lid = ev.get("library_id") or "NONE"
             s = str(lid)
             lib_counts[s] = lib_counts.get(s, 0) + 1
-        _log(f"history index libs cfg={cfg_libs} distribution={lib_counts}")
+        _dbg("index_library_distribution", cfg_libs=cfg_libs, distribution=lib_counts)
 
-    _log(f"index size: {len(out)} (events+presence)")
+    _info("index_done", count=len(out), mode="events+presence")
     return out
 
 
@@ -918,7 +937,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _log(f"resolve exception: {e}")
+            _warn("resolve_exception", error=str(e))
             iid = None
         if iid:
             mids.append((k, iid))
@@ -941,7 +960,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     total = len(mids)
     if total:
-        _log(f"apply:add:start dst=EMBY feature=history count={total}")
+        _info("write_start", op="add", count=total)
 
     processed = 0
     for chunk in chunked(mids, qlim):
@@ -970,7 +989,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     stats["fail_mark"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -984,10 +1003,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     stats["skip_newer"] += 1
                     continue
                 else:
-                    _log(
-                        f"skip_newer bypassed (first time) for key={k} iid={iid} "
-                        f"dst_ts={dst_ts} src_ts={src_ts} tol={tol}"
-                    )
+                    _dbg("skip_newer_bypassed", key=k, item_id=iid, dst_ts=dst_ts, src_ts=src_ts, tolerance_s=tol)
 
             if played and not dst_ts:
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):
@@ -1027,7 +1043,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     stats["fail_mark"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -1043,7 +1059,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             processed += 1
             if (processed % 25) == 0:
-                _log(f"apply:add:progress done={processed}/{total} ok={ok} unresolved={len(unresolved)}")
+                _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
     _shadow_save(shadow)
@@ -1051,13 +1067,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if ok:
         _thaw_if_present([k for k, _ in mids])
 
-    _log(
-        "add done: "
-        f"+{ok} / unresolved {len(unresolved)} | "
-        f"wrote={stats['wrote']} forced={stats['forced']} backdated={stats['backdated']} "
-        f"skip_newer={stats['skip_newer']} skip_played_untimed={stats['skip_played_untimed']} "
-        f"skip_missing_date={stats['skip_missing_date']} fail_mark={stats['fail_mark']}"
-    )
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved), wrote=stats['wrote'], forced=stats['forced'], backdated=stats['backdated'], skip_newer=stats['skip_newer'], skip_played_untimed=stats['skip_played_untimed'], skip_missing_date=stats['skip_missing_date'], fail_mark=stats['fail_mark'])
     return ok, unresolved
 
 
@@ -1121,7 +1131,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _log(f"resolve exception: {e}")
+            _warn("resolve_exception", error=str(e))
             iid = None
         if iid:
             mids.append((k, iid))
@@ -1150,5 +1160,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     if ok:
         _thaw_if_present([k for k, _ in mids])
 
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

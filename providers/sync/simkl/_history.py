@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal
 
+from .._log import log as cw_log
 from ._common import (
     build_headers,
     coalesce_date_from,
@@ -120,9 +121,8 @@ def _safe_int(value: Any) -> int:
     except Exception:
         return 0
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL:history] {msg}")
+def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
+    cw_log("SIMKL", "history", level, msg, **fields)
 
 
 def _now_epoch() -> int:

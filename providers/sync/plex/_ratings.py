@@ -8,6 +8,9 @@ import os
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, cast
+from pathlib import Path
+
+from .._log import log as cw_log
 
 from ._common import (
     read_json,
@@ -25,25 +28,40 @@ from ._common import (
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
-UNRESOLVED_PATH = state_file("plex_ratings.unresolved.json")
+def _unresolved_path() -> Path:
+    return state_file("plex_ratings.unresolved.json")
+
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "ratings", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "ratings", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "ratings", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "ratings", "error", event, **fields)
 
 
 def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG") or os.environ.get("CW_PLEX_RATINGS_FAST_DEBUG"):
-        print(f"[PLEX:ratings] {msg}")
+    _dbg(msg)
 
 
 def _emit(evt: dict[str, Any]) -> None:
     try:
-        feature = str(evt.get("feature") or "?")
-        head: list[str] = []
-        if "event" in evt:
-            head.append(f"event={evt['event']}")
-        if "action" in evt:
-            head.append(f"action={evt['action']}")
-        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
-        line = " ".join(head + tail)
-        print(f"[PLEX:{feature}] {line}", flush=True)
+        feat = str(evt.get("feature") or "ratings")
+        event = str(evt.get("event") or "event")
+        action = evt.get("action")
+        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
+        if action is not None:
+            fields["action"] = action
+        cw_log("PLEX", feat, "info", event, **fields)
     except Exception:
         pass
 
@@ -205,14 +223,14 @@ def _has_ext_ids(m: Mapping[str, Any]) -> bool:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    return read_json(UNRESOLVED_PATH)
+    return read_json(_unresolved_path())
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        write_json(UNRESOLVED_PATH, data)
+        write_json(_unresolved_path(), data)
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", path=str(_unresolved_path()), error=str(e))
 
 
 def _event_key(it: Mapping[str, Any]) -> str:
@@ -700,8 +718,8 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                 prog.done(ok=True, total=max(total, scanned) if total else None)
                             except Exception:
                                 pass
-                        _log(f"index truncated at {limit}")
-                        _log(f"index size: {len(out)} (added={added}, scanned={scanned}, fb_try={fb_try}, fb_ok={fb_ok})")
+                        _info("index_truncated", limit=limit)
+                        _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
                         return out
 
                 _tick()
@@ -716,7 +734,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         except Exception:
             pass
 
-    _log(f"index size: {len(out)} (added={added}, scanned={scanned}, fb_try={fb_try}, fb_ok={fb_ok})")
+    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
     return out
 
 
@@ -735,7 +753,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         for it in items or []:
             _freeze_item(it, action="add", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
-        _log("add skipped: no PMS bound")
+        _info("write_skipped", op="add", reason="no_server")
         return 0, unresolved
 
     ok = 0
@@ -743,7 +761,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     for it in items or []:
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
 
         rating = _norm_rating(it.get("rating"))
@@ -760,7 +778,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         existing = _get_existing_rating(srv, rk)
         if existing is not None and existing == rating:
-            _log(f"skip rate: same rating for {id_minimal(it).get('title')}")
+            _dbg("skip_same_rating", title=id_minimal(it).get("title"))
             _unfreeze_keys_if_present([_event_key(it)])
             continue
 
@@ -771,7 +789,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _freeze_item(it, action="add", reasons=["rate_failed"])
             unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
 
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -782,7 +800,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         for it in items or []:
             _freeze_item(it, action="remove", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
-        _log("remove skipped: no PMS bound")
+        _info("write_skipped", op="remove", reason="no_server")
         return 0, unresolved
 
     ok = 0
@@ -790,7 +808,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     for it in items or []:
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
 
         rk = _resolve_rating_key(adapter, it)
@@ -806,5 +824,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             _freeze_item(it, action="remove", reasons=["clear_failed"])
             unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
 
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

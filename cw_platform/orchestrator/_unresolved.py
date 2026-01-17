@@ -53,7 +53,7 @@ def _blocking_path(dst: str, feature: str) -> Path:
 def _pending_path(dst: str, feature: str) -> Path:
     dst_lower = str(dst).strip().lower()
     feat_lower = str(feature).strip().lower()
-    return STATE_DIR / f"{dst_lower}_{feat_lower}.unresolved.pending.json"
+    return scoped_file(STATE_DIR, f"{dst_lower}_{feat_lower}.unresolved.pending.json")
 
 
 # Blocking

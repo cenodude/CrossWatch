@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from .._log import log as cw_log
+
 import json
 import os
 from typing import Any, Iterable, Mapping
@@ -17,8 +19,12 @@ from ._common import (
     _pair_scope,
 )
 
-UNRESOLVED_PATH = str(state_file("jellyfin_ratings.unresolved.json"))
-SHADOW_PATH = str(state_file("jellyfin_ratings.shadow.json"))
+def _unresolved_path() -> str:
+    return str(state_file("jellyfin_ratings.unresolved.json"))
+
+def _shadow_path() -> str:
+    return str(state_file("jellyfin_ratings.shadow.json"))
+
 
 
 # shadow 
@@ -26,7 +32,7 @@ def _shadow_load() -> dict[str, int]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(SHADOW_PATH, "r", encoding="utf-8") as f:
+        with open(_shadow_path(), "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
             return {str(k): int(v) for k, v in raw.items()}
     except Exception:
@@ -37,21 +43,36 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(SHADOW_PATH), exist_ok=True)
-        with open(SHADOW_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_shadow_path()), exist_ok=True)
+        with open(_shadow_path(), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
 
 
 # logging
-def _dbg_on() -> bool:
-    return bool(os.environ.get("CW_JELLYFIN_DEBUG") or os.environ.get("CW_DEBUG"))
+def _trc(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "ratings", "trace", msg, **fields)
 
 
-def _log(msg: str) -> None:
-    if _dbg_on():
-        print(f"[JELLYFIN:ratings] {msg}")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "ratings", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "ratings", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", "ratings", "warn", msg, **fields)
+
+
+def _dbg_enabled() -> bool:
+    # Keep debug-only expensive logs behind a fast env check.
+    if os.getenv("CW_DEBUG") or os.getenv("CW_JELLYFIN_DEBUG"):
+        return True
+    lvl = (os.getenv("CW_JELLYFIN_LOG_LEVEL") or os.getenv("CW_LOG_LEVEL") or "").strip().lower()
+    return lvl in ("debug", "trace")
 
 
 # unresolved store
@@ -59,7 +80,7 @@ def _load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -69,8 +90,8 @@ def _save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        with open(_unresolved_path(), "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -142,16 +163,12 @@ def _rate(http: Any, uid: str, item_id: str, rating: float | None) -> bool:
         r2 = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
         ok2 = getattr(r2, "status_code", 0) in (200, 204)
 
-        if not ok2 and _dbg_on():
-            _log(
-                f"write failed user={uid} item={item_id} "
-                f"status={getattr(r1,'status_code',None)}/{getattr(r2,'status_code',None)} "
-                f"body={_body_snip(r1) if getattr(r1,'status_code',0) not in (200,204) else _body_snip(r2)}"
-            )
+        if not ok2:
+            body = _body_snip(r1) if getattr(r1,'status_code',0) not in (200,204) else _body_snip(r2)
+            _warn("rate write failed", user_id=uid, item_id=item_id, status1=getattr(r1,'status_code',None), status2=getattr(r2,'status_code',None), body=body)
         return ok2
     except Exception as e:
-        if _dbg_on():
-            _log(f"write exception item={item_id} err={e!r}")
+        _warn("rate write exception", item_id=item_id, err=repr(e))
         return False
 
 
@@ -261,13 +278,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         except Exception:
             pass
 
-    if _dbg_on():
+    if _dbg_enabled():
         seen_libs: dict[str, int] = {}
         for m in out.values():
             lid = m.get("library_id") or "NONE"
             lid_s = str(lid)
             seen_libs[lid_s] = seen_libs.get(lid_s, 0) + 1
-        _log(f"library_id distribution: {seen_libs}")
+        _dbg("library_id_distribution", libs=seen_libs)
 
     shadow = _shadow_load()
     if shadow:
@@ -277,10 +294,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 out.setdefault(k, {"shadow": True})
                 added += 1
         if added:
-            _log(f"shadow merged: +{added}")
+            _dbg("shadow merged", added=added)
 
     _thaw_if_present(out.keys())
-    _log(f"index size: {len(out)}")
+    _info("index done", count=len(out))
     return out
 
 
@@ -344,7 +361,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
 
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("add done", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -399,5 +416,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
 
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("remove done", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

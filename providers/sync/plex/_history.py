@@ -9,6 +9,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
+from pathlib import Path
+
+from .._log import log as cw_log
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
@@ -23,26 +26,43 @@ from ._common import (
     sort_guid_candidates,
 )
 
-UNRESOLVED_PATH = state_file("plex_history.unresolved.json")
-SHADOW_PATH = state_file("plex_history.shadow.json")
+def _unresolved_path() -> Path:
+    return state_file("plex_history.unresolved.json")
+
+def _shadow_path() -> Path:
+    return state_file("plex_history.shadow.json")
+
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "history", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "history", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "history", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "history", "error", event, **fields)
 
 
 def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        print(f"[PLEX:history] {msg}")
+    _dbg(msg)
 
 
 def _emit(evt: dict[str, Any]) -> None:
     try:
-        feature = str(evt.get("feature") or "?")
-        head: list[str] = []
-        if "event" in evt:
-            head.append(f"event={evt['event']}")
-        if "action" in evt:
-            head.append(f"action={evt['action']}")
-        tail = [f"{k}={v}" for k, v in evt.items() if k not in {"feature", "event", "action"}]
-        line = " ".join(head + tail)
-        print(f"[PLEX:{feature}] {line}", flush=True)
+        feat = str(evt.get("feature") or "history")
+        event = str(evt.get("event") or "event")
+        action = evt.get("action")
+        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
+        if action is not None:
+            fields["action"] = action
+        cw_log("PLEX", feat, "info", event, **fields)
     except Exception:
         pass
 
@@ -142,14 +162,14 @@ def _row_section_id(h: Any) -> str | None:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    return read_json(UNRESOLVED_PATH)
+    return read_json(_unresolved_path())
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
     try:
-        write_json(UNRESOLVED_PATH, data)
+        write_json(_unresolved_path(), data)
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", path=str(_unresolved_path()), error=str(e))
 
 
 def _event_key(item: Mapping[str, Any]) -> str:
@@ -190,11 +210,11 @@ def _is_frozen(item: Mapping[str, Any]) -> bool:
 
 
 def _load_shadow() -> dict[str, Any]:
-    return read_json(SHADOW_PATH)
+    return read_json(_shadow_path())
 
 
 def _save_shadow(data: Mapping[str, Any]) -> None:
-    write_json(SHADOW_PATH, data)
+    write_json(_shadow_path(), data)
 
 
 def _shadow_add(item: Mapping[str, Any]) -> None:
@@ -360,7 +380,7 @@ def _iter_marked_watched_from_library(
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
-        _log("no PMS bound (account-only) → empty history index")
+        _info("no_server", reason="account_only")
         return {}
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any | None = prog_mk("history") if callable(prog_mk) else None
@@ -395,11 +415,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
         rows = list(srv.history(**kwargs) or [])
         if not rows and "accountID" in kwargs and not explicit_user:
-            _log("no rows with accountID → retry without account scope")
+            _dbg("retry_without_account_scope")
             kwargs.pop("accountID", None)
             rows = list(srv.history(**kwargs) or [])
     except Exception as e:
-        _log(f"history fetch failed: {e}")
+        _warn("history_fetch_failed", error=str(e))
         return {}
 
     def _username_match(entry: Any, target_uname: str) -> bool:
@@ -479,7 +499,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 prog.done(ok=True, total=0)
             except Exception:
                 pass
-        _log("index size: 0 (since/user/library filter or empty history)")
+        _info("index_done", count=0, reason="filters_or_empty")
         return {}
 
     work.sort(key=lambda x: x[1], reverse=True)
@@ -505,7 +525,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     if rk and meta:
                         _FETCH_CACHE[rk] = meta
         except Exception as e:
-            _log(f"parallel fetch error: {e}")
+            _warn("parallel_fetch_error", error=str(e))
 
     if fallback_guid:
         misses = [rk for rk in to_fetch if rk not in _FETCH_CACHE]
@@ -570,7 +590,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     if extras:
         for meta, ts in extras:
             if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
-                _log(f"index truncated at {limit} (including extras)")
+                _info("index_truncated", limit=limit, reason="including_extras")
                 break
             if not _keep_in_snapshot(adapter, meta):
                 done += 1
@@ -670,10 +690,10 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             can_home = False
 
         if not token_is_owner and not can_home:
-            _log("include_marked_watched disabled: token is not PMS owner and not a Plex Home user")
+            _info("marked_watched_disabled", reason="not_owner_or_home_user")
         elif need_switch:
             if not cli:
-                _log("include_marked_watched disabled: no Plex client bound for home switch")
+                _info("marked_watched_disabled", reason="no_home_switch_client")
             else:
                 pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
                 try:
@@ -689,9 +709,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 if did_switch:
                     need_switch = False
                 else:
-                    _log(
-                        f"include_marked_watched disabled: switch failed or not a home user (selected={desired_acct_id or desired_uname})"
-                    )
+                    _info("marked_watched_disabled", reason="home_switch_failed_or_not_home_user", selected=(desired_acct_id or desired_uname))
 
         include_marked = bool(include_marked_cfg and not need_switch)
 
@@ -707,12 +725,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     continue
 
             marked = _iter_marked_watched_from_library(adapter, allow, since)
-            _log(f"marked-watched scan: found={len(marked)} allow={sorted(allow) if allow else 'ALL'}")
+            _info("marked_watched_scan", found=len(marked), allow=(sorted(allow) if allow else "ALL"))
             added_marked = 0
 
             for meta, ts in marked:
                 if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
-                    _log(f"index truncated at {limit} (including marked-watched)")
+                    _info("index_truncated", limit=limit, reason="including_marked_watched")
                     break
                 if ts is None:
                     continue
@@ -734,9 +752,9 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     base_keys.add(base_key)
                 added_marked += 1
 
-            _log(f"marked-watched hydrate: added={added_marked} (skipped duplicates via base_key)")
+            _info("marked_watched_hydrate_done", added=added_marked)
         except Exception as e:
-            _log(f"marked-watched hydrate failed: {e}")
+            _warn("marked_watched_hydrate_failed", error=str(e))
         finally:
             if did_switch:
                 try:
@@ -750,11 +768,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         except Exception:
             pass
 
-    _log(
-        f"index size: {len(out)} (ignored={ignored}, since={since}, scanned={total}, "
-        f"workers={workers}, unique={len(unique_rks)}, selected={acct_id or uname}, token_acct_id={_int_or_zero(getattr(getattr(adapter, 'client', None), 'user_account_id', None))}, "
-        f"include_marked={include_marked})"
-    )
+    _info("index_done", count=len(out), ignored=ignored, since=since, scanned=total, workers=workers, unique=len(unique_rks), selected=(acct_id or uname), token_acct_id=_int_or_zero(getattr(getattr(adapter, 'client', None), 'user_account_id', None)), include_marked=include_marked)
     return out
 
 
@@ -765,14 +779,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         for item in items or []:
             _freeze_item(item, action="add", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
-        _log("add skipped: no PMS bound")
+        _info("write_skipped", op="add", reason="no_server")
         return 0, unresolved
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
     for item in items or []:
         if _is_frozen(item):
-            _log(f"skip frozen: {id_minimal(item).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(item).get("title"))
             continue
         ts = _as_epoch(item.get("watched_at"))
         if not ts:
@@ -791,7 +805,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         else:
             _freeze_item(item, action="add", reasons=["scrobble_failed"])
             unresolved.append({"item": id_minimal(item), "hint": "scrobble_failed"})
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -802,14 +816,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         for item in items or []:
             _freeze_item(item, action="remove", reasons=["no_plex_server"])
             unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
-        _log("remove skipped: no PMS bound")
+        _info("write_skipped", op="remove", reason="no_server")
         return 0, unresolved
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
     for item in items or []:
         if _is_frozen(item):
-            _log(f"skip frozen: {id_minimal(item).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(item).get("title"))
             continue
         rating_key = _resolve_rating_key(adapter, item)
         if not rating_key:
@@ -822,7 +836,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         else:
             _freeze_item(item, action="remove", reasons=["unscrobble_failed"])
             unresolved.append({"item": id_minimal(item), "hint": "unscrobble_failed"})
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -1012,10 +1026,10 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
             }
             resp = srv._session.get(url, params=params2, headers=getattr(srv._session, "headers", None), timeout=10)
         if not resp.ok:
-            print(f"[PLEX:history] scrobble {rating_key} -> {resp.status_code}")
+            _warn("scrobble_failed", rating_key=str(rating_key), status=resp.status_code)
         return resp.ok
     except Exception as e:
-        print(f"[PLEX:history] scrobble exception key={rating_key}: {e}")
+        _warn("scrobble_exception", rating_key=str(rating_key), error=str(e))
         return False
 
 

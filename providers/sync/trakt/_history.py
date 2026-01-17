@@ -22,6 +22,7 @@ from ._common import (
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from .._log import log as cw_log
 
 BASE = "https://api.trakt.tv"
 URL_HIST_MOV = f"{BASE}/sync/history/movies"
@@ -59,11 +60,24 @@ def _record_limit_error(feature: str) -> None:
         )
         os.replace(tmp, _last_limit_path())
     except Exception as e:
-        _log(f"limit_error.save failed: {e}")
+        _warn("limit_error_save_failed", feature=feature, error=str(e))
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
-        print(f"[TRAKT:history] {msg}")
+_PROVIDER = "TRAKT"
+_FEATURE = "history"
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "debug", event, **fields)
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "info", event, **fields)
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "warn", event, **fields)
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "error", event, **fields)
+
 
 
 def _legacy_path(path: Path) -> Path | None:
@@ -190,7 +204,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, _unresolved_path())
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", error=str(e))
 
 
 def _load_cache_doc() -> dict[str, Any]:
@@ -216,7 +230,7 @@ def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, _cache_path())
     except Exception as e:
-        _log(f"cache.save failed: {e}")
+        _warn("cache_save_failed", error=str(e))
 
 
 def _freeze_item_if_enabled(adapter: Any, item: Mapping[str, Any], *, action: str, reasons: list[str]) -> None:
@@ -325,7 +339,7 @@ def _fetch_history(
             max_retries=max_retries,
         )
         if r.status_code != 200:
-            _log(f"GET {url} p{page} -> {r.status_code}")
+            _warn("http_page_failed", url=url, page=page, status=r.status_code)
             break
         if total_pages is None:
             pc = _hdr_int(r.headers, "X-Pagination-Page-Count")
@@ -376,7 +390,7 @@ def _fetch_history(
         if total_pages is None and len(rows) < per_page:
             break
         if max_pages and page > max_pages:
-            _log(f"stopping early at safety cap: max_pages={max_pages}")
+            _warn("page_safety_cap", max_pages=max_pages)
             break
     return out
 
@@ -413,7 +427,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         a = _as_epoch(_iso8601(remote_wm) or "")
         b = _as_epoch(_iso8601(cached_wm) or "")
         if a is not None and b is not None and a <= b:
-            _log(f"index (cache, activities unchanged): {len(cached_items)}")
+            _info("index_cache_hit", reason="activities_unchanged", count=len(cached_items))
             if prog:
                 try:
                     prog.tick(0, total=len(cached_items), force=True)
@@ -423,7 +437,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     pass
             return cached_items
     elif cached_items and not remote_wm:
-        _log(f"index (cache, activities unavailable): {len(cached_items)}")
+        _info("index_cache_hit", reason="activities_unavailable", count=len(cached_items))
         if prog:
             try:
                 prog.tick(0, total=len(cached_items), force=True)
@@ -530,10 +544,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 prog.done(ok=True, total=len(idx))
         except Exception:
             pass
-    _log(
-        f"index size: {len(idx)} (movies={len(movies)}, episodes={len(episodes)}; "
-        f"per_page={cfg_per_page}, max_pages={cfg_max_pages})"
-    )
+    _info("index_done", count=len(idx), movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages)
     _save_cache_doc(idx, remote_wm or cached_wm)
     return idx
 
@@ -714,7 +725,7 @@ def _batch_add(
 
     for it in items or []:
         if _is_frozen(adapter, it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
         when = _iso8601(it.get("watched_at"))
         if not when:
@@ -815,7 +826,7 @@ def _batch_remove(
 
     for it in items or []:
         if _is_frozen(adapter, it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
         when = _iso8601(it.get("watched_at"))
         if not when:
@@ -1022,28 +1033,22 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             max_retries=retries,
                         )
                         if rc.status_code == 420:
-                            _log(
-                                "COLLECTION add failed 420: collection limit reached "
-                                "for free Trakt account"
-                            )
+                            _warn("collection_limit", status=420)
                             _record_limit_error("collection")
                         elif rc.status_code not in (200, 201):
-                            _log(
-                                f"COLLECTION add failed {rc.status_code}: "
-                                f"{(rc.text or '')[:200]}"
-                            )
+                            _warn("collection_add_failed", status=rc.status_code, body=((rc.text or "")[:200]))
                     except Exception as e:
-                        _log(f"COLLECTION add exception: {e}")
+                        _warn("collection_add_exception", error=str(e))
         elif not unresolved:
-            _log("ADD returned 200 but nothing added/existing")
+            _warn("write_noop", action="add")
     elif r.status_code == 420:
-        _log("ADD failed 420: Trakt account limit reached for this user")
+        _warn("write_limit", action="add", status=420)
         _record_limit_error("history")
         for m in accepted_minimals:
             unresolved.append({"item": m, "hint": "trakt_limit"})
         return 0, unresolved
     else:
-        _log(f"ADD failed {r.status_code}: {(r.text or '')[:200]}")
+        _warn("write_failed", action="add", status=r.status_code, body=((r.text or "")[:200]))
         for m in accepted_minimals:
             _freeze_item_if_enabled(adapter, m, action="add", reasons=[f"http:{r.status_code}"])
     return ok, unresolved
@@ -1089,7 +1094,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
     else:
-        _log(f"REMOVE failed {r.status_code}: {(r.text or '')[:200]}")
+        _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:200]))
         for m in accepted_minimals:
             _freeze_item_if_enabled(adapter, m, action="remove", reasons=[f"http:{r.status_code}"])
     return ok, unresolved

@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 
 import requests
 
+from ._log import log as cw_log
 from ._mod_common import (
     build_session,
     label_simkl,
@@ -24,6 +25,14 @@ from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, norma
 __VERSION__ = "3.0.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
+
+def _health(status: str, ok: bool, latency_ms: int) -> None:
+    cw_log("SIMKL", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
+
+
+def _log(msg: str, *, level: str = "debug", feature: str = "module", **fields: Any) -> None:
+    cw_log("SIMKL", feature, level, msg, **fields)
+
 if "ctx" not in globals():
     class _NullCtx:
         def emit(self, *args: Any, **kwargs: Any) -> None:
@@ -35,22 +44,19 @@ try:
     from .simkl import _watchlist as feat_watchlist
 except Exception as e:
     feat_watchlist = None
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL] failed to import watchlist: {e}")
+    _log("failed to import watchlist", level="warn", error=str(e))
 
 try:
     from .simkl import _history as feat_history
 except Exception as e:
     feat_history = None
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL] failed to import history: {e}")
+    _log("failed to import history", level="warn", error=str(e))
 
 try:
     from .simkl import _ratings as feat_ratings
 except Exception as e:
     feat_ratings = None
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL] failed to import ratings: {e}")
+    _log("failed to import ratings", level="warn", error=str(e))
 
 
 class SIMKLError(RuntimeError):
@@ -59,12 +65,6 @@ class SIMKLError(RuntimeError):
 
 class SIMKLAuthError(SIMKLError):
     pass
-
-
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL] {msg}")
-
 
 
 def _json_load(path: str) -> dict[str, Any]:
@@ -311,10 +311,7 @@ class SIMKLModule:
             except Exception:
                 pass
 
-        _log(
-            f"health status={status} ok={ok} latency_ms={latency_ms} "
-            f"reason={details.get('reason')}"
-        )
+        _health(status, ok, latency_ms)
         return {
             "ok": ok,
             "status": status,

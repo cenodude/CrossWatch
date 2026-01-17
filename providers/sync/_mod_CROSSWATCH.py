@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+try:
+    from ._log import log as cw_log
+except Exception:  # pragma: no cover
+    def cw_log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:  # type: ignore[no-redef]
+        pass
+
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
@@ -16,18 +22,21 @@ except Exception:
 
 try:
     from .crosswatch import _watchlist as feat_watchlist
-except Exception:
+except Exception as e:
     feat_watchlist = None
+    cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="watchlist", error=str(e))
 
 try:
     from .crosswatch import _history as feat_history
-except Exception:
+except Exception as e:
     feat_history = None
+    cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="history", error=str(e))
 
 try:
     from .crosswatch import _ratings as feat_ratings
-except Exception:
+except Exception as e:
     feat_ratings = None
+    cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="ratings", error=str(e))
 
 try:
     from ._mod_common import make_snapshot_progress
@@ -46,9 +55,20 @@ if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_CROSSWATCH_DEBUG"):
-        print(f"[CROSSWATCH] {msg}")
+def _dbg(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", feature, "debug", msg, **fields)
+
+
+def _info(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", feature, "info", msg, **fields)
+
+
+def _warn(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", feature, "warn", msg, **fields)
+
+
+def _error(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", feature, "error", msg, **fields)
 
 
 def _features_flags() -> dict[str, bool]:
@@ -149,7 +169,7 @@ class CROSSWATCHModule:
         try:
             self.cfg.base_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            _log(f"failed to ensure provider dir: {e}")
+            _warn("module", "provider_dir_create_failed", path=str(self.cfg.base_path), error=str(e))
 
         self.config = cfg
 
@@ -188,13 +208,16 @@ class CROSSWATCHModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            _info(feature, "index_skipped", reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"build_index skipped: feature module missing: {feature}")
+            _warn(feature, "index_skipped", reason="module_missing")
             return {}
-        return mod.build_index(self, **kwargs)
+        started = time.perf_counter()
+        out = mod.build_index(self, **kwargs)
+        _info(feature, "index_done", count=len(out), dur_ms=int((time.perf_counter() - started) * 1000))
+        return out
 
     def add(
         self,
@@ -207,19 +230,21 @@ class CROSSWATCHModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"add skipped (disabled/missing): {feature}")
+            _info(feature, "write_skipped", op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"add skipped: feature module missing: {feature}")
+            _warn(feature, "write_skipped", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
+            started = time.perf_counter()
             cnt, unresolved = mod.add(self, lst)
+            _info(feature, "write_done", op="add", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
         except Exception as e:
-            _log(f"add error for {feature}: {e}")
+            _error(feature, "write_failed", op="add", error=str(e))
             return {"ok": False, "error": str(e)}
 
     def remove(
@@ -233,19 +258,21 @@ class CROSSWATCHModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"remove skipped (disabled/missing): {feature}")
+            _info(feature, "write_skipped", op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"remove skipped: feature module missing: {feature}")
+            _warn(feature, "write_skipped", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
+            started = time.perf_counter()
             cnt, unresolved = mod.remove(self, lst)
+            _info(feature, "write_done", op="remove", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             return {"ok": True, "count": int(cnt), "unresolved": unresolved}
         except Exception as e:
-            _log(f"remove error for {feature}: {e}")
+            _error(feature, "write_failed", op="remove", error=str(e))
             return {"ok": False, "error": str(e)}
 
     def health(self) -> Mapping[str, Any]:

@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+from ._log import log as cw_log
+
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -20,13 +22,30 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.3.0"
+__VERSION__ = "3.0.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
+def _health(status: str, ok: bool, latency_ms: int) -> None:
+    cw_log("MDBLIST", "health", "info", "health", latency_ms=latency_ms, ok=ok, status=status)
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_MDBLIST_DEBUG"):
-        print(f"[MDBLIST] {msg}")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "module", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "module", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "module", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "module", "error", msg, **fields)
+
+
+def _log(msg: str, **fields: Any) -> None:
+    _dbg(msg, **fields)
 
 
 def _label_mdblist(*_args: Any, **_kwargs: Any) -> str:
@@ -35,17 +54,20 @@ def _label_mdblist(*_args: Any, **_kwargs: Any) -> str:
 
 try:
     from .mdblist import _watchlist as feat_watchlist
-except Exception:
+except Exception as e:
+    _warn("feature_import_failed", import_feature="watchlist", error=f"{type(e).__name__}: {e}")
     feat_watchlist = None
 
 try:
     from .mdblist import _ratings as feat_ratings
-except Exception:
+except Exception as e:
+    _warn("feature_import_failed", import_feature="ratings", error=f"{type(e).__name__}: {e}")
     feat_ratings = None
 
 try:
     from .mdblist import _history as feat_history
-except Exception:
+except Exception as e:
+    _warn("feature_import_failed", import_feature="history", error=f"{type(e).__name__}: {e}")
     feat_history = None
 
 
@@ -361,7 +383,7 @@ class MDBLISTModule:
             },
         }
 
-        _log(f"health status={status} ok={ok} latency_ms={latency_ms}")
+        _health(status, ok, latency_ms)
         return {
             "ok": ok,
             "status": status,
@@ -376,7 +398,7 @@ class MDBLISTModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"build_index skipped (disabled/missing): {feature}")
+            _dbg("build_index_skipped", requested_feature=feature)
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -392,13 +414,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"add skipped (disabled/missing): {feature}")
+            _dbg("add_skipped", requested_feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"add skipped: feature module missing: {feature}")
+            _warn("add_skipped_missing_module", requested_feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -417,13 +439,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _log(f"remove skipped (disabled/missing): {feature}")
+            _dbg("remove_skipped", requested_feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"remove skipped: feature module missing: {feature}")
+            _warn("remove_skipped_missing_module", requested_feature=feature)
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)

@@ -9,26 +9,35 @@ import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-
+from .._log import log as cw_log
 from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file, _pair_scope
 
-UNRESOLVED_PATH = state_file("emby_ratings.unresolved.json")
+def _unresolved_path() -> str:
+    return state_file("emby_ratings.unresolved.json")
 
 
-def _dbg_on() -> bool:
-    return bool(os.environ.get("CW_EMBY_DEBUG") or os.environ.get("CW_DEBUG"))
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "ratings", "debug", msg, **fields)
 
 
-def _log(msg: str) -> None:
-    if _dbg_on():
-        print(f"[EMBY:ratings] {msg}")
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "ratings", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "ratings", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("EMBY", "ratings", "error", msg, **fields)
 
 
 def _load() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
     try:
-        with open(UNRESOLVED_PATH, "r", encoding="utf-8") as f:
+        with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
@@ -38,8 +47,8 @@ def _save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(UNRESOLVED_PATH), exist_ok=True)
-        with open(UNRESOLVED_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
+        with open(_unresolved_path(), "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
     except Exception:
         pass
@@ -99,8 +108,7 @@ def _set_like(http: Any, uid: str, item_id: str, *, likes: bool | None) -> bool:
         )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception as e:
-        if _dbg_on():
-            _log(f"thumbs write error {item_id}: {e}")
+        _dbg("rating_write_thumbs_error", item_id=item_id, error=str(e))
         return False
 
 
@@ -118,8 +126,7 @@ def _set_numeric_rating(http: Any, uid: str, item_id: str, *, rating: float | No
         )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception as e:
-        if _dbg_on():
-            _log(f"numeric write error {item_id}: {e}")
+        _dbg("rating_write_numeric_error", item_id=item_id, error=str(e))
         return False
 
 
@@ -131,8 +138,7 @@ def _progress_tick(progress: Any | None, current: int, *, total: int, force: boo
         if callable(tick):
             tick(current, total=total, force=force)
     except Exception:
-        if _dbg_on():
-            _log("progress tick failed")
+        _dbg("progress_tick_failed")
 
 
 def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[str, Any]]:
@@ -182,7 +188,7 @@ def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[
                 pass
         done += 1
         _progress_tick(progress, done, total=total)
-    _log(f"index size: {len(out)}")
+    _info("index_done", count=len(out))
     return out
 
 
@@ -273,9 +279,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if delay:
             time.sleep(delay / 1000.0)
 
-    _log(
-        f"add done: +{ok} / unresolved {len(unresolved)} | "
-        f"numeric_set={stats['numeric_set']} thumbs_set={stats['thumbs_set']}"
+    _info(
+        "write_done",
+        op="add",
+        ok=ok,
+        unresolved=len(unresolved),
+        numeric_set=stats["numeric_set"],
+        thumbs_set=stats["thumbs_set"],
+        thumbs_cleared=stats["thumbs_cleared"],
+        write_failed=stats["write_failed"],
     )
     return ok, unresolved
 
@@ -314,6 +326,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         else:
             unresolved.append({"item": id_minimal(m), "hint": "clear_failed"})
             _freeze(m, reason="write_failed")
-
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

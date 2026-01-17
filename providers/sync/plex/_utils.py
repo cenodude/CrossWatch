@@ -10,6 +10,8 @@ import ipaddress
 import xml.etree.ElementTree as ET
 from typing import Any, Mapping
 
+from .._log import log as cw_log
+
 import requests
 from requests.exceptions import ConnectionError, SSLError
 
@@ -28,9 +30,24 @@ def _boolish(value: Any, default: bool) -> bool:
     return default
 
 
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "utils", "debug", event, **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "utils", "info", event, **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "utils", "warn", event, **fields)
+
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "utils", "error", event, **fields)
+
+
 def _log(msg: str) -> None:
-    if _boolish(os.environ.get("CW_DEBUG"), False) or _boolish(os.environ.get("CW_PLEX_DEBUG"), False):
-        print(f"[PLEX:utils] {msg}")
+    _dbg(msg)
 
 
 _LIB_TTL_S = int(os.environ.get("CW_PLEX_LIB_TTL_S", "600"))
@@ -161,18 +178,18 @@ def _try_get(session: requests.Session, base: str, path: str, timeout: float) ->
     try:
         return session.get(url, timeout=timeout)
     except (SSLError, ConnectionError) as e:
-        _log(f"primary failed: {e}")
+        _warn("http_primary_failed", url=url, error=str(e))
         for fb in _fallback_bases(base):
             try:
-                _log(f"fallback -> {fb}{path}")
+                _info("http_fallback_try", url=f"{fb}{path}")
                 session.verify = fb.startswith("https://") and session.verify
                 response = session.get(f"{fb}{path}", timeout=timeout)
                 if response is not None:
                     return response
             except Exception as ee:  # noqa: BLE001
-                _log(f"fallback failed: {ee}")
+                _warn("http_fallback_failed", url=f"{fb}{path}", error=str(ee))
     except Exception as e:  # noqa: BLE001
-        _log(f"request error: {e}")
+        _warn("http_request_failed", url=url, error=str(e))
     return None
 
 
@@ -304,7 +321,7 @@ def fetch_accounts_owner(
         if response and response.ok and (response.text or "").lstrip().startswith("<"):
             out = _pick_owner_id(_parse_accounts_all(response.text))
     except Exception as e:  # noqa: BLE001
-        _log(f"owner fetch failed: {e}")
+        _warn("owner_fetch_failed", error=str(e))
     _CACHE["owner"] = {"key": key, "ts": time.time(), "data": out}
     return out
 
@@ -333,7 +350,7 @@ def fetch_account_id_for_username(
         if response and response.ok and (response.text or "").lstrip().startswith("<"):
             aid = _parse_accounts_xml_for_username(response.text, uname)
     except Exception as e:  # noqa: BLE001
-        _log(f"account-id fetch failed: {e}")
+        _warn("account_id_fetch_failed", error=str(e))
     bucket[cache_key] = {"ts": time.time(), "aid": aid}
     return aid
 
@@ -367,7 +384,7 @@ def fetch_libraries(
                 if keyv and title:
                     libs.append({"key": str(keyv), "title": title, "type": lib_type or "lib"})
     except Exception as e:  # noqa: BLE001
-        _log(f"sections fetch failed: {e}")
+        _warn("sections_fetch_failed", error=str(e))
     _CACHE["libs"] = {"key": key, "ts": time.time(), "data": list(libs)}
     return libs
 
@@ -390,7 +407,7 @@ def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
     verify = _resolve_verify_from_cfg(cfg, base)
     libs = fetch_libraries(base, token, verify=verify)
     if not libs and verify:
-        _log("empty libs; re-try with verify=False")
+        _info("libs_retry_insecure")
         libs = fetch_libraries(base, token, verify=False)
     return libs
 
@@ -408,7 +425,7 @@ def inspect_and_persist() -> dict[str, Any]:
         if base_url:
             _insert_key_first_inplace(plex, "server_url", base_url)
             save_config(cfg)
-            _log(f"server_url={base_url}")
+            _info("server_url_discovered", server_url=base_url)
         base = base_url
 
     if token and base:
@@ -444,7 +461,7 @@ def inspect_and_persist() -> dict[str, Any]:
                 if isinstance(cid, int):
                     plex.setdefault("_cloud", {})["account_id"] = cid
         except Exception as e:  # noqa: BLE001
-            _log(f"plex.tv user probe failed: {e}")
+            _warn("cloud_user_probe_failed", error=str(e))
 
     save_config(cfg)
     return {"server_url": base, "username": username, "account_id": account_id}
@@ -547,7 +564,7 @@ def ensure_whitelist_defaults() -> bool:
             changed = True
     if changed:
         save_config(cfg)
-        _log("whitelist defaults ensured")
+        _info("whitelist_defaults_ensured")
     return changed
 
 

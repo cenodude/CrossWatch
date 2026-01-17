@@ -20,6 +20,7 @@ from ._common import (
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
+from .._log import log as cw_log
 
 BASE = "https://api.trakt.tv"
 URL_ALL = f"{BASE}/sync/watchlist"
@@ -54,11 +55,33 @@ def _record_limit_error(feature: str) -> None:
         )
         os.replace(tmp, _last_limit_path())
     except Exception as e:
-        _log(f"limit_error.save failed: {e}")
+        _warn("limit_error_save_failed", feature=feature, error=str(e))
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_TRAKT_DEBUG"):
-        print(f"[TRAKT:watchlist] {msg}")
+_PROVIDER = "TRAKT"
+_FEATURE = "watchlist"
+
+
+def _int_or_str(v: object) -> int | str | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return int(s) if s.isdigit() else s
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "debug", event, **fields)
+
+def _info(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "info", event, **fields)
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "warn", event, **fields)
+
+def _error(event: str, **fields: Any) -> None:
+    cw_log(_PROVIDER, _FEATURE, "error", event, **fields)
+
 
 
 def _legacy_path(path: Path) -> Path | None:
@@ -191,7 +214,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, _unresolved_path())
     except Exception as e:
-        _log(f"unresolved.save failed: {e}")
+        _warn("unresolved_save_failed", error=str(e))
 
 
 def _freeze_item(
@@ -244,7 +267,7 @@ def _log_rate_headers(resp: Any) -> None:
         reset = r.get("X-RateLimit-Reset")
         raf = r.get("Retry-After")
         if remain or reset or raf:
-            _log(f"rate remain={remain or '-'} reset={reset or '-'} retry_after={raf or '-'}")
+            _dbg("rate_headers", remaining=_int_or_str(remain), reset_s=_int_or_str(reset), retry_after_s=_int_or_str(raf))
     except Exception:
         pass
 
@@ -293,7 +316,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     etag = r.headers.get("ETag")
 
     if r.status_code == 304 and use_etag:
-        _log("304 Not Modified - shadow")
+        _dbg("index_cache_hit", status=304, source="shadow")
         idx = dict(sh.get("items") or {})
         total = len(idx)
         _tick(prog, 0, total=total, force=True)
@@ -302,7 +325,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         return idx
 
     if r.status_code != 200:
-        _log(f"GET failed {r.status_code}; using shadow")
+        _warn("index_fetch_failed_using_shadow", status=r.status_code)
         idx = dict(sh.get("items") or {})
         total = len(idx)
         _tick(prog, 0, total=total, force=True)
@@ -321,7 +344,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     _tick(prog, 0, total=total, force=True)
     _tick(prog, total, total=total)
 
-    _log(f"index size: {len(idx)}")
+    _info("index_done", count=len(idx), source="live")
     return idx
 
 
@@ -333,7 +356,7 @@ def _batch_payload(
     rejected: list[dict[str, Any]] = []
     for it in items or []:
         if _is_frozen(it):
-            _log(f"skip frozen: {id_minimal(it).get('title')}")
+            _dbg("skip_frozen", title=id_minimal(it).get("title"))
             continue
         ids = ids_for_trakt(it)
         if not ids:
@@ -409,7 +432,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         for x in accepted:
             m = id_minimal({"type": x["type"], "ids": x["ids"]})
             unresolved.append({"item": m, "hint": "trakt_limit"})
-        _log(f"watchlist full for free Trakt account (limit={wl_limit}, have={current_count})")
+        _warn("watchlist_limit_reached", limit=wl_limit, have=current_count)
         return 0, unresolved
 
     if capacity is not None and capacity < len(accepted):
@@ -419,7 +442,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             m = id_minimal({"type": x["type"], "ids": x["ids"]})
             unresolved.append({"item": m, "hint": "trakt_limit"})
         accepted = keep
-        _log(f"only {capacity} watchlist slots left, {len(rest)} items left unsynced due to limit")
+        _warn("watchlist_capacity_partial", capacity=capacity, skipped=len(rest))
 
     ok = 0
     
@@ -448,12 +471,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="add", unresolved=unresolved, add_details=freeze_details)
             if ok == 0 and not unresolved:
-                _log("ADD returned 200 but no items were added or existing")
+                _warn("write_noop", action="add")
         elif r.status_code == 420:
             upgrade_url = r.headers.get("X-Upgrade-URL")
-            _log("ADD failed 420: Trakt account limit reached")
-            if upgrade_url:
-                _log(f"Upgrade URL: {upgrade_url}")
+            _warn("write_limit", action="add", status=420, upgrade_url=upgrade_url)
             _record_limit_error("watchlist")
             for x in sl:
                 m = id_minimal({"type": x["type"], "ids": x["ids"]})
@@ -465,7 +486,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
             break
         else:
-            _log(f"ADD failed {r.status_code}: {r.text[:180] if r.text else ''}")
+            _warn("write_failed", action="add", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 m = id_minimal({"type": x["type"], "ids": x["ids"]})
                 unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
@@ -516,7 +537,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="remove", unresolved=unresolved, add_details=freeze_details)
         else:
-            _log(f"REMOVE failed {r.status_code}: {r.text[:180] if r.text else ''}")
+            _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 m = id_minimal({"type": x["type"], "ids": x["ids"]})
                 unresolved.append({"item": m, "hint": f"http:{r.status_code}"})

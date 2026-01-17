@@ -11,6 +11,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
+from ._log import log as cw_log
+
 from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of, _pair_scope as _jf_pair_scope, state_file as _jf_state_file
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
@@ -42,9 +44,21 @@ _FEATURES: dict[str, Any] = {
 _HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
 
 
-def _log(msg: str) -> None:
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
-        print(f"[JELLYFIN] {msg}")
+
+def _dbg(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", feature, "debug", msg, **fields)
+
+
+def _info(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", feature, "info", msg, **fields)
+
+
+def _warn(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", feature, "warn", msg, **fields)
+
+
+def _error(feature: str, msg: str, **fields: Any) -> None:
+    cw_log("JELLYFIN", feature, "error", msg, **fields)
 
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
@@ -396,10 +410,7 @@ class JELLYFINModule:
         except Exception:
             pass
 
-        _log(
-            f"health status={status} ok={ok} latency_ms={latency_ms} "
-            f"reason={details.get('reason') if 'reason' in details else None}"
-        )
+        _info("health", "health", status=status, ok=ok, latency_ms=latency_ms)
 
         return {
             "ok": ok,
@@ -417,7 +428,7 @@ class JELLYFINModule:
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"build_index skipped: feature disabled: {f}")
+            _dbg(f, "build index skipped", reason="feature disabled")
             return {}
         mod = _FEATURES.get(f)
         if not mod:
@@ -437,7 +448,7 @@ class JELLYFINModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"add skipped: feature disabled: {f}")
+            _dbg(f, "add skipped", reason="feature disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
@@ -464,7 +475,7 @@ class JELLYFINModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _log(f"remove skipped: feature disabled: {f}")
+            _dbg(f, "remove skipped", reason="feature disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)

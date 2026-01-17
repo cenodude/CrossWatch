@@ -183,6 +183,10 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
                 os.environ[k] = v
 
 def run_pairs(ctx) -> dict[str, Any]:
+    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+        if str(os.environ.get(k, "")).strip().lower() == "unscoped":
+            os.environ.pop(k, None)
+            
     cfg: dict[str, Any] = ctx.config or {}
     sync_cfg = (cfg.get("sync") or {})
     emit_info = ctx.emit_info

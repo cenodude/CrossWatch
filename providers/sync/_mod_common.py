@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
+from ._log import log as cw_log
+
 __VERSION__ = "0.2.0"
 __all__ = [
     "HitSession",
@@ -30,6 +32,54 @@ __all__ = [
 
 EmitFn = Callable[[str, Mapping[str, Any]], None]
 FeatureLabelFn = Callable[[str, str, Mapping[str, Any]], str]
+
+
+def _safe_url(url: str) -> str:
+    try:
+        p = urlparse(url)
+        if p.scheme and p.netloc:
+            return f"{p.scheme}://{p.netloc}{p.path}"
+        return p.path or str(url)
+    except Exception:
+        return str(url)
+
+
+def _http_log(
+    session: requests.Session,
+    level: str,
+    event: str,
+    *,
+    method: str,
+    url: str,
+    api_feature: str | None = None,
+    status: int | None = None,
+    attempt: int | None = None,
+    max_retries: int | None = None,
+    wait_s: float | None = None,
+    dur_ms: int | None = None,
+    error: str | None = None,
+    **fields: Any,
+) -> None:
+    provider = getattr(session, "_provider", None)
+    if not provider:
+        return
+    p = str(provider)
+    cw_log(
+        p,
+        "http",
+        level,
+        event,
+        method=str(method).upper(),
+        url=_safe_url(url),
+        api_feature=str(api_feature) if api_feature else None,
+        status=int(status) if status is not None else None,
+        attempt=int(attempt) if attempt is not None else None,
+        max_retries=int(max_retries) if max_retries is not None else None,
+        wait_s=float(wait_s) if wait_s is not None else None,
+        dur_ms=int(dur_ms) if dur_ms is not None else None,
+        error=str(error) if error else None,
+        **fields,
+    )
 
 
 def make_emitter(ctx: Any) -> EmitFn:
@@ -385,34 +435,113 @@ def request_with_retries(
     backoff_base: float = 0.5,
     **kwargs: Any,
 ) -> requests.Response:
+    api_feature: str | None = None
+    try:
+        label = getattr(session, "_label", None)
+        if callable(label):
+            api_feature = str(label(str(method).upper(), str(url), dict(kwargs)))
+    except Exception:
+        api_feature = None
+
     last: Any = None
     for i in range(max(1, int(max_retries))):
         try:
+            t0 = time.monotonic()
             resp = session.request(method, url, timeout=timeout, **kwargs)
+            dur_ms = int((time.monotonic() - t0) * 1000)
             if resp.status_code in retry_on and i < max_retries - 1:
                 wait = backoff_base * (2**i)
+                retry_after: float | None = None
                 try:
                     if resp.status_code == 429:
                         ra = resp.headers.get("Retry-After")
                         if ra:
-                            wait = max(wait, float(ra))
+                            retry_after = float(ra)
+                            wait = max(wait, retry_after)
                 except Exception:
                     pass
+
+                if resp.status_code == 429:
+                    rl = parse_rate_limit(resp.headers)
+                    _http_log(
+                        session,
+                        "warn",
+                        "rate_limit_retry",
+                        method=method,
+                        url=url,
+                        api_feature=api_feature,
+                        status=resp.status_code,
+                        attempt=i + 1,
+                        max_retries=max_retries,
+                        wait_s=wait,
+                        dur_ms=dur_ms,
+                        retry_after_s=retry_after,
+                        rate_limit_limit=rl.get("limit"),
+                        rate_limit_remaining=rl.get("remaining"),
+                        rate_limit_reset=rl.get("reset"),
+                    )
+                else:
+                    _http_log(
+                        session,
+                        "warn",
+                        "http_retry",
+                        method=method,
+                        url=url,
+                        api_feature=api_feature,
+                        status=resp.status_code,
+                        attempt=i + 1,
+                        max_retries=max_retries,
+                        wait_s=wait,
+                        dur_ms=dur_ms,
+                    )
+
                 time.sleep(wait)
                 last = resp
                 continue
             return resp
         except Exception as e:
+            dur_ms: int | None = None
+            try:
+                dur_ms = int((time.monotonic() - t0) * 1000)
+            except Exception:
+                dur_ms = None
             last = e
             if i < max_retries - 1:
-                time.sleep(backoff_base * (2**i))
+                wait = backoff_base * (2**i)
+                _http_log(
+                    session,
+                    "warn",
+                    "http_exception_retry",
+                    method=method,
+                    url=url,
+                    api_feature=api_feature,
+                    attempt=i + 1,
+                    max_retries=max_retries,
+                    wait_s=wait,
+                    dur_ms=dur_ms,
+                    error=f"{type(e).__name__}: {e}",
+                )
+                time.sleep(wait)
             else:
+                _http_log(
+                    session,
+                    "error",
+                    "http_exception_giveup",
+                    method=method,
+                    url=url,
+                    api_feature=api_feature,
+                    attempt=i + 1,
+                    max_retries=max_retries,
+                    dur_ms=dur_ms,
+                    error=f"{type(e).__name__}: {e}",
+                )
                 break
     if isinstance(last, requests.Response):
         return last
     msg = f"request failed after retries: {method} {url}"
     if last is not None:
         msg = f"{msg} ({type(last).__name__}: {last})"
+    _http_log(session, "error", "http_request_failed", method=method, url=url, api_feature=api_feature, max_retries=max_retries, error=msg)
     raise requests.RequestException(msg)
 
 

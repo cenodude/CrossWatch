@@ -1,6 +1,4 @@
-# ------------------------------------------------------------------------------
 # Python
-# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.pyo
@@ -21,27 +19,37 @@ ENV/
 pip-wheel-metadata/
 *.sqlite3
 
-# ------------------------------------------------------------------------------
 # VS Code
-# ------------------------------------------------------------------------------
 .vscode/*
-# tenzij je deze expliciet wil delen met je repo:
 !.vscode/extensions.json
 !.vscode/settings.json
 
-# ------------------------------------------------------------------------------
 # Docker / Container data
-# ------------------------------------------------------------------------------
-# lokale docker compose overrides
 docker-compose.override.yml
 
-# volumes/configs die containers schrijven
+# volumes/configs
 /config/
 state.json
 config.json
 
-# ------------------------------------------------------------------------------
-# OS-specific
-# ------------------------------------------------------------------------------
+# OS generated files
 .DS_Store
 Thumbs.db
+
+# Tests / Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+pytestdebug.log
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+
+# CrossWatch runtime state
+.cw_state/

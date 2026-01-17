@@ -12,6 +12,8 @@ from typing import Any, Iterable, Mapping, TypeGuard
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
+from .._log import log as cw_log
+
 from .._mod_common import request_with_retries
 
 from ._common import (
@@ -26,7 +28,6 @@ from ._common import (
     get_watermark,
     iso_ok,
     iso_z,
-    make_logger,
     max_iso,
     now_iso,
     read_json,
@@ -43,10 +44,29 @@ URL_LIST = f"{BASE}/sync/watched"
 URL_UPSERT = f"{BASE}/sync/watched"
 URL_REMOVE = f"{BASE}/sync/watched/remove"
 
+
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "history", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "history", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "history", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "history", "error", msg, **fields)
+
+
+def _log(msg: str, **fields: Any) -> None:
+    # Back-compat alias; treat as debug.
+    _dbg(msg, **fields)
 def _cache_path() -> Path:
     return state_file("mdblist_history.index.json")
 
-_log = make_logger("history")
 _cfg = cfg_section
 _cfg_int = cfg_int
 _now_iso = now_iso
@@ -74,7 +94,7 @@ def _save_cache(items: Mapping[str, Any]) -> None:
         doc = {"generated_at": _now_iso(), "items": dict(items)}
         write_json(_cache_path(), doc)
     except Exception as e:
-        _log(f"cache.save failed: {e}")
+        _warn("cache_save_failed", error=str(e))
 
 
 def _fetch_last_activities(adapter: Any, *, timeout: float, retries: int) -> dict[str, Any] | None:

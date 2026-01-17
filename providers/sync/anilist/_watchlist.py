@@ -14,13 +14,25 @@ from pathlib import Path
 
 from cw_platform.id_map import minimal as id_minimal
 
-from ._common import make_logger, read_json, state_file, write_json
+from ._common import read_json, state_file, write_json
+from .._log import log as cw_log
 
 
-_log = make_logger("watchlist")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "watchlist", "debug", msg, **fields)
 
-LEGACY_SHADOW_PATH = Path("/config/.cw_state/anilist_watchlist_shadow.json")
-SHADOW_PATH = state_file("anilist_watchlist_shadow.json")
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "watchlist", "info", msg, **fields)
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "watchlist", "warn", msg, **fields)
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("ANILIST", "watchlist", "error", msg, **fields)
+
+def _shadow_path() -> Path:
+    return state_file("anilist_watchlist_shadow.json")
+
 
 GQL_VIEWER = "query { Viewer { id name } }"
 
@@ -110,19 +122,15 @@ _WS = re.compile(r"\s+")
 
 
 def _shadow_load() -> dict[str, dict[str, Any]]:
-    data = read_json(SHADOW_PATH)
+    p = _shadow_path()
+    data = read_json(p)
     if isinstance(data, dict) and data:
         return data
-    if SHADOW_PATH != LEGACY_SHADOW_PATH and LEGACY_SHADOW_PATH.exists():
-        legacy = read_json(LEGACY_SHADOW_PATH)
-        if isinstance(legacy, dict) and legacy:
-            write_json(SHADOW_PATH, legacy)
-            return dict(legacy)
     return {}
 
 
 def _shadow_save(d: Mapping[str, Any]) -> None:
-    write_json(SHADOW_PATH, d)
+    write_json(_shadow_path(), d)
 
 
 def _pick_title(t: Mapping[str, Any] | None) -> str:
@@ -256,7 +264,7 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
     page = (q or {}).get("Page")
     media = page.get("media") if isinstance(page, Mapping) else None
     if not isinstance(media, list) or not media:
-        _log(f"resolve miss title={title!r} year={year!r} (no results)")
+        _dbg("resolve miss", title=title, year=year, reason="no_results")
         return None, {}
 
     best_id: int | None = None
@@ -299,10 +307,10 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
                 best_meta["mal"] = int(cm)
 
     if best_id is None or best_score < 85:
-        _log(f"resolve miss title={title!r} year={year!r} best_score={best_score}")
+        _dbg("resolve miss", title=title, year=year, reason="low_score", best_score=int(best_score))
         return None, {}
 
-    _log(f"resolve hit title={title!r} year={year!r} -> id={best_id} score={best_score}")
+    _dbg("resolve hit", title=title, year=year, anilist_id=int(best_id), score=int(best_score))
     return best_id, best_meta
 
 
@@ -332,15 +340,15 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             {"userId": int(user_id), "type": "ANIME", "status": "PLANNING"},
             feature="watchlist:index",
         )
-    except Exception:
-        _log("index planning-query failed; falling back to full list query")
+    except Exception as e:
+        _warn("index planning query failed", error_type=e.__class__.__name__, error=str(e), fallback="full list")
         data = adapter.client.gql(
             GQL_LIST_FALLBACK,
             {"userId": int(user_id), "type": "ANIME"},
             feature="watchlist:index",
         )
 
-    _log(f"index fetched in {int((time.time() - t0) * 1000)}ms")
+    _dbg("index fetched", dur_ms=int((time.time() - t0) * 1000))
 
     mlc = (data or {}).get("MediaListCollection")
     lists = mlc.get("lists") if isinstance(mlc, Mapping) else None
@@ -532,7 +540,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
                 ent2["updated_at"] = int(time.time())
                 shadow[src_key] = ent2
                 shadow_changed = True
-            _log(f"skip non-anime/no-match title={str(m.get('title') or '')!r} year={_to_int(m.get('year'))!r}")
+            _dbg("skip no match", title=str(m.get('title') or ''), year=_to_int(m.get('year')), reason='not_anime_or_no_match')
             if src_key and src_key not in _seen_skip:
                 skipped_keys.append(src_key)
                 _seen_skip.add(src_key)
@@ -577,7 +585,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
                         if src_key and src_key not in _seen_ok:
                             confirmed_keys.append(src_key)
                             _seen_ok.add(src_key)
-                        _log(f"adopt existing planning entry mediaId={mid} src_key={src_key}")
+                        _dbg('adopt existing entry', media_id=int(mid), src_key=str(src_key))
                         _tick(prog, i, total=len(lst))
                         continue
             except Exception:
@@ -633,7 +641,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
         for u in unresolved:
             r = str(u.get("_cw_unresolved_reason") or "unknown")
             reasons[r] = reasons.get(r, 0) + 1
-        _log(f"add unresolved={len(unresolved)} by_reason={reasons}")
+        _warn('add unresolved', count=int(len(unresolved)), by_reason=','.join(f"{k}:{v}" for k, v in sorted(reasons.items())))
 
     return {
         "ok": True,

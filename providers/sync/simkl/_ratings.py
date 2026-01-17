@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping, cast
 
 from cw_platform.id_map import minimal as id_minimal
 
+from .._log import log as cw_log
 from ._common import (
     build_headers,
     coalesce_date_from,
@@ -47,9 +48,8 @@ def _is_unknown_key(k: str) -> bool:
     return (k or "").startswith("unknown:")
 
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_SIMKL_DEBUG"):
-        print(f"[SIMKL:ratings] {msg}")
+def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
+    cw_log("SIMKL", "ratings", level, msg, **fields)
 
 
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:

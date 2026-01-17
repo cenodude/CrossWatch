@@ -9,14 +9,31 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+try:
+    from .._log import log as cw_log
+except Exception:  # pragma: no cover
+    def cw_log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:  # type: ignore[no-redef]
+        pass
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import scoped_file, scoped_snapshots_dir, _pair_scope
 
 
-def _log(msg: str) -> None:
-    if os.getenv("CW_DEBUG") or os.getenv("CW_CROSSWATCH_DEBUG"):
-        print(f"[CROSSWATCH:history] {msg}")
+def _dbg(msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", "history", "debug", msg, **fields)
+
+
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", "history", "info", msg, **fields)
+
+
+def _warn(msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", "history", "warn", msg, **fields)
+
+
+def _error(msg: str, **fields: Any) -> None:
+    cw_log("CROSSWATCH", "history", "error", msg, **fields)
 
 
 def _root(adapter: Any) -> Path:
@@ -100,7 +117,7 @@ def _atomic_write(path: Path, payload: Any) -> None:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), "utf-8")
         os.replace(tmp, path)
     except Exception as e:
-        _log(f"atomic_write failed for {path}: {e}")
+        _warn("atomic_write_failed", path=str(path), error=str(e))
 
 
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
@@ -146,9 +163,9 @@ def _apply_retention(adapter: Any) -> None:
         if retention_days > 0 and age_days > retention_days:
             try:
                 path.unlink()
-                _log(f"snapshot removed by retention: {path.name}")
+                _info("snapshot_removed", reason="retention", snapshot=path.name, retention_days=retention_days)
             except Exception as e:
-                _log(f"snapshot unlink failed: {path} {e}")
+                _warn("snapshot_remove_failed", path=str(path), error=str(e))
         else:
             keep.append(path)
 
@@ -157,9 +174,9 @@ def _apply_retention(adapter: Any) -> None:
         for path in keep[:extra]:
             try:
                 path.unlink()
-                _log(f"snapshot removed by max_snapshots: {path.name}")
+                _info("snapshot_removed", reason="max_snapshots", snapshot=path.name, max_snapshots=max_snapshots)
             except Exception as e:
-                _log(f"snapshot unlink failed: {path} {e}")
+                _warn("snapshot_remove_failed", path=str(path), error=str(e))
 
 
 def _snapshot_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
@@ -258,7 +275,7 @@ def _maybe_restore(adapter: Any) -> None:
 
     snaps = _list_snapshots(adapter)
     if not snaps:
-        _log("restore requested but no snapshots present")
+        _warn("restore_failed", reason="no_snapshots")
         return
 
     chosen: Path | None = None
@@ -273,7 +290,7 @@ def _maybe_restore(adapter: Any) -> None:
                 break
 
     if not chosen:
-        _log(f"restore requested but snapshot not found: {restore_id_str}")
+        _warn("restore_failed", reason="snapshot_not_found", restore_id=restore_id_str)
         return
 
     try:
@@ -282,9 +299,9 @@ def _maybe_restore(adapter: Any) -> None:
         _save_state(adapter, items)
         marker = {"last": restore_id_str, "ts": int(time.time()), "snapshot": chosen.name}
         _atomic_write(marker_path, marker)
-        _log(f"restore applied from {chosen.name}")
+        _info("restore_applied", snapshot=chosen.name)
     except Exception as e:
-        _log(f"restore failed from {chosen}: {e}")
+        _warn("restore_failed", reason="exception", snapshot=str(chosen), error=str(e))
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:

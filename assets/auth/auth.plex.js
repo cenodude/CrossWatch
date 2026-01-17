@@ -29,13 +29,22 @@
       const r = await fetch("/api/plex/pin/new", { method: "POST", cache: "no-store" });
       data = await r.json();
       if (!r.ok || data?.ok === false) throw new Error(data?.error || "PIN request failed");
-    } catch (e) { console.warn("plex pin fetch failed", e); notify("Failed to request PIN"); return; }
+    } catch (e) {
+      console.warn("plex pin fetch failed", e);
+      notify("Failed to request PIN");
+      try { if (win && !win.closed) win.close(); } catch {}
+      return;
+    }
     const pin = data.code || data.pin || data.id || "";
     try {
       d.querySelectorAll('#plex_pin, input[name="plex_pin"]').forEach(el => { el.value = pin; });
       const msg = $("plex_msg"); if (msg) { msg.textContent = pin ? ("PIN: " + pin) : "PIN request ok"; msg.classList.remove("hidden"); }
       if (pin) { try { await navigator.clipboard.writeText(pin); } catch {} }
-      if (win && !win.closed) win.focus();
+      if (win && !win.closed) {
+        try { win.focus(); } catch {}
+      } else {
+        notify("Popup blocked - allow popups and try again");
+      }
     } catch (e) { console.warn("pin ui update failed", e); }
     try { startPlexTokenPoll(); } catch {}
   }
