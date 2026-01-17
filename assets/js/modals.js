@@ -10,8 +10,9 @@ ModalRegistry.register('about',        () => import(ver('./modals/about.js')));
 ModalRegistry.register('analyzer',     () => import(ver('./modals/analyzer/index.js')));
 ModalRegistry.register('exporter',     () => import(ver('./modals/exporter/index.js')));
 ModalRegistry.register('maintenance',  () => import(ver('./modals/maintenance/index.js')));
+ModalRegistry.register('setup-wizard', () => import(ver('./modals/setup-wizard/index.js')));
+ModalRegistry.register('upgrade-warning', () => import(ver('./modals/upgrade-warning/index.js')));
 
-// Public API + legacy bridges
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
 
@@ -26,8 +27,10 @@ window.closeAbout = () => ModalRegistry.close();
 window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
 window.openExporter = (props = {}) => ModalRegistry.open('exporter', props);
 
-// New: maintenance tools modal
 window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);
+
+window.openSetupWizard = (props = {}) => ModalRegistry.open('setup-wizard', props);
+window.openUpgradeWarning = (props = {}) => ModalRegistry.open('upgrade-warning', props);
 
 window.cxEnsureCfgModal = async (pairOrId = null) => {
   await ModalRegistry.open('pair-config', { pairOrId });

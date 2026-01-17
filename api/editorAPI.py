@@ -589,7 +589,15 @@ def api_editor_get_state(
     if src in ("pair", "pair-cache", "cache"):
         scope = (pair or "").strip()
         if not scope:
-            raise HTTPException(status_code=400, detail="Missing pair for source=pair")
+            return {
+                "kind": k,
+                "source": "pair",
+                "pair": None,
+                "dataset": None,
+                "ts": None,
+                "count": 0,
+                "items": {},
+            }
         ds = (dataset or snapshot or "").strip() or None
         state = load_pair_state(k, scope, dataset=ds)
         items = state.get("items") or {}
@@ -668,7 +676,7 @@ def api_editor_pair_datasets(
     k = _normalize_kind(kind)
     scope = str(pair or "").strip()
     if not scope:
-        raise HTTPException(status_code=400, detail="Missing pair")
+        return {"kind": k, "pair": "", "datasets": [], "default_dataset": ""}
     dsets = list_pair_datasets(k, scope)
     default_dataset = str(dsets[0]["name"]) if dsets else ""
     return {"kind": k, "pair": scope, "datasets": dsets, "default_dataset": default_dataset}

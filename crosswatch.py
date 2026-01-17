@@ -42,6 +42,11 @@ from api import (
     api_run_sync,
 )
 
+from _logging import log as LOG, BLUE, GREEN, DIM, RESET  # type: ignore
+
+def _c(text: str, color: str) -> str:
+    return f"{color}{text}{RESET}" if LOG.use_color else text
+
 from api.versionAPI import CURRENT_VERSION
 from services import register as register_services
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -926,19 +931,20 @@ except Exception as _e:
 # Entry point
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     ip = get_primary_ip()
-    print(f"\nCrossWatch Engine {CURRENT_VERSION} running:")
-    print(f"  Local:   http://127.0.0.1:{port}")
-    print(f"  Docker:  http://{ip}:{port}")
-    print(f"  Bind:    {host}:{port}\n")
-
-    print(f"  Cache:      {CACHE_DIR}")
-    print(f"  CW_STATE:   {CW_STATE_DIR}")
-    print(f"  Reports:    {REPORT_DIR}")
-    print(f"  Last Sync:  {LAST_SYNC_PATH} (JSON)")
-    print(f"  Tombstones: {TOMBSTONES_PATH} (JSON)")
-    print(f"  State:      {STATE_PATH} (JSON)")
-    print(f"  Config:     {CONFIG_DIR / 'config.json'} (JSON)\n")
-
+    boot = LOG.child("BOOT")
+    boot.info(_c(f"CROSSWATCH Engine {CURRENT_VERSION} running:", BLUE))
+    boot.info(f"  {_c('Local:', DIM)}   {_c(f'http://127.0.0.1:{port}', GREEN)}")
+    boot.info(f"  {_c('Docker:', DIM)}  {_c(f'http://{ip}:{port}', GREEN)}")
+    boot.info(f"  {_c('Bind:', DIM)}    {_c(f'{host}:{port}', GREEN)}")
+    boot.info("")
+    boot.info(f"  {_c('Cache:', DIM)}      {CACHE_DIR}")
+    boot.info(f"  {_c('CW_STATE:', DIM)}   {CW_STATE_DIR}")
+    boot.info(f"  {_c('Reports:', DIM)}    {REPORT_DIR}")
+    boot.info(f"  {_c('Last Sync:', DIM)}  {LAST_SYNC_PATH} (JSON)")
+    boot.info(f"  {_c('Tombstones:', DIM)} {TOMBSTONES_PATH} (JSON)")
+    boot.info(f"  {_c('State:', DIM)}      {STATE_PATH} (JSON)")
+    boot.info(f"  {_c('Config:', DIM)}     {CONFIG_DIR / 'config.json'} (JSON)")
+    boot.info("")
     cfg = load_config()
     debug = bool((cfg.get("runtime") or {}).get("debug"))
     debug_http = bool((cfg.get("runtime") or {}).get("debug_http"))

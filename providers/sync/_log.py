@@ -73,8 +73,7 @@ def _env_level(provider: str) -> int:
 
     if _env_bool("CW_DEBUG") or _env_bool(f"CW_{p}_DEBUG"):
         return _level_num("debug")
-    # move all info to debug... require changes in future release to revert
-    return _level_num("debug")
+    return _level_num("info")
 
 
 def _one_line(s: Any) -> str:

@@ -2775,6 +2775,23 @@
   }
 
   async function loadState() {
+    if (state.source === "pair") {
+      const scope = String(state.pair || "").trim();
+      if (!scope) {
+        state.items = {};
+        state.rows = [];
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
+        state.hasChanges = false;
+        state.page = 0;
+        renderRows();
+        showStateHint("pair");
+        setTag("loaded", "No cache yet");
+        setStatus("");
+        return;
+      }
+    }
     state.loading = true;
     setTag("warn", "Loading…");
     try {

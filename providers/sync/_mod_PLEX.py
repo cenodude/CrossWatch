@@ -92,12 +92,7 @@ except Exception as e:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         _warn("feature_import_failed", feature="ratings", error=str(e))
 
-try:
-    from .plex import _playlists as feat_playlists
-except Exception as e:
-    feat_playlists = None
-    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
-        _warn("feature_import_failed", feature="playlists", error=str(e))
+feat_playlists = None
 
 
 class PLEXError(RuntimeError):

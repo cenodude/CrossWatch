@@ -55,5 +55,24 @@
     try { CW.Pairs?.list?.(); } catch {}
     try { CW.Scheduling?.load?.(); } catch {}
     try { CW.Insights?.loadLight?.(); } catch {}
+
+    // Setup 
+    (async () => {
+      try {
+        const r = await fetch('/api/config/meta?ts=' + Date.now(), { cache: 'no-store' });
+        if (!r.ok) return;
+        const meta = await r.json();
+        if (!meta) return;
+
+        if (!meta.exists) {
+          try { window.openSetupWizard?.(meta); } catch {}
+          return;
+        }
+
+        if (meta.needs_upgrade) {
+          try { window.openUpgradeWarning?.(meta); } catch {}
+        }
+      } catch {}
+    })();
   });
 })();

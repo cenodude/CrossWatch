@@ -5,6 +5,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import json
+import os
+from datetime import datetime, timezone
+
+from packaging.version import InvalidVersion, Version
+
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
@@ -39,6 +45,80 @@ def _nostore(res: JSONResponse) -> JSONResponse:
     return res
 
 router = APIRouter(prefix="/api", tags=["config"])
+
+
+def _norm_ver(v: str | None) -> str:
+    raw = (v or "").strip()
+    if raw.lower().startswith("v"):
+        raw = raw[1:]
+    return raw
+
+
+def _safe_ver(v: str | None) -> Version:
+    try:
+        return Version(_norm_ver(v) or "0.0.0")
+    except InvalidVersion:
+        return Version("0.0.0")
+
+
+@router.get("/config/meta")
+def api_config_meta() -> JSONResponse:
+    env = _env()
+    base = env.get("cfg_base")
+    try:
+        path = base.config_path()  # type: ignore[attr-defined]
+    except Exception:
+        path = None
+
+    p = path
+    exists = bool(p and getattr(p, "exists", lambda: False)())
+    raw: dict[str, Any] = {}
+    if exists and p is not None:
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+
+    cfg_ver = _norm_ver(raw.get("version") if isinstance(raw, dict) else None) or None
+    try:
+        from api.versionAPI import CURRENT_VERSION as _V
+        cur_ver = _norm_ver(str(_V))
+    except Exception:
+        cur_ver = _norm_ver(os.getenv("APP_VERSION") or "v0.7.0")
+
+    needs_upgrade = False
+    is_legacy_pre_070 = False
+    try:
+        needs_upgrade = _safe_ver(cur_ver) > _safe_ver(cfg_ver)
+        is_legacy_pre_070 = _safe_ver(cfg_ver) < Version("0.7.0")
+    except Exception:
+        needs_upgrade = False
+        is_legacy_pre_070 = False
+
+    mtime = None
+    size = None
+    if exists and p is not None:
+        try:
+            st = p.stat()
+            size = int(st.st_size)
+            mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    return _nostore(
+        JSONResponse(
+            {
+                "exists": exists,
+                "path": str(p) if p is not None else None,
+                "size": size,
+                "mtime": mtime,
+                "current_version": cur_ver,
+                "config_version": cfg_ver,
+                "needs_upgrade": needs_upgrade,
+                "legacy_pre_070": is_legacy_pre_070,
+            }
+        )
+    )
 
 @router.get("/config")
 def api_config() -> JSONResponse:

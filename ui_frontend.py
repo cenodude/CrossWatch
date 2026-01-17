@@ -469,7 +469,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/helpers/events.js"></script>
 <script src="/assets/helpers/api.js"></script>
 <script src="/assets/helpers/legacy-bridge.js"></script>
-<script src="/assets/crosswatch.js"></script>
+<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>
 <script src="/assets/js/syncbar.js" defer></script>
 <script src="/assets/js/main.js" defer></script>
 <script src="/assets/js/connections.overlay.js" defer></script>

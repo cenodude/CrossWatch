@@ -169,17 +169,29 @@ class Logger:
         lvl = display_level
         msg = " ".join(str(p) for p in parts)
 
+        hide_boot_info = (
+            module_name.upper() == "BOOT"
+            and lvl.upper() == "INFO"
+            and (os.getenv("CW_BOOT_SHOW_LEVEL") or "").strip().lower() not in ("1", "true", "yes", "on")
+        )
+
         col: Optional[str]
         if self.use_color:
             col = self.tag_color_map.get(lvl) or self.tag_color_map.get(lvl.upper())
         else:
             col = None
 
-        lvl_disp = f"{col}{lvl}{RESET}" if (col and self.use_color) else lvl
         head = f"[{module_name}]" if module_name else ""
-        line = f"{head} {lvl_disp} {msg}".strip()
+
+        if hide_boot_info:
+            line = "" if not msg.strip() else f"{head} {msg}".strip()
+        else:
+            lvl_disp = f"{col}{lvl}{RESET}" if (col and self.use_color) else lvl
+            line = f"{head} {lvl_disp} {msg}".strip()
 
         if self.show_time:
+            if not line:
+                return ""
             ts = datetime.datetime.now().strftime(self.time_fmt)
             prefix = f"{DIM}[{ts}]{RESET}" if self.use_color else f"[{ts}]"
             return f"{prefix} {line}"
@@ -286,6 +298,6 @@ class Logger:
             logger._emit("info", lvl_in, message, extra=extra)
 
 
-log = Logger()
+log = Logger(show_time=False)
 
 __all__ = ["Logger", "log", "LEVELS", "RESET", "DIM", "RED", "GREEN", "YELLOW", "BLUE"]

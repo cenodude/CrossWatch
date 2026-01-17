@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Any
 
 
+def _current_version_norm() -> str:
+    try:
+        from api.versionAPI import CURRENT_VERSION as _V
+        raw = str(_V)
+    except Exception:
+        raw = (os.getenv("APP_VERSION") or "v0.7.0").strip()
+    return raw[1:] if raw.lower().startswith("v") else raw
+
+
 def CONFIG_BASE() -> Path:
     env = os.getenv("CONFIG_BASE")
     if env:
@@ -511,6 +520,7 @@ def load_config() -> dict[str, Any]:
             user_cfg = {}
 
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
+    cfg.setdefault("version", _current_version_norm())
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -521,6 +531,7 @@ def load_config() -> dict[str, Any]:
 
 def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
+    data["version"] = _current_version_norm()
     pairs = data.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
