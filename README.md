@@ -47,7 +47,8 @@
   </a>
 </p>
 
-
+> [!WARNING]
+> **CrossWatch - v0.7.0 (Pre-release notice) - READ THIS BEFORE UPGRADING**: https://github.com/cenodude/CrossWatch/discussions/59
 
 **CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
 
