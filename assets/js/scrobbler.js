@@ -746,7 +746,7 @@ serverUUID: async () => {
       return;
     }
 
-    
+
     if (it.msg.length <= 64) addLiveLine({ time: it.time, src: it.src, msg: it.msg });
   }
 
@@ -990,7 +990,7 @@ serverUUID: async () => {
     const step = Number.isFinite(+opts.step) ? +opts.step : 1;
     return `<div class="field"><label for="${id}">${label}</label>${helpBtn(tipId)}<input id="${id}" class="input" type="number" inputmode="numeric" min="${min}" max="${max}" step="${step}" placeholder="${placeholder}"></div>`;
   }
-  
+
 
   function buildUI() {
     injectStyles();
@@ -1948,7 +1948,7 @@ serverUUID: async () => {
   try { syncSinkPillsFromSelect(); } catch {}
 
   let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
-  
+
 
   const hostW = $("#sc-whitelist", STATE.mount);
   if (hostW) {

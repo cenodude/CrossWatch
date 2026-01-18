@@ -71,20 +71,7 @@
     if (w.__cwAniListAutoInit) return;
     w.__cwAniListAutoInit = true;
 
-    const root = d.body;
-    if (!root) return;
-
-    let pending = false;
-    const schedule = () => {
-      if (pending) return;
-      pending = true;
-      setTimeout(() => {
-        pending = false;
-        initAniListAuthUI();
-      }, 0);
-    };
-
-    const obs = new MutationObserver(() => {
+    const checkAndInit = () => {
       if (
         $("anilist_client_id") ||
         $("anilist_client_secret") ||
@@ -92,11 +79,16 @@
         $("redirect_uri_preview_anilist") ||
         $("btn-connect-anilist")
       ) {
-        schedule();
+        initAniListAuthUI();
       }
-    });
+    };
 
-    obs.observe(root, { childList: true, subtree: true });
+    // Try immediately
+    checkAndInit();
+
+    // Try again after a short delay in case elements load async
+    setTimeout(checkAndInit, 100);
+    setTimeout(checkAndInit, 500);
   }
 
   async function copyAniListRedirect() {
