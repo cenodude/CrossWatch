@@ -254,6 +254,17 @@
   d.addEventListener("DOMContentLoaded", () => {
     initAniListAuthUI();
     autoInitAniListAuthUI();
+    (async function hydrateAniListBannerFromConfig() {
+      try {
+        const cfg = await fetch('/api/config' + bust(), { cache: 'no-store' }).then(r => r.ok ? r.json() : null);
+        const tok = String(cfg?.anilist?.access_token || '').trim();
+        if (tok) {
+          const el = $('anilist_access_token');
+          if (el) el.value = tok;
+          setAniListSuccess(true);
+        }
+      } catch (_) {}
+    })();
   });
 
   Object.assign(w, {

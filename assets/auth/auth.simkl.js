@@ -1,4 +1,4 @@
-// auth.simkl.js — SIMKL auth only
+// auth.simkl.js
 (function (w, d) {
   // --- tiny utils
   const $ = (s) => d.getElementById(s);
@@ -10,8 +10,20 @@
       ? w.computeRedirectURI()
       : (location.origin + "/callback"));
 
-  // success banner
-  function setSimklSuccess(on) { $("simkl_msg")?.classList.toggle("hidden", !on); }
+  // status banner
+  function setSimklBanner(kind, text) {
+    const el = $("simkl_msg");
+    if (!el) return;
+    el.classList.remove("hidden", "ok", "warn");
+    if (!kind) { el.classList.add("hidden"); el.textContent = ""; return; }
+    el.classList.add(kind);
+    el.textContent = text || "";
+  }
+
+  function setSimklSuccess(on, text) {
+    if (on) setSimklBanner("ok", text || "Connected.");
+    else setSimklBanner(null, "");
+  }
 
   // form state
   function updateSimklButtonState() {
@@ -55,7 +67,7 @@
       if (r.ok && (j.ok !== false)) {
         try { const el = $('simkl_access_token'); if (el) el.value = ''; } catch {}
         try { setSimklSuccess(false); } catch {}
-        if (msg) { msg.textContent = 'Access token removed.'; }
+
         notify('SIMKL access token removed.');
       } else {
         if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
@@ -78,6 +90,16 @@
       notify("Fill in SIMKL Client ID + Client Secret first");
       updateSimklButtonState();
       return;
+
+    try {
+      const cfg = await fetchConfig();
+      const tok = String(cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token || '').trim();
+      if (tok) {
+        setVal('simkl_access_token', tok);
+        setSimklSuccess(true, 'Connected.');
+        updateSimklButtonState();
+      }
+    } catch (_) {}
     }
 
     let win = null;

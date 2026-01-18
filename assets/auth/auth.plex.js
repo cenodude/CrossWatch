@@ -17,8 +17,30 @@
     });
   }
 
-  // success banner
-  function setPlexSuccess(on) { $("plex_msg")?.classList.toggle("hidden", !on); }
+  // status banner
+  function setPlexBanner(kind, text) {
+    const el = $("plex_msg");
+    if (!el) return;
+    el.classList.remove("hidden", "ok", "warn");
+    if (!kind) { el.classList.add("hidden"); el.textContent = ""; return; }
+    el.classList.add(kind);
+    el.textContent = text || "";
+  }
+
+  function setPlexSuccess(on, text) {
+    if (on) setPlexBanner("ok", text || "Connected.");
+    else setPlexBanner(null, "");
+  }
+
+  function setPlexPending(text) {
+    setPlexBanner("warn", text || "Waiting for Plex...");
+  }
+
+  function setPlexConnected(token) {
+    const t = String(token || "").trim();
+    const short = t ? (t.slice(0, 6) + "..." + t.slice(-4)) : "";
+    setPlexSuccess(true, short ? ("Connected · " + short) : "Connected.");
+  }
 
   // PIN flow
   async function requestPlexPin() {
@@ -155,6 +177,9 @@
       await waitFor("#plex_server_url"); await waitFor("#plex_username");
       const set = (id, val) => { const el = $(id); if (el != null && val != null) el.value = String(val); };
       set("plex_token", p.account_token || "");
+      const tok = String(p.account_token || '').trim();
+      if (tok) setPlexConnected(tok);
+      else setPlexSuccess(false);
       set("plex_pin", p._pending_pin?.code || "");
       set("plex_server_url", p.server_url || "");
       set("plex_username", p.username || "");

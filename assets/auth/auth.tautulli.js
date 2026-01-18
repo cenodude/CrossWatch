@@ -17,13 +17,13 @@
     const r = await fetchJSON("/api/config", { cache: "no-store" });
     return r.ok ? (r.data || {}) : {};
   }
-
   function setConn(ok, msg) {
     const m = el("tautulli_msg");
     if (!m) return;
-    m.textContent = ok ? (msg || "Connected") : (msg || "Not connected");
-    m.classList.remove("hidden");
-    m.classList.toggle("warn", !ok);
+    const text = ok ? (msg || "Connected.") : (msg || "Not connected");
+    m.textContent = text;
+    m.classList.remove("hidden", "ok", "warn");
+    m.classList.add(ok ? "ok" : "warn");
   }
 
   function maskKey(i, has) {

@@ -134,7 +134,7 @@ def html() -> str:
         <div class="inline">
           <button id="tautulli_verify" class="btn">Verify</button>
           <button id="tautulli_disconnect" class="btn danger">Disconnect</button>
-          <div id="tautulli_msg" class="msg hidden" aria-live="polite"></div>
+          <div id="tautulli_msg" class="msg ok hidden" aria-live="polite"></div>
         </div>
       </div>
     </div>

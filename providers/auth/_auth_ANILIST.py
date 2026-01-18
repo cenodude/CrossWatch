@@ -181,7 +181,7 @@ def html() -> str:
     <div class="inline" style="margin-top:10px">
       <button class="btn" id="btn-connect-anilist" onclick="startAniList()">Connect AniList</button>
       <button class="btn danger" onclick="anilistDeleteToken()">Disconnect</button>
-      <span class="msg hidden" id="anilist_msg"></span>
+      <span class="msg ok hidden" id="anilist_msg" role="status" aria-live="polite"></span>
     </div>
 
     <div style="margin-top:10px">

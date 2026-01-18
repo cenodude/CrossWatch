@@ -17,6 +17,14 @@
   const maskToken = (has) => { const el = Q("#jfy_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
+  function setMsgBanner(msg, kind, text) {
+    if (!msg) return;
+    msg.classList.remove('hidden', 'ok', 'warn');
+    if (!kind) { msg.classList.add('hidden'); msg.textContent = ''; return; }
+    msg.classList.add(kind);
+    msg.textContent = text || '';
+  }
+
   function applyFilter() {
     const qv = (Q("#jfy_lib_filter")?.value || "").toLowerCase().trim();
     Qa("#jfy_lib_matrix .lm-row").forEach((r) => {
@@ -160,18 +168,18 @@
     const password = Q("#jfy_pass")?.value || "";
     const btn = Q("button.btn.jellyfin"), msg = Q("#jfy_msg");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
-    if (msg) { msg.className = "msg hidden"; msg.textContent = ""; }
+    setMsgBanner(msg, null, '');
     try {
       const r = await fetch("/api/jellyfin/login", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server, username, password }), cache: "no-store"
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok === false) { if (msg) { msg.className = "msg warn"; msg.textContent = "Login failed"; } return; }
+      if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }
       put("#jfy_server_url", server); put("#jfy_username", username);
       if (j?.user_id) put("#jfy_user_id", j.user_id);
       maskToken(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
-      if (msg) { msg.className = "msg"; msg.textContent = "Jellyfin connected."; }
+      setMsgBanner(msg, 'ok', 'Connected.');
       await jfyLoadLibraries();
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }

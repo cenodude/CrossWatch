@@ -212,28 +212,10 @@ class _TraktProvider:
           <button id="btn-connect-trakt" class="btn" onclick="requestTraktPin()">Connect TRAKT</button>
           <button class="btn danger" onclick="try{ traktDeleteToken && traktDeleteToken(); }catch(_){;}">Delete</button>
           <div class="muted">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
-          <div id="trakt_msg" class="msg ok hidden" aria-live="polite" style="display:none"></div>
+          <div id="trakt_msg" class="msg ok hidden" aria-live="polite"></div>
         </div>
 
-        <script>
- 
-          (function(){
-            const msg=document.getElementById('trakt_msg');
-            const pin=document.getElementById('trakt_pin');
-            const tok=document.getElementById('trakt_token');
-            function show(text){ if(!msg) return; msg.textContent=text||''; msg.classList.remove('hidden'); msg.style.display=''; }
-            function hide(){ if(!msg) return; msg.classList.add('hidden'); msg.style.display='none'; }
-            window.traktMsg={show,hide};
-            function tick(){
-              const hasPin=!!(pin&&pin.value&&pin.value.trim().length);
-              const hasTok=!!(tok&&tok.value&&tok.value.trim().length);
-              if(hasPin && !hasTok){ show('Code generated — finish linking on Trakt'); }
-              else { hide(); }
-            }
-            tick();
-            setInterval(tick, 600);
-          })();
-        </script>
+        
 
         <div class="sep"></div>
     </div>

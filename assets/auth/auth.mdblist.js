@@ -26,14 +26,13 @@
     });
     if (!r.ok || (r.data && r.data.ok === false)) throw new Error("save_failed");
   }
-
   function setConn(ok, msg) {
     const m = el("mdblist_msg");
     if (!m) return;
-    m.textContent = ok ? (msg || "Connected") : (msg || "Not connected");
-    m.classList.remove("hidden");
-    m.classList.toggle("warn", !ok);
-    if (!ok && !msg) m.textContent = "Not connected";
+    const text = ok ? (msg || "Connected.") : (msg || "Not connected");
+    m.textContent = text;
+    m.classList.remove("hidden", "ok", "warn");
+    m.classList.add(ok ? "ok" : "warn");
   }
 
   async function refresh() {

@@ -49,6 +49,7 @@ Thumbs.db
 # --- Build artifacts ---
 dist/
 build/
+tests/
 *.egg
 *.whl
 images/
@@ -61,3 +62,6 @@ docs/
 Dockerfile
 LICENSE
 README.md
+SECURITY.md
+CONTRIBUTING.md
+requirements-dev.txt

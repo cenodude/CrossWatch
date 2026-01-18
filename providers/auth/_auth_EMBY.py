@@ -323,7 +323,7 @@ def html() -> str:
     <div class="inline" style="margin-top:10px">
       <button class="btn emby" onclick="try{ embyLogin && embyLogin(); }catch(_){;}">Sign in</button>
       <button class="btn danger" onclick="try{ embyDeleteToken && embyDeleteToken(); }catch(_){;}">Delete</button>
-      <div id="emby_msg" class="msg hidden" role="status" aria-live="polite"></div>
+      <div id="emby_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
     </div>
     <details class="settings">
       <summary><span class="plex-ico">⚙︎</span><span class="title">SETTINGS</span><span class="hint">Server · User · Whitelist</span></summary>

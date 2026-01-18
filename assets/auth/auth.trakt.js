@@ -9,9 +9,24 @@
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
 
-  // Show/hide success message
+  function updateTraktBanner() {
+    try {
+      var msg = _el('trakt_msg');
+      if (!msg) return;
+      var pin = _str(_el('trakt_pin')?.value);
+      var tok = _str(_el('trakt_token')?.value);
+      msg.classList.remove('hidden', 'ok', 'warn');
+      if (tok) { msg.classList.add('ok'); msg.textContent = 'Connected.'; return; }
+      if (pin) { msg.classList.add('warn'); msg.textContent = 'Code: ' + pin; return; }
+      msg.classList.add('hidden'); msg.textContent = '';
+    } catch (_) {}
+  }
+  // status banner
   function setTraktSuccess(show) {
-    try { var el = _el("trakt_msg"); if (el) el.classList.toggle("hidden", !show); } catch (_) {}
+    try {
+      if (show) updateTraktBanner();
+      else { var el = _el('trakt_msg'); if (el) { el.classList.add('hidden'); el.textContent = ''; el.classList.remove('ok','warn'); } }
+    } catch (_) {}
   }
 
   async function fetchConfig() {
@@ -50,6 +65,7 @@
       _setVal("trakt_client_secret", _str(t.client_secret));
       _setVal("trakt_token",         _str(t.access_token || a.access_token));
       updateTraktHint();
+      updateTraktBanner();
     } catch (e) {
       console.warn("[trakt] hydrateAuthFromConfig failed", e);
     }
@@ -335,9 +351,11 @@
       if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
 
       updateTraktHint();
+      updateTraktBanner();
       hydrateAllSecretsRaw();
       startTraktTokenPoll();
     } catch (e) {
+    try { if (!window.__traktBannerTick) window.__traktBannerTick = setInterval(function(){ try { updateTraktBanner(); } catch (_) {} }, 800); } catch (_) {}
       console.warn("[trakt] DOMContentLoaded init failed", e);
     }
   });

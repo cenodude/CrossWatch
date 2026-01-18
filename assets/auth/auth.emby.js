@@ -19,6 +19,14 @@
   const maskToken = (has) => { const el = Q("#emby_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
+  function setMsgBanner(msg, kind, text) {
+    if (!msg) return;
+    msg.classList.remove('hidden', 'ok', 'warn');
+    if (!kind) { msg.classList.add('hidden'); msg.textContent = ''; return; }
+    msg.classList.add(kind);
+    msg.textContent = text || '';
+  }
+
   // --- libraries UI
   function applyFilter() {
     const qv = (Q("#emby_lib_filter")?.value || "").toLowerCase().trim();
@@ -165,18 +173,18 @@
     const verify_ssl = !!(Q("#emby_verify_ssl")?.checked || Q("#emby_verify_ssl_dup")?.checked);
     const btn = Q("button.btn.emby"), msg = Q("#emby_msg");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
-    if (msg) { msg.className = "msg hidden"; msg.textContent = ""; }
+    setMsgBanner(msg, null, '');
     try {
       const r = await fetch("/api/emby/login", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server, username, password, verify_ssl }), cache: "no-store"
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok === false) { if (msg) { msg.className = "msg warn"; msg.textContent = "Login failed"; } return; }
+      if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }
       put("#emby_server_url", server); put("#emby_username", username);
       if (j?.user_id) put("#emby_user_id", j.user_id);
       maskToken(true); if (Q("#emby_pass")) Q("#emby_pass").value = "";
-      if (msg) { msg.className = "msg"; msg.textContent = "Emby connected."; }
+      setMsgBanner(msg, 'ok', 'Connected.');
       await embyLoadLibraries();
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
