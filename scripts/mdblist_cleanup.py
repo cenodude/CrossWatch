@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# MDBList cleanup + backup/restore (watchlist + ratings + history).
+# MDBList cleanup + backup/restore script
 from __future__ import annotations
 
 import gzip
