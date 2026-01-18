@@ -2990,6 +2990,8 @@ async function saveSettings() {
       }));
     } catch {}
 
+    try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
+
     try { document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } })); } catch {}
     try { document.dispatchEvent(new Event("scheduling-status-refresh")); } catch {}
 

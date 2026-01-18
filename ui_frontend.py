@@ -619,12 +619,17 @@ function watchAuthMount(){
   refreshAuthDots(true).catch(()=>{});
 
   if (__authMo) return;
-  __authMo = new MutationObserver(() => {
-    refreshAuthDots(false).catch(()=>{});
-    try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
-  });
+  let t = 0;
+  const kick = () => {
+    if (t) return;
+    t = setTimeout(() => {
+      t = 0;
+      refreshAuthDots(false).catch(()=>{});
+    }, 200);
+  };
 
-  __authMo.observe(host, { childList: true, subtree: true });
+  __authMo = new MutationObserver(() => kick());
+  __authMo.observe(host, { childList: true, subtree: false });
 }
 
 document.addEventListener("settings-collect", () => refreshAuthDots(true), true);

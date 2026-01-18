@@ -41,7 +41,10 @@
       const hint = $("anilist_hint");
       const rid = $("redirect_uri_preview_anilist");
 
-      if (rid) rid.textContent = computeRedirect();
+      if (rid) {
+        const next = computeRedirect();
+        if (rid.textContent !== next) rid.textContent = next;
+      }
       if (btn) btn.disabled = !ok;
       if (hint) hint.classList.toggle("hidden", ok);
     } catch (e) {
@@ -71,32 +74,52 @@
     if (w.__cwAniListAutoInit) return;
     w.__cwAniListAutoInit = true;
 
-    const root = d.body;
-    if (!root) return;
-
+    let obs = null;
     let pending = false;
+
+    const isSettingsVisible = () => {
+      const page = $("page-settings");
+      return !!(page && !page.classList.contains("hidden"));
+    };
+
+    const isReady = () =>
+      !!(
+        $("anilist_client_id") ||
+        $("anilist_client_secret") ||
+        $("anilist_hint") ||
+        $("redirect_uri_preview_anilist") ||
+        $("btn-connect-anilist")
+      );
+
+    const isWired = () => !!($("anilist_client_id")?.__cwBound || $("anilist_client_secret")?.__cwBound);
+
     const schedule = () => {
       if (pending) return;
       pending = true;
       setTimeout(() => {
         pending = false;
         initAniListAuthUI();
+        if (isWired() && obs) {
+          try { obs.disconnect(); } catch {}
+          obs = null;
+        }
       }, 0);
     };
 
-    const obs = new MutationObserver(() => {
-      if (
-        $("anilist_client_id") ||
-        $("anilist_client_secret") ||
-        $("anilist_hint") ||
-        $("redirect_uri_preview_anilist") ||
-        $("btn-connect-anilist")
-      ) {
-        schedule();
-      }
+    const host = $("sec-anilist") || $("page-settings") || d.body;
+    if (!host) return;
+
+    if (isReady()) schedule();
+    if (isWired()) return;
+
+    obs = new MutationObserver(() => {
+      if (d.hidden) return;
+      if (!isSettingsVisible()) return;
+      if (!isReady()) return;
+      schedule();
     });
 
-    obs.observe(root, { childList: true, subtree: true });
+    obs.observe(host, { childList: true, subtree: true });
   }
 
   async function copyAniListRedirect() {
@@ -158,6 +181,7 @@
           msg.textContent = "Disconnected.";
         }
         notify("AniList token removed.");
+        try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       } else {
         if (msg) {
           msg.classList.add("warn");
@@ -242,6 +266,7 @@
         }
 
         pollHandle = null;
+        try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
         return;
       }
 

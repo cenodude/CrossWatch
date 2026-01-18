@@ -2715,14 +2715,29 @@ async function init(opts = {}) {
 
     if (!STATE.__authChangedBound) {
       STATE.__authChangedBound = true;
-      window.addEventListener("auth-changed", async () => {
+      let t = null;
+      let busy = false;
+
+      const run = async () => {
+        if (busy) return;
+        busy = true;
         try {
-          await refreshCfgBeforePopulate();
-        } catch {}
-        try {
-          await refreshWatcher();
-        } catch {}
-        applyModeDisable();
+          if (!d.hidden) {
+            try { await refreshCfgBeforePopulate(); } catch {}
+            try { await refreshWatcher(); } catch {}
+            try { applyModeDisable(); } catch {}
+          }
+        } finally {
+          busy = false;
+        }
+      };
+
+      window.addEventListener("auth-changed", () => {
+        if (t) return;
+        t = setTimeout(() => {
+          t = null;
+          run();
+        }, 400);
       });
     }
 
