@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
 
-import dataclasses as _dc, importlib, inspect, json, os, pkgutil, re, shlex, threading, time, uuid
+import dataclasses as _dc, importlib, inspect, json, os, pkgutil, re, shlex, shutil, threading, time, uuid
 import asyncio
 
 from fastapi import APIRouter, Body, Request
@@ -1447,17 +1447,75 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
             pass
         return {"ok": False, "error": str(e)}
 
+
+
+def _cw_state_dir() -> Path:
+    try:
+        from crosswatch import CW_STATE_DIR
+        return Path(CW_STATE_DIR)
+    except Exception:
+        p = Path('/config/.cw_state')
+        return p if p.exists() else Path('.cw_state')
+
+def _purge_pair_state(pair_id: str) -> dict[str, Any]:
+    state_dir = _cw_state_dir()
+    token = str(pair_id or '').strip()
+    if not token or not state_dir.exists():
+        return {'removed': [], 'errors': []}
+
+    paths: list[Path] = []
+    removed: list[str] = []
+    errors: list[str] = []
+
+    try:
+        for p in state_dir.rglob('*'):
+            try:
+                if token in p.name:
+                    paths.append(p)
+            except Exception:
+                continue
+    except Exception as e:
+        return {'removed': [], 'errors': [f'scan_failed: {e}']}
+
+    paths.sort(key=lambda x: len(x.parts), reverse=True)
+
+    for p in paths:
+        try:
+            rel = str(p.relative_to(state_dir))
+        except Exception:
+            rel = p.name
+        try:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=False)
+            else:
+                p.unlink(missing_ok=True)
+            removed.append(rel)
+        except Exception as e:
+            errors.append(f'{rel}: {e}')
+
+    return {'removed': removed, 'errors': errors}
+
 @router.delete("/pairs/{pair_id}")
-def api_pairs_delete(pair_id: str) -> dict[str, Any]:
+def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
     load_config, save_config = _env()
+    state = {"removed": [], "errors": []}
     try:
         cfg = load_config()
         arr = _cfg_pairs(cfg)
         before = len(arr)
         arr[:] = [it for it in arr if str(it.get("id")) != str(pair_id)]
-        if len(arr) != before:
+        deleted = before - len(arr)
+        if deleted:
             save_config(cfg)
-        return {"ok": True, "deleted": before - len(arr)}
+        if purge_state:
+            state = _purge_pair_state(pair_id)
+        return {
+            "ok": True,
+            "deleted": deleted,
+            "state_removed": len(state.get("removed") or []),
+            "state_errors": len(state.get("errors") or []),
+            "state_removed_preview": (state.get("removed") or [])[:25],
+        }
     except Exception as e:
         try:
             _rt()[8]("TRBL", f"/api/pairs DELETE failed: {e}")
@@ -1573,7 +1631,7 @@ def _scope_env(scope: str, *, src: str = "SYNCAPI", dst: str = "SYNCAPI", mode: 
 def _counts_from_orchestrator(cfg: dict) -> dict:
     from cw_platform.orchestrator import Orchestrator
     with _scope_env("ui_counts", mode="ui", feature="counts"):
-        snaps = Orchestrator(config=cfg).build_snapshots(feature="watchlist")
+        snaps = Orchestrator(cfg).build_snapshots(feature="watchlist")
     out = {k: 0 for k in _PROVIDER_ORDER}
     if isinstance(snaps, dict):
         for name in _PROVIDER_ORDER:

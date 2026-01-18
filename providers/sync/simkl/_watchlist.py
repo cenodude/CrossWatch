@@ -672,7 +672,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(total, total=total)
                 except Exception:
                     pass
-            _log(f"unchanged via activities (reuse shadow) size={len(items)} age={int(age)}s")
+            _log(f"unchanged via activities (reuse shadow) size={len(items)} age={int(age)}s", level="info")
             return items
 
         _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) - ids_only verify")

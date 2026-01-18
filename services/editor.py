@@ -500,11 +500,23 @@ def load_pair_state(kind: Kind, pair: str, dataset: str | None = None) -> dict[s
     except Exception:
         data = {}
 
-    items = {}
+    items: dict[str, Any] = {}
     if isinstance(data, dict):
-        items = data.get("items") or {}
-    if not isinstance(items, dict):
-        items = {}
+        raw_items = data.get("items")
+        raw_events = data.get("events")
+
+        if isinstance(raw_items, dict) and (raw_items or kind != "history"):
+            for k, v in raw_items.items():
+                if isinstance(v, dict) and isinstance(v.get("item"), dict):
+                    items[str(k)] = v["item"]
+                else:
+                    items[str(k)] = v
+        elif kind == "history" and isinstance(raw_events, dict):
+            for k, v in raw_events.items():
+                if isinstance(v, dict) and isinstance(v.get("item"), dict):
+                    items[str(k)] = v["item"]
+                else:
+                    items[str(k)] = v
 
     try:
         ts = int(path.stat().st_mtime)
@@ -529,13 +541,50 @@ def save_pair_state(kind: Kind, pair: str, dataset: str | None, items: dict[str,
 
     if not isinstance(data, dict):
         data = {}
-    data["items"] = dict(items or {})
-    data["edited_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    if kind == "history" and isinstance(data.get("events"), dict):
+        events: dict[str, Any] = {}
+        for k, v in (items or {}).items():
+            if not isinstance(v, dict):
+                continue
+            events[str(k)] = {"item": dict(v)}
+        data["events"] = events
+
+        if "items" in data:
+            try:
+                del data["items"]
+            except Exception:
+                pass
+    else:
+        wrapped = False
+        raw_items = data.get("items")
+        if isinstance(raw_items, dict):
+            for _, v in raw_items.items():
+                if isinstance(v, dict) and isinstance(v.get("item"), dict):
+                    wrapped = True
+                    break
+
+        if wrapped and kind == "ratings":
+            out_items: dict[str, Any] = {}
+            for k, v in (items or {}).items():
+                if not isinstance(v, dict):
+                    continue
+                node: dict[str, Any] = {"item": dict(v)}
+                if v.get("rating") is not None:
+                    node["rating"] = v.get("rating")
+                if v.get("rated_at"):
+                    node["rated_at"] = v.get("rated_at")
+                out_items[str(k)] = node
+            data["items"] = out_items
+        else:
+            data["items"] = dict(items or {})
+
+    data["edited_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _atomic_write_json(path, data)
 
     try:
         ts = int(path.stat().st_mtime)
     except Exception:
         ts = int(datetime.now(timezone.utc).timestamp())
-    return {"items": data["items"], "ts": ts, "file": path.name, "pair": scope}
+
+    return {"items": dict(items or {}), "ts": ts, "file": path.name, "pair": scope}

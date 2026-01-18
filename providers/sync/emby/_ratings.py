@@ -16,6 +16,40 @@ def _unresolved_path() -> str:
     return state_file("emby_ratings.unresolved.json")
 
 
+def _meta_path() -> str:
+    return state_file("emby_ratings.meta.json")
+
+
+def _now_iso_z() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _meta_load() -> dict[str, dict[str, Any]]:
+    if _pair_scope() is None:
+        return {}
+    try:
+        with open(_meta_path(), "r", encoding="utf-8") as f:
+            raw = json.load(f) or {}
+            out: dict[str, dict[str, Any]] = {}
+            for k, v in (raw or {}).items():
+                if isinstance(v, dict):
+                    out[str(k)] = dict(v)
+            return out
+    except Exception:
+        return {}
+
+
+def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
+    if _pair_scope() is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_meta_path()), exist_ok=True)
+        with open(_meta_path(), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        pass
+
+
 
 def _dbg(msg: str, **fields: Any) -> None:
     cw_log("EMBY", "ratings", "debug", msg, **fields)
@@ -145,6 +179,9 @@ def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[
     http = adapter.client
     uid = adapter.cfg.user_id
 
+    meta = _meta_load()
+    meta_changed = False
+
     pidx = provider_index(adapter)
     keys = sorted(pidx.keys())
     out: dict[str, dict[str, Any]] = {}
@@ -183,12 +220,31 @@ def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[
                 if liked is not None:
                     norm["liked"] = bool(liked)
                     norm["user_liked"] = bool(liked)
-                out[canonical_key(norm)] = norm
+                k = canonical_key(norm)
+                cur_rating = norm.get("rating")
+                cur_liked = norm.get("liked")
+                prev = meta.get(k)
+                if not isinstance(prev, dict):
+                    prev = {"rating": cur_rating, "liked": cur_liked, "rated_at": _now_iso_z()}
+                    meta[k] = prev
+                    meta_changed = True
+                else:
+                    if prev.get("rating") != cur_rating or prev.get("liked") != cur_liked:
+                        prev["rating"] = cur_rating
+                        prev["liked"] = cur_liked
+                        prev["rated_at"] = _now_iso_z()
+                        meta_changed = True
+                ra = prev.get("rated_at")
+                if ra:
+                    norm["rated_at"] = str(ra)
+                out[k] = norm
             except Exception:
                 pass
         done += 1
         _progress_tick(progress, done, total=total)
     _info("index_done", count=len(out))
+    if meta_changed:
+        _meta_save(meta)
     return out
 
 
@@ -201,6 +257,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     delay = _delay_ms(adapter)
     ok = 0
     unresolved: list[dict[str, Any]] = []
+
+    meta = _meta_load()
+    meta_changed = False
 
     stats: dict[str, int] = {
         "numeric_set": 0,
@@ -270,6 +329,17 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         if wrote:
             ok += 1
+            ra = str(base.get("rated_at") or m.get("rated_at") or "") or _now_iso_z()
+            cur = meta.get(k) if isinstance(meta.get(k), dict) else {}
+            if rf is None and likes is None:
+                meta.pop(k, None)
+            else:
+                cur = dict(cur or {})
+                cur["rating"] = rf
+                cur["liked"] = likes
+                cur["rated_at"] = ra
+                meta[k] = cur
+            meta_changed = True
             _thaw_if_present([k])
         else:
             unresolved.append({"item": id_minimal(m), "hint": "rate_failed"})
@@ -278,6 +348,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         if delay:
             time.sleep(delay / 1000.0)
+
+    if meta_changed:
+        _meta_save(meta)
 
     _info(
         "write_done",
@@ -297,6 +370,9 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     uid = adapter.cfg.user_id
     ok = 0
     unresolved: list[dict[str, Any]] = []
+
+    meta = _meta_load()
+    meta_changed = False
 
     for it in items or []:
         base: dict[str, Any] = dict(it or {})
@@ -322,9 +398,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         num_ok = _set_numeric_rating(http, uid, iid, rating=None)
         if like_ok or num_ok:
             ok += 1
+            if k in meta:
+                meta.pop(k, None)
+                meta_changed = True
             _thaw_if_present([k])
         else:
             unresolved.append({"item": id_minimal(m), "hint": "clear_failed"})
             _freeze(m, reason="write_failed")
+    if meta_changed:
+        _meta_save(meta)
     _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

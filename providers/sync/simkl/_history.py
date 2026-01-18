@@ -17,6 +17,8 @@ from .._log import log as cw_log
 from ._common import (
     build_headers,
     coalesce_date_from,
+    fetch_activities,
+    extract_latest_ts,
     get_watermark,
     normalize_flat_watermarks,
     key_of as simkl_key_of,
@@ -432,10 +434,11 @@ def _shadow_save(obj: Mapping[str, Any]) -> None:
 
 def _shadow_item(item: Mapping[str, Any]) -> dict[str, Any]:
     typ = str(item.get("type") or "").lower()
+    watched_at = item.get("watched_at") or item.get("watchedAt")
     if typ == "episode":
         ids = dict(item.get("ids") or {})
         show_ids = dict(item.get("show_ids") or {})
-        return {
+        out = {
             "type": "episode",
             "season": item.get("season"),
             "episode": item.get("episode"),
@@ -447,7 +450,13 @@ def _shadow_item(item: Mapping[str, Any]) -> dict[str, Any]:
             "series_year": item.get("series_year"),
             "watched": item.get("watched"),
         }
-    return dict(id_minimal(item))
+        if isinstance(watched_at, str) and watched_at:
+            out["watched_at"] = watched_at
+        return out
+    out = dict(id_minimal(item))
+    if isinstance(watched_at, str) and watched_at:
+        out.setdefault("watched_at", watched_at)
+    return out
 
 
 def _shadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
@@ -457,11 +466,16 @@ def _shadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     shadow = _shadow_load()
     events: dict[str, Any] = dict(shadow.get("events") or {})
     for item in items_list:
-        ts = _as_epoch(item.get("watched_at"))
+        watched_at = item.get("watched_at") or item.get("watchedAt")
+        ts = _as_epoch(watched_at)
         bucket_key = _thaw_key(item)
         if not ts or not bucket_key:
             continue
-        events[f"{bucket_key}@{ts}"] = {"item": _shadow_item(item)}
+        iso = watched_at if isinstance(watched_at, str) and watched_at else _as_iso(int(ts))
+        shadow_item = _shadow_item(item)
+        if isinstance(iso, str) and iso and "watched_at" not in shadow_item:
+            shadow_item["watched_at"] = iso
+        events[f"{bucket_key}@{ts}"] = {"item": shadow_item, "watched_at": iso}
     shadow["events"] = events
     _shadow_save(shadow)
 
@@ -479,11 +493,26 @@ def _shadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
             changed = True
             continue
         item = record.get("item")
-        if isinstance(item, Mapping):
-            item_dict: dict[str, Any] = dict(item)
-            out[event_key] = item_dict
-            thaw.add(_thaw_key(item_dict))
-            merged += 1
+        if not isinstance(item, Mapping):
+            continue
+        item_dict: dict[str, Any] = dict(item)
+        if not item_dict.get("watched_at"):
+            iso = record.get("watched_at")
+            if not (isinstance(iso, str) and iso):
+                ts = _safe_int(str(event_key).rsplit("@", 1)[-1])
+                iso = _as_iso(ts) if ts else None
+            if isinstance(iso, str) and iso:
+                item_dict["watched_at"] = iso
+                fixed_record = dict(record)
+                fixed_item = dict(item)
+                fixed_item["watched_at"] = iso
+                fixed_record["item"] = fixed_item
+                fixed_record["watched_at"] = iso
+                events[event_key] = fixed_record
+                changed = True
+        out[event_key] = item_dict
+        thaw.add(_thaw_key(item_dict))
+        merged += 1
     if merged:
         _log(f"shadow merged {merged} backfill events")
     if changed or merged:
@@ -708,12 +737,73 @@ def _fetch_kind(
     return []
 
 
+
+
+
+def _apply_since_limit(
+    out: dict[str, dict[str, Any]],
+    *,
+    since: int | None,
+    limit: int | None,
+) -> None:
+    if since is not None:
+        cutoff = int(since)
+        for k in list(out.keys()):
+            ts = _safe_int(str(k).rsplit("@", 1)[-1])
+            if ts and ts < cutoff:
+                out.pop(k, None)
+
+    if limit is None:
+        return
+    try:
+        lim = int(limit)
+    except Exception:
+        return
+    if lim <= 0 or len(out) <= lim:
+        return
+
+    scored: list[tuple[int, str]] = []
+    for k in out.keys():
+        ts = _safe_int(str(k).rsplit("@", 1)[-1])
+        scored.append((ts, str(k)))
+    scored.sort(reverse=True)
+    keep = {k for _ts, k in scored[:lim]}
+    for k in list(out.keys()):
+        if k not in keep:
+            out.pop(k, None)
+
+
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     session = adapter.client.session
     timeout = adapter.cfg.timeout
     normalize_flat_watermarks()
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
+
+    acts, _rate = fetch_activities(session, _headers(adapter, force_refresh=True), timeout=timeout)
+    act_latest: str | None = None
+
+    if isinstance(acts, Mapping):
+        wm = get_watermark("history") or ""
+        lm = extract_latest_ts(acts, (("movies", "playback"), ("movies", "all")))
+        ls = extract_latest_ts(acts, (("tv_shows", "playback"), ("shows", "playback"), ("tv_shows", "all"), ("shows", "all")))
+        la = extract_latest_ts(acts, (("anime", "playback"), ("anime", "all")))
+        candidates = [t for t in (lm, ls, la) if isinstance(t, str) and t]
+        act_latest = max(candidates) if candidates else None
+
+        unchanged = (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
+        if unchanged:
+            _log(f"activities unchanged; history from shadow (m={lm} s={ls} a={la})", level="info")
+            _shadow_merge_into(out, thaw)
+            _dedupe_history_movies(out)
+            _apply_since_limit(out, since=since, limit=limit)
+            _unfreeze(thaw)
+            try:
+                _shadow_put_all(out.values())
+            except Exception as exc:
+                _log(f"shadow.put index skipped: {exc}")
+            _log(f"index size: {len(out)} (shadow)", level="info")
+            return out
 
     headers = _headers(adapter, force_refresh=True)
     added = 0
@@ -829,13 +919,18 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _dedupe_history_movies(out)
         _log(
             f"movies={movies_cnt} episodes={eps_cnt} from={df_iso}",
+            level="info",
         )
     else:
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
             f"movies={movies_cnt} episodes=0 from={df_iso}",
+            level="info",
         )
+
+    if act_latest:
+        update_watermark_if_new("history", act_latest)
 
     latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
     if latest_any is not None:
@@ -846,7 +941,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _shadow_put_all(out.values())
     except Exception as exc:
         _log(f"shadow.put index skipped: {exc}")
-    _log(f"index size: {len(out)}")
+    _log(f"index size: {len(out)}", level="info")
     return out
 
 def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:

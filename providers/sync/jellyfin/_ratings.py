@@ -7,6 +7,7 @@ from .._log import log as cw_log
 
 import json
 import os
+import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
@@ -24,6 +25,40 @@ def _unresolved_path() -> str:
 
 def _shadow_path() -> str:
     return str(state_file("jellyfin_ratings.shadow.json"))
+
+
+def _meta_path() -> str:
+    return str(state_file("jellyfin_ratings.meta.json"))
+
+
+def _now_iso_z() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _meta_load() -> dict[str, dict[str, Any]]:
+    if _pair_scope() is None:
+        return {}
+    try:
+        with open(_meta_path(), "r", encoding="utf-8") as f:
+            raw = json.load(f) or {}
+            out: dict[str, dict[str, Any]] = {}
+            for k, v in (raw or {}).items():
+                if isinstance(v, dict):
+                    out[str(k)] = dict(v)
+            return out
+    except Exception:
+        return {}
+
+
+def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
+    if _pair_scope() is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_meta_path()), exist_ok=True)
+        with open(_meta_path(), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception:
+        pass
 
 
 
@@ -198,6 +233,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     total_seen = 0
 
+    meta = _meta_load()
+    meta_changed = False
+
     while True:
         params: dict[str, Any] = {
             "userId": uid,
@@ -251,6 +289,20 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 m["rating"] = round(rf, 1)
 
                 k = canonical_key(m)
+                prev = meta.get(k)
+                cur_rating = m.get("rating")
+                if not isinstance(prev, dict):
+                    prev = {"rating": cur_rating, "rated_at": _now_iso_z()}
+                    meta[k] = prev
+                    meta_changed = True
+                else:
+                    if prev.get("rating") != cur_rating:
+                        prev["rating"] = cur_rating
+                        prev["rated_at"] = _now_iso_z()
+                        meta_changed = True
+                ra = prev.get("rated_at")
+                if ra:
+                    m["rated_at"] = str(ra)
                 jf_new = str((m.get("ids") or {}).get("jellyfin") or row.get("Id") or "")
 
                 prev = out.get(k)
@@ -291,13 +343,23 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         added = 0
         for k in shadow.keys():
             if k not in out:
-                out.setdefault(k, {"shadow": True})
+                if k not in out:
+                    m_shadow: dict[str, Any] = {"shadow": True}
+                    prev = meta.get(k)
+                    if isinstance(prev, dict):
+                        if prev.get("rating") is not None:
+                            m_shadow["rating"] = prev.get("rating")
+                        if prev.get("rated_at"):
+                            m_shadow["rated_at"] = str(prev.get("rated_at"))
+                    out[k] = m_shadow
                 added += 1
         if added:
             _dbg("shadow merged", added=added)
 
     _thaw_if_present(out.keys())
     _info("index done", count=len(out))
+    if meta_changed:
+        _meta_save(meta)
     return out
 
 
@@ -308,6 +370,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     ok = 0
     unresolved: list[dict[str, Any]] = []
     shadow = _shadow_load()
+    meta = _meta_load()
+    meta_changed = False
 
     from ._common import resolve_item_id
 
@@ -353,6 +417,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if _rate(http, uid, iid, rf):
             ok += 1
             shadow[k] = int(shadow.get(k, 0)) + 1
+            ra = str(base.get("rated_at") or m.get("rated_at") or "") or _now_iso_z()
+            cur = meta.get(k) if isinstance(meta.get(k), dict) else {}
+            cur = dict(cur or {})
+            cur["rating"] = round(rf, 1)
+            cur["rated_at"] = ra
+            meta[k] = cur
+            meta_changed = True
             _thaw_if_present([k])
         else:
             unresolved.append({"item": id_minimal(m), "hint": "rate_failed"})
@@ -360,6 +431,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
+    if meta_changed:
+        _meta_save(meta)
 
     _info("add done", ok=ok, unresolved=len(unresolved))
     return ok, unresolved
@@ -371,6 +444,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     ok = 0
     unresolved: list[dict[str, Any]] = []
     shadow = _shadow_load()
+    meta = _meta_load()
+    meta_changed = False
 
     from ._common import resolve_item_id
 
@@ -402,6 +477,9 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
         if _rate(http, uid, iid, None):
             ok += 1
+            if k in meta:
+                meta.pop(k, None)
+                meta_changed = True
             cur = int(shadow.get(k, 0))
             nxt = max(0, cur - 1)
             if nxt > 0:
@@ -415,6 +493,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     shadow = {k: v for k, v in shadow.items() if v > 0}
     _shadow_save(shadow)
+    if meta_changed:
+        _meta_save(meta)
 
     _info("remove done", ok=ok, unresolved=len(unresolved))
     return ok, unresolved

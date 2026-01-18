@@ -93,6 +93,17 @@ def _as_epoch(v: Any) -> int | None:
     return None
 
 
+def _pick_rated_at(it: Mapping[str, Any]) -> str:
+    ra = (it.get("rated_at") or it.get("ratedAt") or it.get("user_rated_at") or it.get("user_ratedAt") or "").strip()
+    if ra:
+        return ra
+    inner = it.get("item") or {}
+    if isinstance(inner, Mapping):
+        ra = (inner.get("rated_at") or inner.get("ratedAt") or inner.get("user_rated_at") or inner.get("user_ratedAt") or "").strip()
+        if ra:
+            return ra
+    return ""
+
 def _as_iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -240,16 +251,24 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
         if not bk or _is_unknown_key(bk):
             continue
         rt = _norm_rating(it.get("rating"))
-        ra = it.get("rated_at") or it.get("ratedAt") or ""
-        ts = _as_epoch(ra) or now
         if rt is None:
             continue
+        ra = _pick_rated_at(it)
+        ts = _as_epoch(ra) or 0
         old = store.get(bk) or {}
-        old_ts = _as_epoch(old.get("rated_at")) or 0
+        old_ra = (old.get("rated_at") or "").strip()
+        old_ts = _as_epoch(old_ra) or 0
+        if not ts and old_ts:
+            store[bk] = {"item": mini, "rating": rt, "rated_at": old_ra}
+            continue
+        if not ts and not old_ts:
+            store[bk] = {"item": mini, "rating": rt, "rated_at": _as_iso(now)}
+            continue
         if ts >= old_ts:
             store[bk] = {"item": mini, "rating": rt, "rated_at": ra or _as_iso(ts)}
     sh["items"] = store
     _rshadow_save(sh)
+
 
 
 def _rshadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
@@ -562,30 +581,33 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
 
-    if since_iso is None:
-        acts, _rate = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
-        if isinstance(acts, Mapping):
-            wm = get_watermark("ratings") or ""
-            lm = extract_latest_ts(acts, (("movies", "rated_at"),))
-            ls = extract_latest_ts(acts, (("tv_shows", "rated_at"), ("shows", "rated_at")))
-            la = extract_latest_ts(acts, (("anime", "rated_at"),))
-            unchanged = (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
-            if unchanged:
-                _log(f"activities unchanged; ratings from shadow (m={lm} s={ls} a={la})")
-                _rshadow_merge_into(out, thaw)
-                _dedupe_prefer_plex_id(out)
-                if prog:
-                    try:
-                        prog.done(ok=True, total=len(out))
-                    except Exception:
-                        pass
-                _unfreeze_if_present(thaw)
+    act_latest: str | None = None
+
+    acts, _rate = fetch_activities(sess, _headers(adapter, force_refresh=True), timeout=tmo)
+    if isinstance(acts, Mapping):
+        wm = get_watermark("ratings") or ""
+        lm = extract_latest_ts(acts, (("movies", "rated_at"),))
+        ls = extract_latest_ts(acts, (("tv_shows", "rated_at"), ("shows", "rated_at")))
+        la = extract_latest_ts(acts, (("anime", "rated_at"),))
+        candidates = [x for x in (lm, ls, la) if x]
+        act_latest = max(candidates) if candidates else None
+        unchanged = bool(wm) and (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
+        if unchanged:
+            _log(f"activities unchanged; ratings from shadow (m={lm} s={ls} a={la})", level="info")
+            _rshadow_merge_into(out, thaw)
+            _dedupe_prefer_plex_id(out)
+            if prog:
                 try:
-                    _rshadow_put_all(out.values())
-                except Exception as exc:
-                    _log(f"shadow.put index skipped: {exc}")
-                _log(f"index size: {len(out)} (shadow)")
-                return out
+                    prog.done(ok=True, total=len(out))
+                except Exception:
+                    pass
+            _unfreeze_if_present(thaw)
+            try:
+                _rshadow_put_all(out.values())
+            except Exception as exc:
+                _log(f"shadow.put index skipped: {exc}")
+            _log(f"index size: {len(out)} (shadow)", level="info")
+            return out
 
     hdrs = _headers(adapter, force_refresh=True)
 
@@ -724,7 +746,13 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         except Exception:
             pass
 
-    _log(f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_all}")
+    _log(
+        f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_all}",
+        level="info",
+    )
+
+    if act_latest:
+        update_watermark_if_new("ratings", act_latest)
 
     latest_any = max([t for t in (max_movies, max_shows, max_anime) if isinstance(t, int)], default=None)
     if latest_any is not None:
@@ -736,7 +764,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     except Exception as exc:
         _log(f"shadow.put index skipped: {exc}")
 
-    _log(f"index size: {len(out)}")
+    _log(f"index size: {len(out)}", level="info")
     return out
 
 
@@ -756,7 +784,7 @@ def _movie_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
     if not ids or rating is None:
         return None
     ent: dict[str, Any] = {"ids": ids, "rating": rating}
-    ra = (it.get("rated_at") or it.get("ratedAt") or "").strip()
+    ra = _pick_rated_at(it)
     if ra:
         ent["rated_at"] = ra
     return ent
@@ -768,7 +796,7 @@ def _show_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
     if not ids or rating is None:
         return None
     ent: dict[str, Any] = {"ids": ids, "rating": rating}
-    ra = (it.get("rated_at") or it.get("ratedAt") or "").strip()
+    ra = _pick_rated_at(it)
     if ra:
         ent["rated_at"] = ra
     return ent
@@ -848,7 +876,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _rshadow_put_all(rshadow_events)
             except Exception:
                 pass
-            _log(f"add done: +{ok}")
+            _log(f"add done: +{ok}", level="info")
             return ok, unresolved
         _log(f"ADD failed {resp.status_code}: {(resp.text or '')[:180]}")
     except Exception as exc:

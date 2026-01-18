@@ -7,7 +7,8 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 try:
     from .._log import log as cw_log
@@ -18,6 +19,27 @@ except Exception:  # pragma: no cover
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import scoped_file, scoped_snapshots_dir, _pair_scope
+
+def _now_iso_z() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
+    base = id_minimal(obj)
+    out: dict[str, Any] = dict(base)
+    for k in ("title", "year"):
+        if k in obj:
+            out[k] = obj.get(k)
+    if obj.get("rating") is not None:
+        out["rating"] = obj.get("rating")
+    if obj.get("liked") is not None:
+        out["liked"] = bool(obj.get("liked"))
+    ra = obj.get("rated_at")
+    if ra:
+        out["rated_at"] = str(ra)
+    elif obj.get("rating") is not None or obj.get("liked") is not None:
+        out["rated_at"] = _now_iso_z()
+    return out
 
 
 def _dbg(msg: str, **fields: Any) -> None:
@@ -90,7 +112,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             key = canonical_key(obj)
             if not key:
                 continue
-            items[key] = id_minimal(obj)
+            items[key] = _accepted(obj)
         return {"ts": 0, "items": items}
 
     if isinstance(raw, Mapping):
@@ -104,7 +126,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 ck = str(key) or canonical_key(value)
                 if not ck:
                     continue
-                items2[ck] = id_minimal(value)
+                items2[ck] = _accepted(value)
             return {"ts": ts, "items": items2}
 
         items3: dict[str, dict[str, Any]] = {}
@@ -114,7 +136,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             ck = str(key) or canonical_key(value)
             if not ck:
                 continue
-            items3[ck] = id_minimal(value)
+            items3[ck] = _accepted(value)
         return {"ts": 0, "items": items3}
 
     return {"ts": 0, "items": {}}
@@ -302,7 +324,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         ck = canonical_key(value) or str(key)
         if not ck:
             continue
-        out[ck] = id_minimal(value)
+        out[ck] = _accepted(value)
 
     total = len(out)
     if prog:
@@ -333,17 +355,19 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            accepted = _accepted(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(minimal)
+        key = canonical_key(accepted)
         if not key:
             unresolved_src.append(obj)
             continue
         existing = cur.get(key)
-        if existing != minimal:
-            cur[key] = minimal
+        new_ts = str(accepted.get("rated_at") or "")
+        old_ts = str((existing or {}).get("rated_at") or "")
+        if existing is None or old_ts <= new_ts:
+            cur[key] = accepted
             changed += 1
 
     if changed:
@@ -372,11 +396,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            accepted = _accepted(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(minimal)
+        key = canonical_key(accepted)
         if not key:
             unresolved_src.append(obj)
             continue

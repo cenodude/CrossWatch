@@ -60,6 +60,22 @@ def _unresolved_path(adapter: Any) -> Path:
 def _restore_state_path(adapter: Any) -> Path:
     return scoped_file(_root(adapter), "history.restore_state.json")
 
+def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
+    base = id_minimal(obj)
+    out: dict[str, Any] = dict(base)
+    if obj.get("watched") is not None:
+        out["watched"] = bool(obj.get("watched"))
+    wa = obj.get("watched_at")
+    if wa:
+        out["watched_at"] = str(wa)
+    for k in ("title", "year", "season", "episode", "series_title", "series_year"):
+        if k in obj:
+            out[k] = obj.get(k)
+    si = obj.get("show_ids")
+    if isinstance(si, Mapping):
+        out["show_ids"] = dict(si)
+    return out
+
 
 def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
@@ -78,7 +94,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             key = canonical_key(obj)
             if not key:
                 continue
-            items[key] = id_minimal(obj)
+            items[key] = _accepted(obj)
         return {"ts": 0, "items": items}
 
     if isinstance(raw, Mapping):
@@ -92,7 +108,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 ck = str(key) or canonical_key(value)
                 if not ck:
                     continue
-                items[ck] = id_minimal(value)
+                items[ck] = _accepted(value)
             return {"ts": ts, "items": items}
 
         items: dict[str, dict[str, Any]] = {}
@@ -102,7 +118,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             ck = str(key) or canonical_key(value)
             if not ck:
                 continue
-            items[ck] = id_minimal(value)
+            items[ck] = _accepted(value)
         return {"ts": 0, "items": items}
 
     return {"ts": 0, "items": {}}
@@ -322,7 +338,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         ck = canonical_key(value) or str(key)
         if not ck:
             continue
-        out[ck] = id_minimal(value)
+        out[ck] = _accepted(value)
 
     total = len(out)
     if prog:
@@ -353,17 +369,20 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            accepted = _accepted(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(minimal)
+        key = canonical_key(accepted)
         if not key:
             unresolved_src.append(obj)
             continue
         existing = cur.get(key)
-        if existing != minimal:
-            cur[key] = minimal
+        if not accepted.get("watched_at"):
+            unresolved_src.append(obj)
+            continue
+        if existing is None or (str(existing.get("watched_at") or "") <= str(accepted.get("watched_at") or "")):
+            cur[key] = accepted
             changed += 1
 
     if changed:
@@ -392,11 +411,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not isinstance(obj, Mapping):
             continue
         try:
-            minimal = id_minimal(obj)
+            accepted = _accepted(obj)
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(minimal)
+        key = canonical_key(accepted)
         if not key:
             unresolved_src.append(obj)
             continue
