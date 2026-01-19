@@ -18,7 +18,14 @@ except Exception:  # pragma: no cover
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-from ._common import scoped_file, scoped_snapshots_dir, _pair_scope
+from ._common import (
+    _pair_scope,
+    latest_snapshot_file,
+    latest_state_file,
+    pair_scoped,
+    scoped_file,
+    scoped_snapshots_dir,
+)
 
 def _now_iso_z() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -98,10 +105,26 @@ def _atomic_write(path: Path, payload: Any) -> None:
 def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
         return {"ts": 0, "items": {}}
+    root = _root(adapter)
     path = _ratings_path(adapter)
-    try:
-        raw = json.loads(path.read_text("utf-8"))
-    except Exception:
+    raw: Any | None
+
+    def _read_json(p: Path) -> Any | None:
+        try:
+            return json.loads(p.read_text("utf-8"))
+        except Exception:
+            return None
+
+    raw = _read_json(path)
+    if raw is None:
+        alt = latest_state_file(root, "ratings")
+        if alt and alt != path:
+            raw = _read_json(alt)
+    if raw is None:
+        snap = latest_snapshot_file(root, "ratings")
+        if snap:
+            raw = _read_json(snap)
+    if raw is None:
         return {"ts": 0, "items": {}}
 
     if isinstance(raw, list):
@@ -113,7 +136,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if not key:
                 continue
             items[key] = _accepted(obj)
-        return {"ts": 0, "items": items}
+        state = {"ts": 0, "items": items}
+        if not pair_scoped() and items and not path.exists():
+            _atomic_write(path, {"ts": int(time.time()), "items": items})
+        return state
 
     if isinstance(raw, Mapping):
         if "items" in raw and isinstance(raw.get("items"), Mapping):
@@ -127,7 +153,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 if not ck:
                     continue
                 items2[ck] = _accepted(value)
-            return {"ts": ts, "items": items2}
+            state = {"ts": ts, "items": items2}
+            if not pair_scoped() and items2 and not path.exists():
+                _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
+            return state
 
         items3: dict[str, dict[str, Any]] = {}
         for key, value in raw.items():
@@ -137,7 +166,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if not ck:
                 continue
             items3[ck] = _accepted(value)
-        return {"ts": 0, "items": items3}
+        state = {"ts": 0, "items": items3}
+        if not pair_scoped() and items3 and not path.exists():
+            _atomic_write(path, {"ts": int(time.time()), "items": items3})
+        return state
 
     return {"ts": 0, "items": {}}
 

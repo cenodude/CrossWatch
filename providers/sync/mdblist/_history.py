@@ -506,20 +506,32 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
     shows_nested: dict[str, dict[str, Any]] = {}
     shows_plain: dict[str, dict[str, Any]] = {}
 
+    nested_show_keys: set[str] = set()
+
     accepted: list[dict[str, Any]] = []
     
-    def _carry_meta(src: Mapping[str, Any], dst: dict[str, Any]) -> None:
-        for k in ("title", "series_title", "year"):
-            v = src.get(k)
-            if v is None or v == "":
-                continue
-            if k == "year":
-                try:
-                    dst[k] = int(v)
-                except Exception:
-                    continue
-            else:
-                dst[k] = v
+    def _carry_meta_for_mdblist(src: Mapping[str, Any], dst: dict[str, Any]) -> None:
+        # MDBList sync payloads are picky: show objects want the show title/year, not episode titles.
+        typ = str(src.get("type") or "").strip().lower()
+        if typ.endswith("s") and typ in ("movies", "shows", "seasons", "episodes"):
+            typ = typ[:-1]
+        if typ in ("season", "episode"):
+            title = src.get("series_title") or src.get("title")
+            y = src.get("series_year") if src.get("year") is None else src.get("year")
+        else:
+            title = src.get("title") or src.get("series_title")
+            y = src.get("year")
+        if isinstance(title, str):
+            title = title.strip()
+        if title:
+            dst["title"] = title
+        try:
+            year = int(y) if y is not None else None
+        except Exception:
+            year = None
+        if year:
+            dst["year"] = year
+
 
     for raw in items or []:
         m = dict(raw or {})
@@ -549,9 +561,10 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             row: dict[str, Any] = {"ids": ids}
             if watched_iso:
                 row["watched_at"] = watched_iso
+            _carry_meta_for_mdblist(m, row)
             movies.append(row)
             acc = {"type": "movie", "ids": ids, **({"watched_at": watched_iso} if watched_iso else {})}
-            _carry_meta(m, acc)
+            _carry_meta_for_mdblist(m, acc)
             accepted.append(acc)
             continue
 
@@ -562,9 +575,10 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             sh = shows_plain.get(key) or {"ids": ids}
             if watched_iso:
                 sh["watched_at"] = watched_iso
+            _carry_meta_for_mdblist(m, sh)
             shows_plain[key] = sh
             acc = {"type": "show", "ids": ids, **({"watched_at": watched_iso} if watched_iso else {})}
-            _carry_meta(m, acc)
+            _carry_meta_for_mdblist(m, acc)
             accepted.append(acc)
             continue
 
@@ -580,7 +594,9 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
         if not sh_ids:
             continue
         skey = _stable_show_key(sh_ids)
+        nested_show_keys.add(skey)
         show_obj = shows_nested.get(skey) or {"ids": sh_ids, "seasons": []}
+        _carry_meta_for_mdblist(m, show_obj)
         if not isinstance(show_obj.get("seasons"), list):
             show_obj["seasons"] = []
         seasons_list: list[dict[str, Any]] = show_obj["seasons"]
@@ -602,7 +618,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
                     **({"watched_at": watched_iso} if watched_iso else {}),
                 }
             )
-            _carry_meta(m, accepted[-1])
+            _carry_meta_for_mdblist(m, accepted[-1])
             continue
 
         ep_num = m.get("episode") if m.get("episode") is not None else m.get("number")
@@ -631,7 +647,27 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
                 **({"watched_at": watched_iso} if watched_iso else {}),
             }
         )
-        _carry_meta(m, accepted[-1])
+        _carry_meta_for_mdblist(m, accepted[-1])
+
+
+    # MDBList's beta watched endpoint is fragile for plain show writes.
+    # If we already have season/episode payloads for a show, drop the redundant show-level row.
+    skipped_nested = 0
+    if shows_plain and nested_show_keys:
+        for k in list(shows_plain.keys()):
+            if k in nested_show_keys:
+                shows_plain.pop(k, None)
+                skipped_nested += 1
+
+    skipped_meta = 0
+    if not unwatch and shows_plain:
+        for k, v in list(shows_plain.items()):
+            if not v.get("title") and not v.get("year"):
+                shows_plain.pop(k, None)
+                skipped_meta += 1
+
+    if skipped_nested or skipped_meta:
+        _log(f"shows_plain filtered nested={skipped_nested} missing_meta={skipped_meta}")
 
     body: dict[str, Any] = {}
     if movies:
@@ -760,6 +796,42 @@ def _write(
                     backoff = min(max_backoff_ms, int(backoff * 1.6) + 200)
                     if attempt <= 4:
                         continue
+
+                if (
+                    r.status_code == 500
+                    and bucket == "shows"
+                    and body_key == "shows_plain"
+                    and len(part) > 1
+                ):
+                    preview = [id_minimal({"type": "show", "ids": (x.get("ids") or {})}) for x in part[:3]]
+                    _log(
+                        f"{'UNWATCH' if unwatch else 'WATCH'} retry split 500 bucket={bucket} stage={body_key} "
+                        f"rows={len(part)} preview={preview}"
+                    )
+
+                    for single in part:
+                        r2 = request_with_retries(
+                            sess,
+                            "POST",
+                            url,
+                            params={"apikey": apikey},
+                            json={bucket: [single]},
+                            timeout=tmo,
+                            max_retries=rr,
+                        )
+                        if r2.status_code in (200, 201, 204):
+                            ok += 1
+                            time.sleep(max(0.0, delay_ms / 1000.0))
+                            continue
+
+                        ids2 = single.get("ids") or {}
+                        unresolved.append(
+                            {
+                                "item": id_minimal({"type": "show", "ids": ids2}),
+                                "hint": f"http:{r2.status_code}",
+                            }
+                        )
+                    break
 
                 _log(
                     f"{'UNWATCH' if unwatch else 'WATCH'} failed {r.status_code} "

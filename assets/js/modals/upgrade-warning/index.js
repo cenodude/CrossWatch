@@ -28,6 +28,9 @@ async function _postJson(url, opts = {}) {
 async function saveNow(btn) {
   const notify = window.notify || ((m) => console.log('[notify]', m));
   try {
+    if (btn && btn.dataset && btn.dataset.done === '1') return;
+  } catch {}
+  try {
     if (btn) {
       btn.disabled = true;
       btn.classList.add('busy');
@@ -38,7 +41,16 @@ async function saveNow(btn) {
   try {
     if (typeof window.saveSettings === 'function') {
       await window.saveSettings();
-      notify('Saved.');
+      notify('Saved. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.');
+
+      try {
+        if (btn) {
+          btn.classList.remove('busy');
+          btn.textContent = 'SAVED';
+          btn.disabled = true;
+          btn.dataset.done = '1';
+        }
+      } catch {}
     } else {
       notify('saveSettings() not found.');
     }
@@ -48,9 +60,11 @@ async function saveNow(btn) {
   } finally {
     try {
       if (btn) {
-        btn.disabled = false;
-        btn.classList.remove('busy');
-        btn.textContent = 'SAVE';
+        if (!btn.dataset || btn.dataset.done !== '1') {
+          btn.disabled = false;
+          btn.classList.remove('busy');
+          btn.textContent = 'SAVE';
+        }
       }
     } catch {}
   }
@@ -185,10 +199,20 @@ export default {
           <div class="h">What to do</div>
           <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, then saves your config so it gets the new <code>version</code> field.</div>
         </div>
+
+        <div class="card">
+          <div class="h">Tip</div>
+          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
+        </div>
         ` : `
         <div class="card">
           <div class="h">What this means</div>
           <div class="p">Nothing is broken. Click <b>SAVE</b> once so CrossWatch can apply the updated config structure.</div>
+        </div>
+
+        <div class="card">
+          <div class="h">Tip</div>
+          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
         </div>
         `}
       </div>

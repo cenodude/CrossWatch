@@ -8,12 +8,27 @@ import shutil
 from pathlib import Path
 
 
+_PAIR_SCOPE_ENV: tuple[str, ...] = ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR")
+
+
+def _truthy_env(name: str) -> bool:
+    v = str(os.getenv(name, "")).strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def pair_scoped() -> bool:
+    return _truthy_env("CW_CROSSWATCH_PAIR_SCOPED")
+
+
 def _pair_scope() -> str | None:
-    for k in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+    if not pair_scoped():
+        return "unscoped"
+
+    for k in _PAIR_SCOPE_ENV:
         v = os.getenv(k)
         if v and str(v).strip():
             return str(v).strip()
-    return None
+    return "unscoped"
 
 
 def _safe_scope(value: str) -> str:
@@ -30,6 +45,9 @@ def scope_safe() -> str:
 
 
 def scoped_file(root: Path, name: str) -> Path:
+    if not pair_scoped():
+        return root / name
+
     safe = scope_safe()
     p = Path(name)
 
@@ -52,4 +70,48 @@ def scoped_file(root: Path, name: str) -> Path:
 
 
 def scoped_snapshots_dir(root: Path) -> Path:
+    if not pair_scoped():
+        return root / "snapshots"
     return root / "snapshots" / scope_safe()
+
+
+def latest_state_file(root: Path, stem: str) -> Path | None:
+    candidates: list[Path] = []
+    legacy = root / f"{stem}.json"
+    if legacy.exists() and legacy.is_file():
+        candidates.append(legacy)
+
+    for p in root.glob(f"{stem}.*.json"):
+        if not p.is_file():
+            continue
+        parts = p.name.split(".")
+        if len(parts) != 3:
+            continue
+        if parts[0] != stem or parts[-1] != "json":
+            continue
+        candidates.append(p)
+
+    if not candidates:
+        return None
+    try:
+        return max(candidates, key=lambda x: x.stat().st_mtime)
+    except Exception:
+        return candidates[-1]
+
+
+def latest_snapshot_file(root: Path, feature: str) -> Path | None:
+    snaps = root / "snapshots"
+    if not snaps.exists() or not snaps.is_dir():
+        return None
+
+    candidates: list[Path] = []
+    for p in snaps.rglob(f"*-{feature}.json"):
+        if p.is_file():
+            candidates.append(p)
+
+    if not candidates:
+        return None
+    try:
+        return max(candidates, key=lambda x: x.stat().st_mtime)
+    except Exception:
+        return candidates[-1]

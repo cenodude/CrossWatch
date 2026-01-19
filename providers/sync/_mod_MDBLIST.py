@@ -101,7 +101,7 @@ def get_manifest() -> Mapping[str, Any]:
         "capabilities": {
             "bidirectional": True,
             "provides_ids": True,
-            "index_semantics": "delta",
+            "index_semantics": "present",
             "history": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -468,7 +468,7 @@ class _MDBLISTOPS:
         return {
             "bidirectional": True,
             "provides_ids": True,
-            "index_semantics": "delta",
+            "index_semantics": "present",
             "history": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
@@ -482,6 +482,66 @@ class _MDBLISTOPS:
                 "from_date": False,
             },
         }
+
+
+    _acts_memo: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def activities(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
+        try:
+            c = cfg or {}
+            m = c.get("mdblist") or {}
+            apikey = str(m.get("api_key") or m.get("apikey") or "").strip()
+            if not apikey:
+                return {}
+
+            now = time.time()
+            memo_key = apikey[-6:] if len(apikey) >= 6 else apikey
+            ent = self._acts_memo.get(memo_key)
+            if ent and (now - float(ent[0])) < 10.0:
+                return dict(ent[1])
+
+            sess = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
+            try:
+                sess.trust_env = False
+            except Exception:
+                pass
+            try:
+                sess.headers.setdefault("Accept", "application/json")
+                sess.headers.setdefault("User-Agent", f"CrossWatch MDBLIST/{__VERSION__}")
+            except Exception:
+                pass
+
+            r = request_with_retries(
+                sess,
+                "GET",
+                f"{MDBLISTClient.BASE}/sync/last_activities",
+                params={"apikey": apikey},
+                timeout=8.0,
+                max_retries=1,
+            )
+            if not (200 <= r.status_code < 300):
+                return {}
+
+            raw = r.json() if (r.text or "").strip() else {}
+            if not isinstance(raw, Mapping):
+                return {}
+
+            acts = dict(raw)
+            watch = acts.get("watchlisted_at") or acts.get("watchlist") or acts.get("updated_at")
+            rated = acts.get("rated_at") or acts.get("ratings") or acts.get("updated_at")
+            hist = acts.get("watched_at") or acts.get("history") or acts.get("updated_at")
+            updated = acts.get("updated_at") or hist or rated or watch
+
+            out = {
+                "watchlist": watch,
+                "ratings": rated,
+                "history": hist,
+                "updated_at": updated,
+            }
+            self._acts_memo[memo_key] = (now, dict(out))
+            return out
+        except Exception:
+            return {}
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         c = cfg or {}
