@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -120,6 +121,12 @@ def register_insights(app: FastAPI) -> None:
         def _format_event_title(e: dict[str, Any]) -> dict[str, Any]:
             out = dict(e)
             t = str(e.get("type") or "").lower()
+            # infer episode type when upstream didn't tag it
+            if not t:
+                raw = (e.get("title") or "").strip()
+                if re.match(r"^s\d{1,3}e\d{1,3}$", raw.lower()):
+                    t = "episode"
+
 
             if t == "movie":
                 title = (e.get("title") or e.get("name") or "").strip()
@@ -128,22 +135,40 @@ def register_insights(app: FastAPI) -> None:
                     out["display_title"] = f"{title} ({year})" if year else title
                 else:
                     out["display_title"] = "Movie"
-
             elif t == "episode":
                 series_title = _series_title_for_event(e)
                 season = e.get("season")
                 episode = e.get("episode")
-                ep_title = (e.get("title") or e.get("episode_title") or "").strip()
+                raw = (e.get("title") or "").strip()
+                ep_title = (e.get("episode_title") or "").strip()
 
-                if series_title and isinstance(season, int) and isinstance(episode, int):
-                    out["display_title"] = f"{series_title} S{int(season):02d}E{int(episode):02d}"
+                code = ""
+                m2 = re.match(r"^s(\d{1,2})e(\d{1,2})$", raw.lower())
+                if m2:
+                    code = f"S{int(m2.group(1)):02d}E{int(m2.group(2)):02d}"
+                elif isinstance(season, int) and isinstance(episode, int):
+                    code = f"S{int(season):02d}E{int(episode):02d}"
+                elif raw:
+                    code = raw
+
+                if series_title and code:
+                    out["display_title"] = f"{series_title} - {code}"
                 elif series_title:
                     out["display_title"] = series_title
+                elif code:
+                    out["display_title"] = code
                 else:
                     out["display_title"] = "Episode"
 
-                if ep_title and ep_title.lower() != series_title.lower():
-                    out["display_subtitle"] = ep_title
+                if ep_title:
+                    low = ep_title.lower()
+                    if series_title and low == series_title.lower():
+                        pass
+                    elif code and low == code.lower():
+                        pass
+                    else:
+                        out["display_subtitle"] = ep_title
+
 
             elif t == "season":
                 series_title = _series_title_for_event(e)
@@ -165,6 +190,109 @@ def register_insights(app: FastAPI) -> None:
             else:
                 title = (e.get("title") or e.get("name") or "").strip()
                 out["display_title"] = title or "Item"
+
+            return out
+
+
+        def _build_show_title_maps(state: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, str]]:
+            key_map: dict[str, str] = {}
+            id_map: dict[str, str] = {}
+
+            state = state or {}
+
+            provs = (state or {}).get("providers") or {}
+            if not isinstance(provs, dict):
+                return key_map, id_map
+
+            for _, pdata in provs.items():
+                if not isinstance(pdata, dict):
+                    continue
+
+                for feat in ("history", "ratings", "watchlist", "playlists"):
+                    node = pdata.get(feat)
+                    if not isinstance(node, dict):
+                        continue
+
+                    baseline = node.get("baseline")
+                    base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
+                    items = base.get("items")
+
+                    if isinstance(items, dict):
+                        iters = items.items()
+                    elif isinstance(items, list):
+                        iters = ((it.get("key"), it) for it in items if isinstance(it, dict))
+                    else:
+                        continue
+
+                    for k, it in iters:
+                        if not isinstance(it, dict):
+                            continue
+
+                        typ = str(it.get("type") or "").lower()
+                        title = (it.get("series_title") or it.get("show_title") or "").strip()
+                        if not title and typ in ("show", "series", "anime"):
+                            title = (it.get("title") or it.get("name") or "").strip()
+                        if not title:
+                            continue
+
+                        for kk in (k, it.get("key")):
+                            if not kk:
+                                continue
+                            kk0 = str(kk).strip().lower()
+                            key_map[kk0] = title
+                            if "#" in kk0:
+                                key_map[kk0.split("#", 1)[0]] = title
+
+                        raw_show_ids = it.get("show_ids")
+                        show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+                        raw_item_ids = it.get("ids")
+                        item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
+                        for ids in (show_ids, item_ids):
+                            if not isinstance(ids, dict):
+                                continue
+                            for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                                v = ids.get(idk)
+                                if v:
+                                    id_map[f"{idk}:{str(v).lower()}"] = title
+
+            return key_map, id_map
+
+        def _enrich_event_from_state(
+            e: dict[str, Any],
+            key_map: dict[str, str],
+            id_map: dict[str, str],
+        ) -> dict[str, Any]:
+            out = dict(e)
+            if out.get("series_title"):
+                return out
+            if out.get("show_title"):
+                out["series_title"] = str(out.get("show_title") or "").strip()
+                return out
+
+            k = str(out.get("key") or "").strip().lower()
+            if k and k in key_map:
+                out["series_title"] = key_map[k]
+                return out
+
+            if k and k in id_map:
+                out["series_title"] = id_map[k]
+                return out
+
+            raw_show_ids = out.get("show_ids")
+            show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+            raw_item_ids = out.get("ids")
+            item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
+            for ids in (show_ids, item_ids):
+                if not isinstance(ids, dict):
+                    continue
+                for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                    v = ids.get(idk)
+                    if not v:
+                        continue
+                    kk = f"{idk}:{str(v).lower()}"
+                    if kk in id_map:
+                        out["series_title"] = id_map[kk]
+                        return out
 
             return out
 
@@ -461,9 +589,16 @@ def register_insights(app: FastAPI) -> None:
                 with lock:
                     data = STATS.data or {}
                 samples_raw = list((data or {}).get("samples") or [])
+                
                 events_raw = list((data or {}).get("events") or [])
+                try:
+                    state = _load_state() or {}
+                except Exception:
+                    state = {}
+                key_map, id_map = _build_show_title_maps(state)
+
                 events = [
-                    _format_event_title(e)
+                    _format_event_title(_enrich_event_from_state(e, key_map, id_map))
                     for e in events_raw
                     if isinstance(e, dict) and not str(e.get("key", "")).startswith("agg:")
                 ]

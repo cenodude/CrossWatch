@@ -144,17 +144,36 @@
       return x.display_title.trim();
     }
 
-    const type = String(x.type || "").toLowerCase();
+    let type = String(x.type || "").toLowerCase();
 
-    if (
-      type === "episode" &&
-      x.series_title &&
-      Number.isInteger(x.season) &&
-      Number.isInteger(x.episode)
-    ) {
-      return `${x.series_title} S${String(x.season).padStart(2, "0")}E${String(
-        x.episode
-      ).padStart(2, "0")}`;
+    const rawTitle = (x.title && String(x.title).trim()) || "";
+    const looksLikeEpisodeCode = /^s\d{1,3}e\d{1,3}$/i.test(rawTitle);
+
+    if (looksLikeEpisodeCode && !type) {
+      x = { ...x, type: "episode" };
+      type = "episode";
+    }
+
+    if (type === "episode") {
+      const show = String(x.series_title || x.show_title || "").trim();
+      const season = Number.isInteger(x.season) ? x.season : null;
+      const episode = Number.isInteger(x.episode) ? x.episode : null;
+
+      const raw = (x.title && String(x.title).trim()) || "";
+      let code = "";
+
+      const m = raw.match(/^s(\d{1,2})e(\d{1,2})$/i);
+      if (m) {
+        code = `S${String(m[1]).padStart(2, "0")}E${String(m[2]).padStart(2, "0")}`;
+      } else if (season != null && episode != null) {
+        code = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+      } else if (raw) {
+        code = raw;
+      }
+
+      if (show && code) return `${show} - ${code}`;
+      if (show) return show;
+      if (code) return code;
     }
 
     if (type === "season") {
@@ -355,7 +374,7 @@
 
   const openSpotsModal = (label, buckets) => {
     const m = ensureSpotsModal();
-    m.querySelector(".ux-spots-title").textContent = `${label} — last 25`;
+    m.querySelector(".ux-spots-title").textContent = `${label} - last 25`;
     const body = m.querySelector(".ux-spots-body");
 
     const tsOf = (it) => {

@@ -613,6 +613,14 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         "playlists": {"add": set(), "remove": set(), "update": set()},
     }
 
+    key_map: dict[str, str] = {}
+    id_map: dict[str, str] = {}
+    try:
+        key_map, id_map = _show_title_maps_from_state(_load_state() or {})
+    except Exception:
+        pass
+
+
     def _sig_for_event(e: dict) -> str:
         k = str(e.get("key") or "").strip().lower()
         if k:
@@ -647,6 +655,7 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
             for k in (
                 "title",
                 "series_title",
+                "show_title",
                 "name",
                 "key",
                 "type",
@@ -669,6 +678,8 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         }
         if "title" not in slim:
             slim["title"] = title
+        _ensure_series_title(e, slim, key_map, id_map)
+        _finalize_spotlight_item(slim)
 
         sig = _sig_for_event(e)
 
@@ -1002,6 +1013,7 @@ def _parse_sync_line(line: str) -> None:
                             pass
                     return 0
 
+                key_map, id_map = _show_title_maps_from_state(_load_state() or {})
                 for feat in ("ratings", "history"):
                     lane = lanes.get(feat) or {}
                     if (
@@ -1029,6 +1041,7 @@ def _parse_sync_line(line: str) -> None:
                                 for k in (
                                     "title",
                                     "series_title",
+                                    "show_title",
                                     "name",
                                     "key",
                                     "type",
@@ -1051,6 +1064,8 @@ def _parse_sync_line(line: str) -> None:
                             }
                             if "title" not in slim:
                                 slim["title"] = e.get("title") or e.get("key") or "item"
+                            _ensure_series_title(e, slim, key_map, id_map)
+                            _finalize_spotlight_item(slim)
                             if any(t in act for t in ("remove", "unrate", "delete", "clear")):
                                 lane.setdefault("spotlight_remove", []).append(slim)
                             elif ("update" in act) or ("rate" in act):
@@ -1118,6 +1133,170 @@ def _load_state() -> dict[str, Any]:
         return json.loads(sp.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    key_map: dict[str, str] = {}
+    id_map: dict[str, str] = {}
+
+    provs = (state or {}).get("providers") or {}
+    if not isinstance(provs, dict):
+        return key_map, id_map
+
+    for _, pdata in provs.items():
+        if not isinstance(pdata, dict):
+            continue
+
+        for feat in ("history", "ratings", "watchlist", "playlists"):
+            node = pdata.get(feat)
+            if not isinstance(node, dict):
+                continue
+
+            baseline = node.get("baseline")
+            base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
+            items = base.get("items")
+
+            if isinstance(items, dict):
+                iters = items.items()
+            elif isinstance(items, list):
+                iters = ((it.get("key"), it) for it in items if isinstance(it, dict))
+            else:
+                continue
+
+            for k, it in iters:
+                if not isinstance(it, dict):
+                    continue
+
+                typ = str(it.get("type") or "").lower()
+                title = (it.get("series_title") or it.get("show_title") or "").strip()
+                if not title and typ in ("show", "series", "anime"):
+                    title = (it.get("title") or it.get("name") or "").strip()
+                if not title:
+                    continue
+
+                if k:
+                    k0 = str(k).strip().lower()
+                    key_map[k0] = title
+                    if "#" in k0:
+                        key_map[k0.split("#", 1)[0]] = title
+
+                kk = it.get("key")
+                if kk:
+                    kk0 = str(kk).strip().lower()
+                    key_map[kk0] = title
+                    if "#" in kk0:
+                        key_map[kk0.split("#", 1)[0]] = title
+
+                raw_show_ids = it.get("show_ids")
+                show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+                raw_item_ids = it.get("ids")
+                item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
+                for ids in (show_ids, item_ids):
+                    if not isinstance(ids, dict):
+                        continue
+                    for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                        v = ids.get(idk)
+                        if v:
+                            id_map[f"{idk}:{str(v).lower()}"] = title
+
+    return key_map, id_map
+
+
+def _ensure_series_title(
+    e: dict[str, Any],
+    slim: dict[str, Any],
+    key_map: dict[str, str],
+    id_map: dict[str, str],
+) -> None:
+    if slim.get("series_title") or slim.get("show_title"):
+        if not slim.get("series_title") and slim.get("show_title"):
+            slim["series_title"] = slim["show_title"]
+        return
+
+    show = (e.get("series_title") or e.get("show_title") or "").strip()
+    if show:
+        slim["series_title"] = show
+        return
+
+    k = str(e.get("key") or "").strip().lower()
+    if k and k in key_map:
+        slim["series_title"] = key_map[k]
+        return
+
+    if k:
+        title = id_map.get(k)
+        if title:
+            slim["series_title"] = title
+            return
+
+    raw_show_ids = e.get("show_ids")
+    show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
+    raw_item_ids = e.get("ids")
+    item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
+    for ids in (show_ids, item_ids):
+        if not isinstance(ids, dict):
+            continue
+        for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+            v = ids.get(idk)
+            if not v:
+                continue
+            kk = f"{idk}:{str(v).lower()}"
+            title = id_map.get(kk)
+            if title:
+                slim["series_title"] = title
+                return
+
+
+_EP_CODE_RE = re.compile(r"^s(\d{1,3})e(\d{1,3})$", re.I)
+
+def _finalize_spotlight_item(it: dict[str, Any]) -> None:
+    # Ensure episode rows render as "Show - SxxEyy" even when upstream didn't tag type.
+    raw_title = str(it.get("title") or it.get("name") or "").strip()
+    raw_type = str(it.get("type") or "").strip().lower()
+
+    show = str(it.get("series_title") or it.get("show_title") or "").strip()
+
+    m = _EP_CODE_RE.match(raw_title)
+    season = it.get("season") if isinstance(it.get("season"), int) else None
+    episode = it.get("episode") if isinstance(it.get("episode"), int) else None
+
+    # Infer episode type if missing.
+    if not raw_type:
+        if m or (season is not None and episode is not None):
+            raw_type = "episode"
+            it["type"] = "episode"
+
+    if raw_type != "episode":
+        return
+
+    if m:
+        try:
+            s_num = int(m.group(1))
+            e_num = int(m.group(2))
+        except Exception:
+            s_num = season
+            e_num = episode
+        if season is None and isinstance(s_num, int):
+            it["season"] = s_num
+            season = s_num
+        if episode is None and isinstance(e_num, int):
+            it["episode"] = e_num
+            episode = e_num
+
+    code = ""
+    if isinstance(season, int) and isinstance(episode, int):
+        code = f"S{season:02d}E{episode:02d}"
+    elif m:
+        code = f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
+    else:
+        code = raw_title
+
+    if show and code:
+        it["display_title"] = f"{show} - {code}"
+    elif show:
+        it["display_title"] = show
+    elif code:
+        it["display_title"] = code
+
 
 # Rating/action mapping
 _R_ACTION_MAP = {
@@ -1724,6 +1903,8 @@ def api_run_summary() -> JSONResponse:
                     pass
             return 0
 
+        key_map, id_map = _show_title_maps_from_state(_load_state() or {})
+
         for feat in ("ratings", "history"):
             lane = feats.get(feat) or {}
             if (
@@ -1749,6 +1930,7 @@ def api_run_summary() -> JSONResponse:
                         for k in (
                             "title",
                             "series_title",
+                            "show_title",
                             "name",
                             "key",
                             "type",
@@ -1771,6 +1953,8 @@ def api_run_summary() -> JSONResponse:
                     }
                     if "title" not in slim:
                         slim["title"] = e.get("title") or e.get("key") or "item"
+                    _ensure_series_title(e, slim, key_map, id_map)
+                    _finalize_spotlight_item(slim)
 
                     if any(t in act for t in ("remove", "unrate", "delete", "clear")):
                         lane.setdefault("spotlight_remove", []).append(slim)
