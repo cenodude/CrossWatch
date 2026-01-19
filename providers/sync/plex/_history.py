@@ -19,7 +19,11 @@ from ._common import (
     read_json,
     state_file,
     write_json,
+    plex_headers,
+    _as_base_url,
+    _xml_to_container,
     normalize as plex_normalize,
+    normalize_discover_row,
     minimal_from_history_row,
     server_find_rating_key_by_guid,
     candidate_guids_from_ids,
@@ -31,6 +35,22 @@ def _unresolved_path() -> Path:
 
 def _shadow_path() -> Path:
     return state_file("plex_history.shadow.json")
+
+def _marked_state_path() -> Path:
+    return state_file("plex_history.marked_watched.json")
+
+
+def _load_marked_state() -> dict[str, Any]:
+    return read_json(_marked_state_path())
+
+
+def _save_marked_state(data: Mapping[str, Any]) -> None:
+    try:
+        write_json(_marked_state_path(), data, indent=0, sort_keys=False, separators=(",", ":"))
+    except Exception:
+        pass
+
+
 
 
 
@@ -93,6 +113,25 @@ def _as_epoch(v: Any) -> int | None:
 
 def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _episode_code(season: Any, episode: Any) -> str | None:
+    try:
+        s = int(season or 0)
+        e = int(episode or 0)
+    except Exception:
+        return None
+    if s <= 0 or e <= 0:
+        return None
+    return f"S{s:02d}E{e:02d}"
+
+
+def _force_episode_title(row: dict[str, Any]) -> None:
+    if (row.get("type") or "").lower() != "episode":
+        return
+    code = _episode_code(row.get("season"), row.get("episode"))
+    if code:
+        row["title"] = code
 
 
 def _plex_cfg(adapter: Any) -> Mapping[str, Any]:
@@ -316,64 +355,112 @@ def _iter_marked_watched_from_library(
     allow: set[str],
     since: int | None,
 ) -> list[tuple[dict[str, Any], int]]:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if not srv:
+        return []
+    base = _as_base_url(srv)
+    ses = getattr(srv, "_session", None)
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    if not (base and ses and token):
+        return []
+
+    state = _load_marked_state()
+    try:
+        last_ts = int((state.get("last_ts") if isinstance(state, dict) else 0) or 0)
+    except Exception:
+        last_ts = 0
+    cutoff = max(int(since or 0), last_ts) if (since is not None or last_ts) else 0
+
+    headers = dict(getattr(ses, "headers", {}) or {})
+    headers.update(plex_headers(token))
+    headers["Accept"] = "application/json"
+
+    def _rows_from(r: Any) -> tuple[list[Mapping[str, Any]], int | None]:
+        try:
+            ctype = (r.headers.get("content-type") or "").lower()
+            data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
+            mc = data.get("MediaContainer") or {}
+            rows = mc.get("Metadata") or []
+            total = mc.get("totalSize")
+            total_i = int(total) if total is not None else None
+            return [x for x in rows if isinstance(x, Mapping)], total_i
+        except Exception:
+            return [], None
+
+    page_size = 200
     results: list[tuple[dict[str, Any], int]] = []
+    newest = last_ts
+
     try:
         sections = list(adapter.libraries(types=("movie", "show")) or [])
     except Exception:
         sections = []
+
     for sec in sections:
         try:
-            section_id = str(getattr(sec, "key", "")).strip()
+            section_id = str(getattr(sec, "key", "") or "").strip()
         except Exception:
             section_id = ""
         if allow and section_id and section_id not in allow:
             continue
+
         section_type = (getattr(sec, "type", "") or "").lower()
-        if section_type == "movie":
+        plex_type = 1 if section_type == "movie" else 4 if section_type == "show" else None
+        if plex_type is None:
+            continue
+
+        start = 0
+        while True:
+            params = {
+                "type": plex_type,
+                "unwatched": 0,
+                "sort": "lastViewedAt:desc",
+                "includeGuids": 1,
+                "X-Plex-Container-Start": start,
+                "X-Plex-Container-Size": page_size,
+            }
             try:
-                items = sec.all() or []
+                r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=15)
             except Exception:
-                items = []
-            for obj in items:
-                try:
-                    if not _is_marked_watched(obj):
-                        continue
-                    ts = _last_view_ts(obj)
-                    if ts is None:
-                        continue
-                    if since is not None and ts < int(since):
-                        continue
-                    meta = plex_normalize(obj) or {}
-                    if not meta:
-                        continue
-                    results.append((meta, int(ts)))
-                except Exception:
+                break
+            if not getattr(r, "ok", False):
+                break
+
+            rows, total = _rows_from(r)
+            if not rows:
+                break
+
+            stop = False
+            for row in rows:
+                ts = _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
+                if not ts:
                     continue
-        elif section_type == "show":
-            try:
-                shows = sec.all() or []
-            except Exception:
-                shows = []
-            for show in shows:
-                try:
-                    episodes = show.episodes() or []
-                except Exception:
-                    episodes = []
-                for ep in episodes:
-                    try:
-                        if not _is_marked_watched(ep):
-                            continue
-                        ts = _last_view_ts(ep)
-                        if ts is None:
-                            continue
-                        if since is not None and ts < int(since):
-                            continue
-                        meta = plex_normalize(ep) or {}
-                        if not meta:
-                            continue
-                        results.append((meta, int(ts)))
-                    except Exception:
-                        continue
+                ts_i = int(ts)
+                if cutoff and ts_i < cutoff:
+                    stop = True
+                    break
+                if ts_i > newest:
+                    newest = ts_i
+                meta = normalize_discover_row(row, token=token) or {}
+                if meta:
+                    results.append((meta, ts_i))
+
+            if stop:
+                break
+            start += len(rows)
+            if total is not None and start >= total:
+                break
+            if len(rows) < page_size:
+                break
+
+    if newest and newest != last_ts:
+        try:
+            st = dict(state) if isinstance(state, dict) else {}
+            st["last_ts"] = newest
+            _save_marked_state(st)
+        except Exception:
+            pass
+
     return results
 
 
@@ -577,6 +664,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         pass
                 continue
         row = dict(meta)
+        _force_episode_title(row)
         row["watched"] = True
         row["watched_at"] = _iso(ts)
         out[f"{canonical_key(row)}@{ts}"] = row
@@ -611,6 +699,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                             pass
                     continue
             row = dict(meta)
+            _force_episode_title(row)
             row["watched"] = True
             row["watched_at"] = _iso(ts)
             out[f"{canonical_key(row)}@{ts}"] = row
@@ -630,6 +719,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 if not ts:
                     continue
                 row = dict(meta)
+                _force_episode_title(row)
                 row["watched"] = True
                 row["watched_at"] = _iso(ts)
                 key = f"{canonical_key(row)}@{ts}"
@@ -741,6 +831,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     if lid is not None and str(lid) not in allow:
                         continue
                 row = dict(meta)
+                _force_episode_title(row)
                 row["watched"] = True
                 ts_int = int(ts)
                 row["watched_at"] = _iso(ts_int)

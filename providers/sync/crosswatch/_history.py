@@ -75,9 +75,31 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
     wa = obj.get("watched_at")
     if wa:
         out["watched_at"] = str(wa)
-    for k in ("title", "year", "season", "episode", "series_title", "series_year"):
-        if k in obj:
-            out[k] = obj.get(k)
+
+    typ = str(obj.get("type") or base.get("type") or "")
+    if typ == "episode":
+        st = obj.get("series_title") or obj.get("show_title") or obj.get("series") or obj.get("show")
+        if st:
+            out["series_title"] = str(st)
+        if obj.get("series_year") is not None:
+            out["series_year"] = obj.get("series_year")
+        season = int(obj.get("season") or 0)
+        episode = int(obj.get("episode") or 0)
+        if season:
+            out["season"] = season
+        if episode:
+            out["episode"] = episode
+        if season and episode:
+            out["title"] = f"S{season:02d}E{episode:02d}"
+        elif "title" in obj:
+            out["title"] = obj.get("title")
+        if "year" in obj:
+            out["year"] = obj.get("year")
+    else:
+        for k in ("title", "year", "season", "episode", "series_title", "series_year"):
+            if k in obj:
+                out[k] = obj.get(k)
+
     si = obj.get("show_ids")
     if isinstance(si, Mapping):
         out["show_ids"] = dict(si)

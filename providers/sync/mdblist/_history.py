@@ -62,7 +62,6 @@ def _error(msg: str, **fields: Any) -> None:
 
 
 def _log(msg: str, **fields: Any) -> None:
-    # Back-compat alias; treat as debug.
     _dbg(msg, **fields)
 def _cache_path() -> Path:
     return state_file("mdblist_history.index.json")
@@ -313,9 +312,17 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
         show_title = str(show.get("title") or show.get("name") or "").strip()
         if show_title:
             out["series_title"] = show_title
-        title = str(ev.get("name") or ev.get("title") or "").strip()
-        if title:
-            out["title"] = title
+
+        try:
+            s = int(out.get("season") or 0)
+            e = int(out.get("episode") or 0)
+        except Exception:
+            s = 0
+            e = 0
+        if s > 0 and e > 0:
+            out["title"] = f"S{s:02d}E{e:02d}"
+        elif show_title:
+            out["title"] = show_title
 
         w = row.get("watched_at") or row.get("last_watched_at")
         if _iso_ok(w):
@@ -511,7 +518,6 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
     accepted: list[dict[str, Any]] = []
     
     def _carry_meta_for_mdblist(src: Mapping[str, Any], dst: dict[str, Any]) -> None:
-        # MDBList sync payloads are picky: show objects want the show title/year, not episode titles.
         typ = str(src.get("type") or "").strip().lower()
         if typ.endswith("s") and typ in ("movies", "shows", "seasons", "episodes"):
             typ = typ[:-1]
@@ -649,9 +655,6 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
         )
         _carry_meta_for_mdblist(m, accepted[-1])
 
-
-    # MDBList's beta watched endpoint is fragile for plain show writes.
-    # If we already have season/episode payloads for a show, drop the redundant show-level row.
     skipped_nested = 0
     if shows_plain and nested_show_keys:
         for k in list(shows_plain.keys()):

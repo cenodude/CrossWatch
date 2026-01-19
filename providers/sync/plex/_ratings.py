@@ -201,6 +201,25 @@ def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _episode_code(season: Any, episode: Any) -> str | None:
+    try:
+        s = int(season or 0)
+        e = int(episode or 0)
+    except Exception:
+        return None
+    if s <= 0 or e <= 0:
+        return None
+    return f"S{s:02d}E{e:02d}"
+
+
+def _force_episode_title(row: dict[str, Any]) -> None:
+    if (row.get("type") or "").lower() != "episode":
+        return
+    code = _episode_code(row.get("season"), row.get("episode"))
+    if code:
+        row["title"] = code
+
+
 def _norm_rating(v: Any) -> int | None:
     if v is None:
         return None
@@ -707,6 +726,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                             si0 = dict(m.get("show_ids") or {})
                             si0.update({k: v for k, v in show_ids_fb.items() if v})
                             m["show_ids"] = si0
+                _force_episode_title(m)
 
                 k = canonical_key(m)
                 if k:

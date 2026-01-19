@@ -866,7 +866,10 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 base.get("title") or (show.get("title") if isinstance(show, Mapping) else "") or "",
             ).strip()
             show_year = base.get("year") or (show.get("year") if isinstance(show, Mapping) else None)
-            ep_meta = _episode_lookup(session, headers, timeout=timeout, show_ids=show_ids, kind=row_kind)
+            series_name: str | None = show_title or (base.get("title") if isinstance(base, Mapping) else None)
+            if not (series_name.strip() if isinstance(series_name, str) else ""):
+                sid = str(show_ids.get("simkl") or "").strip()
+                series_name = f"SIMKL:{sid}" if sid else "Unknown Series"
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
                 s_num = int((season.get("number") or season.get("season") or 0))
@@ -877,23 +880,14 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     ts = _as_epoch(watched_at)
                     if not ts or not s_num or not e_num:
                         continue
-                    meta = ep_meta.get((s_num, e_num)) if isinstance(ep_meta, Mapping) else None
-                    ep_title = meta.get("title") if isinstance(meta, Mapping) else None
-                    ep_ids = meta.get("ids") if isinstance(meta, Mapping) else None
-                    ids_for_key = dict(show_ids)
-                    if isinstance(ep_ids, Mapping):
-                        for k in ID_KEYS:
-                            v = ep_ids.get(k)
-                            if v:
-                                ids_for_key[k] = v
                     ep = {
                         "type": "episode",
                         "season": s_num,
                         "episode": e_num,
-                        "ids": dict(ids_for_key),
-                        "title": (str(ep_title).strip() if isinstance(ep_title, str) and ep_title.strip() else f"S{s_num:02d}E{e_num:02d}"),
+                        "ids": dict(show_ids),
+                        "title": f"S{s_num:02d}E{e_num:02d}",
                         "year": None,
-                        "series_title": show_title or (base.get("title") or None),
+                        "series_title": series_name,
                         "series_year": show_year,
                         "show_ids": dict(show_ids),
                         "watched": True,

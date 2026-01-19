@@ -210,6 +210,14 @@ def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[
                 continue
             try:
                 norm = emby_normalize(body if body.get("Id") else it)
+                if norm.get("type") == "episode":
+                    try:
+                        s = int(norm.get("season") or 0)
+                        e = int(norm.get("episode") or 0)
+                        if s and e:
+                            norm["title"] = f"S{s:02d}E{e:02d}"
+                    except Exception:
+                        pass
                 if rating is not None:
                     try:
                         rf = float(rating)

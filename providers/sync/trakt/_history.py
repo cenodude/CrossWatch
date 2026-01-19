@@ -30,6 +30,7 @@ URL_HIST_EPI = f"{BASE}/sync/history/episodes"
 URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_COLL_ADD = f"{BASE}/sync/collection"
+RESOLVE_ENABLE = False
 
 def _unresolved_path() -> Path:
     return state_file("trakt_history.unresolved.json")
@@ -177,7 +178,7 @@ def _freeze_enabled(adapter: Any) -> bool:
 
 
 def _history_number_fallback_enabled(adapter: Any) -> bool:
-    return bool(_cfg_get(adapter, "history_number_fallback", False))
+    return True if not RESOLVE_ENABLE else bool(_cfg_get(adapter, "history_number_fallback", False))
 
 
 def _history_collection_enabled(adapter: Any) -> bool:
@@ -590,6 +591,8 @@ def _resolve_show_path_id(
     timeout: float,
     retries: int,
 ) -> str | None:
+    if not RESOLVE_ENABLE:
+        return _pick_show_path_id(show_ids or {})
     skey = _stable_show_key(show_ids or {})
     if skey in _SHOW_PATH_CACHE:
         return _SHOW_PATH_CACHE[skey]
@@ -634,6 +637,8 @@ def _resolve_episode_ids_via_trakt(
     timeout: float,
     retries: int,
 ) -> dict[str, str]:
+    if not RESOLVE_ENABLE:
+        return {}
     try:
         s = int(season)
         e = int(number)

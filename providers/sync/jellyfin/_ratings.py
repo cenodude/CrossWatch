@@ -103,7 +103,6 @@ def _warn(msg: str, **fields: Any) -> None:
 
 
 def _dbg_enabled() -> bool:
-    # Keep debug-only expensive logs behind a fast env check.
     if os.getenv("CW_DEBUG") or os.getenv("CW_JELLYFIN_DEBUG"):
         return True
     lvl = (os.getenv("CW_JELLYFIN_LOG_LEVEL") or os.getenv("CW_LOG_LEVEL") or "").strip().lower()
@@ -287,6 +286,22 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 m = dict(m_norm)
                 m["library_id"] = lib_id
                 m["rating"] = round(rf, 1)
+
+                if m.get("type") == "episode":
+                    s = m.get("season")
+                    e = m.get("episode")
+                    try:
+                        s_i = int(s) if s is not None else 0
+                        e_i = int(e) if e is not None else 0
+                    except Exception:
+                        s_i = 0
+                        e_i = 0
+                    if not m.get("series_title"):
+                        st = str(row.get("SeriesName") or "").strip()
+                        if st:
+                            m["series_title"] = st
+                    if s_i > 0 and e_i > 0:
+                        m["title"] = f"S{s_i:02d}E{e_i:02d}"
 
                 k = canonical_key(m)
                 prev = meta.get(k)

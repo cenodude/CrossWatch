@@ -17,6 +17,8 @@ from ._common import (
     normalize as emby_normalize,
     resolve_item_id,
     _pair_scope,
+    _series_minimal_from_episode,
+    prefetch_series_minimals,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from .._log import log as cw_log
@@ -135,6 +137,57 @@ def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int:
     except Exception:
         return 0
 
+
+
+def _prefetch_played_ts(
+    http: Any,
+    uid: str,
+    item_ids: Iterable[Any],
+    _cache: dict[str, int],
+    *,
+    chunk_size: int = 200,
+) -> None:
+    ids: list[str] = []
+    seen = set(_cache.keys())
+    for x in item_ids or []:
+        s = str(x or '').strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        ids.append(s)
+    if not ids:
+        return
+    for batch in chunked(ids, max(1, int(chunk_size))):
+        try:
+            r = http.get(
+                f"/Users/{uid}/Items",
+                params={
+                    "Ids": ','.join(batch),
+                    "Fields": "UserData",
+                    "EnableUserData": True,
+                },
+            )
+        except Exception:
+            r = None
+        if r is None or getattr(r, 'status_code', 0) != 200:
+            for iid in batch:
+                _cache.setdefault(iid, 0)
+            continue
+        try:
+            arr = (r.json() or {}).get('Items') or []
+        except Exception:
+            arr = []
+        for raw in arr:
+            try:
+                iid = str((raw or {}).get('Id') or '').strip()
+                if not iid:
+                    continue
+                ts = _played_ts_from_row(raw)
+                _cache[iid] = int(ts or 0)
+            except Exception:
+                pass
+        for iid in batch:
+            _cache.setdefault(iid, 0)
 # unresolved tracking
 def _unres_load() -> dict[str, Any]:
     if _pair_scope() is None:
@@ -268,94 +321,73 @@ def _history_delay_ms(adapter: Any) -> int:
 
 
 # Emby ID helpers
-def _series_ids_for(http: Any, series_id: str | None) -> dict[str, str]:
-    sid = (str(series_id or "").strip()) or ""
-    if not sid:
-        return {}
-    try:
-        r = http.get(f"/Items/{sid}", params={"Fields": "ProviderIds,ProductionYear"})
-        if getattr(r, "status_code", 0) != 200:
-            return {}
-        body = r.json() or {}
-        pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
-        out: dict[str, str] = {}
-        items: Iterable[tuple[Any, Any]]
-        if isinstance(pids, Mapping):
-            items = pids.items()
-        else:
-            items = ()
-        for k, v in items:
-            kl = str(k).lower()
-            sv = str(v).strip()
-            if not sv:
-                continue
-            if kl == "imdb":
-                out["imdb"] = sv if sv.startswith("tt") else f"tt{sv}"
-            elif kl == "tmdb":
-                try:
-                    out["tmdb"] = str(int(sv))
-                except Exception:
-                    pass
-            elif kl == "tvdb":
-                try:
-                    out["tvdb"] = str(int(sv))
-                except Exception:
-                    pass
-        return out
-    except Exception:
-        return {}
+_item_meta_cache: dict[str, dict[str, Any] | None] = {}
+_item_ids_cache: dict[str, dict[str, str]] = {}
 
-
-def _series_year(http: Any, series_id: str | None) -> int | None:
-    sid = (str(series_id or "").strip()) or ""
-    if not sid:
-        return None
-    try:
-        r = http.get(f"/Items/{sid}", params={"Fields": "ProductionYear"})
-        if getattr(r, "status_code", 0) != 200:
-            return None
-        body = r.json() or {}
-        y = body.get("ProductionYear")
-        try:
-            return int(y) if y is not None else None
-        except Exception:
-            return None
-    except Exception:
-        return None
-
-
-def _item_ids_for(http: Any, item_id: str | None) -> dict[str, str]:
-    iid = (str(item_id or "").strip()) or ""
+def _item_meta(http: Any, item_id: str | None) -> Mapping[str, Any] | None:
+    iid = (str(item_id or '').strip()) or ''
     if not iid:
-        return {}
+        return None
+    if iid in _item_meta_cache:
+        return _item_meta_cache[iid]
     try:
         r = http.get(f"/Items/{iid}", params={"Fields": "ProviderIds,ProductionYear"})
-        if getattr(r, "status_code", 0) != 200:
-            return {}
+        if getattr(r, 'status_code', 0) != 200:
+            _item_meta_cache[iid] = None
+            return None
         body = r.json() or {}
-        pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
-        out: dict[str, str] = {}
-        items: Iterable[tuple[Any, Any]]
-        if isinstance(pids, Mapping):
-            items = pids.items()
-        else:
-            items = ()
-        for k, v in items:
-            kl = str(k).lower()
-            sv = str(v).strip()
-            if not sv:
-                continue
-            if kl == "imdb":
-                out["imdb"] = sv if sv.startswith("tt") else f"tt{sv}"
-            elif kl in ("tmdb", "tvdb"):
-                try:
-                    out[kl] = str(int(sv))
-                except Exception:
-                    pass
-        return out
+        if not isinstance(body, Mapping):
+            _item_meta_cache[iid] = None
+            return None
+        _item_meta_cache[iid] = dict(body)
+        return _item_meta_cache[iid]
     except Exception:
-        return {}
+        _item_meta_cache[iid] = None
+        return None
 
+def _pids_to_ids(pids: Any) -> dict[str, str]:
+    p = pids if isinstance(pids, Mapping) else {}
+    out: dict[str, str] = {}
+    for k, v in p.items():
+        kl = str(k).lower()
+        sv = str(v).strip()
+        if not sv:
+            continue
+        if kl == 'imdb':
+            out['imdb'] = sv if sv.startswith('tt') else f"tt{sv}"
+        elif kl in ('tmdb', 'tvdb'):
+            try:
+                out[kl] = str(int(sv))
+            except Exception:
+                pass
+    return out
+
+def _series_ids_for(http: Any, series_id: str | None) -> dict[str, str]:
+    body = _item_meta(http, series_id)
+    if not body:
+        return {}
+    return _pids_to_ids(body.get('ProviderIds'))
+
+def _series_year(http: Any, series_id: str | None) -> int | None:
+    body = _item_meta(http, series_id)
+    if not body:
+        return None
+    y = body.get('ProductionYear')
+    try:
+        return int(y) if y is not None else None
+    except Exception:
+        return None
+
+def _item_ids_for(http: Any, item_id: str | None) -> dict[str, str]:
+    iid = (str(item_id or '').strip()) or ''
+    if not iid:
+        return {}
+    if iid in _item_ids_cache:
+        return _item_ids_cache[iid]
+    body = _item_meta(http, iid)
+    ids = _pids_to_ids(body.get('ProviderIds')) if body else {}
+    _item_ids_cache[iid] = ids
+    return ids
 
 def _resp_snip(r: Any) -> str:
     try:
@@ -525,6 +557,14 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
 
     http = adapter.client
     uid = adapter.cfg.user_id
+
+    # Per-run caches
+    _item_meta_cache.clear()
+    _item_ids_cache.clear()
+    _lib_anc_cache.clear()
+    series_cache: dict[str, dict[str, Any] | None] = {}
+    played_ts_cache: dict[str, int] = {}
+
     page_size = _history_limit(adapter)
     roots = _emby_library_roots(adapter)
     movie_roots: list[str] = []
@@ -647,11 +687,41 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             if not rows:
                 break
 
+            # Emby episode rows often miss show-level ProviderIds; prefetch series metadata in bulk.
+            try:
+                sids = [
+                    (row.get("SeriesId") or row.get("ParentId"))
+                    for row in rows
+                    if (row.get("Type") or "").strip() == "Episode"
+                ]
+                prefetch_series_minimals(http, uid, sids, series_cache)
+            except Exception:
+                pass
+
+            # Some Emby builds return played items without DatePlayed/LastPlayedDate in the page response.
+            # Batch-fetch UserData for the missing timestamps to avoid per-item backfill calls.
+            try:
+                missing_ts: list[str] = []
+                for row in rows:
+                    if _played_ts_from_row(row):
+                        continue
+                    ud = row.get('UserData') or {}
+                    if ud.get('Played') or ud.get('IsPlayed') or (ud.get('PlayCount') or 0) > 0:
+                        iid = str(row.get('Id') or '').strip()
+                        if iid:
+                            missing_ts.append(iid)
+                _prefetch_played_ts(http, uid, missing_ts, played_ts_cache)
+            except Exception:
+                pass
+
             stop = False
             for row in rows:
                 if callable(filter_row) and not filter_row(row):
                     continue
                 ts = _played_ts_from_row(row)
+                if not ts:
+                    iid = str(row.get('Id') or '').strip()
+                    ts = int(played_ts_cache.get(iid) or 0) if iid else 0
                 if not ts:
                     ts = _played_ts_backfill(http, uid, row)
                 if ts and since_epoch and ts <= since_epoch:
@@ -688,7 +758,22 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     }
                 elif typ == "Episode":
                     sid = row.get("SeriesId") or row.get("ParentId")
-                    show_ids = _series_ids_for(http, sid) or _item_ids_for(http, sid)
+                    smeta = _series_minimal_from_episode(http, uid, row, series_cache)
+                    show_ids_raw = (smeta.get("ids") or {}) if isinstance(smeta, Mapping) else {}
+                    show_ids: dict[str, str] = {}
+                    v = str(show_ids_raw.get("imdb") or "").strip()
+                    if v:
+                        show_ids["imdb"] = v if v.startswith("tt") else f"tt{v}"
+                    for k in ("tmdb", "tvdb"):
+                        vv = str(show_ids_raw.get(k) or "").strip()
+                        if vv:
+                            try:
+                                show_ids[k] = str(int(vv))
+                            except Exception:
+                                pass
+                    if not show_ids and sid:
+                        # Fallback to direct item lookup (cached) if the series item couldn't be resolved.
+                        show_ids = _item_ids_for(http, sid)
                     season = m.get("season")
                     episode = m.get("episode")
                     if season is None:
@@ -703,25 +788,29 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                             pass
                     if season is None or episode is None:
                         continue
-                    series_title = (m.get("series_title") or row.get("SeriesName") or "").strip()
-                    try:
-                        ep_label = f"{series_title} S{int(season):02d}E{int(episode):02d}" if series_title else None
-                    except Exception:
-                        ep_label = None
+                    series_title = (
+                        m.get("series_title")
+                        or row.get("SeriesName")
+                        or (smeta.get("title") if isinstance(smeta, Mapping) else "")
+                        or ""
+                    ).strip()
                     event = {
                         "type": "episode",
                         "season": season,
                         "episode": episode,
                         "series_title": series_title,
-                        "title": (ep_label or (row.get("Name") or series_title or "")).strip(),
+                        "title": f"S{int(season):02d}E{int(episode):02d}",
                         "watched_at": watched_at,
                         "watched": True,
                     }
                     if show_ids:
                         event["show_ids"] = dict(show_ids)
-                    sy = _series_year(http, sid)
+                    sy = smeta.get("year") if isinstance(smeta, Mapping) else None
                     if sy is not None:
-                        event["series_year"] = sy
+                        try:
+                            event["series_year"] = int(sy)
+                        except Exception:
+                            pass
                     epi_ids = (m.get("ids") or {}) if isinstance(m.get("ids"), Mapping) else {}
                     if epi_ids:
                         safe_epi: dict[str, str] = {}
@@ -994,16 +1083,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             played, dst_ts = _dst_user_state(http, uid, iid)
-
             if played and dst_ts and dst_ts >= (src_ts - tol):
-                prev_meta = bb.get(k) or {}
-                if isinstance(prev_meta, Mapping) and prev_meta.get("reason") == "presence:shadow":
-                    shadow[k] = int(shadow.get(k, 0)) + 1
-                    bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
-                    stats["skip_newer"] += 1
-                    continue
-                else:
-                    _dbg("skip_newer_bypassed", key=k, item_id=iid, dst_ts=dst_ts, src_ts=src_ts, tolerance_s=tol)
+                shadow[k] = int(shadow.get(k, 0)) + 1
+                bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
+                stats["skip_newer"] += 1
+                continue
 
             if played and not dst_ts:
                 if _mark_played(http, uid, iid, date_played_iso=src_iso):

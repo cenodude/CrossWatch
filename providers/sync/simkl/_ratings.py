@@ -662,45 +662,19 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
             _merge_row_identity(m, row)
 
-            ids_map = m.get("ids")
             title_cur = m.get("title")
-            title_ok = bool(title_cur.strip() if isinstance(title_cur, str) else "")
-            if (not title_ok or m.get("year") is None) and isinstance(ids_map, Mapping):
-                t2, y2 = _search_id_enrich(
-                    sess,
-                    hdrs,
-                    ids=cast(Mapping[str, Any], ids_map),
-                    timeout=tmo,
-                    cache=search_cache,
-                )
-                if t2 and not title_ok:
-                    m["title"] = t2
-                if y2 is not None and m.get("year") is None:
-                    m["year"] = y2
+            if not (title_cur.strip() if isinstance(title_cur, str) else ""):
+                ids_hint = ""
+                ids_map = m.get("ids")
+                if isinstance(ids_map, Mapping):
+                    for k2 in ("imdb", "tvdb", "tmdb", "simkl"):
+                        v2 = ids_map.get(k2)
+                        if v2:
+                            ids_hint = f"{k2.upper()}:{v2}"
+                            break
+                m["title"] = ids_hint or "Unknown Title"
 
             k = simkl_key_of(m)
-
-            if (not k or _is_unknown_key(k)) and isinstance(m.get("ids"), Mapping):
-                simkl_raw = cast(Mapping[str, Any], m.get("ids")).get("simkl")
-                try:
-                    simkl_id = int(simkl_raw) if simkl_raw is not None else 0
-                except Exception:
-                    simkl_id = 0
-                if simkl_id:
-                    ck = (kind, simkl_id)
-                    meta = resolved_cache.get(ck)
-                    if meta is None:
-                        meta = _resolve_by_simkl_id(sess, hdrs, kind=kind, simkl_id=simkl_id, timeout=tmo)
-                        resolved_cache[ck] = meta
-                    if meta:
-                        mm0 = simkl_normalize(cast(Mapping[str, Any], meta))
-                        mm = dict(mm0) if isinstance(mm0, Mapping) else {}
-                        mm["type"] = m["type"]
-                        mm["rating"] = rt
-                        mm["rated_at"] = m.get("rated_at", "")
-                        _merge_row_identity(mm, row)
-                        m = mm
-                        k = simkl_key_of(m)
 
             if not k or _is_unknown_key(k):
                 done += 1

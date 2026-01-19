@@ -585,6 +585,52 @@ def _series_minimal_from_episode(
     _cache[sid] = None
     return None
 
+
+def prefetch_series_minimals(
+    http: Any,
+    uid: str,
+    series_ids: Iterable[Any],
+    _cache: dict[str, dict[str, Any] | None],
+    *,
+    chunk_size: int = 100,
+) -> None:
+    # Batch-fetch series metadata using Emby /Users/{uid}/Items?Ids=a,b,c...
+    ids: list[str] = []
+    seen: set[str] = set(_cache.keys())
+    for x in series_ids or []:
+        s = str(x or '').strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        ids.append(s)
+    if not ids:
+        return
+    for batch in chunked(ids, max(1, int(chunk_size))):
+        try:
+            r = http.get(
+                f"/Users/{uid}/Items",
+                params={"Ids": ','.join(batch), "Fields": "ProviderIds,ProductionYear,Type,Name"},
+            )
+        except Exception:
+            r = None
+        if r is None or getattr(r, 'status_code', 0) != 200:
+            for sid in batch:
+                _cache.setdefault(sid, None)
+            continue
+        try:
+            arr = (r.json() or {}).get('Items') or []
+        except Exception:
+            arr = []
+        for raw in arr:
+            try:
+                sid = str((raw or {}).get('Id') or '').strip()
+                if sid:
+                    _cache[sid] = normalize(raw)
+            except Exception:
+                pass
+        for sid in batch:
+            _cache.setdefault(sid, None)
+
 def _fetch_all_playlist_items(
     http: Any,
     pid: str,

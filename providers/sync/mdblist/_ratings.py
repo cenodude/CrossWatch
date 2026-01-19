@@ -62,7 +62,6 @@ def _error(msg: str, **fields: Any) -> None:
 
 
 def _log(msg: str, **fields: Any) -> None:
-    # Back-compat alias; treat as debug.
     _dbg(msg, **fields)
 def _cache_path() -> Path:
     return state_file("mdblist_ratings.index.json")
@@ -387,11 +386,17 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
             out["rated_at"] = rated_at
 
         show_title = str(show.get("title") or show.get("name") or "").strip()
-        ep_title = str(ev.get("name") or ev.get("title") or "").strip()
         if show_title:
             out["series_title"] = show_title
-        if ep_title:
-            out["title"] = ep_title
+
+        try:
+            s = int(out.get("season") or 0)
+            e = int(out.get("episode") or 0)
+        except Exception:
+            s = 0
+            e = 0
+        if s > 0 and e > 0:
+            out["title"] = f"S{s:02d}E{e:02d}"
         elif show_title:
             out["title"] = show_title
 
@@ -568,11 +573,17 @@ def build_index(
                         rae = ev.get("rated_at")
                         if rae:
                             em["rated_at"] = rae
-                        ep_title = str(ev.get("name") or ev.get("title") or "").strip()
                         if show_title:
                             em["series_title"] = show_title
-                        if ep_title:
-                            em["title"] = ep_title
+
+                        try:
+                            s_num = int(em.get("season") or 0)
+                            e_num = int(em.get("episode") or 0)
+                        except Exception:
+                            s_num = 0
+                            e_num = 0
+                        if s_num > 0 and e_num > 0:
+                            em["title"] = f"S{s_num:02d}E{e_num:02d}"
                         elif show_title:
                             em["title"] = show_title
                         if year:

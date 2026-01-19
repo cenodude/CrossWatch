@@ -31,6 +31,7 @@ URL_RAT_SEA = f"{BASE}/sync/ratings/seasons"
 URL_RAT_EPI = f"{BASE}/sync/ratings/episodes"
 URL_UPSERT = f"{BASE}/sync/ratings"
 URL_UNRATE = f"{BASE}/sync/ratings/remove"
+RESOLVE_ENABLE = False
 
 def _cache_path() -> Path:
     return state_file("trakt_ratings.index.json")

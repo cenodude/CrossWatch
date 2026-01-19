@@ -213,42 +213,78 @@ def _lib_id_via_ancestors(http: Any, iid: str, roots: Mapping[str, Any]) -> str 
 
 
 # Series IDs fetcher
-def _series_ids_for(http: Any, series_id: str | None) -> dict[str, str]:
-    sid = (str(series_id or "").strip()) or ""
+_SERIES_META_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _prefetch_series_meta(http: Any, uid: str, series_ids: Iterable[str]) -> None:
+    missing: list[str] = []
+    for sid in series_ids or []:
+        ss = str(sid or '').strip()
+        if ss and ss not in _SERIES_META_CACHE and ss not in missing:
+            missing.append(ss)
+    if not missing:
+        return
+    for batch in chunked(missing, 100):
+        ids = ','.join(str(x) for x in batch if x)
+        if not ids:
+            continue
+        try:
+            r = http.get(
+                f"/Users/{uid}/Items",
+                params={
+                    'Ids': ids,
+                    'Fields': 'ProviderIds,ProductionYear,Type,Name',
+                },
+            )
+            if getattr(r, 'status_code', 0) != 200:
+                continue
+            body = r.json() or {}
+            for row in (body.get('Items') or []):
+                if not isinstance(row, Mapping):
+                    continue
+                rid = str(row.get('Id') or '').strip()
+                if rid:
+                    _SERIES_META_CACHE[rid] = dict(row)
+            for sid in batch:
+                ss = str(sid or '').strip()
+                if ss and ss not in _SERIES_META_CACHE:
+                    _SERIES_META_CACHE[ss] = {}
+        except Exception:
+            continue
+
+
+def _series_ids_for(http: Any, uid: str, series_id: str | None) -> dict[str, str]:
+    sid = (str(series_id or '').strip()) or ''
     if not sid:
         return {}
-    try:
-        r = http.get(f"/Items/{sid}", params={"Fields": "ProviderIds,ProductionYear"})
-        if getattr(r, "status_code", 0) != 200:
-            return {}
-        body = r.json() or {}
-        pids = (body.get("ProviderIds") or {}) if isinstance(body, Mapping) else {}
-        out: dict[str, str] = {}
-        items: Iterable[tuple[Any, Any]]
-        if isinstance(pids, Mapping):
-            items = pids.items()
-        else:
-            items = ()
-        for k, v in items:
-            kl = str(k).lower()
-            sv = str(v).strip()
-            if not sv:
-                continue
-            if kl == "imdb":
-                out["imdb"] = sv if sv.startswith("tt") else f"tt{sv}"
-            elif kl == "tmdb":
-                try:
-                    out["tmdb"] = str(int(sv))
-                except Exception:
-                    pass
-            elif kl == "tvdb":
-                try:
-                    out["tvdb"] = str(int(sv))
-                except Exception:
-                    pass
-        return out
-    except Exception:
-        return {}
+    if sid not in _SERIES_META_CACHE:
+        _prefetch_series_meta(http, uid, [sid])
+    body = _SERIES_META_CACHE.get(sid) or {}
+    pids = (body.get('ProviderIds') or {}) if isinstance(body, Mapping) else {}
+    out: dict[str, str] = {}
+    items: Iterable[tuple[Any, Any]]
+    if isinstance(pids, Mapping):
+        items = pids.items()
+    else:
+        items = ()
+    for k, v in items:
+        kl = str(k).lower()
+        sv = str(v).strip()
+        if not sv:
+            continue
+        if kl == 'imdb':
+            out['imdb'] = sv if sv.startswith('tt') else f"tt{sv}"
+        elif kl == 'tmdb':
+            try:
+                out['tmdb'] = str(int(sv))
+            except Exception:
+                pass
+        elif kl == 'tvdb':
+            try:
+                out['tvdb'] = str(int(sv))
+            except Exception:
+                pass
+    return out
 
 
 # low-level Jellyfin writes
@@ -289,6 +325,57 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
         return False, 0
 
 
+
+
+def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tuple[bool, int]]:
+    out: dict[str, tuple[bool, int]] = {}
+    ids: list[str] = []
+    seen: set[str] = set()
+    for x in iids or []:
+        s_id = str(x or '').strip()
+        if s_id and s_id not in seen:
+            seen.add(s_id)
+            ids.append(s_id)
+    if not ids:
+        return out
+    for batch in chunked(ids, 100):
+        qids = ','.join(str(x) for x in batch if x)
+        if not qids:
+            continue
+        try:
+            r = http.get(
+                f"/Users/{uid}/Items",
+                params={
+                    'UserId': uid,
+                    'Ids': qids,
+                    'Fields': 'UserData',
+                    'Recursive': 'false',
+                },
+            )
+            if getattr(r, 'status_code', 0) != 200:
+                continue
+            body = r.json() or {}
+            for row in (body.get('Items') or []):
+                if not isinstance(row, Mapping):
+                    continue
+                iid = str(row.get('Id') or '').strip()
+                if not iid:
+                    continue
+                ud = row.get('UserData') or {}
+                played = bool(ud.get('Played') or ud.get('IsPlayed'))
+                ts = 0
+                for k in ('LastPlayedDate', 'DateLastPlayed', 'LastPlayed'):
+                    v = ud.get(k) or row.get(k)
+                    if v:
+                        ts = _parse_iso_to_epoch(v) or 0
+                        if ts:
+                            break
+                out[iid] = (played, ts)
+        except Exception:
+            continue
+    return out
+
+
 # event index (watched_at)
 def build_index(
     adapter: Any,
@@ -300,6 +387,7 @@ def build_index(
 
     http = adapter.client
     uid = adapter.cfg.user_id
+    _SERIES_META_CACHE.clear()
     page_size = _history_limit(adapter)
 
     since_epoch = 0
@@ -352,6 +440,15 @@ def build_index(
         if not rows:
             break
 
+        series_ids: set[str] = set()
+        for r0 in rows:
+            if (r0.get('Type') or '').strip() == 'Episode':
+                sid = r0.get('SeriesId')
+                if sid:
+                    series_ids.add(str(sid))
+        if series_ids:
+            _prefetch_series_meta(http, uid, sorted(series_ids))
+
         for row in rows:
             ud = row.get("UserData") or {}
             lp = ud.get("LastPlayedDate") or row.get("DateLastPlayed") or None
@@ -363,10 +460,7 @@ def build_index(
                 break
 
             m = jelly_normalize(row)
-
             lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
-            if not lib_id and row.get("Id"):
-                lib_id = _lib_id_via_ancestors(http, str(row["Id"]), roots)
 
             m = dict(m)
             m["library_id"] = lib_id
@@ -384,8 +478,16 @@ def build_index(
                     "watched": True,
                 }
             elif typ == "Episode":
-                show_ids = _series_ids_for(http, row.get("SeriesId"))
-                ep_title = m.get("title") or row.get("Name")
+                show_ids = _series_ids_for(http, uid, row.get("SeriesId"))
+                s = m.get("season")
+                e = m.get("episode")
+                try:
+                    s_i = int(s) if s is not None else 0
+                    e_i = int(e) if e is not None else 0
+                except Exception:
+                    s_i = 0
+                    e_i = 0
+                ep_title = f"S{s_i:02d}E{e_i:02d}" if s_i > 0 and e_i > 0 else (m.get("title") or row.get("Name"))
                 event = {
                     "type": "episode",
                     "ids": dict(m.get("ids") or {}),
@@ -575,6 +677,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     processed = 0
     for chunk in chunked(mids, qlim):
+        states = _dst_user_states(http, uid, [iid for _, iid in chunk])
         for k, iid in chunk:
             src_ts = _parse_iso_to_epoch(wants[k].get("watched_at")) or 0
             if not src_ts:
@@ -585,7 +688,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             src_iso = _epoch_to_iso_z(src_ts)
-            played, dst_ts = _dst_user_state(http, uid, iid)
+            played, dst_ts = states.get(iid, (False, 0))
 
             if played and dst_ts and src_ts and dst_ts >= src_ts:
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
