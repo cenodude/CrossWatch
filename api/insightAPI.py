@@ -257,6 +257,34 @@ def register_insights(app: FastAPI) -> None:
 
             return key_map, id_map
 
+        def _key_lookup_candidates(raw_key: Any) -> list[str]:
+            k = str(raw_key or "").strip().lower()
+            if not k:
+                return []
+
+            out: list[str] = []
+
+            def add(x: str) -> None:
+                x = str(x or "").strip().lower()
+                if x and x not in out:
+                    out.append(x)
+
+            add(k)
+            if "#" in k:
+                base = k.split("#", 1)[0]
+                add(base)
+
+            parts = k.split(":")
+            if len(parts) >= 3:
+                add(f"{parts[0]}:{parts[-1]}")
+
+            if "#" in k:
+                parts2 = k.split("#", 1)[0].split(":")
+                if len(parts2) >= 3:
+                    add(f"{parts2[0]}:{parts2[-1]}")
+
+            return out
+
         def _enrich_event_from_state(
             e: dict[str, Any],
             key_map: dict[str, str],
@@ -269,14 +297,13 @@ def register_insights(app: FastAPI) -> None:
                 out["series_title"] = str(out.get("show_title") or "").strip()
                 return out
 
-            k = str(out.get("key") or "").strip().lower()
-            if k and k in key_map:
-                out["series_title"] = key_map[k]
-                return out
-
-            if k and k in id_map:
-                out["series_title"] = id_map[k]
-                return out
+            for k in _key_lookup_candidates(out.get("key")):
+                if k in key_map:
+                    out["series_title"] = key_map[k]
+                    return out
+                if k in id_map:
+                    out["series_title"] = id_map[k]
+                    return out
 
             raw_show_ids = out.get("show_ids")
             show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
