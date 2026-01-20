@@ -1,3 +1,6 @@
+/* assets/js/playingcard.js */
+/* CrossWatch - Now Playing Card UI */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
   if (window.__PLAYING_CARD_INIT__) return;
   window.__PLAYING_CARD_INIT__ = 1;
@@ -185,15 +188,42 @@
     }
   };
 
-  const fetchCurrentlyWatching = async () => {
-    try {
-      const r = await fetch("/api/watch/currently_watching", { cache: "no-store" });
-      if (!r.ok) return null;
-      const j = await r.json();
-      return j?.currently_watching || null;
-    } catch {
-      return null;
+  let _cwBusy = null;
+  let _cwCacheKey = "";
+  let _cwCacheAt = 0;
+  let _cwCacheVal = null;
+  const CW_TTL_MS = 30000;
+
+  const fetchCurrentlyWatching = async (wantKey) => {
+    const now = Date.now();
+    const wk = String(wantKey || "");
+
+    if (wk && _cwCacheVal && _cwCacheKey === wk && (now - _cwCacheAt) < CW_TTL_MS) {
+      return _cwCacheVal;
     }
+
+    if (_cwBusy) return _cwBusy;
+
+    _cwBusy = (async () => {
+      try {
+        const r = await fetch("/api/watch/currently_watching", { cache: "no-store" });
+        if (!r.ok) return null;
+        const j = await r.json();
+        const v = j?.currently_watching || null;
+        if (v) {
+          _cwCacheVal = v;
+          _cwCacheKey = wk || keyOf(v) || "";
+          _cwCacheAt = Date.now();
+        }
+        return v;
+      } catch {
+        return null;
+      } finally {
+        _cwBusy = null;
+      }
+    })();
+
+    return _cwBusy;
   };
 
   const css = `
@@ -722,8 +752,12 @@
     }
 
     if (!tmdbIdOf(p)) {
-      const api = await fetchCurrentlyWatching();
-      if (api) p = api;
+      const wantKey = keyOf(p);
+      const api = await fetchCurrentlyWatching(wantKey);
+      if (api) {
+        const ak = keyOf(api);
+        if (!wantKey || wantKey === ak || !p.title) p = Object.assign({}, p, api);
+      }
     }
 
     const state = p.state || p.status || eventState;
