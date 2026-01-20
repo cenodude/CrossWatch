@@ -243,12 +243,22 @@ def html() -> str:
     /* pin row */
     #sec-plex .pinrow{ margin-top:8px; display:flex; gap:12px; align-items:center; }
     #sec-plex .pinrow .hint{ color:var(--muted); }
+    #sec-plex .plexmsg{ margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
     #sec-plex #plex_msg{
-      margin-left:auto; display:inline-flex; align-items:center;
+      display:inline-flex; align-items:center;
       white-space:nowrap; width:auto; min-width:0;
       padding:6px 12px; border-radius:10px;
     }
     #sec-plex #plex_msg.hidden{ display:none; }
+
+    #sec-plex #plex_msg_detail{
+      font-size:12px; line-height:1.2;
+      color:var(--muted);
+      max-width:420px;
+      text-align:right;
+    }
+    #sec-plex #plex_msg_detail.warn{ color:#f7b955; }
+    #sec-plex #plex_msg_detail.hidden{ display:none; }
     
     /* Connect PLEX  */
     #sec-plex .pinrow .btn:first-child{
@@ -299,7 +309,10 @@ def html() -> str:
       <button class="btn" onclick="requestPlexPin()">Connect PLEX</button>
       <button class="btn danger" onclick="try{ plexDeleteToken && plexDeleteToken(); }catch(_){;}">Delete</button>
       <div class="hint">Opens plex.tv/link to complete sign-in.</div>
-      <div id="plex_msg" class="msg ok hidden">PIN</div>
+      <div class="plexmsg">
+        <div id="plex_msg" class="msg ok hidden">PIN</div>
+        <div id="plex_msg_detail" class="hidden"></div>
+      </div>
     </div>
 
     <details class="settings">

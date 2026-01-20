@@ -6,7 +6,7 @@
   const notify = w.notify || ((m) => console.log("[notify]", m));
   const bust = () => `?ts=${Date.now()}`;
   const exists = (sel) => !!q(sel);
-  function waitFor(sel, timeout = 2000) {
+  function waitFor(sel, timeout = 12000) {
     return new Promise((res) => {
       const end = Date.now() + timeout;
       (function loop() {
@@ -15,6 +15,28 @@
         requestAnimationFrame(loop);
       })();
     });
+  }
+
+  let __plexHydrateWatch = null;
+  let __plexHydrateTimer = null;
+  function schedulePlexHydrate(delayMs = 0) {
+    try { if (__plexHydrateTimer) clearTimeout(__plexHydrateTimer); } catch {}
+    __plexHydrateTimer = setTimeout(async () => {
+      if (!$("plex_token") || !$("plex_server_url") || !$("plex_username")) return;
+      try { await hydratePlexFromConfigRaw(); } catch {}
+      try { mountPlexLibraryMatrix(); } catch {}
+      try { mountPlexUserPicker(); } catch {}
+      try { schedulePlexPmsProbe(250); } catch {}
+    }, Math.max(0, delayMs | 0));
+  }
+
+  function watchForPlexDom() {
+    if (__plexHydrateWatch) return;
+    schedulePlexHydrate(0);
+    try {
+      __plexHydrateWatch = new MutationObserver(() => schedulePlexHydrate(60));
+      __plexHydrateWatch.observe(d.documentElement || d.body, { childList: true, subtree: true });
+    } catch {}
   }
 
   // status banner
@@ -27,19 +49,56 @@
     el.textContent = text || "";
   }
 
+  function setPlexBannerDetail(kind, text) {
+    const el = $("plex_msg_detail");
+    if (!el) return;
+    el.classList.remove("hidden", "warn");
+    if (!kind || !text) { el.classList.add("hidden"); el.textContent = ""; return; }
+    if (kind) el.classList.add(kind);
+    el.textContent = text || "";
+  }
+
   function setPlexSuccess(on, text) {
-    if (on) setPlexBanner("ok", text || "Connected.");
-    else setPlexBanner(null, "");
+    if (on) setPlexBanner("ok", text || "Connected");
+    else { setPlexBanner(null, ""); setPlexBannerDetail(null, ""); }
   }
 
   function setPlexPending(text) {
     setPlexBanner("warn", text || "Waiting for Plex...");
+    setPlexBannerDetail(null, "");
   }
 
   function setPlexConnected(token) {
-    const t = String(token || "").trim();
-    const short = t ? (t.slice(0, 6) + "..." + t.slice(-4)) : "";
-    setPlexSuccess(true, short ? ("Connected · " + short) : "Connected.");
+    setPlexSuccess(true, "Connected");
+    setPlexBannerDetail(null, "");
+    schedulePlexPmsProbe(200);
+  }
+
+  let __plexProbeT = null;
+  function schedulePlexPmsProbe(delayMs = 400) {
+    try { if (__plexProbeT) clearTimeout(__plexProbeT); } catch {}
+    __plexProbeT = setTimeout(() => { plexProbePmsReachability(); }, Math.max(0, delayMs | 0));
+  }
+
+  async function plexProbePmsReachability() {
+    const tok = String($("plex_token")?.value || "").trim();
+    if (!tok) { setPlexBannerDetail(null, ""); return; }
+    try {
+      const r = await fetch("/api/plex/pms/probe" + bust(), { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.reachable) {
+        setPlexBannerDetail(null, "");
+        return;
+      }
+      const base = String(j?.server_url || "").trim();
+      const sc = Number(j?.status);
+      let msg = "Connected, but PMS is not reachable - validate settings.";
+      if (!base) msg = "Connected, but no PMS URL is set - validate settings.";
+      else if (sc === 401 || sc === 403) msg = "Connected, but PMS rejected the token - validate settings.";
+      setPlexBannerDetail("warn", msg);
+    } catch {
+      setPlexBannerDetail("warn", "Connected, but PMS is not reachable - validate settings.");
+    }
   }
 
   // PIN flow
@@ -61,6 +120,7 @@
     try {
       d.querySelectorAll('#plex_pin, input[name="plex_pin"]').forEach(el => { el.value = pin; });
       const msg = $("plex_msg"); if (msg) { msg.textContent = pin ? ("PIN: " + pin) : "PIN request ok"; msg.classList.remove("hidden"); }
+      try { setPlexBannerDetail(null, ""); } catch {}
       if (pin) { try { await navigator.clipboard.writeText(pin); } catch {} }
       if (win && !win.closed) {
         try { win.focus(); } catch {}
@@ -124,12 +184,14 @@
 
           if (haveDetails || detailTries++ >= 5) {
             try { setPlexSuccess(true); } catch {}
+            try { await plexProbePmsReachability(); } catch {}
             plexPoll = null;
             return;
           }
         } catch (e) {
           console.warn("plex token poll hydrate failed", e);
           try { setPlexSuccess(true); } catch {}
+          try { await plexProbePmsReachability(); } catch {}
           plexPoll = null;
           return;
         }
@@ -142,30 +204,36 @@
   }
 
   // delete Plex account token
-  async function plexDeleteToken() {
-    const btn = document.querySelector('#sec-plex .btn.danger');
-    try { if (btn) { btn.disabled = true; btn.classList.add('busy'); } } catch {}
-    try {
-      const r = await fetch('/api/plex/token/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        cache: 'no-store'
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && (j.ok !== false)) {
-        const el = document.getElementById('plex_token'); if (el) el.value = '';
-        try { setPlexSuccess(false); } catch {}
-        (window.notify || ((m)=>console.log('[notify]', m)))('Plex account token removed.');
-      } else {
-        (window.notify || ((m)=>console.log('[notify]', m)))('Could not remove Plex token.');
-      }
-    } catch {
-      (window.notify || ((m)=>console.log('[notify]', m)))('Error removing Plex token.');
-    } finally {
-      try { if (btn) { btn.disabled = false; btn.classList.remove('busy'); } } catch {}
+async function plexDeleteToken() {
+  const btn = d.querySelector('#sec-plex .btn.danger, #sec-plex [data-action="plex-delete"], #sec-plex button[id*="delete"]');
+  try { if (btn) { btn.disabled = true; btn.classList.add("busy"); } } catch {}
+  try {
+    const r = await fetch("/api/plex/token/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      cache: "no-store"
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && (j.ok !== false)) {
+      ["plex_token", "plex_pin", "plex_username", "plex_account_id"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
+      try { getPlexState().libs = []; } catch {}
+      try { setPlexBanner("warn", "Disconnected"); } catch {}
+      try { setPlexBannerDetail("warn", "Token deleted and saved."); } catch {}
+      try { notify("Plex disconnected (saved)."); } catch {}
+      try { refreshPlexLibraries(); } catch {}
+    } else {
+      const msg = String(j?.error || j?.message || "").trim() || "Could not remove Plex token.";
+      try { setPlexBannerDetail("warn", msg); } catch {}
     }
+  } catch (e) {
+    console.warn("plex delete token failed", e);
+    try { setPlexBannerDetail("warn", "Error removing Plex token."); } catch {}
+  } finally {
+    try { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } } catch {}
   }
+}
+
 
   function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), scr: new Set(), libs: [] }); }
 
@@ -367,6 +435,7 @@
     } catch (e) {
       console.warn("[plex] Auto-Fetch failed", e);
     }
+    try { schedulePlexPmsProbe(200); } catch {}
   }
   
   // User picker
@@ -785,11 +854,27 @@
   function initPlexAuthUI() {
     if (__plexInitDone) return;
     __plexInitDone = true;
+    try { watchForPlexDom(); } catch {}
     try { hookPlexSave(); } catch {}
     setTimeout(() => { try { hydratePlexFromConfigRaw(); } catch {} }, 100);
+    setTimeout(() => { try { schedulePlexPmsProbe(300); } catch {} }, 450);
     try { mountPlexLibraryMatrix(); } catch {}
     try { mountPlexUserPicker(); } catch {}
     try { w.__lastPlexUrl = $("plex_server_url")?.value?.trim() || ""; } catch {}
+
+    try {
+      const urlEl = $("plex_server_url");
+      if (urlEl && !urlEl.__pmsProbeWired) {
+        urlEl.__pmsProbeWired = true;
+        urlEl.addEventListener("change", () => schedulePlexPmsProbe(300));
+        urlEl.addEventListener("blur", () => schedulePlexPmsProbe(300));
+      }
+      const sslEl = $("plex_verify_ssl");
+      if (sslEl && !sslEl.__pmsProbeWired) {
+        sslEl.__pmsProbeWired = true;
+        sslEl.addEventListener("change", () => schedulePlexPmsProbe(300));
+      }
+    } catch {}
   }
 
   if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", initPlexAuthUI, { once: true });
@@ -802,6 +887,7 @@
   d.addEventListener("tab-changed", async (ev) => {
     const onSettings = ev?.detail?.id ? /settings/i.test(ev.detail.id) : !!q("#sec-plex");
     if (onSettings) {
+      try { watchForPlexDom(); } catch {}
       await waitFor("#plex_server_url");
       try { hydratePlexFromConfigRaw(); } catch {}
       try { plexAuto(); } catch {}
@@ -820,6 +906,7 @@
     hydratePlexFromConfigRaw, mountPlexLibraryMatrix,
     openPlexUserPicker, closePlexUserPicker, mountPlexUserPicker,
     refreshPlexLibraries,
+    plexProbePmsReachability,
   });
 
 })(window, document);

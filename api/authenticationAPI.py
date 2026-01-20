@@ -209,6 +209,56 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         ensure_whitelist_defaults()
         return {"libraries": fetch_libraries_from_cfg()}
 
+    @app.get("/api/plex/pms/probe", tags=["media providers"])
+    def plex_pms_probe(timeout: float = 5.0) -> dict[str, Any]:
+        cfg = load_config()
+        plex = (cfg.get("plex") or {})
+        token = (plex.get("account_token") or "").strip()
+        base = (plex.get("server_url") or "").strip().rstrip("/")
+
+        out: dict[str, Any] = {
+            "connected": bool(token),
+            "server_url": base or "",
+            "reachable": False,
+            "status": None,
+        }
+
+        if not token:
+            out["error"] = "Not connected"
+            return out
+
+        if not base:
+            try:
+                ensure_whitelist_defaults()
+                info = inspect_and_persist() or {}
+                base = (info.get("server_url") or "").strip().rstrip("/")
+                if not base:
+                    cfg2 = load_config(); base = ((cfg2.get("plex") or {}).get("server_url") or "").strip().rstrip("/")
+                out["server_url"] = base or ""
+            except Exception:
+                pass
+
+        if not base:
+            out["error"] = "No server_url configured"
+            return out
+
+        try:
+            verify = plex_utils._resolve_verify_from_cfg(cfg, base)
+            s = plex_utils._build_session(token, verify)
+            r = plex_utils._try_get(s, base, "/identity", timeout=float(timeout))
+            if r is None:
+                out["error"] = "No response"
+                return out
+            out["status"] = int(r.status_code)
+            if r.ok:
+                out["reachable"] = True
+                return out
+            out["error"] = "Unauthorized" if r.status_code in (401, 403) else f"HTTP {r.status_code}"
+            return out
+        except Exception as e:
+            out["error"] = str(e)
+            return out
+
     @app.get("/api/plex/pickusers", tags=["media providers"])
     def plex_pickusers() -> dict[str, Any]:
         cfg = load_config()
