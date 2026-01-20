@@ -1,3 +1,6 @@
+/* assets/js/schedulerbanner.js */
+/* CrossWatch - Scheduler Banner and playing card run */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (()=>{ if(window.__SCHED_BANNER_INIT__) return; window.__SCHED_BANNER_INIT__=1; const $=(s,r=document)=>r.querySelector(s);
 
 /* CSS */
@@ -118,10 +121,29 @@ const tClock=s=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,d=new Date(ms);return
 const SCROBBLE_POLL_WATCH_MS=15000;
 const SCROBBLE_POLL_WEBHOOK_MS=60000;
 
+const MIN_SCHED_FETCH_MS=2000;
+const MIN_SCROBBLE_FETCH_MS=2000;
+
 /* State */
 let S={enabled:false,running:false,next:0,busy:false},
     W={enabled:false,alive:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null},
     H={enabled:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null};
+
+let _schedLastAt=0, _schedQueued=false, _schedQueuedForce=false;
+let _scrobLastAt=0, _scrobQueued=false, _scrobQueuedForceCfg=false, _scrobQueuedForce=false;
+let _cwAbort=null;
+
+/* De-dupe event spam to UI listeners */
+const _lastCW = { watcher: '', webhook: '' };
+function emitCurrentlyWatching(source, detail){
+  const payload = { source, ...detail };
+  const key = JSON.stringify(payload);
+  if(_lastCW[source] === key) return;
+  _lastCW[source] = key;
+  try{
+    window.dispatchEvent(new CustomEvent('currently-watching-updated', { detail: payload }));
+  }catch(e){}
+}
 
 let _cfgMemo=null, _cfgAt=0, _cfgBusy=null;
 const CFG_TTL_MS=60000;
@@ -140,23 +162,25 @@ async function readCfg(force=false){
     _cfgAt = Date.now();
     return _cfgMemo;
   }
-
   if(!_cfgMemo) _cfgMemo = {};
   _cfgAt = Date.now();
   return _cfgMemo;
 }
 
-let _pend=false, _forceCfg=false;
+let _pend=false, _forceCfg=false, _forceNow=false;
 function rfr(forceCfg=false){
-  if(forceCfg) _forceCfg = true;
+  if(forceCfg){ _forceCfg = true; _forceNow = true; }
   if(_pend) return;
   _pend=true;
   setTimeout(()=>{
     _pend=false;
-    const f=_forceCfg; _forceCfg=false;
-    fetchSched();
-    fetchScrobble(f);
-    ensureScrobbleLoop(f);
+    const cfg=_forceCfg;
+    const force=_forceNow;
+    _forceCfg=false;
+    _forceNow=false;
+    fetchSched(force);
+    fetchScrobble(cfg, force);
+    ensureScrobbleLoop(cfg);
   },120);
 }
 
@@ -186,28 +210,18 @@ function renderWatch(){
 
   const pct=Math.max(0,Math.min(100,Number(W.progress)||0));
 
-  // Notify UI listeners (playing card)
   if(hasPlay){
-    try{
-      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{
-          source:'watcher',
-          title:W.title||'',
-          media_type:W.media_type||null,
-          year:W.year||null,
-          season:W.season??null,
-          episode:W.episode??null,
-          progress:pct,
-          state:W.state||'playing'
-        }
-      }));
-    }catch(e){}
+    emitCurrentlyWatching('watcher',{
+      title:W.title||'',
+      media_type:W.media_type||null,
+      year:W.year||null,
+      season:W.season??null,
+      episode:W.episode??null,
+      progress:pct,
+      state:W.state||'playing'
+    });
   }else{
-    try{
-      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{ source:'watcher', state:'stopped' }
-      }));
-    }catch(e){}
+    emitCurrentlyWatching('watcher',{ state:'stopped' });
   }
 }
 
@@ -224,42 +238,41 @@ function renderHook(){
 
   const pct=Math.max(0,Math.min(100,Number(H.progress)||0));
 
-  // Notify UI listeners (playing card)
   if(hasPlay){
-    try{
-      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{
-          source:'webhook',
-          title:H.title||'',
-          media_type:H.media_type||null,
-          year:H.year||null,
-          season:H.season??null,
-          episode:H.episode??null,
-          progress:pct,
-          state:H.state||'playing'
-        }
-      }));
-    }catch(e){}
+    emitCurrentlyWatching('webhook',{
+      title:H.title||'',
+      media_type:H.media_type||null,
+      year:H.year||null,
+      season:H.season??null,
+      episode:H.episode??null,
+      progress:pct,
+      state:H.state||'playing'
+    });
   }else{
-    try{
-      window.dispatchEvent(new CustomEvent('currently-watching-updated',{
-        detail:{ source:'webhook', state:'stopped' }
-      }));
-    }catch(e){}
+    emitCurrentlyWatching('webhook',{ state:'stopped' });
   }
 }
 
 /* Fetch */
-async function fetchSched(){ if(S.busy) return; S.busy=true;
+async function fetchSched(force=false){ if(S.busy){ _schedQueued=true; _schedQueuedForce=_schedQueuedForce||force; return; }
+  const now=Date.now();
+  if(!force && _schedLastAt && (now-_schedLastAt)<MIN_SCHED_FETCH_MS){ renderSched(); return; }
+  S.busy=true;
 try{
   if(document.hidden){ S.busy=false; return; }
   const r=await fetch('/api/scheduling/status?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0; const j=await r.json();
   S.enabled=!!(j?.config?.enabled); S.running=!!j?.running; S.next=+(j?.next_run_at||0)||0
 }catch{ S.enabled=false; S.running=false; S.next=0 }
-S.busy=false; renderSched() }
+_schedLastAt=Date.now();
+S.busy=false; renderSched();
+if(_schedQueued){ const f=_schedQueuedForce; _schedQueued=false; _schedQueuedForce=false; setTimeout(()=>fetchSched(f),0); } }
 
 /* Read scrobble once and derive both Watcher and Webhook states */
-async function fetchScrobble(forceCfg=false){ if(W.busy||H.busy) return; W.busy=H.busy=true;
+async function fetchScrobble(forceCfg=false, force=false){ if(W.busy||H.busy){ _scrobQueued=true; _scrobQueuedForceCfg=_scrobQueuedForceCfg||forceCfg; _scrobQueuedForce=_scrobQueuedForce||force; return; }
+  const now=Date.now();
+  const hard=force||forceCfg;
+  if(!hard && _scrobLastAt && (now-_scrobLastAt)<MIN_SCROBBLE_FETCH_MS){ renderWatch(); renderHook(); return; }
+  W.busy=H.busy=true;
 try{
   if(document.hidden){ W.busy=H.busy=false; return; }
 
@@ -270,7 +283,7 @@ try{
   W.enabled=enabled && mode==='watch';
   H.enabled=enabled && mode==='webhook';
 
-  // Reset details
+  /* Reset details */
   W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null;
   H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null;
 
@@ -279,12 +292,14 @@ try{
     W.alive=!!s?.alive;
   } else { W.alive=false }
 
-  // If scrobble is off, don't hit currently_watching at all
+  /* If scrobble is off, don't hit currently_watching */
   if(!(W.enabled || H.enabled)) throw 0;
 
-  const cw = await fetch('/api/watch/currently_watching?t='+Date.now(), {cache:'no-store'})
+  try{ _cwAbort?.abort(); }catch(e){}
+  _cwAbort = new AbortController();
+  const cw = await fetch('/api/watch/currently_watching?t='+Date.now(), {cache:'no-store', signal:_cwAbort.signal})
     .then(r => r.ok ? r.json() : null)
-    .catch(() => null);
+    .catch((e) => (e && e.name === 'AbortError') ? null : null);
   const cur = cw && (cw.currently_watching || cw);
 
   if(cur && cur.state && cur.state!=='stopped'){
@@ -307,7 +322,9 @@ try{
   W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null;
   H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null
 }
-W.busy=H.busy=false; renderWatch(); renderHook() }
+_scrobLastAt=Date.now();
+W.busy=H.busy=false; renderWatch(); renderHook();
+if(_scrobQueued){ const fc=_scrobQueuedForceCfg; const f=_scrobQueuedForce; _scrobQueued=false; _scrobQueuedForceCfg=false; _scrobQueuedForce=false; setTimeout(()=>fetchScrobble(fc, f),0); } }
 
 /* Adaptive scrobble polling */
 async function scrobblePollMs(forceCfg=false){
@@ -331,7 +348,7 @@ function scheduleScrobbleLoop(ms){
   window._scrobPollT = setTimeout(async ()=>{
     window._scrobPollT = null;
     if(document.hidden){ scheduleScrobbleLoop(window._scrobPollMs||ms); return; }
-    await fetchScrobble(false);
+    await fetchScrobble(false, false);
     const next = await scrobblePollMs(false);
     scheduleScrobbleLoop(next);
   }, ms);
@@ -346,12 +363,11 @@ window.refreshSchedulingBanner=rfr;
 
 /* Boot */
 function bootOnce(){
-  // Hard guard: prevent runaway intervals if this script is injected multiple times
   if(window.__SCHED_BANNER_STARTED__) return;
   window.__SCHED_BANNER_STARTED__ = true;
 
   fetchSched();
-  fetchScrobble(true);
+  fetchScrobble(true, true);
   ensureScrobbleLoop(true);
 
   if(!window._schedPoll) window._schedPoll = setInterval(fetchSched, 3e4);
