@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from datetime import datetime, timezone
@@ -44,6 +45,28 @@ URL_LIST = f"{BASE}/sync/watched"
 URL_UPSERT = f"{BASE}/sync/watched"
 URL_REMOVE = f"{BASE}/sync/watched/remove"
 
+IMDB_RE = re.compile(r'^tt\d+$')
+
+def _imdb_ok(value: object) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    return s if IMDB_RE.match(s) else None
+
+
+def _type_norm(value: object) -> str:
+    t = str(value or "").strip().lower()
+    if t.endswith("s") and t in ("movies", "shows", "seasons", "episodes"):
+        t = t[:-1]
+    return t or "movie"
+
+
+def _sync_visible(item: Mapping[str, Any]) -> bool:
+    return _type_norm(item.get("type")) in ("movie", "episode")
+
+
 
 def _dbg(msg: str, **fields: Any) -> None:
     cw_log("MDBLIST", "history", "debug", msg, **fields)
@@ -77,13 +100,50 @@ _max_iso = max_iso
 _pad_since_iso = pad_since_iso
 
 
+def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+    out: dict[str, Any] = {}
+    changed = False
+    for k, v in (items or {}).items():
+        if not isinstance(v, Mapping):
+            changed = True
+            continue
+        item = dict(v)
+        if not _sync_visible(item):
+            changed = True
+            continue
+        ek = _event_key(item)
+        if not ek:
+            changed = True
+            continue
+        if ek != str(k):
+            changed = True
+        cur = out.get(ek)
+        if not cur:
+            out[ek] = item
+            continue
+        w_new = str(item.get('watched_at') or '')
+        w_old = str(cur.get('watched_at') or '')
+        if w_new >= w_old:
+            out[ek] = item
+            changed = True
+    if len(out) != len(items):
+        changed = True
+    return out, changed
+
+
 def _load_cache() -> dict[str, Any]:
     try:
         p = _cache_path()
         doc = read_json(p)
         if not isinstance(doc, dict):
             return {}
-        return dict(doc.get("items") or {})
+        items = dict(doc.get('items') or {})
+        if not items:
+            return {}
+        migrated, changed = _migrate_cache(items)
+        if changed:
+            _save_cache(migrated)
+        return migrated
     except Exception:
         return {}
 
@@ -174,21 +234,27 @@ def _merge_event(dst: dict[str, Any], item: Mapping[str, Any]) -> str | None:
 
 
 def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
-    ids_raw: dict[str, Any] = dict(obj.get("ids") or {})
+    ids_raw: dict[str, Any] = dict(obj.get('ids') or {})
     out: dict[str, Any] = {}
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "kitsu", "mdblist"):
-        v = ids_raw.get(k) or obj.get(k) or obj.get(f"{k}_id")
-        if v is None or v == "":
+    for k in ('imdb', 'tmdb', 'tvdb', 'trakt', 'kitsu', 'mdblist'):
+        v = ids_raw.get(k) or obj.get(k) or obj.get(f'{k}_id')
+        if v is None or v == '':
             continue
-        if k in ("tmdb", "tvdb", "trakt"):
+        if k == 'imdb':
+            vv = _imdb_ok(v)
+            if not vv:
+                continue
+            out[k] = vv
+            continue
+        if k in ('tmdb', 'tvdb', 'trakt'):
             try:
                 out[k] = int(v)
             except Exception:
                 continue
-        else:
-            out[k] = str(v)
-    if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
-        out.pop("tvdb", None)
+            continue
+        out[k] = str(v)
+    if out.get('imdb') and out.get('tmdb') and out.get('tvdb'):
+        out.pop('tvdb', None)
     return out
 
 
@@ -433,27 +499,19 @@ def build_index(
             "seasons": data.get("seasons") or [],
             "episodes": data.get("episodes") or [],
         }
+        sync_buckets = {
+            "movies": buckets["movies"],
+            "episodes": buckets["episodes"],
+        }
 
         added = 0
-        for row in buckets["movies"]:
+        for row in sync_buckets["movies"]:
             m = _row_movie(row) if isinstance(row, Mapping) else None
             if m:
                 _merge_event(out, m)
                 latest_seen = _max_iso(latest_seen, m.get("watched_at"))
                 added += 1
-        for row in buckets["shows"]:
-            m = _row_show(row) if isinstance(row, Mapping) else None
-            if m:
-                _merge_event(out, m)
-                latest_seen = _max_iso(latest_seen, m.get("watched_at"))
-                added += 1
-        for row in buckets["seasons"]:
-            m = _row_season(row) if isinstance(row, Mapping) else None
-            if m:
-                _merge_event(out, m)
-                latest_seen = _max_iso(latest_seen, m.get("watched_at"))
-                added += 1
-        for row in buckets["episodes"]:
+        for row in sync_buckets["episodes"]:
             m = _row_episode(row) if isinstance(row, Mapping) else None
             if m:
                 _merge_event(out, m)
@@ -476,7 +534,7 @@ def build_index(
         if isinstance(pag, Mapping) and pag.get("has_more") is False:
             break
 
-        rows_total = sum(len(v) for v in buckets.values() if isinstance(v, list))
+        rows_total = sum(len(v) for v in sync_buckets.values() if isinstance(v, list))
         if rows_total == 0:
             break
 
@@ -488,7 +546,7 @@ def build_index(
             merged[str(k)] = dict(v)
         _save_cache(merged)
 
-    update_watermark_if_new("history", latest_seen or acts_watched_iso)
+    update_watermark_if_new("history", _max_iso(latest_seen, acts_watched_iso))
 
     if prog:
         try:
@@ -575,6 +633,9 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             continue
 
         if typ == "show":
+            if unwatch:
+                _log(f"skip unwatch: derived type=show item={id_minimal({'type': 'show', 'ids': ids})}")
+                continue
             if not ids:
                 continue
             key = _stable_show_key(ids)
@@ -612,6 +673,9 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             seasons_list.append(season_obj)
 
         if typ == "season":
+            if unwatch:
+                _log(f"skip unwatch: derived type=season item={id_minimal({'type': 'season', 'ids': ids or sh_ids, 'season': s})}")
+                continue
             if watched_iso:
                 season_obj["watched_at"] = watched_iso
             shows_nested[skey] = show_obj
@@ -697,6 +761,37 @@ def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
         yield seq[i : i + n]
 
 
+
+def _count_show_nested_rows(rows: list[Any]) -> int:
+    total = 0
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        seasons = row.get("seasons")
+        if not isinstance(seasons, list):
+            continue
+        for s in seasons:
+            if not isinstance(s, Mapping):
+                continue
+            eps = s.get("episodes")
+            if not isinstance(eps, list):
+                continue
+            for e in eps:
+                if isinstance(e, Mapping):
+                    total += 1
+    return total
+
+
+def _effective_events(bucket: str, body_key: str, part: list[Any]) -> int:
+    if bucket == "movies":
+        return len(part)
+    if bucket == "shows" and body_key == "shows_nested":
+        n = _count_show_nested_rows(part)
+        return n if n > 0 else len(part)
+    if bucket == "shows":
+        return len(part)
+    return len(part)
+
 def _write(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
@@ -738,7 +833,12 @@ def _write(
 
         stage = "" if body_key == bucket else f" stage={body_key}"
         verb = "UNWATCH" if unwatch else "WATCH"
-        _log(f"{verb} bucket={bucket}{stage} rows={len(rows)} chunk={chunk_size}")
+        events_total = len(rows)
+        if bucket == "shows" and body_key == "shows_nested":
+            events_total = _count_show_nested_rows(rows)
+            if events_total <= 0:
+                events_total = len(rows)
+        _log(f"{verb} bucket={bucket}{stage} rows={len(rows)} events={events_total} chunk={chunk_size}")
 
         for part in _chunk(rows, chunk_size):
             payload = {bucket: part}
@@ -768,23 +868,38 @@ def _write(
                             d = {}
 
                     kinds = ("movies", "shows", "seasons", "episodes")
+                    eff = _effective_events(bucket, body_key, part)
                     if unwatch:
                         removed = d.get("removed") or d.get("deleted") or d.get("unwatched") or {}
-                        n = sum(int(removed.get(k) or 0) for k in kinds)
-                        if n <= 0:
-                            n = len(part)
-                        ok += n
+                        n_resp = sum(int(removed.get(k) or 0) for k in kinds)
+                        if n_resp <= 0:
+                            n_resp = eff
+                        if n_resp != eff:
+                            sample = [id_minimal(x) for x in list(part)[:1]]
+                            _log(
+                                f"UNWATCH count mismatch bucket={bucket}{stage} rows={len(part)} events={eff} "
+                                f"reported={n_resp} resp_keys={sorted(list(d.keys()))[:8]} sample={sample}"
+                            )
+                        ok += eff
                     else:
                         updated = d.get("updated") or {}
                         added = d.get("added") or {}
                         existing = d.get("existing") or {}
-                        n = 0
-                        n += sum(int(updated.get(k) or 0) for k in kinds)
-                        n += sum(int(added.get(k) or 0) for k in kinds)
-                        n += sum(int(existing.get(k) or 0) for k in kinds)
-                        if n <= 0:
-                            n = len(part)
-                        ok += n
+                        n_resp = 0
+                        n_resp += sum(int(updated.get(k) or 0) for k in kinds)
+                        n_resp += sum(int(added.get(k) or 0) for k in kinds)
+                        n_resp += sum(int(existing.get(k) or 0) for k in kinds)
+                        if n_resp <= 0:
+                            n_resp = eff
+                        elif n_resp < eff:
+                            # MDBList often reports only "shows" for nested episode payloads.
+                            # Treat the whole chunk as confirmed to avoid misleading "skipped" metrics.
+                            sample = [id_minimal(x) for x in list(part)[:1]]
+                            _log(
+                                f"WATCH count underreported bucket={bucket}{stage} rows={len(part)} events={eff} "
+                                f"reported={n_resp} resp_keys={sorted(list(d.keys()))[:8]} sample={sample}"
+                            )
+                        ok += eff
 
                     time.sleep(max(0.0, delay_ms / 1000.0))
                     break
@@ -850,12 +965,16 @@ def _write(
         cache = _load_cache()
         if unwatch:
             for it in accepted:
+                if not _sync_visible(it):
+                    continue
                 base = _base_key(it)
                 for k in list(cache.keys()):
                     if str(k).startswith(base + "@"):
                         cache.pop(k, None)
         else:
             for it in accepted:
+                if not _sync_visible(it):
+                    continue
                 ek = _event_key(it) if it.get("watched_at") else None
                 if ek:
                     cache[ek] = dict(it)
@@ -863,6 +982,8 @@ def _write(
 
         newest: str | None = None
         for it in accepted:
+            if not _sync_visible(it):
+                continue
             newest = _max_iso(newest, it.get("watched_at"))
         update_watermark_if_new("history", newest)
 

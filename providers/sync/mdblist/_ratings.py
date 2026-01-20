@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from datetime import datetime, timezone
@@ -45,6 +46,18 @@ URL_UNRATE = f"{BASE}/sync/ratings/remove"
 URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 
 
+IMDB_RE = re.compile(r'^tt\d+$')
+
+def _imdb_ok(value: object) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    return s if IMDB_RE.match(s) else None
+
+
+
 def _dbg(msg: str, **fields: Any) -> None:
     cw_log("MDBLIST", "ratings", "debug", msg, **fields)
 
@@ -83,7 +96,11 @@ def _load_cache() -> dict[str, Any]:
         doc = read_json(p)
         if not isinstance(doc, dict):
             return {}
-        return dict(doc.get("items") or {})
+        items = dict(doc.get("items") or {})
+        migrated, changed = _migrate_cache(items)
+        if changed:
+            _save_cache(migrated)
+        return migrated
     except Exception:
         return {}
 
@@ -94,6 +111,48 @@ def _save_cache(items: Mapping[str, Any]) -> None:
         write_json(_cache_path(), doc)
     except Exception as e:
         _warn("cache_save_failed", error=str(e))
+
+
+def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+    out: dict[str, Any] = {}
+    changed = False
+    for k, v in (items or {}).items():
+        if not isinstance(v, Mapping):
+            changed = True
+            continue
+        item = dict(v)
+        ids = item.get("ids")
+        if isinstance(ids, Mapping):
+            ids2 = dict(ids)
+            imdb_ok = _imdb_ok(ids2.get("imdb"))
+            if imdb_ok:
+                if str(ids2.get("imdb") or "") != imdb_ok:
+                    ids2["imdb"] = imdb_ok
+                    changed = True
+            else:
+                if "imdb" in ids2:
+                    ids2.pop("imdb", None)
+                    changed = True
+            item["ids"] = ids2
+        ek = _key_of(item)
+        if not ek:
+            changed = True
+            continue
+        if ek != str(k):
+            changed = True
+        cur = out.get(ek)
+        if not cur:
+            out[ek] = item
+            continue
+        r_new = str(item.get("rated_at") or "")
+        r_old = str(cur.get("rated_at") or "")
+        if r_new >= r_old:
+            out[ek] = item
+            changed = True
+    if len(out) != len(items):
+        changed = True
+    return out, changed
+
 
 
 def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries: int) -> dict[str, Any] | None:
@@ -131,9 +190,9 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "tvdb": item.get("tvdb") or item.get("tvdb_id"),
         }
     out: dict[str, Any] = {}
-    imdb_val = ids_raw.get("imdb")
+    imdb_val = _imdb_ok(ids_raw.get("imdb"))
     if imdb_val:
-        out["imdb"] = str(imdb_val)
+        out["imdb"] = imdb_val
     tmdb_val = ids_raw.get("tmdb")
     if tmdb_val is not None:
         try:
@@ -180,7 +239,7 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             ids_src = show_ids
 
     ids: dict[str, Any] = dict(ids_src or {})
-    imdb = str(ids.get("imdb") or ids.get("imdb_id") or "").strip()
+    imdb = _imdb_ok(ids.get("imdb") or ids.get("imdb_id")) or ""
 
     base = ""
     if imdb:
