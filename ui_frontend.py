@@ -482,14 +482,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/js/scrobbler.js" defer></script>
 <script src="/assets/js/editor.js" defer></script>
 
-<script src="/assets/auth/auth.plex.js?v=0.2.5-20251014-02" defer></script>
-<script src="/assets/auth/auth.simkl.js" defer></script>
-<script src="/assets/auth/auth.trakt.js" defer></script>
-<script src="/assets/auth/auth.jellyfin.js?v=0.2.5-20251014-02" defer></script>
-<script src="/assets/auth/auth.emby.js?v=0.2.5-20251014-02" defer></script>
-<script src="/assets/auth/auth.mdblist.js" defer></script>
-<script src="/assets/auth/auth.tautulli.js" defer></script>
-<script src="/assets/auth/auth.anilist.js" defer></script>
+<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>
 
 <script src="/assets/js/client-formatter.js" defer></script>
 

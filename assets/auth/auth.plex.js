@@ -781,14 +781,23 @@
   }
 
 
-  d.addEventListener("DOMContentLoaded", () => {
-    hookPlexSave();
+  let __plexInitDone = false;
+  function initPlexAuthUI() {
+    if (__plexInitDone) return;
+    __plexInitDone = true;
+    try { hookPlexSave(); } catch {}
     setTimeout(() => { try { hydratePlexFromConfigRaw(); } catch {} }, 100);
     try { mountPlexLibraryMatrix(); } catch {}
     try { mountPlexUserPicker(); } catch {}
+    try { w.__lastPlexUrl = $("plex_server_url")?.value?.trim() || ""; } catch {}
+  }
 
-    try { w.__lastPlexUrl = $("#plex_server_url")?.value?.trim() || ""; } catch {}
-  });
+  if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", initPlexAuthUI, { once: true });
+  else initPlexAuthUI();
+
+  w.cwAuth = w.cwAuth || {};
+  w.cwAuth.plex = w.cwAuth.plex || {};
+  w.cwAuth.plex.init = initPlexAuthUI;
 
   d.addEventListener("tab-changed", async (ev) => {
     const onSettings = ev?.detail?.id ? /settings/i.test(ev.detail.id) : !!q("#sec-plex");

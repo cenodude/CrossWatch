@@ -864,9 +864,23 @@ async function showTab(n) {
     layout?.classList.remove("full");
     logPanel?.classList.add("hidden");
 
-    try { await mountAuthProviders?.(); } catch {}
-    try { await loadConfig(); } catch {}
-    updateTmdbHint?.(); updateSimklHint?.(); updateSimklButtonState?.(); updateTraktHint?.(); startTraktTokenPoll?.();
+    try { await window.mountAuthProviders?.(); } catch {}
+    try { await window.loadConfig?.(); } catch {}
+
+    // Preload auth scripts needed for Settings helpers (lazy-load safe)
+    try {
+      if (typeof window.cwLoadAuth === "function") {
+        await Promise.allSettled([window.cwLoadAuth("simkl"), window.cwLoadAuth("trakt")]);
+      }
+      try { window.cwAuth?.simkl?.init?.(); } catch {}
+      try { window.cwAuth?.trakt?.init?.(); } catch {}
+    } catch {}
+
+    try { window.updateTmdbHint?.(); } catch {}
+    try { window.updateSimklHint?.(); } catch {}
+    try { window.updateSimklButtonState?.(); } catch {}
+    try { window.updateTraktHint?.(); } catch {}
+    try { window.startTraktTokenPoll?.(); } catch {}
 
     if (typeof window.loadScheduling === "function") {
       await window.loadScheduling();
@@ -2298,9 +2312,9 @@ async function loadConfig() {
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
   // UI helper hints
-  try { updateSimklButtonState?.(); } catch {}
-  try { updateSimklHint?.();      } catch {}
-  try { updateTmdbHint?.();       } catch {}
+  try { window.updateSimklButtonState?.(); } catch {}
+  try { window.updateSimklHint?.();      } catch {}
+  try { window.updateTmdbHint?.();       } catch {}
   try {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else applySyncVisibility?.();

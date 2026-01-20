@@ -151,13 +151,23 @@
   }
 
   // lifecycle
-  d.addEventListener("DOMContentLoaded", () => {
+  let __simklInitDone = false;
+  function initSimklAuthUI() {
+    if (__simklInitDone) return;
+    __simklInitDone = true;
     $("simkl_client_id")?.addEventListener("input", updateSimklButtonState);
     $("simkl_client_secret")?.addEventListener("input", updateSimklButtonState);
     const rid = $("redirect_uri_preview");
     if (rid) rid.textContent = computeRedirect();
     updateSimklButtonState();
-  });
+  }
+
+  if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", initSimklAuthUI, { once: true });
+  else initSimklAuthUI();
+
+  w.cwAuth = w.cwAuth || {};
+  w.cwAuth.simkl = w.cwAuth.simkl || {};
+  w.cwAuth.simkl.init = initSimklAuthUI;
 
   // exports
   Object.assign(w, {

@@ -276,9 +276,12 @@
     pollHandle = setTimeout(poll, 1000);
   }
 
-  d.addEventListener("DOMContentLoaded", () => {
-    initAniListAuthUI();
-    autoInitAniListAuthUI();
+  let __anilistInitDone = false;
+  function initAniListAuthLoader() {
+    if (__anilistInitDone) return;
+    __anilistInitDone = true;
+    try { initAniListAuthUI(); } catch (_) {}
+    try { autoInitAniListAuthUI(); } catch (_) {}
     (async function hydrateAniListBannerFromConfig() {
       try {
         const cfg = await fetch('/api/config' + bust(), { cache: 'no-store' }).then(r => r.ok ? r.json() : null);
@@ -290,7 +293,14 @@
         }
       } catch (_) {}
     })();
-  });
+  }
+
+  if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', initAniListAuthLoader, { once: true });
+  else initAniListAuthLoader();
+
+  w.cwAuth = w.cwAuth || {};
+  w.cwAuth.anilist = w.cwAuth.anilist || {};
+  w.cwAuth.anilist.init = initAniListAuthLoader;
 
   Object.assign(w, {
     setAniListSuccess,

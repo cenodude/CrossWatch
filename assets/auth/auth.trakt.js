@@ -136,7 +136,11 @@
     await _copyText(text);
   };
 
-  document.addEventListener("DOMContentLoaded", function () {
+  var __traktInitDone = false;
+  function initTraktAuthUI() {
+    if (__traktInitDone) return;
+    __traktInitDone = true;
+
     [
       ["btn-copy-trakt-pin",   "trakt_pin"],
       ["btn-copy-trakt-token", "trakt_token"],
@@ -150,7 +154,27 @@
         b._copyHooked = true;
       }
     });
-  });
+
+    try {
+      var idEl  = _el("trakt_client_id");
+      var secEl = _el("trakt_client_secret");
+      if (idEl)  idEl.addEventListener("input", function(){ updateTraktHint(); });
+      if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
+
+      updateTraktHint();
+      updateTraktBanner();
+      hydrateAllSecretsRaw();
+      startTraktTokenPoll();
+    } catch (e) {
+      console.warn("[trakt] init failed", e);
+    }
+
+    try {
+      if (!window.__traktBannerTick) {
+        window.__traktBannerTick = setInterval(function(){ try { updateTraktBanner(); } catch (_) {} }, 800);
+      }
+    } catch (_) {}
+  }
 
   // Flush Trakt credentials
   async function flushTraktCreds() {
@@ -343,22 +367,12 @@
   }
 
   // Lifecycle
-  document.addEventListener("DOMContentLoaded", function () {
-    try {
-      var idEl  = _el("trakt_client_id");
-      var secEl = _el("trakt_client_secret");
-      if (idEl)  idEl.addEventListener("input", function(){ updateTraktHint(); });
-      if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initTraktAuthUI, { once: true });
+  else initTraktAuthUI();
 
-      updateTraktHint();
-      updateTraktBanner();
-      hydrateAllSecretsRaw();
-      startTraktTokenPoll();
-    } catch (e) {
-    try { if (!window.__traktBannerTick) window.__traktBannerTick = setInterval(function(){ try { updateTraktBanner(); } catch (_) {} }, 800); } catch (_) {}
-      console.warn("[trakt] DOMContentLoaded init failed", e);
-    }
-  });
+  window.cwAuth = window.cwAuth || {};
+  window.cwAuth.trakt = window.cwAuth.trakt || {};
+  window.cwAuth.trakt.init = initTraktAuthUI;
 
   document.addEventListener("tab-changed", function (ev) {
     try {
