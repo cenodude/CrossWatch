@@ -1201,6 +1201,37 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
     return key_map, id_map
 
 
+def _key_lookup_candidates(raw_key: Any) -> list[str]:
+    k = str(raw_key or "").strip().lower()
+    if not k:
+        return []
+
+    out: list[str] = []
+
+    def add(x: str) -> None:
+        x = str(x or "").strip().lower()
+        if x and x not in out:
+            out.append(x)
+
+    add(k)
+
+    if "#" in k:
+        base = k.split("#", 1)[0]
+        add(base)
+
+    # Normalize keys that embed the media type
+    parts = k.split(":")
+    if len(parts) >= 3:
+        add(f"{parts[0]}:{parts[-1]}")
+
+    if "#" in k:
+        parts2 = k.split("#", 1)[0].split(":")
+        if len(parts2) >= 3:
+            add(f"{parts2[0]}:{parts2[-1]}")
+
+    return out
+
+
 def _ensure_series_title(
     e: dict[str, Any],
     slim: dict[str, Any],
@@ -1217,12 +1248,10 @@ def _ensure_series_title(
         slim["series_title"] = show
         return
 
-    k = str(e.get("key") or "").strip().lower()
-    if k and k in key_map:
-        slim["series_title"] = key_map[k]
-        return
-
-    if k:
+    for k in _key_lookup_candidates(e.get("key")):
+        if k in key_map:
+            slim["series_title"] = key_map[k]
+            return
         title = id_map.get(k)
         if title:
             slim["series_title"] = title
@@ -1249,7 +1278,6 @@ def _ensure_series_title(
 _EP_CODE_RE = re.compile(r"^s(\d{1,3})e(\d{1,3})$", re.I)
 
 def _finalize_spotlight_item(it: dict[str, Any]) -> None:
-    # Ensure episode rows render as "Show - SxxEyy" even when upstream didn't tag type.
     raw_title = str(it.get("title") or it.get("name") or "").strip()
     raw_type = str(it.get("type") or "").strip().lower()
 
