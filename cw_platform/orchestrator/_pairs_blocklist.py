@@ -35,11 +35,7 @@ def _breakdown(
     pair_key: str | None,
     cross_feature_unresolved: bool,
 ) -> tuple[set[str], set[str], set[str], set[str]]:
-    try:
-        gmap = keys_for_feature(state_store, feature, pair=None) or {}
-        global_tomb: set[str] = set(gmap.keys()) if isinstance(gmap, Mapping) else set()
-    except Exception:
-        global_tomb = set()
+    global_tomb: set[str] = set()
 
     try:
         pmap = keys_for_feature(state_store, feature, pair=pair_key) or {}
@@ -101,7 +97,7 @@ def apply_blocklist(
                 feature=feature,
                 dst=dst,
                 pair=pair_key,
-                blocked_global_tomb=len(g_tomb),
+                blocked_global_tomb=0,
                 blocked_pair_tomb=len(p_tomb),
                 blocked_unresolved=len(unr),
                 blocked_blackbox=len(bb),

@@ -15,31 +15,6 @@ TItem = TypeVar("TItem", bound=Mapping[str, Any])
 def pair_key(a: str, b: str) -> str:
     return "-".join(sorted([a.upper(), b.upper()]))
 
-def add_global_keys(
-    store: StateStore,
-    dbg: Callable[..., Any],
-    keys: Iterable[str],
-) -> int:
-    tomb = store.load_tomb()
-    raw = tomb.setdefault("keys", {})
-    if not isinstance(raw, dict):
-        raw = {}
-        tomb["keys"] = raw
-
-    ks: dict[str, Any] = raw
-    now = int(time.time())
-    added = 0
-
-    for k in keys:
-        if k not in ks:
-            ks[k] = now
-            added += 1
-
-    store.save_tomb(tomb)
-    dbg("tombstones.marked", added=added)
-    return added
-
-
 def add_keys_for_feature(
     store: StateStore,
     dbg: Callable[..., Any],
@@ -58,23 +33,26 @@ def add_keys_for_feature(
     now = int(time.time())
     added = 0
 
-    prefixes: list[str] = [feature]
-    if pair:
-        prefixes.append(f"{feature}:{pair}")
+    if not pair:
+        dbg("tombstones.marked", feature=feature, added=0, scope="none")
+        return 0
+
+    scope = str(pair).upper()
+    prefix = f"{str(feature).lower()}:{scope}"
 
     for k in keys:
-        for pref in prefixes:
-            nk = f"{pref}|{k}"
-            if nk not in ks:
-                ks[nk] = now
-                added += 1
+        nk = f"{prefix}|{k}"
+        if nk not in ks:
+            ks[nk] = now
+            added += 1
 
     store.save_tomb(tomb)
     dbg(
         "tombstones.marked",
         feature=feature,
         added=added,
-        scope="global+pair" if pair else "global",
+        pair=scope,
+        scope="pair",
     )
     return added
 
@@ -104,10 +82,8 @@ def keys_for_feature(
                 orig = k[plen:]
                 out[orig] = int(ts)
 
-    if include_global:
-        _collect(feature)
     if pair:
-        _collect(f"{feature}:{pair}")
+        _collect(f"{str(feature).lower()}:{str(pair).upper()}")
 
     return out
 
@@ -146,21 +122,9 @@ def filter_with(
     items: Sequence[TItem],
     extra_block: AbstractSet[str] | None = None,
 ) -> list[TItem]:
-    tomb = store.load_tomb()
-    raw = tomb.get("keys") or {}
-
-    if isinstance(raw, Mapping):
-        raw_keys = raw.keys()
-    else:
-        raw_keys = ()
-
-    base_keys: set[str] = set()
-    for tok in raw_keys:
-        if isinstance(tok, str):
-            base_keys.add(tok.split("|", 1)[-1])
-
-    if extra_block:
-        base_keys |= set(extra_block)
+    base_keys: set[str] = set(extra_block or [])
+    if not base_keys:
+        return list(items or [])
 
     def _hit(keys: set[str], item: Mapping[str, Any]) -> bool:
         ck = canonical_key(item)
@@ -188,6 +152,7 @@ def cascade_removals(
     *,
     feature: str,
     removed_keys: Iterable[str],
+    pair: str | None = None,
 ) -> dict[str, int]:
-    added = add_keys_for_feature(store, dbg, feature, removed_keys)
+    added = add_keys_for_feature(store, dbg, feature, removed_keys, pair=pair)
     return {"tombstones_added": added}

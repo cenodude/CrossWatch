@@ -20,7 +20,7 @@ from ._snapshots import (
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove
-from ._tombstones import keys_for_feature, cascade_removals
+from ._tombstones import keys_for_feature
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
@@ -318,7 +318,7 @@ def _two_way_sync(
     pair_key = "-".join(sorted([a, b]))
     tomb_map = dict(
         keys_for_feature(
-            ctx.state_store, feature, pair=pair_key, include_global=(feature == "watchlist")
+            ctx.state_store, feature, pair=pair_key
         ) or {}
     )
     tomb = {k for k, ts in tomb_map.items() if not isinstance(ts, int) or (now - int(ts)) <= tomb_ttl_secs}
@@ -355,7 +355,6 @@ def _two_way_sync(
                 write_tokens |= _tokens_for_ck(ck)
 
             for tok in write_tokens:
-                ks.setdefault(f"{feature}|{tok}", now)
                 ks.setdefault(f"{feature}:{pair_key}|{tok}", now)
 
             ctx.state_store.save_tomb(t)
@@ -668,12 +667,11 @@ def _two_way_sync(
                     continue
 
             for tok in tokens:
-                ks.setdefault(f"{feature}|{tok}", now_ts)
                 ks.setdefault(f"{feature}:{pair_key}|{tok}", now_ts)
 
             ctx.state_store.save_tomb(tomb)
             emit("debug", msg="tombstones.marked", feature=feature,
-                 added=len(tokens), scope="global+pair")
+                 added=len(tokens), scope="pair")
         except Exception:
             pass
 
@@ -951,15 +949,6 @@ def _two_way_sync(
                  unresolved=int(resB_add.get("unresolved", 0)),
                  errors=int(resB_add.get("errors", 0)),
                  result=resB_add)
-
-    try:
-        rem_keys = (rem_from_A or []) + (rem_from_B or [])
-        cascade_removals(
-            ctx.state_store, dbg, feature=feature,
-            removed_keys=[k.get("ids", {}).get("imdb") or "" for k in rem_keys if isinstance(k, dict)],
-        )
-    except Exception:
-        pass
 
     try:
         st = ctx.state_store.load_state() or {}

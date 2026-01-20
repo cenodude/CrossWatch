@@ -14,6 +14,15 @@ class StateStore:
     base_path: Path
 
     @property
+    def cw_state_dir(self) -> Path:
+        p = self.base_path / ".cw_state"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    @property
     def state(self) -> Path:
         return self.base_path / "state.json"
 
@@ -23,7 +32,7 @@ class StateStore:
 
     @property
     def tomb(self) -> Path:
-        return self.base_path / "tombstones.json"
+        return self.cw_state_dir / "tombstones.json"
 
     @property
     def last(self) -> Path:
@@ -46,6 +55,10 @@ class StateStore:
             return default
 
     def _write_atomic(self, p: Path, data: Any) -> None:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
         tmp.replace(p)
@@ -135,7 +148,26 @@ class StateStore:
         state = self._merge_policy(state, policy)
         self._write_atomic(self.state, state)
 
+
+    def _migrate_legacy_tombstones(self) -> None:
+        legacy = self.base_path / "tombstones.json"
+        target = self.tomb
+        try:
+            if legacy.exists() and not target.exists():
+                try:
+                    legacy.replace(target)
+                except Exception:
+                    data = self._read(legacy, None)
+                    if data is not None:
+                        self._write_atomic(target, data)
+                    try:
+                        legacy.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     def load_tomb(self) -> dict[str, Any]:
+        self._migrate_legacy_tombstones()
         t = self._read(self.tomb, {"keys": {}, "pruned_at": None})
         if "ttl_sec" not in t:
             t["ttl_sec"] = None

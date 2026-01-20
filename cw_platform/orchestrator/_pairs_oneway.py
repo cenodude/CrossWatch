@@ -14,7 +14,6 @@ from ._snapshots import (
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove
-from ._tombstones import cascade_removals
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._planner import diff, diff_ratings
 from ._phantoms import PhantomGuard
@@ -614,12 +613,11 @@ def run_one_way_feature(
                             continue
 
                     for tok in removed_tokens:
-                        ks.setdefault(f"{feature}|{tok}", now)
                         ks.setdefault(f"{feature}:{pair_key}|{tok}", now)
 
                     ctx.state_store.save_tomb(t)
                     emit("debug", msg="tombstones.marked", feature=feature,
-                         added=len(removed_tokens), scope="global+pair")
+                         added=len(removed_tokens), scope="pair")
                 except Exception:
                     pass
             if not dry_run_flag and removed_count:
@@ -671,15 +669,6 @@ def run_one_way_feature(
         import time as _t
         st["last_sync_epoch"] = int(_t.time())
         ctx.state_store.save_state(st)
-    except Exception:
-        pass
-
-    try:
-        if removes:
-            cascade_removals(
-                ctx.state_store, dbg, feature=feature,
-                removed_keys=[k.get("ids", {}).get("imdb") or "" for k in removes if isinstance(k, dict)],
-            )
     except Exception:
         pass
 
