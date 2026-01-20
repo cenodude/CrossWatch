@@ -377,29 +377,64 @@ def _two_way_sync(
     if manual_adds_B:
         B_eff = _merge_manual_adds(B_eff, manual_adds_B)
 
+    def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
+        typ = str(it.get("type") or "").strip().lower()
+        if typ in ("episode", "season"):
+            ids_raw = it.get("show_ids") or it.get("ids") or {}
+        else:
+            ids_raw = it.get("ids") or {}
+        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        toks: set[str] = set()
+
+        if typ == "episode":
+            try:
+                s = int(it.get("season") or 0)
+                e = int(it.get("episode") or 0)
+            except Exception:
+                s, e = 0, 0
+            if s > 0 and e > 0:
+                frag = f"#s{s:02d}e{e:02d}"
+                for k, v in ids.items():
+                    if v is None or str(v) == "":
+                        continue
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
+
+        elif typ == "season":
+            try:
+                s = int(it.get("season") or 0)
+            except Exception:
+                s = 0
+            if s > 0:
+                frag = f"#season:{s}"
+                for k, v in ids.items():
+                    if v is None or str(v) == "":
+                        continue
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
+
+        else:
+            for k, v in ids.items():
+                if v is None or str(v) == "":
+                    continue
+                toks.add(f"{str(k).lower()}:{str(v).lower()}")
+
+        return toks
+
     def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
         m: dict[str, str] = {}
         for ck, it in (idx or {}).items():
-            ids = (it.get("ids") or {})
-            for k, v in (ids or {}).items():
-                if v is None or str(v) == "":
-                    continue
-                m[f"{k}:{str(v).lower()}"] = ck
+            if not isinstance(it, Mapping):
+                continue
+            for tok in _typed_tokens(it):
+                m[tok] = ck
         return m
 
     def _present(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> bool:
         ck = _ck(it)
         if ck in idx:
             return True
-        ids = (it.get("ids") or {})
-        try:
-            for k, v in (ids or {}).items():
-                if v is None or str(v) == "":
-                    continue
-                if f"{k}:{str(v).lower()}" in alias:
-                    return True
-        except Exception:
-            pass
+        for tok in _typed_tokens(it):
+            if tok in alias:
+                return True
         return False
 
     def _tokens(it: Mapping[str, Any]) -> set[str]:
@@ -408,10 +443,7 @@ def _two_way_sync(
             ck = _ck(it)
             if ck:
                 toks.add(ck)
-            for k, v in ((it.get("ids") or {}) or {}).items():
-                if v is None or str(v) == "":
-                    continue
-                toks.add(f"{str(k).lower()}:{str(v).lower()}")
+            toks |= _typed_tokens(it)
         except Exception:
             pass
         return toks
@@ -444,10 +476,8 @@ def _two_way_sync(
         if ck in prev_idx:
             return True
         try:
-            for k, v in ((it.get("ids") or {}) or {}).items():
-                if v is None or str(v) == "":
-                    continue
-                if f"{str(k).lower()}:{str(v).lower()}" in prev_alias:
+            for tok in _typed_tokens(it):
+                if tok in prev_alias:
                     return True
         except Exception:
             pass
