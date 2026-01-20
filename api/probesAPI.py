@@ -180,6 +180,8 @@ def _reason_http(code: int, provider: str) -> str:
         return f"{provider}: forbidden/invalid client id or scope"
     if code == 404:
         return f"{provider}: endpoint not found"
+    if code == 412:
+        return "Daily API limit reached."
     if 500 <= code < 600:
         return f"{provider}: service error ({code})"
     return f"{provider}: http {code}"
