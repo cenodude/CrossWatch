@@ -102,6 +102,9 @@
   let summary = null;
   let enabledFromPairs = null;
   let lastPairsAt = 0;
+  let _lastSummaryEventAt = 0;
+  let _renderTO = null;
+  let _lastRenderAt = 0;
   let _finishedForRun = null;
   let _prevRunKey = null;
   let _sumBusy = false;
@@ -671,6 +674,22 @@
     enabledFromPairs = enabled;
   }
 
+
+  let _pairsRefreshTO = null;
+  function queuePairsRefresh(reason) {
+    clearTimeout(_pairsRefreshTO);
+    _pairsRefreshTO = setTimeout(() => {
+      pullPairs().finally(() => {
+        lastPairsAt = Date.now();
+        renderLanes();
+      });
+    }, 250);
+  }
+
+  window.addEventListener("cx:pairs:changed", () => queuePairsRefresh("cx:pairs:changed"));
+  window.addEventListener("config-saved", () => queuePairsRefresh("config-saved"));
+  window.addEventListener("sync-complete", () => queuePairsRefresh("sync-complete"));
+
   async function hydrateFromInsights(startTsEpoch) {
     const src = await fetchJSON("/api/insights", null);
     const events = src?.events;
@@ -980,99 +999,80 @@
     );
   }
 
-  // Summary pull
-  async function pullSummary() {
-    if (_sumBusy) return;
-    _sumBusy = true;
+  const scheduleRender = () => {
+    const now = Date.now();
+    if (now - _lastRenderAt < 200) {
+      clearTimeout(_renderTO);
+      _renderTO = setTimeout(() => {
+        _lastRenderAt = Date.now();
+        renderAll();
+      }, 200);
+      return;
+    }
+    _lastRenderAt = now;
+    renderAll();
+  };
 
-    try {
+  function applySummarySnapshot(s, source) {
+    if (!s) return;
+    _lastSummaryEventAt = Date.now();
+
+    const runKey = runKeyOf(s) || "_";
+    if (runKey != _prevRunKey) {
+      _finishedForRun = null;
+      _prevRunKey = runKey;
+      _insightsTriedForRun = null;
+      _logHydratedForRun = null;
+    }
+
+    const { running, justFinished } = sync.fromSummary(s);
+    summary = s;
+    setRunButtonState(running);
+
+    if (justFinished && _finishedForRun !== runKey) {
+      _finishedForRun = runKey;
+      if ("_optimistic" in sync) sync._optimistic = false;
+
+      try { window.updatePreviewVisibility?.(); window.refreshSchedulingBanner?.(); } catch {}
+      try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch {}
+
+      if (_insightsTriedForRun !== runKey) {
+        _insightsTriedForRun = runKey;
+        try {
+          const startTs = s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
+          hydrateFromInsights(startTs).catch(() => {});
+        } catch {}
+      }
+
       try {
-        _sumAbort?.abort?.();
-      } catch {}
-      _sumAbort = new AbortController();
-      const s = await fetchJSON("/api/run/summary", null, _sumAbort.signal);
-      if (!s) return;
-
-      const runKey = runKeyOf(s) || "_";
-
-      if (runKey !== _prevRunKey) {
-        _finishedForRun = null;
-        _prevRunKey = runKey;
-        _insightsTriedForRun = null;
-        _logHydratedForRun = null;
-      }
-
-      const { running, justFinished } = sync.fromSummary(s);
-      summary = s;
-      setRunButtonState(running);
-
-      if (justFinished && _finishedForRun !== runKey) {
-        _finishedForRun = runKey;
-
-        if ("_optimistic" in sync) sync._optimistic = false;
-
-        try {
-          window.updatePreviewVisibility?.();
-          window.refreshSchedulingBanner?.();
-        } catch {}
-
-        try {
-          (window.Insights?.refreshInsights || window.refreshInsights)?.();
-        } catch {}
-
-        if (_insightsTriedForRun !== runKey) {
-          _insightsTriedForRun = runKey;
-          try {
-            const startTs =
-              s?.raw_started_ts ||
-              (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
-            await hydrateFromInsights(startTs);
-          } catch {}
+        window.wallLoaded = false;
+        if (typeof window.updateWatchlistPreview === "function") {
+          window.updateWatchlistPreview();
+        } else if (typeof window.updatePreviewVisibility === "function") {
+          window.updatePreviewVisibility();
+        } else if (typeof window.loadWatchlist === "function") {
+          window.loadWatchlist();
         }
+      } catch {}
 
-        try {
-          window.wallLoaded = false;
-          if (typeof window.updateWatchlistPreview === "function") {
-            await window.updateWatchlistPreview();
-          } else if (typeof window.updatePreviewVisibility === "function") {
-            await window.updatePreviewVisibility();
-          } else if (typeof window.loadWatchlist === "function") {
-            await window.loadWatchlist();
-          }
-        } catch {}
+      try {
+        window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary: s, source: source || "?" } }));
+      } catch {}
+    }
 
-        try {
-          window.dispatchEvent(
-            new CustomEvent("sync-complete", {
-              detail: { at: Date.now(), summary: s }
-            })
-          );
-        } catch {}
-      }
+    if (!summary.enabled) summary.enabled = defaultEnabledMap();
+    scheduleRender();
 
-      if (!summary.enabled) summary.enabled = defaultEnabledMap();
-      renderAll();
+    const hasFeatures = summary?.features && Object.values(summary.features).some((v) =>
+      (v?.added || v?.removed || v?.updated || 0) > 0 ||
+      v?.spotlight_add?.length || v?.spotlight_remove?.length || v?.spotlight_update?.length
+    );
 
-      const hasFeatures =
-        summary?.features &&
-        Object.values(summary.features).some(
-          (v) =>
-            (v?.added || v?.removed || v?.updated || 0) > 0 ||
-            v?.spotlight_add?.length ||
-            v?.spotlight_remove?.length ||
-            v?.spotlight_update?.length
-        );
-
-      if (sync.state().timeline.done) {
-        if (_insightsTriedForRun !== runKey) {
-          _insightsTriedForRun = runKey;
-
-          const startTs =
-            summary?.raw_started_ts ||
-            (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
-
-          const got = await hydrateFromInsights(startTs);
-
+    if (sync.state().timeline.done) {
+      if (_insightsTriedForRun !== runKey) {
+        _insightsTriedForRun = runKey;
+        const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
+        hydrateFromInsights(startTs).then((got) => {
           if (!got && !hasFeatures) {
             setTimeout(() => {
               if (_logHydratedForRun !== runKey) {
@@ -1081,23 +1081,34 @@
               }
             }, 300);
           }
-        } else {
-          const missing = FEATS.some((f) => {
-            const lane = summary?.features?.[f.key];
-            return !(
-              lane?.spotlight_add?.length ||
-              lane?.spotlight_remove?.length ||
-              lane?.spotlight_update?.length ||
-              (lane?.added || lane?.removed || lane?.updated)
-            );
-          });
+        });
+      } else {
+        const missing = FEATS.some((f) => {
+          const lane = summary?.features?.[f.key];
+          return !(
+            lane?.spotlight_add?.length ||
+            lane?.spotlight_remove?.length ||
+            lane?.spotlight_update?.length ||
+            (lane?.added || lane?.removed || lane?.updated)
+          );
+        });
 
-          if (missing && _logHydratedForRun !== runKey) {
-            _logHydratedForRun = runKey;
-            hydrateFromLog();
-          }
+        if (missing && _logHydratedForRun !== runKey) {
+          _logHydratedForRun = runKey;
+          hydrateFromLog();
         }
       }
+    }
+  }  // Summary pull
+  async function pullSummary() {
+    if (_sumBusy) return;
+    _sumBusy = true;
+
+    try {
+      try { _sumAbort?.abort?.(); } catch {}
+      _sumAbort = new AbortController();
+      const snap = await fetchJSON("/api/run/summary", null, _sumAbort.signal);
+      if (snap) applySummarySnapshot(snap, "poll");
     } finally {
       _sumBusy = false;
     }
@@ -1119,8 +1130,7 @@
       esSummary.onmessage = (ev) => {
         try {
           const snap = JSON.parse(ev.data || "{}");
-          const { running } = sync.fromSummary(snap);
-          setRunButtonState(!!running);
+          applySummarySnapshot(snap, "sse");
         } catch {}
       };
 
@@ -1222,41 +1232,37 @@
     }
   });
 
-  async function tick() {
+    async function tick() {
+    const now = Date.now();
     const running = sync.isRunning();
-    await pullSummary();
 
-    if (Date.now() - lastPairsAt > 10000) {
-      pullPairs().finally(() => {
-        lastPairsAt = Date.now();
-        renderLanes();
-      });
-    }
+    const sseUp = esSummary && esSummary.readyState === 1;
 
-    if (
-      running &&
-      !sync.state().timeline.pre &&
-      !sync.state().timeline.post
-    ) {
-      if (Date.now() - sync._lastPhaseAt > 900) {
+    const pollDue = !sseUp || !summary || (running && (now - _lastSummaryEventAt) > 15000);
+    if (pollDue) await pullSummary();
+
+    if (now - lastPairsAt > 120000) queuePairsRefresh("sanity");
+
+    if (running && !sync.state().timeline.pre && !sync.state().timeline.post) {
+      if (now - sync._lastPhaseAt > 900) {
         sync.updatePct(Math.min((sync._pctMemo || 0) + 2, 24));
       }
     }
 
-    if (Date.now() - sync.lastEvent() > 20000) {
+    if (now - sync.lastEvent() > 20000) {
       openSummaryStream();
       openLogStream();
     }
 
     clearTimeout(tick._t);
-    tick._t = setTimeout(tick, running ? 1500 : 5000);
+    tick._t = setTimeout(tick, running ? 2000 : 6000);
   }
 
   renderAll();
   wireRunButton();
   openSummaryStream();
   openLogStream();
-  pullPairs();
+  queuePairsRefresh("init");
   tick();
 })();
 
