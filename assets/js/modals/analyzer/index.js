@@ -670,7 +670,7 @@ export default {
           <div class="issue">
             <div class="h">History normalization: ${src} ↔ ${dst}</div>
             <div>${src} has ${srcCount} shows, ${dst} has ${dstCount} shows.</div>
-            <div>These counts differ because some series are split or merged differently between providers.</div>
+            <div>These counts can sometimes differ because some shows are split or merged differently between providers.</div>
             <div style="margin-top:6px">
               <div><strong>Only in ${src}:</strong> ${renderList(listSrc)}</div>
               <div><strong>Only in ${dst}:</strong> ${renderList(listDst)}</div>
