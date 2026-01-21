@@ -36,6 +36,17 @@ HIST_URLS: dict[str, str] = {
 
 RAT_BUCKETS = ("movies", "shows", "anime")
 
+ANIME_ID_KEYS = ("mal", "anidb", "anilist", "kitsu")
+
+
+def _is_anime_ids(ids: dict[str, Any]) -> bool:
+    if not isinstance(ids, dict):
+        return False
+    for k in ANIME_ID_KEYS:
+        if ids.get(k):
+            return True
+    return False
+
 
 def jload(p: Path) -> dict[str, Any]:
     try:
@@ -132,7 +143,6 @@ def build_meta(cfg: dict[str, Any]) -> dict[str, Any]:
     retries = int(b.get("max_retries", 3) or 3)
     delay_ms = int(b.get("write_delay_ms", 350) or 350)
 
-    # Cleanup/backup script: default to full snapshot (avoid accidental incremental 0 results).
     df = normalize_date_from(os.getenv("CW_SIMKL_DATE_FROM") or "1970-01-01T00:00:00Z")
 
     return {
@@ -182,71 +192,42 @@ def request_json(
 ) -> tuple[int, Any, str]:
     last_text = ""
     retries = max(1, int(meta.get("retries") or 1))
-    for i in range(retries):
+    for attempt in range(retries):
         try:
-            r = ses.request(method, url, headers=headers(meta), params=params, json=body, timeout=float(meta["timeout"]))
-            last_text = r.text or ""
-            if r.status_code in (429, 503) and i < retries - 1:
-                retry_sleep(i, r.headers.get("Retry-After"))
+            resp = ses.request(
+                method=method.upper(),
+                url=url,
+                headers=headers(meta),
+                params=params,
+                json=body,
+                timeout=float(meta.get("timeout") or 10),
+            )
+            last_text = resp.text or ""
+            if resp.status_code in (429, 500, 502, 503, 504):
+                retry_sleep(attempt, resp.headers.get("Retry-After"))
                 continue
-            if 500 <= r.status_code <= 599 and i < retries - 1:
-                retry_sleep(i, None)
-                continue
-            if not (r.text or "").strip():
-                return r.status_code, {}, last_text
             try:
-                return r.status_code, r.json(), last_text
+                data = resp.json()
             except Exception:
-                return r.status_code, {}, last_text
-        except Exception:
-            if i == retries - 1:
-                raise
-            retry_sleep(i, None)
-    return 0, {}, last_text
-
-
-def _as_list(v: Any) -> list[dict[str, Any]]:
-    if v is None:
-        return []
-    if isinstance(v, list):
-        return [x for x in v if isinstance(x, dict)]
-    if isinstance(v, dict):
-        if v.get("type") == "null":
-            return []
-        body = v.get("body")
-        if body is None:
-            pass
-        elif isinstance(body, list):
-            return [x for x in body if isinstance(x, dict)]
-        elif isinstance(body, dict):
-            for k in ("movies", "shows", "anime", "items", "results"):
-                vv = body.get(k)
-                if isinstance(vv, list):
-                    return [x for x in vv if isinstance(x, dict)]
-        for k in ("movies", "shows", "anime", "items", "results"):
-            vv = v.get(k)
-            if isinstance(vv, list):
-                return [x for x in vv if isinstance(x, dict)]
-        return []
-    return []
+                data = None
+            return resp.status_code, data, last_text
+        except Exception as e:
+            last_text = str(e)
+            retry_sleep(attempt, None)
+    return 0, None, last_text
 
 
 def _norm_ids(ids: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    if not isinstance(ids, dict):
-        return out
-    if ids.get("simkl") is not None:
-        si = safe_int(ids.get("simkl"))
-        if si is not None:
-            out["simkl"] = si
-    if ids.get("imdb"):
-        out["imdb"] = str(ids["imdb"])
-    for k in ("tmdb", "tvdb", "mal", "anidb", "anilist", "kitsu"):
-        if ids.get(k) is None:
+    for k, v in (ids or {}).items():
+        if v is None:
             continue
-        iv = safe_int(ids.get(k))
-        if iv is not None:
-            out[k] = iv
+        if isinstance(v, str) and not v.strip():
+            continue
+        if isinstance(v, (int, float)) and k != "imdb":
+            out[k] = int(v)
+        else:
+            out[k] = str(v).strip() if isinstance(v, str) else v
     return out
 
 
@@ -280,6 +261,17 @@ def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
         yield seq[i : i + n]
 
 
+def _as_list(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for key in ("items", "results", "movies", "shows", "anime", "tv_shows", "tvShows", "tv"):
+            items = data.get(key)
+            if isinstance(items, list):
+                return [x for x in items if isinstance(x, dict)]
+    return []
+
+
 def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     params = {"extended": "full", "date_from": meta["date_from"]}
@@ -288,7 +280,6 @@ def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[
         st, data, text = request_json(ses, "GET", url, meta=meta, params=params)
         rows = _as_list(data)
 
-        # If the API returns an empty set, retry without date_from (some accounts/providers behave better this way).
         if st == 200 and not rows:
             st, data, text = request_json(ses, "GET", url, meta=meta, params={"extended": "full"})
             rows = _as_list(data)
@@ -299,8 +290,17 @@ def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[
             print(f"[SIMKL:watchlist] {bucket} empty (200). Body head: {(text or '')[:200]}")
 
         for row in rows:
-            key = "movie" if bucket == "movies" else "show"
+            if bucket == "movies":
+                key = "movie"
+            elif bucket == "anime":
+                key = "anime"
+            else:
+                key = "show"
             obj = row.get(key) if isinstance(row.get(key), dict) else row
+            if bucket == "anime" and not isinstance(obj, dict):
+                alt = row.get("show")
+                if isinstance(alt, dict):
+                    obj = alt
             ids = _ids_from_obj(obj)
             if not ids:
                 continue
@@ -316,9 +316,10 @@ def collect_watchlist(meta: dict[str, Any], ses: requests.Session) -> list[dict[
     return out
 
 
-def _wl_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _wl_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     shows: list[dict[str, Any]] = []
+    anime: list[dict[str, Any]] = []
     for it in items:
         typ = str(it.get("type") or "").strip().lower()
         ids = _ids_from_obj(it.get("ids") if isinstance(it.get("ids"), dict) else it)
@@ -326,14 +327,17 @@ def _wl_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], li
             continue
         if typ == "movie":
             movies.append({"ids": ids, "to": "plantowatch"})
+        elif typ == "anime" or _is_anime_ids(ids):
+            anime.append({"ids": ids, "to": "plantowatch"})
         else:
             shows.append({"ids": ids, "to": "plantowatch"})
-    return movies, shows
+    return movies, shows, anime
 
 
-def _wl_remove_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _wl_remove_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     shows: list[dict[str, Any]] = []
+    anime: list[dict[str, Any]] = []
     for it in items:
         typ = str(it.get("type") or "").strip().lower()
         ids = _ids_from_obj(it.get("ids") if isinstance(it.get("ids"), dict) else it)
@@ -341,9 +345,11 @@ def _wl_remove_split(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, An
             continue
         if typ == "movie":
             movies.append({"ids": ids})
+        elif typ == "anime" or _is_anime_ids(ids):
+            anime.append({"ids": ids})
         else:
             shows.append({"ids": ids})
-    return movies, shows
+    return movies, shows, anime
 
 
 def write_watchlist(meta: dict[str, Any], ses: requests.Session, *, remove: bool, items: list[dict[str, Any]]) -> int:
@@ -352,36 +358,60 @@ def write_watchlist(meta: dict[str, Any], ses: requests.Session, *, remove: bool
     delay = max(0.0, float(meta.get("delay_ms") or 0) / 1000.0)
     ok = 0
 
-    # Note: SIMKL does not have a dedicated "remove from plantowatch" endpoint in the sync API;
-    # CrossWatch uses history/remove as the practical "remove from list" mechanism.
+    def post(bucket: str, part: list[dict[str, Any]], *, fallback: str | None = None) -> int:
+        st, _, text = request_json(
+            ses,
+            "POST",
+            (URL_HIST_REMOVE if remove else URL_ADD_TO_LIST),
+            meta=meta,
+            body={bucket: part},
+        )
+        if st in (200, 201, 204):
+            return st
+        if fallback:
+            st2, _, text2 = request_json(
+                ses,
+                "POST",
+                (URL_HIST_REMOVE if remove else URL_ADD_TO_LIST),
+                meta=meta,
+                body={fallback: part},
+            )
+            if st2 in (200, 201, 204):
+                return st2
+            if os.getenv("CW_SIMKL_DEBUG"):
+                print(
+                    f"[SIMKL:watchlist] {('remove' if remove else 'add')} {bucket}->{fallback} failed: {st2}: {(text2 or '')[:200]}"
+                )
+        elif os.getenv("CW_SIMKL_DEBUG"):
+            print(f"[SIMKL:watchlist] {('remove' if remove else 'add')} {bucket} -> {st}: {(text or '')[:200]}")
+        return st
+
     if remove:
-        mv, sh = _wl_remove_split(items)
-        for bucket, rows in (("movies", mv), ("shows", sh)):
+        mv, sh, an = _wl_remove_split(items)
+        for bucket, rows, fallback in (("movies", mv, None), ("shows", sh, None), ("anime", an, "shows")):
             if not rows:
                 continue
             for part in _chunk(rows, int(meta["wl_chunk"])):
-                st, _, text = request_json(ses, "POST", URL_HIST_REMOVE, meta=meta, body={bucket: part})
+                st = post(bucket, part, fallback=fallback)
                 if st in (200, 201, 204):
                     ok += len(part)
-                elif os.getenv("CW_SIMKL_DEBUG"):
-                    print(f"[SIMKL:watchlist] remove {bucket} -> {st}: {(text or '')[:200]}")
                 time.sleep(delay)
         return ok
 
-    mv, sh = _wl_split(items)
-    payloads: list[tuple[str, list[dict[str, Any]]]] = []
-    if mv:
-        payloads.append(("movies", mv))
-    if sh:
-        payloads.append(("shows", sh))
+    mv2, sh2, an2 = _wl_split(items)
+    payloads: list[tuple[str, list[dict[str, Any]], str | None]] = []
+    if mv2:
+        payloads.append(("movies", mv2, None))
+    if sh2:
+        payloads.append(("shows", sh2, None))
+    if an2:
+        payloads.append(("anime", an2, "shows"))
 
-    for bucket, rows in payloads:
-        for part in _chunk(rows, int(meta["wl_chunk"])):
-            st, _, text = request_json(ses, "POST", URL_ADD_TO_LIST, meta=meta, body={bucket: part})
+    for bucket2, rows2, fallback2 in payloads:
+        for part2 in _chunk(rows2, int(meta["wl_chunk"])):
+            st = post(bucket2, part2, fallback=fallback2)
             if st in (200, 201, 204):
-                ok += len(part)
-            elif os.getenv("CW_SIMKL_DEBUG"):
-                print(f"[SIMKL:watchlist] add {bucket} -> {st}: {(text or '')[:200]}")
+                ok += len(part2)
             time.sleep(delay)
 
     return ok
@@ -394,7 +424,6 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
         url = f"{BASE}/sync/ratings/{bucket}"
         params = {"date_from": meta["date_from"]}
 
-        # SIMKL commonly expects POST for this read endpoint; fallback to GET for compatibility.
         st, data, text = request_json(ses, "POST", url, meta=meta, params=params)
         if st in (404, 405):
             st, data, text = request_json(ses, "GET", url, meta=meta, params=params)
@@ -421,8 +450,17 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
             print(f"[SIMKL:ratings] {bucket} empty (200).")
 
         for row in rows:
-            key = "movie" if bucket == "movies" else "show"
+            if bucket == "movies":
+                key = "movie"
+            elif bucket == "anime":
+                key = "anime"
+            else:
+                key = "show"
             obj = row.get(key) if isinstance(row.get(key), dict) else row
+            if bucket == "anime" and not isinstance(obj, dict):
+                alt = row.get("show")
+                if isinstance(alt, dict):
+                    obj = alt
             ids = _ids_from_obj(obj)
             if not ids:
                 continue
@@ -444,57 +482,76 @@ def collect_ratings(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
     return out
 
 
-def _ratings_split(items: Iterable[dict[str, Any]], *, unrate: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _ratings_split(
+    items: Iterable[dict[str, Any]],
+    *,
+    unrate: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     shows: list[dict[str, Any]] = []
+    anime: list[dict[str, Any]] = []
     for it in items:
         typ = str(it.get("type") or "").strip().lower()
         ids = _ids_from_obj(it.get("ids") if isinstance(it.get("ids"), dict) else it)
         if not ids:
             continue
-        if typ == "movie":
+
+        def build_obj() -> dict[str, Any] | None:
             obj: dict[str, Any] = {"ids": ids}
-            if not unrate:
-                r = safe_int(it.get("rating"))
-                if r is None:
-                    continue
-                obj["rating"] = r
-                ra = str(it.get("rated_at") or "").strip()
-                if ra:
-                    obj["rated_at"] = ra
-            movies.append(obj)
+            if unrate:
+                return obj
+            r = safe_int(it.get("rating"))
+            if r is None:
+                return None
+            obj["rating"] = r
+            ra = str(it.get("rated_at") or "").strip()
+            if ra:
+                obj["rated_at"] = ra
+            return obj
+
+        objv = build_obj()
+        if not objv:
+            continue
+        if typ == "movie":
+            movies.append(objv)
+        elif typ == "anime" or _is_anime_ids(ids):
+            anime.append(objv)
         else:
-            obj2: dict[str, Any] = {"ids": ids}
-            if not unrate:
-                r2 = safe_int(it.get("rating"))
-                if r2 is None:
-                    continue
-                obj2["rating"] = r2
-                ra2 = str(it.get("rated_at") or "").strip()
-                if ra2:
-                    obj2["rated_at"] = ra2
-            shows.append(obj2)
-    return movies, shows
+            shows.append(objv)
+
+    return movies, shows, anime
 
 
 def write_ratings(meta: dict[str, Any], ses: requests.Session, *, unrate: bool, items: list[dict[str, Any]]) -> int:
     if not items:
         return 0
-    mv, sh = _ratings_split(items, unrate=unrate)
+    mv, sh, an = _ratings_split(items, unrate=unrate)
     url = URL_RAT_REMOVE if unrate else URL_RAT_UPSERT
     chunk = int(meta["rat_chunk"])
     delay = max(0.0, float(meta.get("delay_ms") or 0) / 1000.0)
     ok = 0
 
-    for bucket, rows in (("movies", mv), ("shows", sh)):
+    def post(bucket: str, part: list[dict[str, Any]], *, fallback: str | None = None) -> int:
+        st, _, text = request_json(ses, "POST", url, meta=meta, body={bucket: part})
+        if st in (200, 201, 204):
+            return st
+        if fallback:
+            st2, _, text2 = request_json(ses, "POST", url, meta=meta, body={fallback: part})
+            if st2 in (200, 201, 204):
+                return st2
+            if os.getenv("CW_SIMKL_DEBUG"):
+                print(f"[SIMKL:ratings] {('remove' if unrate else 'upsert')} {bucket}->{fallback} failed: {st2}: {(text2 or '')[:200]}")
+        elif os.getenv("CW_SIMKL_DEBUG"):
+            print(f"[SIMKL:ratings] {('remove' if unrate else 'upsert')} {bucket} -> {st}: {(text or '')[:200]}")
+        return st
+
+    for bucket, rows, fallback in (("movies", mv, None), ("shows", sh, None), ("anime", an, "shows")):
         if not rows:
             continue
         for part in _chunk(rows, chunk):
-            st, _, text = request_json(ses, "POST", url, meta=meta, body={bucket: part})
+            st = post(bucket, part, fallback=fallback)
             if st in (200, 201, 204):
                 ok += len(part)
-            elif os.getenv("CW_SIMKL_DEBUG"):
-                print(f"[SIMKL:ratings] {('remove' if unrate else 'upsert')} {bucket} -> {st}: {(text or '')[:200]}")
             time.sleep(delay)
 
     return ok
@@ -516,14 +573,14 @@ def collect_history(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
     out: list[dict[str, Any]] = []
 
     def fetch(kind: str, *, episode_watched_at: bool) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"extended": "full", "date_from": meta["date_from"]}
+        ext = "full_anime_seasons" if kind == "anime" else "full"
+        params: dict[str, Any] = {"extended": ext, "date_from": meta["date_from"]}
         if episode_watched_at:
             params["episode_watched_at"] = "yes"
 
         st, data, text = request_json(ses, "GET", HIST_URLS[kind], meta=meta, params=params)
         rows = _as_list(data)
 
-        # Retry without date_from if we got an empty 200 body.
         if st == 200 and not rows:
             p2 = dict(params)
             p2.pop("date_from", None)
@@ -552,13 +609,19 @@ def collect_history(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
             item["year"] = year
         out.append(item)
 
-    def add_show_rows(rows: list[dict[str, Any]]) -> None:
+    def add_show_rows(rows: list[dict[str, Any]], *, obj_key: str, bucket: str) -> None:
         for row in rows:
-            sh = row.get("show") if isinstance(row.get("show"), dict) else row
-            show_ids = _ids_from_obj(sh)
+            obj = row.get(obj_key) if isinstance(row.get(obj_key), dict) else None
+            if not isinstance(obj, dict) and obj_key == "anime":
+                alt = row.get("show")
+                if isinstance(alt, dict):
+                    obj = alt
+            if not isinstance(obj, dict):
+                continue
+            show_ids = _ids_from_obj(obj)
             if not show_ids:
                 continue
-            show_title, show_year = _title_year(sh)
+            show_title, show_year = _title_year(obj)
             seasons = row.get("seasons") or []
             if not isinstance(seasons, list):
                 continue
@@ -582,6 +645,7 @@ def collect_history(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
                         continue
                     item2: dict[str, Any] = {
                         "type": "episode",
+                        "bucket": bucket,
                         "show_ids": show_ids,
                         "season": sn,
                         "number": en,
@@ -593,24 +657,35 @@ def collect_history(meta: dict[str, Any], ses: requests.Session) -> list[dict[st
                         item2["year"] = show_year
                     out.append(item2)
 
-    add_show_rows(fetch("shows", episode_watched_at=True))
-    add_show_rows(fetch("anime", episode_watched_at=True))
+    add_show_rows(fetch("shows", episode_watched_at=True), obj_key="show", bucket="shows")
+    add_show_rows(fetch("anime", episode_watched_at=True), obj_key="anime", bucket="anime")
 
     return out
 
 
-def _history_split(items: Iterable[dict[str, Any]], *, remove: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _history_split(
+    items: Iterable[dict[str, Any]],
+    *,
+    remove: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     shows_map: dict[str, dict[str, Any]] = {}
+    anime_map: dict[str, dict[str, Any]] = {}
     seasons_map: dict[tuple[str, int], dict[str, Any]] = {}
+    anime_seasons_map: dict[tuple[str, int], dict[str, Any]] = {}
 
-    def ensure_show(show_ids: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def ensure_group(show_ids: dict[str, Any], *, is_anime_hint: bool) -> tuple[str, dict[str, Any], dict[tuple[str, int], dict[str, Any]]]:
+        is_anime = bool(is_anime_hint) or _is_anime_ids(show_ids)
+        target = anime_map if is_anime else shows_map
+        seasons = anime_seasons_map if is_anime else seasons_map
         sk = _show_key(show_ids)
-        grp = shows_map.get(sk)
+        grp = target.get(sk)
         if not grp:
             grp = {"ids": show_ids, "seasons": []}
-            shows_map[sk] = grp
-        return sk, grp
+            if is_anime:
+                grp["use_tvdb_anime_seasons"] = True
+            target[sk] = grp
+        return sk, grp, seasons
 
     for it in items:
         typ = str(it.get("type") or "").strip().lower()
@@ -633,11 +708,11 @@ def _history_split(items: Iterable[dict[str, Any]], *, remove: bool) -> tuple[li
             en = safe_int(it.get("number") if it.get("number") is not None else it.get("episode"))
             if not show_ids or sn is None or en is None:
                 continue
-            sk, grp = ensure_show(show_ids)
-            sp = seasons_map.get((sk, sn))
+            sk, grp, seasons = ensure_group(show_ids, is_anime_hint=(str(it.get("bucket") or "").lower() == "anime"))
+            sp = seasons.get((sk, sn))
             if not sp:
                 sp = {"number": sn, "episodes": []}
-                seasons_map[(sk, sn)] = sp
+                seasons[(sk, sn)] = sp
                 grp["seasons"].append(sp)
             ep: dict[str, Any] = {"number": en}
             if not remove:
@@ -647,13 +722,17 @@ def _history_split(items: Iterable[dict[str, Any]], *, remove: bool) -> tuple[li
                 ep["watched_at"] = wa2
             sp["episodes"].append(ep)
 
-    shows = list(shows_map.values())
-    for grp in shows:
-        grp["seasons"] = sorted(grp.get("seasons") or [], key=lambda x: int(x.get("number") or 0))
-        for sp in grp["seasons"]:
-            sp["episodes"] = sorted(sp.get("episodes") or [], key=lambda x: int(x.get("number") or 0))
+    def finalize(groups: list[dict[str, Any]]) -> None:
+        for grp in groups:
+            grp["seasons"] = sorted(grp.get("seasons") or [], key=lambda x: int(x.get("number") or 0))
+            for sp in grp["seasons"]:
+                sp["episodes"] = sorted(sp.get("episodes") or [], key=lambda x: int(x.get("number") or 0))
 
-    return movies, shows
+    shows = list(shows_map.values())
+    anime = list(anime_map.values())
+    finalize(shows)
+    finalize(anime)
+    return movies, shows, anime
 
 
 def _episode_count(show_obj: dict[str, Any]) -> int:
@@ -666,16 +745,19 @@ def _episode_count(show_obj: dict[str, Any]) -> int:
 
 
 def _chunk_shows(shows: list[dict[str, Any]], *, max_shows: int, max_eps: int) -> Iterable[list[dict[str, Any]]]:
+    max_shows = max(1, int(max_shows))
+    max_eps = max(1, int(max_eps))
+
     cur: list[dict[str, Any]] = []
-    cur_eps = 0
+    eps = 0
     for sh in shows:
-        sh_eps = _episode_count(sh)
-        if cur and ((len(cur) >= max_shows) or (cur_eps + sh_eps > max_eps)):
+        cnt = _episode_count(sh)
+        if cur and (len(cur) >= max_shows or (eps + cnt) > max_eps):
             yield cur
             cur = []
-            cur_eps = 0
+            eps = 0
         cur.append(sh)
-        cur_eps += sh_eps
+        eps += cnt
     if cur:
         yield cur
 
@@ -683,26 +765,37 @@ def _chunk_shows(shows: list[dict[str, Any]], *, max_shows: int, max_eps: int) -
 def write_history(meta: dict[str, Any], ses: requests.Session, *, remove: bool, items: list[dict[str, Any]]) -> int:
     if not items:
         return 0
-    mv, sh = _history_split(items, remove=remove)
+    mv, sh, an = _history_split(items, remove=remove)
     url = URL_HIST_REMOVE if remove else URL_HIST_ADD
     delay = max(0.0, float(meta.get("delay_ms") or 0) / 1000.0)
     ok = 0
 
+    def post(bucket: str, part: list[dict[str, Any]], *, fallback: str | None = None) -> int:
+        st, _, text = request_json(ses, "POST", url, meta=meta, body={bucket: part})
+        if st in (200, 201, 204):
+            return st
+        if fallback:
+            st2, _, text2 = request_json(ses, "POST", url, meta=meta, body={fallback: part})
+            if st2 in (200, 201, 204):
+                return st2
+            if os.getenv("CW_SIMKL_DEBUG"):
+                print(f"[SIMKL:history] {('remove' if remove else 'add')} {bucket}->{fallback} failed: {st2}: {(text2 or '')[:200]}")
+        elif os.getenv("CW_SIMKL_DEBUG"):
+            print(f"[SIMKL:history] {('remove' if remove else 'add')} {bucket} -> {st}: {(text or '')[:200]}")
+        return st
+
     for part in _chunk(mv, int(meta["hist_movie_chunk"])):
-        st, _, text = request_json(ses, "POST", url, meta=meta, body={"movies": part})
+        st = post("movies", part)
         if st in (200, 201, 204):
             ok += len(part)
-        elif os.getenv("CW_SIMKL_DEBUG"):
-            print(f"[SIMKL:history] {('remove' if remove else 'add')} movies -> {st}: {(text or '')[:200]}")
         time.sleep(delay)
 
-    for part2 in _chunk_shows(sh, max_shows=int(meta["hist_show_chunk"]), max_eps=int(meta["hist_episode_limit"])):
-        st, _, text = request_json(ses, "POST", url, meta=meta, body={"shows": part2})
-        if st in (200, 201, 204):
-            ok += sum(_episode_count(x) for x in part2)
-        elif os.getenv("CW_SIMKL_DEBUG"):
-            print(f"[SIMKL:history] {('remove' if remove else 'add')} shows -> {st}: {(text or '')[:200]}")
-        time.sleep(delay)
+    for bucket, groups, fallback in (("shows", sh, None), ("anime", an, "shows")):
+        for part2 in _chunk_shows(groups, max_shows=int(meta["hist_show_chunk"]), max_eps=int(meta["hist_episode_limit"])):
+            st2 = post(bucket, part2, fallback=fallback)
+            if st2 in (200, 201, 204):
+                ok += sum(_episode_count(x) for x in part2)
+            time.sleep(delay)
 
     return ok
 
@@ -808,7 +901,7 @@ def main() -> None:
             elif ch == "3":
                 hist = collect_history(meta, ses)
                 print(f"\nSIMKL history entries: {len(hist)}")
-                show(hist, ["type", "title", "year", "season", "number", "watched_at"])
+                show(hist, ["bucket", "type", "title", "year", "season", "number", "watched_at"])
 
             elif ch == "4":
                 wl = collect_watchlist(meta, ses)
