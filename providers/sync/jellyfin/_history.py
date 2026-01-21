@@ -66,9 +66,12 @@ def _unres_save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
-        with open(_unresolved_path(), "w", encoding="utf-8") as f:
+        path = _unresolved_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
@@ -111,9 +114,12 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_shadow_path()), exist_ok=True)
-        with open(_shadow_path(), "w", encoding="utf-8") as f:
+        path = _shadow_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
@@ -133,9 +139,12 @@ def _bb_save(d: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_blackbox_path()), exist_ok=True)
-        with open(_blackbox_path(), "w", encoding="utf-8") as f:
+        path = _blackbox_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
