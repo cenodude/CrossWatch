@@ -1,8 +1,8 @@
 /* assets/helpers/core.js *
-/* This file needs to be refactored and split up over time. - its garbage right now. */
+/* This file needs to be refactored and split up over time. */
 /* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-// Treat anything TV-ish as "tv"
+/* Utilities */
 const isTV = v => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v||""));
 
 function _el(id) {
@@ -52,7 +52,7 @@ function stateAsBool(v) {
   return !!v;
 }
 
-// Server-secret input helpers
+
 function applyServerSecret(inputId, hasValue) {
   const el = document.getElementById(inputId);
   if (!el) return;
@@ -72,7 +72,7 @@ function finishSecretLoad(inputId, hasValue) {
   applyServerSecret(inputId, !!hasValue);
 }
 
-// Determine which authentication providers are configured
+
 function getConfiguredProviders(cfg = window._cfgCache || {}) {
   const S = new Set();
   const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
@@ -98,7 +98,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   return S;
 }
 
-// Resolve a provider key from a dynamic card/row element
+
 function resolveProviderKeyFromNode(node) {
   const attr = (node.getAttribute?.("data-sync-prov") || node.dataset?.syncProv || "").toUpperCase();
   if (attr) return attr;
@@ -115,7 +115,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("EMBY")) return "EMBY";
   if (alt.includes("CROSSWATCH")) return "CROSSWATCH";
 
-  // Fallback: 
+  
   const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
   const txt = (tnode?.textContent || node.textContent || "").toUpperCase();
   if (/\bPLEX\b/.test(txt))  return "PLEX";
@@ -128,7 +128,7 @@ function resolveProviderKeyFromNode(node) {
   if (/\bTAUTULLI\b/.test(txt)) return "TAUTULLI";
   if (/\bCROSSWATCH\b/.test(txt)) return "CROSSWATCH";
 
-  return ""; // unknown
+  return ""; 
 }
 
 function applySyncVisibility() {
@@ -138,14 +138,14 @@ function applySyncVisibility() {
 
   let cards = host.querySelectorAll(".prov-card");
   if (!cards || cards.length === 0) {
-  // Fallback: 
+  
     cards = host.querySelectorAll(":scope > .card, :scope > *");
   }
 
   cards.forEach((card) => {
     let key = (card.getAttribute?.("data-prov") || card.dataset?.prov || "").toUpperCase();
 
-  // Fallback:
+  
     if (!key) key = resolveProviderKeyFromNode(card);
 
     if (!key) return;
@@ -195,7 +195,7 @@ function scheduleApplySyncVisibility() {
   __syncVisTick = raf(run);
 }
 
-// Observe changes to the providers list and footer 
+
 function bindSyncVisibilityObservers() {
   const list = document.getElementById("providers_list");
   if (list && !list.__syncObs) {
@@ -215,11 +215,11 @@ function bindSyncVisibilityObservers() {
     });
     window.__syncVisEvt = true;
   }
-  // Initial pass
+  
   scheduleApplySyncVisibility();
 }
 
-// BEGIN Watchlist Preview visibility based on /api/pairs
+
 const PAIRS_CACHE_KEY = "cw.pairs.v1";
 const PAIRS_TTL_MS    = 15_000;
 
@@ -252,9 +252,9 @@ async function isWatchlistEnabledInPairs(){
 }
 
 
-const AUTO_STATUS = false; // DISABLED by default -- can be enabled for debugging -- WATCH OUT FOR API LIMITS!
+const AUTO_STATUS = false; 
 let lastStatusMs = 0;
-const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; 
 
 let busy = false,
   esDet = null,
@@ -272,7 +272,7 @@ window._ui = { status: null, summary: null };
 
 const STATUS_CACHE_KEY = "cw.status.v1";
 
-// Status normalizer
+
 function normalizeProviders(input) {
   const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
   const normOne = (v) => {
@@ -297,7 +297,7 @@ function normalizeProviders(input) {
   };
 }
 
-// cache helpers
+
 function saveStatusCache(providers) {
   try {
     const normalized = normalizeProviders(providers);
@@ -343,7 +343,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     }
   }
 
-  // Cache for reuse elsewhere
+  
   window._ui = window._ui || {};
   window._ui.pairedProviders = active;
 
@@ -351,7 +351,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
   return active;
 }
 
-// Hide/show badges by provider
+
 function toggleProviderBadges(active){
   const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", ANILIST:"badge-anilist", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
   for (const [prov,id] of Object.entries(map)){
@@ -360,7 +360,7 @@ function toggleProviderBadges(active){
   }
 }
 
-// Tri-state normalizer
+
 function connState(v) {
   if (v == null) return "unknown";
 
@@ -380,7 +380,7 @@ function connState(v) {
     return "unknown";
   }
 
-  // Branch: objects with common status keys
+  
   if (typeof v === "object") {
     if (typeof v.connected === "boolean") return v.connected ? "ok" : "no";
     const b = v.ok ?? v.ready ?? v.active ?? v.online;
@@ -395,12 +395,12 @@ function connState(v) {
   return "unknown";
 }
 
-// Case-insensitive picker
+
 function pickCase(obj, k) {
   return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
 }
 
-// -Inline icons
+
 function svgCrown() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
 }
@@ -408,15 +408,7 @@ function svgCheck() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.2L5.5 12.7l1.4-1.4 2.1 2.1 6-6 1.4 1.4z"/></svg>';
 }
 
-/**
- * Render a connection badge. Adds a left "membership" tag for Plex Pass / Trakt VIP.
- * @param {string} id - Element id (e.g., 'badge-plex')
- * @param {string} providerName - Display name (e.g., 'Plex')
- * @param {'ok'|'no'|'unknown'} state - Connection state
- * @param {boolean} stale - When true, dim slightly
- * @param {string} [provKey] - 'PLEX' | 'TRAKT' | 'SIMKL' | 'JELLYFIN'
- * @param {object|boolean} [info] - Provider object as returned by /api/status.providers[provKey]
- */
+
 function setBadge(id, providerName, state, stale, provKey, info) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -426,7 +418,7 @@ function setBadge(id, providerName, state, stale, provKey, info) {
   if (stale) el.classList.add("stale");
   el.classList.add("conn");
 
-  // left tag for Plex Pass / Trakt VIP
+  
   let tag = "";
   if (provKey === "PLEX" && info && info.plexpass) {
     const plan = String(info?.subscription?.plan || "").toLowerCase();
@@ -438,7 +430,7 @@ function setBadge(id, providerName, state, stale, provKey, info) {
     tag = `<span class="tag vip" title="Trakt ${lbl}">${svgCheck()}${lbl}</span>`;
   }
 
-  // tooltip / limits for TRAKT 
+  
   if (provKey === "TRAKT" && info && typeof info === "object") {
     const lim = info.limits || {};
     const wl  = lim.watchlist  || {};
@@ -470,7 +462,7 @@ function setBadge(id, providerName, state, stale, provKey, info) {
     }
   }
 
-  // Main txt
+  
   const labelState = state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown";
   el.innerHTML =
 
@@ -481,7 +473,7 @@ function setBadge(id, providerName, state, stale, provKey, info) {
     `</span>`;
 }
 
-// normalize and render all connector statuses
+
 function renderConnectorStatus(providers, { stale = false } = {}) {
   const p = providers || {};
   const plex    = pickCase(p, "PLEX");
@@ -510,6 +502,7 @@ function fetchWithTimeout(url, opts = {}, ms = 15000) {
     .finally(() => clearTimeout(t));
 }
 
+/*! Status */
 async function refreshStatus(force = false) {
   const now = Date.now();
   if (!force && typeof lastStatusMs !== "undefined" && typeof STATUS_MIN_INTERVAL !== "undefined" && (now - lastStatusMs < STATUS_MIN_INTERVAL)) return;
@@ -570,7 +563,7 @@ async function refreshStatus(force = false) {
   }
 }
 
-// Bootstrap: load cached status first
+
 (function bootstrapStatusFromCache() {
   try {
     const cached = loadStatusCache();
@@ -661,7 +654,7 @@ function recomputeRunDisabled() {
   btn.disabled = busyNow || running || !canRun;
 }
 
-// Bridge only
+
 window.setTimeline = function setTimeline(tl){
   if (window.UX?.updateTimeline) window.UX.updateTimeline(tl || {});
   else window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
@@ -952,7 +945,7 @@ function setBusy(v) {
   recomputeRunDisabled();
 }
 
-// Run Sync (Trigger + bridge to UI)
+// Run Sync
 async function runSync(){
   if (busy) return;
   setBusy?.(true);
@@ -1176,7 +1169,7 @@ function renderMainUpdatePill(hasUpdate, latest, url) {
   }
 }
 
-// Hook into your existing version check
+// Hook into existing version check
 async function checkForUpdate() {
   try {
     const r = await fetch('/api/version', { cache: 'no-store' });
@@ -1530,103 +1523,8 @@ function _initStatsTooltip() {
 
 document.addEventListener("DOMContentLoaded", _initStatsTooltip);
 
-let detBuf = "";
 
-function scanForEvents(chunk) {
-  const lines = String(chunk).split('\n');
-  for (const line of lines) {
-    if (!line || line[0] !== '{') continue;
-    try {
-      const obj = JSON.parse(line);
-      if (obj && obj.event && !window.SyncBar) {
-        window.Progress?.onEvent(obj);
-      }
-    } catch (_) { /* non-JSON line; ignore */ }
-  }
-}
-
-// Progress mapper: SYNC events -> UI timeline/progress
-window.Progress = (function () {
-  let tl = { start: false, pre: false, post: false, done: false };
-  const A = [0, 33, 66, 100]; 
-
-  function emitTL() {
-    (window.UX?.updateTimeline || window.setTimeline)?.(tl);
-  }
-
-  function setPhase(p) {
-    tl = {
-      start: true,
-      pre: p !== "start",
-      post: p === "post" || p === "done",
-      done: p === "done",
-    };
-    emitTL();
-  }
-
-  function pushPct(done, total) {
-    if (!total) return;
-    const pct = Math.min(99, Math.floor(A[2] + (done / total) * (A[3] - A[2])));
-    window.UX?.updateProgress?.({ pct });
-  }
-
-  function reset() {
-    tl = { start: true, pre: false, post: false, done: false };
-    emitTL();
-    window.UX?.updateProgress?.({ pct: A[0] });
-  }
-
-  function onEvent(e) {
-    if (!e || !e.event) return;
-
-    switch (e.event) {
-      // START
-      case "run:start":
-      case "run:pair":
-      case "pair:start":
-        reset();
-        break;
-
-      // DISCOVERING
-      case "snapshot:start":
-      case "plan":
-        setPhase("pre");
-        break;
-      case "debug":
-        if (e.msg && e.msg.startsWith("snapshot")) setPhase("pre");
-        break;
-
-      // SYNCING
-      case "apply:start":
-      case "apply:add:start":
-      case "apply:remove:start":
-      case "cascade:pre":
-        setPhase("post");
-        break;
-      case "apply:add:progress":
-      case "apply:remove:progress":
-        setPhase("post");
-        pushPct(+e.done || 0, +e.total || 0);
-        break;
-      case "apply:add:done":
-      case "apply:remove:done":
-      case "cascade:summary":
-        setPhase("post");
-        break;
-
-      // DONE
-      case "run:done":
-        tl = { start: true, pre: true, post: true, done: true };
-        emitTL();
-        window.UX?.updateProgress?.({ pct: 100 });
-        break;
-    }
-  }
-
-  return { onEvent };
-})();
-
-// --- Details Log (live stream) -----------------
+// Details Log (live stream)
 if (typeof window.esDet === "undefined") window.esDet = null;
 if (typeof window.esDetSummary === "undefined") window.esDetSummary = null;
 if (typeof window._detStaleIV === "undefined") window._detStaleIV = null;
@@ -1942,8 +1840,6 @@ async function openDetailsLog() {
         return;
       }
 
-      try { scanForEvents(ev.data); } catch {}
-
       if (!useFormatter) {
         appendRaw(ev.data);
       } else {
@@ -2079,7 +1975,7 @@ function setRefreshBusy(busy) {
 }
 
 
-// Settings page
+
 window.openAbout = () => window.ModalRegistry.open('about');
 window.cxEnsureCfgModal = window.cxEnsureCfgModal || function(){};
 window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
@@ -2092,8 +1988,8 @@ window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) 
   el.__wiredTouch = true;
 };
 
-// Disable secret masking globally
-window.maskSecret = function maskSecret(elOrId /*, hasValue */) {
+
+window.maskSecret = function maskSecret(elOrId ) {
   const el = typeof elOrId === "string" ? document.getElementById(elOrId) : elOrId;
   if (!el) return;
   el.dataset.masked  = "0";
@@ -2136,7 +2032,7 @@ async function loadCrossWatchSnapshots(cfg) {
       (f) => f && typeof f.name === "string" && f.name.endsWith(".json")
     );
 
-    // Split by feature suffix
+    
     const groups = {
       watchlist: [],
       history:   [],
@@ -2164,7 +2060,7 @@ async function loadCrossWatchSnapshots(cfg) {
       const names = groups[key];
       sel.innerHTML = "";
 
-      // Always include "Latest"
+      
       const baseOpt = document.createElement("option");
       baseOpt.value = "latest";
       baseOpt.textContent = "Latest (default)";
@@ -2186,6 +2082,7 @@ async function loadCrossWatchSnapshots(cfg) {
   }
 }
 
+/*! Settings */
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
   window._cfgCache = cfg;
@@ -2207,12 +2104,12 @@ async function loadConfig() {
   _setVal("metadata_locale", cfg.metadata?.locale || "");
   _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
-  // User Interface 
+  
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
     const cw = cfg.crosswatch || {};
 
-    // Watchlist preview toggle
+    
     const sel = document.getElementById("ui_show_watchlist_preview");
     if (sel) {
       const on = (typeof ui.show_watchlist_preview === "boolean")
@@ -2221,7 +2118,7 @@ async function loadConfig() {
       sel.value = on ? "true" : "false";
     }
 
-    // Playing Card toggle
+    
     const playSel = document.getElementById("ui_show_playingcard");
     if (playSel) {
       const on = (typeof ui.show_playingcard === "boolean")
@@ -2230,7 +2127,7 @@ async function loadConfig() {
       playSel.value = on ? "true" : "false";
     }
 
-    // CrossWatch Tracker
+    
     const cwEnabledEl = document.getElementById("cw_enabled");
     if (cwEnabledEl) {
       const enabled = (cw.enabled === false) ? "false" : "true";
@@ -2263,7 +2160,7 @@ async function loadConfig() {
   await loadCrossWatchSnapshots(cfg);
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
 
-// Sensitve secrets
+
 (function hydrateSecretsRaw(cfg){
   const val = (x) => (typeof x === "string" ? x.trim() : "");
   const setRaw = (id, v) => {
@@ -2277,33 +2174,33 @@ async function loadConfig() {
     try { wireSecretTouch(id); } catch {}
   };
 
-  // PLEX
+  
   setRaw("plex_token",    val(cfg.plex?.account_token));
   setRaw("plex_home_pin", val(cfg.plex?.home_pin));
 
-  // SIMKL
+  
   setRaw("simkl_client_id",     val(cfg.simkl?.client_id));
   setRaw("simkl_client_secret", val(cfg.simkl?.client_secret));
   setRaw("simkl_access_token",  val(cfg.simkl?.access_token) || val(cfg.auth?.simkl?.access_token));
 
-  // ANILIST
+  
   setRaw("anilist_client_id",     val(cfg.anilist?.client_id));
   setRaw("anilist_client_secret", val(cfg.anilist?.client_secret));
   setRaw("anilist_access_token",  val(cfg.anilist?.access_token) || val(cfg.auth?.anilist?.access_token));
 
-  // TMDB
+  
   setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
 
-  // MDBLIST
+  
   setRaw("mdblist_key",         val(cfg.mdblist?.api_key));
 
-  // TRAKT
+  
   setRaw("trakt_client_id",     val(cfg.trakt?.client_id));
   setRaw("trakt_client_secret", val(cfg.trakt?.client_secret));
   setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
 })(cfg);
 
-  // --- Legacy/basic scheduling
+  
   const s = cfg.scheduling || {};
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
@@ -2311,7 +2208,7 @@ async function loadConfig() {
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
-  // UI helper hints
+  
   try { window.updateSimklButtonState?.(); } catch {}
   try { window.updateSimklHint?.();      } catch {}
   try { window.updateTmdbHint?.();       } catch {}
@@ -2424,7 +2321,7 @@ async function saveSettings() {
 
     const uiMode   = _getVal("mode");
     const uiSource = _getVal("source");
-    const uiDebugMode = _getVal("debug"); // off|on|mods|full
+    const uiDebugMode = _getVal("debug"); 
     let wantDebug=false, wantMods=false, wantHttp=false;
     if (uiDebugMode==='on'){wantDebug=true;}
     else if (uiDebugMode==='mods'){wantDebug=true; wantMods=true;}
@@ -2450,7 +2347,7 @@ async function saveSettings() {
       changed = true;
     }
 
-    // Metadata (locale + TTL)
+    
     const uiMetaLocale = (document.getElementById("metadata_locale")?.value || "").trim();
     const uiMetaTTLraw = (document.getElementById("metadata_ttl_hours")?.value || "").trim();
     const uiMetaTTL    = uiMetaTTLraw === "" ? null : parseInt(uiMetaTTLraw, 10);
@@ -2458,7 +2355,7 @@ async function saveSettings() {
     if (uiMetaLocale !== prevMetaLocale) {
       cfg.metadata = cfg.metadata || {};
       if (uiMetaLocale) cfg.metadata.locale = uiMetaLocale;
-      else delete cfg.metadata.locale; // allow clearing
+      else delete cfg.metadata.locale; 
       changed = true;
     }
     if (uiMetaTTL !== null && !Number.isNaN(uiMetaTTL) && uiMetaTTL !== prevMetaTTL) {
@@ -2467,7 +2364,7 @@ async function saveSettings() {
       changed = true;
     }
 
-    // User Interface + CrossWatch Tracker
+    
     (function () {
       const norm = (s) => (s ?? "").trim();
       const truthy = (v) => ["true","1","yes","on","enabled","enable"].includes(String(v).toLowerCase());
@@ -2477,7 +2374,7 @@ async function saveSettings() {
         return Number.isNaN(n) ? prev : Math.max(0, n);
       };
 
-      // UI: watchlist preview
+      
       const uiSel = document.getElementById("ui_show_watchlist_preview");
       if (uiSel) {
         const uiShow = !truthy(uiSel.value) ? (uiSel.value === "false" ? false : true) : truthy(uiSel.value);
@@ -2489,7 +2386,7 @@ async function saveSettings() {
         }
       }
 
-      // UI: playing card
+      
       const uiPlaySel = document.getElementById("ui_show_playingcard");
       if (uiPlaySel) {
         const finalUiPlay = uiPlaySel.value === "false" ? false : true;
@@ -2504,7 +2401,7 @@ async function saveSettings() {
       let cwChanged = false;
 
 
-      // Enabled
+      
       const enabledEl = document.getElementById("cw_enabled");
       const newEnabled = enabledEl ? truthy(enabledEl.value) : prevCwEnabled;
       if (newEnabled !== prevCwEnabled) {
@@ -2512,14 +2409,14 @@ async function saveSettings() {
         cwChanged = true;
       }
 
-      // Retention days
+      
       const newRet = intOr(document.getElementById("cw_retention_days"), prevCwRet);
       if (newRet !== prevCwRet) {
         cw.retention_days = newRet;
         cwChanged = true;
       }
 
-      // Auto snapshot
+      
       const autoEl = document.getElementById("cw_auto_snapshot");
       const newAuto = autoEl ? truthy(autoEl.value) : prevCwAuto;
       if (newAuto !== prevCwAuto) {
@@ -2527,14 +2424,14 @@ async function saveSettings() {
         cwChanged = true;
       }
 
-      // Max snapshots
+      
       const newMax = intOr(document.getElementById("cw_max_snapshots"), prevCwMax);
       if (newMax !== prevCwMax) {
         cw.max_snapshots = newMax;
         cwChanged = true;
       }
 
-      // Restore snapshots
+      
       const prevMap = {
         watchlist: prevCwRestoreWatch,
         history:   prevCwRestoreHist,
@@ -2556,7 +2453,7 @@ async function saveSettings() {
       }
     })();
 
-    // Secrets (tokens, keys, client ids/secrets)
+    
     const sPlex     = readSecretSafe("plex_token", prevPlex);
     const sHomePin  = readSecretSafe("plex_home_pin", prevHomePin);
     const sCid      = readSecretSafe("simkl_client_id", prevCid);
@@ -2621,7 +2518,7 @@ async function saveSettings() {
     }
 
 
-    // Jellyfin patch
+    
     try {
       const norm = (s) => (s ?? "").trim();
       const first = (...ids) => {
@@ -2633,7 +2530,7 @@ async function saveSettings() {
         return "";
       };
 
-      // read basics from UI
+      
       const uiSrv    = first("jfy_server_url","jfy_server");
       const uiUser   = first("jfy_username","jfy_user");
       const uiUid    = first("jfy_user_id");
@@ -2648,7 +2545,7 @@ async function saveSettings() {
       if (uiSrv && uiSrv !== prevSrv) { (cfg.jellyfin ||= {}).server = uiSrv; changed = true; }
       if (uiUser && uiUser !== prevUser) {
         (cfg.jellyfin ||= {}).username = uiUser;
-        cfg.jellyfin.user = uiUser; // keep both for compatibility
+        cfg.jellyfin.user = uiUser; 
         changed = true;
       }
       if (uiUid && uiUid !== prevUid) { (cfg.jellyfin ||= {}).user_id = uiUid; changed = true; }
@@ -2659,7 +2556,7 @@ async function saveSettings() {
         if (!rows.length) return null;
         const H = [], R = [], S = [];
         rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); // GUID string
+          const id = String(r.dataset.id || "").trim(); 
           if (!id) return;
           if (r.querySelector(".lm-dot.hist.on")) H.push(id);
           if (r.querySelector(".lm-dot.rate.on")) R.push(id);
@@ -2673,7 +2570,7 @@ async function saveSettings() {
         if (!rows.length) return null;  
         const H = [], R = [], S = [];
         rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); // GUID string
+          const id = String(r.dataset.id || "").trim(); 
           if (!id) return;
           if (r.querySelector(".whtog.hist.on")) H.push(id);
           if (r.querySelector(".whtog.rate.on")) R.push(id);
@@ -2727,14 +2624,14 @@ async function saveSettings() {
       console.warn("saveSettings: jellyfin merge failed", e);
     }
 
-      // Emby whitelist
+      
     try {
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
         if (!rows.length) return null;
         const H = [], R = [], S = [];
         rows.forEach((r) => {
-          const id = String(r.dataset.id || "").trim(); // GUID string
+          const id = String(r.dataset.id || "").trim(); 
           if (!id) return;
           if (r.querySelector(".lm-dot.hist.on")) H.push(id);
           if (r.querySelector(".lm-dot.rate.on")) R.push(id);
@@ -2819,13 +2716,13 @@ async function saveSettings() {
       console.warn("saveSettings: emby merge failed", e);
     }
 
-    // Plex root patch + whitelist 
+    
     try {
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
       const uiUser = norm(document.getElementById("plex_username")?.value   || "");
       const uiAidS = norm(document.getElementById("plex_account_id")?.value || "");
 
-      // Normalise account_id: always end up with a positive int, default 1
+      
       let uiAid = null;
       if (uiAidS !== "") {
         const n = parseInt(uiAidS, 10);
@@ -2859,7 +2756,7 @@ async function saveSettings() {
         changed = true;
       }
 
-      // SSL Verify
+      
       const uiVerify   = !!document.getElementById("plex_verify_ssl")?.checked;
       const prevVerify = !!(serverCfg?.plex?.verify_ssl);
       if (uiVerify !== prevVerify) {
@@ -2867,7 +2764,7 @@ async function saveSettings() {
         changed = true;
       }
 
-      // Read selecioned libraries from UI
+      
       const st = (window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() });
       const toNums = (xs) =>
         (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
@@ -2905,7 +2802,7 @@ async function saveSettings() {
     } catch (e) {
       console.warn("saveSettings: plex merge failed", e);
     }
-    // Scrobbler merge
+    
     try {
       if (typeof window.getScrobbleConfig === "function") {
         const prev = serverCfg?.scrobble || {};
@@ -2919,7 +2816,7 @@ async function saveSettings() {
       console.warn("saveSettings: scrobbler merge failed", e);
     }
 
-    // Scheduling merge
+    
     try {
       let sched = {};
       if (typeof window.getSchedulingPatch === "function") {
@@ -2970,7 +2867,7 @@ async function saveSettings() {
       }
     }
 
-    // UI refreshes
+    
     try {
       if (typeof refreshPairedProviders === "function") await refreshPairedProviders(0);
       const cached = (typeof loadStatusCache === "function") ? loadStatusCache() : null;
@@ -3019,7 +2916,7 @@ async function saveSettings() {
   }
 }
 
-// maintenance / troubleshooting actions
+
 async function clearState() {
   const btnText = "Clear State";
   try {
@@ -3124,7 +3021,7 @@ async function restartCrossWatch() {
   }
 }
 
-// TMDB API key hint update
+
 async function updateTmdbHint() {
   const hint = document.getElementById("tmdb_hint");
   const input = document.getElementById("tmdb_api_key");
@@ -3332,6 +3229,7 @@ function artUrl(item, size) {
   )}&cb=${cb}`;
 }
 
+/*! Watchlist preview */
 async function loadWall() {
   try {
     const card = document.getElementById("placeholder-card");
@@ -3371,7 +3269,7 @@ async function loadWall() {
     return (window._deletedKeys && window._deletedKeys.has(item.key)) || false;
   };
 
-  // status and pill helpers
+  
   function pillFor(status) {
     switch (String(status || "").toLowerCase()) {
       case "deleted":    return { text: "DELETED", cls: "p-del" };
@@ -3406,7 +3304,7 @@ async function loadWall() {
     msg.classList.add("hidden");
     row.classList.remove("hidden");
 
-    // first-seen timestamps
+    
     const firstSeen = (() => {
       try { return JSON.parse(localStorage.getItem("wl_first_seen") || "{}"); }
       catch { return {}; }
@@ -3419,10 +3317,10 @@ async function loadWall() {
     for (const it of items) if (!firstSeen[it.key]) firstSeen[it.key] = now;
     localStorage.setItem("wl_first_seen", JSON.stringify(firstSeen));
 
-    // newest first
+    
     items = items.slice().sort((a, b) => getTs(b) - getTs(a));
 
-    // cap preview size (Watchlist Preview only - currently on 20 max)
+    
     const MAX = Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20;
     items = items.slice(0, MAX);
 
@@ -3446,7 +3344,7 @@ async function loadWall() {
       img.alt = `${it.title || ""} (${it.year || ""})`;
       img.src = artUrl(it, "w342");
 
-      // fallback poster
+      
       img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
 
       a.appendChild(img);
@@ -3556,7 +3454,7 @@ async function isWatchlistPreviewAllowed(){
   return true;
 }
 
-// Update preview visibility based on context
+
 let __uPVBusy = false;
 window.__wallLoading = window.__wallLoading || false;
 
@@ -3613,7 +3511,7 @@ window.addEventListener("storage", (event) => {
 });
 
 async function resolvePosterUrl(entity, id, size = "w342") {
-  // Guard
+  
   if (!id) return null;
   if (window._cfgCache && !String(window._cfgCache?.tmdb?.api_key||"").trim()) return null;
 
@@ -3636,7 +3534,7 @@ async function resolvePosterUrl(entity, id, size = "w342") {
     const meta = j && j.ok ? j.result : null;
     if (!meta?.images?.poster?.length) return null;
 
-    // Use the cached art proxy for the actual image
+    
     return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
   } catch {
     return null;
@@ -3726,48 +3624,6 @@ if (typeof updateSimklHint !== "function") {
 
 
 
-try {
-  window.addPair = addPair;
-} catch (e) {}
-try {
-  window.savePairs = savePairs;
-} catch (e) {}
-try {
-  window.deletePair = deletePair;
-} catch (e) {}
-try {
-  window.loadPairs = loadPairs;
-} catch (e) {}
-
-try {
-  window.addBatch = addBatch;
-} catch (e) {}
-try {
-  window.saveBatches = saveBatches;
-} catch (e) {}
-try {
-  window.loadBatches = loadBatches;
-} catch (e) {}
-try {
-  window.runAllBatches = runAllBatches;
-} catch (e) {}
-
-try {
-  window.loadProviders = loadProviders;
-} catch (e) {}
-
-window.addEventListener("DOMContentLoaded", () => {
-  try {
-    loadProviders();
-  } catch (e) {}
-  try {
-    loadPairs();
-  } catch (e) {}
-  try {
-    loadBatches();
-  } catch (e) {}
-});
-
 async function loadProviders() {
   const div = document.getElementById("providers_list");
   if (!div) return;
@@ -3783,7 +3639,7 @@ async function loadProviders() {
       return;
     }
 
-    // Normalize to a stable provider key for known services
+    
     const normKey = (s = "") => {
       s = String(s).toUpperCase();
       if (/\bPLEX\b/.test(s)) return "PLEX";
@@ -3854,64 +3710,6 @@ async function loadProviders() {
 try { window.showTab = showTab; } catch (e) {}
 try { window.runSync = runSync; } catch (e) {}
 
-window.syncPairs = [];
-
-window.addPair = function () {
-  const source = _getVal("source-provider");
-  const target = _getVal("target-provider");
-  if (!source || !target) {
-    logToSyncOutput("Source and Target must be selected.");
-    return;
-  }
-  const pair = { source, target };
-  window.syncPairs.push(pair);
-  logToSyncOutput(`Added sync pair: ${source} → ${target}`);
-  renderSyncPairs();
-};
-
-window.addBatch = function () {
-  const batch = [
-    { source: "PLEX", target: "SIMKL" },
-    { source: "SIMKL", target: "PLEX" },
-  ];
-  for (const pair of batch) {
-    window.syncPairs.push(pair);
-    logToSyncOutput(`Added sync pair: ${pair.source} → ${pair.target}`);
-  }
-  renderSyncPairs();
-};
-
-
-function renderSyncPairs() {
-  const table = _el("pair-table-body");
-  if (!table) return;
-  table.innerHTML = "";
-  window.syncPairs.forEach((pair, idx) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td>${pair.source}</td><td>${pair.target}</td><td><button onclick="removePair(${idx})">✕</button></td>`;
-    table.appendChild(row);
-  });
-}
-
-window.removePair = function (index) {
-  if (index >= 0 && index < window.syncPairs.length) {
-    const pair = window.syncPairs.splice(index, 1)[0];
-    logToSyncOutput(`Removed sync pair: ${pair.source} → ${pair.target}`);
-    renderSyncPairs();
-  }
-};
-
-function logToSyncOutput(msg) {
-  const el = document.getElementById("sync-output");
-  if (el) {
-    const timestamp = new Date().toLocaleTimeString();
-    el.textContent += `[${timestamp}] ${msg}\n`;
-    el.scrollTop = el.scrollHeight;
-  } else {
-    console.log("SYNC LOG:", msg);
-  }
-}
-
 window.cx = window.cx || {
   providers: [],
   pairs: [],
@@ -3944,491 +3742,71 @@ function renderConnections() {
 }
 
 
-(function () {
-  
-  window.cxOpenModalFor = function (pair, editingId) {
-  try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
 
-  function pick() {
-    return {
-      src: document.getElementById("cx-src"),
-      dst: document.getElementById("cx-dst"),
-      one: document.getElementById("cx-mode-one") || document.querySelector('input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]'),
-      two: document.getElementById("cx-mode-two") || document.querySelector('input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]'),
-      enabled: document.getElementById("cx-enabled"),
-      wlAdd: document.getElementById("cx-wl-add"),
-      wlRem: document.getElementById("cx-wl-remove"),
-      wlNote: document.getElementById("cx-wl-note"),
-    };
-  }
-
-  var ui = pick();
-
-  if (!ui.src || !ui.dst || !ui.one || !ui.two || !ui.enabled) {
-    try { if (typeof window.cxEnsureCfgModal === "function") { window.cxEnsureCfgModal(); } else { _ensureCfgModal(); } } catch (_) {}
-    ui = pick();
-    if (!ui.src || !ui.dst || !ui.one || !ui.two || !ui.enabled) {
-      console.warn("cxOpenModalFor: modal inputs missing after ensure()");
-      return;
-    }
-  }
-
-  
+/*! Connections (pairs API) */
+async function loadPairs() {
   try {
-    var _src = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
-    var _dst = typeof _byName === "function" ? _byName(window.cx.providers, pair.target) : null;
-    var twoOk = !!(_src && _dst && _src.capabilities && _dst.capabilities && _src.capabilities.bidirectional && _dst.capabilities.bidirectional);
-    if (ui.two) ui.two.disabled = !twoOk;
-    var twoLabel = document.getElementById("cx-two-label") || (ui.two && ui.two.closest && ui.two.closest("label"));
-    if (twoLabel) twoLabel.classList.toggle("muted", !twoOk);
-  } catch (_) {}
-
-  ui.src.value = pair.source; try { ui.src.dispatchEvent(new Event("change")); } catch(_){};
-  ui.dst.value = pair.target; try { ui.dst.dispatchEvent(new Event("change")); } catch(_){};
-
-  var mode = pair.mode || "one-way";
-  if (mode === "one") mode = "one-way";
-  if (mode === "two") mode = "two-way";
-  ui.two.checked = mode === "two-way";
-  ui.one.checked = !ui.two.checked;
-  ui.enabled.checked = pair.enabled !== false;
-
-  try {
-    var wf = (pair.features && pair.features.watchlist) || { add: true, remove: false };
-    var srcObj = typeof _byName === "function" ? _byName(window.cx.providers, pair.source) : null;
-    var dstObj = typeof _byName === "function" ? _byName(window.cx.providers, pair.target) : null;
-    var wlOk = !!(srcObj && dstObj ? true : true); 
-    if (ui.wlAdd) { ui.wlAdd.checked = wlOk && !!wf.add; ui.wlAdd.disabled = !wlOk; }
-    if (ui.wlRem) {
-      var wlOn = document.getElementById("cx-wl-enable") ? document.getElementById("cx-wl-enable").checked : true;
-      ui.wlRem.checked = wlOk && !!wf.remove;
-      ui.wlRem.disabled = !(wlOk && wlOn);
-    }
-    if (ui.wlNote) ui.wlNote.textContent = wlOk ? "" : "Watchlist is not supported on one of the providers.";
-  } catch (_) {}
-
-  var modal = document.getElementById("cx-modal");
-  if (modal) modal.classList.remove("hidden");
-};
-})();
-
-(function () {
-  
-  window.cx = window.cx || {
-    providers: [],
-    pairs: [],
-    connect: { source: null, target: null },
-  };
-
-  
-  function _getModal() {
-    var m = document.getElementById("cx-modal");
-    if (!m && typeof window.cxEnsureCfgModal === "function") {
-      try {
-        window.cxEnsureCfgModal();
-        m = document.getElementById("cx-modal");
-      } catch (_) {}
-    }
-    return m;
-  }
-
-  
-  async function loadPairs() {
-    try {
-      const res = await fetch("/api/pairs", { cache: "no-store" });
-      const arr = await res.json().catch(() => []);
-      window.cx.pairs = Array.isArray(arr) ? arr : [];
-      if (typeof window.renderConnections === "function") {
-        try {
-          if (typeof window.renderConnections === "function") { renderConnections(); }
-        } catch (_) {}
-      }
-    } catch (e) {
-      console.warn("[cx] loadPairs failed", e);
-    }
-  }
-  try {
-    window.loadPairs = loadPairs;
-  } catch (_) {}
-
-  
-  async function deletePair(id) {
-    if (!id) return;
-    try {
-      await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
-      await loadPairs();
-    } catch (e) {
-      console.warn("[cx] deletePair failed", e);
-      alert("Failed to delete connection.");
-    }
-  }
-  try {
-    window.deletePair = deletePair;
-  } catch (_) {}
-
-  // --------------------------- Save Pair (create/update) ---------------------------
-  async function cxSavePair(data) {
-    try {
-      const modal = (typeof _getModal === "function" ? _getModal() : document.getElementById("cx-modal")) || null;
-      const editingId =
-        modal && modal.dataset ? (modal.dataset.editingId || "").trim() : "";
-
-      // ---- Normalize features ------------------------------------------------
-      const F = (data && data.features) || {};
-      const DEF = { enable: true, add: true, remove: false };
-
-      // Basic feature: only enable/add/remove
-      function normBasic(feat) {
-        const v = Object.assign({}, DEF, feat || {});
-        return {
-          enable: !!v.enable,
-          add: !!v.add,
-          remove: !!v.remove,
-        };
-      }
-
-      // Ratings: keep toggles + pass through types/mode/from_date (sanitized)
-      function normRatings(feat) {
-        const v = Object.assign({}, DEF, feat || {});
-        const out = {
-          enable: !!v.enable,
-          add: !!v.add,
-          remove: !!v.remove,
-        };
-        // Preserve scope if present
-        if (Array.isArray(v.types)) out.types = v.types.map(String);
-        if (typeof v.mode === "string") out.mode = v.mode;
-        if (typeof v.from_date === "string") out.from_date = v.from_date.trim();
-        return out;
-      }
-
-      const features = {};
-      if (F.watchlist) features.watchlist = normBasic(F.watchlist);
-      if (F.history) features.history = normBasic(F.history);
-      if (F.playlists) features.playlists = normBasic(F.playlists);
-      if (F.ratings) features.ratings = normRatings(F.ratings);
-
-      // ---- Payload -----------------------------------------------------------
-      const srcKey = String(data.source || "").trim().toUpperCase();
-      const dstKey = String(data.target || "").trim().toUpperCase();
-
-      const modeIn = String(data.mode || "one-way").toLowerCase();
-      let mode = modeIn === "two" || modeIn === "two-way" ? "two-way" : "one-way";
-
-      // Policy: Tautulli is read-only (source-only). Never allow it as a destination.
-      if (dstKey === "TAUTULLI") {
-        alert("Tautulli can only be used as a source (not as a destination).");
-        return;
-      }
-      // Extra guard: if Tautulli is the source, force one-way.
-      if (srcKey === "TAUTULLI") mode = "one-way";
-
-      const payload = {
-        source: data.source,
-        target: data.target,
-        mode,
-        enabled: !!data.enabled,
-        features,
-      };
-
-      // ---- Save via API ------------------------------------------------------
-      let ok = false;
-      let r;
-      if (editingId) {
-        r = await fetch(`/api/pairs/${encodeURIComponent(editingId)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        ok = !!(r && r.ok);
-      } else {
-        r = await fetch("/api/pairs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        ok = !!(r && r.ok);
-      }
-
-      if (!ok) {
-        let msg = "network";
-        try {
-          msg = r ? `${r.status} ${r.statusText}` : "network";
-        } catch (_) {}
-        console.warn("[cx] save failed:", msg);
-        alert("Failed to save connection.");
-        return;
-      }
-
-      // Reset modal state and refresh UI
-      if (modal && modal.dataset) modal.dataset.editingId = "";
-      try {
-        window.cx = window.cx || {};
-        window.cx.connect = { source: null, target: null };
-      } catch (_) {}
-      try {
-        if (typeof window.cxCloseModal === "function") window.cxCloseModal();
-      } catch (_) {}
-      const close = document.getElementById("cx-modal");
-      if (close) close.classList.add("hidden");
-
-      await (typeof loadPairs === "function" ? loadPairs() : Promise.resolve());
-    } catch (e) {
-      console.warn("[cx] cxSavePair error", e);
-      alert("Failed to save connection.");
-    }
-  }
-
-  try {
-    window.cxSavePair = cxSavePair;
-  } catch (_) {}
-
-  // ------------------------- Open Modal (prefill helpers) -------------------------
-  const _olderOpen = window.cxOpenModalFor;
-  window.cxOpenModalFor = async function (pair, editingId) {
-    // Delegate to the original (which builds the full UI & advanced Ratings)
-    if (typeof _olderOpen === "function") {
-      try {
-        await _olderOpen(pair, editingId);
-      } catch (_) {}
-    }
-
-    // Ensure modal exists
-    try {
-      if (typeof cxEnsureCfgModal === "function") {
-        await cxEnsureCfgModal();
-      } else if (typeof _ensureCfgModal === "function") {
-        _ensureCfgModal();
-      }
-    } catch (_) {}
-
-    // Wait for provider selects to be populated
-    const __wait = (pred, ms = 1500, step = 25) =>
-      new Promise((res) => {
-        const t0 = Date.now();
-        (function loop() {
-          if (pred() || Date.now() - t0 >= ms) return res();
-          setTimeout(loop, step);
-        })();
-      });
-
-    const m =
-      document.getElementById("cx-modal") ||
-      (typeof _getModal === "function" ? _getModal() : null);
-    if (!m) return;
-    if (m.dataset)
-      m.dataset.editingId = String(editingId || (pair && pair.id) || "");
-
-    const q = (sel) => m.querySelector(sel) || document.querySelector(sel);
-
-    await __wait(() => {
-      const s = q("#cx-src"),
-        d = q("#cx-dst");
-      return !!(
-        s &&
-        d &&
-        s.querySelectorAll("option").length &&
-        d.querySelectorAll("option").length
-      );
-    });
-
-    try {
-      const src = q("#cx-src");
-      const dst = q("#cx-dst");
-      const one =
-        q("#cx-mode-one") ||
-        q(
-          'input[name="cx-mode"][value="one-way"], input[name="cx-mode"][value="one"]'
-        );
-      const two =
-        q("#cx-mode-two") ||
-        q(
-          'input[name="cx-mode"][value="two-way"], input[name="cx-mode"][value="two"]'
-        );
-      const en = q("#cx-enabled");
-
-      // Source/Target
-      if (src) {
-        src.value = (pair && pair.source) || "PLEX";
-        try {
-          src.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-      if (dst) {
-        dst.value = (pair && pair.target) || "SIMKL";
-        try {
-          dst.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-
-      // Enabled
-      if (en) en.checked = !(pair && pair.enabled === false);
-
-      // Mode
-      if (one && two) {
-        let mval = (pair && pair.mode) || "one-way";
-        if (mval === "one") mval = "one-way";
-        if (mval === "two") mval = "two-way";
-        two.checked = mval === "two-way";
-        one.checked = !two.checked;
-      }
-
-      // Watchlist basics (Ratings & others are handled by original renderer)
-      const f = (pair && pair.features && pair.features.watchlist) || {};
-      const wlEnable = q("#cx-wl-enable");
-      const wlAdd = q("#cx-wl-add");
-      const wlRem = q("#cx-wl-remove");
-
-      const wlOn = "enable" in f ? !!f.enable : true;
-      if (wlEnable) {
-        wlEnable.checked = wlOn;
-        try {
-          wlEnable.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-      if (wlAdd) wlAdd.checked = !!f.add;
-      if (wlRem) {
-        wlRem.checked = !!f.remove;
-        wlRem.disabled = !wlOn;
-      }
-
-      m.classList.remove("hidden");
-
-      // Re-apply after a tick (ensures labels update)
-      await new Promise((r) => setTimeout(r, 0));
-      if (src && pair && pair.source) {
-        src.value = pair.source;
-        try {
-          src.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-      if (dst && pair && pair.target) {
-        dst.value = pair.target;
-        try {
-          dst.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-      if (wlEnable) {
-        try {
-          wlEnable.dispatchEvent(new Event("change"));
-        } catch (_) {}
-      }
-      if (wlRem) wlRem.disabled = !(wlEnable ? wlEnable.checked : wlOn);
-    } catch (_) {}
-  };
-
-  // ------------------------------- Boot --------------------------------------
-  document.addEventListener("DOMContentLoaded", () => {
-    try {
-      if (typeof loadPairs === "function") loadPairs();
-    } catch (_) {}
-  });
-})();
-
-(function modalTweaks() {
-  const $ = (s) => document.querySelector(s);
-
-  
-  const src = $("#cx-src"),
-    dst = $("#cx-dst");
-  function lockSrcDst() {
-    if (src?.value && dst?.value) {
-      src.disabled = true;
-      dst.disabled = true;
-      src.title = "Locked after selection";
-      dst.title = "Locked after selection";
-    }
-  }
-  src?.addEventListener("change", lockSrcDst);
-  dst?.addEventListener("change", lockSrcDst);
-  lockSrcDst();
-
-  
-  
-  const L1 =
-    document.querySelector('label[for="cx-mode-one"]') ||
-    $("#cx-mode-one-label") ||
-    $("#cx-one-label");
-  const L2 =
-    document.querySelector('label[for="cx-mode-two"]') ||
-    $("#cx-mode-two-label") ||
-    $("#cx-two-label");
-  if (L1) L1.textContent = "Mirror";
-  if (L2) L2.textContent = "Bidirectional";
-
-  
-  const en = $("#cx-enabled");
-  if (en) {
-    en.checked = true;
-    (en.closest(".group,.row,fieldset,div") || en).style.display = "none";
-  }
-
-  
-  function refreshWatchlistUI() {
-    const wlOn = $("#cx-wl-enable")?.checked;
-    const rem = $("#cx-wl-remove");
-    if (rem) {
-      rem.disabled = !wlOn;
-      if (!wlOn) rem.checked = false;
-    }
-  }
-  ["#cx-wl-enable", "#cx-mode-one", "#cx-mode-two"].forEach((sel) =>
-    $(sel)?.addEventListener("change", refreshWatchlistUI)
-  );
-  refreshWatchlistUI();
-
-  
-  function updateDir() {
-    const two = $("#cx-mode-two")?.checked;
-    const el = $("#sum-dir");
-    if (!el) return;
-    el.className = "dir " + (two ? "bidi" : "one");
-    el.textContent = two ? "⇄" : "→";
-  }
-  ["#cx-mode-one", "#cx-mode-two"].forEach((sel) =>
-    $(sel)?.addEventListener("change", updateDir)
-  );
-  updateDir();
-})();
-
-async function populateSyncModes() {
-  const src = document.getElementById("src-provider")?.value?.toUpperCase();
-  const dst = document.getElementById("dst-provider")?.value?.toUpperCase();
-  const select = document.getElementById("sync-mode");
-  if (!select || !src || !dst) return;
-
-  let data = null;
-  try {
-    const res = await fetch("/api/sync/providers", { cache: "no-store" });
-    if (!res.ok) return;
-    data = await res.json();
-  } catch (_) { return; }
-
-  // This helper only works when the API provides explicit direction/mode info.
-  const dirs = (data && typeof data === "object" && Array.isArray(data.directions)) ? data.directions : null;
-  if (!dirs) return;
-
-  const dir =
-    dirs.find((d) => String(d.source || "").toUpperCase() === src && String(d.target || "").toUpperCase() === dst) ||
-    dirs.find((d) => String(d.source || "").toUpperCase() === dst && String(d.target || "").toUpperCase() === src);
-
-  const modes = Array.isArray(dir?.modes) ? dir.modes : [];
-  select.innerHTML = "";
-  for (const m of modes) {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.textContent = (m === "two-way") ? "Two-way (bidirectional)" : "One-way";
-    select.appendChild(opt);
-  }
-  if (!modes.length) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "Not supported";
-    select.appendChild(opt);
+    const res = await fetch("/api/pairs", { cache: "no-store" });
+    const arr = await res.json().catch(() => []);
+    window.cx = window.cx || {};
+    window.cx.pairs = Array.isArray(arr) ? arr : [];
+    try { renderConnections(); } catch (_) {}
+    return window.cx.pairs;
+  } catch (e) {
+    console.warn("[cx] loadPairs failed", e);
+    return [];
   }
 }
 
-window.populateSyncModes = populateSyncModes;
+async function deletePair(id) {
+  if (!id) return false;
+  try {
+    const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    await loadPairs();
+    return true;
+  } catch (e) {
+    console.warn("[cx] deletePair failed", e);
+    return false;
+  }
+}
+
+async function cxSavePair(data, editingId = "") {
+  try {
+    const src = String(data?.source || "").trim();
+    const dst = String(data?.target || "").trim();
+    const mode = String(data?.mode || "one-way").toLowerCase() === "two-way" ? "two-way" : "one-way";
+    const enabled = data?.enabled !== false;
+
+    const normBasic = (v) => ({ enable: !!v?.enable, add: !!v?.add, remove: !!v?.remove });
+    const featuresIn = data?.features || {};
+    const payload = {
+      source: src,
+      target: dst,
+      enabled,
+      mode,
+      features: {
+        watchlist: normBasic(featuresIn.watchlist),
+        ratings:   { ...normBasic(featuresIn.ratings), types: Array.isArray(featuresIn.ratings?.types) ? featuresIn.ratings.types : undefined, mode: featuresIn.ratings?.mode, from_date: featuresIn.ratings?.from_date },
+        history:   normBasic(featuresIn.history),
+        playlists: normBasic(featuresIn.playlists),
+      },
+    };
+
+    const id = String(editingId || data?.id || "").trim();
+    const url = id ? `/api/pairs/${encodeURIComponent(id)}` : "/api/pairs";
+    const method = id ? "PUT" : "POST";
+
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+    await loadPairs();
+    return { ok: true };
+  } catch (e) {
+    console.warn("[cx] cxSavePair failed", e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
 
 window.addEventListener('cx:open-modal', function(ev){
   try{
@@ -4440,15 +3818,16 @@ window.addEventListener('cx:open-modal', function(ev){
 });
 
 
-// Accessibility: automatically associate labels with their nearest controls when missing
+
+/*! Accessibility */
 function fixFormLabels(root = document) {
   const ctrls = new Set(["INPUT","SELECT","TEXTAREA"]);
   let uid = 0;
   root.querySelectorAll("label").forEach(lab => {
     if (lab.hasAttribute("for")) return;
     const owned = lab.querySelector("input,select,textarea");
-    if (owned) return; // label wraps its control → OK
-    // find nearest control
+    if (owned) return; 
+    
     let ctrl = lab.nextElementSibling;
     while (ctrl && !ctrl.matches?.("input,select,textarea")) {
       ctrl = ctrl.nextElementSibling;
@@ -4461,43 +3840,36 @@ function fixFormLabels(root = document) {
 }
 document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
 
-/* Smoke-check: ensure essential APIs exist on window */
-(function(){
-  const need = ["openAbout","cxEnsureCfgModal","renderConnections","loadProviders"];
-  need.forEach(n => { if (typeof window[n] !== "function") { console.warn("[crosswatch] missing", n); } });
-  document.dispatchEvent(new Event("cx-state-change"));
-})();
 
-/* Global shim: showTab for legacy inline onclick= */
-(function(){
-  if (typeof window.showTab !== "function") {
-    window._showTabBootstrap = function(id){
-      try {
-  // Prefer explicit page IDs when available: #page-main, #page-watchlist, #page-settings
-        var pages = document.querySelectorAll("#page-main, #page-watchlist, #page-settings, .tab-page");
-        pages.forEach(function(el){ el.classList.add("hidden"); });
-        var target = document.getElementById("page-" + id) || document.getElementById(id);
-        if (target) target.classList.remove("hidden");
+/*! Boot */
+try {
+  Object.assign(window, {
+    showTab,
+    runSync,
+    toggleSection,
+    toggleDetails,
+    downloadSummary,
+    copySummary,
+    refreshStatus,
+    refreshStats,
+    refreshInsights,
+    scrollWall,
+    updatePreviewVisibility,
+    loadProviders,
+    loadPairs,
+    deletePair,
+    cxSavePair,
+    renderConnections,
+    fixFormLabels,
+  });
+} catch (_) {}
 
-  // Toggle tab header active state if tab headers exist
-        ["main","watchlist","settings"].forEach(function(name){
-          var th = document.getElementById("tab-" + name);
-          if (th) th.classList.toggle("active", name === id);
-        });
-
-  // Mount the Watchlist UI dynamically when required
-        if (id === "watchlist") {
-          try { window.Watchlist?.mount?.(document.getElementById("page-watchlist")); } catch (e) { console.warn(e); }
-        }
-
-  // Call optional hook if provided
-        document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id } }));
-      } catch(e) {
-        console.warn("showTab fallback failed:", e);
-      }
-    };
-  }
-})();
-
-/* Ensure showTab is global at end */
-window.showTab = showTab;
+document.addEventListener("DOMContentLoaded", () => {
+  try { loadProviders(); } catch (_) {}
+  try { loadPairs(); } catch (_) {}
+  try { mountAuthProviders(); } catch (_) {}
+  try {
+    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
+    else if (typeof applySyncVisibility === "function") applySyncVisibility();
+  } catch (_) {}
+});

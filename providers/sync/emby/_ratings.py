@@ -43,9 +43,12 @@ def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_meta_path()), exist_ok=True)
-        with open(_meta_path(), "w", encoding="utf-8") as f:
+        path = _meta_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
@@ -81,9 +84,12 @@ def _save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
-        with open(_unresolved_path(), "w", encoding="utf-8") as f:
+        path = _unresolved_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 

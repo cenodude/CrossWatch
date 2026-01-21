@@ -1,6 +1,4 @@
-/* assets/crosswatch.js
- * Minimal UI bootstrap. Saving is handled by core.js.
- */
+/* assets/crosswatch.js */
 (function () {
   'use strict';
 
@@ -35,7 +33,7 @@
   }
   if (typeof window.showTab !== "function") window.showTab = showTab;
 
-  // Settings collectors (core.js calls __emitSettingsCollect before save)
+  // Settings collectors
   const collectors = (window.__settingsCollectors ||= new Set());
   if (typeof window.registerSettingsCollector !== "function") {
     window.registerSettingsCollector = fn => { if (typeof fn === "function") collectors.add(fn); };
@@ -47,7 +45,7 @@
     };
   }
 
-  // Bootstrap
+  // Bootstrap on DOM ready
   window.addEventListener("DOMContentLoaded", () => {
     try { DOM.fixFormLabels?.(); } catch {}
     try { CW.Providers?.load?.(); } catch {}

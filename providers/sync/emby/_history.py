@@ -188,6 +188,7 @@ def _prefetch_played_ts(
                 pass
         for iid in batch:
             _cache.setdefault(iid, 0)
+            
 # unresolved tracking
 def _unres_load() -> dict[str, Any]:
     if _pair_scope() is None:
@@ -203,9 +204,12 @@ def _unres_save(obj: Mapping[str, Any]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
-        with open(_unresolved_path(), "w", encoding="utf-8") as f:
+        path = _unresolved_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
@@ -248,9 +252,12 @@ def _shadow_save(d: Mapping[str, int]) -> None:
     if _pair_scope() is None:
         return
     try:
-        os.makedirs(os.path.dirname(_shadow_path()), exist_ok=True)
-        with open(_shadow_path(), "w", encoding="utf-8") as f:
+        path = _shadow_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception:
         pass
 
@@ -291,8 +298,10 @@ def _bb_save(d: Mapping[str, Any]) -> None:
     os.makedirs(os.path.dirname(_blackbox_path()), exist_ok=True)
     for p in _bb_paths():
         try:
-            with open(p, "w", encoding="utf-8") as f:
+            tmp = f"{p}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+            os.replace(tmp, p)
         except Exception:
             pass
 
@@ -404,8 +413,6 @@ def _resp_snip(r: Any) -> str:
 
 
 # library roots
-
-
 def _emby_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
     http = adapter.client
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None) or ""
@@ -686,8 +693,6 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
 
             if not rows:
                 break
-
-            # Emby episode rows often miss show-level ProviderIds; prefetch series metadata in bulk.
             try:
                 sids = [
                     (row.get("SeriesId") or row.get("ParentId"))
@@ -698,8 +703,6 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             except Exception:
                 pass
 
-            # Some Emby builds return played items without DatePlayed/LastPlayedDate in the page response.
-            # Batch-fetch UserData for the missing timestamps to avoid per-item backfill calls.
             try:
                 missing_ts: list[str] = []
                 for row in rows:
