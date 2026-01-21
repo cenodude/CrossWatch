@@ -240,13 +240,28 @@
 
   function startTraktTokenPoll() {
     try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
-    var MAX_MS   = 120000;
-    var deadline = Date.now() + MAX_MS;
-    var backoff  = [1000, 2500, 5000, 7500, 10000, 15000, 20000, 20000];
+    try { if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg); } catch (_){}
+    window._traktVisPollCfg = null;
+
+    var MAX_MS    = 120000;
+    var startTs   = Date.now();
+    var deadline  = startTs + MAX_MS;
+    var fastUntil = startTs + 30000; // 2s polling for ~30s
+    var backoff   = [5000, 7500, 10000, 15000, 20000, 20000];
     var i = 0;
+    var inFlight = false;
+
+    var cleanup = function () {
+      try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
+      window._traktPollCfg = null;
+      try {
+        if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg);
+      } catch (_){}
+      window._traktVisPollCfg = null;
+    };
 
     var poll = async function () {
-      if (Date.now() >= deadline) { window._traktPollCfg = null; return; }
+      if (Date.now() >= deadline) { cleanup(); return; }
 
       var page = _el("page-settings");
       var settingsVisible = !!(page && !page.classList.contains("hidden"));
@@ -254,22 +269,38 @@
         window._traktPollCfg = setTimeout(poll, 5000);
         return;
       }
+      if (inFlight) return;
 
-      var cfg = await fetchConfig();
+      inFlight = true;
+      var cfg = null;
+      try { cfg = await fetchConfig(); } catch (_) { cfg = null; }
+      inFlight = false;
+
       var tok = _str(cfg && ((cfg.trakt && cfg.trakt.access_token) || (cfg.auth && cfg.auth.trakt && cfg.auth.trakt.access_token)));
       if (tok) {
         _setVal("trakt_token", tok);
         setTraktSuccess(true);
-        window._traktPollCfg = null;
+        cleanup();
         return;
       }
 
-      var delay = backoff[Math.min(i, backoff.length - 1)];
-      i++;
+      var delay = (Date.now() < fastUntil) ? 2000 : backoff[Math.min(i++, backoff.length - 1)];
       window._traktPollCfg = setTimeout(poll, delay);
     };
 
-    window._traktPollCfg = setTimeout(poll, 1000);
+    window._traktVisPollCfg = function () {
+      if (document.hidden) return;
+      var page = _el("page-settings");
+      var settingsVisible = !!(page && !page.classList.contains("hidden"));
+      if (!settingsVisible) return;
+      if (!window._traktPollCfg) return;
+      clearTimeout(window._traktPollCfg);
+      window._traktPollCfg = null;
+      void poll();
+    };
+    document.addEventListener("visibilitychange", window._traktVisPollCfg);
+
+    window._traktPollCfg = setTimeout(poll, 2000);
   }
 
   // Pin request flow

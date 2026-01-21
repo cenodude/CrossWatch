@@ -229,6 +229,9 @@ class _TraktProvider:
         cid = (c.get("client_id") or "").strip()
         if not cid:
             return {"ok": False, "error": "missing_client_id"}
+        
+        log("TRAKT: start OAuth", level="INFO", module="AUTH")
+        log("TRAKT: request device code", level="INFO", module="AUTH")
 
         headers_primary = {
             "Accept": "application/json",
@@ -287,6 +290,8 @@ class _TraktProvider:
         }
         cfg.setdefault("trakt", {})["_pending_device"] = pend
         _save_config(cfg)
+        
+        log("TRAKT: device code received", level="INFO", module="AUTH")
 
         out = dict(pend)
         out["ok"] = True
@@ -304,6 +309,8 @@ class _TraktProvider:
             return {"ok": False, "status": "no_device_code"}
         if _now() >= int(pend.get("expires_at") or 0):
             return {"ok": False, "status": "expired_token"}
+        
+        log("TRAKT: exchange code", level="INFO", module="AUTH")
 
         r = requests.post(
             OAUTH_DEVICE_TOKEN,
@@ -340,6 +347,7 @@ class _TraktProvider:
             pass
 
         _save_config(cfg)
+        log("TRAKT: tokens stored", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
 
     def refresh(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -355,6 +363,8 @@ class _TraktProvider:
             log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
             return {"ok": False, "status": "missing_refresh"}
 
+        log("TRAKT: refresh token", level="INFO", module="AUTH")
+        
         payload: dict[str, Any] = {
             "refresh_token": rt,
             "client_id": cid,
@@ -408,7 +418,7 @@ class _TraktProvider:
         )
         cfg["trakt"] = tr
         _save_config(cfg)
-        log("TRAKT: token refreshed and persisted", "DEBUG")
+        log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
 
 PROVIDER = _TraktProvider()
