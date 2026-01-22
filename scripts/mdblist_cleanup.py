@@ -415,6 +415,7 @@ def _ids_from_obj(obj: Any) -> dict[str, Any]:
             "imdb": o.get("imdb") or o.get("imdb_id"),
             "tmdb": o.get("tmdb") or o.get("tmdb_id"),
             "tvdb": o.get("tvdb") or o.get("tvdb_id"),
+            "mdblist": o.get("mdblist") or o.get("mdblist_id") or o.get("id"),
         }
     out: dict[str, Any] = {}
     imdb_val = ids.get("imdb")
@@ -426,9 +427,16 @@ def _ids_from_obj(obj: Any) -> dict[str, Any]:
     tvdb_int = safe_int(ids.get("tvdb"))
     if tvdb_int is not None:
         out["tvdb"] = tvdb_int
+    mdbl = ids.get("mdblist") or ids.get("id") or o.get("mdblist") or o.get("mdblist_id") or o.get("id")
+    if mdbl is not None:
+        s = str(mdbl).strip()
+        if s:
+            mdbl_int = safe_int(mdbl)
+            out["mdblist"] = mdbl_int if mdbl_int is not None else s
     if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
         out.pop("tvdb", None)
     return out
+
 
 
 def _row_movie(row: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -542,7 +550,10 @@ def _show_key(ids: dict[str, Any]) -> str:
         return f"tmdb:{ids['tmdb']}"
     if ids.get("tvdb") is not None:
         return f"tvdb:{ids['tvdb']}"
+    if ids.get("mdblist") is not None:
+        return f"mdblist:{ids['mdblist']}"
     return json.dumps(ids, sort_keys=True)
+
 
 
 def _rating_key(it: dict[str, Any]) -> str:
@@ -586,17 +597,35 @@ def _pag_limit(pag: Any, default: int) -> int:
     return default
 
 
-def _pag_total_pages(pag: Any) -> Optional[int]:
+def _pag_total_items(pag: Any) -> Optional[int]:
     if isinstance(pag, dict):
-        for k in ("page_count", "pageCount", "total_pages", "totalPages", "pages", "pagecount", "totalpages"):
+        for k in ("total_items", "total", "count", "items_total", "totalItems", "item_count", "itemsCount"):
             v = safe_int(pag.get(k))
             if v is not None:
                 return v
     return None
 
 
+
+def _pag_total_pages(pag: Any) -> Optional[int]:
+    if isinstance(pag, dict):
+        for k in ("page_count", "pageCount", "total_pages", "totalPages", "pages", "pagecount", "totalpages"):
+            v = safe_int(pag.get(k))
+            if v is not None:
+                return v
+        total = _pag_total_items(pag)
+        lim = _pag_limit(pag, 0)
+        if total is not None and lim > 0:
+            return (total + lim - 1) // lim
+    return None
+
+
+
 def _pag_has_more(pag: Any, *, page: int, per_page: int, lengths: Iterable[int]) -> bool:
     if isinstance(pag, dict):
+        nxt = pag.get("next_page") or pag.get("nextPage") or pag.get("next")
+        if nxt is not None:
+            return bool(nxt)
         hm = pag.get("has_more")
         if hm is not None:
             return bool(hm)
@@ -611,6 +640,7 @@ def _pag_has_more(pag: Any, *, page: int, per_page: int, lengths: Iterable[int])
         except Exception:
             continue
     return total >= eff
+
 
 
 def _collect_ratings_type(meta: dict[str, Any], ses: requests.Session, type_name: str, per_page: int) -> list[dict[str, Any]]:
@@ -1458,7 +1488,7 @@ def main() -> None:
             elif ch == "2":
                 rats = collect_ratings(meta, ses)
                 print(f"\nMDBList ratings entries: {len(rats)}")
-                show(rats, ["type", "title", "year", "rating", "rated_at"])
+                show(rats, ["type", "ids", "show_ids", "season", "number", "title", "year", "rating", "rated_at"])
 
             elif ch == "3":
                 hist = collect_history(meta, ses)
