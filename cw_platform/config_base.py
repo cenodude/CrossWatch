@@ -326,7 +326,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
         "apply_chunk_size": 100,                        # Sweet spot for apply chunking
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
-        "apply_chunk_size_by_provider": {
+        "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/ANILIST overrides
             "SIMKL": 500
         },
         
