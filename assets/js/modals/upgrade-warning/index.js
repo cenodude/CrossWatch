@@ -1,11 +1,11 @@
 // assets/js/modals/upgrade-warning/index.js
 function _norm(v) {
-  return String(v || '').replace(/^v/i, '').trim();
+  return String(v || "").replace(/^v/i, "").trim();
 }
 
 function _cmp(a, b) {
-  const pa = _norm(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = _norm(b).split('.').map((n) => parseInt(n, 10) || 0);
+  const pa = _norm(a).split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = _norm(b).split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const da = pa[i] || 0;
     const db = pb[i] || 0;
@@ -15,9 +15,11 @@ function _cmp(a, b) {
 }
 
 async function _postJson(url, opts = {}) {
-  const res = await fetch(url, { method: 'POST', ...opts });
+  const res = await fetch(url, { method: "POST", ...opts });
   let data = null;
-  try { data = await res.json(); } catch {}
+  try {
+    data = await res.json();
+  } catch {}
   if (!res.ok || (data && data.ok === false)) {
     const msg = (data && (data.error || data.message)) || `HTTP ${res.status} ${res.statusText}`;
     throw new Error(`${url}: ${msg}`);
@@ -25,45 +27,48 @@ async function _postJson(url, opts = {}) {
   return data;
 }
 
+async function _saveConfigNoUi() {
+  return _postJson("/api/config", {
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+}
+
 async function saveNow(btn) {
-  const notify = window.notify || ((m) => console.log('[notify]', m));
+  const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
-    if (btn && btn.dataset && btn.dataset.done === '1') return;
+    if (btn && btn.dataset && btn.dataset.done === "1") return;
   } catch {}
   try {
     if (btn) {
       btn.disabled = true;
-      btn.classList.add('busy');
-      btn.textContent = 'Saving...';
+      btn.classList.add("busy");
+      btn.textContent = "Saving...";
     }
   } catch {}
 
   try {
-    if (typeof window.saveSettings === 'function') {
-      await window.saveSettings();
-      notify('Saved. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.');
+    await _saveConfigNoUi();
+    notify("Saved. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.");
 
-      try {
-        if (btn) {
-          btn.classList.remove('busy');
-          btn.textContent = 'SAVED';
-          btn.disabled = true;
-          btn.dataset.done = '1';
-        }
-      } catch {}
-    } else {
-      notify('saveSettings() not found.');
-    }
+    try {
+      if (btn) {
+        btn.classList.remove("busy");
+        btn.textContent = "SAVED";
+        btn.disabled = true;
+        btn.dataset.done = "1";
+      }
+    } catch {}
   } catch (e) {
-    console.warn('[upgrade-warning] save failed', e);
-    notify('Save failed. Check logs.');
+    console.warn("[upgrade-warning] save failed", e);
+    notify("Save failed. Check logs.");
   } finally {
     try {
       if (btn) {
-        if (!btn.dataset || btn.dataset.done !== '1') {
+        if (!btn.dataset || btn.dataset.done !== "1") {
           btn.disabled = false;
-          btn.classList.remove('busy');
-          btn.textContent = 'SAVE';
+          btn.classList.remove("busy");
+          btn.textContent = "SAVE";
         }
       }
     } catch {}
@@ -71,45 +76,41 @@ async function saveNow(btn) {
 }
 
 async function migrateNow(btn) {
-  const notify = window.notify || ((m) => console.log('[notify]', m));
+  const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
     if (btn) {
       btn.disabled = true;
-      btn.classList.add('busy');
-      btn.textContent = 'Migrating...';
+      btn.classList.add("busy");
+      btn.textContent = "Migrating...";
     }
   } catch {}
 
   try {
-    await _postJson('/api/maintenance/clear-state');
-    await _postJson('/api/maintenance/clear-cache');
-    await _postJson('/api/maintenance/clear-metadata-cache');
+    await _postJson("/api/maintenance/clear-state");
+    await _postJson("/api/maintenance/clear-cache");
+    await _postJson("/api/maintenance/clear-metadata-cache");
 
-    if (typeof window.saveSettings === 'function') {
-      await window.saveSettings();
-    } else {
-      throw new Error('saveSettings() not found.');
-    }
+    await _saveConfigNoUi();
 
-    notify('Migration completed. State/cache cleared and config saved.');
+    notify("Migration completed. State/cache cleared and config saved.");
 
     try {
       if (btn) {
-        btn.classList.remove('busy');
-        btn.textContent = 'MIGRATED';
+        btn.classList.remove("busy");
+        btn.textContent = "MIGRATED";
         btn.disabled = true;
-        btn.dataset.done = '1';
+        btn.dataset.done = "1";
       }
     } catch {}
   } catch (e) {
-    console.warn('[upgrade-warning] migrate failed', e);
-    notify('Migration failed. Check logs.');
+    console.warn("[upgrade-warning] migrate failed", e);
+    notify("Migration failed. Check logs.");
 
     try {
       if (btn) {
         btn.disabled = false;
-        btn.classList.remove('busy');
-        btn.textContent = 'MIGRATE';
+        btn.classList.remove("busy");
+        btn.textContent = "MIGRATE";
       }
     } catch {}
   }
@@ -119,18 +120,18 @@ export default {
   async mount(hostEl, props = {}) {
     if (!hostEl) return;
 
-    const cur = _norm(props.current_version || window.__CW_VERSION__ || '0.0.0');
+    const cur = _norm(props.current_version || window.__CW_VERSION__ || "0.0.0");
 
     const rawCfgVer = props.config_version;
-    const hasCfgVer = rawCfgVer != null && String(rawCfgVer).trim() !== '';
-    const cfg = hasCfgVer ? _norm(rawCfgVer) : '';
+    const hasCfgVer = rawCfgVer != null && String(rawCfgVer).trim() !== "";
+    const cfg = hasCfgVer ? _norm(rawCfgVer) : "";
 
     // Legacy if config has no version, or version < 0.7.0
-    const legacy = !hasCfgVer || _cmp(cfg, '0.7.0') < 0;
+    const legacy = !hasCfgVer || _cmp(cfg, "0.7.0") < 0;
 
     hostEl.innerHTML = `
     <style>
-      #upg-host{--w:820px;min-width:min(var(--w),94vw);max-width:94vw;color:#eef1ff;position:relative;overflow:hidden;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:
+      #upg-host{--w:820px;min-width:min(var(--w),94vw);max-width:94vw;color:#eef1ff;color:#eef1ff;position:relative;overflow:hidden;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:
         radial-gradient(1200px 600px at 0% 0%, rgba(124,58,237,.26), transparent 55%),
         radial-gradient(900px 520px at 100% 20%, rgba(59,130,246,.18), transparent 60%),
         linear-gradient(180deg, rgba(12,16,24,.94), rgba(9,12,18,.94));
@@ -174,8 +175,8 @@ export default {
       <div class="head">
         <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
         <div>
-          <div class="t">${legacy ? 'Legacy config detected' : 'Config version notice'}</div>
-          <div class="sub">${legacy ? 'This release introduced config versioning (0.7.0+).' : 'One save to update your config format.'}</div>
+          <div class="t">${legacy ? "Legacy config detected" : "Config version notice"}</div>
+          <div class="sub">${legacy ? "This release introduced config versioning (0.7.0+)." : "One save updates the config format."}</div>
         </div>
         <div class="pill">
           <span class="b">Engine v${cur}</span>
@@ -227,26 +228,27 @@ export default {
     </div>
     `;
 
-    const shell = hostEl.closest('.cx-modal-shell');
+    const shell = hostEl.closest(".cx-modal-shell");
     if (shell) {
-      shell.style.width = 'auto';
-      shell.style.maxWidth = 'none';
-      shell.style.height = 'auto';
-      shell.style.maxHeight = 'none';
-      shell.style.display = 'inline-block';
+      shell.style.width = "auto";
+      shell.style.maxWidth = "none";
+      shell.style.height = "auto";
+      shell.style.maxHeight = "none";
+      shell.style.display = "inline-block";
     }
 
-    hostEl.querySelector('[data-x="close"]')?.addEventListener('click', () => {
-      try { window.cxCloseModal?.(); } catch {}
+    hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {
+      try {
+        window.cxCloseModal?.();
+      } catch {}
     });
 
     if (legacy) {
-      hostEl.querySelector('[data-x="migrate"]')?.addEventListener('click', (e) => migrateNow(e.currentTarget));
+      hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget));
     } else {
-      hostEl.querySelector('[data-x="save"]')?.addEventListener('click', (e) => saveNow(e.currentTarget));
+      hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
     }
   },
 
-  unmount() {
-  }
+  unmount() {}
 };
