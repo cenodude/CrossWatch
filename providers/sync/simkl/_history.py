@@ -720,6 +720,8 @@ def _fetch_kind(
 ) -> list[dict[str, Any]]:
     ext = "full_anime_seasons" if kind == "anime" else "full"
     params = {"extended": ext, "episode_watched_at": "yes", "date_from": since_iso}
+    if kind in {"shows", "anime"}:
+        params["include_all_episodes"] = "yes"
     resp = session.get(f"{URL_ALL_ITEMS}/{kind}", headers=headers, params=params, timeout=timeout)
     if not resp.ok:
         _log(f"GET {URL_ALL_ITEMS}/{kind} -> {resp.status_code}")
