@@ -322,11 +322,14 @@ DEFAULT_CFG: dict[str, Any] = {
         "state_dir": "",                                # Optional override for state dir (defaults to CONFIG/state)  - this will break container setups!
         "telemetry": {"enabled": True},                 # Usage stats
 
-        # progress + stability knobs
+        # progress
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
         "apply_chunk_size": 100,                        # Sweet spot for apply chunking
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
-
+        "apply_chunk_size_by_provider": {
+            "SIMKL": 500
+        },
+        
         # suspect guard (shrinking inventories protection)
         "suspect_min_prev": 20,                         # Minimum previous size to enable suspect guard
         "suspect_shrink_ratio": 0.10,                   # Shrink ratio to trigger suspect guard
@@ -334,7 +337,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
-        "locale": "en-US",                              # e.g. "en-US" / "nl-NL"
+        "locale": "en-US",                              # example: "en-US" / "nl-NL"
         "ttl_hours": 6,                                 # Coarse cache TTL
     },
 

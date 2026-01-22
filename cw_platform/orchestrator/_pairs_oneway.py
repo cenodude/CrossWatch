@@ -14,6 +14,7 @@ from ._snapshots import (
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove
+from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._planner import diff, diff_ratings
 from ._phantoms import PhantomGuard
@@ -501,7 +502,7 @@ def run_one_way_feature(
                 dry_run=dry_run_flag,
                 emit=emit,
                 dbg=dbg,
-                chunk_size=ctx.apply_chunk_size,
+                chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst),
             )
             unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
@@ -618,7 +619,7 @@ def run_one_way_feature(
                 dry_run=dry_run_flag,
                 emit=emit,
                 dbg=dbg,
-                chunk_size=ctx.apply_chunk_size,
+                chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst),
             )
             removed_count = int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0)

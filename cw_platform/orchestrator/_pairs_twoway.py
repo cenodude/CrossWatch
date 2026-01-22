@@ -20,6 +20,7 @@ from ._snapshots import (
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove
+from ._chunking import effective_chunk_size
 from ._tombstones import keys_for_feature
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
@@ -714,7 +715,7 @@ def _two_way_sync(
             resA_rem = apply_remove(
                 dst_ops=aops, cfg=cfg, dst_name=a, feature=feature, items=rem_from_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(a),
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
             prov_count_A = _confirmed(resA_rem)
             if prov_count_A and not dry_run_flag:
@@ -746,7 +747,7 @@ def _two_way_sync(
             resB_rem = apply_remove(
                 dst_ops=bops, cfg=cfg, dst_name=b, feature=feature, items=rem_from_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(b),
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
             prov_count_B = _confirmed(resB_rem)
             if prov_count_B and not dry_run_flag:
@@ -799,7 +800,7 @@ def _two_way_sync(
             resA_add = apply_add(
                 dst_ops=aops, cfg=cfg, dst_name=a, feature=feature, items=add_to_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(a),
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
             unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
             new_unresolved_A = unresolved_after_A - unresolved_before_A
@@ -901,7 +902,7 @@ def _two_way_sync(
             resB_add = apply_add(
                 dst_ops=bops, cfg=cfg, dst_name=b, feature=feature, items=add_to_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
-                chunk_size=ctx.apply_chunk_size, chunk_pause_ms=_pause_for(b),
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
             unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
             new_unresolved_B = unresolved_after_B - unresolved_before_B

@@ -71,6 +71,7 @@ class Orchestrator:
     suspect_debug: bool = field(init=False, default=False)
     apply_chunk_size: int = field(init=False, default=0)
     apply_chunk_pause_ms: int = field(init=False, default=0)
+    apply_chunk_size_by_provider: dict[str, int] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self.cfg: dict[str, Any] = dict(self.config or {})
@@ -110,6 +111,16 @@ class Orchestrator:
         self.suspect_debug = bool(rt.get("suspect_debug", True))
         self.apply_chunk_size = int(rt.get("apply_chunk_size") or 0)
         self.apply_chunk_pause_ms = int(rt.get("apply_chunk_pause_ms") or 0)
+        raw_map = rt.get("apply_chunk_size_by_provider") or rt.get("apply_chunk_sizes_by_provider") or rt.get("apply_chunk_sizes") or {}
+        self.apply_chunk_size_by_provider = {}
+        if isinstance(raw_map, Mapping):
+            for k, v in raw_map.items():
+                try:
+                    n = int(v)
+                except Exception:
+                    continue
+                if n > 0:
+                    self.apply_chunk_size_by_provider[str(k).upper()] = n
 
         self.emitter.info("[i] Orchestrator v3 ready (full compat shims)")
 
@@ -138,6 +149,7 @@ class Orchestrator:
             snap_ttl_sec=self.snap_ttl_sec,
             apply_chunk_size=self.apply_chunk_size,
             apply_chunk_pause_ms=self.apply_chunk_pause_ms,
+            apply_chunk_size_by_provider=self.apply_chunk_size_by_provider,
         )
 
     # Main run
@@ -323,7 +335,7 @@ class Orchestrator:
             dry_run=self.dry_run if dry_run is None else bool(dry_run),
             emit=self.emit,
             dbg=self.dbg,
-            chunk_size=self.apply_chunk_size,
+            chunk_size=self.apply_chunk_size_by_provider.get(dst_name, self.apply_chunk_size),
             chunk_pause_ms=self.apply_chunk_pause_ms,
         )
 
