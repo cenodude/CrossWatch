@@ -1,6 +1,5 @@
 /* assets/helpers/core.js *
-/* This file needs to be refactored and split up over time. */
-/* Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 /* Utilities */
 const isTV = v => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v||""));
