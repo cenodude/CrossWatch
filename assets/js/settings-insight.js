@@ -91,7 +91,7 @@
   .si-h { color: #E6EAFD; font-weight: 700; line-height: 1.2; }
   .si-one { color: #C3CAE3; font-size: 13px; margin-top: 2px; }
 
-  /* Whitelisting block (Option A) */
+  /* Whitelisting block */
   .si-wl { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
   .si-wl-level { display:flex; flex-direction:column; gap:6px; }
   .si-wl-level-title{
@@ -118,7 +118,7 @@
     line-height:1.2;
   }
 
-  /* Wizard (empty state) */
+  /* Wizard  */
   .si-empty {
     display: flex;
     align-items: flex-start;
@@ -178,17 +178,158 @@
     return cfg || {};
   }
 
+  function _providerKeyFromImg(img) {
+    if (!img) return "";
+    const src = String(img.getAttribute?.("src") || "");
+    const m = src.match(/\/([A-Za-z0-9]+)-log\.svg(?:\?|#|$)/i);
+    if (m && m[1]) return String(m[1]).toUpperCase();
+    return String(img.getAttribute?.("alt") || "").trim().toUpperCase();
+  }
+
+  function _findIconStrip(head) {
+    if (!head) return null;
+    const spans = Array.from(head.querySelectorAll(":scope > span") || []);
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const sp = spans[i];
+      if (sp && sp.querySelector && sp.querySelector('img[src*="-log.svg"]')) return sp;
+    }
+    const any = head.querySelector('img[src*="-log.svg"]');
+    return any ? any.closest("span") : null;
+  }
+
+  function _ensureStripIcon(strip, key) {
+    if (!strip || !key) return null;
+    const k = String(key).toUpperCase();
+    const existing = strip.querySelector(`img[data-cw-key="${k}"], img[src*="/assets/img/${k}-log.svg"]`);
+    if (existing) return existing;
+
+    const img = d.createElement("img");
+    img.src = `/assets/img/${k}-log.svg`;
+    img.alt = k;
+    img.dataset.cwKey = k;
+    img.style.width = "auto";
+    img.style.opacity = ".9";
+    img.style.height = (k === "EMBY") ? "24px" : "18px";
+    strip.appendChild(img);
+    return img;
+  }
+
+  function _applyIconStrip(strip, keysOrdered) {
+    if (!strip) return;
+
+    const order = Array.isArray(keysOrdered) ? keysOrdered : [];
+    const want = new Set(order.map((k) => String(k).toUpperCase()));
+    const imgs = Array.from(strip.querySelectorAll('img[src*="-log.svg"]') || []);
+
+    const byKey = new Map();
+    imgs.forEach((img) => {
+      const k = (img.dataset.cwKey || _providerKeyFromImg(img) || "").toUpperCase();
+      if (!k) return;
+      img.dataset.cwKey = k;
+      byKey.set(k, img);
+    });
+
+    // Ensure icons exist for wanted keys (supports sinks like SIMKL not hard-coded in HTML).
+    order.forEach((k) => {
+      const key = String(k).toUpperCase();
+      if (!byKey.has(key)) {
+        const img = _ensureStripIcon(strip, key);
+        if (img) byKey.set(key, img);
+      }
+    });
+
+    // Show/hide
+    Array.from(byKey.entries()).forEach(([k, img]) => {
+      img.style.display = want.has(k) ? "" : "none";
+    });
+
+    // Re-order (wanted keys first, in order)
+    order.forEach((k) => {
+      const key = String(k).toUpperCase();
+      const img = byKey.get(key);
+      if (img) strip.appendChild(img);
+    });
+
+    if (!strip.dataset.cwDisp) strip.dataset.cwDisp = strip.style.display || "flex";
+    const anyVisible = Array.from(strip.querySelectorAll('img[src*="-log.svg"]') || []).some((i) => i.style.display !== "none");
+    strip.style.display = anyVisible ? strip.dataset.cwDisp : "none";
+  }
+
+  function _parseSinkNames(v) {
+    const raw = String(v || "").trim();
+    if (!raw) return [];
+    const parts = raw.split(/[,&+]/g).map((s) => s.trim().toLowerCase()).filter(Boolean);
+    return Array.from(new Set(parts));
+  }
+
+  function _scrobblerHeaderKeys(cfg, configured) {
+    const keys = [];
+    const sc = (cfg?.scrobble || {}) || {};
+    if (!sc.enabled) return keys;
+
+    const mode = String(sc.mode || "webhook").toLowerCase();
+    const provMap = { plex: "PLEX", emby: "EMBY", jellyfin: "JELLYFIN" };
+    const sinkMap = { trakt: "TRAKT", simkl: "SIMKL", mdblist: "MDBLIST" };
+
+    if (mode === "watch") {
+      const prov = String(sc?.watch?.provider || "plex").toLowerCase().trim();
+      const pkey = provMap[prov] || "PLEX";
+      if (configured.has(pkey)) keys.push(pkey);
+
+      const sinks = _parseSinkNames(sc?.watch?.sink || "trakt");
+      const sinkOrder = ["trakt", "simkl", "mdblist"];
+      sinkOrder.forEach((name) => {
+        if (!sinks.includes(name)) return;
+        const skey = sinkMap[name];
+        if (skey && configured.has(skey)) keys.push(skey);
+      });
+
+      return keys;
+    }
+
+    // Webhook mode: show configured sources + Trakt (webhook modules target Trakt).
+    ["PLEX", "JELLYFIN", "EMBY"].forEach((k) => { if (configured.has(k)) keys.push(k); });
+    if (configured.has("TRAKT")) keys.push("TRAKT");
+    return keys;
+  }
+
+  function _updateSettingsHeaderIcons(cfg) {
+    const page = d.getElementById("page-settings");
+    if (!page) return;
+
+    const allowedRaw = (typeof w.getConfiguredProviders === "function")
+      ? w.getConfiguredProviders(cfg || {})
+      : new Set();
+
+    const configured = (allowedRaw instanceof Set)
+      ? allowedRaw
+      : new Set(Array.isArray(allowedRaw) ? allowedRaw : []);
+
+    const authHead = page.querySelector("#sec-auth > .head");
+    const authStrip = _findIconStrip(authHead);
+    _applyIconStrip(authStrip, ["PLEX","JELLYFIN","SIMKL","TRAKT","MDBLIST","TAUTULLI","ANILIST","EMBY"].filter((k) => configured.has(k)));
+
+    const scHead = page.querySelector("#sec-scrobbler > .head");
+    const scStrip = _findIconStrip(scHead);
+    _applyIconStrip(scStrip, _scrobblerHeaderKeys(cfg, configured));
+  }
+
   async function getAuthSummary(cfg) {
     const list = await fetchJSON("/api/auth/providers?t=" + Date.now());
-    const detected = Array.isArray(list) ? list.length : 4;
+    const detected = Array.isArray(list) ? list.length : 8;
 
-    const plexOK     = !!(cfg?.plex?.account_token);
-    const simklOK    = !!(cfg?.simkl?.access_token);
-    const traktOK    = !!(cfg?.trakt?.access_token);
-    const jellyfinOK = !!(cfg?.jellyfin?.access_token || cfg?.jellyfin?.user_id);
+    const allowedRaw = (typeof w.getConfiguredProviders === "function")
+      ? w.getConfiguredProviders(cfg || {})
+      : new Set();
 
-    const configured = [plexOK, simklOK, traktOK, jellyfinOK].filter(Boolean).length;
-    return { detected, configured };
+    const configured = (allowedRaw instanceof Set)
+      ? allowedRaw
+      : new Set(Array.isArray(allowedRaw) ? allowedRaw : []);
+
+    const AUTH_KEYS = ["PLEX","EMBY","SIMKL","TRAKT","JELLYFIN","TAUTULLI","MDBLIST","ANILIST"];
+    const configuredCount = AUTH_KEYS.filter((k) => configured.has(k)).length;
+
+    return { detected, configured: configuredCount };
   }
 
   async function getPairsSummary(cfg) {
@@ -322,7 +463,6 @@
     return { serverActive, pairActive };
   }
 
-  
   // UI Rendering
   const I = (name, size) => `<span class="material-symbols-rounded" style="font-size:${size||30}px">${name}</span>`;
 
@@ -454,7 +594,6 @@
     body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}${watchProv ? " | " + watchProv : ""}`));
   }
 
-
   // Layout sync
   function syncHeight(){
     const left=$("#cw-settings-left") || $("#page-settings .settings-wrap, #page-settings .settings, #page-settings .accordion, #page-settings .content, #page-settings .page-inner");
@@ -464,15 +603,16 @@
     const top=12, maxViewport=Math.max(200,(w.innerHeight-top-16)), maxByLeft=Math.max(200,rect.height);
     scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
   }
+
   // Main loop
   let _loopTimer = null;
 
-let _tickBusy = false;
+  let _tickBusy = false;
 
-function _scheduleTick(ms) {
-  if (_loopTimer) clearTimeout(_loopTimer);
-  _loopTimer = setTimeout(tick, ms);
-}
+  function _scheduleTick(ms) {
+    if (_loopTimer) clearTimeout(_loopTimer);
+    _loopTimer = setTimeout(tick, ms);
+  }
 
   async function tick() {
     if (_tickBusy) return;
@@ -486,6 +626,7 @@ function _scheduleTick(ms) {
 
       if (visible) {
         const cfg = await readConfig();
+        _updateSettingsHeaderIcons(cfg);
         const [auth, pairs, meta, sched, scrob] = await Promise.all([
           getAuthSummary(cfg),
           getPairsSummary(cfg),
@@ -516,6 +657,10 @@ function _scheduleTick(ms) {
       if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections" || sec === "scrobble") {
         tick();
       }
+    });
+
+    w.addEventListener("auth-changed", () => {
+      try { tick(); } catch {}
     });
 
     d.addEventListener("scheduling-status-refresh", () => tick());
