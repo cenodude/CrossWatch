@@ -904,36 +904,6 @@
       background-clip:text;color:transparent;
     }
   }
-
-  #stats-card #stat-providers [data-provider=plex]{
-    --brand:229,160,13;--wm:url("/assets/img/PLEX.svg");
-  }
-  #stats-card #stat-providers [data-provider=simkl]{
-    --brand:0,183,235;--wm:url("/assets/img/SIMKL.svg");
-  }
-  #stats-card #stat-providers [data-provider=trakt]{
-    --brand:237,28,36;--wm:url("/assets/img/TRAKT.svg");
-  }
-  #stats-card #stat-providers [data-provider=anilist]{
-    --brand:36,160,251;--wm:url("/assets/img/ANILIST.svg");
-  }
-  #stats-card #stat-providers [data-provider=jellyfin]{
-    --brand:150,84,244;--wm:url("/assets/img/JELLYFIN.svg");
-  }
-  #stats-card #stat-providers [data-provider=emby]{
-    --brand:82,181,75;--wm:url("/assets/img/EMBY.svg");
-  }
-  #stats-card #stat-providers [data-provider=mdblist]{
-    --brand:0,163,255;--wm:url("/assets/img/MDBLIST.svg");
-  }
-  #stats-card #stat-providers [data-provider=crosswatch]{
-    --brand:124,92,255;--wm:url("/assets/img/CROSSWATCH.svg");
-  }
-
-  #stats-card #stat-providers [data-provider=tautulli]{
-    --brand:245,124,46;--wm:url("/assets/img/TAUTULLI.svg");
-  }
-
   #stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{
     position:absolute;left:0;right:0;bottom:6px;padding:0 8px;
     font-size:11px;line-height:1.2;font-weight:700;text-align:center;

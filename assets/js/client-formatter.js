@@ -24,14 +24,6 @@
       .cf-arrow{opacity:.9;margin:0 6px}
       .cf-badge{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;font-weight:700;font-size:12px;line-height:1.2;border:1px solid rgba(255,255,255,.15);margin:0 2px;vertical-align:baseline;box-shadow:0 0 .5px rgba(255,255,255,.15) inset,0 0 6px rgba(255,255,255,.03) inset}
       .cf-badge img{width:14px;height:14px;display:block;filter:drop-shadow(0 0 1px rgba(0,0,0,.25))}
-      .cf-plex{background:#2b240a;color:#ffbf3a;border-color:rgba(255,191,58,.28)}
-      .cf-simkl{background:#072430;color:#35d1ff;border-color:rgba(53,209,255,.28)}
-      .cf-trakt{background:#2b0a0a;color:#ff6470;border-color:rgba(255,100,112,.28)}
-      .cf-jellyfin{background:#15102b;color:#9aa5ff;border-color:rgba(154,165,255,.28)}
-      .cf-mdblist{background:#0d1926;color:#9fd3ff;border-color:rgba(159,211,255,.28)}
-      .cf-tautulli{background:#0b1f2b;color:#6ee7ff;border-color:rgba(110,231,255,.28)}
-      .cf-anilist{background:#071b2b;color:#75c6ff;border-color:rgba(36,160,251,.28)}
-      .cf-crosswatch{background:#15102b;color:#d6c8ff;border-color:rgba(124,92,255,.35)}
       .cf-generic{background:#1b1b1b;color:#eaeaea}
       .cf-event.progress{border-color:#0ea5e9}
       .cf-prog-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

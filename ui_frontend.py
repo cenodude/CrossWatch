@@ -445,8 +445,8 @@ def _get_index_html_static() -> str:
               <select id="debug">
                 <option value="off">off</option>
                 <option value="on">on</option>
-                <option value="mods">on - including MOD debug</option>
-                <option value="full">on - full</option>
+                <option value="mods">on - including MOD debug - best option for debug</option>
+                <option value="full">on - full (requires restart) - use with caution</option>
               </select>
             </div>
             <div class="chiprow">

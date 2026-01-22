@@ -354,24 +354,6 @@
     text-transform:uppercase;
   }
 
-  #playing-detail .pc-chip-source-plex{
-    background:rgba(229,160,13,0.18);
-    color:#ffd36a;
-    border:1px solid rgba(229,160,13,0.45);
-  }
-
-  #playing-detail .pc-chip-source-emby{
-    background:rgba(76,175,80,0.18);
-    color:#bbf1bf;
-    border:1px solid rgba(76,175,80,0.45);
-  }
-
-  #playing-detail .pc-chip-source-jellyfin{
-    background:rgba(170,92,195,0.18);
-    color:#e8cff8;
-    border:1px solid rgba(170,92,195,0.45);
-  }
-
   #playing-detail .pc-overview{
     margin-top:8px;
     font-size:13px;
