@@ -130,48 +130,70 @@ export default {
     const legacy = !hasCfgVer || _cmp(cfg, "0.7.0") < 0;
 
     hostEl.innerHTML = `
-    <style>
-      #upg-host{--w:820px;min-width:min(var(--w),94vw);max-width:94vw;color:#eef1ff;color:#eef1ff;position:relative;overflow:hidden;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:
-        radial-gradient(1200px 600px at 0% 0%, rgba(124,58,237,.26), transparent 55%),
-        radial-gradient(900px 520px at 100% 20%, rgba(59,130,246,.18), transparent 60%),
-        linear-gradient(180deg, rgba(12,16,24,.94), rgba(9,12,18,.94));
-        box-shadow:0 35px 110px rgba(0,0,0,.68), 0 0 0 1px rgba(124,58,237,.10), inset 0 1px 0 rgba(255,255,255,.04);
-        backdrop-filter:saturate(140%) blur(10px);
+        <style>
+      #upg-host{--w:820px;position:relative;overflow:hidden;min-width:min(var(--w),94vw);max-width:94vw;color:#eaf0ff;border-radius:18px;
+        border:1px solid rgba(255,255,255,.08);
+        background:
+          radial-gradient(900px circle at 18% 18%, rgba(150,70,255,.22), transparent 55%),
+          radial-gradient(900px circle at 92% 10%, rgba(60,140,255,.18), transparent 55%),
+          radial-gradient(800px circle at 55% 110%, rgba(60,255,215,.08), transparent 60%),
+          rgba(7,8,11,.92);
+        box-shadow:0 30px 90px rgba(0,0,0,.70), inset 0 1px 0 rgba(255,255,255,.04);
+        backdrop-filter:saturate(135%) blur(10px)
       }
-      #upg-host:before{content:'';position:absolute;inset:-2px;pointer-events:none;background:
-        radial-gradient(600px 240px at 20% 10%, rgba(255,255,255,.10), transparent 60%),
-        radial-gradient(520px 260px at 80% 0%, rgba(255,255,255,.06), transparent 58%);
-        opacity:.55
+      #upg-host:before{content:"";position:absolute;inset:-120px;pointer-events:none;
+        background:conic-gradient(from 180deg at 50% 50%, rgba(150,70,255,.0), rgba(150,70,255,.30), rgba(60,140,255,.24), rgba(60,255,215,.10), rgba(150,70,255,.0));
+        filter:blur(90px);opacity:.35;transform:translate3d(0,0,0);
+        animation:upgGlow 16s ease-in-out infinite alternate
       }
-      #upg-host .topline{position:absolute;left:0;top:0;right:0;height:2px;background:linear-gradient(90deg,rgba(124,58,237,.0),rgba(124,58,237,.8),rgba(59,130,246,.8),rgba(59,130,246,.0));opacity:.9}
-      #upg-host .head{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}
-      #upg-host .icon{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);box-shadow:0 10px 28px rgba(0,0,0,.35)}
-      #upg-host .t{font-weight:950;letter-spacing:.35px}
-      #upg-host .sub{opacity:.72;font-size:12.5px;margin-top:2px}
-      #upg-host .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-weight:900;font-size:12px;color:#dfe6ff}
-      #upg-host .pill .b{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
+      @keyframes upgGlow{from{transform:translate(-16px,-10px) scale(1)}to{transform:translate(16px,12px) scale(1.03)}}
+      @media (prefers-reduced-motion: reduce){#upg-host:before{animation:none}}
 
-      #upg-host .body{position:relative;z-index:1;padding:14px 16px;max-height:66vh;overflow:auto}
-      #upg-host .card{background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));border:1px solid rgba(255,255,255,.10);border-radius:14px;box-shadow:0 10px 32px rgba(0,0,0,.28);padding:12px 14px;margin-bottom:12px}
+      #upg-host .head{position:relative;display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);
+        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))
+      }
+      #upg-host .icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
+        background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+        box-shadow:0 12px 30px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.04)
+      }
+      #upg-host .icon span{font-size:26px;opacity:.95;filter:drop-shadow(0 10px 16px rgba(0,0,0,.45))}
+      #upg-host .t{font-weight:950;letter-spacing:.2px;font-size:15px;line-height:1.1;text-transform:uppercase;opacity:.90}
+      #upg-host .sub{opacity:.72;font-size:12px;margin-top:2px}
+      #upg-host .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-weight:900;font-size:12px;opacity:.85}
+      #upg-host .pill .b{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
+
+      #upg-host .body{position:relative;padding:16px 16px 8px 16px;max-height:72vh;overflow:auto}
+      #upg-host .card{display:block;padding:12px 12px;border-radius:14px;
+        background:rgba(255,255,255,.03);
+        border:1px solid rgba(255,255,255,.08);
+        box-shadow:0 10px 30px rgba(0,0,0,.32);
+        margin-bottom:10px
+      }
       #upg-host .card .h{font-weight:950}
-      #upg-host .card .p{opacity:.86;margin-top:6px;line-height:1.45}
-      #upg-host .warn{border-color:rgba(255,120,120,.28);background:linear-gradient(180deg,rgba(255,77,79,.14),rgba(255,77,79,.06))}
+      #upg-host .card .p{opacity:.84;margin-top:6px;line-height:1.45}
+      #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
       #upg-host ul{margin:.6em 0 0 1.15em}
       #upg-host code{opacity:.95}
 
-      #upg-host .btn{appearance:none;border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px 14px;font-weight:950;background:linear-gradient(135deg,rgba(124,58,237,.95),rgba(59,130,246,.92));color:#fff;cursor:pointer;box-shadow:0 10px 26px rgba(0,0,0,.28)}
-      #upg-host .btn:hover{filter:brightness(1.07)}
-      #upg-host .btn:active{transform:translateY(1px)}
-      #upg-host .btn.ghost{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.14);color:#eef1ff;box-shadow:none}
-      #upg-host .btn.danger{background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border-color:rgba(255,120,120,.35)}
+      #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;
+        background:rgba(255,255,255,.04);color:#eaf0ff
+      }
+      #upg-host .btn:hover{filter:brightness(1.06)}
+      #upg-host .btn.primary{border-color:rgba(150,70,255,.35);
+        background:linear-gradient(135deg,rgba(150,70,255,.92),rgba(60,140,255,.82));
+        box-shadow:0 16px 50px rgba(0,0,0,.48)
+      }
+      #upg-host .btn.primary:active{transform:translateY(1px)}
+      #upg-host .btn.ghost{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.10);box-shadow:none}
+      #upg-host .btn.danger{border-color:rgba(255,120,120,.28);background:linear-gradient(135deg,rgba(255,77,79,.92),rgba(255,122,122,.82));color:#fff;box-shadow:0 16px 50px rgba(0,0,0,.48)}
       #upg-host .btn.busy{opacity:.82;cursor:progress}
 
-      #upg-host .foot{position:relative;z-index:1;display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.01),rgba(255,255,255,.00))}
+      #upg-host .foot{position:relative;display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);
+        background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))
+      }
     </style>
 
     <div id="upg-host">
-      <div class="topline" aria-hidden="true"></div>
-
       <div class="head">
         <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
         <div>
@@ -222,7 +244,7 @@ export default {
         <button class="btn ghost" type="button" data-x="close">Close</button>
         ${legacy
           ? `<button class="btn danger" type="button" data-x="migrate">MIGRATE</button>`
-          : `<button class="btn" type="button" data-x="save">SAVE</button>`
+          : `<button class="btn primary" type="button" data-x="save">SAVE</button>`
         }
       </div>
     </div>
