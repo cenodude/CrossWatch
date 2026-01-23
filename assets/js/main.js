@@ -978,7 +978,12 @@
   function setRunButtonState(running) {
     const btn = document.getElementById("run");
     if (!btn) return;
-    btn.toggleAttribute("disabled", !!running);
+    if (running) {
+      btn.setAttribute("disabled", "");
+    } else {
+      btn.removeAttribute("disabled");
+      try { window.recomputeRunDisabled?.(); } catch {}
+    }
     btn.setAttribute("aria-busy", running ? "true" : "false");
     btn.classList.toggle("glass", !!running);
     btn.title = running ? "Synchronization running…" : "Run synchronization";

@@ -888,8 +888,16 @@ async function showTab(n) {
   __currentTab = n || "main";
 }
 
-document.addEventListener("tab-changed", e => {
-  if (String(e?.detail?.id).toLowerCase() === "main") enforceMainLayout();
+document.addEventListener("tab-changed", (e) => {
+  const id = String(e?.detail?.id || "").toLowerCase();
+  if (id !== "main") return;
+  enforceMainLayout();
+  setTimeout(() => {
+    try { window.openSummaryStream?.(); } catch {}
+    try { window.openLogStream?.(); } catch {}
+    try { window.UX?.refresh?.(); } catch {}
+    try { recomputeRunDisabled?.(); } catch {}
+  }, 0);
 });
 
 
