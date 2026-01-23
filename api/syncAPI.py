@@ -557,6 +557,23 @@ def _apply_live_stats_to_snap(snap: dict, stats_feats: dict, enabled: dict) -> d
     out["enabled"] = enabled or _lanes_enabled_defaults()
     return out
 
+
+_LANES_CACHE_LOCK = threading.Lock()
+_LANES_CACHE: dict[tuple[Any, ...], tuple[dict[str, dict[str, Any]], dict[str, bool]]] = {}
+_LANES_CACHE_MAX = 16
+
+def _lanes_cache_get(key: tuple[Any, ...]) -> tuple[dict[str, dict[str, Any]], dict[str, bool]] | None:
+    with _LANES_CACHE_LOCK:
+        return _LANES_CACHE.get(key)
+
+def _lanes_cache_put(key: tuple[Any, ...], feats: dict[str, dict[str, Any]], enabled: dict[str, bool]) -> None:
+    with _LANES_CACHE_LOCK:
+        _LANES_CACHE[key] = (feats, enabled)
+        if len(_LANES_CACHE) > _LANES_CACHE_MAX:
+            try:
+                _LANES_CACHE.pop(next(iter(_LANES_CACHE)))
+            except Exception:
+                _LANES_CACHE.clear()
 def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     _STATS = _rt()[5]
     feats = _lanes_defaults()
@@ -579,6 +596,20 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                 pass
         return 0
 
+    len_events = len(events)
+    last_evt_ts = 0
+    for ee in reversed(events[-30:]):
+        t = _evt_epoch(ee)
+        if t:
+            last_evt_ts = t
+            break
+
+    u_key = min(u, last_evt_ts) if last_evt_ts and u > last_evt_ts else u
+    cache_key = ("lanes", s, u_key, len_events, last_evt_ts, _peek_state_key())
+    hit = _lanes_cache_get(cache_key)
+    if hit:
+        return hit[0], hit[1]
+    u = u_key
     def _is_real_item_event(e: dict) -> bool:
         k = str(e.get("key") or "")
         if k.startswith("agg:"):
@@ -601,6 +632,10 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
 
     rows = [e for e in events if s <= _evt_epoch(e) <= u and _is_real_item_event(e)]
     if not rows:
+        try:
+            _lanes_cache_put(cache_key, feats, enabled)
+        except Exception:
+            pass
         return feats, enabled
 
     rows.sort(key=_evt_epoch)
@@ -616,7 +651,7 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     key_map: dict[str, str] = {}
     id_map: dict[str, str] = {}
     try:
-        key_map, id_map = _show_title_maps_from_state(_load_state() or {})
+        key_map, id_map = _get_title_maps()
     except Exception:
         pass
 
@@ -790,6 +825,10 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
         lane["spotlight_add"] = list((lane.get("spotlight_add") or [])[-25:])[::-1]
         lane["spotlight_remove"] = list((lane.get("spotlight_remove") or [])[-25:])[::-1]
         lane["spotlight_update"] = list((lane.get("spotlight_update") or [])[-25:])[::-1]
+    try:
+        _lanes_cache_put(cache_key, feats, enabled)
+    except Exception:
+        pass
     return feats, enabled
 
 def _parse_sync_line(line: str) -> None:
@@ -1013,7 +1052,7 @@ def _parse_sync_line(line: str) -> None:
                             pass
                     return 0
 
-                key_map, id_map = _show_title_maps_from_state(_load_state() or {})
+                key_map, id_map = _get_title_maps()
                 for feat in ("ratings", "history"):
                     lane = lanes.get(feat) or {}
                     if (
@@ -1125,15 +1164,61 @@ def _find_state_path() -> Path | None:
             return p
     return None
 
+_STATE_CACHE_LOCK = threading.Lock()
+_STATE_CACHE: dict[str, Any] = {"key": None, "data": {}, "checked_ts": 0.0}
+_STATE_CACHE_MIN_CHECK = 0.25
+
+_TITLE_MAP_CACHE_LOCK = threading.Lock()
+_TITLE_MAP_CACHE: dict[str, Any] = {"key": None, "key_map": {}, "id_map": {}}
+
+def _peek_state_key() -> Any:
+    sp = _find_state_path()
+    if not sp:
+        return None
+    try:
+        st = sp.stat()
+        mt = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        return (str(sp), mt, int(st.st_size))
+    except Exception:
+        return (str(sp), 0, 0)
+
+def _state_cache_key() -> Any:
+    with _STATE_CACHE_LOCK:
+        return _STATE_CACHE.get("key")
+
 def _load_state() -> dict[str, Any]:
     sp = _find_state_path()
     if not sp:
         return {}
+    now = time.time()
     try:
-        return json.loads(sp.read_text(encoding="utf-8"))
+        key = _peek_state_key()
     except Exception:
-        return {}
+        key = None
 
+    with _STATE_CACHE_LOCK:
+        prev_key = _STATE_CACHE.get("key")
+        prev_data = _STATE_CACHE.get("data") if isinstance(_STATE_CACHE.get("data"), dict) else {}
+        last_check = float(_STATE_CACHE.get("checked_ts") or 0.0)
+        if prev_key and (now - last_check) < _STATE_CACHE_MIN_CHECK:
+            return cast(dict[str, Any], prev_data)
+        if key and prev_key == key and isinstance(prev_data, dict):
+            _STATE_CACHE["checked_ts"] = now
+            return cast(dict[str, Any], prev_data)
+
+    data: dict[str, Any] = {}
+    try:
+        raw = sp.read_bytes()
+        obj = json.loads(raw) if raw else {}
+        data = obj if isinstance(obj, dict) else {}
+    except Exception:
+        data = {}
+
+    with _STATE_CACHE_LOCK:
+        _STATE_CACHE["key"] = key
+        _STATE_CACHE["data"] = data
+        _STATE_CACHE["checked_ts"] = now
+    return data
 def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     key_map: dict[str, str] = {}
     id_map: dict[str, str] = {}
@@ -1199,6 +1284,22 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
                             id_map[f"{idk}:{str(v).lower()}"] = title
 
     return key_map, id_map
+
+def _get_title_maps() -> tuple[dict[str, str], dict[str, str]]:
+    skey = _peek_state_key()
+    with _TITLE_MAP_CACHE_LOCK:
+        if skey and _TITLE_MAP_CACHE.get("key") == skey:
+            km = _TITLE_MAP_CACHE.get("key_map")
+            im = _TITLE_MAP_CACHE.get("id_map")
+            if isinstance(km, dict) and isinstance(im, dict):
+                return cast(dict[str, str], km), cast(dict[str, str], im)
+    state = _load_state()
+    km2, im2 = _show_title_maps_from_state(state or {})
+    with _TITLE_MAP_CACHE_LOCK:
+        _TITLE_MAP_CACHE["key"] = skey
+        _TITLE_MAP_CACHE["key_map"] = km2
+        _TITLE_MAP_CACHE["id_map"] = im2
+    return km2, im2
 
 
 def _key_lookup_candidates(raw_key: Any) -> list[str]:
@@ -1931,7 +2032,7 @@ def api_run_summary() -> JSONResponse:
                     pass
             return 0
 
-        key_map, id_map = _show_title_maps_from_state(_load_state() or {})
+        key_map, id_map = _get_title_maps()
 
         for feat in ("ratings", "history"):
             lane = feats.get(feat) or {}
@@ -2036,6 +2137,40 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
     def dehtml(s: str) -> str:
         return html.unescape(TAG_RE.sub("", s or ""))
 
+    def _spot_list_sig(items: Any) -> tuple[int, str]:
+        if not isinstance(items, list) or not items:
+            return (0, "")
+        try:
+            return (len(items), _spot_sig(items[-1]))
+        except Exception:
+            return (len(items), "")
+
+    def _lane_key(feats: Any) -> tuple[Any, ...]:
+        if not isinstance(feats, dict):
+            return ()
+        out: list[Any] = []
+        for name in FEATURE_KEYS:
+            lane = feats.get(name) if isinstance(feats.get(name), dict) else {}
+            out.append(
+                (
+                    name,
+                    int((lane or {}).get("added") or 0),
+                    int((lane or {}).get("removed") or 0),
+                    int((lane or {}).get("updated") or 0),
+                    _spot_list_sig((lane or {}).get("spotlight_add")),
+                    _spot_list_sig((lane or {}).get("spotlight_remove")),
+                    _spot_list_sig((lane or {}).get("spotlight_update")),
+                )
+            )
+        return tuple(out)
+
+    def _enabled_key(enabled: Any) -> tuple[Any, ...]:
+        if not isinstance(enabled, dict):
+            return ()
+        try:
+            return tuple(sorted((str(k), bool(v)) for k, v in enabled.items()))
+        except Exception:
+            return ()
     async def agen():
         last_key = None
         last_idx = 0
@@ -2085,8 +2220,8 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 snap.get("result"),
                 snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),
-                json.dumps(snap.get("features", {}), sort_keys=True),
-                json.dumps(snap.get("enabled", {}), sort_keys=True),
+                _lane_key(snap.get("features")),
+                _enabled_key(snap.get("enabled")),
             )
 
             if key != last_key:
