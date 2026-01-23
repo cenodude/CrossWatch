@@ -1285,6 +1285,84 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
 
     return key_map, id_map
 
+_EP_META_CACHE_LOCK = threading.Lock()
+_EP_META_CACHE: dict[str, Any] = {"key": None, "code_map": {}}
+
+def _episode_code_map_from_state(state: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    out: dict[str, tuple[int, int]] = {}
+    def _to_int(v: Any) -> int | None:
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if s.isdigit():
+                return int(s)
+        return None
+    provs = (state or {}).get("providers") or {}
+    if not isinstance(provs, dict):
+        return out
+    def add_key(k: Any, s: int, e: int) -> None:
+        k0 = str(k or "").strip().lower()
+        if not k0:
+            return
+        out.setdefault(k0, (s, e))
+        if "#" in k0:
+            out.setdefault(k0.split("#", 1)[0], (s, e))
+        parts = k0.split(":")
+        if len(parts) >= 3:
+            out.setdefault(f"{parts[0]}:{parts[-1]}", (s, e))
+    for _, pdata in provs.items():
+        if not isinstance(pdata, dict):
+            continue
+        for feat in ("history", "ratings", "watchlist", "playlists"):
+            node = pdata.get(feat)
+            if not isinstance(node, dict):
+                continue
+            baseline = node.get("baseline")
+            base: dict[str, Any] = baseline if isinstance(baseline, dict) else node
+            items = base.get("items")
+            if isinstance(items, dict):
+                iters = items.items()
+            elif isinstance(items, list):
+                iters = ((it.get("key"), it) for it in items if isinstance(it, dict))
+            else:
+                continue
+            for k, it in iters:
+                if not isinstance(it, dict):
+                    continue
+                typ = str(it.get("type") or "").strip().lower()
+                if typ != "episode":
+                    continue
+                s = _to_int(it.get("season"))
+                e = _to_int(it.get("episode"))
+                if s is None or e is None:
+                    continue
+                add_key(k, s, e)
+                add_key(it.get("key"), s, e)
+                raw_ids = it.get("ids")
+                ids = raw_ids if isinstance(raw_ids, dict) else {}
+                for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                    v = ids.get(idk)
+                    if v:
+                        add_key(f"{idk}:{str(v).lower()}", s, e)
+    return out
+
+def _get_episode_code_map() -> dict[str, tuple[int, int]]:
+    skey = _peek_state_key()
+    with _EP_META_CACHE_LOCK:
+        if skey and _EP_META_CACHE.get("key") == skey:
+            cm = _EP_META_CACHE.get("code_map")
+            if isinstance(cm, dict):
+                return cast(dict[str, tuple[int, int]], cm)
+    state = _load_state()
+    cm2 = _episode_code_map_from_state(state or {})
+    with _EP_META_CACHE_LOCK:
+        _EP_META_CACHE["key"] = skey
+        _EP_META_CACHE["code_map"] = cm2
+    return cm2
+
 def _get_title_maps() -> tuple[dict[str, str], dict[str, str]]:
     skey = _peek_state_key()
     with _TITLE_MAP_CACHE_LOCK:
@@ -1381,50 +1459,81 @@ _EP_CODE_RE = re.compile(r"^s(\d{1,3})e(\d{1,3})$", re.I)
 def _finalize_spotlight_item(it: dict[str, Any]) -> None:
     raw_title = str(it.get("title") or it.get("name") or "").strip()
     raw_type = str(it.get("type") or "").strip().lower()
-
     show = str(it.get("series_title") or it.get("show_title") or "").strip()
+    key = str(it.get("key") or "").strip()
 
-    m = _EP_CODE_RE.match(raw_title)
-    season = it.get("season") if isinstance(it.get("season"), int) else None
-    episode = it.get("episode") if isinstance(it.get("episode"), int) else None
+    def _to_int(v: Any) -> int | None:
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if s.isdigit():
+                return int(s)
+        return None
 
-    # Infer episode type if missing.
-    if not raw_type:
-        if m or (season is not None and episode is not None):
+    season = _to_int(it.get("season"))
+    episode = _to_int(it.get("episode"))
+
+    m_key = re.search(r"#s(\d{1,3})e(\d{1,3})", key, flags=re.I)
+    if m_key:
+        if season is None:
+            season = int(m_key.group(1))
+            it["season"] = season
+        if episode is None:
+            episode = int(m_key.group(2))
+            it["episode"] = episode
+        if not raw_type:
             raw_type = "episode"
             it["type"] = "episode"
 
-    if raw_type != "episode":
+    m_season = re.search(r"#season:(\d{1,3})", key, flags=re.I)
+    if m_season and season is None:
+        season = int(m_season.group(1))
+        it["season"] = season
+        if not raw_type:
+            raw_type = "season"
+            it["type"] = "season"
+
+    m = _EP_CODE_RE.match(raw_title)
+    if m:
+        if season is None:
+            season = int(m.group(1))
+            it["season"] = season
+        if episode is None:
+            episode = int(m.group(2))
+            it["episode"] = episode
+        if not raw_type:
+            raw_type = "episode"
+            it["type"] = "episode"
+
+    # If the event doesn't carry season/episode, try to hydrate it from the persisted state.
+    if key and (raw_type == "episode") and (season is None or episode is None):
+        try:
+            cm = _get_episode_code_map()
+            for kk in _key_lookup_candidates(key):
+                v = cm.get(kk)
+                if v:
+                    season = season if season is not None else int(v[0])
+                    episode = episode if episode is not None else int(v[1])
+                    it["season"] = season
+                    it["episode"] = episode
+                    break
+        except Exception:
+            pass
+
+    is_episode = raw_type == "episode" or (show and season is not None and episode is not None)
+    if is_episode:
+        if show and season is not None and episode is not None:
+            it["display_title"] = f"{show} - S{season:02d}E{episode:02d}"
+        elif show:
+            it["display_title"] = show
         return
 
-    if m:
-        try:
-            s_num = int(m.group(1))
-            e_num = int(m.group(2))
-        except Exception:
-            s_num = season
-            e_num = episode
-        if season is None and isinstance(s_num, int):
-            it["season"] = s_num
-            season = s_num
-        if episode is None and isinstance(e_num, int):
-            it["episode"] = e_num
-            episode = e_num
-
-    code = ""
-    if isinstance(season, int) and isinstance(episode, int):
-        code = f"S{season:02d}E{episode:02d}"
-    elif m:
-        code = f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
-    else:
-        code = raw_title
-
-    if show and code:
-        it["display_title"] = f"{show} - {code}"
-    elif show:
-        it["display_title"] = show
-    elif code:
-        it["display_title"] = code
+    if raw_type == "season" and show and season is not None:
+        it["display_title"] = f"{show} - Season {season}"
+        return
 
 
 # Rating/action mapping

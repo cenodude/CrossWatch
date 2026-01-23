@@ -121,12 +121,25 @@ def register_insights(app: FastAPI) -> None:
         def _format_event_title(e: dict[str, Any]) -> dict[str, Any]:
             out = dict(e)
             t = str(e.get("type") or "").lower()
-            # infer episode type when upstream didn't tag it
-            if not t:
-                raw = (e.get("title") or "").strip()
-                if re.match(r"^s\d{1,3}e\d{1,3}$", raw.lower()):
-                    t = "episode"
+            raw = (e.get("title") or "").strip()
+            key = str(e.get("key") or "").strip()
 
+            def _to_int(v: Any) -> int | None:
+                if isinstance(v, int):
+                    return v
+                if isinstance(v, float) and v.is_integer():
+                    return int(v)
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s.isdigit():
+                        return int(s)
+                return None
+
+            m_key = re.search(r"#s(\d{1,3})e(\d{1,3})", key, flags=re.I)
+
+            if not t:
+                if m_key or re.match(r"^s\d{1,3}e\d{1,3}$", raw.lower()):
+                    t = "episode"
 
             if t == "movie":
                 title = (e.get("title") or e.get("name") or "").strip()
@@ -135,21 +148,28 @@ def register_insights(app: FastAPI) -> None:
                     out["display_title"] = f"{title} ({year})" if year else title
                 else:
                     out["display_title"] = "Movie"
+
             elif t == "episode":
                 series_title = _series_title_for_event(e)
-                season = e.get("season")
-                episode = e.get("episode")
-                raw = (e.get("title") or "").strip()
-                ep_title = (e.get("episode_title") or "").strip()
+                season = _to_int(e.get("season"))
+                episode = _to_int(e.get("episode"))
+
+                if m_key:
+                    season = season if season is not None else int(m_key.group(1))
+                    episode = episode if episode is not None else int(m_key.group(2))
+                    out.setdefault("season", season)
+                    out.setdefault("episode", episode)
+
+                m_raw = re.match(r"^s(\d{1,3})e(\d{1,3})$", raw.lower())
+                if m_raw:
+                    season = season if season is not None else int(m_raw.group(1))
+                    episode = episode if episode is not None else int(m_raw.group(2))
+                    out.setdefault("season", season)
+                    out.setdefault("episode", episode)
 
                 code = ""
-                m2 = re.match(r"^s(\d{1,2})e(\d{1,2})$", raw.lower())
-                if m2:
-                    code = f"S{int(m2.group(1)):02d}E{int(m2.group(2)):02d}"
-                elif isinstance(season, int) and isinstance(episode, int):
+                if season is not None and episode is not None:
                     code = f"S{int(season):02d}E{int(episode):02d}"
-                elif raw:
-                    code = raw
 
                 if series_title and code:
                     out["display_title"] = f"{series_title} - {code}"
@@ -160,6 +180,7 @@ def register_insights(app: FastAPI) -> None:
                 else:
                     out["display_title"] = "Episode"
 
+                ep_title = (e.get("episode_title") or "").strip()
                 if ep_title:
                     low = ep_title.lower()
                     if series_title and low == series_title.lower():
@@ -169,13 +190,12 @@ def register_insights(app: FastAPI) -> None:
                     else:
                         out["display_subtitle"] = ep_title
 
-
             elif t == "season":
                 series_title = _series_title_for_event(e)
                 season_title = (e.get("title") or "").strip()
-                season_num = e.get("season")
+                season_num = _to_int(e.get("season"))
 
-                if not season_title and isinstance(season_num, int):
+                if not season_title and season_num is not None:
                     season_title = f"Season {season_num}"
 
                 if series_title and season_title:

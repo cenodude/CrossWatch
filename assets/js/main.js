@@ -143,54 +143,76 @@
     if (typeof x === "string") return x;
     if (!x || typeof x !== "object") return "item";
 
+    const toInt = (v) => {
+      if (Number.isInteger(v)) return v;
+      if (typeof v === "number" && Number.isFinite(v) && Math.floor(v) === v)
+        return v;
+      if (typeof v === "string" && /^\d+$/.test(v.trim()))
+        return parseInt(v.trim(), 10);
+      return null;
+    };
+
+    const key = String(x.key || "");
+    const show = String(x.series_title || x.show_title || "").trim();
+
+    const mKey = key.match(/#s(\d{1,3})e(\d{1,3})/i);
+    const rawTitle = (x.title && String(x.title).trim()) || "";
+    const mRaw = rawTitle.match(/^s(\d{1,3})e(\d{1,3})$/i);
+
+    let season = toInt(x.season);
+    let episode = toInt(x.episode);
+
+    if (mKey) {
+      season ??= parseInt(mKey[1], 10);
+      episode ??= parseInt(mKey[2], 10);
+    }
+    if (mRaw) {
+      season ??= parseInt(mRaw[1], 10);
+      episode ??= parseInt(mRaw[2], 10);
+    }
+
+    let type = String(x.type || "").toLowerCase();
+    const isEpisode =
+      type === "episode" ||
+      !!mKey ||
+      !!mRaw ||
+      (show && season != null && episode != null);
+
+    // Episode: always prefer Show - SxxEyy (never Show - episode title).
+    if (isEpisode) {
+      if (show && season != null && episode != null) {
+        const code = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+        return `${show} - ${code}`;
+      }
+
+      if (
+        typeof x.display_title === "string" &&
+        /S\d{2}E\d{2}/i.test(x.display_title)
+      ) {
+        return x.display_title.trim();
+      }
+
+      if (show) return show;
+    }
+
     if (typeof x.display_title === "string" && x.display_title.trim()) {
       return x.display_title.trim();
     }
 
-    let type = String(x.type || "").toLowerCase();
-
-    const rawTitle = (x.title && String(x.title).trim()) || "";
-    const looksLikeEpisodeCode = /^s\d{1,3}e\d{1,3}$/i.test(rawTitle);
-
-    if (looksLikeEpisodeCode && !type) {
-      x = { ...x, type: "episode" };
-      type = "episode";
-    }
-
-    if (type === "episode") {
-      const show = String(x.series_title || x.show_title || "").trim();
-      const season = Number.isInteger(x.season) ? x.season : null;
-      const episode = Number.isInteger(x.episode) ? x.episode : null;
-
-      const raw = (x.title && String(x.title).trim()) || "";
-      let code = "";
-
-      const m = raw.match(/^s(\d{1,2})e(\d{1,2})$/i);
-      if (m) {
-        code = `S${String(m[1]).padStart(2, "0")}E${String(m[2]).padStart(2, "0")}`;
-      } else if (season != null && episode != null) {
-        code = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-      } else if (raw) {
-        code = raw;
-      }
-
-      if (show && code) return `${show} - ${code}`;
-      if (show) return show;
-      if (code) return code;
-    }
-
     if (type === "season") {
-      const show = (x.series_title || x.show_title || "").trim();
       const seasonLabel =
         (x.title && String(x.title).trim()) ||
-        (Number.isInteger(x.season) ? `Season ${x.season}` : "");
+        (toInt(x.season) != null ? `Season ${toInt(x.season)}` : "");
 
       if (show && seasonLabel) return `${show} - ${seasonLabel}`;
       if (show) return show;
       if (seasonLabel) return seasonLabel;
     }
 
-    return x.title || x.series_title || x.name || x.key || "item";
+    const title = (x.title || x.name || "").toString().trim();
+    if (show && title && show.toLowerCase() === title.toLowerCase()) return show;
+
+    return title || x.series_title || x.name || x.key || "item";
   };
 
   const synthSpots = (items, key) => {
@@ -731,20 +753,33 @@
 
       const k = mapFeature(e);
       const L = tallies[k] || (tallies[k] = mk());
+      
       const title = titleOf(e);
       const act = String(e.action || "").toLowerCase();
 
+      const spot = {
+        title,
+        key: e.key,
+        type: e.type,
+        ts: e.ts,
+        source: e.source || e.provider || e.side,
+        series_title: e.series_title || e.show_title,
+        season: e.season,
+        episode: e.episode,
+        display_title: e.display_title
+      };
+
       if (act === "add") {
         L.added++;
-        if (L.spotAdd.length < 25) L.spotAdd.push({ title });
+        if (L.spotAdd.length < 25) L.spotAdd.push(spot);
       } else if (act === "remove") {
         L.removed++;
-        if (L.spotRem.length < 25) L.spotRem.push({ title });
+        if (L.spotRem.length < 25) L.spotRem.push(spot);
       } else {
         L.updated++;
-        if (L.spotUpd.length < 25) L.spotUpd.push({ title });
+        if (L.spotUpd.length < 25) L.spotUpd.push(spot);
       }
-    }
+}
 
     summary ||= {};
     summary.features ||= {};
@@ -771,19 +806,20 @@
         added: hasPrevCounts ? prevAdded : L.added || 0,
         removed: hasPrevCounts ? prevRemoved : L.removed || 0,
         updated: hasPrevCounts ? prevUpdated : L.updated || 0,
+        
         spotlight_add:
-          (L.spotAdd && L.spotAdd.length
-            ? L.spotAdd
-            : prev.spotlight_add || []) || [],
+          (prev.spotlight_add && prev.spotlight_add.length
+            ? prev.spotlight_add
+            : (L.spotAdd && L.spotAdd.length ? L.spotAdd : [])) || [],
         spotlight_remove:
-          (L.spotRem && L.spotRem.length
-            ? L.spotRem
-            : prev.spotlight_remove || []) || [],
+          (prev.spotlight_remove && prev.spotlight_remove.length
+            ? prev.spotlight_remove
+            : (L.spotRem && L.spotRem.length ? L.spotRem : [])) || [],
         spotlight_update:
-          (L.spotUpd && L.spotUpd.length
-            ? L.spotUpd
-            : prev.spotlight_update || []) || []
-      };
+          (prev.spotlight_update && prev.spotlight_update.length
+            ? prev.spotlight_update
+            : (L.spotUpd && L.spotUpd.length ? L.spotUpd : [])) || []
+};
 
       if (guardLaneOverwrite(feat, merged, nowTs)) {
         summary.features[feat] = merged;
