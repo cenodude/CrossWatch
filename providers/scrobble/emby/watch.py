@@ -18,6 +18,11 @@ from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent,
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 
 TRAKT_API = "https://api.trakt.tv"
+_HTTP = requests.Session()
+
+_CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
+_CFG_TTL_SEC = 2.0
+
 _TRAKT_ID_CACHE: dict[tuple, Any] = {}
 _VIEW_CACHE_TTL_SECS = 60.0
 _SERIES_IDS_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any] | None]] = {}
@@ -25,6 +30,25 @@ _SERIES_IDS_CACHE_TTL_SECS = 60 * 60
 _SERIES_IDS_NEG_TTL_SECS = 60
 _SERIES_IDS_CACHE_MAX = 4096
 _SERIES_IDS_CACHE_MISS = object()
+
+
+def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
+    now = time.time()
+    try:
+        ts = float(_CFG_CACHE.get("ts") or 0.0)
+        cfg = _CFG_CACHE.get("cfg") or {}
+        if isinstance(cfg, dict) and cfg and (now - ts) < float(ttl):
+            return cfg
+    except Exception:
+        pass
+    try:
+        cfg2 = load_config() or {}
+        if not isinstance(cfg2, dict):
+            cfg2 = {}
+    except Exception:
+        cfg2 = {}
+    _CFG_CACHE.update({"ts": now, "cfg": cfg2})
+    return cfg2
 
 
 def _series_ids_cache_get(base: str, uid: str, series_id: str) -> dict[str, Any] | None | object:
@@ -57,7 +81,6 @@ def _series_ids_cache_put(base: str, uid: str, series_id: str, val: dict[str, An
         _SERIES_IDS_CACHE[key] = (time.time() + float(ttl), (v or None))
     except Exception:
         pass
-
 
 
 def _trakt_tokens(cfg: dict[str, Any]) -> dict[str, str]:
@@ -96,13 +119,6 @@ def _cache_put(key: tuple, value: Any) -> None:
         _TRAKT_ID_CACHE[key] = value
     except Exception:
         pass
-
-
-def _cfg() -> dict[str, Any]:
-    try:
-        return load_config()
-    except Exception:
-        return {}
 
 
 def _as_set_str(v: Any) -> set[str]:
@@ -151,12 +167,12 @@ def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _get_json(base: str, tok: str, path: str) -> Any:
-    cfg = _cfg()
-    e = cfg.get("emby") or {}
-    r = requests.get(
+def _get_json(base: str, tok: str, path: str, cfg: dict[str, Any] | None = None) -> Any:
+    cfg2 = cfg or _cfg()
+    e = cfg2.get("emby") or {}
+    r = _HTTP.get(
         f"{base}{path}",
-        headers=_hdr(tok, cfg),
+        headers=_hdr(tok, cfg2),
         timeout=float(e.get("timeout", 6)),
         verify=bool(e.get("verify_ssl", True)),
     )
@@ -287,7 +303,7 @@ def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger=N
         q = {k: epi_hint.get(k) for k in ("imdb", "tmdb", "tvdb") if epi_hint.get(k)}
         if not q:
             return {}
-        r = requests.get(
+        r = _HTTP.get(
             f"{TRAKT_API}/search/episode",
             params=q,
             headers=_trakt_headers(cfg),
@@ -337,7 +353,7 @@ def _show_ids_from_episode_hint(ids_hint: dict[str, Any], cfg: dict[str, Any], l
         if not val:
             continue
         try:
-            r = requests.get(
+            r = _HTTP.get(
                 f"{TRAKT_API}/search/{key}/{val}",
                 params={"type": "episode", "limit": 1},
                 headers=_trakt_headers(cfg),
@@ -393,7 +409,7 @@ def _enrich_episode_ids(
             else:
                 path = f"/Users/{uid}/Items/{sid}?format=json"
                 try:
-                    info = _get_json(base, tok, path)
+                    info = _get_json(base, tok, path, cfg=cfg)
                     show_ids = _series_ids_from_payload(info, info) or {}
                     _series_ids_cache_put(base, uid, sid, show_ids or None)
                     if show_ids and logger and _is_debug():
@@ -441,9 +457,9 @@ def _media_from_session(sess: dict[str, Any]) -> tuple[dict[str, Any] | None, di
     return (item if item else None), ps
 
 
-def _server_id(base: str, tok: str) -> str | None:
+def _server_id(base: str, tok: str, cfg: dict[str, Any]) -> str | None:
     try:
-        info = _get_json(base, tok, "/System/Info/Public")
+        info = _get_json(base, tok, "/System/Info/Public", cfg=cfg)
         return str(info.get("Id") or "") or None
     except Exception:
         return None
@@ -511,29 +527,31 @@ def _normalize_ids(ids: dict[str, Any]) -> dict[str, str]:
 
 class EmbyWatchService:
     def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 1.5) -> None:
-        self._base, self._tok = _emby_bt(_cfg())
+        cfg = _cfg()
+        self._base, self._tok = _emby_bt(cfg)
         self._disabled = False
         if not self._base or not self._tok:
             self._disabled = True
             self._server_id: str | None = None
         else:
-            self._server_id = _server_id(self._base, self._tok)
+            self._server_id = _server_id(self._base, self._tok, cfg)
 
         self._sinks = list(sinks or [])
         self._dispatch = Dispatcher(self._sinks, cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
         self._poll = max(0.5, float(poll_secs))
+        self._idle_steps = 0
+        self._max_idle_sleep = 6.0
+
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
         self._last: dict[str, dict[str, Any]] = {}
         self._last_emit: dict[str, tuple[str, int]] = {}
         self._allowed_sessions: set[str] = set()
         self._filtered_sessions: set[str] = set()
-        self._dbg_last_total = None
-        self._dbg_last_playing = None
-        self._dbg_last_ts = 0.0
         self._cw_last_heartbeat: dict[str, float] = {}
         self._view_roots_cache: dict[str, tuple[float, set[str]]] = {}
         self._item_root_cache: dict[str, str | None] = {}
+
         self._log(f"Ensuring Watcher is running; wired sinks: {len(self._sinks)}", "INFO")
 
     def _log(self, msg: str, level: str = "INFO") -> None:
@@ -552,15 +570,14 @@ class EmbyWatchService:
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
 
-    def _scrobble_whitelist(self) -> set[str]:
+    def _scrobble_whitelist(self, cfg: dict[str, Any]) -> set[str]:
         try:
-            cfg = _cfg() or {}
             libs = ((((cfg.get("emby") or {}).get("scrobble") or {}).get("libraries")) or [])
             return _as_set_str(libs)
         except Exception:
             return set()
 
-    def _view_roots(self, uid: str) -> set[str]:
+    def _view_roots(self, uid: str, cfg: dict[str, Any]) -> set[str]:
         uid = str(uid or "").strip()
         if not uid:
             return set()
@@ -571,7 +588,7 @@ class EmbyWatchService:
 
         roots: set[str] = set()
         try:
-            j = _get_json(self._base, self._tok, f"/Users/{uid}/Views") or {}
+            j = _get_json(self._base, self._tok, f"/Users/{uid}/Views", cfg=cfg) or {}
             items = (j.get("Items") if isinstance(j, dict) else None) or []
             for it in items:
                 rid = (it or {}).get("Id") or (it or {}).get("Key")
@@ -585,7 +602,7 @@ class EmbyWatchService:
         self._view_roots_cache[uid] = (now, roots)
         return roots
 
-    def _view_id_via_ancestors(self, uid: str, item_id: str) -> str | None:
+    def _view_id_via_ancestors(self, uid: str, item_id: str, cfg: dict[str, Any]) -> str | None:
         uid = str(uid or "").strip()
         iid = str(item_id or "").strip()
         if not uid or not iid:
@@ -594,14 +611,14 @@ class EmbyWatchService:
         if iid in self._item_root_cache:
             return self._item_root_cache[iid]
 
-        roots = self._view_roots(uid)
+        roots = self._view_roots(uid, cfg)
         if not roots:
             self._item_root_cache[iid] = None
             return None
 
         found: str | None = None
         try:
-            arr = _get_json(self._base, self._tok, f"/Items/{iid}/Ancestors?Fields=Id&UserId={uid}") or []
+            arr = _get_json(self._base, self._tok, f"/Items/{iid}/Ancestors?Fields=Id&UserId={uid}", cfg=cfg) or []
             if isinstance(arr, list):
                 for a in arr:
                     aid = str((a or {}).get("Id") or "").strip()
@@ -616,26 +633,25 @@ class EmbyWatchService:
         self._item_root_cache[iid] = found
         return found
 
-    def _session_view_id(self, sess: Mapping[str, Any]) -> str | None:
+    def _session_view_id(self, sess: Mapping[str, Any], cfg: dict[str, Any]) -> str | None:
         uid = str(sess.get("UserId") or "").strip()
         item = (sess.get("NowPlayingItem") or {}) if isinstance(sess, Mapping) else {}
         iid = str((item.get("Id") or "") if isinstance(item, Mapping) else "").strip()
         if uid and iid:
-            vid = self._view_id_via_ancestors(uid, iid)
+            vid = self._view_id_via_ancestors(uid, iid, cfg)
             if vid:
                 return vid
 
         sid = str((item.get("SeriesId") or item.get("ParentId") or "") if isinstance(item, Mapping) else "").strip()
         if uid and sid:
-            return self._view_id_via_ancestors(uid, sid)
+            return self._view_id_via_ancestors(uid, sid, cfg)
         return None
 
-    def _passes_filters(self, ev: ScrobbleEvent) -> bool:
+    def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = str(ev.session_key or "")
         if sk and sk in self._allowed_sessions:
             return True
 
-        cfg = _cfg() or {}
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         wl = filt.get("username_whitelist")
         wl_list = wl if isinstance(wl, list) else ([wl] if wl else [])
@@ -666,9 +682,9 @@ class EmbyWatchService:
         if not user_ok:
             return False
 
-        libs = self._scrobble_whitelist()
+        libs = self._scrobble_whitelist(cfg)
         if libs:
-            view_id = self._session_view_id(ev.raw or {})
+            view_id = self._session_view_id(ev.raw or {}, cfg)
             if not view_id or view_id not in libs:
                 if _is_debug():
                     item = ((ev.raw or {}).get("NowPlayingItem") or {}) if isinstance(ev.raw, Mapping) else {}
@@ -714,12 +730,12 @@ class EmbyWatchService:
             raw=sess,
         )
 
-    def _current_sessions(self) -> list[dict[str, Any]]:
+    def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]]:
         try:
-            e = (_cfg().get("emby") or {})
+            e = (cfg.get("emby") or {})
             uid = str(e.get("user_id") or "").strip().lower()
             q = "/Sessions?ActiveWithinSeconds=15"
-            all_sessions = _get_json(self._base, self._tok, q) or []
+            all_sessions = _get_json(self._base, self._tok, q, cfg=cfg) or []
             playing: list[dict[str, Any]] = []
             for s in all_sessions:
                 if not (s.get("NowPlayingItem") or {}):
@@ -743,9 +759,9 @@ class EmbyWatchService:
             "account": ev.account,
         }
 
-    def _emit(self, ev: ScrobbleEvent) -> None:
+    def _emit(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
         sk = str(ev.session_key or "")
-        if not self._passes_filters(ev):
+        if not self._passes_filters(ev, cfg):
             if sk and sk not in self._filtered_sessions:
                 self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
                 self._filtered_sessions.add(sk)
@@ -783,28 +799,28 @@ class EmbyWatchService:
             self._last[sk] = last_meta
             self._last_emit[sk] = (ev.action, ev.progress)
 
-    def _tick(self) -> None:
+    def _tick(self) -> bool:
         now = time.time()
-        cur = self._current_sessions()
+        cfg = _cfg()
+        cur = self._current_sessions(cfg)
         seen: set[str] = set()
 
         try:
-            debounce = float((((_cfg().get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds") or 0))
+            debounce = float((((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds") or 0))
         except Exception:
             debounce = 0.0
         try:
-            suppress_start_at = int((((_cfg().get("scrobble") or {}).get("watch") or {}).get("suppress_start_at") or 0))
+            suppress_start_at = int((((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at") or 0))
         except Exception:
             suppress_start_at = 0
         try:
-            force_at = int((((_cfg().get("scrobble") or {}).get("trakt") or {}).get("force_stop_at") or 95))
+            force_at = int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at") or 95))
         except Exception:
             force_at = 95
         try:
-            hb = float((((_cfg().get("scrobble") or {}).get("watch") or {}).get("cw_heartbeat_seconds") or 30))
+            hb = float((((cfg.get("scrobble") or {}).get("watch") or {}).get("cw_heartbeat_seconds") or 30))
         except Exception:
             hb = 30.0
-
         heartbeat_secs = max(5.0, hb)
 
         for s in cur:
@@ -850,7 +866,7 @@ class EmbyWatchService:
                 if ev:
                     last_em = self._last_emit.get(sid)
                     if not (last_em and last_em[0] == ev.action and last_em[1] == ev.progress):
-                        self._emit(ev)
+                        self._emit(ev, cfg)
                         state_ts = now
                         did_emit = True
             elif state == "playing" and sid in self._last_emit:
@@ -872,7 +888,7 @@ class EmbyWatchService:
                 if last_prog is not None and abs(int(p) - int(last_prog)) >= 5:
                     ev = self._build_event(s, "playing", p)
                     if ev:
-                        self._emit(ev)
+                        self._emit(ev, cfg)
                         did_emit = True
 
             self._last[sid] = {
@@ -891,7 +907,7 @@ class EmbyWatchService:
                     self._cw_last_heartbeat[sid] = now
                 elif now - last_hb >= heartbeat_secs:
                     ev_hb = self._build_event(s, "playing", p)
-                    if ev_hb and self._passes_filters(ev_hb):
+                    if ev_hb and self._passes_filters(ev_hb, cfg):
                         try:
                             _cw_update("emby", ev_hb)
                         except Exception:
@@ -948,7 +964,7 @@ class EmbyWatchService:
                 )
                 last_em = self._last_emit.get(sid)
                 if not (last_em and last_em[0] == "stop"):
-                    self._emit(ev)
+                    self._emit(ev, cfg)
 
                 del self._last[sid]
                 try:
@@ -960,6 +976,8 @@ class EmbyWatchService:
                 except Exception:
                     pass
 
+        return bool(cur)
+
     def start(self) -> None:
         self._stop.clear()
         if self._disabled:
@@ -967,8 +985,14 @@ class EmbyWatchService:
             return
         self._log("Watcher connected", "INFO")
         while not self._stop.is_set():
-            self._tick()
-            time.sleep(self._poll)
+            active = self._tick()
+            if active:
+                self._idle_steps = 0
+                sleep_for = self._poll
+            else:
+                self._idle_steps = min(self._idle_steps + 1, 10)
+                sleep_for = min(self._poll * (1.0 + (0.5 * self._idle_steps)), self._max_idle_sleep)
+            time.sleep(sleep_for)
 
     def stop(self) -> None:
         self._stop.set()

@@ -27,11 +27,27 @@ from providers.scrobble.scrobble import (
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 
 
-def _cfg() -> dict[str, Any]:
+_CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
+_CFG_TTL_SEC = 2.0
+
+
+def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
+    now = time.time()
     try:
-        return load_config()
+        ts = float(_CFG_CACHE.get("ts") or 0.0)
+        cfg = _CFG_CACHE.get("cfg") or {}
+        if isinstance(cfg, dict) and cfg and (now - ts) < float(ttl):
+            return cfg
     except Exception:
-        return {}
+        pass
+    try:
+        cfg2 = load_config() or {}
+        if not isinstance(cfg2, dict):
+            cfg2 = {}
+    except Exception:
+        cfg2 = {}
+    _CFG_CACHE.update({"ts": now, "cfg": cfg2})
+    return cfg2
 
 
 def _is_debug() -> bool:
@@ -154,6 +170,7 @@ class WatchService:
         self._first_seen: dict[str, float] = {}
         self._last_pause_ts: dict[str, float] = {}
         self._filtered_ts: dict[str, float] = {}
+        self._last_probe: dict[str, float] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -192,6 +209,7 @@ class WatchService:
                 if r:
                     return r
         return None
+
     def _plex_section_id(self, ev: ScrobbleEvent) -> str | None:
         raw = ev.raw or {}
         psn = self._find_psn(raw)
@@ -245,7 +263,6 @@ class WatchService:
             pass
         return None
 
-
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         sk = str(ev.session_key) if ev.session_key is not None else None
         if sk and sk in self._allowed_sessions:
@@ -263,7 +280,6 @@ class WatchService:
                 return False
             if sid not in libs:
                 return False
-
 
         def _allow() -> bool:
             if sk:
@@ -413,7 +429,7 @@ class WatchService:
                         break
                 except Exception:
                     pass
-                
+
         # Fallback to ratingKey
         if not tgt and rk:
             matches = []
@@ -496,18 +512,29 @@ class WatchService:
                 self._first_seen[sk] = time.time()
             want = ev.progress
             best = want
-            for _ in range(3):
-                real = self._probe_session_progress(ev)
-                if real is not None and abs(real - best) >= 5:
-                    best = real
-                if 5 <= best <= 95:
-                    break
-                time.sleep(0.25)
-            if ev.action == "stop" and (best is None or best == want):
+
+            probe_key = sk
+            if not probe_key:
+                px_id = (ev.ids or {}).get("plex")
+                if px_id:
+                    probe_key = f"rk:{px_id}"
+
+            need_probe = (ev.action == "stop") or (want < 5) or (want > 95)
+            if need_probe and probe_key:
+                now = time.time()
+                lastp = self._last_probe.get(probe_key, 0.0)
+                if now - lastp >= 2.0:
+                    self._last_probe[probe_key] = now
+                    real = self._probe_session_progress(ev)
+                    if real is not None and abs(real - best) >= 5:
+                        best = real
+
+            if ev.action == "stop" and best == want:
                 prev = self._last_emit.get(sk or "", (None, None))[1] if sk else None
                 if isinstance(prev, int):
                     best = prev
-            if best != want and best is not None:
+
+            if best != want:
                 self._dbg(f"progress normalized: {best}%")
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
             if ev.action == "start" and ev.progress < 1:
