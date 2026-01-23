@@ -235,7 +235,7 @@ async function plexDeleteToken() {
 }
 
 
-  function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), scr: new Set(), libs: [] }); }
+  function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), scr: new Set(), libs: [], hydrated: false }); }
 
   // Config
   async function hydratePlexFromConfigRaw() {
@@ -257,6 +257,7 @@ async function plexDeleteToken() {
       st.hist = new Set((p.history?.libraries || []).map(x => String(x)));
       st.rate = new Set((p.ratings?.libraries || []).map(x => String(x)));
       st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
+      st.hydrated = true;
 
       ["plex_lib_history", "plex_lib_ratings", "plex_lib_scrobble"].forEach(id => {
         const el = $(id); if (!el) return;
@@ -787,15 +788,19 @@ async function plexDeleteToken() {
       plex.account_id = n;
     }
 
-    let hist = readMatrixSelection("hist");
-    let rate = readMatrixSelection("rate");
-    let scr  = readMatrixSelection("scr");
-    if (hist === null) hist = readSelectInts("#plex_lib_history") || [];
-    if (rate === null) rate = readSelectInts("#plex_lib_ratings") || [];
-    if (scr  === null) scr  = readSelectInts("#plex_lib_scrobble") || [];
-    plex.scrobble = Object.assign({}, plex.scrobble || {}, { libraries: scr });
-    plex.history = Object.assign({}, plex.history || {}, { libraries: hist });
-    plex.ratings = Object.assign({}, plex.ratings || {}, { libraries: rate });
+    const st = getPlexState();
+    const uiReady = !!st.hydrated ||
+      !!document.querySelector("#plex_lib_matrix .lm-row") ||
+      !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_scrobble option");
+    if (uiReady) {
+      const toInts = (set) => Array.from(set || []).map(x => parseInt(String(x), 10)).filter(Number.isFinite);
+      const hist = toInts(st.hist);
+      const rate = toInts(st.rate);
+      const scr  = toInts(st.scr);
+      plex.scrobble = Object.assign({}, plex.scrobble || {}, { libraries: scr });
+      plex.history  = Object.assign({}, plex.history  || {}, { libraries: hist });
+      plex.ratings  = Object.assign({}, plex.ratings  || {}, { libraries: rate });
+    }
     return cfg;
   }
 

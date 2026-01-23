@@ -2558,6 +2558,14 @@ async function saveSettings() {
       if (uiUid && uiUid !== prevUid) { (cfg.jellyfin ||= {}).user_id = uiUid; changed = true; }
       if (uiVerify !== prevVerify)   { (cfg.jellyfin ||= {}).verify_ssl = uiVerify; changed = true; }
 
+      const jfyHydrated =
+        window.__jellyfinHydrated === true ||
+        window.__jfyHydrated === true ||
+        document.getElementById("sec-jellyfin")?.dataset?.hydrated === "1" ||
+        document.querySelectorAll("#jfy_lib_matrix .lm-row").length > 0 ||
+        document.querySelectorAll("#jfy_lib_whitelist .whrow").length > 0 ||
+        !!document.querySelector("#jfy_lib_history option, #jfy_lib_ratings option, #jfy_lib_scrobble option");
+
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#jfy_lib_matrix .lm-row");
         if (!rows.length) return null;
@@ -2600,7 +2608,7 @@ async function saveSettings() {
         return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings"), S: toStrs("#jfy_lib_scrobble") };
       };
 
-      const src = readFromMatrix() || readFromWhitelist() || readFromSelects();
+      const src = jfyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
 
       const same = (a, b) => {
         const A = (a || []).map(String).filter(Boolean).sort();
@@ -2679,7 +2687,14 @@ async function saveSettings() {
         };
       };
 
-      const src = readFromMatrix() || readFromWhitelist() || readFromSelects();
+      const embyHydrated =
+        window.__embyHydrated === true ||
+        document.getElementById("sec-emby")?.dataset?.hydrated === "1" ||
+        document.querySelectorAll("#emby_lib_matrix .lm-row").length > 0 ||
+        document.querySelectorAll("#emby_lib_whitelist .whrow").length > 0 ||
+        !!document.querySelector("#emby_lib_history option, #emby_lib_ratings option, #emby_lib_scrobble option");
+
+      const src = embyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
 
       const same = (a, b) => {
         const A = (a || []).map(String).filter(Boolean).sort();
@@ -2771,40 +2786,49 @@ async function saveSettings() {
         changed = true;
       }
 
-      
-      const st = (window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() });
-      const toNums = (xs) =>
-        (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
-          .map(x => parseInt(String(x), 10))
-          .filter(Number.isFinite);
 
-      const hist = toNums(st.hist);
-      const rate = toNums(st.rate);
-      const scr  = toNums(st.scr);
+      const plexHydrated =
+        window.__plexHydrated === true ||
+        document.getElementById("sec-plex")?.dataset?.hydrated === "1" ||
+        document.querySelectorAll("#plex_lib_matrix .lm-row").length > 0 ||
+        document.querySelectorAll("#plex_lib_whitelist .whrow").length > 0 ||
+        !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_scrobble option");
 
-      const _same = (a, b) => {
-        const A = (a || []).map(Number).sort((x,y)=>x-y);
-        const B = (b || []).map(Number).sort((x,y)=>x-y);
-        if (A.length !== B.length) return false;
-        for (let i=0;i<A.length;i++) if (A[i] !== B[i]) return false;
-        return true;
-      };
+      if (plexHydrated) {
+        const st = (window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() });
+        const toNums = (xs) =>
+          (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
+            .map(x => parseInt(String(x), 10))
+            .filter(Number.isFinite);
 
-      const prevHist = (serverCfg?.plex?.history?.libraries || []).map(Number);
-      const prevRate = (serverCfg?.plex?.ratings?.libraries || []).map(Number);
-      const prevScr  = (serverCfg?.plex?.scrobble?.libraries || []).map(Number);
+        const hist = toNums(st.hist);
+        const rate = toNums(st.rate);
+        const scr  = toNums(st.scr);
 
-      if (!_same(hist, prevHist)) {
-        (cfg.plex ||= {}).history = Object.assign({}, cfg.plex.history || {}, { libraries: hist });
-        changed = true;
-      }
-      if (!_same(rate, prevRate)) {
-        (cfg.plex ||= {}).ratings = Object.assign({}, cfg.plex.ratings || {}, { libraries: rate });
-        changed = true;
-      }
-      if (!_same(scr, prevScr)) {
-        (cfg.plex ||= {}).scrobble = Object.assign({}, cfg.plex.scrobble || {}, { libraries: scr });
-        changed = true;
+        const _same = (a, b) => {
+          const A = (a || []).map(Number).sort((x,y)=>x-y);
+          const B = (b || []).map(Number).sort((x,y)=>x-y);
+          if (A.length !== B.length) return false;
+          for (let i=0;i<A.length;i++) if (A[i] !== B[i]) return false;
+          return true;
+        };
+
+        const prevHist = (serverCfg?.plex?.history?.libraries || []).map(Number);
+        const prevRate = (serverCfg?.plex?.ratings?.libraries || []).map(Number);
+        const prevScr  = (serverCfg?.plex?.scrobble?.libraries || []).map(Number);
+
+        if (!_same(hist, prevHist)) {
+          (cfg.plex ||= {}).history = Object.assign({}, cfg.plex.history || {}, { libraries: hist });
+          changed = true;
+        }
+        if (!_same(rate, prevRate)) {
+          (cfg.plex ||= {}).ratings = Object.assign({}, cfg.plex.ratings || {}, { libraries: rate });
+          changed = true;
+        }
+        if (!_same(scr, prevScr)) {
+          (cfg.plex ||= {}).scrobble = Object.assign({}, cfg.plex.scrobble || {}, { libraries: scr });
+          changed = true;
+        }
       }
     } catch (e) {
       console.warn("saveSettings: plex merge failed", e);

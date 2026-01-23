@@ -212,6 +212,7 @@
   }
 
   function mergeJellyfinIntoCfg(cfg) {
+    cfg = cfg || (window.__cfg ||= {});
     const v = (sel) => (Q(sel)?.value || "").trim();
     const jf = (cfg.jellyfin = cfg.jellyfin || {});
     const server = v("#jfy_server_url") || v("#jfy_server");
@@ -219,11 +220,13 @@
     if (server) jf.server = server;
     if (user) { jf.user = user; jf.username = user || jf.username || ""; }
     const uid = v("#jfy_user_id"); if (uid) jf.user_id = uid;
-    const vs = Q("#jfy_verify_ssl"), vs2 = Q("#jfy_verify_ssl_dup");
-    jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
-    jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
-    jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
-    jf.scrobble = Object.assign({}, jf.scrobble || {}, { libraries: Array.from(S) });
+    if (hydrated) {
+      const vs = Q("#jfy_verify_ssl"), vs2 = Q("#jfy_verify_ssl_dup");
+      jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
+      jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
+      jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
+      jf.scrobble = Object.assign({}, jf.scrobble || {}, { libraries: Array.from(S) });
+    }
     return cfg;
   }
 

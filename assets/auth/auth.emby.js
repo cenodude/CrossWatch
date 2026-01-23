@@ -219,6 +219,7 @@
 
   // --- merge back to cfg
   function mergeEmbyIntoCfg(cfg) {
+    cfg = cfg || (window.__cfg ||= {});
     const v = (sel) => (Q(sel)?.value || "").trim();
     const em = (cfg.emby = cfg.emby || {});
     const server = v("#emby_server_url") || v("#emby_server");
@@ -226,11 +227,13 @@
     if (server) em.server = server;
     if (user) { em.user = user; em.username = user || em.username || ""; }
     const uid = v("#emby_user_id"); if (uid) em.user_id = uid;
-    const vs = Q("#emby_verify_ssl"), vs2 = Q("#emby_verify_ssl_dup");
-    em.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
-    em.history = Object.assign({}, em.history || {}, { libraries: Array.from(H) });
-    em.ratings = Object.assign({}, em.ratings || {}, { libraries: Array.from(R) });
-    em.scrobble = Object.assign({}, em.scrobble || {}, { libraries: Array.from(S) });
+    if (hydrated) {
+      const vs = Q("#emby_verify_ssl"), vs2 = Q("#emby_verify_ssl_dup");
+      em.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
+      em.history = Object.assign({}, em.history || {}, { libraries: Array.from(H) });
+      em.ratings = Object.assign({}, em.ratings || {}, { libraries: Array.from(R) });
+      em.scrobble = Object.assign({}, em.scrobble || {}, { libraries: Array.from(S) });
+    }
     return cfg;
   }
 
