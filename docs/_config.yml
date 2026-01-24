@@ -1,0 +1,6 @@
+title: CrossWatch
+description: Sync engine for Plex/Jellyfin/Emby and trackers (SIMKL/Trakt/AniList/MDBList/Tautulli)
+theme: jekyll-theme-cayman
+markdown: kramdown
+kramdown:
+  input: GFM
