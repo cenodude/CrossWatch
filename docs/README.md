@@ -3,21 +3,23 @@
 </p>
 
 <p align="center">
-  <a href="images/screenshot1.jpg">
-    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="24%">
+  <a href="images/screenshot1.jpg" data-cw-gallery="screenshots">
+    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="24%" class="cw-screenshot">
   </a>
-  <a href="images/screenshot2.jpg">
-    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="24%">
+  <a href="images/screenshot2.jpg" data-cw-gallery="screenshots">
+    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="24%" class="cw-screenshot">
   </a>
-  <a href="images/screenshot3.jpg">
-    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="24%">
+  <a href="images/screenshot3.jpg" data-cw-gallery="screenshots">
+    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="24%" class="cw-screenshot">
   </a>
-  <a href="images/screenshot4.jpg">
-    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="24%">
+  <a href="images/screenshot4.jpg" data-cw-gallery="screenshots">
+    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="24%" class="cw-screenshot">
   </a>
 </p>
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
+
+<script defer src="assets/js/cw-lightbox.js"></script>
 <p align="center">
   <img width="776" height="314" alt="image" src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" />
 </p>
