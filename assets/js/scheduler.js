@@ -1,6 +1,6 @@
-// /assets/js/scheduler.js
-//* Refactoring project: scheduler.js (v0.1) */
-//*------------------------------------------*/
+/* assets/js/scheduler.js */
+/* CrossWatch - Advanced Scheduling UI */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
   "use strict";
   if (window.__SCHED_UI_INIT__) return; window.__SCHED_UI_INIT__ = true;
@@ -24,11 +24,9 @@
 
   // styles (once)
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css", textContent: `
-.sch-adv{margin-top:12px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--panel2)}
-.sch-adv summary{font-weight:700;letter-spacing:.02em;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between}
-.sch-adv summary::-webkit-details-marker{display:none}
+.sch-adv{padding:0;margin-top:0}
 .sch-adv .mini{font-size:12px;color:var(--muted)}
-.sch-adv table{width:100%;border-collapse:collapse;margin-top:8px}
+.sch-adv table{width:100%;border-collapse:collapse;margin-top:10px}
 .sch-adv th,.sch-adv td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
 .sch-adv th{font-weight:600;color:var(--muted)}
 .sch-adv select,.sch-adv input[type=time]{width:100%}
@@ -115,34 +113,38 @@
     return tr;
   };
 
-  // mount UI (idempotent)
+  // mount UI
   const ensureUI = () => {
-    const host = $("#sec-scheduling .body"); if (!host || $("#schAdv")) return;
-    const adv = Object.assign(el("details","sch-adv"), { id: "schAdv" });
+    const host = $("#sched_advanced_mount") || $("#sec-scheduling .body");
+    if (!host || $("#schAdv")) return;
+
+    const adv = Object.assign(el("div", "sch-adv"), { id: "schAdv" });
     adv.innerHTML = `
-<summary><span>Advanced plan (sequential)</span><span class="mini">Click to expand</span></summary>
-<div style="margin-top:12px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <label class="mini"><input type="checkbox" id="schAdvEnabled"> Use advanced plan</label>
-    <span class="mini">Only enabled pairs are selectable; disabled pairs are greyed-out.</span>
+<div class="cw-panel-head">
+  <div>
+    <div class="cw-panel-title">Advanced Scheduling</div>
+    <div class="mini">Sequential steps across your enabled pairs.</div>
   </div>
-  <table>
-    <thead><tr>
-      <th style="width:32%">Pair</th>
-      <th style="width:14%">Time</th>
-      <th style="width:30%">Days</th>
-      <th style="width:14%">After</th>
-      <th style="width:6%">Active</th>
-      <th style="width:4%"></th>
-    </tr></thead>
-    <tbody id="schJobsBody"></tbody>
-  </table>
-  <div class="mini" style="margin-top:8px">Always sequential. Times are user-defined.</div>
-  <div class="status" id="schAdvStatus"></div>
-  <div style="display:flex;gap:8px;margin-top:10px">
-    <button class="btn" id="btnAddStep">Add step</button>
-    <button class="btn" id="btnAutoFromPairs">Auto-create from enabled pairs</button>
-  </div>
+  <label class="mini" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="schAdvEnabled"> Use advanced plan</label>
+</div>
+
+<table>
+  <thead><tr>
+    <th style="width:32%">Pair</th>
+    <th style="width:14%">Time</th>
+    <th style="width:30%">Days</th>
+    <th style="width:14%">After</th>
+    <th style="width:6%">Active</th>
+    <th style="width:4%"></th>
+  </tr></thead>
+  <tbody id="schJobsBody"></tbody>
+</table>
+
+<div class="mini" style="margin-top:8px">Only enabled pairs are selectable; disabled pairs are greyed-out.</div>
+<div class="status" id="schAdvStatus"></div>
+<div style="display:flex;gap:8px;margin-top:10px">
+  <button class="btn" id="btnAddStep">Add step</button>
+  <button class="btn" id="btnAutoFromPairs">Auto-create from enabled pairs</button>
 </div>`;
     host.appendChild(adv);
 
@@ -153,7 +155,10 @@
       if (!_jobs.length) _jobs.push({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
       renderJobs();
     };
-    $("#schAdvEnabled").onchange = () => { _advEnabled = !!$("#schAdvEnabled").checked; };
+    $("#schAdvEnabled").onchange = () => {
+      _advEnabled = !!$("#schAdvEnabled").checked;
+      try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+    };
   };
 
   // render
@@ -165,6 +170,7 @@
     _jobs.forEach(j => tbody.appendChild(jobRow(j)));
     const st = $("#schAdvStatus");
     st.textContent = !_pairs.length ? "No pairs from /api/pairs." : (_jobs.some(j => j._blocked) ? "Some steps reference disabled pairs." : "");
+    try { window.cwSchedSettingsHubUpdate?.(); } catch {}
   };
 
   // load (guarded)
@@ -194,6 +200,9 @@
         active: j.active !== false
       })) : [];
       renderJobs();
+
+      try { window.cwSchedSettingsHubInit?.(); } catch {}
+      try { window.cwSchedSettingsHubUpdate?.(); } catch {}
 
       try { typeof window.refreshSchedulingBanner === "function" && window.refreshSchedulingBanner(); } catch {}
     } finally { _loading = false; }

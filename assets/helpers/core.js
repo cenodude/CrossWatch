@@ -2222,6 +2222,474 @@ try {
   window.cwUiSettingsHubInit = cwUiSettingsHubInit;
   window.cwUiSettingsHubUpdate = cwUiSettingsHubUpdate;
 } catch {}
+
+/* Settings Hub: Scheduling */
+const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
+
+function cwSchedSettingsSelect(tab, opts = {}) {
+  const hub = document.getElementById("sched_settings_hub");
+  const panels = document.getElementById("sched_settings_panels");
+  if (!hub || !panels) return;
+
+  const t = (tab || "basic").toLowerCase();
+  const want = ["basic", "advanced"].includes(t) ? t : "basic";
+
+  hub.querySelectorAll(".cw-hub-tile").forEach((btn) => {
+    btn.classList.toggle("active", (btn.dataset.tab || "") === want);
+  });
+  panels.querySelectorAll(".cw-settings-panel").forEach((p) => {
+    p.classList.toggle("active", (p.dataset.tab || "") === want);
+  });
+
+  if (opts.persist !== false) {
+    try { localStorage.setItem(SCHED_SETTINGS_TAB_KEY, want); } catch {}
+  }
+  try { cwSchedSettingsHubUpdate(); } catch {}
+}
+
+function cwSchedSettingsHubUpdate() {
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+
+  let patch = null;
+  try {
+    patch = (typeof window.getSchedulingPatch === "function") ? window.getSchedulingPatch() : null;
+  } catch {}
+
+  if (!patch) {
+    const enabled = (document.getElementById("schEnabled")?.value || "").toString().trim() === "true";
+    const mode = document.getElementById("schMode")?.value || "hourly";
+    const every_n_hours = parseInt(document.getElementById("schN")?.value || "2", 10);
+    const daily_time = document.getElementById("schTime")?.value || "03:30";
+    const advOn = !!document.getElementById("schAdvEnabled")?.checked;
+    patch = { enabled, mode, every_n_hours, daily_time, advanced: { enabled: advOn, jobs: [] } };
+  }
+
+  set("hub_sch_enabled", `Status: ${patch.enabled ? "Enabled" : "Disabled"}`);
+
+  let modeText = patch.mode || "hourly";
+  if (patch.mode === "hourly") modeText = "Every hour";
+  else if (patch.mode === "every_n_hours") modeText = `Every ${patch.every_n_hours || 2}h`;
+  else if (patch.mode === "daily_time") modeText = `Daily ${patch.daily_time || "—"}`;
+  set("hub_sch_mode", `Mode: ${modeText}`);
+
+  const adv = patch.advanced || {};
+  const jobs = Array.isArray(adv.jobs) ? adv.jobs : [];
+  const active = jobs.filter(j => j && j.active !== false).length;
+  const total = jobs.length;
+
+  set("hub_sch_adv", `Plan: ${adv.enabled ? "On" : "Off"}`);
+  set("hub_sch_steps", total ? `Steps: ${active}/${total}` : "Steps: —");
+}
+
+function cwSchedSettingsHubInit() {
+  const first = !window.__cwSchedSettingsHubInit;
+  if (first) window.__cwSchedSettingsHubInit = true;
+
+  const wire = (id) => {
+    const el = document.getElementById(id);
+    if (!el || el.__hubWired) return;
+    el.addEventListener("change", () => { try { cwSchedSettingsHubUpdate(); } catch {} });
+    el.addEventListener("input",  () => { try { cwSchedSettingsHubUpdate(); } catch {} });
+    el.__hubWired = true;
+  };
+
+  ["schEnabled", "schMode", "schN", "schTime", "schAdvEnabled"].forEach(wire);
+
+  const adv = document.getElementById("schAdv");
+  if (adv && !adv.__hubWired) {
+    adv.addEventListener("change", () => { try { cwSchedSettingsHubUpdate(); } catch {} }, true);
+    adv.addEventListener("input",  () => { try { cwSchedSettingsHubUpdate(); } catch {} }, true);
+    adv.__hubWired = true;
+  }
+
+  if (first) {
+    let tab = "basic";
+    try {
+      const saved = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "").toLowerCase();
+      if (["basic", "advanced"].includes(saved)) tab = saved;
+    } catch {}
+    cwSchedSettingsSelect(tab, { persist: false });
+  }
+
+  try { cwSchedSettingsHubUpdate(); } catch {}
+}
+
+try {
+  window.cwSchedSettingsSelect = cwSchedSettingsSelect;
+  window.cwSchedSettingsHubInit = cwSchedSettingsHubInit;
+  window.cwSchedSettingsHubUpdate = cwSchedSettingsHubUpdate;
+} catch {}
+
+/* Settings Hub: Metadata Providers */
+const META_SETTINGS_TAB_KEY = "cw.ui.metadata.tab.v1";
+const META_PROVIDER_STATE_KEY = "cw.ui.meta.provider.v1";
+const TMDB_META_SUBTAB_KEY = "cw.ui.meta.tmdb.sub.v1";
+
+let activeMetaProvider = null;
+
+function cwMetaProviderUpdateChips() {
+  try { cwMetaSettingsHubUpdate?.(); } catch {}
+}
+
+function cwMetaProviderSelect(provider, opts = {}) {
+  const want = provider ? String(provider).toLowerCase() : null;
+
+  const tilesHost = document.getElementById("meta_provider_tiles");
+  const panelHost = document.getElementById("meta-provider-panel");
+  if (!tilesHost || !panelHost) return;
+
+  const tiles = tilesHost.querySelectorAll("[data-provider]");
+  tiles.forEach((btn) => {
+    const k = String(btn.dataset.provider || "").toLowerCase();
+    const on = !!(want && k === want);
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+
+  activeMetaProvider = want;
+  panelHost.classList.toggle("hidden", !want);
+
+  const panels = panelHost.querySelectorAll(".cw-meta-provider-panel");
+  panels.forEach((p) => {
+    const k = String(p.dataset.provider || "").toLowerCase();
+    p.classList.toggle("active", !!(want && k === want));
+  });
+
+  if (opts.persist !== false) {
+    try { localStorage.setItem(META_PROVIDER_STATE_KEY, want || ""); } catch {}
+  }
+
+  try { cwMetaProviderUpdateChips(); } catch {}
+}
+
+function cwMetaProviderSubSelect(provider, sub, opts = {}) {
+  const p = (provider || "").toLowerCase();
+  const s = (sub || "").toLowerCase();
+  if (!p || !s) return;
+
+  const panelHost = document.getElementById("meta-provider-panel");
+  const panel = panelHost?.querySelector(`.cw-meta-provider-panel[data-provider="${p}"]`);
+  if (!panel) return;
+
+  const tiles = panel.querySelectorAll(".cw-subtile[data-sub]");
+  tiles.forEach((b) => b.classList.toggle("active", (b.dataset.sub || "").toLowerCase() === s));
+
+  const subs = panel.querySelectorAll(".cw-subpanel[data-sub]");
+  subs.forEach((sp) => sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === s));
+
+  if (opts.persist !== false) {
+    try { localStorage.setItem(TMDB_META_SUBTAB_KEY, s); } catch {}
+  }
+}
+
+function cwMetaProviderInit() {
+  let last = "";
+  try { last = localStorage.getItem(META_PROVIDER_STATE_KEY) || ""; } catch {}
+  const want = (last || "").trim().toLowerCase();
+  cwMetaProviderSelect(want || null, { persist: false });
+}
+
+function cwMetaProviderEnsure() {
+  const tilesHost = document.getElementById("meta_provider_tiles");
+  const panelHost = document.getElementById("meta-provider-panel");
+  if (!tilesHost || !panelHost) return;
+
+  tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
+    if (btn.__cwMetaWired) return;
+    btn.addEventListener("click", () => cwMetaProviderSelect(btn.dataset.provider || null));
+    btn.__cwMetaWired = true;
+  });
+
+  if (!panelHost.dataset.__cwMetaBuilt) {
+    try { cwBuildTmdbPanel(); } catch {}
+    panelHost.dataset.__cwMetaBuilt = "1";
+  }
+
+  try {
+    const keyEl = document.getElementById("tmdb_api_key");
+    if (keyEl && !keyEl.__tmdbChipWired) {
+      keyEl.addEventListener("input", () => { try { cwMetaProviderUpdateChips(); } catch {} });
+      keyEl.__tmdbChipWired = true;
+    }
+  } catch {}
+
+  try { cwMetaProviderInit(); } catch {}
+  try { cwMetaProviderUpdateChips(); } catch {}
+}
+
+function cwBuildTmdbPanel() {
+  const panelHost = document.getElementById("meta-provider-panel");
+  if (!panelHost) return;
+
+  if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="tmdb"]')) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "cw-meta-provider-panel";
+  wrap.dataset.provider = "tmdb";
+
+  const head = document.createElement("div");
+  head.className = "cw-panel-head";
+  head.innerHTML = `
+    <div>
+      <div class="cw-panel-title">TMDb (The Movie Database)</div>
+      <div class="muted">Metadata and images fetched from TMDb.</div>
+    </div>
+  `;
+
+  const subTiles = document.createElement("div");
+  subTiles.className = "cw-subtiles";
+  subTiles.innerHTML = `
+    <button type="button" class="cw-subtile active" data-sub="api">API key</button>
+    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+  `;
+
+  const subPanels = document.createElement("div");
+  subPanels.className = "cw-subpanels";
+
+  const pApi = document.createElement("div");
+  pApi.className = "cw-subpanel active";
+  pApi.dataset.sub = "api";
+
+  const pAdv = document.createElement("div");
+  pAdv.className = "cw-subpanel";
+  pAdv.dataset.sub = "advanced";
+
+  const detach = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    try { el.parentNode?.removeChild(el); } catch {}
+    return el;
+  };
+
+  const keyInput = detach("tmdb_api_key") || (() => {
+    const i = document.createElement("input");
+    i.id = "tmdb_api_key";
+    i.type = "text";
+    i.placeholder = "TMDb API key";
+    return i;
+  })();
+
+  const hint = detach("tmdb_hint") || (() => {
+    const d = document.createElement("div");
+    d.id = "tmdb_hint";
+    d.className = "auth-card-notes";
+    d.textContent = "Add a TMDb API key to enable metadata lookups.";
+    return d;
+  })();
+
+  if (!hint.classList.contains("auth-card-notes")) hint.classList.add("auth-card-notes");
+
+  const apiCard = document.createElement("div");
+  apiCard.className = "auth-card";
+
+  const apiFields = document.createElement("div");
+  apiFields.className = "auth-card-fields";
+
+  const apiField = document.createElement("div");
+  apiField.className = "field";
+  apiField.innerHTML = `<div class="muted" style="margin-bottom:6px;">API key</div>`;
+  apiField.appendChild(keyInput);
+
+  apiFields.appendChild(apiField);
+  apiCard.appendChild(hint);
+  apiCard.appendChild(apiFields);
+
+  pApi.appendChild(apiCard);
+
+  const localeEl = detach("metadata_locale");
+  const ttlEl = detach("metadata_ttl_hours");
+
+  const advCard = document.createElement("div");
+  advCard.className = "auth-card";
+
+  const advFields = document.createElement("div");
+  advFields.className = "auth-card-fields";
+
+  if (localeEl) {
+    const f = document.createElement("div");
+    f.className = "field";
+    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Language / locale</div>`;
+    advFields.appendChild(f);
+    f.appendChild(localeEl);
+    const note = document.createElement("div");
+    note.className = "auth-card-notes";
+    note.textContent = "Optional. Example: en-US, nl-NL.";
+    advFields.appendChild(note);
+  }
+
+  if (ttlEl) {
+    const f = document.createElement("div");
+    f.className = "field";
+    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Cache TTL (hours)</div>`;
+    f.appendChild(ttlEl);
+    advFields.appendChild(f);
+    const note = document.createElement("div");
+    note.className = "auth-card-notes";
+    note.textContent = "How long metadata stays cached before re-fetching.";
+    advFields.appendChild(note);
+  }
+
+  if (!localeEl && !ttlEl) {
+    const note = document.createElement("div");
+    note.className = "auth-card-notes";
+    note.textContent = "No advanced options available yet.";
+    advCard.appendChild(note);
+  }
+
+  if (advFields.childNodes.length) advCard.appendChild(advFields);
+  pAdv.appendChild(advCard);
+
+  subPanels.appendChild(pApi);
+  subPanels.appendChild(pAdv);
+
+  wrap.appendChild(head);
+  wrap.appendChild(subTiles);
+  wrap.appendChild(subPanels);
+
+  panelHost.appendChild(wrap);
+
+  subTiles.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+    btn.addEventListener("click", () => cwMetaProviderSubSelect("tmdb", btn.dataset.sub));
+  });
+
+  let lastSub = "api";
+  try { lastSub = (localStorage.getItem(TMDB_META_SUBTAB_KEY) || "api").toLowerCase(); } catch {}
+  cwMetaProviderSubSelect("tmdb", (lastSub === "advanced") ? "advanced" : "api", { persist: false });
+}
+
+try {
+  window.cwMetaProviderSelect = cwMetaProviderSelect;
+  window.cwMetaProviderEnsure = cwMetaProviderEnsure;
+  window.cwMetaProviderSubSelect = cwMetaProviderSubSelect;
+} catch {}
+
+
+function cwMetaSettingsSelect(tab, opts = {}) {
+  const hub = document.getElementById("meta_settings_hub");
+  const panels = document.getElementById("meta_settings_panels");
+  if (!hub || !panels) return;
+
+  const t = (tab || "tmdb").toLowerCase();
+  const want = ["tmdb"].includes(t) ? t : "tmdb";
+
+  hub.querySelectorAll(".cw-hub-tile").forEach((btn) => {
+    btn.classList.toggle("active", (btn.dataset.tab || "") === want);
+  });
+  panels.querySelectorAll(".cw-settings-panel").forEach((p) => {
+    p.classList.toggle("active", (p.dataset.tab || "") === want);
+  });
+
+  if (opts.persist !== false) {
+    try { localStorage.setItem(META_SETTINGS_TAB_KEY, want); } catch {}
+  }
+  try { cwMetaSettingsHubUpdate(); } catch {}
+}
+
+function cwMetaSettingsHubUpdate() {
+  const chip = document.getElementById("hub_tmdb_key");
+  if (!chip) return;
+
+  const keyEl = document.getElementById("tmdb_api_key");
+  const v = (keyEl && typeof keyEl.value === "string") ? keyEl.value.trim() : "";
+  const hasTyped = v.length > 0;
+
+  const isMasked = hasTyped && (v.startsWith("•") || v === "*****");
+  const hasKeyNow = hasTyped || isMasked;
+
+  chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
+}
+
+function cwMetaSettingsHubInit() {
+  let last = null;
+  try { last = localStorage.getItem(META_SETTINGS_TAB_KEY); } catch {}
+  cwMetaSettingsSelect(last || "tmdb", { persist: false });
+  try { cwMetaSettingsHubUpdate(); } catch {}
+}
+
+function cwMetaSettingsHubEnsure() {
+  const host = document.getElementById("metadata-providers");
+  if (!host || host.dataset.metaHubified === "1") return;
+
+  // New provider shell already present (tile-driven panels)
+  if (document.getElementById("meta_provider_tiles") || document.getElementById("meta-provider-panel")) {
+    host.dataset.metaHubified = "1";
+    return;
+  }
+
+  if (host.querySelector("#meta_settings_hub")) {
+    host.dataset.metaHubified = "1";
+    return;
+  }
+
+  const hub = document.createElement("div");
+  hub.className = "cw-settings-hub cw-settings-hub--single";
+  hub.id = "meta_settings_hub";
+
+  const tile = document.createElement("button");
+  tile.type = "button";
+  tile.className = "cw-hub-tile tmdb active";
+  tile.dataset.tab = "tmdb";
+  tile.innerHTML = `
+    <div class="cw-hub-dots" aria-hidden="true">
+      <span class="cw-hub-dot dot-a"></span>
+      <span class="cw-hub-dot dot-b"></span>
+      <span class="cw-hub-dot dot-c"></span>
+    </div>
+    <div class="cw-hub-title-row">
+      <img class="cw-hub-logo" src="/assets/img/TMDB.svg" alt="" loading="lazy">
+      <div>
+        <div class="cw-hub-title">TMDb</div>
+        <div class="cw-hub-desc">The Movie Database</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip" id="hub_tmdb_key">API key: —</span>
+    </div>
+  `;
+  tile.addEventListener("click", () => cwMetaSettingsSelect("tmdb"));
+
+  hub.appendChild(tile);
+
+  const panels = document.createElement("div");
+  panels.className = "cw-settings-panels";
+  panels.id = "meta_settings_panels";
+
+  const panel = document.createElement("div");
+  panel.className = "cw-settings-panel active";
+  panel.dataset.tab = "tmdb";
+
+  while (host.firstChild) panel.appendChild(host.firstChild);
+
+  panels.appendChild(panel);
+
+  host.appendChild(hub);
+  host.appendChild(panels);
+
+  host.dataset.metaHubified = "1";
+
+  const keyEl = document.getElementById("tmdb_api_key");
+  if (keyEl && !keyEl.__tmdbChipWired) {
+    keyEl.addEventListener("input", () => {
+      try { cwMetaSettingsHubUpdate(); } catch {}
+    });
+    keyEl.__tmdbChipWired = true;
+  }
+
+  setTimeout(() => {
+    try { cwMetaSettingsHubInit(); } catch {}
+  }, 0);
+}
+
+try {
+  window.cwMetaSettingsSelect = cwMetaSettingsSelect;
+  window.cwMetaSettingsHubInit = cwMetaSettingsHubInit;
+  window.cwMetaSettingsHubUpdate = cwMetaSettingsHubUpdate;
+  window.cwMetaSettingsHubEnsure = cwMetaSettingsHubEnsure;
+} catch {}
+
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
   window._cfgCache = cfg;
@@ -3844,15 +4312,18 @@ async function mountMetadataProviders() {
     const res = await fetch("/api/metadata/providers/html");
     if (!res.ok) return;
     const html = await res.text();
-    const slot = document.getElementById("metadata-providers");
-    if (slot) {
-      slot.innerHTML = html;
+
+    const raw = document.getElementById("meta-provider-raw");
+    if (raw) raw.innerHTML = html;
+    else {
+      const slot = document.getElementById("metadata-providers");
+      if (slot) slot.innerHTML = html;
     }
 
-    
-    try {
-      updateTmdbHint?.();
-    } catch (_) {}
+    try { cwMetaProviderEnsure?.(); } catch (_) {}
+
+    try { updateTmdbHint?.(); } catch (_) {}
+    try { cwMetaProviderUpdateChips?.(); } catch (_) {}
   } catch (e) {}
 }
 
