@@ -1,10 +1,10 @@
-/* CrossWatch Pages: lightweight screenshot lightbox (no deps). */
+/* CrossWatch Pages: lightweight screenshot lightbox */
 (() => {
   "use strict";
 
   const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const groups = new Map(); // name -> {items: Array<{href, alt, thumb}>, anchors: HTMLAnchorElement[]}
+  const groups = new Map();
 
   function buildGroups() {
     const anchors = qsa('a[data-cw-gallery]');
@@ -124,8 +124,6 @@
       btnNext.disabled = items.length <= 1;
 
       setActiveThumb(activeIndex);
-
-      // Preload neighbors for snappy navigation
       preload(items[clampIndex(activeIndex - 1, items.length)].href);
       preload(items[clampIndex(activeIndex + 1, items.length)].href);
     }
@@ -152,7 +150,6 @@
     btnPrev.addEventListener("click", () => go(activeIndex - 1));
     btnNext.addEventListener("click", () => go(activeIndex + 1));
 
-    // Click on image to go next (unless it was a drag/swipe)
     imgEl.addEventListener("click", () => {
       if (!activeGroup) return;
       if (activeGroup.items.length <= 1) return;
@@ -192,7 +189,6 @@
       else go(activeIndex + 1);
     });
 
-    // Wire anchors
     for (const [name, g] of groups.entries()) {
       g.anchors.forEach((a, idx) => {
         a.addEventListener("click", (e) => {
