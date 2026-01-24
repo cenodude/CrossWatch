@@ -29,13 +29,15 @@
 <script defer src="assets/js/cw-lightbox.js"></script>
 
 <p align="center">
-  <img width="776" height="314" alt="image" src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" />
-</p>
-<p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img alt="Latest Release"
       src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&sort=semver&logo=github&label=Latest%20Release&style=for-the-badge">
   </a>
+  <a href="https://github.com/cenodude/CrossWatch/pkgs/container/crosswatch">
+  <img alt="GHCR Pulls"
+       src="https://img.shields.io/badge/dynamic/json?url=https://ghcr-badge.elias.eu.org/api/cenodude/CrossWatch/crosswatch&query=%24.downloadCount&style=for-the-badge&logo=github&label=GHCR%20Pulls">
+</a>
+
   <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started">
     <img alt="Must-read: Quick Start"
       src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
