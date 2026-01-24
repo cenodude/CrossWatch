@@ -20,7 +20,7 @@
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 <p align="center">
   <img width="776" height="314" alt="image" src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" />
-
+</p>
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img alt="Latest Release"
