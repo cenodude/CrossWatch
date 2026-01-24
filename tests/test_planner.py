@@ -1,3 +1,4 @@
+# CrossWatch test scripts
 from __future__ import annotations
 
 from cw_platform.orchestrator._planner import diff, diff_ratings
