@@ -472,6 +472,115 @@ code {
   gap: 12px;
 }
 
+
+/* Settings Hub (UI / Security / CW Tracker) */
+
+#sec-ui.open > .body {
+  max-height: 1400px;
+}
+
+.cw-settings-hub {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .cw-settings-hub {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cw-hub-tile {
+  text-align: left;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.03);
+  border-radius: 18px;
+  padding: 14px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+
+.cw-hub-tile:hover {
+  border-color: rgba(255,255,255,.16);
+  background: rgba(255,255,255,.05);
+  transform: translateY(-1px);
+}
+
+.cw-hub-tile.active {
+  border-color: rgba(124, 92, 255, .55);
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, .18), 0 14px 30px rgba(0,0,0,.35);
+  background:
+    radial-gradient(1200px 500px at 15% 0%, rgba(124,92,255,.14), transparent 50%),
+    rgba(255,255,255,.04);
+}
+
+.cw-hub-title {
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: .2px;
+}
+
+.cw-hub-desc {
+  margin-top: 2px;
+  color: rgba(242,244,248,.72);
+  font-size: 12px;
+}
+
+.cw-hub-tile .chips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cw-hub-tile .chip {
+  cursor: default;
+  border-color: rgba(255,255,255,.10);
+  background: rgba(0,0,0,.30);
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.cw-settings-panels {
+  display: grid;
+  gap: 12px;
+}
+
+.cw-settings-panel {
+  display: none;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.16);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.cw-settings-panel.active {
+  display: block;
+}
+
+.cw-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cw-panel-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+
+.cw-disabled {
+  opacity: .55;
+  filter: grayscale(.15);
+  pointer-events: none;
+}
+
 .section {
   border: 1px solid var(--border);
   border-radius: 16px;

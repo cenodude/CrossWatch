@@ -346,92 +346,184 @@ def _get_index_html_static() -> str:
       <div class="section" id="sec-ui">
         <div class="head" onclick="toggleSection('sec-ui')" style="display:flex;align-items:center">
           <span class="chev">▶</span>
-          <strong>Settings (UI and CW Tracker)</strong>
+          <strong>Settings (UI / Security / CW Tracker)</strong>
         </div>
         <div class="body">
-          <!-- Sub-section: User Interface -->
-          <div class="sub">User Interface</div>
-          <div class="grid2">
-            <div>
-              <label>Watchlist Preview</label>
-              <select id="ui_show_watchlist_preview">
-                <option value="true">Show</option>
-                <option value="false">Hide</option>
-              </select>
-            </div>
 
-            <div>
-              <label>Playing Card</label>
-              <select id="ui_show_playingcard">
-                <option value="true">Show</option>
-                <option value="false">Hide</option>
-              </select>
-            </div>
+          <div class="cw-settings-hub" id="ui_settings_hub">
+            <button type="button" class="cw-hub-tile active" data-tab="ui" onclick="cwUiSettingsSelect?.('ui')">
+              <div class="cw-hub-title">User Interface</div>
+              <div class="cw-hub-desc">Dashboard visuals</div>
+              <div class="chips">
+                <span class="chip" id="hub_ui_watchlist">Watchlist: —</span>
+                <span class="chip" id="hub_ui_playing">Playing: —</span>
+              </div>
+            </button>
+
+            <button type="button" class="cw-hub-tile" data-tab="security" onclick="cwUiSettingsSelect?.('security')">
+              <div class="cw-hub-title">Security</div>
+              <div class="cw-hub-desc">Protect CrossWatch</div>
+              <div class="chips">
+                <span class="chip" id="hub_sec_auth">Auth: —</span>
+                <span class="chip" id="hub_sec_session">Session: —</span>
+              </div>
+            </button>
+
+            <button type="button" class="cw-hub-tile" data-tab="tracker" onclick="cwUiSettingsSelect?.('tracker')">
+              <div class="cw-hub-title">CW Tracker</div>
+              <div class="cw-hub-desc">Local snapshots</div>
+              <div class="chips">
+                <span class="chip" id="hub_cw_enabled">Tracker: —</span>
+                <span class="chip" id="hub_cw_retention">Retention: —</span>
+              </div>
+            </button>
           </div>
 
-          <!-- Sub-section: CrossWatch Tracker -->
-          <div class="sub" style="margin-top:1.25rem">CrossWatch Tracker</div>
-          <div class="sub">
-            Local backup tracker for Watchlist, Ratings and History snapshots
-            (stored under <code>/config/.cw_provider</code>).
-          </div>
+          <div class="cw-settings-panels" id="ui_settings_panels">
 
-          <div class="grid2">
-            <div>
-              <label>Enabled</label>
-              <select id="cw_enabled">
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
-              </select>
+            <!-- Panel: User Interface -->
+            <div class="cw-settings-panel active" data-tab="ui">
+              <div class="cw-panel-head">
+                <div>
+                  <div class="cw-panel-title">User Interface</div>
+                  <div class="sub" style="margin-top:0.25rem">Dashboard visuals.</div>
+                </div>
+              </div>
+
+              <div class="grid2">
+                <div>
+                  <label>Watchlist Preview</label>
+                  <select id="ui_show_watchlist_preview">
+                    <option value="true">Show</option>
+                    <option value="false">Hide</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Playing Card</label>
+                  <select id="ui_show_playingcard">
+                    <option value="true">Show</option>
+                    <option value="false">Hide</option>
+                  </select>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label>Retention (days)</label>
-              <input id="cw_retention_days" type="number" min="0" step="1" placeholder="30">
-              <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
+            <!-- Panel: Security -->
+            <div class="cw-settings-panel" data-tab="security">
+              <div class="cw-panel-head">
+                <div>
+                  <div class="cw-panel-title">Security</div>
+                  <div class="sub" style="margin-top:0.25rem">
+                    Sign-in authentication. Sessions are cached for 30 days.
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid2">
+                <div>
+                  <label>Enabled</label>
+                  <select id="app_auth_enabled">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Username</label>
+                  <input id="app_auth_username" type="text" autocomplete="username" placeholder="admin">
+                </div>
+              </div>
+
+              <div id="app_auth_fields" class="grid2" style="margin-top:12px">
+                <div>
+                  <label>New password</label>
+                  <input id="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
+                  <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password</div>
+                </div>
+
+                <div>
+                  <label>Confirm password</label>
+                  <input id="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                </div>
+              </div>
+
+              <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
+                <div class="sub" id="app_auth_state" style="margin:0">—</div>
+              </div>
             </div>
 
-            <div>
-              <label>Auto snapshot</label>
-              <select id="cw_auto_snapshot">
-                <option value="true">On (before writes)</option>
-                <option value="false">Off</option>
-              </select>
+            <!-- Panel: CW Tracker -->
+            <div class="cw-settings-panel" data-tab="tracker">
+              <div class="cw-panel-head">
+                <div>
+                  <div class="cw-panel-title">CW Tracker</div>
+                  <div class="sub" style="margin-top:0.25rem">
+                    Local backup tracker for Watchlist, Ratings and History snapshots (stored under <code>/config/.cw_provider</code>).
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid2">
+                <div>
+                  <label>Enabled</label>
+                  <select id="cw_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Retention (days)</label>
+                  <input id="cw_retention_days" type="number" min="0" step="1" placeholder="30">
+                  <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
+                </div>
+
+                <div>
+                  <label>Auto snapshot</label>
+                  <select id="cw_auto_snapshot">
+                    <option value="true">On (before writes)</option>
+                    <option value="false">Off</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Max snapshots per feature</label>
+                  <input id="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
+                  <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
+                </div>
+              </div>
+
+              <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
+              <div class="grid2" id="cw_restore_fields">
+                <div>
+                  <label>Watchlist snapshot</label>
+                  <select id="cw_restore_watchlist">
+                    <!-- options populated by JS, default "latest" -->
+                  </select>
+                </div>
+
+                <div>
+                  <label>History snapshot</label>
+                  <select id="cw_restore_history">
+                    <!-- options populated by JS, default "latest" -->
+                  </select>
+                </div>
+
+                <div>
+                  <label>Ratings snapshot</label>
+                  <select id="cw_restore_ratings">
+                    <!-- options populated by JS, default "latest" -->
+                  </select>
+                </div>
+              </div>
+
+              <div class="sub" style="margin-top:0.5rem">
+                Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
+              </div>
             </div>
 
-            <div>
-              <label>Max snapshots per feature</label>
-              <input id="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
-              <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
-            </div>
-          </div>
-
-          <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
-          <div class="grid2">
-            <div>
-              <label>Watchlist snapshot</label>
-              <select id="cw_restore_watchlist">
-                <!-- options populated by JS, default "latest" -->
-              </select>
-            </div>
-
-            <div>
-              <label>History snapshot</label>
-              <select id="cw_restore_history">
-                <!-- options populated by JS, default "latest" -->
-              </select>
-            </div>
-
-            <div>
-              <label>Ratings snapshot</label>
-              <select id="cw_restore_ratings">
-                <!-- options populated by JS, default "latest" -->
-              </select>
-            </div>
-          </div>
-          <div class="sub" style="margin-top:0.5rem">
-            Select <code>latest</code> to use the most recent snapshot, or choose a specific file name
-            for each feature.
           </div>
         </div>
       </div>
