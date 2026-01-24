@@ -26,6 +26,11 @@
     <img alt="Latest Release"
       src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&sort=semver&logo=github&label=Latest%20Release&style=for-the-badge">
   </a>
+  <a href="https://github.com/cenodude/CrossWatch/pkgs/container/crosswatch">
+  <img alt="GHCR Pulls"
+       src="https://img.shields.io/badge/dynamic/json?url=https://ghcr-badge.elias.eu.org/api/cenodude/CrossWatch/crosswatch&query=%24.downloadCount&style=for-the-badge&logo=github&label=GHCR%20Pulls">
+</a>
+
   <a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started">
     <img alt="Must-read: Quick Start"
       src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&logo=gitbook">
@@ -45,6 +50,7 @@
     <img alt="Docker Version"
       src="https://img.shields.io/docker/v/cenodude/crosswatch?sort=semver&style=for-the-badge&logo=docker&label=Docker%20Version">
   </a>
+
 </p>
 
 **CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.  
