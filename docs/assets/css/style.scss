@@ -199,3 +199,7 @@ img.cw-screenshot:hover {
   .cw-lightbox__nav { display: none; }
   .cw-lightbox__thumbImg { width: 92px; height: 54px; }
 }
+
+/* Remove Cayman header */
+.page-header { display: none !important; }
+.main-content { padding-top: 2rem; }
