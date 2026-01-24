@@ -1,7 +1,6 @@
 # Security Policy
 
 CrossWatch is NOT meant to be exposed directly to the public internet.
-During the current development stage there is also NO authentication built in, so treat it as a LAN/VPN-only tool.
 
 - Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
 - Run CrossWatch on your **local network**, or access it via:
