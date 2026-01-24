@@ -2090,6 +2090,138 @@ async function loadCrossWatchSnapshots(cfg) {
 }
 
 /*! Settings */
+
+
+/* Settings Hub: UI / Security / CW Tracker */
+
+const UI_SETTINGS_TAB_KEY = "cw.ui.settings.tab.v1";
+
+function _uiDaysLeftFromEpochSeconds(epochSeconds) {
+  if (!epochSeconds || !Number.isFinite(epochSeconds)) return null;
+  const ms = epochSeconds * 1000;
+  const diffMs = ms - Date.now();
+  if (diffMs <= 0) return 0;
+  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+}
+
+function cwUiSettingsSelect(tab, opts = {}) {
+  const t = String(tab || "ui").toLowerCase();
+  const persist = opts.persist !== false;
+
+  const hub = document.getElementById("ui_settings_hub");
+  const panels = document.getElementById("ui_settings_panels");
+  if (!hub || !panels) return;
+
+  const tiles = hub.querySelectorAll(".cw-hub-tile");
+  tiles.forEach((btn) => {
+    const k = String(btn.dataset.tab || "").toLowerCase();
+    btn.classList.toggle("active", k === t);
+    btn.setAttribute("aria-selected", k === t ? "true" : "false");
+  });
+
+  const ps = panels.querySelectorAll(".cw-settings-panel");
+  ps.forEach((p) => {
+    const k = String(p.dataset.tab || "").toLowerCase();
+    p.classList.toggle("active", k === t);
+  });
+
+  if (persist) {
+    try { localStorage.setItem(UI_SETTINGS_TAB_KEY, t); } catch {}
+  }
+
+  try { cwUiSettingsHubUpdate(); } catch {}
+}
+
+function cwUiSettingsHubUpdate() {
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+
+  const wl = document.getElementById("ui_show_watchlist_preview");
+  if (wl) set("hub_ui_watchlist", `Watchlist: ${wl.value === "false" ? "Hide" : "Show"}`);
+
+  const pc = document.getElementById("ui_show_playingcard");
+  if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
+
+  const aaEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
+  const st = window._appAuthStatus || null;
+
+  if (!aaEnabled) {
+    set("hub_sec_auth", "Auth: Off");
+    set("hub_sec_session", "Session: —");
+  } else if (st && st.enabled && st.configured && st.authenticated) {
+    set("hub_sec_auth", "Auth: On");
+    const days = _uiDaysLeftFromEpochSeconds(st.session_expires_at);
+    set("hub_sec_session", days == null ? "Session: active" : `Session: ${days}d`);
+  } else if (st && st.enabled && !st.configured) {
+    set("hub_sec_auth", "Auth: On");
+    set("hub_sec_session", "Set password");
+  } else {
+    set("hub_sec_auth", "Auth: On");
+    set("hub_sec_session", "Locked");
+  }
+
+  const cwEnabled = (document.getElementById("cw_enabled")?.value || "").toString() !== "false";
+  set("hub_cw_enabled", `Tracker: ${cwEnabled ? "On" : "Off"}`);
+
+  const retRaw = (document.getElementById("cw_retention_days")?.value || "").toString().trim();
+  const ret = retRaw === "" ? null : parseInt(retRaw, 10);
+  if (ret == null || Number.isNaN(ret)) set("hub_cw_retention", "Retention: —");
+  else if (ret === 0) set("hub_cw_retention", "Retention: ∞");
+  else set("hub_cw_retention", `Retention: ${ret}d`);
+
+  const authFields = document.getElementById("app_auth_fields");
+  if (authFields) authFields.classList.toggle("cw-disabled", !aaEnabled);
+
+  const trackerFields = document.getElementById("cw_restore_fields");
+  if (trackerFields) trackerFields.classList.toggle("cw-disabled", !cwEnabled);
+}
+
+function cwUiSettingsHubInit() {
+  if (window.__cwUiSettingsHubInit) return;
+  window.__cwUiSettingsHubInit = true;
+
+  const ids = [
+    "ui_show_watchlist_preview",
+    "ui_show_playingcard",
+    "app_auth_enabled",
+    "app_auth_username",
+    "app_auth_password",
+    "app_auth_password2",
+    "cw_enabled",
+    "cw_retention_days",
+    "cw_auto_snapshot",
+    "cw_max_snapshots",
+    "cw_restore_watchlist",
+    "cw_restore_history",
+    "cw_restore_ratings"
+  ];
+
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.__hubWired) return;
+    el.addEventListener("change", () => { try { cwUiSettingsHubUpdate(); } catch {} });
+    el.addEventListener("input",  () => { try { cwUiSettingsHubUpdate(); } catch {} });
+    el.__hubWired = true;
+  });
+
+  let tab = "ui";
+  try {
+    const saved = (localStorage.getItem(UI_SETTINGS_TAB_KEY) || "").toLowerCase();
+    if (["ui","security","tracker"].includes(saved)) tab = saved;
+  } catch {}
+
+  cwUiSettingsSelect(tab, { persist: false });
+  try { cwUiSettingsHubUpdate(); } catch {}
+}
+
+try {
+  window.cwUiSettingsSelect = cwUiSettingsSelect;
+  window.cwUiSettingsHubInit = cwUiSettingsHubInit;
+  window.cwUiSettingsHubUpdate = cwUiSettingsHubUpdate;
+} catch {}
 async function loadConfig() {
   const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
   window._cfgCache = cfg;
@@ -2115,6 +2247,7 @@ async function loadConfig() {
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
     const cw = cfg.crosswatch || {};
+    const aa = cfg.app_auth || {};
 
     
     const sel = document.getElementById("ui_show_watchlist_preview");
@@ -2133,6 +2266,19 @@ async function loadConfig() {
         : true;
       playSel.value = on ? "true" : "false";
     }
+
+    const aaEnabledEl = document.getElementById("app_auth_enabled");
+    if (aaEnabledEl) {
+      aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
+    }
+    const aaUserEl = document.getElementById("app_auth_username");
+    if (aaUserEl) {
+      aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
+    }
+    const aaP1 = document.getElementById("app_auth_password");
+    if (aaP1) aaP1.value = "";
+    const aaP2 = document.getElementById("app_auth_password2");
+    if (aaP2) aaP2.value = "";
 
     
     const cwEnabledEl = document.getElementById("cw_enabled");
@@ -2163,6 +2309,8 @@ async function loadConfig() {
     setVal("cw_restore_history", cw.restore_history || "latest");
     setVal("cw_restore_ratings", cw.restore_ratings || "latest");
   })();
+
+  try { cwUiSettingsHubInit?.(); } catch {}
 
   await loadCrossWatchSnapshots(cfg);
   window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
@@ -2215,7 +2363,26 @@ async function loadConfig() {
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
-  
+  try {
+    const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
+    const st = r.ok ? await r.json() : null;
+    window._appAuthStatus = st;
+    const el = document.getElementById("app_auth_state");
+    if (el) {
+      if (!st) el.textContent = "—";
+      else if (!st.enabled) el.textContent = "Auth: disabled";
+      else if (!st.configured) el.textContent = "Auth: enabled (set password)";
+      else if (st.authenticated) {
+        const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
+        el.textContent = exp ? `Auth: signed in (until ${exp.toISOString().replace('T',' ').slice(0,16)}Z)` : "Auth: signed in";
+      } else el.textContent = "Auth: locked";
+    }
+    const btn = document.getElementById("btn-auth-logout");
+    if (btn) btn.disabled = !(st && st.enabled && st.authenticated);
+  } catch {}
+
+  try { cwUiSettingsHubUpdate?.(); } catch {}
+
   try { window.updateSimklButtonState?.(); } catch {}
   try { window.updateSimklHint?.();      } catch {}
   try { window.updateTmdbHint?.();       } catch {}
@@ -2224,6 +2391,13 @@ async function loadConfig() {
     else applySyncVisibility?.();
   } catch {}
 }
+
+window.cwAppLogout = async function cwAppLogout() {
+  try {
+    await fetch("/api/app-auth/logout", { method: "POST", cache: "no-store", credentials: "same-origin" });
+  } catch {}
+  location.href = "/login";
+};
 
 function _getVal(id) {
   const el = document.getElementById(id);
@@ -2295,6 +2469,61 @@ async function saveSettings() {
     const serverCfg = await serverResp.json();
     const cfg = JSON.parse(JSON.stringify(serverCfg || {}));
     let changed = false;
+
+    try { delete cfg.app_auth; } catch {}
+
+    try {
+      const wantEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
+      const wantUser = norm(document.getElementById("app_auth_username")?.value || "");
+      const pass1 = (document.getElementById("app_auth_password")?.value || "").toString();
+      const pass2 = (document.getElementById("app_auth_password2")?.value || "").toString();
+
+      const prevEnabled = !!serverCfg?.app_auth?.enabled;
+      const prevUser = norm(serverCfg?.app_auth?.username);
+
+      let st = null;
+      try {
+        const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
+        st = r.ok ? await r.json() : null;
+      } catch {}
+
+      const configured = !!(st && st.configured);
+      const wantsPwd = norm(pass1) !== "" || norm(pass2) !== "";
+      const needsCall = (wantEnabled !== prevEnabled) || (wantUser !== prevUser) || wantsPwd;
+
+      if (wantsPwd && pass1 !== pass2) {
+        showToast("Password mismatch", false);
+        return;
+      }
+      if (wantEnabled && !wantUser) {
+        showToast("Auth username required", false);
+        return;
+      }
+      if (wantEnabled && !configured && !norm(pass1)) {
+        showToast("Set a password to enable auth", false);
+        return;
+      }
+
+      if (needsCall) {
+        const resp = await fetch("/api/app-auth/credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          cache: "no-store",
+          body: JSON.stringify({ enabled: wantEnabled, username: wantUser, password: pass1 || "" }),
+        });
+        const j = await resp.json().catch(() => null);
+        if (!resp.ok || !j || !j.ok) {
+          showToast((j && j.error) ? j.error : `Auth save failed (${resp.status})`, false);
+          return;
+        }
+        try { document.getElementById("app_auth_password").value = ""; } catch {}
+        try { document.getElementById("app_auth_password2").value = ""; } catch {}
+        try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
+      }
+    } catch (e) {
+      console.warn("saveSettings: app_auth merge failed", e);
+    }
 
     const prevMode     = serverCfg?.sync?.bidirectional?.mode || "two-way";
     const prevSource   = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";

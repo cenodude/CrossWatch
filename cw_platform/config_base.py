@@ -401,9 +401,47 @@ DEFAULT_CFG: dict[str, Any] = {
         "show_playingcard": True,                       # Show Now Playing card on Main tab
     },
 
+    # --- Local UI Authentication --------------------------------------------
+    "app_auth": {
+        "enabled": False,
+        "username": "",
+        "password": {
+            "scheme": "pbkdf2_sha256",
+            "iterations": 260000,
+            "salt": "",
+            "hash": "",
+        },
+        "session": {
+            "token_hash": "",
+            "expires_at": 0,
+        },
+        "last_login_at": 0,
+    },
+
     # --- Pairs (UI-driven) ---------------------------------------------------
     "pairs": [],
 }
+
+
+def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = copy.deepcopy(cfg or {})
+    a = out.get("app_auth")
+    if not isinstance(a, dict):
+        return out
+
+    pwd = a.get("password")
+    if isinstance(pwd, dict):
+        if pwd.get("hash"):
+            pwd["hash"] = "••••••••"
+        if pwd.get("salt"):
+            pwd["salt"] = "••••••••"
+
+    sess = a.get("session")
+    if isinstance(sess, dict):
+        if sess.get("token_hash"):
+            sess["token_hash"] = "••••••••"
+
+    return out
 
 
 # Helpers: paths, IO, merging, normalization

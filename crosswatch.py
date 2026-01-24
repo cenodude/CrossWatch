@@ -42,6 +42,13 @@ from api import (
     api_run_sync,
 )
 
+from api.appAuthAPI import (
+    COOKIE_NAME as APP_AUTH_COOKIE,
+    auth_required as app_auth_required,
+    is_authenticated as app_is_authenticated,
+    register_app_auth,
+)
+
 from _logging import log as LOG, BLUE, GREEN, DIM, RESET  # type: ignore
 
 def _c(text: str, color: str) -> str:
@@ -56,6 +63,7 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
+    RedirectResponse,
     Response,
     StreamingResponse,
 )
@@ -391,9 +399,37 @@ async def conditional_access_logger(request: Request, call_next):
         raise err
     return response
 
+
+@app.middleware("http")
+async def app_auth_gate(request: Request, call_next):
+    try:
+        cfg = load_config()
+    except Exception:
+        return await call_next(request)
+
+    if not app_auth_required(cfg):
+        return await call_next(request)
+
+    path = request.url.path or "/"
+    if path.startswith("/assets/"):
+        return await call_next(request)
+    if path in {"/favicon.ico", "/favicon.svg", "/favicon.png"}:
+        return await call_next(request)
+    if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
+        return await call_next(request)
+
+    token = request.cookies.get(APP_AUTH_COOKIE)
+    if app_is_authenticated(cfg, token):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+    return RedirectResponse(url="/login", status_code=302)
+
 # Static files
 register_assets_and_favicons(app, ROOT)
 register_ui_root(app)
+register_app_auth(app)
 
 # Misc utilities
 def get_primary_ip() -> str:

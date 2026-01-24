@@ -153,6 +153,9 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         ("jellyfin","access_token"),
         ("emby","api_key"), ("emby","access_token"),
         ("mdblist","api_key"),
+        ("app_auth","password","hash"),
+        ("app_auth","password","salt"),
+        ("app_auth","session","token_hash"),
     ]
     for path in secrets:
         cur = current; inc = incoming; dst = merged
