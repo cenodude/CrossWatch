@@ -1,24 +1,26 @@
-# docs
 
-<div align="center">
-  <img src="images/CrossWatch.png" alt="CrossWatch" width="480">
-</div>
+<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
 
-<p align="center"><a href="https://github.com/cenodude/CrossWatch">Join us on GitHub</a></p>
+<p align="center">
+  <a class="cw-cta" href="https://github.com/cenodude/CrossWatch">
+    <span class="cw-cta-icon" aria-hidden="true"></span>
+    Join us on GitHub
+  </a>
+</p>
 
-<!-- Screenshots (cw-lightbox.js binds to a[data-cw-gallery]) -->
-<div class="cw-shotgrid">
-  <a href="images/screenshot1.jpg" data-cw-gallery="cw-screens">
-    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" loading="lazy" decoding="async">
+<!-- Screenshots (small thumbs, click to zoom) -->
+<div class="cw-shotgrid is-small" align="center">
+  <a href="images/screenshot1.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 1">
+    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="180" loading="lazy" decoding="async">
   </a>
-  <a href="images/screenshot2.jpg" data-cw-gallery="cw-screens">
-    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" loading="lazy" decoding="async">
+  <a href="images/screenshot2.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 2">
+    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="180" loading="lazy" decoding="async">
   </a>
-  <a href="images/screenshot3.jpg" data-cw-gallery="cw-screens">
-    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" loading="lazy" decoding="async">
+  <a href="images/screenshot3.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 3">
+    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="180" loading="lazy" decoding="async">
   </a>
-  <a href="images/screenshot4.jpg" data-cw-gallery="cw-screens">
-    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" loading="lazy" decoding="async">
+  <a href="images/screenshot4.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 4">
+    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="180" loading="lazy" decoding="async">
   </a>
 </div>
 
@@ -33,6 +35,7 @@ Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL and 
 NOT supported: **Multi-users/servers**
 
 ### CW in a nutshell:
+
 * **One brain for all your media syncs** A single place to configure and understand everything.
 * **Multi-server** (Plex, Jellyfin, Emby) and multi-tracker (Trakt, SIMKL, MDBList, AniList) in one tool.
 * **Flexible sync directions** Between media server. Between trackers. Or from/to media servers and trackers.
@@ -49,4 +52,5 @@ NOT supported: **Multi-users/servers**
 <div align="center"><img src="https://github.com/user-attachments/assets/86098e05-7250-4e66-9ac5-cc75623d9920" alt="image"></div>
 
 ### Features
+
 <table data-header-hidden><thead><tr><th valign="top"></th><th valign="top"></th></tr></thead><tbody><tr><td valign="top"><p>Core features</p><ul><li>Sync watchlists (one-/two-way)</li><li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL/MDBList)</li><li>Sync ratings (one-/two-way)</li><li>Sync history (one-/two-way)</li><li>Keep snapshots with CW tracker</li><li>Auto-remove from watchlist after finish</li></ul></td><td valign="top"><p>Tools &#x26; modes</p><ul><li>Analyzer: finds broken or missing matches/IDs</li><li>Exporter: CSV files for popular services</li><li>Editor: Edit and adjust your items</li><li>Now Playing card, Stats, history, live logs</li><li>Headless scheduled runs</li></ul><p>Trackers<br><img src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&#x26;logoColor=white" alt="CrossWatch">  <img src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" alt="SIMKL">  <img src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328" alt="AniList">  <img src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" alt="Trakt">  <img src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" alt="MDBList"></p><p>Media servers<br><img src="https://img.shields.io/badge/Plex-E08A00?logo=plex&#x26;logoColor=white&#x26;labelColor=1f2328" alt="Plex">  <img src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&#x26;logoColor=white&#x26;labelColor=1f2328" alt="Jellyfin">  <img src="https://img.shields.io/badge/Emby-52B54B?logo=emby&#x26;logoColor=white&#x26;labelColor=1f2328" alt="Emby"></p><p>Others<br><img src="https://img.shields.io/badge/Tautulli-FF5C5C?labelColor=1f2328" alt="Tautulli"></p></td></tr></tbody></table>
