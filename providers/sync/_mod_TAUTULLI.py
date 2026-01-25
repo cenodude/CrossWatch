@@ -1,5 +1,6 @@
 # providers/sync/_mod_TAUTULLI.py
 # CrossWatch - Tautulli sync module (history only)
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
