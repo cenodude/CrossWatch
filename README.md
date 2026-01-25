@@ -1,5 +1,3 @@
-# README
-
 <div align="center"><img src=".gitbook/assets/CrossWatch.png" alt="CrossWatch" width="480"></div>
 
 <!-- Screenshots row  -->
