@@ -198,7 +198,7 @@ export default {
         <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
         <div>
           <div class="t">${legacy ? "Legacy config detected" : "Config version notice"}</div>
-          <div class="sub">${legacy ? "This release introduced config versioning (0.7.0+)." : "One save updates the config format."}</div>
+          <div class="sub">${legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format."}</div>
         </div>
         <div class="pill">
           <span class="b">Engine v${cur}</span>

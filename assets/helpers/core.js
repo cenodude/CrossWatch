@@ -1,4 +1,4 @@
-/* assets/helpers/core.js *
+/* assets/helpers/core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 /* Utilities */
@@ -69,6 +69,9 @@ function startSecretLoad(inputId) {
 }
 function finishSecretLoad(inputId, hasValue) {
   applyServerSecret(inputId, !!hasValue);
+  try {
+    if (String(inputId || "") === "tmdb_api_key" && typeof cwMetaSettingsHubUpdate === "function") cwMetaSettingsHubUpdate();
+  } catch {}
 }
 
 
@@ -2225,25 +2228,189 @@ try {
 
 /* Settings Hub: Scheduling */
 const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
+const SCHED_PROVIDER_OPEN_KEY = "cw.ui.scheduling.open.v1";
+
+let __cwSchedOpen = false;
+
+function cwSchedProviderSelect(open, opts = {}) {
+  const tilesHost = document.getElementById("sched_provider_tiles");
+  const panelHost = document.getElementById("sched-provider-panel");
+  if (!panelHost) return;
+
+  const wantOpen = (open == null) ? !__cwSchedOpen : !!open;
+  __cwSchedOpen = wantOpen;
+
+  if (tilesHost) {
+    const tile = tilesHost.querySelector('[data-provider="scheduler"]');
+    if (tile) {
+      tile.classList.toggle("active", wantOpen);
+      tile.setAttribute("aria-selected", wantOpen ? "true" : "false");
+    }
+  }
+
+  panelHost.classList.toggle("hidden", !wantOpen);
+
+  if (opts.persist !== false) {
+    try { localStorage.setItem(SCHED_PROVIDER_OPEN_KEY, wantOpen ? "1" : "0"); } catch {}
+  }
+}
 
 function cwSchedSettingsSelect(tab, opts = {}) {
-  const hub = document.getElementById("sched_settings_hub");
-  const panels = document.getElementById("sched_settings_panels");
-  if (!hub || !panels) return;
+  const panelHost = document.getElementById("sched-provider-panel");
+  const panel = panelHost?.querySelector('.cw-meta-provider-panel[data-provider="scheduler"]');
+  if (!panelHost || !panel) return;
 
   const t = (tab || "basic").toLowerCase();
   const want = ["basic", "advanced"].includes(t) ? t : "basic";
 
-  hub.querySelectorAll(".cw-hub-tile").forEach((btn) => {
-    btn.classList.toggle("active", (btn.dataset.tab || "") === want);
+  panel.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+    btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
   });
-  panels.querySelectorAll(".cw-settings-panel").forEach((p) => {
-    p.classList.toggle("active", (p.dataset.tab || "") === want);
+  panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
+    sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
   });
 
   if (opts.persist !== false) {
     try { localStorage.setItem(SCHED_SETTINGS_TAB_KEY, want); } catch {}
   }
+  try { cwSchedSettingsHubUpdate(); } catch {}
+}
+
+function cwBuildSchedulerPanel() {
+  const panelHost = document.getElementById("sched-provider-panel");
+  if (!panelHost) return;
+  if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="scheduler"]')) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "cw-meta-provider-panel active";
+  wrap.dataset.provider = "scheduler";
+
+  const head = document.createElement("div");
+  head.className = "cw-panel-head";
+  head.innerHTML = `
+    <div>
+      <div class="cw-panel-title">Scheduler</div>
+      <div class="muted">Run sync automatically on a timer.</div>
+    </div>
+  `;
+
+  const subTiles = document.createElement("div");
+  subTiles.className = "cw-subtiles";
+  subTiles.innerHTML = `
+    <button type="button" class="cw-subtile active" data-sub="basic">Standard</button>
+    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+  `;
+
+  const subPanels = document.createElement("div");
+  subPanels.className = "cw-subpanels";
+
+  const pBasic = document.createElement("div");
+  pBasic.className = "cw-subpanel active";
+  pBasic.dataset.sub = "basic";
+
+  const pAdv = document.createElement("div");
+  pAdv.className = "cw-subpanel";
+  pAdv.dataset.sub = "advanced";
+
+  const detach = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    try { el.parentNode?.removeChild(el); } catch {}
+    return el;
+  };
+
+  const mkField = (labelText, ctrl, noteText) => {
+    if (!ctrl) return null;
+    const f = document.createElement("div");
+    f.className = "field";
+    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">${labelText}</div>`;
+    f.appendChild(ctrl);
+    if (noteText) {
+      const n = document.createElement("div");
+      n.className = "auth-card-notes";
+      n.textContent = noteText;
+      f.appendChild(n);
+    }
+    return f;
+  };
+
+  const enabledEl = detach("schEnabled");
+  const modeEl = detach("schMode");
+  const nEl = detach("schN");
+  const timeEl = detach("schTime");
+
+  const basicCard = document.createElement("div");
+  basicCard.className = "auth-card";
+  const basicFields = document.createElement("div");
+  basicFields.className = "auth-card-fields";
+
+  const f1 = mkField("Enable", enabledEl);
+  const f2 = mkField("Frequency", modeEl, "Choose the timer mode.");
+  const f3 = mkField("Every N hours", nEl, "Only used when Frequency = Every N hours.");
+  const f4 = mkField("Time", timeEl, "Only used when Frequency = Daily at…");
+
+  [f1, f2, f3, f4].forEach((x) => x && basicFields.appendChild(x));
+  if (basicFields.childNodes.length) basicCard.appendChild(basicFields);
+  pBasic.appendChild(basicCard);
+
+  const advMount = detach("sched_advanced_mount") || (() => {
+    const d = document.createElement("div");
+    d.id = "sched_advanced_mount";
+    return d;
+  })();
+
+  pAdv.appendChild(advMount);
+
+  subPanels.appendChild(pBasic);
+  subPanels.appendChild(pAdv);
+
+  wrap.appendChild(head);
+  wrap.appendChild(subTiles);
+  wrap.appendChild(subPanels);
+
+  panelHost.appendChild(wrap);
+
+  try {
+    const raw = document.getElementById("sched-provider-raw");
+    if (raw) raw.classList.add("hidden");
+  } catch {}
+
+  subTiles.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+    btn.addEventListener("click", () => cwSchedSettingsSelect(btn.dataset.sub));
+  });
+
+  let lastSub = "basic";
+  try { lastSub = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "basic").toLowerCase(); } catch {}
+  cwSchedSettingsSelect((lastSub === "advanced") ? "advanced" : "basic", { persist: false });
+}
+
+function cwSchedProviderEnsure() {
+  const tilesHost = document.getElementById("sched_provider_tiles");
+  const panelHost = document.getElementById("sched-provider-panel");
+  if (!panelHost) return;
+
+  if (!panelHost.dataset.__cwSchedBuilt) {
+    try { cwBuildSchedulerPanel(); } catch {}
+    panelHost.dataset.__cwSchedBuilt = "1";
+  }
+
+  if (tilesHost) {
+    tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
+      if (btn.__cwSchedWired) return;
+      btn.addEventListener("click", () => {
+        const isOpen = !document.getElementById("sched-provider-panel")?.classList.contains("hidden");
+        cwSchedProviderSelect(!isOpen);
+      });
+      btn.__cwSchedWired = true;
+    });
+
+    let open = "0";
+    try { open = localStorage.getItem(SCHED_PROVIDER_OPEN_KEY) || "0"; } catch {}
+    cwSchedProviderSelect(open === "1", { persist: false });
+  } else {
+    cwSchedProviderSelect(true, { persist: false });
+  }
+
   try { cwSchedSettingsHubUpdate(); } catch {}
 }
 
@@ -2288,6 +2455,8 @@ function cwSchedSettingsHubInit() {
   const first = !window.__cwSchedSettingsHubInit;
   if (first) window.__cwSchedSettingsHubInit = true;
 
+  try { cwSchedProviderEnsure(); } catch {}
+
   const wire = (id) => {
     const el = document.getElementById(id);
     if (!el || el.__hubWired) return;
@@ -2318,10 +2487,13 @@ function cwSchedSettingsHubInit() {
 }
 
 try {
+  window.cwSchedProviderSelect = cwSchedProviderSelect;
+  window.cwSchedProviderEnsure = cwSchedProviderEnsure;
   window.cwSchedSettingsSelect = cwSchedSettingsSelect;
   window.cwSchedSettingsHubInit = cwSchedSettingsHubInit;
   window.cwSchedSettingsHubUpdate = cwSchedSettingsHubUpdate;
 } catch {}
+
 
 /* Settings Hub: Metadata Providers */
 const META_SETTINGS_TAB_KEY = "cw.ui.metadata.tab.v1";
@@ -2386,10 +2558,7 @@ function cwMetaProviderSubSelect(provider, sub, opts = {}) {
 }
 
 function cwMetaProviderInit() {
-  let last = "";
-  try { last = localStorage.getItem(META_PROVIDER_STATE_KEY) || ""; } catch {}
-  const want = (last || "").trim().toLowerCase();
-  cwMetaProviderSelect(want || null, { persist: false });
+  cwMetaProviderSelect(null, { persist: false });
 }
 
 function cwMetaProviderEnsure() {
@@ -2399,7 +2568,11 @@ function cwMetaProviderEnsure() {
 
   tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
     if (btn.__cwMetaWired) return;
-    btn.addEventListener("click", () => cwMetaProviderSelect(btn.dataset.provider || null));
+    btn.addEventListener("click", () => {
+      const want = String(btn.dataset.provider || "").toLowerCase();
+      if (want && activeMetaProvider === want) cwMetaProviderSelect(null);
+      else cwMetaProviderSelect(btn.dataset.provider || null);
+    });
     btn.__cwMetaWired = true;
   });
 
@@ -2592,13 +2765,25 @@ function cwMetaSettingsHubUpdate() {
   const chip = document.getElementById("hub_tmdb_key");
   if (!chip) return;
 
+  const cfg = window._cfgCache || {};
+  const cfgKey = String(cfg?.tmdb?.api_key || "").trim();
+  const cfgMasked = cfgKey === "*****" || /^[•]+$/.test(cfgKey);
+  const cfgHasKey = cfgKey.length > 0 || cfgMasked;
+
   const keyEl = document.getElementById("tmdb_api_key");
-  const v = (keyEl && typeof keyEl.value === "string") ? keyEl.value.trim() : "";
-  const hasTyped = v.length > 0;
+  let uiHasKey = false;
+  let uiTouched = false;
 
-  const isMasked = hasTyped && (v.startsWith("•") || v === "*****");
-  const hasKeyNow = hasTyped || isMasked;
+  if (keyEl) {
+    const v = String(keyEl.value || "").trim();
+    uiTouched = keyEl.dataset?.touched === "1";
+    const vMasked = v === "*****" || /^[•]+$/.test(v);
+    const dsMasked = keyEl.dataset?.masked === "1";
+    uiHasKey = v.length > 0 || vMasked || dsMasked;
+    if (uiTouched) uiHasKey = v.length > 0 || vMasked;
+  }
 
+  const hasKeyNow = uiHasKey || (!uiTouched && cfgHasKey);
   chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
 }
 
@@ -2823,7 +3008,8 @@ async function loadConfig() {
   setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
 })(cfg);
 
-  
+  try { cwMetaSettingsHubUpdate(); } catch {}
+
   const s = cfg.scheduling || {};
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
@@ -4282,6 +4468,31 @@ async function mountAuthProviders() {
     window.initTautulliAuthUI?.();
     window.initAniListAuthUI?.();
 
+    // Collapse auth groups by default (Media servers / Trackers / Others).
+    try {
+      const root = document.getElementById("auth-providers");
+      if (root) {
+        const want = ["media servers", "trackers", "others"];
+        root.querySelectorAll(".section").forEach((sec) => {
+          const t = (
+            sec.querySelector(":scope > .head strong")?.textContent ||
+            sec.querySelector(":scope > .head")?.textContent ||
+            ""
+          ).trim().toLowerCase();
+          if (want.some((w) => t.startsWith(w))) {
+            sec.classList.remove("open");
+            const chev = sec.querySelector(":scope > .head .chev");
+            if (chev) chev.textContent = "▶";
+          }
+        });
+        root.querySelectorAll("details").forEach((det) => {
+          const t = (det.querySelector(":scope > summary")?.textContent || "").trim().toLowerCase();
+          if (want.some((w) => t.startsWith(w))) det.open = false;
+        });
+      }
+    } catch (_) {}
+
+
     document.getElementById("btn-copy-plex-pin")
       ?.addEventListener("click", (e) => copyInputValue?.("plex_pin", e.currentTarget));
     document.getElementById("btn-copy-plex-token")
@@ -4599,6 +4810,7 @@ document.addEventListener("DOMContentLoaded", () => {
   try { loadProviders(); } catch (_) {}
   try { loadPairs(); } catch (_) {}
   try { mountAuthProviders(); } catch (_) {}
+  try { cwSchedProviderEnsure?.(); } catch (_) {}
   try {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else if (typeof applySyncVisibility === "function") applySyncVisibility();

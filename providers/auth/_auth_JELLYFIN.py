@@ -228,29 +228,10 @@ def html() -> str:
     #sec-jellyfin .inp-row{display:flex;gap:12px;align-items:center}
     #sec-jellyfin .inp-row .grow{flex:1 1 auto}
     #sec-jellyfin .verify{display:flex;gap:8px;align-items:center;white-space:nowrap}
-    #sec-jellyfin details.settings{margin-top:8px}
-    #sec-jellyfin details.settings summary{
-      position:relative;display:flex;align-items:center;gap:10px;
-      padding:10px 12px;margin:-2px;border-radius:12px;cursor:pointer;list-style:none;
-      background:#0b0d12;border:1px solid rgba(160,160,255,.18);
-      transition:box-shadow .18s ease, border-color .18s ease;
-    }
-    #sec-jellyfin details.settings summary:hover{
-      box-shadow:0 0 18px rgba(176,102,255,.22),0 0 18px rgba(0,209,255,.22);
-      border-color:rgba(176,102,255,.35);
-    }
-    #sec-jellyfin details.settings summary .plex-ico{
-      width:26px;height:26px;border-radius:999px;display:grid;place-items:center;
-      font-weight:700;color:#fff;background:linear-gradient(180deg,#b066ff 0%,#00d1ff 100%);
-      box-shadow:0 0 10px rgba(176,102,255,.6),0 0 10px rgba(0,209,255,.6)
-    }
-    #sec-jellyfin details.settings summary .title{font-weight:700;letter-spacing:.2px}
-    #sec-jellyfin details.settings summary .hint{opacity:.75;font-size:.92em;margin-left:auto;padding-right:22px}
-    #sec-jellyfin details.settings summary::after{
-      content:'▸';position:absolute;right:10px;top:50%;transform:translateY(-50%);opacity:.85;color:#a9b1ff
-    }
-    #sec-jellyfin details.settings[open] > summary::after{transform:translateY(-50%) rotate(90deg);color:#00d1ff}
-    #sec-jellyfin details.settings .wrap{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+    #sec-jellyfin .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
+    #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
+
+    /* matrix */
     #sec-jellyfin .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
     #sec-jellyfin .lm-head .title{font-weight:700}
     #sec-jellyfin .lm-rows{
@@ -270,17 +251,11 @@ def html() -> str:
     #sec-jellyfin .lm-col{display:flex;align-items:center;gap:6px}
     #sec-jellyfin .lm-filter{min-width:160px}
     #sec-jellyfin select.lm-hidden{display:none}
-    #sec-jellyfin .lm-rows{scrollbar-width:thin;scrollbar-color:#b066ff #0b0d12}
-    #sec-jellyfin .lm-rows::-webkit-scrollbar{width:10px}
-    #sec-jellyfin .lm-rows::-webkit-scrollbar-track{background:#0b0d12;border-radius:10px}
-    #sec-jellyfin .lm-rows::-webkit-scrollbar-thumb{border-radius:10px;border:2px solid #0b0d12;background:linear-gradient(180deg,#b066ff 0%,#00d1ff 100%);box-shadow:0 0 8px rgba(176,102,255,.55),0 0 8px rgba(0,209,255,.55)}
-    #sec-jellyfin .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
-    #sec-jellyfin .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
+
+    #sec-jellyfin .inline .msg{margin-left:auto}
     #sec-jellyfin .inline .msg.hidden{display:none}
-    #sec-jellyfin .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
-    #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
-    
-    /* Jellyfin Sign in  */
+
+    /* Jellyfin Sign in */
     #sec-jellyfin .btn.jellyfin{
       background: linear-gradient(135deg,#00e084,#2ea859);
       border-color: rgba(0,224,132,.45);
@@ -298,75 +273,100 @@ def html() -> str:
   </div>
 
   <div class="body">
-    <div class="grid2">
-      <div>
-        <label>Server URL</label>
-        <div class="inp-row">
-          <input id="jfy_server" class="grow" placeholder="http://host:8096/">
-          <label class="verify"><input id="jfy_verify_ssl" type="checkbox"> Verify SSL</label>
-        </div>
-      </div>
-      <div>
-        <label>Username</label>
-        <input id="jfy_user" placeholder="username">
-      </div>
-    </div>
-    <div class="grid2" style="margin-top:8px">
-      <div>
-        <label>Password</label>
-        <input id="jfy_pass" type="password" placeholder="********">
-      </div>
-      <div>
-        <label>Access Token</label>
-        <input id="jfy_tok" readonly placeholder="empty = not set">
-      </div>
-    </div>
-    <div class="inline" style="margin-top:10px">
-      <button class="btn jellyfin" onclick="try{ jfyLogin && jfyLogin(); }catch(_){;}">Sign in</button>
-      <button class="btn danger" onclick="try{ jfyDeleteToken && jfyDeleteToken(); }catch(_){;}">Delete</button>
-      <div id="jfy_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
-    </div>
-    <details class="settings">
-      <summary><span class="plex-ico">⚙︎</span><span class="title">SETTINGS</span><span class="hint">Server · User · Whitelist</span></summary>
-      <div class="wrap">
-        <div>
-          <label>Server URL</label>
-          <div class="inp-row">
-            <input id="jfy_server_url" class="grow" placeholder="http://host:8096/">
-            <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox" onclick="(function(){var a=document.getElementById('jfy_verify_ssl'); if(a) a.checked = document.getElementById('jfy_verify_ssl_dup').checked;})();"> Verify SSL</label>
-          </div>
-          <div class="sub">Leave blank to discover.</div>
-
-          <label style="margin-top:10px">Username</label>
-          <input id="jfy_username" placeholder="Display name">
-
-          <label style="margin-top:10px">User_ID</label>
-          <input id="jfy_user_id" placeholder="e.g. 6f7a0b3b-... (GUID)">
-
-          <div class="inline" style="gap:12px;margin-top:12px">
-            <button class="btn" onclick="(window.jfyAuto||function(){})();">Auto-Fetch</button>
-            <button class="btn" title="Load Jellyfin libraries" onclick="(window.jfyLoadLibraries||function(){})();">Load libraries</button>
-            <span class="sub" style="margin-left:auto">Edit values before Save if needed.</span>
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="jellyfin">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">Jellyfin</div>
+            <div class="muted">Sign in, tune settings, and whitelist libraries.</div>
           </div>
         </div>
 
-        <div>
-          <div class="lm-head">
-            <div class="title">Whitelist Libraries</div>
-            <input id="jfy_lib_filter" class="lm-filter" placeholder="Filter…">
-            <div class="lm-col"><span class="sub">Select all:</span></div>
-            <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
-            <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
-            <div class="lm-col"><button id="jfy_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble" aria-pressed="false"></button><span class="sub">Scrobble</span></div>
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+          <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
+          <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
+        </div>
+
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+              <div>
+                <label>Server URL</label>
+                <div class="inp-row">
+                  <input id="jfy_server" class="grow" placeholder="http://host:8096/">
+                  <label class="verify"><input id="jfy_verify_ssl" type="checkbox"> Verify SSL</label>
+                </div>
+              </div>
+              <div>
+                <label>Username</label>
+                <input id="jfy_user" placeholder="username">
+              </div>
+            </div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>Password</label>
+                <input id="jfy_pass" type="password" placeholder="********">
+              </div>
+              <div>
+                <label>Access Token</label>
+                <input id="jfy_tok" readonly placeholder="empty = not set">
+              </div>
+            </div>
+            <div class="inline" style="margin-top:10px">
+              <button class="btn jellyfin" onclick="try{ jfyLogin && jfyLogin(); }catch(_){;}">Sign in</button>
+              <button class="btn danger" onclick="try{ jfyDeleteToken && jfyDeleteToken(); }catch(_){;}">Delete</button>
+              <div id="jfy_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
+            </div>
           </div>
-          <div id="jfy_lib_matrix" class="lm-rows"></div>
-          <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
-          <select id="jfy_lib_history" class="lm-hidden" multiple></select>
-          <select id="jfy_lib_ratings" class="lm-hidden" multiple></select>
-          <select id="jfy_lib_scrobble" class="lm-hidden" multiple></select>
+
+          <div class="cw-subpanel" data-sub="settings">
+            <div style="max-width:820px">
+              <label>Server URL</label>
+              <div class="inp-row">
+                <input id="jfy_server_url" class="grow" placeholder="http://host:8096/">
+                <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox" onclick="(function(){var a=document.getElementById('jfy_verify_ssl'); if(a) a.checked = document.getElementById('jfy_verify_ssl_dup').checked;})();"> Verify SSL</label>
+              </div>
+              <div class="sub">Leave blank to discover.</div>
+
+              <label style="margin-top:10px">Username</label>
+              <input id="jfy_username" placeholder="Display name">
+
+              <label style="margin-top:10px">User_ID</label>
+              <input id="jfy_user_id" placeholder="e.g. 6f7a0b3b-... (GUID)">
+
+              <div class="inline" style="gap:12px;margin-top:12px">
+                <button class="btn" onclick="(window.jfyAuto||function(){})();">Auto-Fetch</button>
+                <span class="sub" style="margin-left:auto">Edit values before Save if needed.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cw-subpanel" data-sub="whitelist">
+            <div style="max-width:980px">
+              <div class="inline" style="gap:12px;margin-top:0;margin-bottom:12px">
+                <button class="btn" title="Load Jellyfin libraries" onclick="(window.jfyLoadLibraries||function(){})();">Load libraries</button>
+                <span class="sub" style="margin-left:auto">Refresh after changing Server URL / token.</span>
+              </div>
+
+              <div class="lm-head">
+                <div class="title">Whitelist Libraries</div>
+                <input id="jfy_lib_filter" class="lm-filter" placeholder="Filter…">
+                <div class="lm-col"><span class="sub">Select all:</span></div>
+                <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
+                <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
+                <div class="lm-col"><button id="jfy_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble" aria-pressed="false"></button><span class="sub">Scrobble</span></div>
+              </div>
+              <div id="jfy_lib_matrix" class="lm-rows"></div>
+              <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
+              <select id="jfy_lib_history" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_ratings" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_scrobble" class="lm-hidden" multiple></select>
+            </div>
+          </div>
         </div>
       </div>
-    </details>
+    </div>
   </div>
 </div>
 

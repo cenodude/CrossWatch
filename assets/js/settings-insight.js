@@ -48,14 +48,17 @@
       0 10px 24px rgba(0,0,0,0.45),
       inset 0 1px 0 rgba(255,255,255,0.02);
     overflow:hidden;
+    isolation:isolate;
   }
-  .si-card::after {
+  .si-card::before {
     content: "";
     position: absolute;
-    inset: 0;
-    background: url("/assets/img/background.svg") center/220px no-repeat;
-    opacity: 0.12;
+    inset: -2px;
+    background: url("/assets/img/background.svg") no-repeat 50% 96% / cover;
+    opacity: 0.14;
+    mix-blend-mode: screen;
     pointer-events: none;
+    z-index: 0;
   }
 
   .si-header{

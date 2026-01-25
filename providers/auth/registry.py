@@ -140,10 +140,45 @@ def _module_html(mod: ModuleType) -> str:
 
 
 def auth_providers_html() -> str:
-    frags: list[str] = []
+    groups: list[tuple[str, str, list[str]]] = [
+        ("sec-auth-media", "Media servers", ["plex", "jellyfin", "emby"]),
+        ("sec-auth-trackers", "Trackers", ["trakt", "simkl", "mdblist", "anilist"]),
+        ("sec-auth-others", "Others", ["tautulli"]),
+    ]
+
+    by_key: dict[str, str] = {}
     for mod in _iter_auth_modules():
         try:
-            frags.append(_module_html(mod))
+            html = _module_html(mod)
         except Exception:
             continue
-    return "".join(frags)
+
+        stem = str(getattr(mod, "__name__", "")).split(".")[-1]
+        key = stem.lower().replace("_auth_", "")
+        if key and html.strip():
+            by_key[key] = html
+
+    used: set[str] = set()
+    buckets: dict[str, list[str]] = {gid: [] for gid, _, _ in groups}
+    for gid, _, order in groups:
+        for key in order:
+            html = by_key.get(key)
+            if not html:
+                continue
+            buckets[gid].append(html)
+            used.add(key)
+
+    # Anything not mapped goes to "Others"
+    leftovers = [html for key, html in by_key.items() if key not in used]
+    buckets["sec-auth-others"].extend(leftovers)
+
+    def _wrap(gid: str, title: str, items: list[str]) -> str:
+        body = "".join(items) if items else '<div class="sub">No providers.</div>'
+        return (
+            f'<div class="section open" id="{gid}">'
+            f'  <div class="head" onclick="toggleSection(\'{gid}\')"><span class="chev">▶</span><strong>{title}</strong></div>'
+            f'  <div class="body">{body}</div>'
+            f'</div>'
+        )
+
+    return "".join(_wrap(gid, title, buckets.get(gid, [])) for gid, title, _ in groups)

@@ -36,13 +36,26 @@
 .sch-adv .row-disabled{opacity:.55;filter:grayscale(.25)}
 .sch-adv option[disabled]{color:#666}
 .sch-adv .status{margin-top:10px;min-height:20px}
+
+/* Shared toggle  */
+.cx-toggle{position:relative;display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.cx-toggle input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.cx-toggle-ui{display:inline-block;width:46px;height:26px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);transition:background .15s ease,border-color .15s ease,box-shadow .15s ease}
+.cx-toggle-ui:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 8px 18px rgba(0,0,0,.35);transition:transform .15s ease,background .15s ease}
+.cx-toggle-text{display:inline-block;font-size:12px;opacity:.9;white-space:nowrap}
+.cx-toggle-state{display:inline-flex;align-items:center;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);opacity:.85}
+.cx-toggle-state:before{content:"Off"}
+.cx-toggle:hover .cx-toggle-ui{border-color:rgba(255,255,255,.22)}
+.cx-toggle input:checked + .cx-toggle-ui{background:rgba(34,197,94,.28);border-color:rgba(34,197,94,.45)}
+.cx-toggle input:checked + .cx-toggle-ui:after{transform:translateX(20px)}
+.cx-toggle input:checked ~ .cx-toggle-state:before{content:"On"}
+.cx-toggle input:focus-visible + .cx-toggle-ui{box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15),inset 0 0 0 1px rgba(0,0,0,.18)}
+.sch-std-toggle{margin-top:0}
 ` }));
 
   // state
   let _pairs = [], _jobs = [], _advEnabled = false, _loading = false;
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-
-  // select true/false in vendor dropdowns
   const setBooleanSelect = (sel, v) => {
     if (!sel) return;
     const want = v ? "true" : "false";
@@ -54,6 +67,37 @@
     }
     if (hit) sel.value = hit.value;
   };
+
+const ensureStdEnabledToggle = () => {
+  const sel = $("#schEnabled");
+  if (!sel || sel.__toggleEnhanced) return;
+  const box = sel.parentElement;
+  if (!box) return;
+
+  const lab = box.querySelector("label");
+  if (lab) lab.remove();
+  sel.style.display = "none";
+
+  const t = el("label", "cx-toggle sch-std-toggle");
+  t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text"></span><span class="cx-toggle-state" aria-hidden="true"></span>`;
+  box.appendChild(t);
+
+  const cb = $("#schEnabledToggle", box);
+  const syncFromSel = () => { cb.checked = String(sel.value || "").trim().toLowerCase() === "true"; };
+  sel.__toggleSync = syncFromSel;
+  syncFromSel();
+
+  cb.onchange = () => {
+    setBooleanSelect(sel, cb.checked);
+    try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+    try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+    try { window.refreshSchedulingBanner?.(); } catch {}
+    try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+  };
+
+  sel.addEventListener("change", syncFromSel);
+  sel.__toggleEnhanced = true;
+};
 
   // data
   const fetchPairs = async () => {
@@ -121,11 +165,12 @@
     const adv = Object.assign(el("div", "sch-adv"), { id: "schAdv" });
     adv.innerHTML = `
 <div class="cw-panel-head">
-  <div>
-    <div class="cw-panel-title">Advanced Scheduling</div>
-    <div class="mini">Sequential steps across your enabled pairs.</div>
-  </div>
-  <label class="mini" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="schAdvEnabled"> Use advanced plan</label>
+  <label class="cx-toggle">
+    <input type="checkbox" id="schAdvEnabled">
+    <span class="cx-toggle-ui" aria-hidden="true"></span>
+    <span class="cx-toggle-text">Use advanced plan</span>
+    <span class="cx-toggle-state" aria-hidden="true"></span>
+  </label>
 </div>
 
 <table>
@@ -184,6 +229,8 @@
       try { saved = await fetch(`/api/scheduling?t=${Date.now()}`, { cache: "no-store" }).then(r => r.json()); } catch {}
 
       setBooleanSelect($("#schEnabled"), !!saved.enabled);
+      ensureStdEnabledToggle();
+      try { $("#schEnabled")?.__toggleSync?.(); } catch {}
       $("#schMode") && ($("#schMode").value = saved.mode || "hourly");
       $("#schN")    && ($("#schN").value = String(saved.every_n_hours || 2));
       $("#schTime") && ($("#schTime").value = saved.daily_time || "03:30");
@@ -207,7 +254,7 @@
       try { typeof window.refreshSchedulingBanner === "function" && window.refreshSchedulingBanner(); } catch {}
     } finally { _loading = false; }
   };
-  window.loadScheduling = loadScheduling; // exposed for global flows
+  window.loadScheduling = loadScheduling;
 
   // serialize advanced
   const serializeAdvanced = () => ({

@@ -854,7 +854,7 @@ serverUUID: async () => {
   const watcherOn = !!wa?.checked && useWatch;
 
   $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
-    if (n.id !== "sc-enable-webhook") n.disabled = !webhookOn;
+    if (!String(n.id || "").startsWith("sc-enable-webhook")) n.disabled = !webhookOn;
   });
   $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
     if (n.id !== "sc-enable-watcher" && n.id !== "sc-live-toggle") n.disabled = !watcherOn;
@@ -995,99 +995,192 @@ serverUUID: async () => {
   function buildUI() {
     injectStyles();
 
-    if (STATE.webhookHost) {
+        if (STATE.webhookHost) {
       STATE.webhookHost.innerHTML = `
-        <div class="wh-top" style="--wh-logo:28px">
-          <div class="wh-left">
-	            <label class="cx-toggle">
-	              <input type="checkbox" id="sc-enable-webhook">
-	              <span class="cx-toggle-ui" aria-hidden="true"></span>
-	              <span class="cx-toggle-text">Enable</span>
-	              <span class="cx-toggle-state" aria-hidden="true"></span>
-	            </label>
-          </div>
-          <div class="wh-endpoints">
-            <div class="codepair right">
-              <img class="wh-logo" src="/assets/img/PLEX-log.svg" alt="Plex">
-              <code id="sc-webhook-url-plex"></code>
-              <button id="sc-copy-plex" class="btn small">Copy</button>
+        <div class="cw-panel">
+          <div class="cw-meta-provider-panel active" data-provider="webhook">
+            <div class="cw-panel-head">
+              <div>
+                <div class="cw-panel-title">Webhooks</div>
+                <div class="muted">Legacy endpoints that scrobble to Trakt.</div>
+              </div>
             </div>
-            <div class="codepair right">
-              <img class="wh-logo" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin">
-              <code id="sc-webhook-url-jf"></code>
-              <button id="sc-copy-jf" class="btn small">Copy</button>
-            </div>
-            <div class="codepair right">
-              <img class="wh-logo" src="/assets/img/EMBY-log.svg" alt="Emby">
-              <code id="sc-webhook-url-emby"></code>
-              <button id="sc-copy-emby" class="btn small">Copy</button>
-            </div>
-          </div>
-        </div>
-        <div id="sc-webhook-warning" class="micro-note"></div>
-        <div id="sc-endpoint-note" class="micro-note"></div>
 
-        <details id="sc-options-webhook" class="sc-box"><summary>Options</summary>
-          <div class="body">
-            <span class="cx-switch-wrap">
-              <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>
-              ${helpBtn("sc-help-auto-remove")}
-            </span>
-          </div>
-        </details>
+            <div class="cw-subtiles" style="margin-top:2px">
+              <button type="button" class="cw-subtile active" data-sub="plex">Plex</button>
+              <button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button>
+              <button type="button" class="cw-subtile" data-sub="emby">Emby</button>
+              <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+            </div>
 
-        <details id="sc-plex-specifics-webhook" class="sc-box"><summary>Plex specifics</summary>
-          <div class="body">
-            <div class="sc-subbox">
-              <div class="head">Filters</div>
-              <div class="body">
-                <div class="sc-filter-grid">
-                  <div>
-                    <div class="muted">Username whitelist</div>
-                    <div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div>
-                    <div id="sc-users-note-webhook" class="micro-note"></div>
-                    <div style="display:flex;gap:8px;margin-top:6px">
-                      <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
-                      <button id="sc-add-user-webhook" class="btn small">Add</button>
-                      <button id="sc-load-users-webhook" class="btn small">Pick</button>
+            <div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div>
+            <div id="sc-endpoint-note" class="micro-note"></div>
+
+            <div class="cw-subpanels">
+              <div class="cw-subpanel active" data-sub="plex">
+                <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px">
+                  <label class="cx-toggle">
+                    <input type="checkbox" id="sc-enable-webhook">
+                    <span class="cx-toggle-ui" aria-hidden="true"></span>
+                    <span class="cx-toggle-text">Enable</span>
+                    <span class="cx-toggle-state" aria-hidden="true"></span>
+                  </label>
+                  <div class="codepair right" style="margin-left:auto">
+                    <img class="wh-logo" src="/assets/img/PLEX-log.svg" alt="Plex">
+                    <code id="sc-webhook-url-plex"></code>
+                    <button id="sc-copy-plex" class="btn small">Copy</button>
+                  </div>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Options</div>
+                  <div class="body">
+                    <span class="cx-switch-wrap">
+                      <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>
+                      ${helpBtn("sc-help-auto-remove")}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Filters</div>
+                  <div class="body">
+                    <div class="sc-filter-grid">
+                      <div>
+                        <div class="muted">Username whitelist</div>
+                        <div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div>
+                        <div id="sc-users-note-webhook" class="micro-note"></div>
+                        <div style="display:flex;gap:8px;margin-top:6px">
+                          <input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1">
+                          <button id="sc-add-user-webhook" class="btn small">Add</button>
+                          <button id="sc-load-users-webhook" class="btn small">Pick</button>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="muted">Server UUID</div>
+                        <div id="sc-uuid-note-webhook" class="micro-note"></div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                          <input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1">
+                          <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <div class="muted">Server UUID</div>
-                    <div id="sc-uuid-note-webhook" class="micro-note"></div>
-                    <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-                      <input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1">
-                      <button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Plex settings</div>
+                  <div class="body">
+                    <span class="cx-switch-wrap">
+                      <label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>
+                      ${helpBtn("sc-help-webhook-plex-ratings")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cw-subpanel" data-sub="jellyfin">
+                <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px">
+                  <label class="cx-toggle">
+                    <input type="checkbox" id="sc-enable-webhook-jf">
+                    <span class="cx-toggle-ui" aria-hidden="true"></span>
+                    <span class="cx-toggle-text">Enable</span>
+                    <span class="cx-toggle-state" aria-hidden="true"></span>
+                  </label>
+                  <div class="codepair right" style="margin-left:auto">
+                    <img class="wh-logo" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin">
+                    <code id="sc-webhook-url-jf"></code>
+                    <button id="sc-copy-jf" class="btn small">Copy</button>
+                  </div>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Options</div>
+                  <div class="body">
+                    <span class="cx-switch-wrap">
+                      <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-jf"><span class="one-line">Auto-remove from Watchlists</span></label>
+                      ${helpBtn("sc-help-auto-remove")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cw-subpanel" data-sub="emby">
+                <div class="row" style="justify-content:space-between;align-items:center;margin-top:6px">
+                  <label class="cx-toggle">
+                    <input type="checkbox" id="sc-enable-webhook-emby">
+                    <span class="cx-toggle-ui" aria-hidden="true"></span>
+                    <span class="cx-toggle-text">Enable</span>
+                    <span class="cx-toggle-state" aria-hidden="true"></span>
+                  </label>
+                  <div class="codepair right" style="margin-left:auto">
+                    <img class="wh-logo" src="/assets/img/EMBY-log.svg" alt="Emby">
+                    <code id="sc-webhook-url-emby"></code>
+                    <button id="sc-copy-emby" class="btn small">Copy</button>
+                  </div>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Options</div>
+                  <div class="body">
+                    <span class="cx-switch-wrap">
+                      <label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-emby"><span class="one-line">Auto-remove from Watchlists</span></label>
+                      ${helpBtn("sc-help-auto-remove")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cw-subpanel" data-sub="advanced">
+                <div class="row" style="justify-content:flex-start;align-items:center;margin-top:6px">
+                  <label class="cx-toggle">
+                    <input type="checkbox" id="sc-enable-webhook-adv">
+                    <span class="cx-toggle-ui" aria-hidden="true"></span>
+                    <span class="cx-toggle-text">Enable</span>
+                    <span class="cx-toggle-state" aria-hidden="true"></span>
+                  </label>
+                </div>
+
+                <div class="sc-subbox">
+                  <div class="head">Advanced</div>
+                  <div class="body">
+                    <div class="sc-adv-grid">
+                      ${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
+                      ${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}
+                      ${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}
+                      ${buildAdvField("sc-stop-pause-webhook", "Stop pause ≥", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}
+                      ${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}
                     </div>
+                    <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
                   </div>
                 </div>
               </div>
             </div>
-
-            <details id="sc-plex-options-webhook" class="sc-box"><summary>Plex Options</summary>
-              <div class="body">
-                <span class="cx-switch-wrap">
-                  <label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>
-              ${helpBtn("sc-help-webhook-plex-ratings")}
-            </span>
-              </div>
-            </details>
           </div>
-        </details>
-
-        <details class="sc-advanced sc-box" id="sc-advanced-webhook"><summary>Advanced</summary>
-          <div class="body">
-            <div class="sc-adv-grid">
-              ${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
-              ${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}
-              ${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}
-              ${buildAdvField("sc-stop-pause-webhook", "Stop pause ≥", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}
-              ${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}
-            </div>
-            <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1–100.</div>
-          </div>
-        </details>
+        </div>
       `;
+
+      // Tabs: Plex / Jellyfin / Emby / Advanced
+      const tabKey = "cw.ui.scrobbler.webhook.tab.v1";
+      const root = STATE.webhookHost;
+      const selectTab = (sub, opts = {}) => {
+        const want = (sub || "plex").toLowerCase();
+        root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
+          btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
+        });
+        root.querySelectorAll('.cw-subpanel[data-sub]').forEach((sp) => {
+          sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
+        });
+        if (opts.persist !== false) {
+          try { localStorage.setItem(tabKey, want); } catch {}
+        }
+      };
+
+      root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
+        btn.addEventListener("click", () => selectTab(btn.dataset.sub || "plex"));
+      });
+
+      try { selectTab(localStorage.getItem(tabKey) || "plex", { persist: false }); } catch { selectTab("plex", { persist: false }); }
     }
 
     if (STATE.watcherHost) {
@@ -1123,7 +1216,30 @@ serverUUID: async () => {
           .status-dot.on{background:#22c55e;color:#22c55e}
           .status-dot.off{background:#ef4444;color:#ef4444}
           @media (max-width:900px){.cc-wrap{grid-template-columns:1fr}}
+        
+          .sc-box{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+          .sc-box>.body{padding:12px 14px}
+
         </style>
+
+        <div class="cw-panel">
+          <div class="cw-meta-provider-panel active" data-provider="watcher">
+            <div class="cw-panel-head">
+              <div>
+                <div class="cw-panel-title">Watcher</div>
+                <div class="muted">Monitor playback and scrobble automatically.</div>
+              </div>
+            </div>
+
+            <div class="cw-subtiles" style="margin-top:2px">
+              <button type="button" class="cw-subtile active" data-sub="watcher">Watcher</button>
+              <button type="button" class="cw-subtile" data-sub="filters">Filters</button>
+              <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+            </div>
+
+            <div class="cw-subpanels">
+              <div class="cw-subpanel active" data-sub="watcher">
+
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
 	          <label class="cx-toggle">
@@ -1265,9 +1381,14 @@ serverUUID: async () => {
 	          </div>
         </div>
 
-        <details id="sc-filters" class="sc-filters sc-box"><summary>Filters ${helpBtn("sc-help-watch-filters")}</summary>
-          <div class="body">
-            <div class="sc-filter-grid">
+        
+              </div>
+
+              <div class="cw-subpanel" data-sub="filters">
+                <div class="sc-box" id="sc-filters">
+                  <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-filters")}</div>
+                  <div class="body">
+<div class="sc-filter-grid">
               <div>
                 <div class="muted">Username whitelist</div>
                 <div id="sc-whitelist" class="chips" style="margin-top:4px"></div>
@@ -1287,12 +1408,15 @@ serverUUID: async () => {
                 </div>
               </div>
             </div>
-          </div>
-        </details>
+                  </div>
+                </div>
+              </div>
 
-        <details class="sc-advanced sc-box" id="sc-advanced"><summary>Advanced ${helpBtn("sc-help-watch-advanced")}</summary>
-          <div class="body">
-            <div class="sc-adv-grid">
+              <div class="cw-subpanel" data-sub="advanced">
+                <div class="sc-box sc-advanced" id="sc-advanced">
+                  <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-advanced")}</div>
+                  <div class="body">
+<div class="sc-adv-grid">
               ${buildAdvField("sc-pause-debounce", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}
               ${buildAdvField("sc-suppress-start", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}
               ${buildAdvField("sc-regress", "Regress", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}
@@ -1303,9 +1427,36 @@ serverUUID: async () => {
               ${buildAdvField("sc-progress-step", "Progress step", "sc-help-adv-progress-step", DEFAULTS.trakt.progress_step, { min: 1, max: 25, step: 1 })}
             </div>
             <div class="micro-note" style="margin-top:6px">Empty resets to defaults. Percent fields are 1–100. Progress step is 1–25.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </details>
-      `;
+        </div>
+`;
+
+      // Tabs: Watcher / Filters / Advanced
+      const tabKey = "cw.ui.scrobbler.watcher.tab.v1";
+      const root = STATE.watcherHost;
+      const selectTab = (sub, opts = {}) => {
+        const want = (sub || "watcher").toLowerCase();
+        root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
+          btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
+        });
+        root.querySelectorAll('.cw-subpanel[data-sub]').forEach((sp) => {
+          sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
+        });
+        if (opts.persist !== false) {
+          try { localStorage.setItem(tabKey, want); } catch {}
+        }
+      };
+
+      root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
+        btn.addEventListener("click", () => selectTab(btn.dataset.sub || "watcher"));
+      });
+
+      try { selectTab(localStorage.getItem(tabKey) || "watcher", { persist: false }); } catch { selectTab("watcher", { persist: false }); }
+
     }
 
     bindHelpTips(STATE.mount || d);
@@ -1937,7 +2088,8 @@ serverUUID: async () => {
   const pvSel = $("#sc-provider", STATE.mount);
   const skSel = $("#sc-sink", STATE.mount);
 
-  if (whEl) whEl.checked = useWebhook;
+    if (whEl) whEl.checked = useWebhook;
+  ["#sc-enable-webhook-jf", "#sc-enable-webhook-emby", "#sc-enable-webhook-adv"].forEach((id) => { const n = $(id, STATE.mount); if (n) n.checked = useWebhook; });
   if (waEl) waEl.checked = useWatch;
   if (pvSel) pvSel.value = prov;
   try { syncProviderPickerUi(); } catch {}
@@ -2016,7 +2168,8 @@ serverUUID: async () => {
 
   const delEnabled = !!read("scrobble.delete_plex", false);
   const delWh = $("#sc-delete-plex-webhook", STATE.mount);
-  if (delWh) delWh.checked = delEnabled;
+    if (delWh) delWh.checked = delEnabled;
+  ["#sc-delete-plex-webhook-jf", "#sc-delete-plex-webhook-emby"].forEach((id) => { const n = $(id, STATE.mount); if (n) n.checked = delEnabled; });
   const delW = $("#sc-delete-plex-watch", STATE.mount);
   if (delW) delW.checked = delEnabled;
 
@@ -2389,6 +2542,37 @@ async function hydrateJellyfin() {
     const wh = $("#sc-enable-webhook", STATE.mount);
     const wa = $("#sc-enable-watcher", STATE.mount);
     const pv = $("#sc-provider", STATE.mount);
+
+    const mirrorToggle = (masterSel, clones) => {
+      const master = $(masterSel, STATE.mount);
+      if (!master) return;
+      let mute = false;
+      const sync = () => {
+        if (mute) return;
+        mute = true;
+        clones.forEach((sel) => {
+          const c = $(sel, STATE.mount);
+          if (c) c.checked = !!master.checked;
+        });
+        mute = false;
+      };
+      clones.forEach((sel) => {
+        const c = $(sel, STATE.mount);
+        if (!c) return;
+        on(c, "change", () => {
+          if (mute) return;
+          mute = true;
+          master.checked = !!c.checked;
+          master.dispatchEvent(new Event("change", { bubbles: true }));
+          mute = false;
+        });
+      });
+      on(master, "change", sync);
+      sync();
+    };
+
+    mirrorToggle("#sc-enable-webhook", ["#sc-enable-webhook-jf", "#sc-enable-webhook-emby", "#sc-enable-webhook-adv"]);
+    mirrorToggle("#sc-delete-plex-webhook", ["#sc-delete-plex-webhook-jf", "#sc-delete-plex-webhook-emby"]);
 
     const pvBtn = $("#sc-provider-btn", STATE.mount);
     const pvMenu = $("#sc-provider-menu", STATE.mount);

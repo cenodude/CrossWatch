@@ -17,11 +17,56 @@
     });
   }
 
+
+  const PLEX_SUBTAB_KEY = "cw.ui.plex.auth.subtab.v1";
+
+  function plexAuthSubSelect(tab, opts = {}) {
+    const root = q('#sec-plex .cw-meta-provider-panel[data-provider="plex"]') || q("#sec-plex .cw-panel");
+    if (!root) return;
+
+    const want = String(tab || "auth").toLowerCase();
+    const sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      btn.classList.toggle("active", String(btn.dataset.sub || "").toLowerCase() === sub);
+    });
+    root.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
+      sp.classList.toggle("active", String(sp.dataset.sub || "").toLowerCase() === sub);
+    });
+
+    if (opts.persist !== false) {
+      try { localStorage.setItem(PLEX_SUBTAB_KEY, sub); } catch {}
+    }
+
+    if (sub === "whitelist") {
+      try { mountPlexLibraryMatrix(); } catch {}
+    }
+  }
+
+  function mountPlexAuthTabs() {
+    const root = q('#sec-plex .cw-meta-provider-panel[data-provider="plex"]');
+    if (!root) return;
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      if (btn.__plexTabWired) return;
+      btn.__plexTabWired = true;
+      btn.addEventListener("click", () => plexAuthSubSelect(btn.dataset.sub));
+    });
+
+    if (root.__plexTabsInit) return;
+    root.__plexTabsInit = true;
+
+    let last = "auth";
+    try { last = localStorage.getItem(PLEX_SUBTAB_KEY) || "auth"; } catch {}
+    plexAuthSubSelect(last, { persist: false });
+  }
+
   let __plexHydrateWatch = null;
   let __plexHydrateTimer = null;
   function schedulePlexHydrate(delayMs = 0) {
     try { if (__plexHydrateTimer) clearTimeout(__plexHydrateTimer); } catch {}
     __plexHydrateTimer = setTimeout(async () => {
+      try { mountPlexAuthTabs(); } catch {}
       if (!$("plex_token") || !$("plex_server_url") || !$("plex_username")) return;
       try { await hydratePlexFromConfigRaw(); } catch {}
       try { mountPlexLibraryMatrix(); } catch {}
@@ -860,6 +905,7 @@ async function plexDeleteToken() {
     if (__plexInitDone) return;
     __plexInitDone = true;
     try { watchForPlexDom(); } catch {}
+    try { mountPlexAuthTabs(); } catch {}
     try { hookPlexSave(); } catch {}
     setTimeout(() => { try { hydratePlexFromConfigRaw(); } catch {} }, 100);
     setTimeout(() => { try { schedulePlexPmsProbe(300); } catch {} }, 450);
@@ -893,6 +939,7 @@ async function plexDeleteToken() {
     const onSettings = ev?.detail?.id ? /settings/i.test(ev.detail.id) : !!q("#sec-plex");
     if (onSettings) {
       try { watchForPlexDom(); } catch {}
+      try { mountPlexAuthTabs(); } catch {}
       await waitFor("#plex_server_url");
       try { hydratePlexFromConfigRaw(); } catch {}
       try { plexAuto(); } catch {}

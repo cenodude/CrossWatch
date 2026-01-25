@@ -14,7 +14,51 @@
   let S = new Set(); // scrobble lib ids
   let hydrated = false;
 
-  // --- tiny helpers
+  const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
+
+  function embyAuthSubSelect(tab, opts = {}) {
+    const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby .cw-panel");
+    if (!root) return;
+
+    const want = String(tab || "auth").toLowerCase();
+    const sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      btn.classList.toggle("active", String(btn.dataset.sub || "").toLowerCase() === sub);
+    });
+    root.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
+      sp.classList.toggle("active", String(sp.dataset.sub || "").toLowerCase() === sub);
+    });
+
+    if (opts.persist !== false) {
+      try { localStorage.setItem(EMBY_SUBTAB_KEY, sub); } catch {}
+    }
+
+    if (sub === "whitelist") {
+      try { embyLoadLibraries(); } catch {}
+    }
+  }
+
+  function mountEmbyAuthTabs() {
+    const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]');
+    if (!root) return;
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      if (btn.__embyTabWired) return;
+      btn.__embyTabWired = true;
+      btn.addEventListener("click", () => embyAuthSubSelect(btn.dataset.sub));
+    });
+
+    if (root.__embyTabsInit) return;
+    root.__embyTabsInit = true;
+
+    let last = "auth";
+    try { last = localStorage.getItem(EMBY_SUBTAB_KEY) || "auth"; } catch {}
+    embyAuthSubSelect(last, { persist: false });
+  }
+
+
+  // helpers
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const maskToken = (has) => { const el = Q("#emby_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -27,7 +71,7 @@
     msg.textContent = text || '';
   }
 
-  // --- libraries UI
+  // libraries UI
   function applyFilter() {
     const qv = (Q("#emby_lib_filter")?.value || "").toLowerCase().trim();
     Qa("#emby_lib_matrix .lm-row").forEach((r) => {
@@ -86,7 +130,7 @@
     } catch { renderLibraries([]); }
   }
 
-  // --- hydrate from /api/config (auto when section becomes visible)
+  // hydrate from /api/config 
   function embySectionLooksEmpty() {
     const s1 = Q("#emby_server") || Q("#emby_server_url");
     const u1 = Q("#emby_user") || Q("#emby_username");
@@ -95,7 +139,6 @@
     return vals.every(v => !v);
   }
 
-  // --- hydrate from /api/config (auto when section becomes visible)
   async function hydrateFromConfig(force = false) {
     if (hydrated && !force) return;
     try {
@@ -124,6 +167,7 @@
 
   // ensure hydrate when section is present and visible
   function ensureHydrate() {
+    try { mountEmbyAuthTabs(); } catch {}
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
     if (!sec || (body && !visible(body))) return;
@@ -132,7 +176,7 @@
   }
 
 
-  // observe section insertion (SPAs/late render)
+  // observe section insertion
   if (!Q(SECTION)) {
     const mo = new MutationObserver(() => {
       if (Q(SECTION)) { mo.disconnect(); ensureHydrate(); }
@@ -140,7 +184,7 @@
     mo.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // click on the section header → open → hydrate
+  // click on the section header
   document.addEventListener("click", (e) => {
     const head = Q("#sec-emby .head");
     if (head && head.contains(e.target)) setTimeout(ensureHydrate, 0);
@@ -153,7 +197,7 @@
     setTimeout(ensureHydrate, 30);
   }
 
-  // --- auto-fill from inspect
+  // auto-fill from inspect
   async function embyAuto() {
     try {
       const r = await fetch("/api/emby/inspect?ts=" + Date.now(), { cache: "no-store" });
@@ -165,7 +209,7 @@
     } catch {}
   }
 
-  // --- login
+  // login
   async function embyLogin() {
     const server = (Q("#emby_server")?.value || "").trim();
     const username = (Q("#emby_user")?.value || "").trim();
@@ -189,7 +233,7 @@
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
 
-  // --- delete token
+  // delete token
   async function embyDeleteToken() {
     const delBtn = Q('#sec-emby .btn.danger');
     const msg = Q('#emby_msg');
@@ -217,7 +261,7 @@
     }
   }
 
-  // --- merge back to cfg
+  // merge back to cfg
   function mergeEmbyIntoCfg(cfg) {
     cfg = cfg || (window.__cfg ||= {});
     const v = (sel) => (Q(sel)?.value || "").trim();
@@ -238,7 +282,7 @@
   }
 
 
-  // --- toggles + master toggles
+  // toggles and master toggles
   document.addEventListener("click", (ev) => {
     const t = ev.target; if (!(t instanceof Element)) return;
     const btn = t.closest(".lm-dot") || t.closest(".lm-col")?.querySelector(".lm-dot");
@@ -306,26 +350,7 @@
   window.embyLogin = embyLogin;
   window.embyDeleteToken = embyDeleteToken;
 
-  // optional integration
+  // integration
   window.registerSettingsCollector?.(mergeEmbyIntoCfg);
   document.addEventListener("settings-collect", (e) => { try { mergeEmbyIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
-})();
-
-// Force Emby settings collapsed by default
-(function(){
-  const SEL = '#sec-emby details.settings';
-  const collapse = (root=document) => root.querySelectorAll(SEL).forEach(d=>{ d.open = false; d.removeAttribute('open'); });
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => collapse());
-  } else {
-    collapse();
-  }
-  new MutationObserver(muts=>{
-    for (const m of muts) {
-      for (const n of (m.addedNodes || [])) {
-        if (n.nodeType === 1) collapse(n);
-      }
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true });
 })();

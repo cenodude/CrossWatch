@@ -322,43 +322,22 @@ def _get_index_html_static() -> str:
         <div class="section" id="sec-scheduling">
           <div class="head" onclick="toggleSection('sec-scheduling')"><span class="chev">▶</span><strong>Scheduling</strong></div>
           <div class="body">
-            <div class="cw-settings-hub cw-settings-hub--two" id="sched_settings_hub">
-              <button type="button" class="cw-hub-tile active" data-tab="basic" onclick="cwSchedSettingsSelect?.('basic')">
-                <div class="cw-hub-title">Scheduling</div>
-                <div class="cw-hub-desc">Basic timer</div>
-                <div class="chips">
-                  <span class="chip" id="hub_sch_enabled">Status: —</span>
-                  <span class="chip" id="hub_sch_mode">Mode: —</span>
-                </div>
-              </button>
 
-              <button type="button" class="cw-hub-tile" data-tab="advanced" onclick="cwSchedSettingsSelect?.('advanced')">
-                <div class="cw-hub-title">Advanced</div>
-                <div class="cw-hub-desc">Sequential plan</div>
-                <div class="chips">
-                  <span class="chip" id="hub_sch_adv">Plan: —</span>
-                  <span class="chip" id="hub_sch_steps">Steps: —</span>
-                </div>
-              </button>
-            </div>
+            <div id="sched-provider-panel" class="cw-panel hidden"></div>
 
-            <div class="cw-settings-panels" id="sched_settings_panels">
-              <div class="cw-settings-panel active" data-tab="basic">
-            <div class="grid2">
-                          <div><label>Enable</label><select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
-                          <div><label>Frequency</label><select id="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
-                          <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
-                          <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
+            <div id="sched-provider-raw" class="hidden">
+              <div class="grid2">
+                <div><label>Enable</label><select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
+                <div><label>Frequency</label><select id="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
+                <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
+                <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
               </div>
-              <div class="cw-settings-panel" data-tab="advanced">
-                <div id="sched_advanced_mount"></div>
-              </div>
+              <div id="sched_advanced_mount"></div>
             </div>
-            </div>
-          </div>
-        </div>
-        
-      <div class="section" id="sec-scrobbler">
+	          </div>
+	        </div>
+	
+	      <div class="section" id="sec-scrobbler">
         <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
           <span class="chev">▶</span><strong>Scrobbler</strong>
           <span title="Plex/Jellyfin/Emby to Trakt" style="margin-left:auto;display:flex;gap:6px;align-items:center">

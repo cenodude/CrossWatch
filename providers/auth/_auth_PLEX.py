@@ -288,94 +288,116 @@ def html() -> str:
   </div>
 
   <div class="body">
-    <div class="grid2">
-      <div>
-        <label>Current token</label>
-        <div class="inline">
-          <input id="plex_token" placeholder="empty = not set">
-          <button class="btn copy" onclick="copyInputValue('plex_token', this)">Copy</button>
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="plex">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">Plex</div>
+            <div class="muted">Connect your account, tune settings, and whitelist libraries.</div>
+          </div>
         </div>
-      </div>
-      <div>
-        <label>Link code (PIN)</label>
-        <div class="inline">
-          <input id="plex_pin" placeholder="" readonly>
-          <button class="btn copy" onclick="copyInputValue('plex_pin', this)">Copy</button>
+
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+          <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
+          <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
         </div>
-      </div>
-    </div>
 
-    <div class="inline pinrow">
-      <button class="btn" onclick="requestPlexPin()">Connect PLEX</button>
-      <button class="btn danger" onclick="try{ plexDeleteToken && plexDeleteToken(); }catch(_){;}">Delete</button>
-      <div class="hint">Opens plex.tv/link to complete sign-in.</div>
-      <div class="plexmsg">
-        <div id="plex_msg" class="msg ok hidden">PIN</div>
-        <div id="plex_msg_detail" class="hidden"></div>
-      </div>
-    </div>
-
-    <details class="settings">
-      <summary><span class="plex-ico">⚙︎</span><span class="title">Settings</span><span class="hint">Server · User · Whitelist</span></summary>
-      <div class="wrap">
-        <div>
-        <label>Server URL</label>
-        <div class="fieldline">
-          <input id="plex_server_url" placeholder="http://host:32400" list="plex_server_suggestions">
-          <datalist id="plex_server_suggestions"></datalist>
-          <label class="sslopt" title="Verify server TLS certificate">
-            <input type="checkbox" id="plex_verify_ssl">
-            <span class="lbl">Verify SSL</span>
-          </label>
-        </div>
-          <div class="sub">Leave blank to discover.</div>
-
-          <label style="margin-top:10px">Username</label>
-          <div class="fieldline userpick">
-            <input id="plex_username" placeholder="Plex Home profile">
-            <button class="btn" id="plex_user_pick_btn" title="Choose from server users">Pick</button>
-            <div id="plex_user_pop" class="userpop hidden">
-              <div class="pophead">
-                <input id="plex_user_filter" placeholder="Filter users…">
-                <button type="button" class="btn" id="plex_user_close">Close</button>
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+              <div>
+                <label>Current token</label>
+                <div class="inline">
+                  <input id="plex_token" placeholder="empty = not set">
+                  <button class="btn copy" onclick="copyInputValue('plex_token', this)">Copy</button>
+                </div>
               </div>
-              <div id="plex_user_list" class="userlist"></div>
-              <div class="sub" style="margin-top:6px">Click a user to fill Username and Account_ID.</div>
+              <div>
+                <label>Link code (PIN)</label>
+                <div class="inline">
+                  <input id="plex_pin" placeholder="" readonly>
+                  <button class="btn copy" onclick="copyInputValue('plex_pin', this)">Copy</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="inline pinrow">
+              <button class="btn" onclick="requestPlexPin()">Connect PLEX</button>
+              <button class="btn danger" onclick="try{ plexDeleteToken && plexDeleteToken(); }catch(_){;}">Delete</button>
+              <div class="hint">Opens plex.tv/link to complete sign-in.</div>
+              <div class="plexmsg">
+                <div id="plex_msg" class="msg ok hidden">PIN</div>
+                <div id="plex_msg_detail" class="hidden"></div>
+              </div>
             </div>
           </div>
 
-          <label style="margin-top:10px">Account_ID</label>
-          <input id="plex_account_id" type="number" min="1" placeholder="e.g. 1">
+          <div class="cw-subpanel" data-sub="settings">
+            <div style="max-width:820px">
+              <label>Server URL</label>
+              <div class="fieldline">
+                <input id="plex_server_url" placeholder="http://host:32400" list="plex_server_suggestions">
+                <datalist id="plex_server_suggestions"></datalist>
+                <label class="sslopt" title="Verify server TLS certificate">
+                  <input type="checkbox" id="plex_verify_ssl">
+                  <span class="lbl">Verify SSL</span>
+                </label>
+              </div>
+              <div class="sub">Leave blank to discover.</div>
 
-          <label style="margin-top:10px">Home PIN (optional)</label>
-          <input id="plex_home_pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 digits">
-          <div class="sub">Only needed if the selected Plex Home user is PIN-protected.</div>
+              <label style="margin-top:10px">Username</label>
+              <div class="fieldline userpick">
+                <input id="plex_username" placeholder="Plex Home profile">
+                <button class="btn" id="plex_user_pick_btn" title="Choose from server users">Pick</button>
+                <div id="plex_user_pop" class="userpop hidden">
+                  <div class="pophead">
+                    <input id="plex_user_filter" placeholder="Filter users…">
+                    <button type="button" class="btn" id="plex_user_close">Close</button>
+                  </div>
+                  <div id="plex_user_list" class="userlist"></div>
+                  <div class="sub" style="margin-top:6px">Click a user to fill Username and Account_ID.</div>
+                </div>
+              </div>
 
-          <div class="btnrow">
-            <button class="btn" title="Fetch Server URL, Username, Account ID" onclick="plexAuto()">Auto-Fetch</button>
-            <button class="btn" title="Load Plex libraries" onclick="refreshPlexLibraries()">Load libraries</button>
-            <span class="sub" style="align-self:center">Edit values before Save if needed.</span>
+              <label style="margin-top:10px">Account_ID</label>
+              <input id="plex_account_id" type="number" min="1" placeholder="e.g. 1">
+
+              <label style="margin-top:10px">Home PIN (optional)</label>
+              <input id="plex_home_pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 digits">
+              <div class="sub">Only needed if the selected Plex Home user is PIN-protected.</div>
+
+              <div class="plex-btnrow">
+                <button class="btn" title="Fetch Server URL, Username, Account ID" onclick="plexAuto()">Auto-Fetch</button>
+                <span class="sub" style="align-self:center">Edit values before Save if needed.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cw-subpanel" data-sub="whitelist">
+            <div style="max-width:980px">
+              <div class="plex-btnrow" style="margin-top:0;margin-bottom:12px">
+                <button class="btn" title="Load Plex libraries" onclick="refreshPlexLibraries()">Load libraries</button>
+                <span class="sub" style="align-self:center">Refresh after changing Server URL / token.</span>
+              </div>
+
+              <div class="lm-head">
+                <div class="title">Whitelist Libraries</div>
+                <input id="plex_lib_filter" class="lm-filter" placeholder="Filter…">
+                <div class="lm-col"><button id="plex_hist_all" type="button" class="lm-dot hist" title="Toggle all History"></button><span class="sub">History</span></div>
+                <div class="lm-col"><button id="plex_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings"></button><span class="sub">Ratings</span></div>
+                <div class="lm-col"><button id="plex_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble"></button><span class="sub">Scrobble</span></div>
+              </div>
+              <div id="plex_lib_matrix" class="lm-rows"></div>
+              <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
+              <select id="plex_lib_history" class="lm-hidden" multiple></select>
+              <select id="plex_lib_ratings" class="lm-hidden" multiple></select>
+              <select id="plex_lib_scrobble" class="lm-hidden" multiple></select>
+            </div>
           </div>
         </div>
-
-        <div>
-          <div class="lm-head">
-            <div class="title">Whitelist Libraries</div>
-            <input id="plex_lib_filter" class="lm-filter" placeholder="Filter…">
-            <div class="lm-col"><button id="plex_hist_all" type="button" class="lm-dot hist" title="Toggle all History"></button><span class="sub">History</span></div>
-            <div class="lm-col"><button id="plex_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings"></button><span class="sub">Ratings</span></div>
-            <div class="lm-col"><button id="plex_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble"></button><span class="sub">Scrobble</span></div>
-          </div>
-          <div id="plex_lib_matrix" class="lm-rows"></div>
-          <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
-          <select id="plex_lib_history" class="lm-hidden" multiple></select>
-          <select id="plex_lib_ratings" class="lm-hidden" multiple></select>
-          <select id="plex_lib_scrobble" class="lm-hidden" multiple></select>
-        </div>
-
-        <div class="footspace" aria-hidden="true"></div>
       </div>
-    </details>
+    </div>
   </div>
 
   <script>

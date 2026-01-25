@@ -13,6 +13,50 @@
   let S = new Set();
   let hydrated = false;
 
+  const JFY_SUBTAB_KEY = "cw.ui.jellyfin.auth.subtab.v1";
+
+  function jfyAuthSubSelect(tab, opts = {}) {
+    const root = Q('#sec-jellyfin .cw-meta-provider-panel[data-provider="jellyfin"]') || Q("#sec-jellyfin .cw-panel");
+    if (!root) return;
+
+    const want = String(tab || "auth").toLowerCase();
+    const sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      btn.classList.toggle("active", String(btn.dataset.sub || "").toLowerCase() === sub);
+    });
+    root.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
+      sp.classList.toggle("active", String(sp.dataset.sub || "").toLowerCase() === sub);
+    });
+
+    if (opts.persist !== false) {
+      try { localStorage.setItem(JFY_SUBTAB_KEY, sub); } catch {}
+    }
+
+    if (sub === "whitelist") {
+      try { jfyLoadLibraries(); } catch {}
+    }
+  }
+
+  function mountJfyAuthTabs() {
+    const root = Q('#sec-jellyfin .cw-meta-provider-panel[data-provider="jellyfin"]');
+    if (!root) return;
+
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      if (btn.__jfyTabWired) return;
+      btn.__jfyTabWired = true;
+      btn.addEventListener("click", () => jfyAuthSubSelect(btn.dataset.sub));
+    });
+
+    if (root.__jfyTabsInit) return;
+    root.__jfyTabsInit = true;
+
+    let last = "auth";
+    try { last = localStorage.getItem(JFY_SUBTAB_KEY) || "auth"; } catch {}
+    jfyAuthSubSelect(last, { persist: false });
+  }
+
+
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const maskToken = (has) => { const el = Q("#jfy_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -126,6 +170,7 @@
   }
 
   function ensureHydrate() {
+    try { mountJfyAuthTabs(); } catch {}
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
     if (!sec || (body && !visible(body))) return;
@@ -304,20 +349,3 @@
   document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
 })();
 
-(function(){
-  const SEL = '#sec-jellyfin details.settings';
-  const collapse = (root=document) => root.querySelectorAll(SEL).forEach(d=>{ d.open = false; d.removeAttribute('open'); });
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => collapse());
-  } else {
-    collapse();
-  }
-  new MutationObserver(muts=>{
-    for (const m of muts) {
-      for (const n of m.addedNodes || []) {
-        if (n.nodeType === 1) collapse(n);
-      }
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true });
-})();
