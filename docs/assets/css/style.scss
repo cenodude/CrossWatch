@@ -99,6 +99,29 @@ blockquote {
   transform: translateY(-2px) scale(1.02);
   filter: brightness(1.05);
 }
+/* Screenshot row (smaller thumbs, horizontal on desktop) */
+.cw-shotgrid.is-small {
+  gap: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.cw-shotgrid.is-small a {
+  flex: 0 0 auto;
+  width: 180px;
+  max-width: 180px;
+}
+.cw-shotgrid.is-small img {
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.42);
+}
+@media (max-width: 900px) {
+  .cw-shotgrid.is-small {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
 
 /* Lightbox viewer */
 .cw-lb {

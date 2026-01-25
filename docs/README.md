@@ -1,10 +1,28 @@
-# docs
 
-<div align="center"><img src="../.gitbook/assets/CrossWatch (1).png" alt="CrossWatch" width="480"></div>
+<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
 
-<p align="center"><a href="https://github.com/cenodude/CrossWatch">Join us on GitHub</a></p>
+<p align="center">
+  <a class="cw-cta" href="https://github.com/cenodude/CrossWatch">
+    <span class="cw-cta-icon" aria-hidden="true"></span>
+    Join us on GitHub
+  </a>
+</p>
 
-[![CrossWatch - Screenshot 1](<../.gitbook/assets/screenshot1 (1).jpg>) ](images/screenshot1.jpg)[![CrossWatch - Screenshot 2](<../.gitbook/assets/screenshot2 (1).jpg>) ](images/screenshot2.jpg)[![CrossWatch - Screenshot 3](<../.gitbook/assets/screenshot3 (1).jpg>) ](images/screenshot3.jpg)[![CrossWatch - Screenshot 4](<../.gitbook/assets/screenshot4 (1).jpg>)](images/screenshot4.jpg)
+<!-- Screenshots (small thumbs, click to zoom) -->
+<div class="cw-shotgrid is-small" align="center">
+  <a href="images/screenshot1.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 1">
+    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="180" loading="lazy" decoding="async">
+  </a>
+  <a href="images/screenshot2.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 2">
+    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="180" loading="lazy" decoding="async">
+  </a>
+  <a href="images/screenshot3.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 3">
+    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="180" loading="lazy" decoding="async">
+  </a>
+  <a href="images/screenshot4.jpg" data-cw-gallery="cw-screens" aria-label="Open screenshot 4">
+    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="180" loading="lazy" decoding="async">
+  </a>
+</div>
 
 <p align="center"><sub>Click any screenshot to view it full size.</sub></p>
 
