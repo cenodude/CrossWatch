@@ -52,6 +52,86 @@ ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
 
 _EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 
+_ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
+_ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
+_ANIME_TVDB_MAP_DATE_FROM = "1970-01-01T00:00:00Z"
+
+
+def _anime_tvdb_map_path() -> str:
+    return str(state_file("simkl.anime.tvdb_map.json"))
+
+
+def _load_anime_tvdb_map() -> tuple[dict[str, str], int]:
+    try:
+        raw = json.loads(Path(_anime_tvdb_map_path()).read_text("utf-8"))
+        mp = dict(raw.get("map") or {})
+        updated = int(raw.get("updated_at") or 0)
+        return {str(k): str(v) for k, v in mp.items() if k and v}, updated
+    except Exception:
+        return {}, 0
+
+
+def _save_anime_tvdb_map(mp: Mapping[str, str]) -> None:
+    try:
+        payload = {"updated_at": int(time.time()), "map": dict(mp)}
+        Path(_anime_tvdb_map_path()).write_text(json.dumps(payload, indent=2, sort_keys=True), "utf-8")
+    except Exception:
+        pass
+
+
+def _ensure_anime_tvdb_map(adapter: Any) -> dict[str, str]:
+    global _ANIME_TVDB_MAP_MEMO
+    if _ANIME_TVDB_MAP_MEMO is not None:
+        return _ANIME_TVDB_MAP_MEMO
+
+    mp, updated = _load_anime_tvdb_map()
+    if mp and updated and (time.time() - updated) < _ANIME_TVDB_MAP_TTL_SEC:
+        _ANIME_TVDB_MAP_MEMO = mp
+        return mp
+
+    try:
+        rows = _fetch_kind(adapter.client.session, _headers(adapter, force_refresh=True), kind="anime", since_iso=_ANIME_TVDB_MAP_DATE_FROM, timeout=adapter.cfg.timeout)
+    except Exception:
+        _ANIME_TVDB_MAP_MEMO = mp
+        return mp
+
+    built: dict[str, str] = {}
+    for row in rows or []:
+        show = row.get("show") if isinstance(row, Mapping) else None
+        show = show if isinstance(show, Mapping) else row
+        ids = dict(show.get("ids") or {}) if isinstance(show, Mapping) else {}
+        tvdb = str(ids.get("tvdb") or "").strip()
+        if not tvdb:
+            continue
+        for k in ("tmdb", "imdb", "simkl"):
+            v = str(ids.get(k) or "").strip()
+            if v:
+                built[f"{k}:{v}"] = tvdb
+    if built:
+        mp = built
+        _save_anime_tvdb_map(mp)
+    _ANIME_TVDB_MAP_MEMO = mp
+    return mp
+
+
+def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
+    out = {k: str(v) for k, v in dict(ids).items() if v}
+    if out.get("tvdb"):
+        return out
+    if not any(out.get(k) for k in ("tmdb", "imdb", "simkl")):
+        return out
+    mp = _ensure_anime_tvdb_map(adapter)
+    for k in ("tmdb", "imdb", "simkl"):
+        v = out.get(k)
+        if not v:
+            continue
+        tvdb = mp.get(f"{k}:{v}")
+        if tvdb:
+            out["tvdb"] = tvdb
+            break
+    return out
+
+
 def _dedupe_history_movies(out: dict[str, dict[str, Any]]) -> None:
     if not out:
         return
@@ -299,30 +379,8 @@ def _episode_lookup(
 
 def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = _raw_show_ids(item)
-    have = {k: show_ids[k] for k in ID_KEYS if show_ids.get(k)}
-    if have:
-        return have
+    return {k: show_ids[k] for k in ID_KEYS if show_ids.get(k)}
 
-    ids_raw = item.get("ids")
-    ids: dict[str, Any] = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
-    guid = str(ids.get("guid") or "")
-
-    inferred = {k: ids[k] for k in ID_KEYS if ids.get(k)}
-    if inferred:
-        adapter = item.get("_adapter") if isinstance(item, Mapping) else None
-        if adapter:
-            resolved = _resolve_show_ids(adapter, item, inferred)
-            return resolved or {k: str(v) for k, v in inferred.items()}
-        return inferred
-
-    if guid.startswith("plex://"):
-        adapter = item.get("_adapter") if isinstance(item, Mapping) else None
-        if adapter:
-            resolved = _resolve_show_ids(adapter, item, show_ids)
-            if resolved:
-                return resolved
-
-    return {}
 
 def _legacy_path(path: Path) -> Path | None:
     parts = path.stem.split(".")
@@ -551,32 +609,6 @@ def _best_ids(obj: Mapping[str, Any]) -> dict[str, str]:
     return {k: str(ids[k]) for k in ("tvdb", "tmdb", "imdb", "simkl") if ids.get(k)}
 
 def _simkl_resolve_show_via_ids(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
-    params: dict[str, str] = {}
-    for key in ("imdb", "tvdb", "tmdb"):
-        value = ids.get(key)
-        if value:
-            params[key] = str(value)
-    if not params:
-        return {}
-    session = adapter.client.session
-    headers = _headers(adapter, force_refresh=True)
-    try:
-        resp = session.get(
-            f"{BASE}/search/id",
-            headers=headers,
-            params=params,
-            timeout=adapter.cfg.timeout,
-        )
-        if not resp.ok:
-            return {}
-        body = resp.json() or {}
-    except Exception:
-        return {}
-    candidate: Any = body[0] if isinstance(body, list) and body else body
-    if isinstance(candidate, Mapping):
-        show = candidate.get("show") if isinstance(candidate.get("show"), Mapping) else candidate
-        if isinstance(show, Mapping):
-            return _best_ids(show)
     return {}
 
 
@@ -632,83 +664,12 @@ def _simkl_search_show(adapter: Any, title: str, year: int | None) -> dict[str, 
 
 
 def _simkl_resolve_show_via_episode_id(adapter: Any, item: Mapping[str, Any]) -> dict[str, str]:
-    ids = dict(item.get("ids") or {})
-    params: dict[str, str] = {}
-    for key in ("imdb", "tvdb", "tmdb"):
-        value = ids.get(key)
-        if value:
-            params[key] = str(value)
-    if not params:
-        return {}
-    session = adapter.client.session
-    headers = _headers(adapter, force_refresh=True)
-    try:
-        resp = session.get(
-            f"{BASE}/search/id",
-            headers=headers,
-            params=params,
-            timeout=adapter.cfg.timeout,
-        )
-        if not resp.ok:
-            return {}
-        body = resp.json() or {}
-    except Exception:
-        return {}
-    candidate: Any = body
-    if isinstance(body, list) and body:
-        candidate = body[0]
-    if isinstance(candidate, Mapping):
-        show = candidate.get("show") if isinstance(candidate.get("show"), Mapping) else candidate
-        if isinstance(show, Mapping):
-            return _best_ids(show)
     return {}
 
 
 def _resolve_show_ids(adapter: Any, item: Mapping[str, Any], raw_show_ids: Mapping[str, Any]) -> dict[str, str]:
     have = {k: raw_show_ids[k] for k in ("tvdb", "tmdb", "imdb", "simkl") if raw_show_ids.get(k)}
-    if have:
-        out = {k: str(v) for k, v in have.items()}
-
-        if "simkl" not in out:
-            enriched = _simkl_resolve_show_via_ids(adapter, out)
-            if enriched.get("simkl"):
-                out["simkl"] = str(enriched["simkl"])
-        return out
-
-    plex = raw_show_ids.get("plex")
-    title = (
-        item.get("series_title")
-        or item.get("show_title")
-        or item.get("grandparent_title")
-        or item.get("title")
-        or ""
-    )
-    key = f"plex:{plex}" if plex else _norm_title(title)
-    if key in _RESOLVE_CACHE:
-        return _RESOLVE_CACHE[key]
-
-    mapping = _load_show_map().get("map", {})
-    if isinstance(mapping, Mapping) and key in mapping:
-        cached = dict(mapping[key])
-        _RESOLVE_CACHE[key] = cached
-        return cached
-
-    year = item.get("series_year")
-    year_int: int | None = None
-    if isinstance(year, int):
-        year_int = year
-    elif isinstance(year, str) and year.isdigit():
-        year_int = int(year)
-
-    found = _simkl_search_show(adapter, title, year_int)
-    if not found:
-        found = _simkl_resolve_show_via_episode_id(adapter, item)
-    if found:
-        _persist_show_map(key, found)
-        _RESOLVE_CACHE[key] = found
-        return found
-    return {}
-
+    return {k: str(v) for k, v in have.items()} if have else {}
 
 def _fetch_kind(
     session: Any,
@@ -874,10 +835,20 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 series_name = f"SIMKL:{sid}" if sid else "Unknown Series"
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
-                s_num = int((season.get("number") or season.get("season") or 0))
+                s_num_internal = int((season.get("number") or season.get("season") or 0))
                 for episode in (season.get("episodes") or []):
                     episode = episode if isinstance(episode, Mapping) else {}
-                    e_num = int((episode.get("number") or episode.get("episode") or 0))
+                    e_num_internal = int((episode.get("number") or episode.get("episode") or 0))
+                    s_num = s_num_internal
+                    e_num = e_num_internal
+                    if row_kind == "anime":
+                        tvdb_map = episode.get("tvdb")
+                        if isinstance(tvdb_map, Mapping):
+                            s_m = int(tvdb_map.get("season") or 0)
+                            e_m = int(tvdb_map.get("episode") or 0)
+                            if s_m >= 1 and e_m >= 1:
+                                s_num = s_m
+                                e_num = e_m
                     watched_at = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
                     ts = _as_epoch(watched_at)
                     if not ts or not s_num or not e_num:
@@ -958,10 +929,11 @@ def _is_anime_like(item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
     return False
 
 
-def _show_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
+def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = _ids_of(item)
     if not ids:
         return None
+    ids = _maybe_map_tvdb(adapter, ids)
     entry: dict[str, Any] = {"ids": ids}
     if _is_anime_like(item, ids):
         entry["use_tvdb_anime_seasons"] = True
@@ -973,6 +945,7 @@ def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str,
     if not show_ids_raw:
         return None
     show_ids = {k: str(show_ids_raw[k]) for k in ID_KEYS if show_ids_raw.get(k)}
+    show_ids = _maybe_map_tvdb(adapter, show_ids)
     if not show_ids:
         return None
 
@@ -1076,7 +1049,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             shadow_events.append(ev)
             continue
 
-        entry = _show_add_entry(item)
+        entry = _show_add_entry(adapter, item)
         if entry:
             shows_whole.append(entry)
             thaw_keys.append(_thaw_key(item))

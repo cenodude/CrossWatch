@@ -13,7 +13,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
-UA = os.getenv("CW_UA", "CrossWatch/3.1.0 (SIMKL)")
+UA = os.getenv("CW_UA", "CrossWatch/3.2.0 (SIMKL)")
 
 STATE_DIR = Path("/config/.cw_state")
 

@@ -1,6 +1,6 @@
 # /providers/sync/_mod_SIMKL.py
-# CrossWatch SIMKL module
-# Copyright (c) 2025 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# CrossWatch - SIMKL module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from ._mod_common import (
 )
 from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, normalize as simkl_normalize, key_of as simkl_key_of, state_file
 
-__VERSION__ = "3.1.0"
+__VERSION__ = "3.2.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 

@@ -30,7 +30,7 @@ from ._common import (
 BASE = "https://api.simkl.com"
 URL_ADD = f"{BASE}/sync/ratings"
 URL_REMOVE = f"{BASE}/sync/ratings/remove"
-URL_SEARCH_ID = f"{BASE}/search/id"
+URL_ALL_ITEMS = f"{BASE}/sync/all-items"
 
 
 def _unresolved_path() -> str:
@@ -42,6 +42,92 @@ def _shadow_path() -> str:
 
 
 ID_KEYS = ("imdb", "tmdb", "tvdb", "simkl")
+
+_ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
+_ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
+_ANIME_TVDB_MAP_DATE_FROM = "1970-01-01T00:00:00Z"
+
+
+def _anime_tvdb_map_path() -> str:
+    return str(state_file("simkl.anime.tvdb_map.json"))
+
+
+def _load_anime_tvdb_map() -> tuple[dict[str, str], int]:
+    try:
+        raw = json.loads(Path(_anime_tvdb_map_path()).read_text("utf-8"))
+        mp = dict(raw.get("map") or {})
+        updated = int(raw.get("updated_at") or 0)
+        return {str(k): str(v) for k, v in mp.items() if k and v}, updated
+    except Exception:
+        return {}, 0
+
+
+def _save_anime_tvdb_map(mp: Mapping[str, str]) -> None:
+    try:
+        payload = {"updated_at": int(time.time()), "map": dict(mp)}
+        Path(_anime_tvdb_map_path()).write_text(json.dumps(payload, indent=2, sort_keys=True), "utf-8")
+    except Exception:
+        pass
+
+
+def _ensure_anime_tvdb_map(adapter: Any) -> dict[str, str]:
+    global _ANIME_TVDB_MAP_MEMO
+    if _ANIME_TVDB_MAP_MEMO is not None:
+        return _ANIME_TVDB_MAP_MEMO
+
+    mp, updated = _load_anime_tvdb_map()
+    if mp and updated and (time.time() - updated) < _ANIME_TVDB_MAP_TTL_SEC:
+        _ANIME_TVDB_MAP_MEMO = mp
+        return mp
+
+    built: dict[str, str] = {}
+    try:
+        resp = adapter.client.session.get(
+            f"{URL_ALL_ITEMS}/anime",
+            headers=_headers(adapter, force_refresh=True),
+            params={"extended": "full_anime_seasons", "date_from": _ANIME_TVDB_MAP_DATE_FROM},
+            timeout=adapter.cfg.timeout,
+        )
+        rows = resp.json() if resp.ok else []
+    except Exception:
+        rows = []
+
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+        ids = dict(show.get("ids") or {}) if isinstance(show, Mapping) else {}
+        tvdb = str(ids.get("tvdb") or "").strip()
+        if not tvdb:
+            continue
+        for k in ("tmdb", "imdb", "simkl"):
+            v = str(ids.get(k) or "").strip()
+            if v:
+                built[f"{k}:{v}"] = tvdb
+    if built:
+        mp = built
+        _save_anime_tvdb_map(mp)
+    _ANIME_TVDB_MAP_MEMO = mp
+    return mp
+
+
+def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
+    out = {k: str(v) for k, v in dict(ids).items() if v}
+    if out.get("tvdb"):
+        return out
+    if not any(out.get(k) for k in ("tmdb", "imdb", "simkl")):
+        return out
+    mp = _ensure_anime_tvdb_map(adapter)
+    for k in ("tmdb", "imdb", "simkl"):
+        v = out.get(k)
+        if not v:
+            continue
+        tvdb = mp.get(f"{k}:{v}")
+        if tvdb:
+            out["tvdb"] = tvdb
+            break
+    return out
+
 
 
 def _is_unknown_key(k: str) -> bool:
@@ -526,65 +612,6 @@ def _fetch_rows_any(
         return []
 
 
-def _search_id_enrich(
-    sess: Any,
-    hdrs: Mapping[str, str],
-    *,
-    ids: Mapping[str, Any],
-    timeout: float,
-    cache: dict[str, tuple[str, int | None]],
-) -> tuple[str, int | None]:
-    imdb = str(ids.get("imdb") or "").strip()
-    tmdb = str(ids.get("tmdb") or "").strip()
-    tvdb = str(ids.get("tvdb") or "").strip()
-    simkl = str(ids.get("simkl") or "").strip()
-
-    cache_key = ""
-    params: dict[str, str] = {}
-    if imdb:
-        cache_key = f"imdb:{imdb}"
-        params["imdb"] = imdb
-    elif tmdb:
-        cache_key = f"tmdb:{tmdb}"
-        params["tmdb"] = tmdb
-    elif tvdb:
-        cache_key = f"tvdb:{tvdb}"
-        params["tvdb"] = tvdb
-    elif simkl:
-        cache_key = f"simkl:{simkl}"
-        params["simkl"] = simkl
-
-    if not cache_key:
-        return "", None
-    if cache_key in cache:
-        return cache[cache_key]
-
-    try:
-        resp = sess.get(URL_SEARCH_ID, headers=dict(hdrs), params=params, timeout=timeout)
-        if resp.status_code != 200:
-            cache[cache_key] = ("", None)
-            return "", None
-        data = resp.json()
-    except Exception:
-        cache[cache_key] = ("", None)
-        return "", None
-
-    obj: Mapping[str, Any] | None = None
-    if isinstance(data, list) and data:
-        first = data[0]
-        obj = first if isinstance(first, Mapping) else None
-    elif isinstance(data, Mapping):
-        obj = data
-
-    if not obj:
-        cache[cache_key] = ("", None)
-        return "", None
-
-    title, year = _title_year_from_row(obj)
-    cache[cache_key] = (title, year)
-    return title, year
-
-
 def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict[str, Any]]:
     sess = adapter.client.session
     tmo = adapter.cfg.timeout
@@ -778,11 +805,12 @@ def _movie_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
     return ent
 
 
-def _show_entry_add(it: Mapping[str, Any]) -> dict[str, Any] | None:
+def _show_entry_add(adapter: Any, it: Mapping[str, Any]) -> dict[str, Any] | None:
     ids = _ids_of(it)
     rating = _norm_rating(it.get("rating"))
     if not ids or rating is None:
         return None
+    ids = _maybe_map_tvdb(adapter, ids)
     ent: dict[str, Any] = {"ids": ids, "rating": rating}
     ra = _pick_rated_at(it)
     if ra:
@@ -834,7 +862,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved.append({"item": mini, "hint": "unsupported_type"})
             continue
 
-        ent = _show_entry_add(it)
+        ent = _show_entry_add(adapter, it)
         if ent:
             shows.append(ent)
             thaw_keys.append(key)
@@ -871,7 +899,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         _log(f"ADD error: {exc}")
 
     for it in attempted:
-        ids = _ids_of(it)
+        ids = _maybe_map_tvdb(adapter, _ids_of(it))
         rating = _norm_rating(it.get("rating"))
         if ids and rating is not None:
             _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
@@ -900,6 +928,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             continue
 
         ids = _ids_of(it) or _show_ids_of_episode(it)
+        ids = _maybe_map_tvdb(adapter, ids)
         if not ids:
             unresolved.append({"item": mini, "hint": "missing_ids"})
             continue
@@ -955,6 +984,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     for it in attempted:
         ids = _ids_of(it) or _show_ids_of_episode(it)
+        ids = _maybe_map_tvdb(adapter, ids)
         if ids:
             _freeze(it, action="remove", reasons=["write_failed"], ids_sent=ids, rating=None)
 
