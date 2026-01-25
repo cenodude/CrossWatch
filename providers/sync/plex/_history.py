@@ -493,18 +493,34 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     rows: list[Any] = []
     try:
         explicit_user = bool(cfg_acct_id or cfg_uname)
-        kwargs: dict[str, Any] = {}
+        base_kwargs: dict[str, Any] = {}
         if cfg_acct_id and (not cli_acct_id or int(cfg_acct_id) != int(cli_acct_id)):
-            kwargs["accountID"] = int(cfg_acct_id)
+            base_kwargs["accountID"] = int(cfg_acct_id)
         elif not explicit_user and cli_acct_id:
-            kwargs["accountID"] = int(cli_acct_id)
+            base_kwargs["accountID"] = int(cli_acct_id)
         if since is not None:
-            kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
-        rows = list(srv.history(**kwargs) or [])
-        if not rows and "accountID" in kwargs and not explicit_user:
-            _dbg("retry_without_account_scope")
-            kwargs.pop("accountID", None)
-            rows = list(srv.history(**kwargs) or [])
+            base_kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
+
+        if allow:
+            _dbg("history_fetch_scoped", sections=sorted(allow))
+            for sec_id in sorted(allow):
+                kwargs = dict(base_kwargs)
+                try:
+                    kwargs["librarySectionID"] = int(sec_id)
+                except Exception:
+                    continue
+                part = list(srv.history(**kwargs) or [])
+                if not part and "accountID" in kwargs and not explicit_user:
+                    _dbg("retry_without_account_scope", librarySectionID=sec_id)
+                    kwargs.pop("accountID", None)
+                    part = list(srv.history(**kwargs) or [])
+                rows.extend(part)
+        else:
+            rows = list(srv.history(**base_kwargs) or [])
+            if not rows and "accountID" in base_kwargs and not explicit_user:
+                _dbg("retry_without_account_scope")
+                base_kwargs.pop("accountID", None)
+                rows = list(srv.history(**base_kwargs) or [])
     except Exception as e:
         _warn("history_fetch_failed", error=str(e))
         return {}
