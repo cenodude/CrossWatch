@@ -27,6 +27,14 @@
     if (!hasTmdbKey(cfg)) return false;
     return true;
   };
+  const isSmallScreen = () => {
+    try {
+      return !!window.matchMedia?.("(max-width: 680px)")?.matches;
+    } catch {
+      return false;
+    }
+  };
+
 
   const isActiveState = (s) => {
     const v = String(s || "").toLowerCase();
@@ -498,6 +506,60 @@
       justify-content:space-between;
     }
   }
+
+  @media (max-width:680px){
+    #playing-detail{
+      bottom:max(10px, env(safe-area-inset-bottom));
+      width:calc(100vw - 20px);
+      border-radius:18px;
+    }
+    #playing-detail .pc-inner{
+      grid-template-columns:64px 1fr;
+      gap:12px;
+      padding:12px;
+    }
+    #playing-detail .pc-poster{width:64px;height:96px;border-radius:10px}
+    #playing-detail .pc-title{font-size:15px;line-height:1.15}
+    #playing-detail .pc-close{padding:2px 4px}
+    #playing-detail .pc-close span:nth-child(2){display:none}
+    #playing-detail .pc-meta{gap:4px;margin-top:4px}
+    #playing-detail .pc-chip{font-size:10px;padding:3px 7px}
+    #playing-detail .pc-overview{display:none}
+    #playing-detail .pc-progress-bg{height:18px}
+    #playing-detail .pc-progress-labels{font-size:11px;padding:0 8px}
+    #playing-detail .pc-right{
+      grid-column:1 / -1;
+      flex-direction:row;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+    }
+    #playing-detail .pc-score-circle{width:46px;height:46px}
+    #playing-detail .pc-score-label{display:none}
+    #playing-detail .pc-link{
+      font-size:11px;
+      padding:4px 8px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      text-decoration:none;
+    }
+    #playing-detail .pc-status{
+      margin-top:0;
+      flex:1 1 auto;
+      text-align:right;
+      white-space:normal;
+      max-width:60%;
+    }
+  }
+
+  @media (hover:none){
+    #playing-detail.show:hover{
+      transform:translate(-50%,0);
+      box-shadow:0 20px 48px rgba(0,0,0,.6);
+    }
+  }
   `;
 
   const style = document.createElement("style");
@@ -694,7 +756,7 @@
     }));
     if (tmdbUrl) {
       tmdbEl.href = tmdbUrl;
-      tmdbEl.textContent = "View on TMDb ↗";
+      tmdbEl.textContent = isSmallScreen() ? "TMDb ↗" : "View on TMDb ↗";
       tmdbEl.style.display = "";
     } else {
       tmdbEl.style.display = "none";
@@ -704,7 +766,7 @@
     const imdbUrl = buildImdbUrl(p, meta);
     if (imdbUrl) {
       imdbEl.href = imdbUrl;
-      imdbEl.textContent = "View on IMDb ↗";
+      imdbEl.textContent = isSmallScreen() ? "IMDb ↗" : "View on IMDb ↗";
       imdbEl.style.display = "";
     } else {
       imdbEl.style.display = "none";

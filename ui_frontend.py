@@ -26,6 +26,31 @@ FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64
 </svg>"""
 
 
+DEFAULT_MANIFEST: str = r"""{
+  "name": "CrossWatch",
+  "short_name": "CrossWatch",
+  "start_url": "/?ui=compact",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0b0f",
+  "theme_color": "#0b0b0f",
+  "icons": [
+    { "src": "/assets/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/pwa/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}"""
+
+DEFAULT_SW: str = r"""/* sw.js - service worker */
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
+});
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+self.addEventListener("fetch", (event) => {
+});
+"""
+
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -47,6 +72,31 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
         # serve SVG for legacy path
         return _svg_resp()
 
+    def _asset_text(name: str, fallback: str) -> str:
+        p = assets_dir / name
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            return fallback
+
+    @app.get("/manifest.webmanifest", include_in_schema=False, tags=["ui"])
+    def manifest_webmanifest() -> Response:
+        content = _asset_text("manifest.webmanifest", DEFAULT_MANIFEST)
+        return Response(
+            content=content,
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/sw.js", include_in_schema=False, tags=["ui"])
+    def service_worker() -> Response:
+        content = _asset_text("sw.js", DEFAULT_SW)
+        return Response(
+            content=content,
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store", "Service-Worker-Allowed": "/"},
+        )
+
 
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
@@ -58,8 +108,24 @@ def _get_index_html_static() -> str:
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch | Sync-licious</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="alternate icon" href="/favicon.ico">
+<meta name="theme-color" content="#0b0b0f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/pwa/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-<link rel="stylesheet" href="/assets/crosswatch.css">
+<link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
+<script>
+(() => {
+  try {
+    const q = new URLSearchParams(window.location.search || "");
+    const ui = String(q.get("ui") || "").toLowerCase();
+    const explicit = ui === "compact" || ui === "full" || q.get("compact") === "1" || q.get("full") === "1";
+    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && window.matchMedia?.("(max-width: 680px)")?.matches);
+    if (wantCompact) document.documentElement.classList.add("cw-compact");
+  } catch {}
+})();
+</script>
 
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
 <style>
@@ -159,6 +225,11 @@ def _get_index_html_static() -> str:
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
+
+  <div class="cw-ui-toggle" aria-label="UI mode">
+    <button class="cw-ui-btn btn-full" type="button" onclick="cwSetUiMode('full')">Full UI</button>
+    <button class="cw-ui-btn btn-compact" type="button" onclick="cwSetUiMode('compact')">Compact</button>
+  </div>
 </header>
 
 <main id="layout">
@@ -231,7 +302,7 @@ def _get_index_html_static() -> str:
     </div>
   </section>
 
-  <section id="stats-card" class="card collapsed">
+  <section id="stats-card" class="card">
     <div class="title">Statistics</div>
 
     <div class="stats-modern v2">
@@ -577,31 +648,36 @@ def _get_index_html_static() -> str:
 
 </main>
 
-<script src="/assets/helpers/core.js?v=0.2.5-20251014-02"></script>
-<script src="/assets/helpers/dom.js"></script>
-<script src="/assets/helpers/events.js"></script>
-<script src="/assets/helpers/api.js"></script>
-<script src="/assets/helpers/legacy-bridge.js"></script>
+<script>window.__CW_BUILD__="0.2.5-20251014-02";</script>
+<script>
+  window.APP_VERSION="__CW_VERSION__";
+  window["__CW_" + "VERSION__"] = window.APP_VERSION;
+</script>
+
+<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/dom.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/events.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/legacy-bridge.js?v=__CW_VERSION__"></script>
 <script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>
-<script src="/assets/js/syncbar.js" defer></script>
-<script src="/assets/js/main.js" defer></script>
-<script src="/assets/js/connections.overlay.js" defer></script>
-<script src="/assets/js/connections.pairs.overlay.js" defer></script>
-<script src="/assets/js/scheduler.js" defer></script>
-<script src="/assets/js/schedulerbanner.js" defer></script>
-<script src="/assets/js/playingcard.js" defer></script>
-<script src="/assets/js/insights.js" defer></script>
-<script src="/assets/js/settings-insight.js" defer></script>
-<script src="/assets/js/scrobbler.js" defer></script>
-<script src="/assets/js/editor.js" defer></script>
+<script src="/assets/js/syncbar.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/main.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/connections.overlay.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/connections.pairs.overlay.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/scheduler.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/schedulerbanner.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/playingcard.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/insights.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/settings-insight.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/scrobbler.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/editor.js?v=__CW_VERSION__" defer></script>
 
 <script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>
 
-<script src="/assets/js/client-formatter.js" defer></script>
+<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>
 
-<script>window.__CW_BUILD__="0.2.5-20251014-02";</script>
-<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=0.2.5-20251014-02">
-<script type="module" src="/assets/js/modals.js?v=0.2.5-20251014-02"></script>
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
+<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
 
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 

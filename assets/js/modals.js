@@ -1,17 +1,29 @@
 // assets/js/modals.js
-import { ModalRegistry } from './modals/core/registry.js';
 
-// Cache-buster for dynamic imports
-const ver = (u) => u + (u.includes('?') ? '&' : '?') + 'v=' + (window.__CW_BUILD__ || Date.now());
+const _cwGetV = () => {
+  try {
+    // Prefer explicit global version
+    return (window.__CW_VERSION__ || window.__CW_BUILD__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
+  } catch {
+    return (window.__CW_VERSION__ || window.__CW_BUILD__ || Date.now());
+  }
+};
 
-// Register modals (versioned)
-ModalRegistry.register('pair-config', () => import(ver('./modals/pair-config/index.js')));
-ModalRegistry.register('about',        () => import(ver('./modals/about.js')));
-ModalRegistry.register('analyzer',     () => import(ver('./modals/analyzer/index.js')));
-ModalRegistry.register('exporter',     () => import(ver('./modals/exporter/index.js')));
-ModalRegistry.register('maintenance',  () => import(ver('./modals/maintenance/index.js')));
-ModalRegistry.register('setup-wizard', () => import(ver('./modals/setup-wizard/index.js')));
-ModalRegistry.register('upgrade-warning', () => import(ver('./modals/upgrade-warning/index.js')));
+const _cwVer = (u) => {
+  const v = encodeURIComponent(String(_cwGetV()));
+  return u + (u.includes('?') ? '&' : '?') + 'v=' + v;
+};
+
+const { ModalRegistry } = await import(_cwVer('./modals/core/registry.js'));
+
+// Register modals
+ModalRegistry.register('pair-config', () => import(_cwVer('./modals/pair-config/index.js')));
+ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js')));
+ModalRegistry.register('analyzer',     () => import(_cwVer('./modals/analyzer/index.js')));
+ModalRegistry.register('exporter',     () => import(_cwVer('./modals/exporter/index.js')));
+ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
+ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
+ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-warning/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
