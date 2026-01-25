@@ -18,7 +18,9 @@
   </a>
 </p>
 
-<p align="center"><sub>Click any screenshot to view it full size • ⭐ Star this repository to get updates</sub></p>
+<p align="center" style="font-size:14px;">
+  <b>⭐ Star this repository to get updates</b>
+</p>
 
 <div align="center"><img src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" alt="image" height="314" width="776"></div>
 
