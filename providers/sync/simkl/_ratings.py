@@ -404,6 +404,16 @@ def _title_year_from_row(row: Mapping[str, Any]) -> tuple[str, int | None]:
         year = y
     elif isinstance(y, str) and y.strip().isdigit():
         year = int(y.strip())
+
+    if (not title) or (year is None):
+        for key in ("movie", "show", "anime"):
+            nested = row.get(key)
+            if isinstance(nested, Mapping):
+                t2, y2 = _title_year_from_row(cast(Mapping[str, Any], nested))
+                if (not title) and t2:
+                    title = t2
+                if (year is None) and (y2 is not None):
+                    year = y2
     return title, year
 
 
@@ -411,11 +421,15 @@ def _media_from_row(kind: str, row: Mapping[str, Any]) -> Mapping[str, Any]:
     if kind == "movies":
         raw = row.get("movie")
         if isinstance(raw, Mapping):
-            return cast(Mapping[str, Any], raw)
-    if kind in ("shows", "anime"):
+            return {"movie": cast(Mapping[str, Any], raw)}
+    if kind == "shows":
+        raw = row.get("show")
+        if isinstance(raw, Mapping):
+            return {"show": cast(Mapping[str, Any], raw)}
+    if kind == "anime":
         raw = row.get("show") or row.get("anime")
         if isinstance(raw, Mapping):
-            return cast(Mapping[str, Any], raw)
+            return {"anime": cast(Mapping[str, Any], raw)}
 
     ids = _row_ids(row)
     title, year = _title_year_from_row(row)
@@ -429,6 +443,7 @@ def _media_from_row(kind: str, row: Mapping[str, Any]) -> Mapping[str, Any]:
             m["year"] = year
         return m
     return {}
+
 
 
 def _merge_row_identity(m: dict[str, Any], row: Mapping[str, Any]) -> None:
@@ -459,7 +474,6 @@ def _resolve_by_simkl_id(
     simkl_id: int,
     timeout: float,
 ) -> Mapping[str, Any]:
-    """Resolve a Simkl ID into a full media object per API blueprint."""
     client_id = str(hdrs.get("simkl-api-key") or "").strip()
     params: dict[str, str] = {"extended": "full"}
     if client_id:
