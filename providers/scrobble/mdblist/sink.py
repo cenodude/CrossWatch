@@ -29,7 +29,7 @@ except ImportError:
 
 
 MDBLIST_API = "https://api.mdblist.com"
-APP_AGENT = "CrossWatch/Scrobble/0.4"
+APP_AGENT = "CrossWatch/Watcher/1.0"
 _AR_TTL = 60
 
 _RESOLVE_TTL_S = 30 * 86400

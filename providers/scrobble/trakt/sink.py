@@ -30,7 +30,7 @@ except ImportError:
 
 
 TRAKT_API = "https://api.trakt.tv"
-APP_AGENT = "CrossWatch/Scrobble/0.3"
+APP_AGENT = "CrossWatch/Watcher/1.0"
 _TOKEN_OVERRIDE: str | None = None
 _AR_TTL = 60
 

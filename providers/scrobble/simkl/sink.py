@@ -30,7 +30,7 @@ except ImportError:
 
 
 SIMKL_API = "https://api.simkl.com"
-APP_AGENT = "CrossWatch/Scrobble/0.3"
+APP_AGENT = "CrossWatch/Watcher/1.0"
 _AR_TTL = 60
 
 
