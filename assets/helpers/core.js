@@ -3060,13 +3060,104 @@ function _getVal(id) {
 
 async function saveSettings() {
   let schedChanged = false;
-  const toast = document.getElementById("save_msg");
+
+  const _cwEnsureSaveToast = () => {
+    let el = document.getElementById("save_msg") || document.querySelector(".save-toast");
+    if (el) return el;
+    try {
+      el = document.createElement("div");
+      el.className = "save-toast hide";
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+      if (!document.getElementById("cw-save-toast-style")) {
+        const style = document.createElement("style");
+        style.id = "cw-save-toast-style";
+        style.textContent = `
+          .save-toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;max-width:calc(100vw - 24px);
+            padding:10px 14px;border-radius:999px;backdrop-filter:blur(10px);background:rgba(20,20,30,.82);
+            border:1px solid rgba(255,255,255,.14);color:#fff;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .save-toast.ok{border-color:rgba(80,220,140,.35)}
+          .save-toast.error{border-color:rgba(255,120,120,.35)}
+          .save-toast.hide{display:none}
+        `;
+        document.head.appendChild(style);
+      }
+    } catch {}
+    return el;
+  };
+
+  const _cwEnsureInlineErrorStyle = () => {
+    if (document.getElementById("cw-inline-error-style")) return;
+    try {
+      const style = document.createElement("style");
+      style.id = "cw-inline-error-style";
+      style.textContent = `
+        .cw-inline-error{margin-top:10px;padding:8px 10px;border-radius:12px;background:rgba(255,80,80,.08);
+          border:1px solid rgba(255,80,80,.18);color:rgba(255,220,220,.95);font-size:12px}
+        .cw-inline-error.hidden{display:none}
+        .cw-invalid{border-color:rgba(255,100,100,.55)!important;box-shadow:0 0 0 2px rgba(255,80,80,.12)!important}
+      `;
+      document.head.appendChild(style);
+    } catch {}
+  };
+
+  const _cwEnsureAuthInlineError = () => {
+    const host = document.getElementById("app_auth_fields");
+    if (!host) return null;
+    let el = document.getElementById("app_auth_error");
+    if (el) return el;
+    try {
+      _cwEnsureInlineErrorStyle();
+      el = document.createElement("div");
+      el.id = "app_auth_error";
+      el.className = "cw-inline-error hidden";
+      el.setAttribute("role", "alert");
+      host.appendChild(el);
+      return el;
+    } catch {
+      return null;
+    }
+  };
+
+  const setAuthError = (msg) => {
+    const p1 = document.getElementById("app_auth_password");
+    const p2 = document.getElementById("app_auth_password2");
+    const has = !!(msg && String(msg).trim());
+    try {
+      if (p1) { p1.classList.toggle("cw-invalid", has); has ? p1.setAttribute("aria-invalid", "true") : p1.removeAttribute("aria-invalid"); }
+      if (p2) { p2.classList.toggle("cw-invalid", has); has ? p2.setAttribute("aria-invalid", "true") : p2.removeAttribute("aria-invalid"); }
+    } catch {}
+    const el = _cwEnsureAuthInlineError();
+    if (!el) return;
+    if (!has) {
+      el.textContent = "";
+      el.classList.add("hidden");
+      return;
+    }
+    el.textContent = String(msg);
+    el.classList.remove("hidden");
+  };
+
+  const abortSave = (msg) => {
+    const e = new Error(String(msg || "Save aborted"));
+    // @ts-ignore
+    e.__cwAbortSave = true;
+    throw e;
+  };
+
   const showToast = (text, ok = true) => {
-    if (!toast) return;
-    toast.classList.remove("hidden", "ok", "warn");
-    toast.classList.add(ok ? "ok" : "warn");
-    toast.textContent = text;
-    setTimeout(() => toast.classList.add("hidden"), 2000);
+    _cwEnsureSaveToast();
+    try {
+      const fn = window.CW?.DOM?.showToast || window.showToast;
+      if (typeof fn === "function") return fn(String(text || ""), ok);
+    } catch {}
+    const el = _cwEnsureSaveToast();
+    if (!el) return console.log(text);
+    el.textContent = String(text || "");
+    el.classList.remove("hide", "error", "ok");
+    el.classList.add(ok ? "ok" : "error");
+    el.classList.remove("hide");
+    window.setTimeout(() => el.classList.add("hide"), 2000);
   };
 
   const norm = (s) => (s ?? "").trim();
@@ -3145,17 +3236,40 @@ async function saveSettings() {
       const wantsPwd = norm(pass1) !== "" || norm(pass2) !== "";
       const needsCall = (wantEnabled !== prevEnabled) || (wantUser !== prevUser) || wantsPwd;
 
+      try {
+        const p1El = document.getElementById("app_auth_password");
+        const p2El = document.getElementById("app_auth_password2");
+        if (p1El && p2El && !p1El.__cwAuthPwWired) {
+          const onInput = () => {
+            const a = (p1El.value || "").toString();
+            const b = (p2El.value || "").toString();
+            if (!norm(a) && !norm(b)) { setAuthError(""); return; }
+            if (a === b) setAuthError("");
+          };
+          p1El.addEventListener("input", onInput);
+          p2El.addEventListener("input", onInput);
+          p1El.__cwAuthPwWired = true;
+        }
+      } catch {}
+
+      setAuthError("");
+      try { document.getElementById("app_auth_username")?.classList.remove("cw-invalid"); } catch {}
+
       if (wantsPwd && pass1 !== pass2) {
+        setAuthError("Passwords do not match");
         showToast("Password mismatch", false);
-        return;
+        try { document.getElementById("app_auth_password2")?.focus?.(); } catch {}
+        abortSave("Password mismatch");
       }
       if (wantEnabled && !wantUser) {
         showToast("Auth username required", false);
-        return;
+        try { document.getElementById("app_auth_username")?.classList.add("cw-invalid"); } catch {}
+        abortSave("Auth username required");
       }
       if (wantEnabled && !configured && !norm(pass1)) {
+        setAuthError("Password required to enable auth");
         showToast("Set a password to enable auth", false);
-        return;
+        abortSave("Password required");
       }
 
       if (needsCall) {
@@ -3177,6 +3291,8 @@ async function saveSettings() {
       }
     } catch (e) {
       console.warn("saveSettings: app_auth merge failed", e);
+      // @ts-ignore
+      if (e && e.__cwAbortSave) throw e;
     }
 
     const prevMode     = serverCfg?.sync?.bidirectional?.mode || "two-way";
@@ -3827,6 +3943,7 @@ async function saveSettings() {
   } catch (err) {
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);
+    throw err;
   }
 }
 
