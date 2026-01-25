@@ -9,7 +9,6 @@ CrossWatch is NOT meant to be exposed directly to the public internet.
   * use CrossWatch authentication to set a username/password
 
 ## Supported Versions
-
 > Security fixes land on `main` first, then the next release.
 
 ## Reporting a Vulnerability
