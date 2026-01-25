@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from pathlib import Path
@@ -30,7 +31,6 @@ URL_INDEX_BUCKET = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
 URL_INDEX_IDS = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
 URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
-URL_SEARCH_ID = f"{BASE}/search/id"
 
 
 def _unresolved_path() -> Path:
@@ -43,7 +43,6 @@ def _shadow_path() -> Path:
 
 WATCHLIST_BUCKETS = ("movies", "shows", "anime")
 
-_ENRICH_MEMO: dict[str, dict[str, Any]] = {}
 
 
 def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
@@ -210,6 +209,33 @@ def _ids_filter(ids_in: Mapping[str, Any]) -> dict[str, Any]:
     return {k: ids_in.get(k) for k in _ALLOWED_ID_KEYS if ids_in.get(k)}
 
 
+
+_SLUG_SMALL_WORDS = {
+    "a","an","and","as","at","but","by","for","in","nor","of","on","or","per","the","to","vs","via","with",
+}
+
+def _title_from_slug(slug: str) -> str | None:
+    s = re.sub(r"[-_]+", " ", str(slug or "")).strip()
+    if not s:
+        return None
+    words = [w for w in s.split(" ") if w]
+    out: list[str] = []
+    for i, w in enumerate(words):
+        lw = w.lower()
+        if i > 0 and lw in _SLUG_SMALL_WORDS:
+            out.append(lw)
+        else:
+            out.append(lw[:1].upper() + lw[1:] if lw else lw)
+    return " ".join(out) or None
+
+
+def _anime_title_hint(ids_src: Any) -> str | None:
+    if not isinstance(ids_src, Mapping):
+        return None
+    slug = ids_src.get("tvdbslug") or ids_src.get("trakttvslug") or ids_src.get("slug")
+    return _title_from_slug(str(slug)) if slug else None
+
+
 def _kind_group(item: Mapping[str, Any]) -> str:
     media_type = str(item.get("type") or "movie").lower()
     return "movies" if media_type in ("movie", "movies") else "shows"
@@ -269,6 +295,10 @@ def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
         ids = _ids_filter(dict(ids_src or {}))
         title = node.get("title")
         year = node.get("year")
+        if bucket == "anime":
+            hint = _anime_title_hint(ids_src)
+            if hint:
+                title = hint
     elif isinstance(row, (int, str)):
         ids = {"simkl": str(row)}
         title = None
@@ -375,49 +405,6 @@ def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
     return headers
 
 
-def _best_id_q(ids: Mapping[str, Any]) -> dict[str, str] | None:
-    order = ("imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb", "simkl")
-    for key in order:
-        value = ids.get(key)
-        if value:
-            return {key: str(value)}
-    return None
-
-
-def _lookup_by_id(adapter: Any, ids: Mapping[str, Any]) -> dict[str, Any] | None:
-    query = _best_id_q(ids or {})
-    if not query:
-        return None
-    memo_key = json.dumps(query, sort_keys=True)
-    if memo_key in _ENRICH_MEMO:
-        return _ENRICH_MEMO[memo_key]
-    try:
-        resp = adapter.client.session.get(
-            URL_SEARCH_ID,
-            headers=_headers(adapter),
-            params=query,
-            timeout=min(6.0, adapter.cfg.timeout),
-        )
-        if 200 <= resp.status_code < 300 and (resp.text or "").strip():
-            data = resp.json()
-            normalized = simkl_normalize(
-                data
-                if isinstance(data, Mapping)
-                else (data[0] if isinstance(data, list) and data else {}),
-            )
-            out = {
-                "title": normalized.get("title"),
-                "year": normalized.get("year"),
-                "ids": _ids_filter(dict(normalized.get("ids") or {})),
-            }
-            if out.get("title") or out.get("ids"):
-                _ENRICH_MEMO[memo_key] = out
-                return out
-    except Exception:
-        pass
-    return None
-
-
 def _merge_upsert(dst: dict[str, dict[str, Any]], src: Mapping[str, Mapping[str, Any]]) -> None:
     for key, value in (src or {}).items():
         current = dict(dst.get(key) or {})
@@ -435,41 +422,6 @@ def _merge_upsert(dst: dict[str, dict[str, Any]], src: Mapping[str, Mapping[str,
             "ids": ids,
             "simkl_bucket": bucket,
         }
-
-
-def _jit_enrich_missing(
-    adapter: Any,
-    items: dict[str, dict[str, Any]],
-    *,
-    cap: int | None = None,
-) -> int:
-    limit = int(os.getenv("CW_SIMKL_ENRICH_LIMIT") or 6) if cap is None else int(cap)
-    if limit <= 0:
-        return 0
-    enriched = 0
-    for key, value in list(items.items()):
-        if enriched >= limit:
-            break
-        ids = value.get("ids") or {}
-        if value.get("title") and value.get("year") and any(
-            ids.get(k) for k in ("imdb", "tmdb", "tvdb")
-        ):
-            continue
-        out = _lookup_by_id(adapter, ids)
-        if out:
-            updated = dict(value)
-            updated["title"] = updated.get("title") or out.get("title")
-            updated["year"] = updated.get("year") or out.get("year")
-            if out.get("ids"):
-                ids_a = dict(updated.get("ids") or {})
-                ids_b = dict(out["ids"])
-                updated["ids"] = {**ids_a, **{k: v for k, v in ids_b.items() if v}}
-            items[key] = updated
-            enriched += 1
-    if enriched:
-        _log(f"jit-enriched items: {enriched}")
-    return enriched
-
 
 
 def _keys_from_write_resp(body: Any) -> list[str]:
@@ -589,7 +541,7 @@ def _pull_bucket(
             for row in rows:
                 try:
                     mapped = _normalize_row(bucket, row)
-                    if not (mapped.get("ids") or mapped.get("title")):
+                    if not mapped.get("ids"):
                         continue
                     out_local[simkl_key_of(mapped)] = mapped
                     count += 1
@@ -861,8 +813,6 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(done, total=total_known, force=(done == cnt))
                 except Exception:
                     pass
-
-    _jit_enrich_missing(adapter, items)
     _unfreeze_if_present(items.keys())
     _shadow_save(comp_ts, items, buckets_seen)
 

@@ -603,6 +603,43 @@ def _persist_show_map(key: str, ids: Mapping[str, Any]) -> None:
 def _norm_title(value: str | None) -> str:
     return "".join(ch for ch in (value or "").lower() if ch.isalnum())
 
+_SMALL_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "but",
+    "by",
+    "for",
+    "in",
+    "nor",
+    "of",
+    "on",
+    "or",
+    "per",
+    "the",
+    "to",
+    "vs",
+    "via",
+    "with",
+}
+
+
+def _slug_to_title(slug: str | None) -> str:
+    s = (slug or "").strip().replace("_", "-")
+    if not s:
+        return ""
+    parts = [p for p in s.split("-") if p]
+    out: list[str] = []
+    for i, p in enumerate(parts):
+        w = p.lower()
+        if i and w in _SMALL_WORDS:
+            out.append(w)
+            continue
+        out.append(w[:1].upper() + w[1:])
+    return " ".join(out)
+
 
 def _best_ids(obj: Mapping[str, Any]) -> dict[str, str]:
     ids = dict(obj.get("ids") or obj or {})
@@ -830,6 +867,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             ).strip()
             show_year = base.get("year") or (show.get("year") if isinstance(show, Mapping) else None)
             series_name: str | None = show_title or (base.get("title") if isinstance(base, Mapping) else None)
+            if row_kind == "anime":
+                raw_ids = show.get("ids") if isinstance(show, Mapping) else None
+                if isinstance(raw_ids, Mapping):
+                    slug = raw_ids.get("tvdbslug") or raw_ids.get("trakttvslug")
+                    if isinstance(slug, str) and slug:
+                        series_name = _slug_to_title(slug) or series_name
             if not (series_name.strip() if isinstance(series_name, str) else ""):
                 sid = str(show_ids.get("simkl") or "").strip()
                 series_name = f"SIMKL:{sid}" if sid else "Unknown Series"

@@ -481,6 +481,46 @@ def _row_ids(obj: Mapping[str, Any]) -> dict[str, Any]:
     return {k: ids[k] for k in ID_KEYS if ids.get(k)}
 
 
+_SLUG_ID_KEYS = ("tvdbslug", "trakttvslug", "traktmslug", "letterslug", "slug")
+
+def _slug_to_title(slug: str) -> str:
+    s = (slug or "").strip().strip("/")
+    if not s:
+        return ""
+    s = s.replace("-", " ").replace("_", " ")
+    s = " ".join(s.split())
+    if not s:
+        return ""
+    lower_words = {"and", "or", "the", "a", "an", "of", "to", "in", "on", "for", "with"}
+    out: list[str] = []
+    for i, w in enumerate(s.split(" ")):
+        wl = w.lower()
+        if i and (wl in lower_words):
+            out.append(wl)
+        else:
+            out.append(w[:1].upper() + w[1:].lower() if w else w)
+    return " ".join(out)
+
+
+def _title_from_slug_ids(ids: Mapping[str, Any]) -> str:
+    for k in _SLUG_ID_KEYS:
+        v = ids.get(k)
+        if isinstance(v, str) and v.strip():
+            return _slug_to_title(v)
+    return ""
+
+
+def _title_from_slug_row(row: Mapping[str, Any]) -> str:
+    for obj in (row, row.get("show"), row.get("anime"), row.get("movie")):
+        if not isinstance(obj, Mapping):
+            continue
+        ids = obj.get("ids")
+        if isinstance(ids, Mapping):
+            title = _title_from_slug_ids(cast(Mapping[str, Any], ids))
+            if title:
+                return title
+    return ""
+
 def _title_year_from_row(row: Mapping[str, Any]) -> tuple[str, int | None]:
     t = row.get("title") or row.get("name") or row.get("en_title")
     title = t.strip() if isinstance(t, str) else ""
@@ -500,6 +540,10 @@ def _title_year_from_row(row: Mapping[str, Any]) -> tuple[str, int | None]:
                     title = t2
                 if (year is None) and (y2 is not None):
                     year = y2
+    if not title:
+        st = _title_from_slug_row(row)
+        if st:
+            title = st
     return title, year
 
 
@@ -702,6 +746,31 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
             m["rated_at"] = row.get("user_rated_at") or row.get("rated_at") or ""
 
             _merge_row_identity(m, row)
+
+            ids_map = m.get("ids")
+            if not (isinstance(ids_map, Mapping) and any(ids_map.get(k2) for k2 in ID_KEYS)):
+                done += 1
+                if prog:
+                    try:
+                        prog.tick(done, total=grand_total)
+                    except Exception:
+                        pass
+                continue
+
+            if kind == "anime":
+                st = _title_from_slug_row(row)
+                if st:
+                    cur0 = m.get("title")
+                    src_title = ""
+                    for obj2 in (row, row.get("show"), row.get("anime")):
+                        if isinstance(obj2, Mapping):
+                            v2 = obj2.get("title")
+                            if isinstance(v2, str) and v2.strip():
+                                src_title = v2.strip()
+                                break
+                    cur = cur0.strip() if isinstance(cur0, str) else ""
+                    if (not cur) or (src_title and cur == src_title):
+                        m["title"] = st
 
             title_cur = m.get("title")
             if not (title_cur.strip() if isinstance(title_cur, str) else ""):
