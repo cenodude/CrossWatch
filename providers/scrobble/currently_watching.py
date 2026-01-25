@@ -1,5 +1,5 @@
 # providers/scrobble/currently_watching.py
-# CrossWatch - A cross-platform media scrobbling service
+# CrossWatch - currently_watching middleware
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
