@@ -3,16 +3,15 @@ name: dev-image
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
-
 env:
-  IMAGE: ghcr.io/cenodude/crosswatch
+  IMAGE: ghcr.io/${{ github.repository_owner }}/crosswatch-dev
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
 
