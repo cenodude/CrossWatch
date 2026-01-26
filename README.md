@@ -143,3 +143,28 @@ services:
 3. Create one or more Sync Pairs (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble
 4. Click Synchronize to start, or enable scheduling in Settings
 5. Track stats, logs, and history from the UI
+
+## Sponsors
+
+<div align="center">
+
+<a href="https://www.buymeacoffee.com/cenodude">
+  <img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000000">
+</a>
+
+<br/>
+
+<a href="https://www.gitbook.com/">
+  <img alt="GitBook" src="https://img.shields.io/badge/GitBook-sponsored-3884ff?style=for-the-badge&logo=gitbook&logoColor=white">
+</a>
+<a href="https://mdblist.com/">
+  <img alt="MDBList" src="https://img.shields.io/badge/MDBList-sponsored-3884ff?style=for-the-badge&logo=databricks&logoColor=white">
+</a>
+
+</div>
+
+<p align="center">
+  Huge thanks to our sponsors for keeping this project moving. ❤️
+</p>
+
+
