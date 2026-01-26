@@ -46,7 +46,7 @@ NOT supported: **Multi-users/servers**
 * **Simple and advanced scheduling** From “run once a day” to more detailed pair schedules
 * **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
 * **Unified Watchlist across providers** View all watchlist items in one place.
-* **Fallback GUID** Revives items that left your Plex library but still exist in your server database.
+* **Fallback GUID** Revives old items from  your Plex library.
 * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList) Plugin-free and subscription-free.
 * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
 * **Analyzer** Finds items that are **stuck** or inconsistent between providers.
