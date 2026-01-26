@@ -82,7 +82,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.0.1"
+__VERSION__ = "3.2.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 
