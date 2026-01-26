@@ -111,6 +111,8 @@
   let _sumAbort = null;
   let _insightsTriedForRun = null;
   let _logHydratedForRun = null;
+  const INSIGHTS_RETRY_DELAYS = [0, 800, 2000, 5000];
+  let _insightsRetry = { runKey: null, tries: 0, t: null };
 
   const runKeyOf = (s) =>
     s?.run_id ||
@@ -178,7 +180,7 @@
       !!mRaw ||
       (show && season != null && episode != null);
 
-    // Episode: always prefer Show - SxxEyy (never Show - episode title).
+    // Episode: always prefer Show - SxxEyy
     if (isEpisode) {
       if (show && season != null && episode != null) {
         const code = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
@@ -785,6 +787,7 @@
     summary.features ||= {};
 
     const nowTs = Date.now();
+    let appliedAny = false;
 
     for (const [feat, L] of Object.entries(tallies)) {
       if (
@@ -802,10 +805,12 @@
       const prevUpdated = +prev.updated || 0;
       const hasPrevCounts = prevAdded + prevRemoved + prevUpdated > 0;
 
+      if (!hasPrevCounts) continue;
+
       const merged = {
-        added: hasPrevCounts ? prevAdded : L.added || 0,
-        removed: hasPrevCounts ? prevRemoved : L.removed || 0,
-        updated: hasPrevCounts ? prevUpdated : L.updated || 0,
+        added: prevAdded,
+        removed: prevRemoved,
+        updated: prevUpdated,
         
         spotlight_add:
           (prev.spotlight_add && prev.spotlight_add.length
@@ -822,6 +827,7 @@
 };
 
       if (guardLaneOverwrite(feat, merged, nowTs)) {
+        appliedAny = true;
         summary.features[feat] = merged;
         hydratedLanes[feat] = {
           added: merged.added,
@@ -834,12 +840,69 @@
       }
     }
 
+    if (!appliedAny) return false;
     summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
     renderAll();
     return true;
   }
 
-  function hydrateFromLog() {
+  
+  const _laneHasCounts = (lane) =>
+    (+lane?.added || 0) + (+lane?.removed || 0) + (+lane?.updated || 0) > 0;
+
+  const needsSpotlights = (s) => {
+    const feats = s?.features;
+    if (!feats) return false;
+
+    for (const f of FEATS) {
+      const lane = feats[f.key] || {};
+      if (!_laneHasCounts(lane)) continue;
+
+      const has =
+        (lane.spotlight_add?.length || 0) +
+          (lane.spotlight_remove?.length || 0) +
+          (lane.spotlight_update?.length || 0) >
+        0;
+
+      if (!has) return true;
+    }
+
+    return false;
+  };
+
+  function queueInsightsHydration(runKey, startTs) {
+    if (!runKey) return;
+
+    if (_insightsRetry.runKey !== runKey) {
+      _insightsRetry.runKey = runKey;
+      _insightsRetry.tries = 0;
+    }
+
+    clearTimeout(_insightsRetry.t);
+
+    const i = Math.min(_insightsRetry.tries, INSIGHTS_RETRY_DELAYS.length - 1);
+    const delay = INSIGHTS_RETRY_DELAYS[i] || 0;
+
+    _insightsRetry.t = setTimeout(async () => {
+      const got = await hydrateFromInsights(startTs).catch(() => false);
+      if (got) return;
+      if (_insightsRetry.runKey !== runKey) return;
+      if (!needsSpotlights(summary)) return;
+
+      if (_insightsRetry.tries >= INSIGHTS_RETRY_DELAYS.length - 1) {
+        if (_logHydratedForRun !== runKey) {
+          _logHydratedForRun = runKey;
+          hydrateFromLog();
+        }
+        return;
+      }
+
+      _insightsRetry.tries++;
+      queueInsightsHydration(runKey, startTs);
+    }, delay);
+  }
+
+function hydrateFromLog() {
     const det = document.getElementById("det-log");
     if (!det) return false;
     const txt = det.innerText || det.textContent || "";
@@ -920,36 +983,16 @@
             count: obj.result?.count || obj.count
           });
         }
+          const lane = ensureLane(lastFeatHint || feat || obj.feature);
+          const evt = String(obj.event || "");
+          const cnt = +(obj.result?.count || obj.count || 0);
+          if (/^apply:add:done$/.test(evt)) lane.added += cnt;
+          else if (/^apply:remove:done$/.test(evt)) lane.removed += cnt;
+          else if (/^apply:update:done$/.test(evt)) lane.updated += cnt;
+
       }
 
       const laneKey = feat || lastFeatHint;
-
-      if (obj.event === "two:done" && laneKey) {
-        const res = obj.res || {};
-        const L = ensureLane(laneKey);
-        L.added += +res.adds || 0;
-        L.removed += +res.removes || 0;
-        L.updated += +res.updates || 0;
-        continue;
-      }
-
-      if (obj.event === "plan" && laneKey) {
-        const L = ensureLane(laneKey);
-        L.added += +obj.add || 0;
-        L.removed += +obj.rem || 0;
-        continue;
-      }
-
-      if (obj.event === "two:plan" && laneKey) {
-        const L = ensureLane(laneKey);
-        const addA = +obj.add_to_A || 0;
-        const addB = +obj.add_to_B || 0;
-        const remA = +obj.rem_from_A || 0;
-        const remB = +obj.rem_from_B || 0;
-        L.added += Math.max(addA, addB);
-        L.removed += Math.max(remA, remB);
-        continue;
-      }
 
       if (
         obj.event === "spotlight" &&
@@ -1077,13 +1120,11 @@
       try { window.updatePreviewVisibility?.(); window.refreshSchedulingBanner?.(); } catch {}
       try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch {}
 
-      if (_insightsTriedForRun !== runKey) {
-        _insightsTriedForRun = runKey;
-        try {
-          const startTs = s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
-          hydrateFromInsights(startTs).catch(() => {});
-        } catch {}
-      }
+      if (_insightsTriedForRun !== runKey) _insightsTriedForRun = runKey;
+      try {
+        const startTs = s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
+        if (needsSpotlights(s)) queueInsightsHydration(runKey, startTs);
+      } catch {}
 
       try {
         window.wallLoaded = false;
@@ -1110,34 +1151,20 @@
     );
 
     if (sync.state().timeline.done) {
-      if (_insightsTriedForRun !== runKey) {
-        _insightsTriedForRun = runKey;
-        const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
-        hydrateFromInsights(startTs).then((got) => {
-          if (!got && !hasFeatures) {
-            setTimeout(() => {
-              if (_logHydratedForRun !== runKey) {
-                _logHydratedForRun = runKey;
-                hydrateFromLog();
-              }
-            }, 300);
-          }
-        });
-      } else {
-        const missing = FEATS.some((f) => {
-          const lane = summary?.features?.[f.key];
-          return !(
-            lane?.spotlight_add?.length ||
-            lane?.spotlight_remove?.length ||
-            lane?.spotlight_update?.length ||
-            (lane?.added || lane?.removed || lane?.updated)
-          );
-        });
+      const startTs =
+        summary?.raw_started_ts ||
+        (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
 
-        if (missing && _logHydratedForRun !== runKey) {
-          _logHydratedForRun = runKey;
-          hydrateFromLog();
-        }
+      if (needsSpotlights(summary)) {
+        if (_insightsTriedForRun !== runKey) _insightsTriedForRun = runKey;
+        queueInsightsHydration(runKey, startTs);
+      } else if (!hasFeatures) {
+        setTimeout(() => {
+          if (_logHydratedForRun !== runKey) {
+            _logHydratedForRun = runKey;
+            hydrateFromLog();
+          }
+        }, 300);
       }
     }
   }  // Summary pull
@@ -1307,7 +1334,6 @@
   tick();
 })();
 
-// FIX - CSS Guard for Preview Pane
 (() => {
   (document.getElementById("preview-guard-css") || {}).remove?.();
   document.head.appendChild(

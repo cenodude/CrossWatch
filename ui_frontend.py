@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
@@ -50,6 +50,47 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
 });
 """
+
+GITBOOK_SITE_URL: str = "https://wiki.crosswatch.app"
+GITBOOK_EMBED_SCRIPT_URL: str = "https://wiki.crosswatch.app/~gitbook/embed/script.js"
+GITBOOK_EMBED_BLOCK: str = r"""<script src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script>
+<script>
+(() => {
+  const SITE_URL = "https://wiki.crosswatch.app";
+
+  function boot() {
+    try {
+      window.GitBook("init", { siteURL: SITE_URL });
+    } catch (e) {
+      const msg = String(e || "");
+      if (!msg.includes("already initialized")) console.warn("[docs] GitBook init failed:", e);
+    }
+    try {
+      window.GitBook("show");
+    } catch (e) {
+      console.warn("[docs] GitBook show failed:", e);
+    }
+  }
+
+  if (typeof window.GitBook === "function") {
+    boot();
+    return;
+  }
+
+  let tries = 0;
+  const t = setInterval(() => {
+    tries += 1;
+    if (typeof window.GitBook === "function") {
+      clearInterval(t);
+      boot();
+    } else if (tries > 120) {
+      clearInterval(t);
+      console.warn("[docs] GitBook embed timed out");
+    }
+  }, 50);
+})();
+</script>"""
+
 
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir = root / "assets"
@@ -100,8 +141,16 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
 
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
-    def ui_root() -> HTMLResponse:
-        return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
+    def ui_root(request: Request) -> HTMLResponse:
+        is_https = _is_https_request(request)
+        return HTMLResponse(get_index_html(include_gitbook_embed=is_https), headers={"Cache-Control": "no-store"})
+
+def _is_https_request(request: Request) -> bool:
+    xf_proto = request.headers.get("x-forwarded-proto")
+    if xf_proto:
+        scheme = xf_proto.split(",")[0].strip().lower()
+        return scheme == "https"
+    return request.url.scheme.lower() == "https"
 
 def _get_index_html_static() -> str:
     return r"""<!doctype html><html lang="en"><head>
@@ -223,6 +272,7 @@ def _get_index_html_static() -> str:
     <div id="tab-watchlist" class="tab" onclick="showTab('watchlist')">Watchlist</div>
     <div id="tab-editor" class="tab" onclick="showTab('editor')">Editor</div>
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
+    <div id="tab-help" class="tab" onclick="openHelp()" title="Open docs in a new tab">Help</div>
     <div id="tab-about" class="tab" onclick="openAbout()">About</div>
   </div>
 
@@ -652,6 +702,9 @@ def _get_index_html_static() -> str:
 <script>
   window.APP_VERSION="__CW_VERSION__";
   window["__CW_" + "VERSION__"] = window.APP_VERSION;
+  window.openHelp = function () {
+    window.open("https://wiki.crosswatch.app", "_blank", "noopener,noreferrer");
+  };
 </script>
 
 <script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
@@ -1227,5 +1280,12 @@ document.readyState==='loading'
 
 """
 
-def get_index_html() -> str:
-    return _get_index_html_static().replace("__CW_VERSION__", CURRENT_VERSION)
+def get_index_html(include_gitbook_embed: bool = True) -> str:
+    html = _get_index_html_static()
+    if include_gitbook_embed and "gitbook/embed/script.js" not in html:
+        needle = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
+        if needle in html:
+            html = html.replace(needle, GITBOOK_EMBED_BLOCK + "\n\n" + needle, 1)
+        else:
+            html = html + "\n\n" + GITBOOK_EMBED_BLOCK + "\n"
+    return html.replace("__CW_VERSION__", CURRENT_VERSION)
