@@ -43,11 +43,11 @@ NOT supported: **Multi-users/servers**
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
 * **Flexible sync directions** Between media server and trackers.
-* **Simple and advanced scheduling** From “run once a day” to more detailed pair schedules
+* **Simple and advanced scheduling** From standard to more detailed pair schedules
 * **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
 * **Unified Watchlist across providers** View all watchlist items in one place.
 * **Fallback GUID** Revives old items from  your Plex library.
-* **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList) Plugin-free and subscription-free.
+* **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList) subscription-free.
 * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
 * **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 * **Editor** Inspect and adjust your items and add or block items.
