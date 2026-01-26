@@ -892,39 +892,56 @@ def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
 
 def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
     n = (name or "").strip().lower()
+
+    # CrossWatch is a local/virtual provider
+    if n in ("crosswatch", "cw"):
+        cw = cfg.get("crosswatch") or cfg.get("CrossWatch") or {}
+        enabled = cw.get("enabled")
+        return bool(enabled) if isinstance(enabled, bool) else True
+
     if n == "plex":
         return bool((cfg.get("plex") or {}).get("account_token"))
+
     if n == "trakt":
         return bool(
             (cfg.get("trakt") or {}).get("access_token")
             or (cfg.get("auth") or {}).get("trakt", {}).get("access_token")
         )
+
     if n == "simkl":
-        return bool((cfg.get("simkl") or {}).get("access_token"))
+        return bool(
+            (cfg.get("simkl") or {}).get("access_token")
+            or (cfg.get("auth") or {}).get("simkl", {}).get("access_token")
+        )
+
     if n == "anilist":
         return bool(
             (cfg.get("anilist") or {}).get("access_token")
             or (cfg.get("auth") or {}).get("anilist", {}).get("access_token")
         )
+
     if n == "jellyfin":
         jf = cfg.get("jellyfin") or {}
         return bool(
             (jf.get("server") or "").strip()
             and (jf.get("access_token") or jf.get("token") or "").strip()
         )
+
     if n == "emby":
         em = cfg.get("emby") or {}
         return bool(
             (em.get("server") or "").strip()
             and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
         )
+
     if n == "mdblist":
         md = cfg.get("mdblist") or {}
         return bool((md.get("api_key") or "").strip())
-    
+
     if n == "tautulli":
         tt = cfg.get("tautulli") or {}
         return bool((tt.get("server_url") or "").strip() and (tt.get("api_key") or "").strip())
+
     return False
 
 
