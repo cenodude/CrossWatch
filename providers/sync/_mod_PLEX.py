@@ -924,7 +924,34 @@ class PLEXModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+            attempted_keys: list[str] = []
+            for it in lst:
+                k = None
+                if isinstance(it, dict):
+                    k = it.get("key")
+                if not k:
+                    try:
+                        k = plex_key_of(it)
+                    except Exception:
+                        k = None
+                if k:
+                    attempted_keys.append(str(k))
+            unresolved_keys: set[str] = set()
+            if isinstance(unresolved, list):
+                for u in unresolved:
+                    if isinstance(u, str):
+                        unresolved_keys.add(u)
+                    elif isinstance(u, dict):
+                        uk = u.get("key")
+                        if not uk:
+                            try:
+                                uk = plex_key_of(u)
+                            except Exception:
+                                uk = None
+                        if uk:
+                            unresolved_keys.add(str(uk))
+            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys]
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -949,7 +976,34 @@ class PLEXModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+            attempted_keys: list[str] = []
+            for it in lst:
+                k = None
+                if isinstance(it, dict):
+                    k = it.get("key")
+                if not k:
+                    try:
+                        k = plex_key_of(it)
+                    except Exception:
+                        k = None
+                if k:
+                    attempted_keys.append(str(k))
+            unresolved_keys: set[str] = set()
+            if isinstance(unresolved, list):
+                for u in unresolved:
+                    if isinstance(u, str):
+                        unresolved_keys.add(u)
+                    elif isinstance(u, dict):
+                        uk = u.get("key")
+                        if not uk:
+                            try:
+                                uk = plex_key_of(u)
+                            except Exception:
+                                uk = None
+                        if uk:
+                            unresolved_keys.add(str(uk))
+            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys]
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

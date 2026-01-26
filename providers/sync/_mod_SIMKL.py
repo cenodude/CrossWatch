@@ -22,6 +22,47 @@ from ._mod_common import (
 )
 from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, normalize as simkl_normalize, key_of as simkl_key_of, state_file
 
+
+def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
+    attempted: list[str] = []
+    for it in items or []:
+        try:
+            k = str(key_of(it) or "").strip()
+        except Exception:
+            k = ""
+        if k:
+            attempted.append(k)
+
+    unresolved_keys: set[str] = set()
+    if unresolved:
+        for u in unresolved:
+            obj: Any = u
+            if isinstance(u, Mapping):
+                if isinstance(u.get("key"), str) and u.get("key"):
+                    unresolved_keys.add(str(u.get("key")))
+                    continue
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                unresolved_keys.add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    k = str(key_of(obj) or "").strip()
+                except Exception:
+                    k = ""
+                if k:
+                    unresolved_keys.add(k)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in attempted:
+        if k in unresolved_keys or k in seen:
+            continue
+        out.append(k)
+        seen.add(k)
+    return out
+
 __VERSION__ = "3.2.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
@@ -365,8 +406,8 @@ class SIMKLModule:
             _log(f"add skipped: feature module missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = mod.add(self, lst)
-        return {"ok": True, "count": int(count), "unresolved": unresolved}
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
     def remove(
         self,
         feature: str,
@@ -388,9 +429,8 @@ class SIMKLModule:
             _log(f"remove skipped: feature module missing: {feature}")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = mod.remove(self, lst)
-        return {"ok": True, "count": int(count), "unresolved": unresolved}
-
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
 class _SIMKLOPS:
     def name(self) -> str:
         return "SIMKL"

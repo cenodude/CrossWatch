@@ -13,6 +13,47 @@ from ._mod_common import build_session, make_snapshot_progress, request_with_ret
 from ._log import log as cw_log
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
+
+def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
+    attempted: list[str] = []
+    for it in items or []:
+        try:
+            k = str(key_of(it) or "").strip()
+        except Exception:
+            k = ""
+        if k:
+            attempted.append(k)
+
+    unresolved_keys: set[str] = set()
+    if unresolved:
+        for u in unresolved:
+            obj: Any = u
+            if isinstance(u, Mapping):
+                if isinstance(u.get("key"), str) and u.get("key"):
+                    unresolved_keys.add(str(u.get("key")))
+                    continue
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                unresolved_keys.add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    k = str(key_of(obj) or "").strip()
+                except Exception:
+                    k = ""
+                if k:
+                    unresolved_keys.add(k)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in attempted:
+        if k in unresolved_keys or k in seen:
+            continue
+        out.append(k)
+        seen.add(k)
+    return out
+
 __VERSION__ = "0.1.0"
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
@@ -369,8 +410,8 @@ class ANILISTModule:
                 "unresolved": list(unresolved) if isinstance(unresolved, list) else [],
             }
         count, unresolved = feat_watchlist.add(self, lst)
-        return {"ok": True, "count": int(count), "unresolved": unresolved}
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
     def remove(
         self,
         feature: str,
@@ -386,9 +427,8 @@ class ANILISTModule:
         if feature != "watchlist" or not feat_watchlist:
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = feat_watchlist.remove(self, lst)
-        return {"ok": True, "count": int(count), "unresolved": unresolved}
-
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
 class _ANILISTOPS:
     def name(self) -> str:
         return "ANILIST"

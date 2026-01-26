@@ -170,26 +170,91 @@ def _summary_snapshot() -> dict[str, Any]:
         return dict(SUMMARY)
 
 # Sync progress logging
+def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
+    if not isinstance(obj, dict):
+        return None
+
+    def _slim_counts(d: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if "ok" in d:
+            out["ok"] = bool(d.get("ok"))
+        if "attempted" in d:
+            try:
+                out["attempted"] = int(d.get("attempted") or 0)
+            except Exception:
+                out["attempted"] = 0
+        conf = d.get("confirmed")
+        if conf is None:
+            conf = d.get("count")
+        if conf is None:
+            conf = d.get("added") or d.get("removed") or d.get("updated") or 0
+        try:
+            out["confirmed"] = int(conf or 0)
+        except Exception:
+            out["confirmed"] = 0
+        return out
+
+    ev = str(obj.get("event") or "")
+    if "confirmed_keys" in obj and not ev:
+        return _slim_counts(cast(dict[str, Any], obj))
+
+    if ev.startswith("apply:") and ev.endswith(":done"):
+        out = dict(cast(dict[str, Any], obj))
+        res = out.get("result")
+        if isinstance(res, dict):
+            out["result"] = _slim_counts(cast(dict[str, Any], res))
+        out.pop("confirmed_keys", None)
+        if isinstance(out.get("result"), dict):
+            cast(dict[str, Any], out["result"]).pop("confirmed_keys", None)
+        return out
+
+    if "confirmed_keys" in obj:
+        out = dict(cast(dict[str, Any], obj))
+        out.pop("confirmed_keys", None)
+        res = out.get("result")
+        if isinstance(res, dict) and "confirmed_keys" in res:
+            res2 = dict(cast(dict[str, Any], res))
+            res2.pop("confirmed_keys", None)
+            out["result"] = res2
+        return out
+
+    return None
+
+def _slim_sync_log_line(line: str) -> str:
+    s = str(line or "")
+    if not s.lstrip().startswith("{"):
+        return s
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return s
+    out = _slim_sync_log_obj(obj)
+    if out is None:
+        return s
+    try:
+        return json.dumps(out, ensure_ascii=False, separators=(",", ":"), default=str)
+    except Exception:
+        return s
+
 def _sync_progress_ui(msg: str):
     rt = _rt()
-    LOG_BUFFERS, strip_ansi, _append_log = rt[0], rt[7], rt[8]
+    strip_ansi, _append_log = rt[7], rt[8]
     try:
-        _append_log("SYNC", msg)
         try:
             _parse_sync_line(strip_ansi(msg))
         except Exception as e:
             _append_log("SYNC", f"[!] progress-parse failed: {e}")
+        _append_log("SYNC", _slim_sync_log_line(msg))
     except Exception:
         pass
 
 def _orc_progress(event: str, data: dict):
-    rt = _rt()
-    _append_log = rt[8]
+    _append_log = _rt()[8]
     try:
         payload = json.dumps({"event": event, **(data or {})}, default=str)
     except Exception:
         payload = f"{event} | {data}"
-    _append_log("SYNC", payload[:2000])
+    _append_log("SYNC", _slim_sync_log_line(payload)[:2000])
 
 def _feature_enabled(fmap: dict, name: str) -> tuple[bool, bool]:
     d = dict(fmap.get(name) or {})
@@ -891,6 +956,51 @@ def _parse_sync_line(line: str) -> None:
                         F[feat]["updated"] += cnt
                     _summary_set("features", F)
 
+                    try:
+                        result_obj = o.get("result")
+                        res: dict[str, Any] = result_obj if isinstance(result_obj, dict) else {}
+                        ckeys = res.get("confirmed_keys") or o.get("confirmed_keys") or []
+                        if isinstance(ckeys, list) and ckeys:
+                            try:
+                                key_map, id_map = _get_title_maps()
+                            except Exception:
+                                key_map, id_map = {}, {}
+                            bucket = (
+                                "spotlight_add"
+                                if ev == "apply:add:done"
+                                else "spotlight_remove"
+                                if ev == "apply:remove:done"
+                                else "spotlight_update"
+                            )
+                            seen = set()
+                            try:
+                                for it0 in (F[feat].get(bucket) or []):
+                                    seen.add(_spot_sig(it0))
+                            except Exception:
+                                pass
+                            for k0 in ckeys:
+                                k = str(k0 or "").strip()
+                                if not k:
+                                    continue
+                                item: dict[str, Any] = {"key": k, "ts": int(time.time())}
+                                title = ""
+                                for cand in _key_lookup_candidates(k):
+                                    title = str(id_map.get(cand) or key_map.get(cand) or "").strip()
+                                    if title:
+                                        break
+                                item["title"] = title or k
+                                _ensure_series_title({"key": k}, item, key_map, id_map)
+                                _finalize_spotlight_item(item)
+                                sig = _spot_sig(item)
+                                if sig in seen:
+                                    continue
+                                seen.add(sig)
+                                (F[feat][bucket] or []).append(item)
+                                if len(F[feat][bucket]) > 25:
+                                    F[feat][bucket] = (F[feat][bucket] or [])[-25:]
+                    except Exception:
+                        pass
+
                     phase = SUMMARY.setdefault("_phase", {})
                     apply_phase = phase.setdefault(
                         "apply", {"total": 0, "done": 0, "final": False}
@@ -1004,148 +1114,21 @@ def _parse_sync_line(line: str) -> None:
                     _summary_set_timeline("post", True)
         except Exception:
             pass
+
         try:
             snap = _summary_snapshot()
-            since = _parse_epoch(snap.get("raw_started_ts") or snap.get("started_at"))
-            until = _parse_epoch(snap.get("finished_at")) or int(time.time())
-            feats_tmp, enabled_tmp = _compute_lanes_from_stats(since, until)
-
-            snap.setdefault("features", {})
-            for k, v in (feats_tmp or {}).items():
-                dst = snap["features"].setdefault(
-                    k,
-                    {
-                        "added": 0,
-                        "removed": 0,
-                        "updated": 0,
-                        "spotlight_add": [],
-                        "spotlight_remove": [],
-                        "spotlight_update": [],
-                    },
-                )
-                va = int((v or {}).get("added") or 0)
-                vr = int((v or {}).get("removed") or 0)
-                vu = int((v or {}).get("updated") or 0)
-                dst["added"] = max(int(dst.get("added") or 0), va)
-                dst["removed"] = max(int(dst.get("removed") or 0), vr)
-                dst["updated"] = max(int(dst.get("updated") or 0), vu)
-                if not dst["spotlight_add"]:
-                    dst["spotlight_add"] = list((v or {}).get("spotlight_add") or [])[:25]
-                if not dst["spotlight_remove"]:
-                    dst["spotlight_remove"] = list((v or {}).get("spotlight_remove") or [])[:25]
-                if not dst["spotlight_update"]:
-                    dst["spotlight_update"] = list((v or {}).get("spotlight_update") or [])[:25]
-
             lanes = snap.get("features") or {}
-            try:
-                _STATS = _rt()[5]
-                with _STATS.lock:
-                    evs = list(_STATS.data.get("events") or [])
-
-                def _evt_ts(e):
-                    for k in ("ts", "seen_ts", "sync_ts", "ingested_ts"):
-                        try:
-                            v = int(e.get(k) or 0)
-                            if v:
-                                return v
-                        except Exception:
-                            pass
-                    return 0
-
-                key_map, id_map = _get_title_maps()
-                for feat in ("ratings", "history"):
-                    lane = lanes.get(feat) or {}
-                    if (
-                        (lane.get("added", 0) + lane.get("removed", 0) + lane.get("updated", 0)) > 0
-                        and not (
-                            lane.get("spotlight_add")
-                            or lane.get("spotlight_remove")
-                            or lane.get("spotlight_update")
-                        )
-                    ):
-                        rows = [
-                            e
-                            for e in evs
-                            if str(e.get("feature") or e.get("feat") or "").lower() == feat
-                            and not str(e.get("key") or "").startswith("agg:")
-                            and since <= _evt_ts(e) <= until
-                        ]
-                        rows.sort(key=_evt_ts)
-                        for e in reversed(rows[-25:]):
-                            act = str(
-                                e.get("action") or e.get("op") or e.get("change") or ""
-                            ).lower()
-                            slim = {
-                                k: e.get(k)
-                                for k in (
-                                    "title",
-                                    "series_title",
-                                    "show_title",
-                                    "name",
-                                    "key",
-                                    "type",
-                                    "source",
-                                    "year",
-                                    "season",
-                                    "episode",
-                                    "added_at",
-                                    "listed_at",
-                                    "watched_at",
-                                    "rated_at",
-                                    "last_watched_at",
-                                    "user_rated_at",
-                                    "ts",
-                                    "seen_ts",
-                                    "sync_ts",
-                                    "ingested_ts",
-                                )
-                                if k in e and e.get(k) is not None
-                            }
-                            if "title" not in slim:
-                                slim["title"] = e.get("title") or e.get("key") or "item"
-                            _ensure_series_title(e, slim, key_map, id_map)
-                            _finalize_spotlight_item(slim)
-                            if any(t in act for t in ("remove", "unrate", "delete", "clear")):
-                                lane.setdefault("spotlight_remove", []).append(slim)
-                            elif ("update" in act) or ("rate" in act):
-                                lane.setdefault("spotlight_update", []).append(slim)
-                            else:
-                                lane.setdefault("spotlight_add", []).append(slim)
-                        lanes[feat] = lane
-            except Exception:
-                pass
-
-            _summary_set("enabled", enabled_tmp)
-            _summary_set("features", lanes)
-
+            enabled = snap.get("enabled") or _lanes_enabled_defaults()
             a = r = u = 0
-            for k, d in (lanes or {}).items():
-                if isinstance(enabled_tmp, dict) and enabled_tmp.get(k) is False:
+            for name, lane in (lanes or {}).items():
+                if isinstance(enabled, dict) and enabled.get(name) is False:
                     continue
-                a += int((d or {}).get("added") or 0)
-                r += int((d or {}).get("removed") or 0)
-                u += int((d or {}).get("updated") or 0)
+                a += int((lane or {}).get("added") or 0)
+                r += int((lane or {}).get("removed") or 0)
+                u += int((lane or {}).get("updated") or 0)
             _summary_set("added_last", a)
             _summary_set("removed_last", r)
             _summary_set("updated_last", u)
-
-            _STATS = _rt()[5]
-            run_id = snap.get("finished_at") or snap.get("started_at") or ""
-            for name, lane in (lanes or {}).items():
-                aa = int((lane or {}).get("added") or 0)
-                rr = int((lane or {}).get("removed") or 0)
-                uu = int((lane or {}).get("updated") or 0)
-                if aa or rr or uu:
-                    _STATS.record_feature_totals(
-                        name,
-                        added=aa,
-                        removed=rr,
-                        updated=uu,
-                        src="REPORT",
-                        run_id=run_id,
-                        expand_events=True,
-                    )
-
         except Exception:
             pass
         try:
@@ -2117,101 +2100,15 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
 @router.get("/run/summary")
 def api_run_summary() -> JSONResponse:
     snap0 = _summary_snapshot()
-    since = _parse_epoch(snap0.get("raw_started_ts") or snap0.get("started_at"))
-    until = _parse_epoch(snap0.get("finished_at"))
-    if not until and snap0.get("running"):
-        until = int(time.time())
-
-    stats_feats, enabled = _compute_lanes_from_stats(since, until)
-    snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
-
-    try:
-        feats = snap.get("features") or {}
-        _STATS = _rt()[5]
-        with _STATS.lock:
-            evs = list(_STATS.data.get("events") or [])
-
-        def _evt_ts(e):
-            for k in ("ts", "seen_ts", "sync_ts", "ingested_ts"):
-                try:
-                    v = int(e.get(k) or 0)
-                    if v:
-                        return v
-                except Exception:
-                    pass
-            return 0
-
-        key_map, id_map = _get_title_maps()
-
-        for feat in ("ratings", "history"):
-            lane = feats.get(feat) or {}
-            if (
-                (lane.get("added", 0) + lane.get("removed", 0) + lane.get("updated", 0)) > 0
-                and not (
-                    lane.get("spotlight_add")
-                    or lane.get("spotlight_remove")
-                    or lane.get("spotlight_update")
-                )
-            ):
-                rows = [
-                    e
-                    for e in evs
-                    if str(e.get("feature") or e.get("feat") or "").lower() == feat
-                    and not str(e.get("key") or "").startswith("agg:")
-                    and (since <= _evt_ts(e) <= (until or _evt_ts(e)))
-                ]
-                rows.sort(key=_evt_ts)
-                for e in reversed(rows[-25:]):
-                    act = str(e.get("action") or e.get("op") or e.get("change") or "").lower()
-                    slim = {
-                        k: e.get(k)
-                        for k in (
-                            "title",
-                            "series_title",
-                            "show_title",
-                            "name",
-                            "key",
-                            "type",
-                            "source",
-                            "year",
-                            "season",
-                            "episode",
-                            "added_at",
-                            "listed_at",
-                            "watched_at",
-                            "rated_at",
-                            "last_watched_at",
-                            "user_rated_at",
-                            "ts",
-                            "seen_ts",
-                            "sync_ts",
-                            "ingested_ts",
-                        )
-                        if k in e and e.get(k) is not None
-                    }
-                    if "title" not in slim:
-                        slim["title"] = e.get("title") or e.get("key") or "item"
-                    _ensure_series_title(e, slim, key_map, id_map)
-                    _finalize_spotlight_item(slim)
-
-                    if any(t in act for t in ("remove", "unrate", "delete", "clear")):
-                        lane.setdefault("spotlight_remove", []).append(slim)
-                    elif ("update" in act) or ("rate" in act):
-                        lane.setdefault("spotlight_update", []).append(slim)
-                    else:
-                        lane.setdefault("spotlight_add", []).append(slim)
-                feats[feat] = lane
-
-        snap["features"] = feats
-    except Exception:
-        pass
+    snap = dict(snap0 or {})
+    snap.setdefault("features", {})
+    snap.setdefault("enabled", _lanes_enabled_defaults())
 
     tl = snap.get("timeline") or {}
     if tl.get("done") and not tl.get("post"):
         tl["post"] = True
         tl["pre"] = True
         snap["timeline"] = tl
-
 
     try:
         snap["provider_counts"] = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
@@ -2227,9 +2124,9 @@ def api_run_summary_file() -> Response:
     until = _parse_epoch(snap0.get("finished_at"))
     if not until and snap0.get("running"):
         until = int(time.time())
-
-    stats_feats, enabled = _compute_lanes_from_stats(since, until)
-    snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
+    snap = dict(snap0 or {})
+    snap.setdefault("features", {})
+    snap.setdefault("enabled", _lanes_enabled_defaults())
 
     js = json.dumps(snap, indent=2)
     return Response(
@@ -2298,6 +2195,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                         if raw.startswith("{"):
                             try:
                                 obj = json.loads(raw)
+                                obj = _slim_sync_log_obj(obj) or obj
                             except Exception:
                                 continue
                             evt = (str(obj.get("event") or "log").strip() or "log")
@@ -2312,9 +2210,9 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             until = _parse_epoch(snap0.get("finished_at"))
             if not until and snap0.get("running"):
                 until = int(time.time())
-
-            stats_feats, enabled = _compute_lanes_from_stats(since, until)
-            snap = _apply_live_stats_to_snap(snap0, stats_feats, enabled)
+            snap = dict(snap0 or {})
+            snap.setdefault("features", {})
+            snap.setdefault("enabled", _lanes_enabled_defaults())
 
             key = (
                 snap.get("running"),

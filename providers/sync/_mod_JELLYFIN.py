@@ -25,6 +25,47 @@ from ._mod_common import (
     make_snapshot_progress,
 )
 
+
+def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
+    attempted: list[str] = []
+    for it in items or []:
+        try:
+            k = str(key_of(it) or "").strip()
+        except Exception:
+            k = ""
+        if k:
+            attempted.append(k)
+
+    unresolved_keys: set[str] = set()
+    if unresolved:
+        for u in unresolved:
+            obj: Any = u
+            if isinstance(u, Mapping):
+                if isinstance(u.get("key"), str) and u.get("key"):
+                    unresolved_keys.add(str(u.get("key")))
+                    continue
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                unresolved_keys.add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    k = str(key_of(obj) or "").strip()
+                except Exception:
+                    k = ""
+                if k:
+                    unresolved_keys.add(k)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in attempted:
+        if k in unresolved_keys or k in seen:
+            continue
+        out.append(k)
+        seen.add(k)
+    return out
+
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
@@ -464,8 +505,8 @@ class JELLYFINModule:
                 "error": f"unknown_feature:{feature}",
             }
         cnt, unres = mod.add(self, lst)
-        return {"ok": True, "count": int(cnt), "unresolved": unres}
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
+        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys}
     def remove(
         self,
         feature: str,
@@ -491,9 +532,8 @@ class JELLYFINModule:
                 "error": f"unknown_feature:{feature}",
             }
         cnt, unres = mod.remove(self, lst)
-        return {"ok": True, "count": int(cnt), "unresolved": unres}
-
-
+        confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
+        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys}
 class _JellyfinOPS:
     def name(self) -> str:
         return "JELLYFIN"

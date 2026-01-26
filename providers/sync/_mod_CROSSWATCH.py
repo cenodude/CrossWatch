@@ -9,6 +9,55 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
+    attempted: list[str] = []
+    for it in items or []:
+        try:
+            k = str(key_of(it) or "").strip()
+        except Exception:
+            k = ""
+        if k:
+            attempted.append(k)
+
+    unresolved_keys: set[str] = set()
+    if unresolved:
+        for u in unresolved:
+            obj: Any = u
+            if isinstance(u, Mapping):
+                if isinstance(u.get("key"), str) and u.get("key"):
+                    unresolved_keys.add(str(u.get("key")))
+                    continue
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                unresolved_keys.add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    k = str(key_of(obj) or "").strip()
+                except Exception:
+                    k = ""
+                if k:
+                    unresolved_keys.add(k)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in attempted:
+        if k in unresolved_keys or k in seen:
+            continue
+        out.append(k)
+        seen.add(k)
+    return out
+
+def _crosswatch_key_of(obj: Any) -> str:
+    try:
+        from cw_platform.id_map import canonical_key, minimal as id_minimal
+        if isinstance(obj, Mapping):
+            return str(canonical_key(id_minimal(obj)) or "").strip()
+    except Exception:
+        pass
+    return ""
+
 try:
     from ._log import log as cw_log
 except Exception:  # pragma: no cover
@@ -242,7 +291,8 @@ class CROSSWATCHModule:
             started = time.perf_counter()
             cnt, unresolved = mod.add(self, lst)
             _info(feature, "write_done", op="add", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+            confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             _error(feature, "write_failed", op="add", error=str(e))
             return {"ok": False, "error": str(e)}
@@ -270,7 +320,8 @@ class CROSSWATCHModule:
             started = time.perf_counter()
             cnt, unresolved = mod.remove(self, lst)
             _info(feature, "write_done", op="remove", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved}
+            confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             _error(feature, "write_failed", op="remove", error=str(e))
             return {"ok": False, "error": str(e)}
