@@ -652,9 +652,25 @@ def _two_way_sync(
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
     if use_phantoms and add_to_A:
-        add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
+        # Ratings use upsert semantics (add == set/update). Do not phantom-block updates.
+        if feature == "ratings":
+            upd = [it for it in add_to_A if _present(A_eff, A_alias, it)]
+            fresh = [it for it in add_to_A if not _present(A_eff, A_alias, it)]
+            if fresh:
+                fresh, _ = guardA.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
+            add_to_A = upd + fresh
+        else:
+            add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
     if use_phantoms and add_to_B:
-        add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
+        # Ratings use upsert semantics
+        if feature == "ratings":
+            upd = [it for it in add_to_B if _present(B_eff, B_alias, it)]
+            fresh = [it for it in add_to_B if not _present(B_eff, B_alias, it)]
+            if fresh:
+                fresh, _ = guardB.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
+            add_to_B = upd + fresh
+        else:
+            add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
 
     rem_from_A = _maybe_block_massdelete(
         rem_from_A, baseline_size=len(A_eff),

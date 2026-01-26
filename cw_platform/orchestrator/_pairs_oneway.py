@@ -464,7 +464,15 @@ def run_one_way_feature(
 
     guard = PhantomGuard(src, dst, feature, ttl_days=ttl_days, enabled=use_phantoms)
     if use_phantoms and adds:
-        adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
+        # Ratings use upsert semantics
+        if feature == "ratings":
+            updates = [it for it in adds if _present(dst_full, dst_alias, it)]
+            fresh = [it for it in adds if not _present(dst_full, dst_alias, it)]
+            if fresh:
+                fresh, _blocked = guard.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
+            adds = updates + fresh
+        else:
+            adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
