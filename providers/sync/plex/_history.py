@@ -1002,6 +1002,8 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             pass
 
     kind = (item.get("type") or "movie").lower()
+    if kind == "anime":
+        kind = "episode"
     is_episode = kind == "episode"
     title = (item.get("title") or "").strip()
     series_title = (item.get("series_title") or "").strip()
