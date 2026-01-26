@@ -150,8 +150,9 @@ services:
 
 <a href="https://www.buymeacoffee.com/cenodude">
   <img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000000">
-</a>
-
+</a><center><br>
+Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
+<br/>
 <br/>
 
 <a href="https://www.gitbook.com/">
