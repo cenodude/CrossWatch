@@ -352,7 +352,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
         return None
 
     kind_raw = str(it.get("type") or "").strip().lower()
-    kind = {"movies": "movie", "shows": "show", "series": "show"}.get(kind_raw, kind_raw)
+    kind = {"movies":"movie","shows":"show","series":"show","anime":"show","tv":"show","tv_shows":"show","tvshows":"show"}.get(kind_raw, kind_raw)
     if kind not in {"movie", "show", "season", "episode"}:
         return None
 
