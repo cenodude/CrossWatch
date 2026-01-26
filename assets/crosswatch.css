@@ -515,6 +515,7 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 #save-fab{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));z-index:10000;display:flex;justify-content:center;align-items:center;pointer-events:none;background:transparent}
 #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
 #save-fab.hidden,#save-frost.hidden{display:none}
+#save-fab .btn:disabled{opacity:1}
 body:has(#about-backdrop:not(.hidden)) #save-fab,body:has(#about-backdrop:not(.hidden)) #save-frost{display:none !important}
 @media (max-width:480px){.about-grid{grid-template-columns:1fr}
 }

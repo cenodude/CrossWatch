@@ -3060,9 +3060,18 @@ function _getVal(id) {
 
 async function saveSettings() {
   let schedChanged = false;
+  const fromFab = (() => {
+    const ae = document.activeElement;
+    return !!(ae && typeof ae.closest === "function" && ae.closest("#save-fab"));
+  })();
 
   const _cwEnsureSaveToast = () => {
-    let el = document.getElementById("save_msg") || document.querySelector(".save-toast");
+    let el = document.querySelector(".save-toast");
+    if (!el) {
+      const inline = document.getElementById("save_msg");
+      if (inline && !inline.closest("#save-fab")) el = inline;
+    }
+
     if (el) return el;
     try {
       el = document.createElement("div");
@@ -3939,7 +3948,7 @@ async function saveSettings() {
     try { if (typeof window.refreshSchedulingBanner === "function") await window.refreshSchedulingBanner(); } catch {}
     try { if (typeof window.refreshSettingsInsight === "function") window.refreshSettingsInsight(); } catch {}
 
-    showToast("Settings saved", true);
+    if (!fromFab) showToast("Settings saved", true);
   } catch (err) {
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);
