@@ -369,7 +369,7 @@ def _norm_type(t: Any) -> str:
     x = str(t or "").strip().lower()
     if x in ("movies", "movie"):
         return "movie"
-    if x in ("shows", "show", "series", "tv"):
+    if x in ("shows", "show", "series", "tv", "anime", "tv_shows", "tvshows"):
         return "show"
     if x in ("episode", "episodes"):
         return "episode"

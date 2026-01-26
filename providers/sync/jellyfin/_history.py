@@ -637,6 +637,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if ids:
                 m["ids"] = ids
 
+        t_raw = str(m.get("type") or "").strip().lower()
+        if t_raw == "anime":
+            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
+                m["type"] = "episode"
+            else:
+                m["type"] = "show"
+
         try:
             k = canonical_key(m) or canonical_key(base)
         except Exception:
@@ -784,6 +791,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     ids[k_id] = v_id
             if ids:
                 m["ids"] = ids
+
+        t_raw = str(m.get("type") or "").strip().lower()
+        if t_raw == "anime":
+            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
+                m["type"] = "episode"
+            else:
+                m["type"] = "show"
 
         try:
             k = canonical_key(m) or canonical_key(base)
