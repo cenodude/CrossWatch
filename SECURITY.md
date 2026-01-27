@@ -7,6 +7,7 @@ CrossWatch is NOT meant to be exposed directly to the public internet.
   * a **VPN** (WireGuard, Tailscale, etc.)
 * Anyone who can reach the web UI can change sync pairs, tokens and settings.
   * use CrossWatch authentication to set a username/password
+  * use reverse proxy to HTTPS with the self-signed certificate build-in CW.
 
 ## Supported Versions
 > Security fixes land on `main` first, then the next release.
