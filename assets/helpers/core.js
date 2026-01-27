@@ -2147,6 +2147,9 @@ function cwUiSettingsHubUpdate() {
   const pc = document.getElementById("ui_show_playingcard");
   if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
 
+  const proto = document.getElementById("ui_protocol");
+  if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
+
   const aaEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
   const st = window._appAuthStatus || null;
 
@@ -2188,6 +2191,7 @@ function cwUiSettingsHubInit() {
   const ids = [
     "ui_show_watchlist_preview",
     "ui_show_playingcard",
+    "ui_protocol",
     "app_auth_enabled",
     "app_auth_username",
     "app_auth_password",
@@ -2920,6 +2924,12 @@ async function loadConfig() {
       playSel.value = on ? "true" : "false";
     }
 
+    const protoSel = document.getElementById("ui_protocol");
+    if (protoSel) {
+      const p = String(ui.protocol || "http").trim().toLowerCase();
+      protoSel.value = (p === "https") ? "https" : "http";
+    }
+
     const aaEnabledEl = document.getElementById("app_auth_enabled");
     if (aaEnabledEl) {
       aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
@@ -3323,6 +3333,7 @@ async function saveSettings() {
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
     const prevUiShow     = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
     const prevUiPlaying  = (typeof serverCfg?.ui?.show_playingcard === "boolean") ? !!serverCfg.ui.show_playingcard : true;
+    const prevUiProtocol = String(serverCfg?.ui?.protocol || "http").trim().toLowerCase() === "https" ? "https" : "http";
 
     const prevCw = serverCfg?.crosswatch || {};
 
@@ -3409,6 +3420,17 @@ async function saveSettings() {
           cfg.ui = cfg.ui || {};
           cfg.ui.show_playingcard = finalUiPlay;
           changed = true;
+        }
+      }
+
+      const protoSel = document.getElementById("ui_protocol");
+      if (protoSel) {
+        const want = String(protoSel.value || "http").trim().toLowerCase() === "https" ? "https" : "http";
+        if (want !== prevUiProtocol) {
+          cfg.ui = cfg.ui || {};
+          cfg.ui.protocol = want;
+          changed = true;
+          try { window.__cwProtoChanged = want; } catch {}
         }
       }
 
@@ -3949,6 +3971,14 @@ async function saveSettings() {
     try { if (typeof window.refreshSettingsInsight === "function") window.refreshSettingsInsight(); } catch {}
 
     if (!fromFab) showToast("Settings saved", true);
+
+    if (window.__cwProtoChanged) {
+      const wantProto = String(window.__cwProtoChanged || "").trim().toLowerCase();
+      try { delete window.__cwProtoChanged; } catch {}
+      const url = cwBuildProtoUrl(wantProto);
+      cwShowRestartBanner(`Protocol changed: restart required`, url);
+      showToast("Protocol changed: restart required", true);
+    }
   } catch (err) {
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);
@@ -4942,3 +4972,143 @@ document.addEventListener("DOMContentLoaded", () => {
     else if (typeof applySyncVisibility === "function") applySyncVisibility();
   } catch (_) {}
 });
+
+
+function cwBuildProtoUrl(proto) {
+  try {
+    const p = String(proto || "").toLowerCase() === "https" ? "https" : "http";
+    const u = new URL(window.location.href);
+    u.protocol = p + ":";
+    return u.toString();
+  } catch {
+    try {
+      const p = String(proto || "").toLowerCase() === "https" ? "https" : "http";
+      return window.location.href.replace(/^https?:\/\//, p + "://");
+    } catch {
+      return null;
+    }
+  }
+}
+
+function cwEnsureRestartBanner() {
+  if (document.getElementById("cw-restart-banner")) return;
+  const cssId = "cw-restart-banner-css";
+  if (!document.getElementById(cssId)) {
+    const st = document.createElement("style");
+    st.id = cssId;
+    st.textContent = `
+#cw-restart-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.12);
+  background: rgba(20,20,24,.92);
+  backdrop-filter: blur(8px);
+}
+#cw-restart-banner.hidden { display: none; }
+#cw-restart-banner .cw-rb-inner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+#cw-restart-banner .cw-rb-msg {
+  font-weight: 600;
+}
+#cw-restart-banner .cw-rb-sub {
+  font-size: 12px;
+  opacity: .8;
+  margin-top: 2px;
+}
+#cw-restart-banner .cw-rb-left { display:flex; flex-direction:column; gap:2px; }
+#cw-restart-banner .cw-rb-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+#cw-restart-banner .cw-rb-actions a, #cw-restart-banner .cw-rb-actions button {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 600;
+}
+#cw-restart-banner .cw-rb-actions a:hover, #cw-restart-banner .cw-rb-actions button:hover {
+  background: rgba(255,255,255,.10);
+}
+#cw-restart-banner .cw-rb-actions button.danger {
+  border-color: rgba(255,80,80,.35);
+}
+`;
+    document.head.appendChild(st);
+  }
+
+  const b = document.createElement("div");
+  b.id = "cw-restart-banner";
+  b.className = "hidden";
+  b.innerHTML = `
+  <div class="cw-rb-inner">
+    <div class="cw-rb-left">
+      <div class="cw-rb-msg" id="cw-rb-msg">Restart required</div>
+      <div class="cw-rb-sub" id="cw-rb-sub">Container/service restart needed to apply TLS/protocol changes.</div>
+    </div>
+    <div class="cw-rb-actions">
+      <a id="cw-rb-link" href="#" target="_blank" rel="noopener" style="display:none">Open after restart</a>
+      <button type="button" id="cw-rb-copy" style="display:none">Copy link</button>
+      <button type="button" class="danger" id="cw-rb-dismiss">Dismiss</button>
+    </div>
+  </div>
+`;
+  const anchor = document.getElementById("content") || document.body;
+  anchor.insertBefore(b, anchor.firstChild);
+
+  const hide = () => { b.classList.add("hidden"); };
+  b.querySelector("#cw-rb-dismiss")?.addEventListener("click", hide);
+  b.querySelector("#cw-rb-copy")?.addEventListener("click", async () => {
+    const a = b.querySelector("#cw-rb-link");
+    const href = a?.getAttribute("href") || "";
+    if (!href || href === "#") return;
+    try { await navigator.clipboard.writeText(href); } catch {}
+  });
+}
+
+function cwShowRestartBanner(message, href) {
+  cwEnsureRestartBanner();
+  const b = document.getElementById("cw-restart-banner");
+  if (!b) return;
+
+  const msg = b.querySelector("#cw-rb-msg");
+  if (msg) msg.textContent = String(message || "Restart required");
+
+  const link = b.querySelector("#cw-rb-link");
+  const copy = b.querySelector("#cw-rb-copy");
+  const url = (href && String(href).trim()) ? String(href).trim() : "";
+
+  if (link && copy) {
+    if (url) {
+      link.setAttribute("href", url);
+      link.style.display = "";
+      copy.style.display = "";
+    } else {
+      link.setAttribute("href", "#");
+      link.style.display = "none";
+      copy.style.display = "none";
+    }
+  }
+
+  b.classList.remove("hidden");
+}
+
+function cwHideRestartBanner() {
+  const b = document.getElementById("cw-restart-banner");
+  if (b) b.classList.add("hidden");
+}
+
+try {
+  window.cwShowRestartBanner = cwShowRestartBanner;
+  window.cwHideRestartBanner = cwHideRestartBanner;
+  window.cwBuildProtoUrl = cwBuildProtoUrl;
+} catch {}

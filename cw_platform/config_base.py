@@ -8,7 +8,7 @@ import json
 import os
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def _current_version_norm() -> str:
@@ -399,6 +399,14 @@ DEFAULT_CFG: dict[str, Any] = {
     "ui": {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
+        "protocol": "http",                             # "http" | "https" (HTTPS uses a self-signed cert by default)
+        "tls": {
+            "self_signed": True,                        # Auto-generate a self-signed certificate when missing
+            "hostname": "localhost",                    # Used for certificate CN/SAN
+            "valid_days": 825,                          # Certificate validity (days)
+            "cert_file": "",                            # Optional override path to a PEM cert
+            "key_file": "",                             # Optional override path to a PEM key
+        },
     },
 
     # --- Local UI Authentication --------------------------------------------
@@ -484,6 +492,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 # Feature normalization
 _ALLOWED_RATING_TYPES: list[str] = ["movies", "shows", "seasons", "episodes"]
 _ALLOWED_RATING_MODES: list[str] = ["only_new", "from_date", "all"]
+_ALLOWED_UI_PROTOCOLS: list[str] = ["http", "https"]
 
 
 def _as_list(value: Any) -> list[str]:
@@ -550,6 +559,43 @@ def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
     return f
 
 
+def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
+    v = parent.get(key)
+    if isinstance(v, dict):
+        return cast(dict[str, Any], v)
+    d: dict[str, Any] = {}
+    parent[key] = d
+    return d
+
+
+def _normalize_ui(cfg: dict[str, Any]) -> None:
+    ui = _ensure_dict(cfg, "ui")
+
+    protocol = str(ui.get("protocol", "http") or "http").strip().lower()
+    if protocol not in _ALLOWED_UI_PROTOCOLS:
+        protocol = "http"
+    ui["protocol"] = protocol
+
+    tls = _ensure_dict(ui, "tls")
+    tls["self_signed"] = bool(tls.get("self_signed", True))
+
+    hostname = str(tls.get("hostname", "localhost") or "localhost").strip()
+    tls["hostname"] = hostname or "localhost"
+
+    try:
+        valid_days = int(tls.get("valid_days", 825) or 825)
+    except Exception:
+        valid_days = 825
+    if valid_days < 1:
+        valid_days = 1
+    if valid_days > 3650:
+        valid_days = 3650
+    tls["valid_days"] = valid_days
+
+    tls["cert_file"] = str(tls.get("cert_file", "") or "").strip()
+    tls["key_file"] = str(tls.get("key_file", "") or "").strip()
+
+
 # Public API
 def load_config() -> dict[str, Any]:
     p = _cfg_file()
@@ -567,12 +613,14 @@ def load_config() -> dict[str, Any]:
         for it in pairs:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
+    _normalize_ui(cfg)
     return cfg
 
 
 def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
     data["version"] = _current_version_norm()
+    _normalize_ui(data)
     pairs = data.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:

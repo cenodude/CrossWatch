@@ -4,6 +4,7 @@ from typing import Callable
 from fastapi import FastAPI
 
 from .configAPI import router as config_router
+from .tlsAPI import router as tls_router
 from .maintenanceAPI import router as maintenance_router
 from .metaAPI import router as meta_router
 from .insightAPI import register_insights
@@ -34,6 +35,7 @@ from services.export import router as export_router
 
 __all__ = [
     "config_router",
+    "tls_router",
     "maintenance_router",
     "meta_router",
     "watchlist_router",
@@ -66,6 +68,7 @@ def register(
     log_fn: Callable[[str, str], None] | None = None,
 ) -> None:
     app.include_router(config_router)
+    app.include_router(tls_router)
     app.include_router(meta_router)
     app.include_router(watchlist_router)
     app.include_router(maintenance_router)

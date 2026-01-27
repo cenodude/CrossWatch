@@ -130,6 +130,7 @@ from services.watchlist import build_watchlist, delete_watchlist_item
 from cw_platform.orchestrator import Orchestrator, minimal
 from cw_platform.modules_registry import MODULES as _MODULES
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
+from cw_platform.tls import ensure_self_signed_cert, resolve_tls_paths
 from cw_platform.orchestrator import canonical_key
 from cw_platform import config_base
 
@@ -966,11 +967,19 @@ except Exception as _e:
 
 # Entry point
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
-    ip = get_primary_ip()
+    cfg = load_config()
+    ui = cfg.get("ui")
+    if not isinstance(ui, dict):
+        ui = {}
+    protocol = str(ui.get("protocol") or "http").strip().lower()
+    if protocol not in ("http", "https"):
+        protocol = "http"
+
+    ip = get_primary_ip() or "127.0.0.1"
     boot = LOG.child("BOOT")
     boot.info(_c(f"CROSSWATCH Engine {CURRENT_VERSION} running:", BLUE))
-    boot.info(f"  {_c('Local:', DIM)}   {_c(f'http://127.0.0.1:{port}', GREEN)}")
-    boot.info(f"  {_c('Docker:', DIM)}  {_c(f'http://{ip}:{port}', GREEN)}")
+    boot.info(f"  {_c('Local:', DIM)}   {_c(f'{protocol}://127.0.0.1:{port}', GREEN)}")
+    boot.info(f"  {_c('Docker:', DIM)}  {_c(f'{protocol}://{ip}:{port}', GREEN)}")
     boot.info(f"  {_c('Bind:', DIM)}    {_c(f'{host}:{port}', GREEN)}")
     boot.info("")
     boot.info(f"  {_c('Cache:', DIM)}      {CACHE_DIR}")
@@ -981,17 +990,52 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     boot.info(f"  {_c('State:', DIM)}      {STATE_PATH} (JSON)")
     boot.info(f"  {_c('Config:', DIM)}     {CONFIG_DIR / 'config.json'} (JSON)")
     boot.info("")
-    cfg = load_config()
+
     debug = bool((cfg.get("runtime") or {}).get("debug"))
     debug_http = bool((cfg.get("runtime") or {}).get("debug_http"))
 
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level=("debug" if debug else "warning"),
-        access_log=debug_http,
-    )
+    uv_args: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "log_level": ("debug" if debug else "warning"),
+        "access_log": debug_http,
+    }
+
+    if protocol == "https":
+        tls = ui.get("tls")
+        if not isinstance(tls, dict):
+            tls = {}
+        self_signed = bool(tls.get("self_signed", True))
+        hostname = str(tls.get("hostname") or "localhost").strip() or "localhost"
+        try:
+            valid_days = int(tls.get("valid_days") or 825)
+        except Exception:
+            valid_days = 825
+
+        cert_path, key_path = resolve_tls_paths(cfg, CONFIG_DIR)
+        if self_signed:
+            alt_dns_raw = tls.get("alt_dns") if isinstance(tls, dict) else None
+            alt_ips_raw = tls.get("alt_ips") if isinstance(tls, dict) else None
+            alt_dns: list[str] = [str(x) for x in alt_dns_raw] if isinstance(alt_dns_raw, list) else []
+            alt_ips: list[str] = [str(x) for x in alt_ips_raw] if isinstance(alt_ips_raw, list) else []
+            ensure_self_signed_cert(
+                cert_path,
+                key_path,
+                hostname=hostname,
+                valid_days=valid_days,
+                alt_dns=[hostname, "localhost", socket.gethostname(), *alt_dns],
+                alt_ips=["127.0.0.1", ip, *alt_ips],
+            )
+        else:
+            if not cert_path.exists() or not key_path.exists():
+                boot.error(f"[!] HTTPS selected but cert/key not found: {cert_path} / {key_path}")
+                raise SystemExit(2)
+
+        uv_args["ssl_certfile"] = str(cert_path)
+        uv_args["ssl_keyfile"] = str(key_path)
+
+    uvicorn.run(app, **uv_args)
+
 
 if __name__ == "__main__":
     main()

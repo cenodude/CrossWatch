@@ -499,6 +499,7 @@ def _get_index_html_static() -> str:
               <div class="chips">
                 <span class="chip" id="hub_ui_watchlist">Watchlist: —</span>
                 <span class="chip" id="hub_ui_playing">Playing: —</span>
+                <span class="chip" id="hub_ui_proto">Proto: —</span>
               </div>
             </button>
 
@@ -547,6 +548,20 @@ def _get_index_html_static() -> str:
                     <option value="true">Show</option>
                     <option value="false">Hide</option>
                   </select>
+                </div>
+
+                <div>
+                  <label>Protocol</label>
+                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <select id="ui_protocol" style="min-width:220px;flex:1">
+                      <option value="http">HTTP</option>
+                      <option value="https">HTTPS (self-signed)</option>
+                    </select>
+                    <button type="button" class="btn" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                  </div>
+                  <div class="sub" style="margin-top:0.25rem">
+                    HTTPS generates a self-signed certificate. Your browser will show a warning unless you trust it.
+                  </div>
                 </div>
               </div>
             </div>

@@ -7,3 +7,4 @@ websocket-client
 websockets
 python-multipart
 packaging
+cryptography
