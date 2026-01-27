@@ -577,10 +577,11 @@
         (spotAdd?.length || 0) +
         (spotRem?.length || 0) +
         (spotUpd?.length || 0);
-      const logicalTotal = rawTotal || (items?.length || 0) || spots.length;
+      const logicalTotal = (added || 0) + (removed || 0) + (updated || 0);
       const cappedTotal = Math.min(25, logicalTotal);
 
-      const shownSpots = Math.min(3, spots.length);
+      const maxShow = Math.min(3, cappedTotal);
+      const shownSpots = Math.min(maxShow, spots.length);
       const moreCount = Math.max(0, cappedTotal - shownSpots);
 
       if (!isEnabled) {
@@ -590,7 +591,7 @@
             textContent: "Feature not configured"
           })
         );
-      } else if (!spots.length) {
+      } else if (cappedTotal === 0 || !spots.length) {
         body.appendChild(
           Object.assign(document.createElement("div"), {
             className: "spot muted small",
@@ -602,7 +603,7 @@
       } else {
         let lastRow = null;
 
-        for (const s of spots.slice(0, 3)) {
+        for (const s of spots.slice(0, maxShow)) {
           const row = document.createElement("div");
           row.className = "spot";
 
