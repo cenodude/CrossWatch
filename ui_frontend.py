@@ -53,29 +53,31 @@ self.addEventListener("fetch", (event) => {
 
 GITBOOK_SITE_URL: str = "https://wiki.crosswatch.app"
 GITBOOK_EMBED_SCRIPT_URL: str = "https://wiki.crosswatch.app/~gitbook/embed/script.js"
-GITBOOK_EMBED_BLOCK: str = r"""<script src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script>
+GITBOOK_EMBED_BLOCK: str = r"""<script id="cw-gitbook-embed" src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script>
 <script>
 (() => {
   const SITE_URL = "https://wiki.crosswatch.app";
 
+  if (window.__cwGitBookBooted) return;
+  window.__cwGitBookBooted = true;
+
   function boot() {
+    const GB = window.GitBook;
+    if (typeof GB !== "function") return;
+
+    // If GitBook was already initialized (HMR/duplicate load), reset it first
+    try { GB("unload"); } catch (_) {}
+
     try {
-      window.GitBook("init", { siteURL: SITE_URL });
+      GB("init", { siteURL: SITE_URL });
     } catch (e) {
-      const msg = String(e || "");
-      if (!msg.includes("already initialized")) console.warn("[docs] GitBook init failed:", e);
+      console.warn("[docs] GitBook init failed:", e);
     }
-    try {
-      window.GitBook("show");
-    } catch (e) {
-      console.warn("[docs] GitBook show failed:", e);
-    }
+
+    try { GB("show"); } catch (e) { console.warn("[docs] GitBook show failed:", e); }
   }
 
-  if (typeof window.GitBook === "function") {
-    boot();
-    return;
-  }
+  if (typeof window.GitBook === "function") { boot(); return; }
 
   let tries = 0;
   const t = setInterval(() => {
