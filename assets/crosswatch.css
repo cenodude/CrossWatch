@@ -427,6 +427,10 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 .conn-pill.ok.has-vip::before{content:"";position:absolute;inset:-1px auto -1px -1px;width:var(--vip-rail);background:linear-gradient(135deg,var(--vip-p1),var(--vip-p2));border-radius:10px 0 0 10px;opacity:var(--rail-alpha);z-index:-1;pointer-events:none}
 .conn-pill.has-vip{padding-left:0}
 .conn-pill:hover .conn-slot{animation:crown-bob 5s ease-in-out infinite,crown-tilt .8s cubic-bezier(.2,.8,.2,1) 1}
+#conn-badges .conn-pill.ok,
+#conn-badges .conn-pill.no{
+  box-shadow: var(--shadow);
+}
 #conn-badges{display:flex;gap:8px;flex-wrap:wrap;position:absolute !important;top:8px;right:56px;z-index:4;margin-left:0 !important}
 @media (prefers-reduced-motion:reduce){.badge.upd,.badge.upd::before,.badge.upd::after{animation:none !important;transition:none !important}
 }
