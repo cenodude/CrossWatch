@@ -102,6 +102,7 @@
     const j = await fetch("/api/simkl/authorize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({ origin }),
       cache: "no-store",
     }).then((r) => r.json()).catch(() => null);
@@ -141,7 +142,11 @@
 
       inFlight = true;
       let cfg = null;
-      try { cfg = await fetch("/api/config" + bust(), { cache: "no-store" }).then((r) => r.json()); } catch {} finally { inFlight = false; }
+      try {
+        const r = await fetch("/api/config" + bust(), { cache: "no-store", credentials: "same-origin" });
+        if (r.status === 401) { notify("Session expired - please log in again"); cleanup(); return; }
+        cfg = await r.json();
+      } catch {} finally { inFlight = false; }
 
       const tok = (cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token || "").trim();
       if (tok) {
