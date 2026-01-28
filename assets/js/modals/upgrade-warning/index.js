@@ -15,6 +15,164 @@ function _cmp(a, b) {
   return 0;
 }
 
+function _escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function _sanitizeHtml(html) {
+  try {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = String(html || "");
+    const blocked = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META"]);
+    const kill = [];
+
+    const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const el = walker.currentNode;
+      if (blocked.has(el.tagName)) kill.push(el);
+
+      // Strip unsafe attributes
+      for (const attr of Array.from(el.attributes || [])) {
+        const k = String(attr.name || "").toLowerCase();
+        const v = String(attr.value || "");
+        if (k.startsWith("on")) el.removeAttribute(attr.name);
+        if ((k === "href" || k === "src") && /^\s*javascript:/i.test(v)) el.removeAttribute(attr.name);
+      }
+
+      // Force safe link behavior
+      if (el.tagName === "A") {
+        el.setAttribute("target", "_blank");
+        el.setAttribute("rel", "noopener noreferrer");
+      }
+    }
+
+    for (const el of kill) el.remove();
+    return tpl.innerHTML;
+  } catch {
+    return String(html || "");
+  }
+}
+
+function _mdInline(s) {
+  let x = String(s || "");
+
+  // Code spans, links, bold, italics
+  x = x.replace(/`([^`]+)`/g, (_, c) => `<code>${_escapeHtml(c)}</code>`);
+  x = x.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, href) => `<a href="${href}">${t}</a>`);
+  x = x.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  x = x.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<i>$2</i>");
+
+  return x;
+}
+
+function _mdToHtml(md) {
+  const src = String(md || "").replace(/\r\n/g, "\n");
+  const blocks = [];
+  let tmp = src.replace(/```([\s\S]*?)```/g, (_, inner) => {
+    let code = String(inner || "");
+    let lang = "";
+    const lines = code.split("\n");
+    const first = (lines[0] || "").trim();
+    if (first && /^[a-z0-9_-]+$/i.test(first) && lines.length > 1) {
+      lang = first;
+      lines.shift();
+      code = lines.join("\n");
+    }
+    const html = `<pre><code${lang ? ` class="lang-${lang}"` : ""}>${_escapeHtml(code.replace(/\n$/, ""))}</code></pre>`;
+    const id = blocks.length;
+    blocks.push(html);
+    return `@@CW_CODE_${id}@@`;
+  });
+
+  const out = [];
+  const lines = tmp.split("\n");
+  let i = 0;
+  let inUl = false;
+  let inOl = false;
+
+  const closeLists = () => {
+    if (inUl) out.push("</ul>");
+    if (inOl) out.push("</ol>");
+    inUl = false;
+    inOl = false;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const t = line.trim();
+
+    if (!t) {
+      closeLists();
+      i += 1;
+      continue;
+    }
+
+    // Headings
+    const hm = line.match(/^(#{1,6})\s+(.*)$/);
+    if (hm) {
+      closeLists();
+      const lvl = hm[1].length;
+      out.push(`<h${lvl}>${_mdInline(hm[2])}</h${lvl}>`);
+      i += 1;
+      continue;
+    }
+
+    // Unordered list
+    const ulm = line.match(/^\s*[-*]\s+(.*)$/);
+    if (ulm) {
+      if (!inUl) {
+        closeLists();
+        out.push("<ul>");
+        inUl = true;
+      }
+      out.push(`<li>${_mdInline(ulm[1])}</li>`);
+      i += 1;
+      continue;
+    }
+
+    // Ordered list
+    const olm = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (olm) {
+      if (!inOl) {
+        closeLists();
+        out.push("<ol>");
+        inOl = true;
+      }
+      out.push(`<li>${_mdInline(olm[1])}</li>`);
+      i += 1;
+      continue;
+    }
+
+    // Paragraph
+    closeLists();
+    const buf = [t];
+    i += 1;
+    while (i < lines.length) {
+      const n = lines[i];
+      const nt = n.trim();
+      if (!nt) break;
+      if (/^(#{1,6})\s+/.test(n)) break;
+      if (/^\s*[-*]\s+/.test(n)) break;
+      if (/^\s*\d+\.\s+/.test(n)) break;
+      buf.push(nt);
+      i += 1;
+    }
+    out.push(`<p>${_mdInline(buf.join(" "))}</p>`);
+  }
+
+  closeLists();
+
+  let html = out.join("\n");
+  html = html.replace(/@@CW_CODE_(\d+)@@/g, (_, n) => blocks[Number(n)] || "");
+  return html;
+}
+
+
 async function _getJson(url, opts = {}) {
   const res = await fetch(url, { method: "GET", ...opts });
   let data = null;
@@ -185,11 +343,22 @@ export default {
       #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
       #upg-host ul{margin:.6em 0 0 1.15em}
       #upg-host code{opacity:.95}
-      #upg-host .notes{margin-top:8px;white-space:pre-wrap;overflow:auto;max-height:280px;
-        font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-        padding:10px 11px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);opacity:.92}
-      #upg-host .link{display:inline-block;margin-top:8px;opacity:.86}
-
+      #upg-host .notes{margin-top:8px;overflow:auto;max-height:340px;
+        padding:12px 12px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);opacity:.92}
+      #upg-host .notes.md{white-space:normal;font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial}
+      #upg-host .notes.md h1{font-size:16px;margin:0 0 10px 0}
+      #upg-host .notes.md h2{font-size:14px;margin:14px 0 8px 0}
+      #upg-host .notes.md h3{font-size:13px;margin:12px 0 6px 0}
+      #upg-host .notes.md p{margin:0 0 10px 0}
+      #upg-host .notes.md ul,#upg-host .notes.md ol{margin:0 0 10px 1.25em}
+      #upg-host .notes.md li{margin:4px 0}
+      #upg-host .notes.md code{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+        background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);padding:1px 6px;border-radius:8px}
+      #upg-host .notes.md pre{margin:10px 0;padding:10px 10px;border-radius:12px;overflow:auto;white-space:pre;
+        background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.10)}
+      #upg-host .notes.md pre code{background:transparent;border:0;padding:0}
+      #upg-host .notes.md a{color:inherit;text-decoration:underline;opacity:.9}
+      #upg-host .notes.md img{max-width:100%;height:auto;border-radius:12px;display:block;margin:10px 0;opacity:.96}
       #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;
         background:rgba(255,255,255,.04);color:#eaf0ff
       }
@@ -257,8 +426,7 @@ export default {
         <div class="card" id="upg-release-notes" style="display:none">
           <div class="h">Release notes</div>
           <div class="p" id="upg-release-notes-meta" style="opacity:.72">&nbsp;</div>
-          <pre class="notes" id="upg-release-notes-body"></pre>
-          <a class="link" id="upg-release-notes-link" href="" target="_blank" rel="noopener noreferrer">Open on GitHub</a>
+          <div class="notes md" id="upg-release-notes-body"></div>
         </div>
       </div>
 
@@ -301,18 +469,11 @@ export default {
       const pre = hostEl.querySelector("#upg-release-notes-body");
       if (!card || !pre) return;
 
-      pre.textContent = body;
+      pre.innerHTML = _sanitizeHtml(_mdToHtml(body));
       const lat = _norm(j.latest_version || j.latest || "");
       const pub = String(j.published_at || "").trim();
       const meta = hostEl.querySelector("#upg-release-notes-meta");
       if (meta) meta.textContent = `Latest${lat ? ` v${lat}` : ""}${pub ? ` • ${pub}` : ""}`;
-
-      const href = String(j.html_url || j.url || "").trim();
-      const a = hostEl.querySelector("#upg-release-notes-link");
-      if (a) {
-        if (href) a.setAttribute("href", href);
-        else a.style.display = "none";
-      }
 
       card.style.display = "block";
     } catch {
