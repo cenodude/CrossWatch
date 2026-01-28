@@ -176,7 +176,7 @@ Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
 </div>
 
 <p align="center">
-  Huge thanks to our sponsors for keeping this project moving. ❤️
+  Huge thanks to our sponsors for keeping this project moving.
 </p>
 
 
