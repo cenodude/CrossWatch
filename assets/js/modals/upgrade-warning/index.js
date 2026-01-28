@@ -1,4 +1,5 @@
 // assets/js/modals/upgrade-warning/index.js
+const NOTES_ENDPOINT = "/api/update";
 function _norm(v) {
   return String(v || "").replace(/^v/i, "").trim();
 }
@@ -12,6 +13,16 @@ function _cmp(a, b) {
     if (da !== db) return da > db ? 1 : -1;
   }
   return 0;
+}
+
+async function _getJson(url, opts = {}) {
+  const res = await fetch(url, { method: "GET", ...opts });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {}
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status} ${res.statusText}`);
+  return data || {};
 }
 
 async function _postJson(url, opts = {}) {
@@ -174,6 +185,10 @@ export default {
       #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
       #upg-host ul{margin:.6em 0 0 1.15em}
       #upg-host code{opacity:.95}
+      #upg-host .notes{margin-top:8px;white-space:pre-wrap;overflow:auto;max-height:280px;
+        font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+        padding:10px 11px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);opacity:.92}
+      #upg-host .link{display:inline-block;margin-top:8px;opacity:.86}
 
       #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;
         background:rgba(255,255,255,.04);color:#eaf0ff
@@ -238,6 +253,13 @@ export default {
           <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
         </div>
         `}
+
+        <div class="card" id="upg-release-notes" style="display:none">
+          <div class="h">Release notes</div>
+          <div class="p" id="upg-release-notes-meta" style="opacity:.72">&nbsp;</div>
+          <pre class="notes" id="upg-release-notes-body"></pre>
+          <a class="link" id="upg-release-notes-link" href="" target="_blank" rel="noopener noreferrer">Open on GitHub</a>
+        </div>
       </div>
 
       <div class="foot">
@@ -269,6 +291,31 @@ export default {
       hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget));
     } else {
       hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
+    }
+
+    try {
+      const j = await _getJson(NOTES_ENDPOINT, { cache: "no-store" });
+      const body = String(j.body || "").trim();
+      if (!body) return;
+      const card = hostEl.querySelector("#upg-release-notes");
+      const pre = hostEl.querySelector("#upg-release-notes-body");
+      if (!card || !pre) return;
+
+      pre.textContent = body;
+      const lat = _norm(j.latest_version || j.latest || "");
+      const pub = String(j.published_at || "").trim();
+      const meta = hostEl.querySelector("#upg-release-notes-meta");
+      if (meta) meta.textContent = `Latest${lat ? ` v${lat}` : ""}${pub ? ` • ${pub}` : ""}`;
+
+      const href = String(j.html_url || j.url || "").trim();
+      const a = hostEl.querySelector("#upg-release-notes-link");
+      if (a) {
+        if (href) a.setAttribute("href", href);
+        else a.style.display = "none";
+      }
+
+      card.style.display = "block";
+    } catch {
     }
   },
 
