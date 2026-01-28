@@ -8,7 +8,9 @@ from typing import Any
 import base64
 import hashlib
 import hmac
+import os
 import secrets
+import threading
 import time
 
 from fastapi import APIRouter, Body, Request
@@ -145,7 +147,8 @@ def _clear_session(cfg: dict[str, Any]) -> None:
 
 
 def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
-    secure = str(request.url.scheme).lower() == "https"
+    xfp = str(request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-protocol") or "").lower()
+    secure = (str(request.url.scheme).lower() == "https") or (xfp == "https")
     resp.set_cookie(
         COOKIE_NAME,
         token,
@@ -153,14 +156,15 @@ def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
         expires=exp,
         path="/",
         httponly=True,
-        samesite="strict",
+        samesite="lax",
         secure=secure,
     )
 
 
 def _del_cookie(resp: Response, request: Request) -> None:
-    secure = str(request.url.scheme).lower() == "https"
-    resp.delete_cookie(COOKIE_NAME, path="/", samesite="strict", secure=secure)
+    xfp = str(request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-protocol") or "").lower()
+    secure = (str(request.url.scheme).lower() == "https") or (xfp == "https")
+    resp.delete_cookie(COOKIE_NAME, path="/", samesite="lax", secure=secure)
 
 
 def _login_html(username: str) -> str:
@@ -209,7 +213,9 @@ def _login_html(username: str) -> str:
           msg.style.display='inline-flex';
           return;
         }}
-        location.href='/';
+        const next = (new URLSearchParams(location.search)).get('next') || '/';
+          const safe = (next.startsWith('/') && !next.startsWith('//')) ? next : '/';
+          location.href = safe;
       }}catch(e){{
         msg.textContent='Login failed';
         msg.style.display='inline-flex';
@@ -287,6 +293,27 @@ def api_logout(request: Request) -> JSONResponse:
     cfg = load_config()
     _clear_session(cfg)
     save_config(cfg)
+    resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+    _del_cookie(resp, request)
+    return resp
+
+
+@router.post("/apply-now")
+def api_apply_now(request: Request, payload: dict[str, Any] | None = Body(None)) -> JSONResponse:
+    cfg = load_config()
+    token = request.cookies.get(COOKIE_NAME)
+
+    if auth_required(cfg) and not is_authenticated(cfg, token):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+
+    _clear_session(cfg)
+    save_config(cfg)
+
+    def _kill() -> None:
+        os._exit(0)
+
+    threading.Timer(0.75, _kill).start()
+
     resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
     _del_cookie(resp, request)
     return resp

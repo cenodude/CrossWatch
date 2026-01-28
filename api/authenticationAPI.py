@@ -12,7 +12,7 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
-from fastapi import Body, Request, HTTPException
+from fastapi import Body, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from cw_platform.config_base import load_config, save_config
@@ -825,7 +825,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": str(e)}
 
     @app.get("/callback/anilist", tags=["auth"])
-    def oauth_anilist_callback(request: Request) -> PlainTextResponse:
+    def oauth_anilist_callback(request: Request) -> Response:
         try:
             params = dict(request.query_params)
             code = params.get("code")
@@ -978,7 +978,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": str(e)}
 
     @app.get("/callback", tags=["auth"])
-    def oauth_simkl_callback(request: Request) -> PlainTextResponse:
+    def oauth_simkl_callback(request: Request) -> Response:
         try:
             params = dict(request.query_params)
             code = params.get("code"); state = params.get("state")
