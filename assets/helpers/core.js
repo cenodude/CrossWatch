@@ -2948,7 +2948,14 @@ try {
 } catch {}
 
 async function loadConfig() {
-  const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+  const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
+  if (r.status === 401) {
+    // Auth is enabled but this session isn't valid anymore.
+    location.href = "/login";
+    return;
+  }
+  if (!r.ok) throw new Error(`GET /api/config ${r.status}`);
+  const cfg = await r.json();
   window._cfgCache = cfg;
 
   try { bindSyncVisibilityObservers?.(); } catch {}
@@ -3007,13 +3014,9 @@ async function loadConfig() {
     }
 
     const aaEnabledEl = document.getElementById("app_auth_enabled");
-    if (aaEnabledEl) {
-      aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
-    }
+    if (aaEnabledEl) aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
     const aaUserEl = document.getElementById("app_auth_username");
-    if (aaUserEl) {
-      aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
-    }
+    if (aaUserEl) aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
     const aaP1 = document.getElementById("app_auth_password");
     if (aaP1) aaP1.value = "";
     const aaP2 = document.getElementById("app_auth_password2");
@@ -3107,6 +3110,14 @@ async function loadConfig() {
     const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
     const st = r.ok ? await r.json() : null;
     window._appAuthStatus = st;
+
+    try {
+      const aaEnabledEl = document.getElementById("app_auth_enabled");
+      if (aaEnabledEl && st && typeof st.enabled === "boolean") aaEnabledEl.value = st.enabled ? "true" : "false";
+      const aaUserEl = document.getElementById("app_auth_username");
+      if (aaUserEl && st && st.enabled) aaUserEl.value = (st.username || "").toString();
+    } catch {}
+
     const el = document.getElementById("app_auth_state");
     if (el) {
       if (!st) el.textContent = "—";
@@ -4065,8 +4076,9 @@ async function saveSettings() {
     if (window.__cwProtoChanged) {
       const wantProto = String(window.__cwProtoChanged || "").trim().toLowerCase();
       try { delete window.__cwProtoChanged; } catch {}
+
       const url = cwBuildProtoUrl(wantProto);
-      cwShowRestartBanner(`Protocol changed: restart required`, url);
+      try { cwQueueProtocolApply(wantProto, url); } catch { cwShowRestartBanner("Protocol changed: restart required"); }
       showToast("Protocol changed: restart required", true);
     }
 
@@ -4165,26 +4177,9 @@ async function resetCurrentlyPlaying() {
 }
 
 async function restartCrossWatch() {
-  const btnText = "Restart CrossWatch";
-  try {
-    const r = await fetch("/api/maintenance/restart", { method: "POST" });
-    let j = {};
-    try { j = await r.json(); } catch {}
-    const m = document.getElementById("tb_msg");
-    if (!m) return;
-
-    m.classList.remove("hidden");
-    m.textContent = j.ok
-      ? btnText + " – requested ✓"
-      : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
-    setTimeout(() => m.classList.add("hidden"), 2200);
-  } catch (_) {
-    const m = document.getElementById("tb_msg");
-    if (!m) return;
-    m.classList.remove("hidden");
-    m.textContent = btnText + " – failed (network)";
-    setTimeout(() => m.classList.add("hidden"), 2200);
-  }
+  if (typeof cwRestartCrossWatchWithOverlay === "function") return cwRestartCrossWatchWithOverlay();
+  try { await fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }); } catch {}
+  try { window.location.reload(); } catch {}
 }
 
 
@@ -5067,144 +5062,5 @@ document.addEventListener("DOMContentLoaded", () => {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
     else if (typeof applySyncVisibility === "function") applySyncVisibility();
   } catch (_) {}
+  try { cwInitPendingProtoBanner(); } catch (_) {}
 });
-
-
-function cwBuildProtoUrl(proto) {
-  try {
-    const p = String(proto || "").toLowerCase() === "https" ? "https" : "http";
-    const u = new URL(window.location.href);
-    u.protocol = p + ":";
-    return u.toString();
-  } catch {
-    try {
-      const p = String(proto || "").toLowerCase() === "https" ? "https" : "http";
-      return window.location.href.replace(/^https?:\/\//, p + "://");
-    } catch {
-      return null;
-    }
-  }
-}
-
-function cwEnsureRestartBanner() {
-  if (document.getElementById("cw-restart-banner")) return;
-  const cssId = "cw-restart-banner-css";
-  if (!document.getElementById(cssId)) {
-    const st = document.createElement("style");
-    st.id = cssId;
-    st.textContent = `
-#cw-restart-banner {
-  position: sticky;
-  top: 0;
-  z-index: 9999;
-  margin: 0;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,.12);
-  background: rgba(20,20,24,.92);
-  backdrop-filter: blur(8px);
-}
-#cw-restart-banner.hidden { display: none; }
-#cw-restart-banner .cw-rb-inner {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-#cw-restart-banner .cw-rb-msg {
-  font-weight: 600;
-}
-#cw-restart-banner .cw-rb-sub {
-  font-size: 12px;
-  opacity: .8;
-  margin-top: 2px;
-}
-#cw-restart-banner .cw-rb-left { display:flex; flex-direction:column; gap:2px; }
-#cw-restart-banner .cw-rb-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-#cw-restart-banner .cw-rb-actions a, #cw-restart-banner .cw-rb-actions button {
-  appearance: none;
-  border: 1px solid rgba(255,255,255,.18);
-  background: rgba(255,255,255,.06);
-  color: inherit;
-  border-radius: 10px;
-  padding: 8px 10px;
-  cursor: pointer;
-  text-decoration: none;
-  font-weight: 600;
-}
-#cw-restart-banner .cw-rb-actions a:hover, #cw-restart-banner .cw-rb-actions button:hover {
-  background: rgba(255,255,255,.10);
-}
-#cw-restart-banner .cw-rb-actions button.danger {
-  border-color: rgba(255,80,80,.35);
-}
-`;
-    document.head.appendChild(st);
-  }
-
-  const b = document.createElement("div");
-  b.id = "cw-restart-banner";
-  b.className = "hidden";
-  b.innerHTML = `
-  <div class="cw-rb-inner">
-    <div class="cw-rb-left">
-      <div class="cw-rb-msg" id="cw-rb-msg">Restart required</div>
-      <div class="cw-rb-sub" id="cw-rb-sub">Container/service restart needed to apply changes.</div>
-    </div>
-    <div class="cw-rb-actions">
-      <a id="cw-rb-link" href="#" target="_blank" rel="noopener" style="display:none">Open after restart</a>
-      <button type="button" id="cw-rb-copy" style="display:none">Copy link</button>
-      <button type="button" class="danger" id="cw-rb-dismiss">Dismiss</button>
-    </div>
-  </div>
-`;
-  const anchor = document.getElementById("content") || document.body;
-  anchor.insertBefore(b, anchor.firstChild);
-
-  const hide = () => { b.classList.add("hidden"); };
-  b.querySelector("#cw-rb-dismiss")?.addEventListener("click", hide);
-  b.querySelector("#cw-rb-copy")?.addEventListener("click", async () => {
-    const a = b.querySelector("#cw-rb-link");
-    const href = a?.getAttribute("href") || "";
-    if (!href || href === "#") return;
-    try { await navigator.clipboard.writeText(href); } catch {}
-  });
-}
-
-function cwShowRestartBanner(message, href) {
-  cwEnsureRestartBanner();
-  const b = document.getElementById("cw-restart-banner");
-  if (!b) return;
-
-  const msg = b.querySelector("#cw-rb-msg");
-  if (msg) msg.textContent = String(message || "Restart required");
-
-  const link = b.querySelector("#cw-rb-link");
-  const copy = b.querySelector("#cw-rb-copy");
-  const url = (href && String(href).trim()) ? String(href).trim() : "";
-
-  if (link && copy) {
-    if (url) {
-      link.setAttribute("href", url);
-      link.style.display = "";
-      copy.style.display = "";
-    } else {
-      link.setAttribute("href", "#");
-      link.style.display = "none";
-      copy.style.display = "none";
-    }
-  }
-
-  b.classList.remove("hidden");
-}
-
-function cwHideRestartBanner() {
-  const b = document.getElementById("cw-restart-banner");
-  if (b) b.classList.add("hidden");
-}
-
-try {
-  window.cwShowRestartBanner = cwShowRestartBanner;
-  window.cwHideRestartBanner = cwHideRestartBanner;
-  window.cwBuildProtoUrl = cwBuildProtoUrl;
-} catch {}
