@@ -4,7 +4,9 @@
 
   const css = `
 .cw-root{display:flex;flex-direction:column;gap:10px}
-.cw-topline{margin-bottom:4px}
+.cw-topline{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.cw-title{font-weight:900;font-size:22px;letter-spacing:.01em}
+.cw-sub{opacity:.72;font-size:13px;margin-top:4px;line-height:1.3}
 .cw-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:flex-start}
 .cw-main{display:flex;flex-direction:column;gap:8px}
 .cw-side{display:flex;flex-direction:column;gap:6px}
@@ -14,7 +16,8 @@
 .cw-controls-spacer{flex:1 1 auto}
 .cw-status-text{font-size:12px;opacity:.8}
 .cw-input,.cw-select,.cw-btn{
-  background:#15151c;
+  font:inherit;
+    background:#15151c;
   border:1px solid rgba(255,255,255,.12);
   border-radius:8px;
   color:#fff;
@@ -712,7 +715,10 @@
   host.innerHTML = `
     <div class="cw-root">
       <div class="cw-topline">
-        <div class="title">CrossWatch tracker editor</div>
+        <div>
+          <div class="cw-title">Editor</div>
+          <div class="cw-sub">Edit tracker/state data (watchlist / ratings / history).</div>
+        </div>
       </div>
 
       <div class="cw-wrap">

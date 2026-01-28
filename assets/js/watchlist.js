@@ -6,8 +6,12 @@
   const css = `
   .wl-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
   .wl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-  .wl-input{background:#15151c;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px;color:#fff;width:100%}
-  .wl-btn{background:#1d1d26;border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;padding:8px 10px;cursor:pointer}
+  .wl-topline{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  .wl-title{font-weight:900;font-size:22px;letter-spacing:.01em}
+  .wl-sub{opacity:.72;font-size:13px;margin-top:4px;line-height:1.3}
+
+  .wl-input{font:inherit;background:#15151c;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px;color:#fff;width:100%}
+  .wl-btn{font:inherit;background:#1d1d26;border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;padding:8px 10px;cursor:pointer}
   .wl-btn.danger{background:#2a1113;border-color:#57252a}
   .wl-chip{display:inline-flex;align-items:center;gap:6px;border-radius:16px;padding:6px 10px;background:#171720;border:1px solid rgba(255,255,255,.1);white-space:nowrap}
   .wl-muted{opacity:.7}
@@ -240,7 +244,12 @@
   const writePrefs=p=>{try{localStorage.setItem("wl.prefs",JSON.stringify(p))}catch{}};
   const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",sortKey:"title",sortDir:"asc",moreOpen:false,cols:{}},readPrefs());
   host.innerHTML=`
-    <div class="title" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span>Watchlist</span></div>
+    <div class="wl-topline">
+      <div>
+        <div class="wl-title">Watchlist</div>
+        <div class="wl-sub">Browse and manage your unified watchlist.</div>
+      </div>
+    </div>
     <div class="wl-wrap" id="watchlist-root">
       <div>
         <div class="wl-controls">
@@ -280,7 +289,10 @@
           <div class="ins-row wl-ref-row" style="align-items:center">
             <div class="ins-icon"><span class="material-symbol">tune</span></div>
             <div class="ins-title" style="margin-right:auto">Filters</div>
-            <button id="wl-refresh" class="wl-refresh-btn" title="Refresh watchlist" aria-label="Refresh watchlist"><span class="material-symbol">refresh</span></button>
+            <button id="wl-refresh" class="wl-refresh-btn" title="Sync watchlist" aria-label="Sync watchlist">
+            <span class="material-symbol ss-refresh-icon">sync</span>
+          </button>
+
           </div>
           <div class="ins-row"><div class="ins-kv" style="width:100%">
             <label>View</label>
