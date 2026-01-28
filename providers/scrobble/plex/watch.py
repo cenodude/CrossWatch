@@ -479,6 +479,9 @@ class WatchService:
             except Exception:
                 server_uuid = None
             cfg = _cfg()
+            sc = (cfg.get("scrobble") or {})
+            if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+                return
             defaults = {
                 "username": (cfg.get("plex") or {}).get("username") or "",
                 "server_uuid": server_uuid or (cfg.get("plex") or {}).get("server_uuid") or "",
@@ -591,6 +594,11 @@ class WatchService:
 
     def start(self) -> None:
         self._stop.clear()
+        cfg = _cfg() or {}
+        sc = (cfg.get("scrobble") or {})
+        if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+            self._log("Watcher disabled by config; not starting", "INFO")
+            return
         self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
         while not self._stop.is_set():
             try:
@@ -989,7 +997,7 @@ def process_rating_webhook(
 ) -> dict[str, Any]:
     cfg = _cfg() or {}
     sc = (cfg.get("scrobble") or {})
-    if not sc.get("enabled", True) or str(sc.get("mode", "watch")).lower() != "watch":
+    if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
         return {"ok": True, "ignored": True}
 
     watch_cfg = (sc.get("watch") or {})

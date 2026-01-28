@@ -978,6 +978,11 @@ class JellyfinWatchService:
 
     def start(self) -> None:
         self._stop.clear()
+        cfg = _cfg() or {}
+        sc = (cfg.get("scrobble") or {})
+        if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+            self._log("Watcher disabled by config; not starting", "INFO")
+            return
         if self._disabled:
             self._log("Missing jellyfin.server or jellyfin.access_token in config.json", "ERROR")
             return

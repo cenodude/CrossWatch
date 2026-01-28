@@ -37,11 +37,9 @@ def _cache_path() -> Path:
     return state_file("trakt_ratings.index.json")
 
 
-
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_BACKOFF_SECONDS = 30
-
-
+_MAX_PAGE_SIZE = 1000
 _PROVIDER = "TRAKT"
 _FEATURE = "ratings"
 
@@ -347,6 +345,7 @@ def _dedupe_canonical(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, An
 
 def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> dict[str, dict[str, Any]]:
     per_page = int(getattr(adapter.cfg, "ratings_per_page", per_page) or per_page)
+    per_page = max(1, min(per_page, _MAX_PAGE_SIZE))
     max_pages = int(getattr(adapter.cfg, "ratings_max_pages", max_pages) or max_pages)
 
     sess = adapter.client.session

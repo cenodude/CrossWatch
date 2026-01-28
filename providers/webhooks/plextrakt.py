@@ -1081,7 +1081,7 @@ def process_webhook(
     cfg = _ensure_scrobble(_load_config())
 
     sc = cfg.get("scrobble") or {}
-    if not sc.get("enabled", True) or str(sc.get("mode", "webhook")).lower() != "webhook":
+    if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "webhook":
         _emit(logger, "scrobble webhook disabled by config", "DEBUG")
         return {"ok": True, "ignored": True}
 
