@@ -399,6 +399,7 @@ DEFAULT_CFG: dict[str, Any] = {
     "ui": {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
+        "show_AI": True,                                # Show ASK AI from GitBook
         "protocol": "http",                             # "http" | "https" (HTTPS uses a self-signed cert by default)
         "tls": {
             "self_signed": True,                        # Auto-generate a self-signed certificate when missing
@@ -570,6 +571,10 @@ def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
 
 def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui = _ensure_dict(cfg, "ui")
+
+    ui["show_watchlist_preview"] = bool(ui.get("show_watchlist_preview", True))
+    ui["show_playingcard"] = bool(ui.get("show_playingcard", True))
+    ui["show_AI"] = bool(ui.get("show_AI", True))
 
     protocol = str(ui.get("protocol", "http") or "http").strip().lower()
     if protocol not in _ALLOWED_UI_PROTOCOLS:
