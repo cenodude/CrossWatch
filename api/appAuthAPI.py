@@ -29,6 +29,7 @@ __all__ = [
 
 COOKIE_NAME = "cw_auth"
 AUTH_TTL_SEC = 30 * 24 * 60 * 60
+MAX_SESSIONS = 10
 
 _LOGIN_FAILS: dict[str, dict[str, Any]] = {}
 
@@ -65,8 +66,69 @@ def _cfg_pwd(a: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cfg_session(a: dict[str, Any]) -> dict[str, Any]:
+    # Legacy: single-session storage backwards compatibility
     s = a.get("session")
     return s if isinstance(s, dict) else {}
+
+
+def _cfg_sessions(a: dict[str, Any]) -> list[dict[str, Any]]:
+    s = a.get("sessions")
+    if not isinstance(s, list):
+        return []
+    return [x for x in s if isinstance(x, dict)]
+
+
+def _legacy_session_as_entry(a: dict[str, Any]) -> dict[str, Any] | None:
+    s = _cfg_session(a)
+    token_hash = str(s.get("token_hash") or "").strip()
+    exp = int(s.get("expires_at") or 0)
+    if not token_hash or exp <= 0:
+        return None
+    created_at = int(a.get("last_login_at") or 0) or max(1, exp - AUTH_TTL_SEC)
+    return {
+        "id": "legacy",
+        "token_hash": token_hash,
+        "created_at": created_at,
+        "expires_at": exp,
+    }
+
+
+def _iter_sessions(a: dict[str, Any]) -> list[dict[str, Any]]:
+    sessions = _cfg_sessions(a)
+    legacy = _legacy_session_as_entry(a)
+    if legacy is None:
+        return sessions
+    if any(str(x.get("token_hash") or "") == str(legacy.get("token_hash") or "") for x in sessions):
+        return sessions
+    return sessions + [legacy]
+
+
+def _prune_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    now = _now()
+    keep: list[dict[str, Any]] = []
+    for s in sessions:
+        exp = int(s.get("expires_at") or 0)
+        th = str(s.get("token_hash") or "").strip()
+        if th and exp > now:
+            keep.append(s)
+    keep.sort(key=lambda x: int(x.get("created_at") or 0) or int(x.get("expires_at") or 0))
+    if len(keep) > MAX_SESSIONS:
+        keep = keep[-MAX_SESSIONS:]
+    return keep
+
+
+def _sync_legacy_session(a: dict[str, Any], sessions: list[dict[str, Any]]) -> None:
+    s = a.setdefault("session", {})
+    if not isinstance(s, dict):
+        s = {}
+        a["session"] = s
+    if not sessions:
+        s["token_hash"] = ""
+        s["expires_at"] = 0
+        return
+    last = sessions[-1]
+    s["token_hash"] = str(last.get("token_hash") or "")
+    s["expires_at"] = int(last.get("expires_at") or 0)
 
 
 def auth_required(cfg: dict[str, Any]) -> bool:
@@ -83,21 +145,27 @@ def auth_required(cfg: dict[str, Any]) -> bool:
     return True
 
 
+def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None:
+    t = (token or "").strip()
+    if not t:
+        return None
+    th = _sha256_hex(t)
+    now = _now()
+    for s in _iter_sessions(a):
+        exp = int(s.get("expires_at") or 0)
+        want = str(s.get("token_hash") or "").strip()
+        if not want or exp <= now:
+            continue
+        if hmac.compare_digest(th, want):
+            return s
+    return None
+
+
 def is_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
     if not auth_required(cfg):
         return True
-    t = (token or "").strip()
-    if not t:
-        return False
     a = _cfg_auth(cfg)
-    s = _cfg_session(a)
-    exp = int(s.get("expires_at") or 0)
-    if exp <= _now():
-        return False
-    want = str(s.get("token_hash") or "").strip()
-    if not want:
-        return False
-    return hmac.compare_digest(_sha256_hex(t), want)
+    return _find_session(a, token) is not None
 
 
 def _rate_limit_ok(request: Request) -> tuple[bool, int]:
@@ -117,33 +185,55 @@ def _rate_limit_fail(request: Request) -> None:
     _LOGIN_FAILS[ip] = {"n": n, "until": _now() + backoff}
 
 
-def _issue_session(cfg: dict[str, Any]) -> tuple[str, int]:
+def _issue_session(cfg: dict[str, Any], request: Request) -> tuple[str, int]:
     token = secrets.token_urlsafe(32)
     exp = _now() + AUTH_TTL_SEC
     a = cfg.setdefault("app_auth", {})
     if not isinstance(a, dict):
         a = {}
         cfg["app_auth"] = a
-    s = a.setdefault("session", {})
-    if not isinstance(s, dict):
-        s = {}
-        a["session"] = s
-    s["token_hash"] = _sha256_hex(token)
-    s["expires_at"] = exp
-    a["last_login_at"] = _now()
+
+    sessions = _prune_sessions(_iter_sessions(a))
+    ip = getattr(getattr(request, "client", None), "host", "") or ""
+    ua = str(request.headers.get("user-agent") or "")[:240]
+    now = _now()
+    sessions.append(
+        {
+            "id": secrets.token_hex(8),
+            "token_hash": _sha256_hex(token),
+            "created_at": now,
+            "expires_at": exp,
+            "ip": ip,
+            "ua": ua,
+        }
+    )
+    sessions = _prune_sessions(sessions)
+    a["sessions"] = sessions
+    _sync_legacy_session(a, sessions)
+    a["last_login_at"] = now
     return token, exp
 
 
-def _clear_session(cfg: dict[str, Any]) -> None:
+def _drop_session(cfg: dict[str, Any], token: str | None) -> None:
     a = cfg.get("app_auth")
     if not isinstance(a, dict):
         return
-    s = a.get("session")
-    if not isinstance(s, dict):
-        s = {}
-        a["session"] = s
-    s["token_hash"] = ""
-    s["expires_at"] = 0
+    t = (token or "").strip()
+    if not t:
+        return
+    th = _sha256_hex(t)
+    sessions = _prune_sessions(_iter_sessions(a))
+    kept = [s for s in sessions if not hmac.compare_digest(str(s.get("token_hash") or ""), th)]
+    a["sessions"] = kept
+    _sync_legacy_session(a, kept)
+
+
+def _clear_sessions(cfg: dict[str, Any]) -> None:
+    a = cfg.get("app_auth")
+    if not isinstance(a, dict):
+        return
+    a["sessions"] = []
+    _sync_legacy_session(a, [])
 
 
 def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
@@ -239,13 +329,14 @@ def api_status(request: Request) -> JSONResponse:
     configured = bool(str(a.get("username") or "").strip() and str(p.get("hash") or "").strip() and str(p.get("salt") or "").strip())
     enabled = bool(a.get("enabled"))
     token = request.cookies.get(COOKIE_NAME)
+    s = _find_session(a, token)
     return JSONResponse(
         {
             "enabled": enabled,
             "configured": configured,
             "username": str(a.get("username") or "") if enabled else "",
-            "authenticated": is_authenticated(cfg, token),
-            "session_expires_at": int((_cfg_session(a).get("expires_at") or 0)),
+            "authenticated": (s is not None) if auth_required(cfg) else True,
+            "session_expires_at": int((s or {}).get("expires_at") or 0),
         },
         headers={"Cache-Control": "no-store"},
     )
@@ -281,7 +372,7 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
     except Exception:
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=400)
 
-    token, exp = _issue_session(cfg)
+    token, exp = _issue_session(cfg, req)
     save_config(cfg)
     resp = JSONResponse({"ok": True, "expires_at": exp}, headers={"Cache-Control": "no-store"})
     _set_cookie(resp, token, exp, req)
@@ -291,7 +382,18 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
 @router.post("/logout")
 def api_logout(request: Request) -> JSONResponse:
     cfg = load_config()
-    _clear_session(cfg)
+    token = request.cookies.get(COOKIE_NAME)
+    _drop_session(cfg, token)
+    save_config(cfg)
+    resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+    _del_cookie(resp, request)
+    return resp
+
+
+@router.post("/logout-all")
+def api_logout_all(request: Request) -> JSONResponse:
+    cfg = load_config()
+    _clear_sessions(cfg)
     save_config(cfg)
     resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
     _del_cookie(resp, request)
@@ -306,7 +408,7 @@ def api_apply_now(request: Request, payload: dict[str, Any] | None = Body(None))
     if auth_required(cfg) and not is_authenticated(cfg, token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
-    _clear_session(cfg)
+    _clear_sessions(cfg)
     save_config(cfg)
 
     def _kill() -> None:
@@ -323,7 +425,6 @@ def api_apply_now(request: Request, payload: dict[str, Any] | None = Body(None))
 def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     req = request
     cfg = load_config()
-    a0 = _cfg_auth(cfg)
     configured0 = auth_required(cfg)
     token = req.cookies.get(COOKIE_NAME)
 
@@ -342,7 +443,7 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
     if not enabled:
         a["enabled"] = False
         a["username"] = username or str(a.get("username") or "")
-        _clear_session(cfg)
+        _clear_sessions(cfg)
         save_config(cfg)
         resp = JSONResponse({"ok": True, "enabled": False}, headers={"Cache-Control": "no-store"})
         _del_cookie(resp, req)
@@ -374,9 +475,9 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
 
     a["enabled"] = True
     a["username"] = username
-    _clear_session(cfg)
+    _clear_sessions(cfg)
 
-    token2, exp2 = _issue_session(cfg)
+    token2, exp2 = _issue_session(cfg, req)
     save_config(cfg)
 
     resp = JSONResponse({"ok": True, "enabled": True, "expires_at": exp2}, headers={"Cache-Control": "no-store"})
@@ -399,7 +500,8 @@ def register_app_auth(app) -> None:
     @app.get("/logout", include_in_schema=False, tags=["ui"])
     def ui_logout(request: Request) -> Response:
         cfg = load_config()
-        _clear_session(cfg)
+        token = request.cookies.get(COOKIE_NAME)
+        _drop_session(cfg, token)
         save_config(cfg)
         resp = RedirectResponse(url="/login" if auth_required(cfg) else "/")
         _del_cookie(resp, request)

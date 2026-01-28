@@ -424,6 +424,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "token_hash": "",
             "expires_at": 0,
         },
+        "sessions": [],
         "last_login_at": 0,
     },
 
@@ -449,6 +450,12 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(sess, dict):
         if sess.get("token_hash"):
             sess["token_hash"] = "••••••••"
+
+    sessions = a.get("sessions")
+    if isinstance(sessions, list):
+        for s in sessions:
+            if isinstance(s, dict) and s.get("token_hash"):
+                s["token_hash"] = "••••••••"
 
     return out
 
