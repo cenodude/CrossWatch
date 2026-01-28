@@ -414,9 +414,14 @@ async def app_auth_gate(request: Request, call_next):
     path = request.url.path or "/"
     if path.startswith("/assets/"):
         return await call_next(request)
+    
     if path in {"/favicon.ico", "/favicon.svg", "/favicon.png"}:
         return await call_next(request)
+    
     if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
+        return await call_next(request)
+    # exclude webhooks from auth
+    if path.startswith("/webhook/"):
         return await call_next(request)
 
     token = request.cookies.get(APP_AUTH_COOKIE)
