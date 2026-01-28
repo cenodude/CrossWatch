@@ -145,6 +145,7 @@ def _get_index_html_static() -> str:
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/pwa/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
@@ -815,6 +816,7 @@ def _get_index_html_static() -> str:
 </script>
 
 <script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/restart_apply.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/dom.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/events.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>

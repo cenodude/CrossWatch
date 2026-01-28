@@ -167,17 +167,6 @@ function _cwIsSecureEnough() {
   return false;
 }
 
-// Capture install prompt (Chrome/Edge/Android).
-let _cwDeferredInstallPrompt = null;
-
-window.addEventListener("beforeinstallprompt", (e) => {
-  try { e.preventDefault(); } catch {}
-  _cwDeferredInstallPrompt = e;
-  try {
-    const wrap = document.getElementById("cw-install");
-    if (wrap) wrap.setAttribute("data-cw-install-ready", "1");
-  } catch {}
-});
 
 window.addEventListener("appinstalled", () => {
   _cwMarkInstallDismissed();
@@ -215,9 +204,7 @@ function _cwEnsureInstallUi() {
 }
 
 function cwInitPwaInstall() {
-  if (!_cwIsMobile()) return;
   if (_cwIsStandalone()) return;
-  if (_cwInstallDismissedRecently()) return;
   if (!_cwIsSecureEnough()) return;
 
   try {
@@ -225,6 +212,9 @@ function cwInitPwaInstall() {
       navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
     }
   } catch {}
+
+  if (!_cwIsMobile() || !_cwIsIOS()) return;
+  if (_cwInstallDismissedRecently()) return;
 
   const wrap = _cwEnsureInstallUi();
   if (!wrap) return;
@@ -242,19 +232,6 @@ function cwInitPwaInstall() {
   secondaryBtn?.addEventListener("click", dismiss, { passive: true });
   closeBtn?.addEventListener("click", dismiss, { passive: true });
 
-  let primaryHandler = null;
-  const setPrimary = (label, handler) => {
-    if (primaryBtn && label) primaryBtn.textContent = label;
-    if (!primaryBtn) return;
-    if (primaryHandler) primaryBtn.removeEventListener("click", primaryHandler);
-    primaryHandler = handler;
-    if (primaryHandler) primaryBtn.addEventListener("click", primaryHandler);
-  };
-
-  const setSecondary = (label) => {
-    if (secondaryBtn && label) secondaryBtn.textContent = label;
-  };
-
   const setCopy = (title, text) => {
     if (titleEl && title) titleEl.textContent = title;
     if (textEl && text) textEl.textContent = text;
@@ -266,52 +243,17 @@ function cwInitPwaInstall() {
     hintEl.classList.toggle("hidden", !text);
   };
 
-  const show = () => {
-    if (wrap.classList.contains("show")) return;
-    requestAnimationFrame(() => wrap.classList.add("show"));
-  };
-
-  // iOS: always manual A2HS.
-  if (_cwIsIOS()) {
-    setCopy("Install CrossWatch", "Add it to your Home Screen for the best experience.");
-    setHint("Tap Share (⬆︎) → “Add to Home Screen”.");
-    setPrimary("Got it", dismiss);
-    setSecondary("Not now");
-    show();
-    return;
+  if (primaryBtn) {
+    primaryBtn.textContent = "Got it";
+    primaryBtn.onclick = dismiss;
   }
 
-  // Android/others:
-  const installAttempt = async () => {
-    if (_cwDeferredInstallPrompt) {
-      try {
-        wrap.setAttribute("data-cw-install-ready", "1");
-        _cwDeferredInstallPrompt.prompt();
-        await _cwDeferredInstallPrompt.userChoice;
-      } catch {}
-      _cwDeferredInstallPrompt = null;
-      dismiss();
-      return;
-    }
+  if (secondaryBtn) secondaryBtn.textContent = "Not now";
 
-    // No prompt available 
-    const tip = _cwIsAndroid()
-      ? "Chrome: ⋮ menu|settings  “Install app” (or “Add to Home screen”)."
-      : "Browser menu “Add to Home screen”.";
-    setHint(tip);
-    setPrimary("Got it", dismiss);
-  };
+  setCopy("Install CrossWatch", "Add it to your Home Screen for the best experience.");
+  setHint("Tap Share (⬆︎) → “Add to Home Screen”.");
 
-  setCopy("Install CrossWatch", "Use it like a real app: full screen and faster access.");
-  setHint("");
-  setPrimary("Install", installAttempt);
-  setSecondary("Not now");
-
-  try {
-    if (_cwDeferredInstallPrompt) wrap.setAttribute("data-cw-install-ready", "1");
-  } catch {}
-
-  show();
+  requestAnimationFrame(() => wrap.classList.add("show"));
 }
 window.cwPwaDiag = function () {
   try {
@@ -324,7 +266,7 @@ window.cwPwaDiag = function () {
       ios: _cwIsIOS(),
       android: _cwIsAndroid(),
       dismissedRecently: _cwInstallDismissedRecently(),
-      hasInstallPrompt: !!_cwDeferredInstallPrompt,
+      hasInstallPrompt: false,
       swSupported: "serviceWorker" in navigator,
     };
   } catch {

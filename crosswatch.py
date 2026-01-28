@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 from importlib import import_module
 
 import sys
@@ -418,10 +418,18 @@ async def app_auth_gate(request: Request, call_next):
     if path in {"/favicon.ico", "/favicon.svg", "/favicon.png"}:
         return await call_next(request)
     
+    if path in {"/manifest.webmanifest", "/sw.js"}:
+        return await call_next(request)
+    
     if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
         return await call_next(request)
+    
     # exclude webhooks from auth
     if path.startswith("/webhook/"):
+        return await call_next(request)
+
+    # exclude callback paths
+    if path == "/callback" or path.startswith("/callback/"):
         return await call_next(request)
 
     token = request.cookies.get(APP_AUTH_COOKIE)
@@ -430,7 +438,8 @@ async def app_auth_gate(request: Request, call_next):
 
     if path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
-    return RedirectResponse(url="/login", status_code=302)
+    next_url = (request.url.path or "/") + (("?" + request.url.query) if request.url.query else "")
+    return RedirectResponse(url="/login?next=" + quote(next_url), status_code=302)
 
 # Static files
 register_assets_and_favicons(app, ROOT)
