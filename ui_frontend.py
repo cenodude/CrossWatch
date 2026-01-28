@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
+from cw_platform.config_base import load_config
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -53,45 +54,15 @@ self.addEventListener("fetch", (event) => {
 
 GITBOOK_SITE_URL: str = "https://wiki.crosswatch.app"
 GITBOOK_EMBED_SCRIPT_URL: str = "https://wiki.crosswatch.app/~gitbook/embed/script.js"
+GITBOOK_REPORT_URL: str = "https://github.com/cenodude/CrossWatch/issues/new"
 GITBOOK_EMBED_BLOCK: str = r"""<script id="cw-gitbook-embed" src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script>
 <script>
-(() => {
-  const SITE_URL = "https://wiki.crosswatch.app";
-
-  if (window.__cwGitBookBooted) return;
-  window.__cwGitBookBooted = true;
-
-  function boot() {
-    const GB = window.GitBook;
-    if (typeof GB !== "function") return;
-
-    // If GitBook was already initialized (HMR/duplicate load), reset it first
-    try { GB("unload"); } catch (_) {}
-
-    try {
-      GB("init", { siteURL: SITE_URL });
-    } catch (e) {
-      console.warn("[docs] GitBook init failed:", e);
-    }
-
-    try { GB("show"); } catch (e) { console.warn("[docs] GitBook show failed:", e); }
-  }
-
-  if (typeof window.GitBook === "function") { boot(); return; }
-
-  let tries = 0;
-  const t = setInterval(() => {
-    tries += 1;
-    if (typeof window.GitBook === "function") {
-      clearInterval(t);
-      boot();
-    } else if (tries > 120) {
-      clearInterval(t);
-      console.warn("[docs] GitBook embed timed out");
-    }
-  }, 50);
-})();
-</script>"""
+  window.__cwGitBookConfig = {
+    siteUrl: "https://wiki.crosswatch.app",
+    reportUrl: "https://github.com/cenodude/CrossWatch/issues/new"
+  };
+</script>
+<script src="/assets/js/gitbook.js?v=__CW_VERSION__" defer></script>"""
 
 
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
@@ -145,7 +116,18 @@ def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
     def ui_root(request: Request) -> HTMLResponse:
         is_https = _is_https_request(request)
-        return HTMLResponse(get_index_html(include_gitbook_embed=is_https), headers={"Cache-Control": "no-store"})
+        try:
+            cfg = load_config()
+            ui = cfg.get("ui") if isinstance(cfg, dict) else {}
+            show_ai = bool(ui.get("show_AI", True)) if isinstance(ui, dict) else True
+        except Exception:
+            show_ai = True
+
+        include_embed = bool(is_https and show_ai)
+        return HTMLResponse(
+            get_index_html(include_gitbook_embed=include_embed, ui_show_ai=show_ai),
+            headers={"Cache-Control": "no-store"},
+        )
 
 def _is_https_request(request: Request) -> bool:
     xf_proto = request.headers.get("x-forwarded-proto")
@@ -251,6 +233,22 @@ def _get_index_html_static() -> str:
     }
   }
 
+
+  /* About dropdown */
+  .cw-tabmenu{position:relative;display:inline-flex}
+  .cw-menu{position:absolute;top:calc(100% + 8px);right:0;display:flex;gap:8px;padding:8px;border-radius:999px;border:1px solid var(--border,rgba(255,255,255,.12));background:rgba(11,11,15,.92);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);box-shadow:0 18px 40px rgba(0,0,0,.45);z-index:2000}
+  .cw-menu-item{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:var(--fg,#fff);cursor:pointer;font-weight:800;line-height:1;transition:transform .12s ease,background .12s ease,opacity .12s ease}
+  .cw-menu-item:hover{background:rgba(255,255,255,.10);transform:translateY(-1px);opacity:.98}
+  .cw-menu-item:active{transform:translateY(0)}
+  .cw-menu.hidden{display:none!important}
+
+  /* Help modal (GitBook in iframe, lazy loaded) */
+  #cw-help-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(6px) saturate(120%);-webkit-backdrop-filter:blur(6px) saturate(120%);z-index:3000}
+  #cw-help-card{width:min(1100px,94vw);height:min(720px,86vh);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:18px;background:rgba(11,11,15,.92);box-shadow:0 18px 40px rgba(0,0,0,.5);overflow:hidden;position:relative}
+  #cw-help-close{position:absolute;top:10px;right:10px;z-index:1}
+  #cw-help-frame{width:100%;height:100%;border:0}
+  #cw-help-overlay.hidden{display:none!important}
+
 </style>
 </head><body>
 
@@ -272,10 +270,22 @@ def _get_index_html_static() -> str:
   <div class="tabs">
     <div id="tab-main" class="tab active" onclick="showTab('main')">Main</div>
     <div id="tab-watchlist" class="tab" onclick="showTab('watchlist')">Watchlist</div>
+    <div id="tab-snapshots" class="tab" onclick="showTab('snapshots')">Snapshots</div>
     <div id="tab-editor" class="tab" onclick="showTab('editor')">Editor</div>
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
-    <div id="tab-help" class="tab" onclick="openHelp()" title="Open docs in a new tab">Help</div>
-    <div id="tab-about" class="tab" onclick="openAbout()">About</div>
+    <div class="cw-tabmenu" id="tab-about-menu">
+      <div id="tab-about" class="tab"
+           role="button" tabindex="0"
+           aria-haspopup="menu" aria-expanded="false"
+           onclick="window.cwToggleAboutMenu(event)"
+           onkeypress="if(event.key==='Enter'||event.key===' ')window.cwToggleAboutMenu(event)">
+        About ▾
+      </div>
+      <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')">About</button>
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')">Help</button>
+      </div>
+    </div>
   </div>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
@@ -390,6 +400,8 @@ def _get_index_html_static() -> str:
     <div class="title">Watchlist</div><div id="watchlist-root"></div>
   </section>
 
+  <section id="page-snapshots" class="card hidden"></section>
+
   <section id="page-editor" class="card hidden"></section>
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
@@ -501,6 +513,7 @@ def _get_index_html_static() -> str:
               <div class="chips">
                 <span class="chip" id="hub_ui_watchlist">Watchlist: —</span>
                 <span class="chip" id="hub_ui_playing">Playing: —</span>
+                <span class="chip" id="hub_ui_askai">ASK AI: —</span>
                 <span class="chip" id="hub_ui_proto">Proto: —</span>
               </div>
             </button>
@@ -547,6 +560,14 @@ def _get_index_html_static() -> str:
                 <div>
                   <label>Playing Card</label>
                   <select id="ui_show_playingcard">
+                    <option value="true">Show</option>
+                    <option value="false">Hide</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Help ASK AI</label>
+                  <select id="ui_show_AI">
                     <option value="true">Show</option>
                     <option value="false">Hide</option>
                   </select>
@@ -715,13 +736,82 @@ def _get_index_html_static() -> str:
 
 </main>
 
+<div id="cw-help-overlay" class="hidden" aria-hidden="true">
+  <div id="cw-help-card">
+    <button id="cw-help-close" class="btn" type="button" onclick="window.cwCloseHelp()">Close</button>
+    <iframe id="cw-help-frame" title="CrossWatch Help" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </div>
+</div>
+
+
 <script>window.__CW_BUILD__="0.2.5-20251014-02";</script>
 <script>
   window.APP_VERSION="__CW_VERSION__";
   window["__CW_" + "VERSION__"] = window.APP_VERSION;
+
+  window.cwOpenHelp = function(){
+    const overlay = document.getElementById("cw-help-overlay");
+    const frame = document.getElementById("cw-help-frame");
+    if (!overlay || !frame) return;
+    if (!frame.src) frame.src = "https://wiki.crosswatch.app";
+    overlay.classList.remove("hidden");
+    overlay.setAttribute("aria-hidden","false");
+  };
+
+  window.cwCloseHelp = function(){
+    const overlay = document.getElementById("cw-help-overlay");
+    if (!overlay) return;
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden","true");
+  };
+
   window.openHelp = function () {
+    if (window.location && window.location.protocol === "https:") return window.cwOpenHelp?.();
     window.open("https://wiki.crosswatch.app", "_blank", "noopener,noreferrer");
   };
+
+  window.cwCloseAboutMenu = function(){
+    const menu = document.getElementById("cw-about-menu");
+    const btn  = document.getElementById("tab-about");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  };
+
+  window.cwToggleAboutMenu = function (ev) {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    const menu = document.getElementById("cw-about-menu");
+    const btn  = document.getElementById("tab-about");
+    if (!menu || !btn) return;
+
+    const willOpen = menu.classList.contains("hidden");
+    document.querySelectorAll(".cw-menu").forEach(m => m.classList.add("hidden"));
+    menu.classList.toggle("hidden", !willOpen);
+    btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  };
+
+  window.cwAboutMenuSelect = function(which){
+    window.cwCloseAboutMenu?.();
+    if (which === "about") return window.openAbout?.();
+    if (which === "help")  return window.openHelp?.();
+  };
+
+  document.addEventListener("click", (e) => {
+    const overlay = document.getElementById("cw-help-overlay");
+    const card = document.getElementById("cw-help-card");
+    if (overlay && !overlay.classList.contains("hidden") && card && !card.contains(e.target)) window.cwCloseHelp?.();
+  }, true);
+
+  document.addEventListener("click", (e) => {
+    const host = document.getElementById("tab-about-menu");
+    if (host && !host.contains(e.target)) window.cwCloseAboutMenu?.();
+  }, true);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    window.cwCloseHelp?.();
+    window.cwCloseAboutMenu?.();
+  }, true);
 </script>
 
 <script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
@@ -741,6 +831,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/js/settings-insight.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/scrobbler.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/editor.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/snapshots.js?v=__CW_VERSION__" defer></script>
 
 <script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>
 
@@ -1297,12 +1388,18 @@ document.readyState==='loading'
 
 """
 
-def get_index_html(include_gitbook_embed: bool = True) -> str:
+def get_index_html(include_gitbook_embed: bool = True, ui_show_ai: bool = True) -> str:
     html = _get_index_html_static()
+
+    needle = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
+    if needle in html and "__cwUiShowAI" not in html:
+        flag = "true" if ui_show_ai else "false"
+        html = html.replace(needle, f"<script>window.__cwUiShowAI={flag};</script>\n" + needle, 1)
+
     if include_gitbook_embed and "gitbook/embed/script.js" not in html:
-        needle = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
         if needle in html:
             html = html.replace(needle, GITBOOK_EMBED_BLOCK + "\n\n" + needle, 1)
         else:
             html = html + "\n\n" + GITBOOK_EMBED_BLOCK + "\n"
+
     return html.replace("__CW_VERSION__", CURRENT_VERSION)

@@ -749,6 +749,7 @@ async function showTab(n) {
 
   const pageSettings  = document.getElementById("page-settings");
   const pageWatchlist = document.getElementById("page-watchlist");
+  const pageSnapshots = document.getElementById("page-snapshots");
   const logPanel      = document.getElementById("log-panel");
   const layout        = document.getElementById("layout");
   const statsCard     = document.getElementById("stats-card");
@@ -757,6 +758,7 @@ async function showTab(n) {
   // Tab header state
   document.getElementById("tab-main")?.classList.toggle("active", n === "main");
   document.getElementById("tab-watchlist")?.classList.toggle("active", n === "watchlist");
+  document.getElementById("tab-snapshots")?.classList.toggle("active", n === "snapshots");
   document.getElementById("tab-settings")?.classList.toggle("active", n === "settings");
 
   // Cards visibility
@@ -766,6 +768,7 @@ async function showTab(n) {
 
   // Pages
   pageWatchlist?.classList.toggle("hidden", n !== "watchlist");
+  pageSnapshots?.classList.toggle("hidden", n !== "snapshots");
   pageSettings?.classList.toggle("hidden", n !== "settings");
 
   document.documentElement.dataset.tab = n;
@@ -852,6 +855,69 @@ async function showTab(n) {
     return;
   }
 
+  // SNAPSHOTS
+  if (n === "snapshots") {
+    layout?.classList.add("single");
+    layout?.classList.remove("full");
+    logPanel?.classList.add("hidden");
+
+    try {
+      const firstLoad = !window.__snapshotsLoaded;
+      const base = new URL("/assets/js/snapshots.js", document.baseURI).href;
+      const ssUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
+
+      const loadClassic = (src) => new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+
+      const loadViaBlobModule = async (src) => {
+        const res = await fetch(src, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status} loading ${src}`);
+        const text = await res.text();
+
+        const head = text.slice(0, 200).toLowerCase();
+        if (head.includes("<!doctype") || head.includes("<html")) {
+          const err = new Error("snapshots.js was served as HTML (reverse-proxy fallback?)");
+          err.code = "SS_HTML_FALLBACK";
+          throw err;
+        }
+
+        const blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
+        try {
+          await import(/* @vite-ignore */ blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      };
+
+      if (firstLoad) {
+        try {
+          await import(/* @vite-ignore */ ssUrl);
+        } catch (e1) {
+          try {
+            await loadViaBlobModule(ssUrl);
+          } catch (e2) {
+            await loadClassic(ssUrl);
+          }
+        }
+        window.__snapshotsLoaded = true;
+      } else {
+        try {
+          if (window.Snapshots?.refresh) await window.Snapshots.refresh(true);
+        } catch {}
+      }
+    } catch (e) {
+      console.warn("Snapshots load/refresh failed:", e);
+    }
+
+    __currentTab = "snapshots";
+    return;
+  }
 
   // SETTINGS
   if (n === "settings") {
@@ -861,8 +927,6 @@ async function showTab(n) {
 
     try { await window.mountAuthProviders?.(); } catch {}
     try { await window.loadConfig?.(); } catch {}
-
-    // Preload auth scripts needed for Settings helpers (lazy-load safe)
     try {
       if (typeof window.cwLoadAuth === "function") {
         await Promise.allSettled([window.cwLoadAuth("simkl"), window.cwLoadAuth("trakt")]);
@@ -2147,6 +2211,9 @@ function cwUiSettingsHubUpdate() {
   const pc = document.getElementById("ui_show_playingcard");
   if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
 
+  const ai = document.getElementById("ui_show_AI");
+  if (ai) set("hub_ui_askai", `ASK AI: ${ai.value === "false" ? "Hide" : "Show"}`);
+
   const proto = document.getElementById("ui_protocol");
   if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
 
@@ -2191,6 +2258,7 @@ function cwUiSettingsHubInit() {
   const ids = [
     "ui_show_watchlist_preview",
     "ui_show_playingcard",
+    "ui_show_AI",
     "ui_protocol",
     "app_auth_enabled",
     "app_auth_username",
@@ -2924,6 +2992,14 @@ async function loadConfig() {
       playSel.value = on ? "true" : "false";
     }
 
+    const aiSel = document.getElementById("ui_show_AI");
+    if (aiSel) {
+      const on = (typeof ui.show_AI === "boolean")
+        ? !!ui.show_AI
+        : true;
+      aiSel.value = on ? "true" : "false";
+    }
+
     const protoSel = document.getElementById("ui_protocol");
     if (protoSel) {
       const p = String(ui.protocol || "http").trim().toLowerCase();
@@ -3333,6 +3409,7 @@ async function saveSettings() {
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
     const prevUiShow     = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
     const prevUiPlaying  = (typeof serverCfg?.ui?.show_playingcard === "boolean") ? !!serverCfg.ui.show_playingcard : true;
+    const prevUiAskAi    = (typeof serverCfg?.ui?.show_AI === "boolean") ? !!serverCfg.ui.show_AI : true;
     const prevUiProtocol = String(serverCfg?.ui?.protocol || "http").trim().toLowerCase() === "https" ? "https" : "http";
 
     const prevCw = serverCfg?.crosswatch || {};
@@ -3420,6 +3497,19 @@ async function saveSettings() {
           cfg.ui = cfg.ui || {};
           cfg.ui.show_playingcard = finalUiPlay;
           changed = true;
+        }
+      }
+
+      const uiAiSel = document.getElementById("ui_show_AI");
+      if (uiAiSel) {
+        const finalUiAi = uiAiSel.value === "false" ? false : true;
+        if (finalUiAi !== prevUiAskAi) {
+          cfg.ui = cfg.ui || {};
+          cfg.ui.show_AI = finalUiAi;
+          changed = true;
+          if (prevUiAskAi && !finalUiAi) {
+            try { window.__cwAskAiDisabled = true; } catch {}
+          }
         }
       }
 
@@ -3978,6 +4068,12 @@ async function saveSettings() {
       const url = cwBuildProtoUrl(wantProto);
       cwShowRestartBanner(`Protocol changed: restart required`, url);
       showToast("Protocol changed: restart required", true);
+    }
+
+    if (window.__cwAskAiDisabled) {
+      try { delete window.__cwAskAiDisabled; } catch {}
+      cwShowRestartBanner("ASK AI hidden: restart required", null);
+      showToast("ASK AI hidden: restart required", true);
     }
   } catch (err) {
     console.error("saveSettings failed", err);
@@ -5053,7 +5149,7 @@ function cwEnsureRestartBanner() {
   <div class="cw-rb-inner">
     <div class="cw-rb-left">
       <div class="cw-rb-msg" id="cw-rb-msg">Restart required</div>
-      <div class="cw-rb-sub" id="cw-rb-sub">Container/service restart needed to apply TLS/protocol changes.</div>
+      <div class="cw-rb-sub" id="cw-rb-sub">Container/service restart needed to apply changes.</div>
     </div>
     <div class="cw-rb-actions">
       <a id="cw-rb-link" href="#" target="_blank" rel="noopener" style="display:none">Open after restart</a>
