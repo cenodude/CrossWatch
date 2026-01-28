@@ -167,7 +167,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         if isinstance(inc, dict) and leaf in inc and _blank(inc[leaf]):
             dst[leaf] = (cur or {}).get(leaf, "")
 
-    cfg = merged
+    cfg: dict[str, Any] = dict(merged or {})
 
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
