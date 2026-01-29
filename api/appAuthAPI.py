@@ -50,6 +50,18 @@ def _b64d(s: str) -> bytes:
 def _sha256_hex(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
+def _is_sha256_hex(s: str) -> bool:
+    v = (s or "").strip().lower()
+    if len(v) != 64:
+        return False
+    for ch in v:
+        if ch not in "0123456789abcdef":
+            return False
+    return True
+
+def _digest_eq(a: str, b: str) -> bool:
+    return hmac.compare_digest((a or "").encode("utf-8"), (b or "").encode("utf-8"))
+
 
 def _pbkdf2_hash(password: str, salt: bytes, *, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, int(iterations))
@@ -82,7 +94,7 @@ def _legacy_session_as_entry(a: dict[str, Any]) -> dict[str, Any] | None:
     s = _cfg_session(a)
     token_hash = str(s.get("token_hash") or "").strip()
     exp = int(s.get("expires_at") or 0)
-    if not token_hash or exp <= 0:
+    if not token_hash or not _is_sha256_hex(token_hash) or exp <= 0:
         return None
     created_at = int(a.get("last_login_at") or 0) or max(1, exp - AUTH_TTL_SEC)
     return {
@@ -109,7 +121,7 @@ def _prune_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for s in sessions:
         exp = int(s.get("expires_at") or 0)
         th = str(s.get("token_hash") or "").strip()
-        if th and exp > now:
+        if th and _is_sha256_hex(th) and exp > now:
             keep.append(s)
     keep.sort(key=lambda x: int(x.get("created_at") or 0) or int(x.get("expires_at") or 0))
     if len(keep) > MAX_SESSIONS:
@@ -156,7 +168,9 @@ def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None
         want = str(s.get("token_hash") or "").strip()
         if not want or exp <= now:
             continue
-        if hmac.compare_digest(th, want):
+        if not _is_sha256_hex(want):
+            continue
+        if _digest_eq(th, want):
             return s
     return None
 
@@ -223,7 +237,7 @@ def _drop_session(cfg: dict[str, Any], token: str | None) -> None:
         return
     th = _sha256_hex(t)
     sessions = _prune_sessions(_iter_sessions(a))
-    kept = [s for s in sessions if not hmac.compare_digest(str(s.get("token_hash") or ""), th)]
+    kept = [s for s in sessions if not _digest_eq(str(s.get("token_hash") or ""), th)]
     a["sessions"] = kept
     _sync_legacy_session(a, kept)
 

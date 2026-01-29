@@ -167,6 +167,16 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         if isinstance(inc, dict) and leaf in inc and _blank(inc[leaf]):
             dst[leaf] = (cur or {}).get(leaf, "")
 
+    try:
+        inc_a = incoming.get("app_auth")
+        cur_a = current.get("app_auth")
+        if isinstance(inc_a, dict) and "sessions" in inc_a and isinstance(cur_a, dict):
+            cur_s = cur_a.get("sessions")
+            if isinstance(cur_s, list):
+                merged.setdefault("app_auth", {})["sessions"] = cur_s
+    except Exception:
+        pass
+
     cfg: dict[str, Any] = dict(merged or {})
 
     sc = cfg.setdefault("scrobble", {})
