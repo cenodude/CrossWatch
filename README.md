@@ -85,6 +85,7 @@ NOT supported: **Multi-users/servers**
         <li>Analyzer: finds broken or missing matches/IDs</li>
         <li>Exporter: CSV files for popular services</li>
         <li>Editor: Edit and adjust your items</li>
+        <li>Snapshots: Create and restore snapshots</li>
         <li>Now Playing card, Stats, history, live logs</li>
         <li>Headless scheduled runs</li>
       </ul>
