@@ -418,7 +418,7 @@ def _get_index_html_static() -> str:
               <img data-prov="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="display:none;height:18px;width:auto;opacity:.9">
               <img data-prov="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" style="display:none;height:18px;width:auto;opacity:.9">
               <img data-prov="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" style="display:none;height:14px;width:auto;opacity:.9">
               <img data-prov="TAUTULLI" src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="display:none;height:18px;width:auto;opacity:.9">
               <img data-prov="ANILIST" src="/assets/img/ANILIST-log.svg" alt="AniList" style="display:none;height:18px;width:auto;opacity:.9">
               <img data-prov="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" style="display:none;height:24px;width:auto;opacity:.9">
@@ -932,8 +932,9 @@ function isProviderConfigured(key,cfg){
     case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
     case 'MDBLIST':  return !!(c?.mdblist?.api_key);
     case 'TMDB':{
-      const tm = c?.tmdb_sync || c?.tmdb || c?.auth?.tmdb_sync || c?.auth?.tmdb;
-      return !!(tm?.api_key || tm?.access_token || tm?.bearer_token || tm?.session_id);
+      // TMDb Sync auth (not Metadata TMDb). /api/config may redact secrets; account_id is a safe configured hint.
+      const tm = c?.tmdb_sync || c?.auth?.tmdb_sync || {};
+      return !!(tm?.account_id || tm?.session_id);
     }
     case 'TAUTULLI': return !!((c?.tautulli?.server_url || c?.auth?.tautulli?.server_url) && (c?.tautulli?.api_key || c?.auth?.tautulli?.api_key));
     default: return false;
