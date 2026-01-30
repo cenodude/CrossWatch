@@ -1,5 +1,6 @@
 # providers/auth/_auth_TAUTULLI.py
-# CrossWatch - Tautulli Auth Provider (API key)
+# CrossWatch - Tautulli Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
