@@ -771,6 +771,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 return {"ok": True, "connected": False, "pending": bool(token), "error": "Missing session_id"}
 
             me = _tmdb_v3_account(key, sess)
+            acc_id = str((me or {}).get("id") or "").strip()
+            if acc_id and str((tm or {}).get("account_id") or "").strip() != acc_id:
+                tm["account_id"] = acc_id
+                tm["username"] = str((me or {}).get("username") or "").strip()
+                try:
+                    save_config(cfg)
+                except Exception:
+                    pass
             return {"ok": True, "connected": True, "pending": False, "account": {"id": (me or {}).get("id"), "username": (me or {}).get("username")}}
         except Exception as e:
             return {"ok": False, "connected": False, "pending": False, "error": str(e)}
@@ -782,6 +790,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             tm = cfg.setdefault("tmdb_sync", {})
             tm["api_key"] = ""
             tm["session_id"] = ""
+            tm.pop("account_id", None)
+            tm.pop("username", None)
             tm.pop("_pending_request_token", None)
             tm.pop("_pending_request_token_ts", None)
             tm.pop("_pending_created_at", None)

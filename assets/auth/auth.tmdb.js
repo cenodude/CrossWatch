@@ -56,8 +56,9 @@
   async function hydrate(forceFresh, verifyAfter) {
     const cfg = await getCfg(!!forceFresh);
     const tm = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || {};
-    const hasKey = !!txt(tm?.api_key);
-    const hasSess = !!txt(tm?.session_id);
+    const hasAcc  = !!txt(tm?.account_id);
+    const hasKey  = !!txt(tm?.api_key) || hasAcc;
+    const hasSess = !!txt(tm?.session_id) || hasAcc;
 
     const keyEl = el("tmdb_sync_api_key");
     const sessEl = el("tmdb_sync_session_id");

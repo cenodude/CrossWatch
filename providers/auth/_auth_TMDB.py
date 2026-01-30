@@ -81,8 +81,11 @@ class TMDbAuth(AuthProvider):
         return self.get_status(cfg)
 
     def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        cfg.setdefault("tmdb_sync", {})["api_key"] = ""
-        cfg.setdefault("tmdb_sync", {})["session_id"] = ""
+        tm = cfg.setdefault("tmdb_sync", {})
+        tm["api_key"] = ""
+        tm["session_id"] = ""
+        tm.pop("account_id", None)
+        tm.pop("username", None)
         save_config(dict(cfg))
         log("TMDb disconnected.", module="AUTH")
         return self.get_status(cfg)
