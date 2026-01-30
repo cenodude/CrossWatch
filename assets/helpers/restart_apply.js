@@ -8,6 +8,8 @@
   const BANNER_ID = "cw-restart-banner";
   const BANNER_CSS_ID = "cw-restart-banner-css";
 
+  const DEFAULT_RESTART_SECONDS = 15;
+
   function cwBuildProtoUrl(proto) {
     try {
       const p = String(proto || "").toLowerCase() === "https" ? "https" : "http";
@@ -58,17 +60,17 @@
     if (!document.getElementById(OVERLAY_CSS_ID)) {
       const st = document.createElement("style");
       st.id = OVERLAY_CSS_ID;
-      st.textContent = `
-#${OVERLAY_ID}{
+      st.textContent = `#${OVERLAY_ID}{
   position:fixed; inset:0; z-index:10001;
   display:none; align-items:center; justify-content:center;
   padding:18px;
   background:rgba(10,10,14,.72);
   backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
 }
 #${OVERLAY_ID}.show{display:flex}
 #${OVERLAY_ID} .cw-ao-card{
-  width:min(520px, calc(100vw - 36px));
+  width:min(560px, calc(100vw - 36px));
   border:1px solid rgba(255,255,255,.14);
   border-radius:18px;
   background:rgba(20,20,24,.92);
@@ -82,57 +84,177 @@
   border-top-color:rgba(255,255,255,.85);
   animation:cw-spin .9s linear infinite;
 }
-#${OVERLAY_ID} .cw-ao-title{font-weight:800; font-size:16px}
+#${OVERLAY_ID} .cw-ao-title{font-weight:900; font-size:16px}
 #${OVERLAY_ID} .cw-ao-sub{margin-top:8px; opacity:.85; font-size:13px; line-height:1.35}
-#${OVERLAY_ID} .cw-ao-count{margin-top:14px; font-size:34px; font-weight:900; letter-spacing:.5px}
-#${OVERLAY_ID} .cw-ao-count.hidden{display:none}
-#${OVERLAY_ID} .cw-ao-foot{margin-top:10px; font-size:12px; opacity:.75}
+
+#${OVERLAY_ID} .cw-ao-timer{
+  margin-top:16px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:12px;
+  --p:0;
+}
+#${OVERLAY_ID} .cw-ao-timer.hidden{display:none}
+
+#${OVERLAY_ID} .cw-ao-ring{
+  width:148px; height:148px;
+  border-radius:999px;
+  position:relative;
+  display:grid;
+  place-items:center;
+  isolation:isolate;
+  background:conic-gradient(from -90deg,
+    rgba(90,200,160,.95) calc(var(--p,0) * 1turn),
+    rgba(255,255,255,.10) 0
+  );
+  box-shadow:0 18px 44px rgba(0,0,0,.45);
+  transition:background .25s ease;
+}
+#${OVERLAY_ID} .cw-ao-ring::before{
+  content:"";
+  position:absolute;
+  inset:-10px;
+  border-radius:999px;
+  z-index:0;
+  pointer-events:none;
+  background:radial-gradient(circle, rgba(90,200,160,.22), rgba(90,160,255,.12) 45%, rgba(0,0,0,0) 70%);
+  filter:blur(12px);
+  opacity:.70;
+}
+#${OVERLAY_ID} .cw-ao-ring::after{
+  content:"";
+  position:absolute;
+  inset:10px;
+  border-radius:999px;
+  z-index:0;
+  pointer-events:none;
+  background:
+    radial-gradient(140px 140px at 30% 25%, rgba(255,255,255,.14), rgba(0,0,0,0) 58%),
+    rgba(18,18,22,.94);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+#${OVERLAY_ID} .cw-ao-count{
+  position:relative; z-index:1;
+  font-size:48px;
+  font-weight:950;
+  letter-spacing:-1px;
+  line-height:1;
+  text-shadow:0 10px 28px rgba(0,0,0,.55);
+}
+#${OVERLAY_ID} .cw-ao-unit{
+  position:relative; z-index:1;
+  margin-top:-6px;
+  font-size:11px;
+  opacity:.72;
+  letter-spacing:.28em;
+  text-transform:uppercase;
+}
+#${OVERLAY_ID} .cw-ao-ring.tick .cw-ao-count{animation:cw-pop .18s ease}
+
+#${OVERLAY_ID} .cw-ao-bar{
+  width:min(360px, 100%);
+  height:10px;
+  border-radius:999px;
+  background:rgba(255,255,255,.10);
+  overflow:hidden;
+  border:1px solid rgba(255,255,255,.12);
+}
+#${OVERLAY_ID} .cw-ao-bar-fill{
+  height:100%;
+  width:calc(var(--p,0) * 100%);
+  background:linear-gradient(90deg, rgba(90,200,160,.95), rgba(90,160,255,.92));
+  box-shadow:0 10px 26px rgba(90,200,160,.18);
+  transition:width .25s ease;
+}
+
+#${OVERLAY_ID} .cw-ao-foot{margin-top:14px; font-size:12px; opacity:.75}
+
 @keyframes cw-spin{to{transform:rotate(360deg)}}
-`;
+@keyframes cw-pop{0%{transform:scale(1)}45%{transform:scale(1.07)}100%{transform:scale(1)}}
+
+@media (prefers-reduced-motion: reduce){
+  #${OVERLAY_ID} .cw-ao-spinner{animation:none}
+  #${OVERLAY_ID} .cw-ao-ring.tick .cw-ao-count{animation:none}
+  #${OVERLAY_ID} .cw-ao-bar-fill{transition:none}
+}`;
       document.head.appendChild(st);
     }
 
     const o = document.createElement("div");
     o.id = OVERLAY_ID;
-    o.innerHTML = `
-  <div class="cw-ao-card" role="dialog" aria-modal="true" aria-live="polite">
+    o.innerHTML = `  <div class="cw-ao-card" role="dialog" aria-modal="true" aria-live="polite">
     <div class="cw-ao-top">
       <div class="cw-ao-spinner" aria-hidden="true"></div>
       <div class="cw-ao-title" id="cw-ao-title">Applying changes</div>
     </div>
     <div class="cw-ao-sub" id="cw-ao-sub">Restarting container / service…</div>
-    <div class="cw-ao-count" id="cw-ao-count">10</div>
+
+    <div class="cw-ao-timer" id="cw-ao-timer" style="--p:0">
+      <div class="cw-ao-ring" id="cw-ao-ring" aria-hidden="true">
+        <div class="cw-ao-count" id="cw-ao-count">${DEFAULT_RESTART_SECONDS}</div>
+        <div class="cw-ao-unit">sec</div>
+      </div>
+      <div class="cw-ao-bar" aria-hidden="true"><div class="cw-ao-bar-fill" id="cw-ao-bar-fill"></div></div>
+    </div>
+
     <div class="cw-ao-foot" id="cw-ao-foot">You’ll be redirected automatically.</div>
-  </div>
-`;
+  </div>`;
     document.body.appendChild(o);
   }
 
-  function cwShowApplyOverlay(title, subtitle, seconds) {
-    cwEnsureApplyOverlay();
-    const o = document.getElementById(OVERLAY_ID);
-    if (!o) return;
+function _cwUpdateOverlayTimer(o, left, total) {
+  if (!o) return;
+  const timer = o.querySelector("#cw-ao-timer");
+  const ring = o.querySelector("#cw-ao-ring");
+  const c = o.querySelector("#cw-ao-count");
 
-    const t = o.querySelector("#cw-ao-title");
-    const s = o.querySelector("#cw-ao-sub");
-    const c = o.querySelector("#cw-ao-count");
+  const l = Number(left);
+  const t = Number(total);
 
-    if (t) t.textContent = String(title || "Applying changes");
-    if (s) s.textContent = String(subtitle || "Restarting container / service…");
+  const leftClamped = Number.isFinite(l) ? Math.max(0, l) : 0;
+  const totalClamped = Number.isFinite(t) ? Math.max(0, t) : 0;
 
-    const sec = Number.isFinite(Number(seconds)) ? Number(seconds) : 10;
-    if (c) {
-      if (sec > 0) {
-        c.classList.remove("hidden");
-        c.textContent = String(sec);
-      } else {
-        c.classList.add("hidden");
-        c.textContent = "";
-      }
-    }
+  if (c) c.textContent = String(Math.ceil(leftClamped));
 
-    o.classList.add("show");
+  const p = totalClamped > 0 ? Math.min(1, Math.max(0, (totalClamped - leftClamped) / totalClamped)) : 0;
+  if (timer) timer.style.setProperty("--p", String(p));
+
+  if (ring) {
+    try {
+      ring.classList.remove("tick");
+      void ring.offsetWidth;
+      ring.classList.add("tick");
+      setTimeout(() => { try { ring.classList.remove("tick"); } catch (_) {} }, 200);
+    } catch (_) {}
   }
+}
+
+function cwShowApplyOverlay(title, subtitle, seconds) {
+  cwEnsureApplyOverlay();
+  const o = document.getElementById(OVERLAY_ID);
+  if (!o) return;
+
+  const t = o.querySelector("#cw-ao-title");
+  const s = o.querySelector("#cw-ao-sub");
+  const timer = o.querySelector("#cw-ao-timer");
+
+  if (t) t.textContent = String(title || "Applying changes");
+  if (s) s.textContent = String(subtitle || "Restarting container / service…");
+
+  const sec = Number.isFinite(Number(seconds)) ? Number(seconds) : DEFAULT_RESTART_SECONDS;
+  if (timer) {
+    if (sec > 0) {
+      timer.classList.remove("hidden");
+      _cwUpdateOverlayTimer(o, sec, sec);
+    } else {
+      timer.classList.add("hidden");
+    }
+  }
+
+  o.classList.add("show");
+}
 
   function cwHideApplyOverlay() {
     const o = document.getElementById(OVERLAY_ID);
@@ -288,7 +410,7 @@
     const targetUrl = p.url || cwBuildProtoUrl(p.proto) || window.location.href;
 
     cwHideRestartBanner();
-    cwShowApplyOverlay("Protocol change: applying", "Logging out, restarting CrossWatch…", 10);
+    cwShowApplyOverlay("Protocol change: applying", "Logging out, restarting CrossWatch…", DEFAULT_RESTART_SECONDS);
 
     const btn = document.getElementById("cw-rb-apply");
     if (btn) btn.disabled = true;
@@ -311,15 +433,14 @@
       return;
     }
 
-    let left = 10;
+    const total = DEFAULT_RESTART_SECONDS;
+    let left = total;
     const o = document.getElementById(OVERLAY_ID);
-    const c = o?.querySelector("#cw-ao-count");
-    const tick = () => { if (c) c.textContent = String(left); };
-    tick();
+    _cwUpdateOverlayTimer(o, left, total);
 
     const tmr = setInterval(() => {
       left -= 1;
-      tick();
+      _cwUpdateOverlayTimer(o, left, total);
       if (left <= 0) {
         clearInterval(tmr);
         window.location.href = targetUrl;
@@ -328,7 +449,7 @@
   }
 
   async function cwRestartCrossWatchWithOverlay() {
-    const seconds = 10;
+    const seconds = DEFAULT_RESTART_SECONDS;
     cwShowApplyOverlay("Restarting CrossWatch", "Restarting container / service…", seconds);
 
     let ok = false;
@@ -350,15 +471,14 @@
       return;
     }
 
-    let left = seconds;
+    const total = seconds;
+    let left = total;
     const o = document.getElementById(OVERLAY_ID);
-    const c = o?.querySelector("#cw-ao-count");
-    const tick = () => { if (c) c.textContent = String(left); };
-    tick();
+    _cwUpdateOverlayTimer(o, left, total);
 
     const tmr = setInterval(() => {
       left -= 1;
-      tick();
+      _cwUpdateOverlayTimer(o, left, total);
       if (left <= 0) {
         clearInterval(tmr);
         window.location.reload();
