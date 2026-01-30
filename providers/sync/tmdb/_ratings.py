@@ -1,6 +1,6 @@
-# /providers/sync/_mod_ratings.py
-# CrossWatch - TMDb ratings adapter
-# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# /providers/sync/tmdb/_ratings.py
+# TMDb ratings adapter
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
@@ -11,12 +11,14 @@ from .._log import log as cw_log
 
 from ._common import (
     as_int,
-    fetch_external_ids,
+    enrich_ids_dict,
     iso_z_from_tmdb,
     key_of,
+    now_epoch,
     pick_media_type,
     resolve_tmdb_id,
     tmdb_id_from_item,
+    touch_feature_state,
     unresolved_item,
     year_from_date,
 )
@@ -39,6 +41,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     account_id = client.account_id()
     prog = adapter.progress_factory("ratings")
     out: dict[str, dict[str, Any]] = {}
+
+    touch_feature_state(adapter, "ratings", phase="index_start", account_id=account_id, ts=now_epoch())
 
     def pull(path: str, *, typ: str) -> None:
         page = 1
@@ -75,15 +79,13 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 if typ == "movie":
                     title = raw.get("title") or raw.get("original_title")
                     year = year_from_date(raw.get("release_date"))
-                    ids = fetch_external_ids(adapter, kind="movie", tmdb_id=int(tmdb_id))
-                    ids.setdefault("tmdb", int(tmdb_id))
-                    item = {"type": "movie", "title": title, "year": year, "ids": ids}
+                    item = {"type": "movie", "title": title, "year": year, "ids": {"tmdb": tmdb_id}}
+                    enrich_ids_dict(adapter, item["ids"], media_type="movie", tmdb_id=tmdb_id, feature="ratings")
                 elif typ == "tv":
                     title = raw.get("name") or raw.get("original_name")
                     year = year_from_date(raw.get("first_air_date"))
-                    ids = fetch_external_ids(adapter, kind="tv", tmdb_id=int(tmdb_id))
-                    ids.setdefault("tmdb", int(tmdb_id))
-                    item = {"type": "show", "title": title, "year": year, "ids": ids}
+                    item = {"type": "show", "title": title, "year": year, "ids": {"tmdb": tmdb_id}}
+                    enrich_ids_dict(adapter, item["ids"], media_type="tv", tmdb_id=tmdb_id, feature="ratings")
                 else:
                     show_id = as_int(raw.get("show_id") or raw.get("series_id"))
                     season = as_int(raw.get("season_number"))
@@ -92,11 +94,6 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                         continue
                     title = raw.get("name") or raw.get("title")
                     year = year_from_date(raw.get("air_date"))
-                    show_ids = {"tmdb": show_id}
-                    show_ext = fetch_external_ids(adapter, kind="tv", tmdb_id=int(show_id))
-                    if show_ext:
-                        show_ids.update(show_ext)
-
                     item = {
                         "type": "episode",
                         "title": title,
@@ -104,8 +101,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                         "season": season,
                         "episode": episode,
                         "ids": {"tmdb": tmdb_id},
-                        "show_ids": show_ids,
+                        "show_ids": {"tmdb": show_id},
                     }
+                    enrich_ids_dict(adapter, item["show_ids"], media_type="tv", tmdb_id=show_id, feature="ratings")
 
                 item["rating"] = max(1, min(10, int(rating_i)))
                 if rated_at:
@@ -122,6 +120,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     pull("rated/tv/episodes", typ="episode")
     prog.done(ok=True)
     _info("build_index_done", count=len(out))
+    touch_feature_state(adapter, "ratings", phase="index_done", count=len(out), ts=now_epoch())
     return out
 
 

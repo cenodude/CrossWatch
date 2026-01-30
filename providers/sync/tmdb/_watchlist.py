@@ -1,6 +1,6 @@
-# /providers/sync/_mod_watchlist.py
-# CrossWatch - TMDb watchlist adapter
-# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+# /providers/sync/tmdb/_watchlist.py
+# TMDb watchlist adapter
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
@@ -11,10 +11,12 @@ from .._log import log as cw_log
 
 from ._common import (
     as_int,
-    fetch_external_ids,
+    enrich_ids_dict,
     key_of,
+    now_epoch,
     pick_watchlist_media_type,
     resolve_tmdb_id,
+    touch_feature_state,
     unresolved_item,
     year_from_date,
 )
@@ -37,6 +39,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     account_id = client.account_id()
     prog = adapter.progress_factory("watchlist")
     out: dict[str, dict[str, Any]] = {}
+
+    touch_feature_state(adapter, "watchlist", phase="index_start", account_id=account_id, ts=now_epoch())
 
     def pull(kind: str) -> None:
         page = 1
@@ -66,15 +70,13 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 if kind == "movies":
                     title = raw.get("title") or raw.get("original_title")
                     year = year_from_date(raw.get("release_date"))
-                    ids = fetch_external_ids(adapter, kind="movie", tmdb_id=int(tmdb_id))
-                    ids.setdefault("tmdb", int(tmdb_id))
-                    item = {"type": "movie", "title": title, "year": year, "ids": ids}
+                    item = {"type": "movie", "title": title, "year": year, "ids": {"tmdb": tmdb_id}}
+                    enrich_ids_dict(adapter, item["ids"], media_type="movie", tmdb_id=tmdb_id, feature="watchlist")
                 else:
                     title = raw.get("name") or raw.get("original_name")
                     year = year_from_date(raw.get("first_air_date"))
-                    ids = fetch_external_ids(adapter, kind="tv", tmdb_id=int(tmdb_id))
-                    ids.setdefault("tmdb", int(tmdb_id))
-                    item = {"type": "show", "title": title, "year": year, "ids": ids}
+                    item = {"type": "show", "title": title, "year": year, "ids": {"tmdb": tmdb_id}}
+                    enrich_ids_dict(adapter, item["ids"], media_type="tv", tmdb_id=tmdb_id, feature="watchlist")
 
                 mini = id_minimal(item)
                 out[key_of(mini)] = mini
@@ -87,6 +89,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     pull("tv")
     prog.done(ok=True)
     _info("build_index_done", count=len(out))
+    touch_feature_state(adapter, "watchlist", phase="index_done", count=len(out), ts=now_epoch())
     return out
 
 

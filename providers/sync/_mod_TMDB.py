@@ -69,10 +69,20 @@ except Exception as e:
     feat_ratings = None
 
 try:
-    from .tmdb._common import key_of as _tmdb_key_of
+    from .tmdb._common import key_of as _tmdb_key_of_impl
 except Exception:
-    def _tmdb_key_of(item: Mapping[str, Any]) -> str:  # type: ignore[no-redef]
+    _tmdb_key_of_impl = None
+
+
+def _tmdb_key_of(_obj: Any) -> str:
+    if _tmdb_key_of_impl is None:
         return ""
+    if isinstance(_obj, Mapping):
+        try:
+            return str(_tmdb_key_of_impl(_obj) or "").strip()
+        except Exception:
+            return ""
+    return ""
 
 
 def _features_flags() -> dict[str, bool]:
