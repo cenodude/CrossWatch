@@ -41,7 +41,7 @@
     "sc-help-adv-force-stop":
       "Force stop @ (%) (default 80) - If STOP is at or above this %, send /scrobble/stop.",
     "sc-help-adv-progress-step":
-      "Progress updates in percentages, which can significantly reduce or increase the number of API calls required. When in doubt, default to 5% increments.",
+      "Progress updates in percentages, which can significantly reduce or increase the number of API calls required. When in doubt, default to 25% increments.",
     "sc-help-watch-filters":
       "Don't skip the filtering step! While optional for solo media server users, it becomes essential the moment you share your server with other users. Without filters, the system will scrobble everything",
     "sc-help-watch-advanced":
@@ -175,7 +175,7 @@
 
   const DEFAULTS = {
     watch: { pause_debounce_seconds: 5, suppress_start_at: 99 },
-    trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 5 },
+    trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 25 },
   };
 
   const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false, _noSinkAutostartFixApplied: false };
