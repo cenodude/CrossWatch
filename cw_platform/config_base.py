@@ -177,9 +177,15 @@ DEFAULT_CFG: dict[str, Any] = {
             "created_at": 0,                            # Epoch when device_code was created
         },
     },
-
-    "tmdb": {"api_key": ""},
-
+"tmdb_sync": {                                      # Tracker / sync adapter auth (TMDb v3)
+    "api_key": "",                                  # v3 API Key (required)
+    "session_id": "",                               # v3 Session ID (filled after Connect)
+    "account_id": "",                               # v3 Account ID (auto-filled)
+    "_pending_request_token": "",                   # Temporary token waiting for approval
+    "_pending_created_at": 0,                       # Epoch when request token was created
+    "timeout": 15.0,
+    "max_retries": 3,
+},
     "jellyfin": {
         "server": "",                                   # http(s)://host:port (required)
         "access_token": "",                             # Jellyfin access token (required)
@@ -280,6 +286,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "restore_history": "latest",                   # "", "latest", or specific snapshot name/stem
         "restore_ratings": "latest"                    # "", "latest", or specific snapshot name/stem
     },
+    
+    # --- Meta Providers ------------------------------------------------------
+    
+    "tmdb": {"api_key": ""},                            # Metadata resolver (TMDb)
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
@@ -380,7 +390,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # Trakt sink rules (progress decisions) used by Trakt|SIMKL|MDblist
         "trakt": {
-            "progress_step": 5,                         # Send scrobble progress in % steps (1=every %, 5=every 5%)
+            "progress_step": 25,                        # Send scrobble progress in % steps
             "stop_pause_threshold": 85,                 # <85% STOP-send as PAUSE (your “watched” bar)
             "force_stop_at": 95,                        # ≥85% always STOP (bypass debounces)
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
@@ -576,6 +586,41 @@ def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
     return d
 
 
+def _normalize_tmdb_sync(cfg: dict[str, Any]) -> None:
+    t0 = cfg.get("tmdb_sync")
+    if isinstance(t0, dict):
+        t = t0
+    else:
+        t = {}
+        cfg["tmdb_sync"] = t
+
+    # TMDb sync v3 config
+    t["api_key"] = str(t.get("api_key") or "").strip()
+    t["session_id"] = str(t.get("session_id") or "").strip()
+    t["account_id"] = str(t.get("account_id") or "").strip()
+    t["_pending_request_token"] = str(t.get("_pending_request_token") or "").strip()
+    try:
+        t["_pending_created_at"] = int(t.get("_pending_created_at") or 0)
+    except Exception:
+        t["_pending_created_at"] = 0
+
+    try:
+        t["timeout"] = float(t.get("timeout", 15.0) or 15.0)
+    except Exception:
+        t["timeout"] = 15.0
+    try:
+        t["max_retries"] = int(t.get("max_retries", 3) or 3)
+    except Exception:
+        t["max_retries"] = 3
+
+    # Guard: if api_key is empty, clear derived/session state
+    if not t["api_key"]:
+        t["session_id"] = ""
+        t["account_id"] = ""
+        t["_pending_request_token"] = ""
+        t["_pending_created_at"] = 0
+
+
 def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui = _ensure_dict(cfg, "ui")
 
@@ -620,6 +665,7 @@ def load_config() -> dict[str, Any]:
 
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
     cfg.setdefault("version", _current_version_norm())
+    _normalize_tmdb_sync(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -632,6 +678,7 @@ def load_config() -> dict[str, Any]:
 def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
     data["version"] = _current_version_norm()
+    _normalize_tmdb_sync(data)
     _normalize_ui(data)
     pairs = data.get("pairs")
     if isinstance(pairs, list):
