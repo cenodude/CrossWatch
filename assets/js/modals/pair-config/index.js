@@ -53,7 +53,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function iconPath(n){const key=String(n||"").trim().toUpperCase();return `/assets/img/${key}.svg`}
 function logoHTML(n,l){const src=iconPath(n),alt=(l||n||"Provider")+" logo";return `<span class="prov-wrap"><img class="prov-logo" src="${src}" alt="${alt}" width="36" height="36" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block'"/><span class="prov-fallback" style="display:none">${l||n||"—"}</span></span>`}
 
-const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]}};
+const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
 function ratingsDisabledFor(state){
   const names=[state?.src,state?.dst].map(x=>String(x||"").trim().toUpperCase());
   const out=new Set();
@@ -1606,7 +1606,11 @@ function buildPayload(state,wrap){
   const dst=state.dst||ID("cx-dst")?.value||ID("cx-dst-display")?.dataset.value||"";
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign({enable:false,add:false,remove:false},(state.options||{})[k]||{});
-  const payload={source:src,target:dst,enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist:get("watchlist"),ratings:get("ratings"),history:get("history"),playlists:get("playlists")}};
+  const watchlist=get("watchlist");
+  const ratings=get("ratings");
+  const dis=ratingsDisabledFor({src,dst});
+  if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
+  const payload={source:src,target:dst,enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),playlists:get("playlists")}};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
 }
 
