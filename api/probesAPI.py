@@ -33,7 +33,7 @@ HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
 STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
-PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "anilist", "jellyfin", "emby", "mdblist", "tautulli")
+PROVIDERS: tuple[str, ...] = ("plex", "simkl", "trakt", "anilist", "jellyfin", "emby", "tmdb", "mdblist", "tautulli")
 
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -498,6 +498,49 @@ def _probe_anilist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     return ok, rsn
 
 
+
+def _probe_tmdb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    ts, ok, rsn = PROBE_DETAIL_CACHE["tmdb"]
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok, rsn
+
+    t: Mapping[str, Any] = (cfg.get("tmdb_sync") or {}) if isinstance(cfg.get("tmdb_sync"), Mapping) else {}
+    api_key = str(t.get("api_key") or "").strip()
+    session_id = str(t.get("session_id") or "").strip()
+
+    if not api_key:
+        ok = False
+        rsn = "TMDB: api_key missing"
+        PROBE_DETAIL_CACHE["tmdb"] = (now, ok, rsn)
+        return ok, rsn
+
+    if not session_id:
+        ok = False
+        rsn = "TMDB: session_id missing (click Connect)"
+        PROBE_DETAIL_CACHE["tmdb"] = (now, ok, rsn)
+        return ok, rsn
+
+    url = f"https://api.themoviedb.org/3/account?api_key={api_key}&session_id={session_id}"
+    code, _ = _http_get(url, headers=UA, timeout=6)
+
+    if code == 200:
+        ok = True
+        rsn = ""
+    elif code in (401, 403):
+        ok = False
+        rsn = "TMDB: invalid session_id"
+    elif code == 0:
+        ok = False
+        rsn = "TMDB: request failed"
+    else:
+        ok = False
+        rsn = f"TMDB: HTTP {code}"
+
+    PROBE_DETAIL_CACHE["tmdb"] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     ts, ok, rsn = PROBE_DETAIL_CACHE["mdblist"]
     now = time.time()
@@ -938,6 +981,15 @@ def _prov_configured(cfg: dict[str, Any], name: str) -> bool:
         md = cfg.get("mdblist") or {}
         return bool((md.get("api_key") or "").strip())
 
+    if n == "tmdb":
+        raw = cfg.get("tmdb_sync")
+        t: dict[str, Any] = dict(raw) if isinstance(raw, Mapping) else {}
+        legacy_raw = cfg.get("tmdb")
+        legacy: dict[str, Any] = dict(legacy_raw) if isinstance(legacy_raw, Mapping) else {}
+        if (not t) and any(k in legacy for k in ("session_id", "access_token", "read_access_token")):
+            t = legacy
+        return bool(str(t.get("api_key") or "").strip() and str(t.get("session_id") or "").strip())
+
     if n == "tautulli":
         tt = cfg.get("tautulli") or {}
         return bool((tt.get("server_url") or "").strip() and (tt.get("api_key") or "").strip())
@@ -1008,6 +1060,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "ANILIST": _probe_anilist_detail,
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
+    "TMDB": _probe_tmdb_detail,
     "MDBLIST": _probe_mdblist_detail,
     "TAUTULLI": _probe_tautulli_detail,
 }
@@ -1061,6 +1114,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             trakt_ok, trakt_reason = results.get("TRAKT", (False, ""))
             jelly_ok, jelly_reason = results.get("JELLYFIN", (False, ""))
             emby_ok, emby_reason = results.get("EMBY", (False, ""))
+            tmdb_ok, tmdb_reason = results.get("TMDB", (False, ""))
             mdbl_ok, mdbl_reason = results.get("MDBLIST", (False, ""))
             taut_ok, taut_reason = results.get("TAUTULLI", (False, ""))
             anilist_ok, anilist_reason = results.get("ANILIST", (False, ""))
@@ -1111,6 +1165,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "anilist_connected": anilist_ok,
                 "jellyfin_connected": jelly_ok,
                 "emby_connected": emby_ok,
+                "tmdb_connected": tmdb_ok,
                 "mdblist_connected": mdbl_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
@@ -1147,6 +1202,10 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                         "connected": emby_ok,
                         **({} if emby_ok else {"reason": emby_reason}),
                         **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))}),
+                    },
+                    "TMDB": {
+                        "connected": tmdb_ok,
+                        **({} if tmdb_ok else {"reason": tmdb_reason}),
                     },
                     "TAUTULLI": {
                         "connected": taut_ok,

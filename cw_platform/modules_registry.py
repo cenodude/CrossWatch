@@ -17,6 +17,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_MDBLIST":  "providers.auth._auth_MDBLIST",
         "_auth_TAUTULLI": "providers.auth._auth_TAUTULLI",
         "_auth_ANILIST":  "providers.auth._auth_ANILIST",
+        "_auth_TMDB":     "providers.auth._auth_TMDB",
     },
     "SYNC": {
         "_mod_PLEX":       "providers.sync._mod_PLEX",
@@ -28,6 +29,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_CROSSWATCH": "providers.sync._mod_CROSSWATCH",
         "_mod_TAUTULLI":   "providers.sync._mod_TAUTULLI",
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
+        "_mod_TMDB":       "providers.sync._mod_TMDB",
     },
 }
 

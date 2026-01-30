@@ -311,6 +311,7 @@
               <option value="SIMKL">SIMKL</option>
               <option value="ANILIST">ANILIST</option>
               <option value="TRAKT">TRAKT</option>
+              <option value="TMDB">TMDB</option>
               <option value="JELLYFIN">JELLYFIN</option>
               <option value="EMBY">EMBY</option>
               <option value="MDBLIST">MDBLIST</option>
@@ -350,6 +351,7 @@
                 <option value="SIMKL">SIMKL</option>
                 <option value="ANILIST">ANILIST</option>
                 <option value="TRAKT">TRAKT</option>
+                <option value="TMDB">TMDB</option>
                 <option value="JELLYFIN">JELLYFIN</option>
                 <option value="EMBY">EMBY</option>
                 <option value="MDBLIST">MDBLIST</option>
@@ -676,13 +678,14 @@
     PLEX:"/assets/img/PLEX.svg",
     SIMKL:"/assets/img/SIMKL.svg",
     TRAKT:"/assets/img/TRAKT.svg",
+    TMDB:"/assets/img/TMDB.svg",
     JELLYFIN:"/assets/img/JELLYFIN.svg",
     EMBY:"/assets/img/EMBY.svg",
     MDBLIST:"/assets/img/MDBLIST.svg",
     CROSSWATCH:"/assets/img/CROSSWATCH.svg"
   };
 
-  const PROV_LABEL = { CROSSWATCH: "CW", ANILIST: "AL" };
+  const PROV_LABEL = { CROSSWATCH: "CW", ANILIST: "AL", TMDB: "TMDb" };
   const provLabel = p => PROV_LABEL[String(p || "").toUpperCase()] || String(p || "");
 
   const providerChip = name => {
@@ -704,12 +707,13 @@
       SIMKL: "featured_play_list",
       ANILIST: "featured_play_list",
       MDBLIST: "featured_play_list",
+      TMDB: "featured_play_list",
       CROSSWATCH: "save"
     };
     const LABEL = {
       CROSSWATCH: "CW"
     };
-    const ORDER = ["PLEX","SIMKL","ANILIST","TRAKT","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
+    const ORDER = ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
 
     const counts = ORDER.reduce((acc, p) => {
       acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
@@ -1044,12 +1048,13 @@
         SIMKL:p.includes("SIMKL"),
         ANILIST:p.includes("ANILIST"),
         TRAKT:p.includes("TRAKT"),
+        TMDB:p.includes("TMDB"),
         JELLYFIN:p.includes("JELLYFIN"),
         EMBY:p.includes("EMBY"),
         MDBLIST:p.includes("MDBLIST"),
         CROSSWATCH:p.includes("CROSSWATCH")
       };
-      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("ANILIST",have.ANILIST)}${providerActive("TRAKT",have.TRAKT)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}${providerActive("CROSSWATCH",have.CROSSWATCH)}</div>`;
+      const matrix = `<div class="wl-matrix">${providerActive("PLEX",have.PLEX)}${providerActive("SIMKL",have.SIMKL)}${providerActive("ANILIST",have.ANILIST)}${providerActive("TRAKT",have.TRAKT)}${providerActive("TMDB",have.TMDB)}${providerActive("MDBLIST",have.MDBLIST)}${providerActive("JELLYFIN",have.JELLYFIN)}${providerActive("EMBY",have.EMBY)}${providerActive("CROSSWATCH",have.CROSSWATCH)}</div>`;
       const d = getDerived(it);
 
       tr.innerHTML = `
@@ -1089,7 +1094,7 @@
   function rebuildDeleteProviderOptions(){
     const byKey = mapProvidersByKey(items), union = new Set(), prev = delProv.value;
     for (const k of selected) byKey.get(k)?.forEach?.(p => union.add(p));
-    const ALL = ["CROSSWATCH","PLEX","SIMKL","ANILIST","TRAKT","MDBLIST","JELLYFIN","EMBY"];
+    const ALL = ["CROSSWATCH","PLEX","SIMKL","ANILIST","TRAKT","TMDB","MDBLIST","JELLYFIN","EMBY"];
     delProv.innerHTML = `<option value="ALL">ALL (default)</option>${ALL.filter(p=>union.has(p)).map(p=>`<option value="${p}">${p}</option>`).join("")}`;
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
   }
@@ -1244,6 +1249,7 @@
     const anTok = cfg?.anilist?.access_token || cfg?.anilist?.token || cfg?.auth?.anilist?.access_token || cfg?.auth?.anilist?.token;
     if (anTok) active.add("ANILIST");
     if (cfg?.trakt?.access_token) active.add("TRAKT");
+    if (cfg?.tmdb_sync?.api_key && cfg?.tmdb_sync?.session_id) active.add("TMDB");
     if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
     if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");
     if (cfg?.mdblist?.api_key) active.add("MDBLIST");

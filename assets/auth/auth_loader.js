@@ -9,6 +9,7 @@
     jellyfin: "/assets/auth/auth.jellyfin.js",
     emby: "/assets/auth/auth.emby.js",
     mdblist: "/assets/auth/auth.mdblist.js",
+    tmdb: "/assets/auth/auth.tmdb.js",
     tautulli: "/assets/auth/auth.tautulli.js",
     anilist: "/assets/auth/auth.anilist.js",
   };
@@ -20,6 +21,7 @@
     "sec-jellyfin": "jellyfin",
     "sec-emby": "emby",
     "sec-mdblist": "mdblist",
+    "sec-tmdb-sync": "tmdb",
     "sec-tautulli": "tautulli",
     "sec-anilist": "anilist",
   };

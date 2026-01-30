@@ -152,7 +152,7 @@ async function renderHostedAbout(hostEl){
       <div class="cards">
         <div class="card intro">
           <div class="lead">CrossWatch in a nutshell</div>
-          <div class="p">A fast, local-first sync engine for Plex, Jellyfin, Emby, MDBList, AniList Tautulli, SIMKL, and Trakt. Clean UI, solid planner, reliable runs.</div>
+          <div class="p">A fast, local-first sync engine for Plex, Jellyfin, Emby, MDBList, AniList Tautulli, TMDB, SIMKL, and Trakt. Clean UI, solid planner, reliable runs.</div>
         </div>
         ${foldCard("fold-auth","Authentication Providers", rowsFromGroup(mods.groups?.AUTH))}
         ${foldCard("fold-sync","Synchronization Providers", rowsFromGroup(mods.groups?.SYNC))}

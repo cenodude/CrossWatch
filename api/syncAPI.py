@@ -138,12 +138,14 @@ def _summary_reset() -> None:
                 "trakt_pre": None,
                 "jellyfin_pre": None,
                 "mdblist_pre": None,
+                "tmdb_pre": None,
                 "crosswatch_pre": None,
                 "plex_post": None,
                 "simkl_post": None,
                 "trakt_post": None,
                 "jellyfin_post": None,
                 "mdblist_post": None,
+                "tmdb_post": None,
                 "crosswatch_post": None,
                 "result": "",
                 "exit_code": None,
@@ -168,6 +170,30 @@ def _summary_set_timeline(flag: str, value: bool = True) -> None:
 def _summary_snapshot() -> dict[str, Any]:
     with SUMMARY_LOCK:
         return dict(SUMMARY)
+
+# Provider counts (pre/post) seeding for UI/report parity
+def _seed_summary_provider_counts(phase: str) -> None:
+    ph = str(phase or "").strip().lower()
+    if ph not in ("pre", "post"):
+        return
+    try:
+        counts = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+    except Exception:
+        counts = {k: 0 for k in _PROVIDER_ORDER}
+    if not isinstance(counts, dict):
+        return
+    _summary_set(f"provider_counts_{ph}", counts)
+    if ph == "post":
+        _summary_set("provider_counts", counts)
+    for k, v in counts.items():
+        key = str(k or "").strip().lower()
+        if not key:
+            continue
+        try:
+            _summary_set(f"{key}_{ph}", int(v or 0))
+        except Exception:
+            _summary_set(f"{key}_{ph}", 0)
+    _summary_set_timeline(ph, True)
 
 # Sync progress logging
 def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
@@ -1037,6 +1063,11 @@ def _parse_sync_line(line: str) -> None:
             pass
         _summary_set("cmd", short_cmd)
         _summary_set_timeline("start", True)
+        try:
+            if SUMMARY.get("plex_pre") is None:
+                _seed_summary_provider_counts("pre")
+        except Exception:
+            pass
         return
 
     m = re.search(r"Pre-sync counts:\s*(?P<pairs>.+)$", s, re.IGNORECASE)
@@ -1048,7 +1079,7 @@ def _parse_sync_line(line: str) -> None:
                 val_i = int(val)
             except Exception:
                 continue
-            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "crosswatch"):
+            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch"):
                 _summary_set(f"{key}_pre", val_i)
         _summary_set_timeline("pre", True)
         return
@@ -1063,7 +1094,7 @@ def _parse_sync_line(line: str) -> None:
                 val_i = int(val)
             except Exception:
                 continue
-            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "crosswatch"):
+            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch"):
                 _summary_set(f"{key}_post", val_i)
         mres = re.search(r"(?:→|->|=>)\s*([A-Za-z]+)", rest)
         if mres:
@@ -1082,6 +1113,10 @@ def _parse_sync_line(line: str) -> None:
         _summary_set("finished_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         _summary_set("running", False)
         _summary_set_timeline("done", True)
+        try:
+            _seed_summary_provider_counts("post")
+        except Exception:
+            pass
         try:
             phase = SUMMARY.setdefault("_phase", {})
             prev_apply = phase.get("apply") or {}
@@ -1925,7 +1960,7 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
 
 # Provider counts endpoint
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
-_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "CROSSWATCH", "ANILIST")
+_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "TMDB", "CROSSWATCH", "ANILIST")
 
 def _counts_from_state(state: dict | None) -> dict | None:
     if not isinstance(state, dict):
@@ -2223,6 +2258,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 snap.get("jellyfin_post"),
                 snap.get("emby_post"),
                 snap.get("mdblist_post"),
+                snap.get("tmdb_post"),
                 snap.get("crosswatch_post"),
                 snap.get("result"),
                 snap.get("duration_sec"),

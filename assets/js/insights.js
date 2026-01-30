@@ -53,16 +53,19 @@
 
     const has = v => typeof v === "string" ? v.trim().length > 0 : !!v;
     const S = new Set();
-    if (has(cfg?.plex?.account_token)) S.add("plex");
-    if (has(cfg?.trakt?.access_token)) S.add("trakt");
-    if (has(cfg?.simkl?.access_token)) S.add("simkl");
-    if (has(cfg?.anilist?.access_token) || has(cfg?.anilist?.token)) S.add("anilist");
-    if (has(cfg?.jellyfin?.access_token)) S.add("jellyfin");
-    if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("emby");
-    if (has(cfg?.mdblist?.api_key)) S.add("mdblist");
+    if (has(cfg?.plex?.account_token)) S.add("PLEX");
+    if (has(cfg?.trakt?.access_token)) S.add("TRAKT");
+    if (has(cfg?.simkl?.access_token)) S.add("SIMKL");
+    if (has(cfg?.anilist?.access_token) || has(cfg?.anilist?.token)) S.add("ANILIST");
+    if (has(cfg?.jellyfin?.access_token)) S.add("JELLYFIN");
+    if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("EMBY");
+    if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
+
+    const tm = cfg?.tmdb_sync || cfg?.tmdb || cfg?.auth?.tmdb_sync || {};
+    if (has(tm?.api_key) && (has(tm?.session_id) || has(tm?.session))) S.add("TMDB");
 
     const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
-    if (has(t?.server_url || t?.server)) S.add("tautulli");
+    if (has(t?.server_url || t?.server)) S.add("TAUTULLI");
 
     S.add("crosswatch");
 
@@ -214,15 +217,28 @@
     const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
     if (host.parentNode !== wrap) wrap.appendChild(host);
 
-    const totals = provTotals || {};
-    const active = Object.assign({}, provActive || {});
-    const conf   = configuredSet || _cfgSet || new Set();
+    const canonical = (k) => {
+      const lc = _lc(k);
+      if (lc === "crosswatch") return "crosswatch";
+      return String(k || "").toUpperCase();
+    };
+
+    const totals0 = provTotals || {};
+    const active0 = Object.assign({}, provActive || {});
+    const conf0   = configuredSet || _cfgSet || new Set();
     const breakdown = breakdownMap || {};
+
+    const totals = {};
+    for (const [k, v] of Object.entries(totals0)) totals[canonical(k)] = v;
+    const active = {};
+    for (const [k, v] of Object.entries(active0)) active[canonical(k)] = v;
+    const conf = new Set(Array.from(conf0).map(canonical));
 
     let keys = Array.from(new Set([
       ...Object.keys(Object.assign({}, totals, active)),
       ...Array.from(conf)
-    ])).filter(k=> conf.has(_lc(k))).sort();
+    ])).filter(k => conf.has(canonical(k)))
+      .sort((a, b) => (b === "crosswatch") - (a === "crosswatch") || a.localeCompare(b));
 
     // Hide if no providers
     if (!keys.length) {

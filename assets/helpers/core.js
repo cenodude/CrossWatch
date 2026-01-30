@@ -87,6 +87,9 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
   if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
 
+  const ts = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || {};
+  if (has(ts?.api_key) && has(ts?.session_id)) S.add("TMDB");
+
   const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
   if (has(t?.api_key) && has(t?.server_url)) S.add("TAUTULLI");
 
@@ -110,6 +113,7 @@ function resolveProviderKeyFromNode(node) {
   if (alt.includes("PLEX"))  return "PLEX";
   if (alt.includes("SIMKL")) return "SIMKL";
   if (alt.includes("TRAKT")) return "TRAKT";
+  if (alt.includes("TMDB") || alt.includes("TMDBSYNC") || alt.includes("TMDB-SYNC")) return "TMDB";
   if (alt.includes("ANILIST")) return "ANILIST";
   if (alt.includes("JELLYFIN")) return "JELLYFIN";
   if (alt.includes("TAUTULLI")) return "TAUTULLI";
@@ -123,6 +127,7 @@ function resolveProviderKeyFromNode(node) {
   if (/\bPLEX\b/.test(txt))  return "PLEX";
   if (/\bSIMKL\b/.test(txt)) return "SIMKL";
   if (/\bTRAKT\b/.test(txt)) return "TRAKT";
+  if (/\bTMDB\b/.test(txt) || /\bTMDB\s*SYNC\b/.test(txt) || /\bTMDB-SYNC\b/.test(txt)) return "TMDB";
   if (/\bANILIST\b/.test(txt)) return "ANILIST";
   if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
   if (/\bEMBY\b/.test(txt)) return "EMBY";
@@ -155,8 +160,8 @@ function applySyncVisibility() {
     card.style.display = allowed.has(key) ? "" : "none";
   });
 
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
-  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
+  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", TMDB: "TMDb", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
+  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","TMDB","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
   ["source-provider", "target-provider"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -291,6 +296,7 @@ function normalizeProviders(input) {
     SIMKL:   normOne(pick(p, "SIMKL")   ?? p.simkl_connected),
     TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
     ANILIST: normOne(pick(p, "ANILIST") ?? p.anilist_connected),
+    TMDB:    normOne(pick(p, "TMDB")    ?? p.tmdb_connected),
     JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
     EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
     MDBLIST:  normOne(pick(p, "MDBLIST")  ?? p.mdblist_connected),
@@ -335,7 +341,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
     if (res.ok) pairs = await res.json();
   } catch (_) {}
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false, ANILIST: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
+  const active = { PLEX: false, SIMKL: false, TRAKT: false, ANILIST: false, TMDB: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
   for (const p of pairs || []) {
     if (p && p.enabled !== false) {
       const s = String(p.source || "").toUpperCase();
@@ -355,7 +361,7 @@ async function refreshPairedProviders(throttleMs = 5000) {
 
 
 function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", ANILIST:"badge-anilist", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
+  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", ANILIST:"badge-anilist", TMDB:"badge-tmdb", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
   for (const [prov,id] of Object.entries(map)){
     const el = document.getElementById(id);
     if (el) el.classList.toggle("hidden", !active?.[prov]);
@@ -1793,7 +1799,7 @@ async function openWatcherLog() {
     tabWatch?.classList.add("connected");
     tabWatch?.classList.remove("stale");
 
-    for (const t of (uniq.length ? uniq : ["PLEX","JELLYFIN","EMBY","TRAKT","SIMKL","MDBLIST","TRBL"])) {
+    for (const t of (uniq.length ? uniq : ["PLEX","JELLYFIN","EMBY","TRAKT","SIMKL","TMDB","MDBLIST","TRBL"])) {
       es.addEventListener(t, (ev) => enqueue(t, ev?.data));
     }
 

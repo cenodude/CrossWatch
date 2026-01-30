@@ -589,6 +589,210 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         users = [u for u in users if (u or {}).get("username")]
         return {"users": users, "count": len(users)}
     
+
+    # TMDB
+    @app.post("/api/tmdb/save", tags=["auth"])
+    def api_tmdb_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            key = str((payload or {}).get("api_key") or "").strip()
+            cfg = load_config(); cfg.setdefault("tmdb", {})["api_key"] = key
+            save_config(cfg)
+            _safe_log(log_fn, "TMDB", "[TMDB] api_key saved")
+            if isinstance(probe_cache, dict): probe_cache["tmdb"] = (0.0, False)
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "TMDB", f"[TMDB] ERROR save: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/tmdb/disconnect", tags=["auth"])
+    def api_tmdb_disconnect() -> dict[str, Any]:
+        try:
+            cfg = load_config(); cfg.setdefault("tmdb", {})["api_key"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "TMDB", "[TMDB] disconnected")
+            if isinstance(probe_cache, dict): probe_cache["tmdb"] = (0.0, False)
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "TMDB", f"[TMDB] ERROR disconnect: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # TMDB Sync (v3 session)
+    TMDB_API_BASE = "https://api.themoviedb.org/3"
+
+    def _tmdb_v3_request_token(api_key: str) -> dict[str, Any]:
+        r = requests.get(f"{TMDB_API_BASE}/authentication/token/new", params={"api_key": api_key}, timeout=15)
+        r.raise_for_status()
+        return r.json() or {}
+
+    def _tmdb_v3_create_session(api_key: str, request_token: str) -> dict[str, Any]:
+        r = requests.post(
+            f"{TMDB_API_BASE}/authentication/session/new",
+            params={"api_key": api_key},
+            json={"request_token": request_token},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json() or {}
+
+    def _tmdb_v3_account(api_key: str, session_id: str) -> dict[str, Any]:
+        r = requests.get(f"{TMDB_API_BASE}/account", params={"api_key": api_key, "session_id": session_id}, timeout=15)
+        r.raise_for_status()
+        return r.json() or {}
+
+    @app.post("/api/tmdb_sync/connect/start", tags=["auth"])
+    def api_tmdb_sync_connect_start(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        key = str((payload or {}).get("api_key") or "").strip()
+        if not key:
+            return {"ok": False, "error": "Missing api_key"}
+        try:
+            cfg = load_config()
+            tm = cfg.setdefault("tmdb_sync", {})
+            tm["api_key"] = key
+
+            j = _tmdb_v3_request_token(key)
+            token = str((j or {}).get("request_token") or "").strip()
+            if not token:
+                return {"ok": False, "error": "TMDb did not return a request token"}
+            tm["_pending_request_token"] = token
+            tm.pop("_pending_request_token_ts", None)
+            tm.pop("_pending_created_at", None)
+            tm["_pending_created_at"] = int(time.time())
+            save_config(cfg)
+
+            if isinstance(probe_cache, dict):
+                probe_cache["tmdb_sync"] = (0.0, False)
+
+            _safe_log(log_fn, "TMDB_SYNC", "[TMDB_SYNC] request_token issued")
+            return {
+                "ok": True,
+                "request_token": token,
+                "auth_url": f"https://www.themoviedb.org/authenticate/{token}",
+                "expires_at": (j or {}).get("expires_at"),
+            }
+        except Exception as e:
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/start: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/tmdb_sync/connect/finish", tags=["auth"])
+    def api_tmdb_sync_connect_finish(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            tm = cfg.setdefault("tmdb_sync", {})
+            key = str((payload or {}).get("api_key") or tm.get("api_key") or "").strip()
+            token = str((payload or {}).get("request_token") or tm.get("_pending_request_token") or "").strip()
+            if not key:
+                return {"ok": False, "error": "Missing api_key"}
+            if not token:
+                return {"ok": False, "error": "Missing request_token. Click Connect first."}
+
+            j = _tmdb_v3_create_session(key, token)
+            sess = str((j or {}).get("session_id") or "").strip()
+            if not sess:
+                return {"ok": False, "error": "TMDb did not return a session id. Did you approve the request?"}
+
+            tm["api_key"] = key
+            tm["session_id"] = sess
+            tm.pop("_pending_request_token", None)
+            tm.pop("_pending_request_token_ts", None)
+            tm.pop("_pending_created_at", None)
+
+            try:
+                me = _tmdb_v3_account(key, sess)
+                tm["account_id"] = str((me or {}).get("id") or "").strip()
+            except Exception:
+                pass
+
+            save_config(cfg)
+            if isinstance(probe_cache, dict):
+                probe_cache["tmdb_sync"] = (0.0, False)
+
+            _safe_log(log_fn, "TMDB_SYNC", "[TMDB_SYNC] session created")
+            return {"ok": True, "session_id": sess, "account_id": tm.get("account_id") or ""}
+        except Exception as e:
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/finish: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/tmdb_sync/save", tags=["auth"])
+    def api_tmdb_sync_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            key = str((payload or {}).get("api_key") or "").strip()
+            sess = str((payload or {}).get("session_id") or "").strip()
+            cfg = load_config()
+            tm = cfg.setdefault("tmdb_sync", {})
+            tm["api_key"] = key
+            tm["session_id"] = sess
+            tm.pop("_pending_request_token", None)
+            tm.pop("_pending_request_token_ts", None)
+            tm.pop("_pending_created_at", None)
+            save_config(cfg)
+            if isinstance(probe_cache, dict):
+                probe_cache["tmdb_sync"] = (0.0, False)
+            _safe_log(log_fn, "TMDB_SYNC", "[TMDB_SYNC] credentials saved")
+            return {"ok": True}
+        except Exception as e:
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR save: {e}")
+            return {"ok": False, "error": str(e)}
+
+    @app.get("/api/tmdb_sync/verify", tags=["auth"])
+    def api_tmdb_sync_verify() -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            tm = cfg.setdefault("tmdb_sync", {})
+            key = str((tm or {}).get("api_key") or "").strip()
+            sess = str((tm or {}).get("session_id") or "").strip()
+            token = str((tm or {}).get("_pending_request_token") or "").strip()
+
+            if not key:
+                return {"ok": True, "connected": False, "pending": bool(token), "error": "Missing api_key"}
+
+            if not sess and token:
+                try:
+                    j = _tmdb_v3_create_session(key, token)
+                    new_sess = str((j or {}).get("session_id") or "").strip()
+                    if new_sess:
+                        tm["session_id"] = new_sess
+                        tm.pop("_pending_request_token", None)
+                        tm.pop("_pending_request_token_ts", None)
+                        tm.pop("_pending_created_at", None)
+                        try:
+                            me = _tmdb_v3_account(key, new_sess)
+                            tm["account_id"] = str((me or {}).get("id") or "").strip()
+                        except Exception:
+                            pass
+                        save_config(cfg)
+                        if isinstance(probe_cache, dict):
+                            probe_cache["tmdb_sync"] = (0.0, False)
+                        _safe_log(log_fn, "TMDB_SYNC", "[TMDB_SYNC] auto-finish: session created")
+                        sess = new_sess
+                except Exception:
+                    return {"ok": True, "connected": False, "pending": True, "error": ""}
+
+            if not sess:
+                return {"ok": True, "connected": False, "pending": bool(token), "error": "Missing session_id"}
+
+            me = _tmdb_v3_account(key, sess)
+            return {"ok": True, "connected": True, "pending": False, "account": {"id": (me or {}).get("id"), "username": (me or {}).get("username")}}
+        except Exception as e:
+            return {"ok": False, "connected": False, "pending": False, "error": str(e)}
+
+    @app.post("/api/tmdb_sync/disconnect", tags=["auth"])
+    def api_tmdb_sync_disconnect() -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            tm = cfg.setdefault("tmdb_sync", {})
+            tm["api_key"] = ""
+            tm["session_id"] = ""
+            tm.pop("_pending_request_token", None)
+            tm.pop("_pending_request_token_ts", None)
+            tm.pop("_pending_created_at", None)
+            save_config(cfg)
+            if isinstance(probe_cache, dict):
+                probe_cache["tmdb_sync"] = (0.0, False)
+            _safe_log(log_fn, "TMDB_SYNC", "[TMDB_SYNC] disconnected")
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # MDBLIST
     @app.post("/api/mdblist/save", tags=["auth"])
     def api_mdblist_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

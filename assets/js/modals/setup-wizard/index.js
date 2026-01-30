@@ -159,7 +159,7 @@ export default {
         <details class="disc">
           <summary><span class="material-symbols-rounded" aria-hidden="true">gavel</span>Disclaimer</summary>
           <div class="discBody">
-            <p>This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, Tautulli, AniList or MDBList. Use at your own risk.</p>
+            <p>This is an independent, community-maintained project and is not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, TMDB, SIMKL, Tautulli, AniList or MDBList. Use at your own risk.</p>
             <p>All product names, logos, and brands are property of their respective owners and used for identification only.</p>
             <p>Interacts with third-party services; you are responsible for complying with their Terms of Use and API rules.</p>
             <p>Provided “as is,” without warranties or guarantees.</p>

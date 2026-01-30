@@ -711,10 +711,42 @@ def register_insights(app: FastAPI) -> None:
                     )
 
                     provider_posts = {
-                        k[:-5]: v
+                        str(k[:-5]).strip().lower(): v
                         for k, v in d.items()
                         if isinstance(k, str) and k.endswith("_post")
                     }
+                    pc = d.get("provider_counts") or d.get("provider_counts_post") or d.get("provider_counts_pre")
+                    if isinstance(pc, dict):
+                        for k0, v0 in pc.items():
+                            kk = str(k0 or "").strip().lower()
+                            if kk and kk not in provider_posts:
+                                provider_posts[kk] = v0
+                    plex_post = d.get("plex_post")
+                    simkl_post = d.get("simkl_post")
+                    trakt_post = d.get("trakt_post")
+                    tmdb_post = d.get("tmdb_post")
+                    jellyfin_post = d.get("jellyfin_post")
+                    emby_post = d.get("emby_post")
+                    mdblist_post = d.get("mdblist_post")
+                    crosswatch_post = d.get("crosswatch_post")
+
+                    if plex_post is None:
+                        plex_post = provider_posts.get("plex")
+                    if simkl_post is None:
+                        simkl_post = provider_posts.get("simkl")
+                    if trakt_post is None:
+                        trakt_post = provider_posts.get("trakt")
+                    if tmdb_post is None:
+                        tmdb_post = provider_posts.get("tmdb")
+                    if jellyfin_post is None:
+                        jellyfin_post = provider_posts.get("jellyfin")
+                    if emby_post is None:
+                        emby_post = provider_posts.get("emby")
+                    if mdblist_post is None:
+                        mdblist_post = provider_posts.get("mdblist")
+                    if crosswatch_post is None:
+                        crosswatch_post = provider_posts.get("crosswatch")
+
 
                     rows.append(
                         {
@@ -729,13 +761,14 @@ def register_insights(app: FastAPI) -> None:
                             "features_enabled": enabled,
                             "updated_total": _as_int(d.get("updated_last")),
                             "provider_posts": provider_posts,
-                            "plex_post": d.get("plex_post"),
-                            "simkl_post": d.get("simkl_post"),
-                            "trakt_post": d.get("trakt_post"),
-                            "jellyfin_post": d.get("jellyfin_post"),
-                            "emby_post": d.get("emby_post"),
-                            "mdblist_post": d.get("mdblist_post"),
-                            "crosswatch_post": d.get("crosswatch_post"),
+                            "plex_post": plex_post,
+                            "simkl_post": simkl_post,
+                            "trakt_post": trakt_post,
+                            "tmdb_post": tmdb_post,
+                            "jellyfin_post": jellyfin_post,
+                            "emby_post": emby_post,
+                            "mdblist_post": mdblist_post,
+                            "crosswatch_post": crosswatch_post,
                         }
                     )
                 except Exception as e:
@@ -892,15 +925,35 @@ def register_insights(app: FastAPI) -> None:
                 state = None
 
         prov_block: dict[str, Any] = (state or {}).get("providers") or {}
-        providers_set: set[str] = {
-            str(k).strip().lower() for k in prov_block.keys() if isinstance(k, str)
-        }
+        _PROVIDER_ORDER = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch", "anilist")
+        providers_set: set[str] = set(_PROVIDER_ORDER)
+        try:
+            providers_set.update(
+                str(k).strip().lower()
+                for k in prov_block.keys()
+                if isinstance(k, str) and str(k).strip()
+            )
+        except Exception:
+            pass
 
-        active: dict[str, bool] = {k: False for k in providers_set}
         try:
             raw_pairs = (cfg.get("pairs") or cfg.get("connections") or [])
             cfg_pairs: list[Any] = raw_pairs if isinstance(raw_pairs, list) else []
             for p in cfg_pairs:
+                if not isinstance(p, dict):
+                    continue
+                s = str(p.get("source") or "").strip().lower()
+                t = str(p.get("target") or "").strip().lower()
+                if s:
+                    providers_set.add(s)
+                if t:
+                    providers_set.add(t)
+        except Exception:
+            cfg_pairs = []
+
+        active: dict[str, bool] = {k: False for k in providers_set}
+        try:
+            for p in (cfg_pairs or []):
                 if not isinstance(p, dict):
                     continue
                 s = str(p.get("source") or "").strip().lower()
@@ -911,7 +964,7 @@ def register_insights(app: FastAPI) -> None:
                     active[t] = True
         except Exception:
             pass
-        
+
         def _iter_feature_items(node: Any) -> list[dict[str, Any]]:
             try:
                 if not isinstance(node, dict):
@@ -990,7 +1043,8 @@ def register_insights(app: FastAPI) -> None:
             pass
 
         providers_mse_by_feature: dict[str, dict[str, dict[str, int]]] = {
-            feat: {} for feat in feature_keys
+            feat: {k: {"movies": 0, "shows": 0, "anime": 0, "episodes": 0} for k in providers_set}
+            for feat in feature_keys
         }
         try:
             for prov_upper, pdata in (prov_block or {}).items():
