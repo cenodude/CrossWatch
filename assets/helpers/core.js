@@ -88,7 +88,7 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
 
   const ts = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || {};
-  if (has(ts?.api_key) && has(ts?.session_id)) S.add("TMDB");
+  if ((has(ts?.api_key) && has(ts?.session_id)) || has(ts?.account_id)) S.add("TMDB");
 
   const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
   if (has(t?.api_key) && has(t?.server_url)) S.add("TAUTULLI");
@@ -2876,7 +2876,7 @@ function cwMetaSettingsHubEnsure() {
   const host = document.getElementById("metadata-providers");
   if (!host || host.dataset.metaHubified === "1") return;
 
-  // New provider shell already present (tile-driven panels)
+  // New provider presents
   if (document.getElementById("meta_provider_tiles") || document.getElementById("meta-provider-panel")) {
     host.dataset.metaHubified = "1";
     return;
@@ -2956,7 +2956,6 @@ try {
 async function loadConfig() {
   const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
   if (r.status === 401) {
-    // Auth is enabled but this session isn't valid anymore.
     location.href = "/login";
     return;
   }
@@ -4721,7 +4720,6 @@ async function mountAuthProviders() {
     window.initTautulliAuthUI?.();
     window.initAniListAuthUI?.();
 
-    // Collapse auth groups by default (Media servers / Trackers / Others).
     try {
       const root = document.getElementById("auth-providers");
       if (root) {

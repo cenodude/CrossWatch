@@ -310,7 +310,7 @@
 
     const authHead = page.querySelector("#sec-auth > .head");
     const authStrip = _findIconStrip(authHead);
-    _applyIconStrip(authStrip, ["PLEX","JELLYFIN","SIMKL","TRAKT","MDBLIST","TAUTULLI","ANILIST","EMBY"].filter((k) => configured.has(k)));
+    _applyIconStrip(authStrip, ["PLEX","JELLYFIN","SIMKL","TRAKT","MDBLIST","TMDB","TAUTULLI","ANILIST","EMBY"].filter((k) => configured.has(k)));
 
     const scHead = page.querySelector("#sec-scrobbler > .head");
     const scStrip = _findIconStrip(scHead);
@@ -329,7 +329,7 @@
       ? allowedRaw
       : new Set(Array.isArray(allowedRaw) ? allowedRaw : []);
 
-    const AUTH_KEYS = ["PLEX","EMBY","SIMKL","TRAKT","JELLYFIN","TAUTULLI","MDBLIST","ANILIST"];
+    const AUTH_KEYS = ["PLEX","EMBY","SIMKL","TRAKT","JELLYFIN","TAUTULLI","MDBLIST","ANILIST","TMDB"];
     const configuredCount = AUTH_KEYS.filter((k) => configured.has(k)).length;
 
     return { detected, configured: configuredCount };
