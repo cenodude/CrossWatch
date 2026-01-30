@@ -412,15 +412,18 @@ def _get_index_html_static() -> str:
         <div class="section" id="sec-auth">
           <div class="head" onclick="toggleSection('sec-auth')" style="display:flex;align-items:center">
             <span class="chev">▶</span><strong>Authentication Providers</strong>
-            <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img src="/assets/img/PLEX-log.svg" alt="Plex" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/TRAKT-log.svg" alt="Trakt" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/ANILIST-log.svg" alt="AniList" style="height:18px;width:auto;opacity:.9">
-              <img src="/assets/img/EMBY-log.svg" alt="Emby" style="height:24px;width:auto;opacity:.9">
+            <span id="auth-providers-icons" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+              <img data-prov="PLEX" src="/assets/img/PLEX-log.svg" alt="Plex" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="JELLYFIN" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="TAUTULLI" src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="ANILIST" src="/assets/img/ANILIST-log.svg" alt="AniList" style="display:none;height:18px;width:auto;opacity:.9">
+              <img data-prov="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" style="display:none;height:24px;width:auto;opacity:.9">
+            </span>
+              
             </span>
           </div>
           <div class="body"><div id="auth-providers"></div></div>
@@ -836,6 +839,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/js/snapshots.js?v=__CW_VERSION__" defer></script>
 
 <script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>
 
 <script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>
 
@@ -881,14 +885,41 @@ def _get_index_html_static() -> str:
 <script>
 (()=>{const CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>';
 let __cfg=null;
+let __cfgLastGood=null;
 
 async function getConfig(force=false){
   if(__cfg && !force) return __cfg;
-  try{ const r=await fetch('/api/config?ts='+Date.now(),{cache:'no-store'}); __cfg=r.ok?await r.json():{}; }
-  catch{ __cfg={}; }
+
+  const prev = __cfgLastGood || __cfg;
+  try{
+    const r = await fetch('/api/config?ts=' + Date.now(), { cache: 'no-store' });
+
+    if(r && r.ok){
+      const j = await r.json();
+      __cfg = (j && typeof j === 'object') ? j : {};
+      __cfgLastGood = __cfg;
+      return __cfg;
+    }
+
+    // On auth expiry / transient errors, keep last known-good config so icons don't flicker off.
+    if(prev){
+      __cfg = prev;
+      return __cfg;
+    }
+  }catch{
+    if(prev){
+      __cfg = prev;
+      return __cfg;
+    }
+  }
+
+  __cfg = {};
   return __cfg;
 }
-function invalidateConfigCache(){ __cfg=null; }
+
+function invalidateConfigCache(){
+  __cfg=null;
+}
 
 function isProviderConfigured(key,cfg){
   const k=(key||'').toUpperCase(), c=cfg||__cfg||{};
@@ -900,9 +931,24 @@ function isProviderConfigured(key,cfg){
     case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
     case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
     case 'MDBLIST':  return !!(c?.mdblist?.api_key);
+    case 'TMDB':{
+      const tm = c?.tmdb_sync || c?.tmdb || c?.auth?.tmdb_sync || c?.auth?.tmdb;
+      return !!(tm?.api_key || tm?.access_token || tm?.bearer_token || tm?.session_id);
+    }
     case 'TAUTULLI': return !!((c?.tautulli?.server_url || c?.auth?.tautulli?.server_url) && (c?.tautulli?.api_key || c?.auth?.tautulli?.api_key));
     default: return false;
   }
+}
+
+function refreshAuthHeaderIcons(cfg){
+  const host = document.getElementById("auth-providers-icons");
+  if(!host) return;
+  const imgs = host.querySelectorAll("img[data-prov]");
+  imgs.forEach(img => {
+    const key = String(img.dataset.prov || "").toUpperCase();
+    const on = isProviderConfigured(key, cfg);
+    img.style.display = on ? "inline-block" : "none";
+  });
 }
 
 // Auth provider configured dots
@@ -935,6 +981,7 @@ function ensureAuthDot(secId, on){
 
 async function refreshAuthDots(force=false){
   const cfg = await getConfig(force);
+  refreshAuthHeaderIcons(cfg);
   const map = [
     ["sec-plex",     "PLEX"],
     ["sec-emby",     "EMBY"],
@@ -943,6 +990,7 @@ async function refreshAuthDots(force=false){
     ["sec-simkl",    "SIMKL"],
     ["sec-anilist",  "ANILIST"],
     ["sec-mdblist",  "MDBLIST"],
+    ["sec-tmdb-sync","TMDB"],
     ["sec-tautulli", "TAUTULLI"],
   ];
 
@@ -1091,6 +1139,7 @@ function render(payload){
       JELLYFIN: 'Jellyfin',
       EMBY: 'Emby',
       MDBLIST: 'MDBlist',
+      TMDB: 'TMDb',
       TAUTULLI: 'Tautulli',
     };
     const name = LABELS[K] || titleCase(K);
