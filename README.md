@@ -63,6 +63,7 @@ NOT supported: **Multi-users/servers**
 * **Analyzer** Finds items that are **stuck** or inconsistent between providers.
 * **Editor** Inspect and adjust your items and add or block items.
 * **Player card** Shows what you are currently watching in real time.
+* **Snapshosts** Rollback tool for provider watchlist, ratings, and history
 
 <!-- Features (no header row, titles visible, no "empty grid") -->
 <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border:0; border-collapse:collapse;">
@@ -84,6 +85,7 @@ NOT supported: **Multi-users/servers**
         <li>Analyzer: finds broken or missing matches/IDs</li>
         <li>Exporter: CSV files for popular services</li>
         <li>Editor: Edit and adjust your items</li>
+        <li>Snapshots: Create and restore snapshots</li>
         <li>Now Playing card, Stats, history, live logs</li>
         <li>Headless scheduled runs</li>
       </ul>
