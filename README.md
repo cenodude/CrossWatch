@@ -171,9 +171,6 @@ Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
 <a href="https://www.gitbook.com/">
   <img alt="GitBook" src="https://img.shields.io/badge/GitBook-sponsored-3884ff?style=for-the-badge&logo=gitbook&logoColor=white">
 </a>
-<a href="https://mdblist.com/">
-  <img alt="MDBList" src="https://img.shields.io/badge/MDBList-sponsored-3884ff?style=for-the-badge&logo=databricks&logoColor=white">
-</a>
 
 </div>
 
