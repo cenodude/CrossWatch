@@ -1,4 +1,4 @@
-#CrossWatch License (MIT-based with Commercial Restriction)
+CrossWatch License (MIT-based with Commercial Restriction)
 
 Copyright (c) 2025-2026 Cenodude
 https://github.com/cenodude/CrossWatch
@@ -14,19 +14,33 @@ The above copyright notice and this permission notice (including the additional
 terms below) shall be included in all copies or substantial portions of the
 Software.
 
-ADDITIONAL TERMS — COMMERCIAL USE RESTRICTION (CONTAINER EXCEPTION)
+ADDITIONAL TERMS - COMMERCIAL USE RESTRICTION (INCLUDING HOSTED CONTAINERS)
 
-Notwithstanding the permission grant above, you may not use, distribute, sublicense,
-or make the Software available as part of any commercial product or service where
-end users are required to pay (including subscriptions, licenses, paywalls, or paid
-features) in order to access or use the Software.
+1) Commercial use requires permission
+Notwithstanding the permission grant above, you may not use, distribute,
+sublicense, or make the Software available as part of any commercial product
+or service where end users are required to pay (including subscriptions,
+licenses, paywalls, or paid features) in order to access or use the Software,
+unless you have explicit permission from the copyright holder.
 
-Container Exception: The restriction above does not apply if the Software is provided
-exclusively as (a) a container image (e.g., Docker/OCI) and/or (b) a hosted container
-deployment running the Software. In that case, charging money is permitted.
+Permission requests: contact on Discord: cenodude#2185
 
-This exception does not remove the requirement to include the copyright notice and
-this license text in all copies or substantial portions of the Software.
+2) Hosted containers / container images (cost-only allowance)
+If you provide the Software via a container image (such as Docker/OCI) and/or as a
+hosted container deployment running the Software, you may charge ONLY the direct,
+pass-through costs for hosting/infrastructure (such as compute, storage, bandwidth).
+
+You may NOT charge for CrossWatch itself, bundle it into a paid plan, include it
+as part of a subscription value proposition, add markup for the Software, or
+otherwise price the service in a way that implies CrossWatch is included in the
+price beyond hosting cost recovery.
+
+This allowance does not remove the requirement to include the copyright notice
+and this license text in all copies or substantial portions of the Software.
+
+Rationale (informational; non-binding)
+Life is expensive enough, and I built this application with love for the community.
+CrossWatch will be free-for-ever.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
