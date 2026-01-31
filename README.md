@@ -57,7 +57,7 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-NOT supported: **Multi-users/servers**
+NOT supported: **Multi-users/servers** per insance | but you can run multiple containers for different users/servers 
 
 <img
   align="right"
