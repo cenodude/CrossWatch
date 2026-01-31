@@ -836,6 +836,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             continue
         movie_norm["watched"] = True
         movie_norm["watched_at"] = watched_at
+        movie_norm["simkl_bucket"] = "movies"
         bucket_key = simkl_key_of(movie_norm)
         event_key = f"{bucket_key}@{ts}"
         if event_key in out:
@@ -876,6 +877,47 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if not (series_name.strip() if isinstance(series_name, str) else ""):
                 sid = str(show_ids.get("simkl") or "").strip()
                 series_name = f"SIMKL:{sid}" if sid else "Unknown Series"
+            if row_kind == "anime":
+                at = (show.get("anime_type") or show.get("animeType")) if isinstance(show, Mapping) else None
+                anime_type = at.strip().lower() if isinstance(at, str) and at.strip() else None
+                if anime_type == "movie":
+                    watched_at = (row.get("last_watched_at") or row.get("watched_at") or "").strip()
+                    if not watched_at:
+                        best_ts = 0
+                        best = ""
+                        for season in row.get("seasons") or []:
+                            season = season if isinstance(season, Mapping) else {}
+                            for episode in (season.get("episodes") or []):
+                                episode = episode if isinstance(episode, Mapping) else {}
+                                wa = (episode.get("watched_at") or episode.get("last_watched_at") or "").strip()
+                                ts_wa = _as_epoch(wa)
+                                if ts_wa and ts_wa > best_ts:
+                                    best_ts = ts_wa
+                                    best = wa
+                        watched_at = best
+                    ts = _as_epoch(watched_at)
+                    if ts:
+                        movie_item: dict[str, Any] = {
+                            "type": "movie",
+                            "title": series_name,
+                            "year": show_year,
+                            "ids": dict(show_ids),
+                            "simkl_bucket": "anime",
+                            "anime_type": "movie",
+                            "watched": True,
+                            "watched_at": watched_at,
+                        }
+                        bucket_key = simkl_key_of(movie_item)
+                        event_key = f"{bucket_key}@{ts}"
+                        if event_key not in out:
+                            out[event_key] = movie_item
+                            thaw.add(bucket_key)
+                            added += 1
+                            latest_ts_anime = max(latest_ts_anime or 0, ts)
+                            if limit and added >= limit:
+                                break
+                    continue
+
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
                 s_num_internal = int((season.get("number") or season.get("season") or 0))
@@ -908,6 +950,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         "show_ids": dict(show_ids),
                         "watched": True,
                         "watched_at": watched_at,
+                        "simkl_bucket": row_kind,
                     }
                     bucket_key = simkl_key_of(ep)
                     event_key = f"{bucket_key}@{ts}"
@@ -963,6 +1006,9 @@ def _movie_add_entry(item: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _is_anime_like(item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
+    bucket = str(item.get("simkl_bucket") or "").strip().lower()
+    if bucket == "anime":
+        return True
     typ = str(item.get("type") or "").lower()
     if typ == "anime":
         return True
@@ -970,6 +1016,7 @@ def _is_anime_like(item: Mapping[str, Any], ids: Mapping[str, Any]) -> bool:
         if ids.get(k):
             return True
     return False
+
 
 
 def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -1046,6 +1093,23 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     for item in items_list:
         typ = str(item.get("type") or "").lower()
+        bucket = str(item.get("simkl_bucket") or "").strip().lower()
+        if typ == "movie" and bucket == "anime":
+            entry = _show_add_entry(adapter, item)
+            watched_at = str(item.get("watched_at") or "").strip()
+            if entry and watched_at:
+                entry["watched_at"] = watched_at
+            if entry:
+                shows_whole.append(entry)
+                thaw_keys.append(_thaw_key(item))
+                ev = dict(id_minimal(item))
+                if watched_at:
+                    ev["watched_at"] = watched_at
+                    shadow_events.append(ev)
+            else:
+                unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
+            continue
+
         if typ == "movie":
             entry = _movie_add_entry(item)
             if entry:
@@ -1168,6 +1232,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     items_list: list[Mapping[str, Any]] = list(items or [])
     for item in items_list:
         typ = str(item.get("type") or "").lower()
+        bucket = str(item.get("simkl_bucket") or "").strip().lower()
+        if typ == "movie" and bucket == "anime":
+            ids = _ids_of(item)
+            if not ids:
+                unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
+                continue
+            shows_whole.append({"ids": ids})
+            thaw_keys.append(_thaw_key(item))
+            continue
         if typ == "movie":
             ids = _ids_of(item)
             if not ids:

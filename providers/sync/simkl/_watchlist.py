@@ -237,7 +237,12 @@ def _anime_title_hint(ids_src: Any) -> str | None:
 
 
 def _kind_group(item: Mapping[str, Any]) -> str:
-    media_type = str(item.get("type") or "movie").lower()
+    bucket = str(item.get("simkl_bucket") or "").strip().lower()
+    if bucket == "movies":
+        return "movies"
+    if bucket in ("shows", "anime"):
+        return "shows"
+    media_type = str(item.get("type") or "movie").strip().lower()
     return "movies" if media_type in ("movie", "movies") else "shows"
 
 
@@ -289,12 +294,20 @@ def _rows_from_data(data: Any, bucket: str) -> list[Any]:
 
 
 def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
+    anime_type: str | None = None
+
     if isinstance(row, Mapping):
-        node = (row.get("movie") or row.get("show") or row.get("anime") or row or {})
+        node_any = row.get("movie") or row.get("show") or row.get("anime") or row or {}
+        node = node_any if isinstance(node_any, Mapping) else {}
         ids_src = node.get("ids") if isinstance(node.get("ids"), Mapping) else row
         ids = _ids_filter(dict(ids_src or {}))
         title = node.get("title")
         year = node.get("year")
+
+        at = node.get("anime_type") or node.get("animeType")
+        if isinstance(at, str) and at.strip():
+            anime_type = at.strip().lower()
+
         if bucket == "anime":
             hint = _anime_title_hint(ids_src)
             if hint:
@@ -307,14 +320,24 @@ def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
         ids = {}
         title = None
         year = None
-    media_type = "movie" if bucket == "movies" else ("anime" if bucket == "anime" else "show")
-    return {
+
+    if bucket == "movies":
+        media_type = "movie"
+    elif bucket == "anime":
+        media_type = "movie" if anime_type == "movie" else "show"
+    else:
+        media_type = "show"
+
+    out: dict[str, Any] = {
         "type": media_type,
         "title": title,
         "year": year,
         "ids": ids,
         "simkl_bucket": bucket,
     }
+    if bucket == "anime" and anime_type:
+        out["anime_type"] = anime_type
+    return out
 
 
 def _acts_get(data: Mapping[str, Any], *path: str) -> str | None:
@@ -455,16 +478,55 @@ def _keys_from_write_resp(body: Any) -> list[str]:
     return uniq
 
 
+_SIG_ID_ORDER = ("simkl", "tmdb", "imdb", "tvdb", "mal", "anilist", "kitsu", "anidb", "trakt")
+
+
+def _id_sig(ids: Mapping[str, Any]) -> str:
+    if not isinstance(ids, Mapping):
+        return ""
+    for k in _SIG_ID_ORDER:
+        v = ids.get(k)
+        if v:
+            return f"{k}:{v}"
+    return ""
+
+
+def _sigs_from_write_resp(body: Any) -> set[str]:
+    sigs: set[str] = set()
+    if not isinstance(body, dict):
+        return sigs
+
+    def _collect(parent: Mapping[str, Any]) -> None:
+        for bucket in ("movies", "shows"):
+            value = parent.get(bucket)
+            if isinstance(value, list):
+                for item in value:
+                    ids = _ids_filter((item.get("ids") or item) if isinstance(item, Mapping) else {})
+                    sig = _id_sig(ids)
+                    if sig:
+                        sigs.add(sig)
+
+    for top in ("added", "removed", "deleted"):
+        section = body.get(top)
+        if isinstance(section, Mapping):
+            _collect(section)
+    _collect(body)
+    return sigs
+
+
 def _mk_shadow_item(item: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     ids = _ids_filter(dict(item.get("ids") or {}))
-    group = _kind_group(item)
-    media_type = "movie" if group == "movies" else "show"
+    bucket = str(item.get("simkl_bucket") or "").strip().lower()
+    if bucket not in {"movies", "shows", "anime"}:
+        bucket = "movies" if str(item.get("type") or "").strip().lower() == "movie" else "shows"
+
+    media_type = "movie" if str(item.get("type") or "").strip().lower() == "movie" else "show"
     m = {
         "type": media_type,
         "title": item.get("title"),
         "year": item.get("year"),
         "ids": ids,
-        "simkl_bucket": group,
+        "simkl_bucket": bucket,
     }
     return simkl_key_of(m), m
 
@@ -925,19 +987,13 @@ def add(
                 _log(f"ADD 2xx but no items processed; body={str(resp_body)[:180]}")
             ok = int(processed)
             if ok > 0:
-                keys_from_resp = _keys_from_write_resp(resp_body)
-                if keys_from_resp:
-                    by_key: dict[str, Mapping[str, Any]] = {}
+                sigs = _sigs_from_write_resp(resp_body)
+                if sigs:
+                    to_add: list[Mapping[str, Any]] = []
                     for item in items_list:
-                        ids = _ids_filter(item.get("ids") or {})
-                        group = _kind_group(item)
-                        mapped = {
-                            "type": "movie" if group == "movies" else "show",
-                            "ids": ids,
-                            "simkl_bucket": group,
-                        }
-                        by_key[simkl_key_of(mapped)] = item
-                    to_add = [by_key[k] for k in keys_from_resp if k in by_key]
+                        sig = _id_sig(_ids_filter(item.get("ids") or {}))
+                        if sig and sig in sigs:
+                            to_add.append(item)
                     if to_add:
                         _shadow_add_items(to_add)
                 elif ok == len(items_list):
@@ -1030,20 +1086,17 @@ def remove(
                 )
             ok = int(processed)
             if ok > 0:
-                keys_from_resp = _keys_from_write_resp(resp_body)
-                if keys_from_resp:
-                    _shadow_remove_keys(keys_from_resp)
-                elif ok == len(items_list):
+                sigs = _sigs_from_write_resp(resp_body)
+                if sigs:
                     rm_keys: list[str] = []
                     for item in items_list:
-                        group = _kind_group(item)
-                        mapped = {
-                            "type": "movie" if group == "movies" else "show",
-                            "ids": _ids_filter(item.get("ids") or {}),
-                            "simkl_bucket": group,
-                        }
-                        rm_keys.append(simkl_key_of(mapped))
-                    _shadow_remove_keys(rm_keys)
+                        sig = _id_sig(_ids_filter(item.get("ids") or {}))
+                        if sig and sig in sigs:
+                            rm_keys.append(_mk_shadow_item(item)[0])
+                    if rm_keys:
+                        _shadow_remove_keys(rm_keys)
+                elif ok == len(items_list):
+                    _shadow_remove_keys([_mk_shadow_item(item)[0] for item in items_list])
                 _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
         else:
             _log(f"REMOVE failed {resp.status_code}: {(resp.text or '')[:180]}")

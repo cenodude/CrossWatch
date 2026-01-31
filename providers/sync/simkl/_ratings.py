@@ -736,10 +736,16 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
             m0 = simkl_normalize(cast(Mapping[str, Any], media0)) if media0 else {}
             m = dict(m0) if isinstance(m0, Mapping) else {}
 
+            m["simkl_bucket"] = kind
             if kind == "movies":
                 m["type"] = "movie"
             elif kind == "anime":
-                m["type"] = "anime"
+                raw = media0.get("anime") if isinstance(media0, Mapping) else None
+                at = (raw.get("anime_type") or raw.get("animeType")) if isinstance(raw, Mapping) else None
+                anime_type = at.strip().lower() if isinstance(at, str) and at.strip() else None
+                m["type"] = "movie" if anime_type == "movie" else "show"
+                if anime_type:
+                    m["anime_type"] = anime_type
             else:
                 m["type"] = "show"
             m["rating"] = rt
@@ -887,6 +893,16 @@ def _show_entry_add(adapter: Any, it: Mapping[str, Any]) -> dict[str, Any] | Non
     return ent
 
 
+def _write_group(item: Mapping[str, Any]) -> str:
+    bucket = str(item.get("simkl_bucket") or "").strip().lower()
+    if bucket == "movies":
+        return "movies"
+    if bucket in ("shows", "anime"):
+        return "shows"
+    typ = str(item.get("type") or "").strip().lower()
+    return "movies" if typ == "movie" else "shows"
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
     hdrs = _headers(adapter)
@@ -906,6 +922,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             continue
 
         typ = str(it.get("type") or "").strip().lower()
+        group = _write_group(it)
         if typ not in {"movie", "show", "season", "episode"}:
             unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
             continue
@@ -913,10 +930,24 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if _is_frozen(it):
             continue
 
-        if typ == "movie":
+        if typ == "movie" and group == "movies":
             ent = _movie_entry_add(it)
             if ent:
                 movies.append(ent)
+                thaw_keys.append(key)
+                attempted.append(it)
+                ev = dict(mini)
+                ev["rating"] = ent["rating"]
+                ev["rated_at"] = ent.get("rated_at", "")
+                rshadow_events.append(ev)
+            else:
+                unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
+            continue
+
+        if typ == "movie" and group == "shows":
+            ent = _show_entry_add(adapter, it)
+            if ent:
+                shows.append(ent)
                 thaw_keys.append(key)
                 attempted.append(it)
                 ev = dict(mini)
@@ -1003,12 +1034,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             continue
 
         typ = str(it.get("type") or "").strip().lower()
+        group = _write_group(it)
         if typ not in {"movie", "show", "season", "episode"}:
             unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
             continue
 
-        if typ == "movie":
+        if typ == "movie" and group == "movies":
             movies.append({"ids": ids})
+        elif typ == "movie" and group == "shows":
+            shows.append({"ids": ids})
         elif typ in ("episode", "season"):
             unresolved.append({"item": mini, "hint": "unsupported_type"})
             continue
