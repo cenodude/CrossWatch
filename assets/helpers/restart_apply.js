@@ -9,6 +9,7 @@
   const BANNER_CSS_ID = "cw-restart-banner-css";
 
   const DEFAULT_RESTART_SECONDS = 15;
+  const CW_PROTO_PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes fallback
 
   function cwBuildProtoUrl(proto) {
     try {
@@ -40,6 +41,17 @@
       const j = JSON.parse(raw);
       if (!j || typeof j !== "object") return null;
       if (!j.proto) return null;
+
+      const ts = Number(j.ts || 0);
+      if (!Number.isFinite(ts) || ts <= 0) {
+        cwClearPendingProto();
+        return null;
+      }
+      if (Date.now() - ts > CW_PROTO_PENDING_TTL_MS) {
+        cwClearPendingProto();
+        return null;
+      }
+
       return j;
     } catch (_) {
       return null;
@@ -332,6 +344,7 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
 
     const dismiss = b.querySelector("#cw-rb-dismiss");
     dismiss?.addEventListener("click", () => {
+      try { cwClearPendingProto(); } catch (_) {}
       try { b.classList.add("hidden"); } catch (_) {}
     });
 
