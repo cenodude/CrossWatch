@@ -16,7 +16,7 @@ try:
 except ImportError:
     _real_log = None
 
-__VERSION__ = "0.1.0"
+__VERSION__ = "1.0.0"
 
 UA = "CrossWatch/1.0"
 AUTH_URL = "https://anilist.co/api/v2/oauth/authorize"
