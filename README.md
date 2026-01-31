@@ -129,23 +129,20 @@ NOT supported: **Multi-users/servers**
 
 
 ### Download
+[![Guide: Container Installation](https://img.shields.io/badge/Guide-Container%20Installation-2ea44f?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/container-installation)
+[![Guide: Docker Setup](https://img.shields.io/badge/Guide-Docker%20Setup-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/docker-setup)
+
 
 *   **Docker:**
 
     ```bash
     docker pull ghcr.io/cenodude/crosswatch:latest
     ```
-* **Prebuilt releases:**\
-  Get the latest builds and assets here: [**Releases ▸**](https://github.com/cenodude/CrossWatch/releases/latest)
-
-<sub>Tip: use</sub> <sub></sub><sub>`:latest`</sub> <sub></sub><sub>for stable, or a specific tag like</sub> <sub></sub><sub>`:v0.2.x`</sub><sub>.</sub>
-
-***
 
 ### Run as Container
 
 ```bash
-docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=Europe/Amsterdam   ghcr.io/cenodude/crosswatch:latest
+docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=UTC   ghcr.io/cenodude/crosswatch:latest
 ```
 
 or
@@ -159,7 +156,7 @@ services:
     ports:
       - "8787:8787"          # host:container
     environment:
-      - TZ=Europe/Amsterdam
+      - TZ=UTC
     volumes:
       - /path/to/config:/config
     restart: unless-stopped
@@ -167,14 +164,6 @@ services:
 
 > The container exposes the web UI at:\
 > http://localhost:8787
-
-### Usage
-
-1. Open the web UI
-2. Connect at least one authentication providers such as: Plex, Jellyfin, Emby, SIMKL, TRAKT etc.
-3. Create one or more Sync Pairs (for example: Plex to SIMKL or two-way) AND/OR enable Scrobble
-4. Click Synchronize to start, or enable scheduling in Settings
-5. Track stats, logs, and history from the UI
 
 ## Sponsors
 
