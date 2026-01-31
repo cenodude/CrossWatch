@@ -228,6 +228,10 @@ async function saveNow(btn) {
         btn.dataset.done = "1";
       }
     } catch {}
+
+    try {
+      window.cxCloseModal?.();
+    } catch {}
   } catch (e) {
     console.warn("[upgrade-warning] save failed", e);
     notify("Save failed. Check logs.");
