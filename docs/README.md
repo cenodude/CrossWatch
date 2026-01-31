@@ -50,8 +50,6 @@ Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMD
 NOT supported: **Multi-users/servers**
 
 ### CW in a nutshell:
-
-### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
