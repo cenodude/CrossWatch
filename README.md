@@ -19,10 +19,7 @@
 <p align="center" style="font-size:14px;">
   <b>⭐ Star this repository to get updates</b>
 </p>
-
-
-<div align="center"><img src="https://github.com/user-attachments/assets/7f4976b2-b6d7-4c69-9e1e-1612d0288a9f" alt="image" height="314" width="776"></div>
-
+<img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center"><a href="https://github.com/cenodude/CrossWatch/releases/latest"><img src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&#x26;sort=semver&#x26;logo=github&#x26;label=Latest%20Release&#x26;style=for-the-badge" alt="Latest Release"> </a><a href="https://github.com/cenodude/CrossWatch/pkgs/container/crosswatch"><img src="https://img.shields.io/badge/dynamic/json?url=https://ghcr-badge.elias.eu.org/api/cenodude/CrossWatch/crosswatch&#x26;query=%24.downloadCount&#x26;style=for-the-badge&#x26;logo=github&#x26;label=GHCR%20Pulls" alt="GHCR Pulls"> </a><a href="https://github.com/cenodude/CrossWatch/wiki/Getting-Started"><img src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&#x26;logo=gitbook" alt="Must-read: Quick Start"></a><br><a href="https://hub.docker.com/r/cenodude/crosswatch"><img src="https://img.shields.io/docker/pulls/cenodude/crosswatch?style=for-the-badge&#x26;logo=docker&#x26;label=Docker%20Pulls" alt="Docker Pulls"> </a><a href="https://hub.docker.com/r/cenodude/crosswatch"><img src="https://img.shields.io/docker/image-size/cenodude/crosswatch/latest?style=for-the-badge&#x26;logo=docker&#x26;label=Image%20Size" alt="Image Size"> </a><a href="https://hub.docker.com/r/cenodude/crosswatch/tags"><img src="https://img.shields.io/docker/v/cenodude/crosswatch?sort=semver&#x26;style=for-the-badge&#x26;logo=docker&#x26;label=Docker%20Version" alt="Docker Version"></a></p>
 <p align="center">
   <a href="https://www.crosswatch.app/" style="margin: 0 6px;">
@@ -35,10 +32,10 @@
 
 
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, TMDb, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots.
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
-Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL and CW internal tracker**\
+Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
 NOT supported: **Multi-users/servers**
 
 <img
@@ -95,6 +92,7 @@ NOT supported: **Multi-users/servers**
         <img src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328" alt="AniList">
         <img src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" alt="Trakt">
         <img src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" alt="MDBList">
+        <img src="https://img.shields.io/badge/TMDb-01B4E4?labelColor=1f2328&logo=themoviedatabase&logoColor=white" alt="TMDb">
       </p>
       <p style="margin:10px 0 6px 0;"><b>Media servers</b><br>
         <img src="https://img.shields.io/badge/Plex-E08A00?logo=plex&amp;logoColor=white&amp;labelColor=1f2328" alt="Plex">
