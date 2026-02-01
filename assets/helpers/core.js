@@ -3523,9 +3523,7 @@ async function saveSettings() {
           cfg.ui = cfg.ui || {};
           cfg.ui.show_AI = finalUiAi;
           changed = true;
-          if (prevUiAskAi && !finalUiAi) {
-            try { window.__cwAskAiDisabled = true; } catch {}
-          }
+          try { window.__cwAskAiChanged = { from: prevUiAskAi, to: finalUiAi }; } catch {}
         }
       }
 
@@ -4078,20 +4076,40 @@ async function saveSettings() {
 
     if (!fromFab) showToast("Settings saved", true);
 
-    if (window.__cwProtoChanged) {
-      const wantProto = String(window.__cwProtoChanged || "").trim().toLowerCase();
-      try { delete window.__cwProtoChanged; } catch {}
+    (function () {
+      const reasons = [];
+      let kind = "";
+      let applyText = "Restart NOW";
 
-      const url = cwBuildProtoUrl(wantProto);
-      try { cwQueueProtocolApply(wantProto, url); } catch { cwShowRestartBanner("Protocol changed: restart required"); }
-      showToast("Protocol changed: restart required", true);
-    }
+      if (window.__cwProtoChanged) {
+        const wantProto = String(window.__cwProtoChanged || "").trim().toLowerCase();
+        try { delete window.__cwProtoChanged; } catch {}
+        const url = cwBuildProtoUrl(wantProto);
+        try { cwQueueProtocolApply(wantProto, url); } catch {}
+        reasons.push("Protocol changed");
+        kind = "protocol";
+        applyText = "Apply NOW";
+      }
 
-    if (window.__cwAskAiDisabled) {
-      try { delete window.__cwAskAiDisabled; } catch {}
-      cwShowRestartBanner("ASK AI hidden: restart required", null);
-      showToast("ASK AI hidden: restart required", true);
-    }
+      let askAiInfo = null;
+      if (window.__cwAskAiChanged) {
+        askAiInfo = window.__cwAskAiChanged;
+        try { delete window.__cwAskAiChanged; } catch {}
+        try {
+          const to = !!(askAiInfo && askAiInfo.to);
+          reasons.push(`ASK AI ${to ? "shown" : "hidden"}`);
+        } catch {
+          reasons.push("ASK AI changed");
+        }
+        if (!kind) kind = "restart";
+      }
+
+      if (!reasons.length) return;
+
+      const msg = `${reasons.join(" + ")}: restart required`;
+      try { cwShowRestartBanner(msg, { showApply: true, applyText, kind }); } catch {}
+      showToast(msg, true);
+    })();
   } catch (err) {
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);

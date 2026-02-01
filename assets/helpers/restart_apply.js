@@ -67,6 +67,15 @@
     _lsDel(CW_PROTO_PENDING_KEY);
   }
 
+  function cwHasPendingProtoMismatch() {
+    const p = cwGetPendingProto();
+    if (!p) return false;
+    const cur = String(window.location.protocol || "").replace(":", "").toLowerCase();
+    const want = String(p.proto || "").toLowerCase() === "https" ? "https" : "http";
+    if (!cur || !want) return false;
+    return cur !== want;
+  }
+
   function cwEnsureApplyOverlay() {
     if (document.getElementById(OVERLAY_ID)) return;
 
@@ -345,13 +354,21 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
 
     const dismiss = b.querySelector("#cw-rb-dismiss");
     dismiss?.addEventListener("click", () => {
-      try { cwClearPendingProto(); } catch (_) {}
-      try { b.classList.add("hidden"); } catch (_) {}
+      try { cwHideRestartBanner(); } catch (_) {
+        try { b.classList.add("hidden"); } catch (_) {}
+      }
     });
 
     const apply = b.querySelector("#cw-rb-apply");
     apply?.addEventListener("click", () => {
-      try { cwApplyPendingRestart(); } catch (_) {}
+      try {
+        const kind = String(b.dataset.kind || "").toLowerCase();
+        if (kind === "protocol" || cwHasPendingProtoMismatch()) {
+          cwApplyPendingRestart();
+          return;
+        }
+        cwRestartCrossWatchWithOverlay();
+      } catch (_) {}
     });
   }
 
@@ -366,10 +383,12 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
     let opts = maybeOpts || {};
     if (hrefOrOpts && typeof hrefOrOpts === "object" && !Array.isArray(hrefOrOpts)) opts = hrefOrOpts;
 
+    try { b.dataset.kind = String(opts.kind || ""); } catch (_) {}
+
     const apply = b.querySelector("#cw-rb-apply");
     if (apply) {
-      const show = !!opts.showApply;
-      apply.textContent = String(opts.applyText || "Apply NOW");
+      const show = (typeof opts.showApply === "boolean") ? opts.showApply : cwHasPendingProtoMismatch();
+      apply.textContent = String(opts.applyText || (cwHasPendingProtoMismatch() ? "Apply NOW" : "Restart NOW"));
       apply.style.display = show ? "" : "none";
       apply.disabled = false;
     }
@@ -394,14 +413,14 @@ function cwShowApplyOverlay(title, subtitle, seconds) {
       return;
     }
 
-    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW" });
+    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW", kind: "protocol" });
   }
 
   function cwQueueProtocolApply(proto, url) {
     const want = String(proto || "").toLowerCase() === "https" ? "https" : "http";
     const p = { kind: "protocol", proto: want, url: url || cwBuildProtoUrl(want), ts: Date.now() };
     cwSetPendingProto(p);
-    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW" });
+    cwShowRestartBanner("Protocol changed: restart required", { showApply: true, applyText: "Apply NOW", kind: "protocol" });
   }
 
   async function _postJson(url, body) {
