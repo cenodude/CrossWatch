@@ -57,7 +57,16 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-NOT supported: **Multi-users/servers** per insance | but you can run multiple containers for different users/servers 
+
+> **Not supported (yet): Multi-users / Multi-servers per instance**  
+> CrossWatch currently supports **one user and one server per instance**.  
+> Need multiple users/servers? Run **multiple containers** (one per user/server).
+
+<p align="center">
+  <b> Important: Multi-user / multi-server support is in progress.</b><br>
+  Track progress here: <a href="https://github.com/cenodude/CrossWatch/issues/73">Issue #73</a>
+</p>
+
 
 <img
   align="right"
