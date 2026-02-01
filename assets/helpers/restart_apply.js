@@ -9,7 +9,8 @@
   const BANNER_CSS_ID = "cw-restart-banner-css";
 
   const DEFAULT_RESTART_SECONDS = 15;
-  const CW_PROTO_PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes fallback
+  const CW_PROTO_PENDING_TTL_MS = 1 * 60 * 1000; // 1 minute fallback
+
 
   function cwBuildProtoUrl(proto) {
     try {
