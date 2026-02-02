@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config
+from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble.currently_watching import _state_file as _cw_state_file
 
 try:
@@ -328,21 +329,27 @@ def _list_pms_servers(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @router.get("/api/plex/server_uuid")
-def api_plex_server_uuid() -> JSONResponse:
-    cfg = load_config() or {}
+def api_plex_server_uuid(instance: str | None = Query(None)) -> JSONResponse:
+    inst = normalize_instance_id(instance)
+    cfg0 = load_config() or {}
+    cfg = build_provider_config_view(cfg0, "plex", inst)
     uid = _resolve_plex_server_uuid(cfg)
     return JSONResponse(
-        {"server_uuid": uid or None},
+        {"server_uuid": uid or None, "instance": inst},
         headers={"Cache-Control": "no-store"},
     )
+
 
 
 @router.get("/api/plex/users")
 def api_plex_users(
     only_with_server_access: bool = Query(False),
     only_home_or_owner: bool = Query(False),
+    instance: str | None = Query(None),
 ) -> JSONResponse:
-    cfg = load_config() or {}
+    inst = normalize_instance_id(instance)
+    cfg0 = load_config() or {}
+    cfg = build_provider_config_view(cfg0, "plex", inst)
     users = _list_plex_users(cfg)
 
     if only_with_server_access:
@@ -353,19 +360,22 @@ def api_plex_users(
         users = [u for u in users if u.get("type") in {"owner", "managed"}]
 
     return JSONResponse(
-        {"users": users, "count": len(users)},
+        {"users": users, "count": len(users), "instance": inst},
         headers={"Cache-Control": "no-store"},
     )
 
 
 @router.get("/api/plex/pms")
-def api_plex_pms() -> JSONResponse:
-    cfg = load_config() or {}
+def api_plex_pms(instance: str | None = Query(None)) -> JSONResponse:
+    inst = normalize_instance_id(instance)
+    cfg0 = load_config() or {}
+    cfg = build_provider_config_view(cfg0, "plex", inst)
     servers = _list_pms_servers(cfg)
     return JSONResponse(
-        {"servers": servers, "count": len(servers)},
+        {"servers": servers, "count": len(servers), "instance": inst},
         headers={"Cache-Control": "no-store"},
     )
+
 
 
 @router.get("/api/watch/currently_watching")
