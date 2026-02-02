@@ -123,13 +123,10 @@ const tpl=()=>`
             <div class="field"><label>Source</label><div id="cx-src-display" class="input static" data-value=""></div><select id="cx-src" class="input hidden"></select></div>
             <div class="field"><label>Target</label><div id="cx-dst-display" class="input static" data-value=""></div><select id="cx-dst" class="input hidden"></select></div>
           </div>
-          <div class="cx-row cx-mode-row">
-            <div class="seg">
-              <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
-              <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two">Two-way</label>
-            </div>
+          <div class="cx-row cx-st-row cx-inst-row">
+            <div class="field"><label>Source profile</label><div id="cx-src-inst-display" class="input static hidden" data-value=""></div><select id="cx-src-inst" class="input"></select></div>
+            <div class="field"><label>Target profile</label><div id="cx-dst-inst-display" class="input static hidden" data-value=""></div><select id="cx-dst-inst" class="input"></select></div>
           </div>
-          <div class="cx-row"><div id="cx-feat-tabs" class="feature-tabs"></div></div>
         </div>
         <div class="top-right">
           <div class="flow-card">
@@ -143,6 +140,15 @@ const tpl=()=>`
           <div id="cx-flow-warn" class="flow-warn-area" aria-live="polite"></div>
         </div>
       </div>
+      <div class="cx-tabsrow grid2">
+        <div id="cx-feat-tabs" class="feature-tabs"></div>
+        <div class="cx-mode-inline">
+          <div class="seg">
+            <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
+            <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two">Two-way</label>
+          </div>
+        </div>
+      </div>
       <div class="cx-main grid2">
         <div class="left"><div class="panel" id="cx-feat-panel"></div></div>
         <div class="right"><div class="panel" id="cx-adv-panel"></div></div>
@@ -154,7 +160,7 @@ const tpl=()=>`
 // State
 function defaultState(){
   return {
-    providers:[],src:null,dst:null,feature:"globals",mode:"one-way",enabled:true,
+    providers:[],src:null,dst:null,src_instance:"default",dst_instance:"default",instanceMap:{},feature:"globals",mode:"one-way",enabled:true,
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
@@ -202,6 +208,14 @@ async function loadPairById(id){
     }
   }catch{}
   return null;
+}
+
+async function loadProviderInstances(state){
+  try{
+    const r=await fetch("/api/provider-instances",{cache:"no-store"});
+    const j=r.ok?await r.json():{};
+    state.instanceMap=(j&&typeof j==="object")?j:{};
+  }catch{state.instanceMap={}}
 }
 
 async function loadProviders(state){
@@ -498,10 +512,71 @@ function renderProviderSelects(state){
   srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${opts}`;
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const upd=()=>{const s=byName(state,srcSel.value),d=byName(state,dstSel.value);if(srcLab){srcLab.textContent=s?.label||"—";srcLab.dataset.value=srcSel.value||""}if(dstLab){dstLab.textContent=d?.label||"—";dstLab.dataset.value=dstSel.value||""}};
-  srcSel.onchange=()=>{state.src=srcSel.value||null;upd();updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
-  dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
-  upd();ID("cx-mode-two").checked=state.mode==="two-way";ID("cx-mode-one").checked=!ID("cx-mode-two").checked;ID("cx-enabled").checked=!!state.enabled;
+  srcSel.onchange=()=>{state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
+  dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
+  upd();renderInstanceSelects(state);ID("cx-mode-two").checked=state.mode==="two-way";ID("cx-mode-one").checked=!ID("cx-mode-two").checked;ID("cx-enabled").checked=!!state.enabled;
 }
+
+function renderInstanceSelects(state){
+  const srcInstSel=ID("cx-src-inst"),dstInstSel=ID("cx-dst-inst");
+  const srcLab=ID("cx-src-inst-display"),dstLab=ID("cx-dst-inst-display");
+  if(!srcInstSel||!dstInstSel) return;
+  const map=state.instanceMap||{};
+  const norm=(v)=>{const s=String(v||"default").trim();return (!s||s.toLowerCase()==="default")?"default":s};
+  const setLab=(lab,val)=>{if(!lab) return;const v=norm(val);lab.textContent=v==="default"?"Default":v;lab.dataset.value=v};
+  const optsFor=(prov)=>{
+    const key=String(prov||"").toUpperCase();
+    const raw=map[key]||map[String(prov||"").toLowerCase()]||[];
+    const arr=Array.isArray(raw)?raw:[];
+    const ids=[];
+    for(const x of arr){
+      if(typeof x==="string") ids.push(x);
+      else if(x&&typeof x==="object"&&x.id) ids.push(String(x.id));
+    }
+    const uniq=["default",...ids.map(norm).filter(x=>x&&x!=="default")];
+    return [...new Set(uniq)];
+  };
+  const fill=(sel, prov, cur)=>{
+    const ids=optsFor(prov);
+    sel.innerHTML=ids.map(id=>`<option value="${id}">${id==="default"?"Default":id}</option>`).join("");
+    const want=norm(cur);
+    sel.value=ids.includes(want)?want:"default";
+  };
+  const openPicker=(sel)=>{
+    if(!sel) return;
+    try{
+      sel.focus({preventScroll:true});
+      if(typeof sel.showPicker==="function") sel.showPicker();
+      else{
+        try{sel.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}))}catch{}
+        sel.click();
+      }
+    }catch{}
+  };
+  const bindPicker=(lab,sel)=>{
+    if(!lab||!sel) return;
+    lab.tabIndex=0;
+    lab.setAttribute("role","button");
+    lab.style.cursor="pointer";
+    lab.onclick=(e)=>{e.preventDefault();openPicker(sel)};
+    lab.onkeydown=(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openPicker(sel)}};
+  };
+
+  fill(srcInstSel, state.src, state.src_instance);
+  fill(dstInstSel, state.dst, state.dst_instance);
+  state.src_instance=norm(srcInstSel.value);
+  state.dst_instance=norm(dstInstSel.value);
+
+  setLab(srcLab, state.src_instance);
+  setLab(dstLab, state.dst_instance);
+
+  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);setLab(srcLab, state.src_instance)};
+  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);setLab(dstLab, state.dst_instance)};
+
+  bindPicker(srcLab, srcInstSel);
+  bindPicker(dstLab, dstInstSel);
+}
+
 
 function updateFlow(state,animate=false){
   const s=byName(state,state.src),d=byName(state,state.dst);
@@ -713,8 +788,8 @@ function renderFeaturePanel(state){
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
 
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals</div>
-      <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div><div class="muted">Simulate changes only; no writes.</div>
-      <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div><div class="muted">Re-check a small sample after writes.</div>
+      <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div
       <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
       <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:.5;pointer-events:none;"}">
         <div class="panel-title small">Suspect guard (shrinking inventories)</div>
@@ -1604,13 +1679,15 @@ function injectHelpIcons(root) {
 function buildPayload(state,wrap){
   const src=state.src||ID("cx-src")?.value||ID("cx-src-display")?.dataset.value||"";
   const dst=state.dst||ID("cx-dst")?.value||ID("cx-dst-display")?.dataset.value||"";
+  const srcInst=state.src_instance||ID("cx-src-inst")?.value||"default";
+  const dstInst=state.dst_instance||ID("cx-dst-inst")?.value||"default";
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign({enable:false,add:false,remove:false},(state.options||{})[k]||{});
   const watchlist=get("watchlist");
   const ratings=get("ratings");
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
-  const payload={source:src,target:dst,enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),playlists:get("playlists")}};
+  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),playlists:get("playlists")}};
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
 }
 
@@ -1638,6 +1715,8 @@ export default{
       const up=x=>String(x||"").toUpperCase();
       state.src=up(pair.source||pair.src||state.src);
       state.dst=up(pair.target||pair.dst||state.dst);
+      state.src_instance=String(pair.source_instance||"default");
+      state.dst_instance=String(pair.target_instance||"default");
       state.mode=pair.mode||state.mode;
       state.enabled=typeof pair.enabled==="boolean"?pair.enabled:true;
       const f=pair.features||{}, safe=(v,d)=>Object.assign({},d,v||{});
@@ -1651,6 +1730,7 @@ export default{
 
     await loadConfigBits(state);
     await loadProviders(state);
+    await loadProviderInstances(state);
 
     state.feature="globals";
     renderProviderSelects(state);

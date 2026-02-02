@@ -317,10 +317,21 @@
     _applyIconStrip(scStrip, _scrobblerHeaderKeys(cfg, configured));
   }
 
-  async function getAuthSummary(cfg) {
-    const list = await fetchJSON("/api/auth/providers?t=" + Date.now());
-    const detected = Array.isArray(list) ? list.length : 8;
+  function countAdditionalProfiles(cfg){
+    let total = 0;
+    const obj = cfg && typeof cfg === "object" ? cfg : {};
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      const insts = v.instances;
+      if (!insts || typeof insts !== "object" || Array.isArray(insts)) continue;
+      total += Object.keys(insts).filter((id) => String(id || "").toLowerCase() !== "default").length;
+    }
+    return total;
+  }
 
+
+  async function getAuthSummary(cfg) {
     const allowedRaw = (typeof w.getConfiguredProviders === "function")
       ? w.getConfiguredProviders(cfg || {})
       : new Set();
@@ -332,7 +343,9 @@
     const AUTH_KEYS = ["PLEX","EMBY","SIMKL","TRAKT","JELLYFIN","TAUTULLI","MDBLIST","ANILIST","TMDB"];
     const configuredCount = AUTH_KEYS.filter((k) => configured.has(k)).length;
 
-    return { detected, configured: configuredCount };
+    const profiles = countAdditionalProfiles(cfg);
+
+    return { configured: configuredCount, profiles };
   }
 
   async function getPairsSummary(cfg) {
@@ -570,7 +583,7 @@
 
     body.innerHTML="";
     body.appendChild(row("lock","Authentication Providers",
-      `Detected providers: ${data.auth.detected}, Configured: ${data.auth.configured}`));
+      `Configured providers: ${data.auth.configured}, Profiles: ${data.auth.profiles}`));
     body.appendChild(row("link","Synchronization Pairs",  `Pairs: ${data.pairs.count}`));
 
     const wlBlock = whitelistHTML(data.whitelist);
