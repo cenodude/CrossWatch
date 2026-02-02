@@ -52,11 +52,9 @@ PROVIDERS: tuple[str, ...] = (
 # Caches
 STATUS_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 STATUS_LOCK = threading.Lock()
-
-# Provider bust markers (auth API will poke PROBE_CACHE[<name>] = (0.0, False))
 PROBE_CACHE: dict[str, tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS}
 
-# Keyed by per-credential probe key (e.g. trakt|cid:xxxx|tok:yyyy)
+# Keyed by per-credential probe key 
 PROBE_DETAIL_CACHE: dict[str, tuple[float, bool, str]] = {}
 _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -98,7 +96,6 @@ def _norm_url(v: Any) -> str:
     s = str(v or "").strip()
     if not s:
         return ""
-    # Keep it simple: only normalize obvious duplicates
     while s.endswith("/"):
         s = s[:-1]
     return s
@@ -121,7 +118,7 @@ def _instance_block(cfg: Mapping[str, Any], cfg_key: str, instance_id: Any) -> d
 
     sub = get_provider_block(cfg, cfg_key, inst)
     out = dict(sub or {}) if isinstance(sub, Mapping) else {}
-    for k in _FALLBACK_KEYS.get(cfg_key, ()):  # shared app keys
+    for k in _FALLBACK_KEYS.get(cfg_key, ()):
         if not str(out.get(k) or "").strip() and str(base.get(k) or "").strip():
             out[k] = base.get(k)
     return out
@@ -202,12 +199,10 @@ def _consume_bust(provider_id: str) -> float:
     except Exception:
         ts = 0.0
 
-    # Startup initializes to 0.0 too; we only treat it as a bust once per provider.
     if ts != 0.0 and p in _BUST_SEEN:
         return 0.0
 
     if ts == 0.0 and p in _BUST_SEEN:
-        # Real bust requested by auth API
         pass
 
     if ts == 0.0:
@@ -342,7 +337,7 @@ def _trakt_limits_used(
     if wl_count:
         out["watchlist"] = wl_count
 
-    # Collection = movies + shows
+    # Collection = movies and shows
     movies_count = _count_items(f"{base}/sync/collection/movies")
     shows_count = _count_items(f"{base}/sync/collection/shows")
     if movies_count or shows_count:
@@ -1077,7 +1072,7 @@ def anilist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
 def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default") -> bool:
     n = str(name or "").strip().upper()
 
-    # CrossWatch is a local/virtual provider
+    # CrossWatch local/virtual provider
     if n in ("CROSSWATCH", "CW"):
         cw = cfg.get("crosswatch") or cfg.get("CrossWatch") or {}
         enabled = cw.get("enabled")
@@ -1102,7 +1097,6 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
         return bool(str(blk.get("account_token") or "").strip())
 
     if ck == "trakt":
-        # token is per-instance; cid may come from base via _instance_block fallback
         return bool(str(blk.get("access_token") or blk.get("token") or "").strip() and str(blk.get("client_id") or "").strip())
 
     if ck == "simkl":
@@ -1270,9 +1264,6 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 STATUS_CACHE["data"] = data
                 return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
-
-            # - all enabled-pair instances
-            # - plus one representative configured instance per provider (keeps UI truthful)
             targets: set[tuple[str, str]] = set(used_targets)
 
             def _pick_one_configured(prov: str) -> str | None:
@@ -1294,11 +1285,11 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 picked = _pick_one_configured(prov)
                 if picked:
                     targets.add((prov, picked))
+                    
+            active_providers = {p for p, _ in targets}
 
             if not targets:
                 targets = {(prov, "default") for prov in DETAIL_PROBES.keys()}
-
-            # Build unique probe jobs, deduped by probe key.
 
             jobs_by_key: dict[str, tuple[str, dict[str, Any], Callable[..., tuple[bool, str]]]] = {}
             refs: dict[tuple[str, str], str] = {}
@@ -1321,16 +1312,16 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                         results_by_key[pkey] = (False, f"probe failed: {e}")
 
             # Per-provider aggregation
-            per: dict[str, dict[str, tuple[bool, str, dict[str, Any]]]] = {k: {} for k in active_providers}
+            per: dict[str, dict[str, tuple[bool, str, dict[str, Any]]]] = {}
             for (prov, inst), pkey in refs.items():
                 ok, rsn = results_by_key.get(pkey, (False, ""))
-                per[prov][inst] = (ok, rsn, _cfg_view_for(cfg, prov, inst))
+                per.setdefault(prov, {})[inst] = (ok, rsn, _cfg_view_for(cfg, prov, inst))
 
             def _pick_rep(prov: str) -> tuple[bool, str, dict[str, Any]]:
                 items = per.get(prov) or {}
                 if not items:
                     return False, "not configured", dict(cfg)
-                # Prefer default when OK, otherwise first OK, otherwise default, otherwise first.
+
                 if "default" in items and items["default"][0]:
                     return items["default"]
                 for inst, tup in items.items():
