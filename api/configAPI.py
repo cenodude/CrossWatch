@@ -157,7 +157,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         ("app_auth","password","salt"),
         ("app_auth","session","token_hash"),
     ]
-    for path in secrets:
+    def _preserve_blank_secret(path: tuple[str, ...]) -> None:
         cur = current; inc = incoming; dst = merged
         for k in path[:-1]:
             cur = cur.get(k, {}) if isinstance(cur, dict) else {}
@@ -167,6 +167,27 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         if isinstance(inc, dict) and leaf in inc and _blank(inc[leaf]):
             dst[leaf] = (cur or {}).get(leaf, "")
 
+    providers_with_instances = {"plex","simkl","trakt","tmdb","mdblist","jellyfin","emby"}
+
+    for path in secrets:
+        if len(path) == 2 and path[0] in providers_with_instances:
+            prov, leaf = path
+            _preserve_blank_secret((prov, leaf))
+
+            cur_inst = ((current.get(prov) or {}).get("instances") or {})
+            inc_inst = ((incoming.get(prov) or {}).get("instances") or {})
+            inst_ids: set[str] = set()
+            if isinstance(cur_inst, dict):
+                inst_ids.update([str(k) for k in cur_inst.keys()])
+            if isinstance(inc_inst, dict):
+                inst_ids.update([str(k) for k in inc_inst.keys()])
+
+            for inst_id in sorted(inst_ids):
+                if not str(inst_id).strip():
+                    continue
+                _preserve_blank_secret((prov, "instances", str(inst_id), leaf))
+        else:
+            _preserve_blank_secret(tuple(path))
     try:
         inc_a = incoming.get("app_auth")
         cur_a = current.get("app_auth")

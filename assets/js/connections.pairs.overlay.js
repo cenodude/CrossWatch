@@ -216,9 +216,13 @@
     host.style.display = "block";
 
     const bead = (cls, tip, val) => `<span class="bead ${cls} ${truthy(val) ? "on" : ""}" data-tip="${tip}"></span>`;
+    const inst = (v) => (String(v || "default").trim() || "default");
+    const fmtProv = (p, i) => (String(i || "default").toLowerCase() !== "default" ? `${p}:${i}` : p);
 
     const html = pairs.map((pr, i) => {
       const src = key(pr.source), dst = key(pr.target);
+      const srcInst = inst(pr.source_instance), dstInst = inst(pr.target_instance);
+      const srcLabel = fmtProv(src, srcInst), dstLabel = fmtProv(dst, dstInst);
       const isTwo = (pr.mode || "one-way").toLowerCase().includes("two");
       const modeLabel = isTwo ? "Two-way" : "One-way";
       const arrow = isTwo ? "↔" : "→";
@@ -230,9 +234,9 @@
           <div class="pair-row">
             <div class="pair-left">
               <span class="ord-badge" data-tip="Order position">${i + 1}</span>
-              <span class="pair-pill src"  data-tip="Source: ${src}">${src}</span>
+              <span class="pair-pill src"  data-tip="Source: ${srcLabel}">${srcLabel}</span>
               <span class="arrow"          data-tip="${modeLabel}">${arrow}</span>
-              <span class="pair-pill dst"  data-tip="Target: ${dst}">${dst}</span>
+              <span class="pair-pill dst"  data-tip="Target: ${dstLabel}">${dstLabel}</span>
               <span class="pair-pill mode" data-tip="${modeLabel}">${modeLabel}</span>
             </div>
             <div class="pair-actions">

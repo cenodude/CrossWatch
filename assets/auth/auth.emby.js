@@ -16,6 +16,148 @@
 
   const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
 
+const EMBY_INSTANCE_KEY = "cw.ui.emby.auth.instance.v1";
+
+function getEmbyInstance() {
+  const el = Q("#emby_instance");
+  let v = el ? String(el.value || "").trim() : "";
+  if (!v) { try { v = localStorage.getItem(EMBY_INSTANCE_KEY) || ""; } catch {} }
+  v = (v || "").trim() || "default";
+  return v.toLowerCase() === "default" ? "default" : v;
+}
+
+function setEmbyInstance(v) {
+  const id = (String(v || "").trim() || "default");
+  try { localStorage.setItem(EMBY_INSTANCE_KEY, id); } catch {}
+  const el = Q("#emby_instance");
+  if (el) el.value = id;
+}
+
+function embyApi(path) {
+  const p = String(path || "");
+  const sep = p.includes("?") ? "&" : "?";
+  return p + sep + "instance=" + encodeURIComponent(getEmbyInstance()) + "&ts=" + Date.now();
+}
+
+function getEmbyCfgBlock(cfg) {
+  cfg = cfg || {};
+  const base = (cfg.emby && typeof cfg.emby === "object") ? cfg.emby : (cfg.emby = {});
+  const inst = getEmbyInstance();
+  if (inst === "default") return base;
+  if (!base.instances || typeof base.instances !== "object") base.instances = {};
+  if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+  return base.instances[inst];
+}
+
+async function refreshEmbyInstanceOptions(preserve = true) {
+  const sel = Q("#emby_instance");
+  if (!sel) return;
+  let want = preserve ? getEmbyInstance() : "default";
+  try {
+    const r = await fetch("/api/provider-instances/emby?ts=" + Date.now(), { cache: "no-store" });
+    const arr = await r.json().catch(() => []);
+    const opts = Array.isArray(arr) ? arr : [];
+
+    sel.innerHTML = "";
+    const addOpt = (id, label) => {
+      const o = document.createElement("option");
+      o.value = String(id);
+      o.textContent = String(label || id);
+      sel.appendChild(o);
+    };
+
+    addOpt("default", "Default");
+    opts.forEach((o) => { if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
+
+    if (!Array.from(sel.options).some(o => o.value === want)) want = "default";
+    sel.value = want;
+    setEmbyInstance(want);
+  } catch {}
+}
+
+function ensureEmbyInstanceUI() {
+  const panel = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]');
+  const head = panel ? Q(".cw-panel-head", panel) : null;
+  if (!head || head.__embyInstanceUI) return;
+  head.__embyInstanceUI = true;
+
+  const wrap = document.createElement("div");
+  wrap.className = "inline";
+  wrap.style.display = "flex";
+  wrap.style.gap = "8px";
+  wrap.style.alignItems = "center";
+  wrap.title = "Select which Emby server/account this config applies to.";
+
+  const lab = document.createElement("span");
+  lab.className = "muted";
+  lab.textContent = "Profile";
+
+  const sel = document.createElement("select");
+  sel.id = "emby_instance";
+  sel.className = "input";
+  sel.style.minWidth = "160px";
+
+  const btnNew = document.createElement("button");
+  btnNew.type = "button";
+  btnNew.className = "btn secondary";
+  btnNew.id = "emby_instance_new";
+  btnNew.textContent = "New";
+
+  const btnDel = document.createElement("button");
+  btnDel.type = "button";
+  btnDel.className = "btn secondary";
+  btnDel.id = "emby_instance_del";
+  btnDel.textContent = "Delete";
+
+  wrap.appendChild(lab);
+  wrap.appendChild(sel);
+  wrap.appendChild(btnNew);
+  wrap.appendChild(btnDel);
+  head.appendChild(wrap);
+
+  refreshEmbyInstanceOptions(true);
+
+  sel.addEventListener("change", async () => {
+    setEmbyInstance(sel.value);
+    try { hydrated = false; } catch {}
+    try { await hydrateFromConfig(true); } catch {}
+  });
+
+  btnNew.addEventListener("click", async () => {
+    try {
+      const r = await fetch(`/api/provider-instances/emby/next?ts=${Date.now()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      const id = String(j?.id || "").trim();
+      if (!r.ok || j?.ok === false || !id) throw new Error(String(j?.error || "create_failed"));
+      setEmbyInstance(id);
+      await refreshEmbyInstanceOptions(true);
+      sel.value = id;
+      hydrated = false;
+      try { await hydrateFromConfig(true); } catch {}
+    } catch (e) {
+      (window.notify || console.log)("Could not create profile: " + (e?.message || e));
+    }
+  });
+
+  btnDel.addEventListener("click", async () => {
+    const id = getEmbyInstance();
+    if (id === "default") return (window.notify || console.log)("Default profile cannot be deleted.");
+    if (!confirm(`Delete Emby profile "${id}"?`)) return;
+    try {
+      const r = await fetch(`/api/provider-instances/emby/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(String(j?.error || "delete_failed"));
+      setEmbyInstance("default");
+      await refreshEmbyInstanceOptions(false);
+      sel.value = "default";
+      hydrated = false;
+      try { await hydrateFromConfig(true); } catch {}
+    } catch (e) {
+      (window.notify || console.log)("Could not delete profile: " + (e?.message || e));
+    }
+  });
+}
+
   function embyAuthSubSelect(tab, opts = {}) {
     const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby .cw-panel");
     if (!root) return;
@@ -123,7 +265,7 @@
 
   async function embyLoadLibraries() {
     try {
-      const r = await fetch(LIB_URL + "?ts=" + Date.now(), { cache: "no-store" });
+      const r = await fetch(embyApi(LIB_URL), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
       const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
       renderLibraries(libs);
@@ -146,7 +288,7 @@
       if (!r.ok) return;
       const cfg = await r.json();
       window.__cfg = cfg;
-      const em = cfg.emby || {};
+      const em = getEmbyCfgBlock(cfg);
 
       put("#emby_server", em.server); put("#emby_server_url", em.server);
       put("#emby_user", em.user || em.username); put("#emby_username", em.user || em.username);
@@ -167,6 +309,7 @@
 
   // ensure hydrate when section is present and visible
   function ensureHydrate() {
+    try { ensureEmbyInstanceUI(); } catch {}
     try { mountEmbyAuthTabs(); } catch {}
     const sec = Q(SECTION);
     const body = sec?.querySelector(".body");
@@ -200,7 +343,7 @@
   // auto-fill from inspect
   async function embyAuto() {
     try {
-      const r = await fetch("/api/emby/inspect?ts=" + Date.now(), { cache: "no-store" });
+      const r = await fetch(embyApi("/api/emby/inspect"), { cache: "no-store" });
       if (!r.ok) return;
       const d = await r.json();
       if (d.server_url) { put("#emby_server", d.server_url); put("#emby_server_url", d.server_url); }
@@ -219,7 +362,7 @@
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
     setMsgBanner(msg, null, '');
     try {
-      const r = await fetch("/api/emby/login", {
+      const r = await fetch(embyApi("/api/emby/login"), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server, username, password, verify_ssl }), cache: "no-store"
       });
@@ -240,7 +383,7 @@
     if (delBtn) { delBtn.disabled = true; delBtn.classList.add('busy'); }
     if (msg) { msg.className = 'msg hidden'; msg.textContent = ''; }
     try {
-      const r = await fetch('/api/emby/token/delete', {
+      const r = await fetch(embyApi('/api/emby/token/delete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
@@ -265,7 +408,7 @@
   function mergeEmbyIntoCfg(cfg) {
     cfg = cfg || (window.__cfg ||= {});
     const v = (sel) => (Q(sel)?.value || "").trim();
-    const em = (cfg.emby = cfg.emby || {});
+    const em = getEmbyCfgBlock(cfg);
     const server = v("#emby_server_url") || v("#emby_server");
     const user = v("#emby_username") || v("#emby_user");
     if (server) em.server = server;

@@ -9,6 +9,180 @@
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
 
+  const TRAKT_INSTANCE_KEY = "cw.ui.trakt.auth.instance.v1";
+
+  function getTraktInstance() {
+    var el = _el("trakt_instance");
+    var v = el ? _str(el.value) : "";
+    if (!v) { try { v = localStorage.getItem(TRAKT_INSTANCE_KEY) || ""; } catch (_) {} }
+    v = _str(v) || "default";
+    return v.toLowerCase() === "default" ? "default" : v;
+  }
+
+  function setTraktInstance(v) {
+    var id = _str(String(v || "")) || "default";
+    try { localStorage.setItem(TRAKT_INSTANCE_KEY, id); } catch (_) {}
+    var el = _el("trakt_instance");
+    if (el) el.value = id;
+  }
+
+  function traktApi(path) {
+    var p = String(path || "");
+    var sep = p.indexOf("?") >= 0 ? "&" : "?";
+    return p + sep + "instance=" + encodeURIComponent(getTraktInstance()) + "&ts=" + Date.now();
+  }
+
+  function getTraktCfgBlock(cfg) {
+    cfg = cfg || {};
+    var base = (cfg.trakt && typeof cfg.trakt === "object") ? cfg.trakt : (cfg.trakt = {});
+    var inst = getTraktInstance();
+    if (inst === "default") return base;
+    if (!base.instances || typeof base.instances !== "object") base.instances = {};
+    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+    return base.instances[inst];
+  }
+
+  async function refreshTraktInstanceOptions(preserve) {
+    var sel = _el("trakt_instance");
+    if (!sel) return;
+    var want = preserve === false ? "default" : getTraktInstance();
+    try {
+      var r = await fetch("/api/provider-instances/trakt?ts=" + Date.now(), { cache: "no-store" });
+      var arr = await r.json().catch(function(){ return []; });
+      var opts = Array.isArray(arr) ? arr : [];
+      sel.innerHTML = "";
+      function addOpt(id, label) {
+        var o = document.createElement("option");
+        o.value = String(id);
+        o.textContent = String(label || id);
+        sel.appendChild(o);
+      }
+      addOpt("default", "Default");
+      opts.forEach(function(o){ if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
+      if (!Array.from(sel.options).some(function(o){ return o.value === want; })) want = "default";
+      sel.value = want;
+      setTraktInstance(want);
+    } catch (_) {}
+  }
+
+  function ensureTraktInstanceUI() {
+    var panel = document.querySelector('#sec-trakt .cw-meta-provider-panel[data-provider="trakt"]') || document.querySelector('.cw-meta-provider-panel[data-provider="trakt"]') || document.querySelector('#sec-trakt .cw-meta-provider-panel') || document.querySelector('#sec-trakt') || document.querySelector('[data-provider="trakt"]');
+    if (!panel) return;
+    if (panel.querySelector('#trakt_instance')) return;
+    var head = panel.querySelector('.cw-panel-head') || panel.querySelector('.panel-head') || panel.querySelector('header') || panel;
+    if (head.__traktInstanceUI) return;
+    head.__traktInstanceUI = true;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'inline';
+    wrap.style.display = 'flex';
+    wrap.style.gap = '8px';
+    wrap.style.alignItems = 'center';
+    try { head.style.flexWrap = 'wrap'; } catch (_) {}
+    wrap.title = 'Select which Trakt account this config applies to.';
+
+    var lab = document.createElement('span');
+    lab.className = 'muted';
+    lab.textContent = 'Profile';
+
+    var sel = document.createElement('select');
+    sel.id = 'trakt_instance';
+    sel.className = 'input';
+    sel.style.minWidth = '140px';
+    sel.style.width = 'auto';
+    sel.style.maxWidth = '220px';
+    sel.style.flex = '0 0 auto';
+
+    var btnNewEl = document.createElement('button');
+    btnNewEl.type = 'button';
+    btnNewEl.className = 'btn secondary';
+    btnNewEl.id = 'trakt_instance_new';
+    btnNewEl.textContent = 'New';
+
+    var btnDelEl = document.createElement('button');
+    btnDelEl.type = 'button';
+    btnDelEl.className = 'btn secondary';
+    btnDelEl.id = 'trakt_instance_del';
+    btnDelEl.textContent = 'Delete';
+
+    wrap.appendChild(lab);
+    wrap.appendChild(sel);
+    wrap.appendChild(btnNewEl);
+    wrap.appendChild(btnDelEl);
+    if (head === panel) panel.insertBefore(wrap, panel.firstChild);
+    else head.appendChild(wrap);
+
+    refreshTraktInstanceOptions(true);
+
+    var sel = _el('trakt_instance');
+    if (sel && !sel._wired) {
+      sel._wired = true;
+      sel.addEventListener('change', function(){
+        setTraktInstance(sel.value);
+        void hydrateAuthFromConfig();
+        try { startTraktTokenPoll(); } catch (_) {}
+      });
+    }
+
+    var btnNew = _el('trakt_instance_new');
+    if (btnNew && !btnNew._wired) {
+      btnNew._wired = true;
+      btnNew.addEventListener('click', async function(){
+        try {
+          var r = await fetch('/api/provider-instances/trakt/next?ts=' + Date.now(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', cache: 'no-store' });
+          var j = await r.json().catch(function(){ return {}; });
+          var id = _str((j && j.id) || '');
+          if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || 'create_failed'));
+          setTraktInstance(id);
+          await refreshTraktInstanceOptions(true);
+          void hydrateAuthFromConfig();
+        } catch (e) {
+          _notify('Could not create profile: ' + (e && e.message ? e.message : e));
+        }
+      });
+    }
+
+    var btnDel = _el('trakt_instance_del');
+    if (btnDel && !btnDel._wired) {
+      btnDel._wired = true;
+      btnDel.addEventListener('click', async function(){
+        var id = getTraktInstance();
+        if (id === 'default') return _notify('Default profile cannot be deleted.');
+        if (!confirm('Delete Trakt profile "' + id + '"?')) return;
+        try {
+          var r = await fetch('/api/provider-instances/trakt/' + encodeURIComponent(id), { method: 'DELETE', cache: 'no-store' });
+          var j = await r.json().catch(function(){ return {}; });
+          if (!r.ok || (j && j.ok === false)) throw new Error(String((j && j.error) || 'delete_failed'));
+          setTraktInstance('default');
+          await refreshTraktInstanceOptions(false);
+          void hydrateAuthFromConfig();
+        } catch (e) {
+          _notify('Could not delete profile: ' + (e && e.message ? e.message : e));
+        }
+      });
+    }
+  }
+
+  async function persistTraktClientFields() {
+    try {
+      var cid = _str((_el('trakt_client_id') || {}).value);
+      var secr = _str((_el('trakt_client_secret') || {}).value);
+      var cfg = await fetchConfig();
+      if (!cfg) return;
+      var base = (cfg.trakt && typeof cfg.trakt === 'object') ? cfg.trakt : (cfg.trakt = {});
+      var inst = getTraktInstance();
+      if (cid) base.client_id = cid;
+      if (secr) base.client_secret = secr;
+      if (inst !== 'default') {
+        if (!base.instances || typeof base.instances !== 'object') base.instances = {};
+        if (!base.instances[inst] || typeof base.instances[inst] !== 'object') base.instances[inst] = {};
+        base.instances[inst].client_id = cid;
+        base.instances[inst].client_secret = secr;
+      }
+      await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+    } catch (_) {}
+  }
+
   function updateTraktBanner() {
     try {
       var msg = _el('trakt_msg');
@@ -59,11 +233,13 @@
   async function hydrateAuthFromConfig() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
-      var t = cfg.trakt || {};
+      var t = getTraktCfgBlock(cfg);
       var a = (cfg.auth && cfg.auth.trakt) || {};
-      _setVal("trakt_client_id",     _str(t.client_id));
-      _setVal("trakt_client_secret", _str(t.client_secret));
-      _setVal("trakt_token",         _str(t.access_token || a.access_token));
+            var isDefault = (getTraktInstance() === "default");
+      _setVal("trakt_client_id",     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
+      _setVal("trakt_client_secret", _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
+      _setVal("trakt_token",         _str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')));
+      _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
       updateTraktHint();
       updateTraktBanner();
     } catch (e) {
@@ -156,10 +332,13 @@
     });
 
     try {
+      ensureTraktInstanceUI();
       var idEl  = _el("trakt_client_id");
       var secEl = _el("trakt_client_secret");
       if (idEl)  idEl.addEventListener("input", function(){ updateTraktHint(); });
       if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
+      if (idEl)  idEl.addEventListener('change', function(){ void persistTraktClientFields(); });
+      if (secEl) secEl.addEventListener('change', function(){ void persistTraktClientFields(); });
 
       updateTraktHint();
       updateTraktBanner();
@@ -179,34 +358,8 @@
   // Flush Trakt credentials
   async function flushTraktCreds() {
     try {
-      var cfg = await fetchConfig(); if (!cfg) return;
-      cfg.trakt = cfg.trakt || {};
-      cfg.auth  = cfg.auth  || {};
-      cfg.auth.trakt = cfg.auth.trakt || {};
-
-      delete cfg.trakt.access_token;
-      delete cfg.trakt.refresh_token;
-      delete cfg.trakt.scope;
-      delete cfg.trakt.token_type;
-      delete cfg.trakt.expires_at;
-      delete cfg.trakt._pending_device;
-
-      delete cfg.auth.trakt.access_token;
-      delete cfg.auth.trakt.refresh_token;
-      delete cfg.auth.trakt.scope;
-      delete cfg.auth.trakt.token_type;
-      delete cfg.auth.trakt.expires_at;
-
-      await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-
-      _setVal("trakt_token", "");
-      _setVal("trakt_pin", "");
-      setTraktSuccess(false);
-      _notify("Trakt-gegevens gewist");
+      await traktDeleteToken();
+      _notify('Trakt cleared for this profile');
     } catch (e) {
       console.warn("flushTraktCreds failed", e);
       _notify("Wissen mislukt");
@@ -226,9 +379,9 @@
     var tick = async function () {
       if (Date.now() >= deadline) { window._traktPoll = null; return; }
       try {
-        var r = await fetch("/api/status?fresh=1", { cache: "no-store" });
-        var s = await r.json();
-        var ok = !!(s && (s.trakt_connected || (s.providers && s.providers.TRAKT && s.providers.TRAKT.connected)));
+        var cfg = await fetchConfig();
+        var t = cfg ? getTraktCfgBlock(cfg) : null;
+        var ok = !!(t && _str(t.access_token));
         if (ok) { setTraktSuccess(true); window._traktPoll = null; return; }
       } catch (_) { /* ignore; keep polling */ }
       var delay = backoff[Math.min(i++, backoff.length - 1)];
@@ -277,6 +430,10 @@
       inFlight = false;
 
       var tok = _str(cfg && ((cfg.trakt && cfg.trakt.access_token) || (cfg.auth && cfg.auth.trakt && cfg.auth.trakt.access_token)));
+      try {
+        var t = cfg ? getTraktCfgBlock(cfg) : null;
+        tok = _str(t && t.access_token) || (getTraktInstance() === 'default' ? tok : '');
+      } catch (_) {}
       if (tok) {
         _setVal("trakt_token", tok);
         setTraktSuccess(true);
@@ -319,7 +476,7 @@
 
     var resp, data;
     try {
-      resp = await fetch("/api/trakt/pin/new", {
+      resp = await fetch(traktApi("/api/trakt/pin/new"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: cid, client_secret: secr })
@@ -377,7 +534,7 @@
     if (btn) { btn.disabled = true; btn.classList.add('busy'); }
     if (msg) { msg.classList.remove('hidden'); msg.classList.remove('warn'); msg.textContent=''; }
     try {
-      var r = await fetch('/api/trakt/token/delete', {
+      var r = await fetch(traktApi('/api/trakt/token/delete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',

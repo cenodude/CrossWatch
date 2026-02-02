@@ -79,19 +79,44 @@ function getConfiguredProviders(cfg = window._cfgCache || {}) {
   const S = new Set();
   const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
 
-  if (has(cfg?.plex?.account_token)) S.add("PLEX");
-  if (has(cfg?.simkl?.access_token || cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
-  if (has(cfg?.trakt?.access_token || cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
-  if (has(cfg?.anilist?.access_token || cfg?.auth?.anilist?.access_token)) S.add("ANILIST");
-  if (has(cfg?.jellyfin?.access_token || cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
-  if (has(cfg?.emby?.access_token || cfg?.auth?.emby?.access_token)) S.add("EMBY");
-  if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
+  const hasInProvider = (obj, keys = []) => {
+    if (!obj || typeof obj !== "object") return false;
+    for (const k of keys) { if (has(obj[k])) return true; }
+    const inst = obj.instances;
+    if (inst && typeof inst === "object") {
+      for (const v of Object.values(inst)) {
+        if (!v || typeof v !== "object") continue;
+        for (const k of keys) { if (has(v[k])) return true; }
+      }
+    }
+    return false;
+  };
+
+  if (hasInProvider(cfg?.plex, ["account_token"])) S.add("PLEX");
+  if (hasInProvider(cfg?.simkl, ["access_token"]) || has(cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
+  if (hasInProvider(cfg?.trakt, ["access_token"]) || has(cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
+  if (hasInProvider(cfg?.anilist, ["access_token"]) || has(cfg?.auth?.anilist?.access_token)) S.add("ANILIST");
+  if (hasInProvider(cfg?.jellyfin, ["access_token"]) || has(cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
+  if (hasInProvider(cfg?.emby, ["access_token"]) || has(cfg?.auth?.emby?.access_token)) S.add("EMBY");
+  if (hasInProvider(cfg?.mdblist, ["api_key"])) S.add("MDBLIST");
 
   const ts = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || {};
-  if ((has(ts?.api_key) && has(ts?.session_id)) || has(ts?.account_id)) S.add("TMDB");
+  const tmdbOk = (() => {
+    if (!ts || typeof ts !== "object") return false;
+    if ((has(ts.api_key) && has(ts.session_id)) || has(ts.account_id)) return true;
+    const inst = ts.instances;
+    if (inst && typeof inst === "object") {
+      for (const v of Object.values(inst)) {
+        if (!v || typeof v !== "object") continue;
+        if ((has(v.api_key) && has(v.session_id)) || has(v.account_id)) return true;
+      }
+    }
+    return false;
+  })();
+  if (tmdbOk) S.add("TMDB");
 
   const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
-  if (has(t?.api_key) && has(t?.server_url)) S.add("TAUTULLI");
+  if (hasInProvider(t, ["api_key","server_url"])) S.add("TAUTULLI");
 
   const cw = cfg?.crosswatch || cfg?.CrossWatch || {};
   const cwEnabled =
@@ -409,6 +434,42 @@ function pickCase(obj, k) {
 }
 
 
+
+function instancesTooltip(info) {
+  const inst = info?.instances;
+  const sum = info?.instances_summary;
+
+  if (!inst || typeof inst !== "object") return "";
+
+  const ok = Number(sum?.ok);
+  const total = Number(sum?.total);
+  const rep = String(sum?.rep || info?.rep_instance || "");
+
+  const parts = [];
+
+  if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) {
+    parts.push(`Instances: ${ok}/${total}`);
+  }
+
+  const entries = Object.entries(inst)
+    .slice(0, 6)
+    .map(([id, v]) => {
+      const label = id === "default" ? "Default" : String(id);
+      const c = !!(v && typeof v === "object" ? v.connected : v);
+      return `${label}=${c ? "OK" : "NO"}`;
+    });
+
+  if (entries.length && (Number.isFinite(total) ? total > 1 : entries.length > 1)) {
+    parts.push(entries.join(" · "));
+  }
+
+  if (rep && rep !== "default" && (Number.isFinite(total) ? total > 1 : true)) {
+    parts.push(`Rep: ${rep}`);
+  }
+
+  return parts.filter(Boolean).join(" · ");
+}
+
 function svgCrown() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
 }
@@ -439,7 +500,9 @@ function setBadge(id, providerName, state, stale, provKey, info) {
   }
 
   
-  if (provKey === "TRAKT" && info && typeof info === "object") {
+    const instTip = instancesTooltip(info);
+
+if (provKey === "TRAKT" && info && typeof info === "object") {
     const lim = info.limits || {};
     const wl  = lim.watchlist  || {};
     const col = lim.collection || {};
@@ -465,9 +528,15 @@ function setBadge(id, providerName, state, stale, provKey, info) {
       bits.push(`Last limit: ${last.feature} @ ${last.ts}`);
     }
 
+    if (instTip) bits.unshift(instTip);
+
     if (bits.length) {
       el.title = bits.join(" · ");
     }
+  }
+
+  if (provKey !== "TRAKT" && instTip) {
+    el.title = instTip;
   }
 
   
@@ -3671,6 +3740,22 @@ async function saveSettings() {
         return "";
       };
 
+      const jfyInstRaw = norm(document.getElementById("jellyfin_instance")?.value || "");
+      const jfyInst = (jfyInstRaw && jfyInstRaw.toLowerCase() !== "default") ? jfyInstRaw : "default";
+
+      const jfyBaseSrv = (serverCfg?.jellyfin && typeof serverCfg.jellyfin === "object") ? serverCfg.jellyfin : {};
+      const prevJfy = jfyInst === "default"
+        ? jfyBaseSrv
+        : ((jfyBaseSrv.instances && typeof jfyBaseSrv.instances === "object" && jfyBaseSrv.instances[jfyInst]) ? jfyBaseSrv.instances[jfyInst] : {});
+
+      const jfyBaseCfg = (cfg.jellyfin && typeof cfg.jellyfin === "object") ? cfg.jellyfin : (cfg.jellyfin = {});
+      const nextJfy = (() => {
+        if (jfyInst === "default") return jfyBaseCfg;
+        if (!jfyBaseCfg.instances || typeof jfyBaseCfg.instances !== "object") jfyBaseCfg.instances = {};
+        if (!jfyBaseCfg.instances[jfyInst] || typeof jfyBaseCfg.instances[jfyInst] !== "object") jfyBaseCfg.instances[jfyInst] = {};
+        return jfyBaseCfg.instances[jfyInst];
+      })();
+
       
       const uiSrv    = first("jfy_server_url","jfy_server");
       const uiUser   = first("jfy_username","jfy_user");
@@ -3678,19 +3763,19 @@ async function saveSettings() {
       const uiVerify = !!(document.getElementById("jfy_verify_ssl")?.checked ||
                           document.getElementById("jfy_verify_ssl_dup")?.checked);
 
-      const prevSrv    = norm(serverCfg?.jellyfin?.server);
-      const prevUser   = norm(serverCfg?.jellyfin?.username || serverCfg?.jellyfin?.user);
-      const prevUid    = norm(serverCfg?.jellyfin?.user_id);
-      const prevVerify = !!serverCfg?.jellyfin?.verify_ssl;
+      const prevSrv    = norm(prevJfy?.server);
+      const prevUser   = norm(prevJfy?.username || prevJfy?.user);
+      const prevUid    = norm(prevJfy?.user_id);
+      const prevVerify = !!prevJfy?.verify_ssl;
 
-      if (uiSrv && uiSrv !== prevSrv) { (cfg.jellyfin ||= {}).server = uiSrv; changed = true; }
+      if (uiSrv && uiSrv !== prevSrv) { nextJfy.server = uiSrv; changed = true; }
       if (uiUser && uiUser !== prevUser) {
-        (cfg.jellyfin ||= {}).username = uiUser;
-        cfg.jellyfin.user = uiUser; 
+        nextJfy.username = uiUser;
+        nextJfy.user = uiUser;
         changed = true;
       }
-      if (uiUid && uiUid !== prevUid) { (cfg.jellyfin ||= {}).user_id = uiUid; changed = true; }
-      if (uiVerify !== prevVerify)   { (cfg.jellyfin ||= {}).verify_ssl = uiVerify; changed = true; }
+      if (uiUid && uiUid !== prevUid) { nextJfy.user_id = uiUid; changed = true; }
+      if (uiVerify !== prevVerify)   { nextJfy.verify_ssl = uiVerify; changed = true; }
 
       const jfyHydrated =
         window.__jellyfinHydrated === true ||
@@ -3753,19 +3838,19 @@ async function saveSettings() {
       };
 
       if (src) {
-        const prevH = (serverCfg?.jellyfin?.history?.libraries || []).map(String);
-        const prevR = (serverCfg?.jellyfin?.ratings?.libraries || []).map(String);
-        const prevS = (serverCfg?.jellyfin?.scrobble?.libraries || []).map(String);
+        const prevH = (prevJfy?.history?.libraries || []).map(String);
+        const prevR = (prevJfy?.ratings?.libraries || []).map(String);
+        const prevS = (prevJfy?.scrobble?.libraries || []).map(String);
         if (!same(src.H, prevH)) {
-          (cfg.jellyfin ||= {}).history = Object.assign({}, cfg.jellyfin.history || {}, { libraries: src.H || [] });
+          nextJfy.history = Object.assign({}, nextJfy.history || {}, { libraries: src.H || [] });
           changed = true;
         }
         if (!same(src.R, prevR)) {
-          (cfg.jellyfin ||= {}).ratings = Object.assign({}, cfg.jellyfin.ratings || {}, { libraries: src.R || [] });
+          nextJfy.ratings = Object.assign({}, nextJfy.ratings || {}, { libraries: src.R || [] });
           changed = true;
         }
         if (!same(src.S, prevS)) {
-          (cfg.jellyfin ||= {}).scrobble = Object.assign({}, cfg.jellyfin.scrobble || {}, { libraries: src.S || [] });
+          nextJfy.scrobble = Object.assign({}, nextJfy.scrobble || {}, { libraries: src.S || [] });
           changed = true;
         }
       }
@@ -3775,6 +3860,24 @@ async function saveSettings() {
 
       
     try {
+      const norm = (s) => (s ?? "").trim();
+
+      const embyInstRaw = norm(document.getElementById("emby_instance")?.value || "");
+      const embyInst = (embyInstRaw && embyInstRaw.toLowerCase() !== "default") ? embyInstRaw : "default";
+
+      const embyBaseSrv = (serverCfg?.emby && typeof serverCfg.emby === "object") ? serverCfg.emby : {};
+      const prevEmby = embyInst === "default"
+        ? embyBaseSrv
+        : ((embyBaseSrv.instances && typeof embyBaseSrv.instances === "object" && embyBaseSrv.instances[embyInst]) ? embyBaseSrv.instances[embyInst] : {});
+
+      const embyBaseCfg = (cfg.emby && typeof cfg.emby === "object") ? cfg.emby : (cfg.emby = {});
+      const nextEmby = (() => {
+        if (embyInst === "default") return embyBaseCfg;
+        if (!embyBaseCfg.instances || typeof embyBaseCfg.instances !== "object") embyBaseCfg.instances = {};
+        if (!embyBaseCfg.instances[embyInst] || typeof embyBaseCfg.instances[embyInst] !== "object") embyBaseCfg.instances[embyInst] = {};
+        return embyBaseCfg.instances[embyInst];
+      })();
+
       const readFromMatrix = () => {
         const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
         if (!rows.length) return null;
@@ -3839,87 +3942,83 @@ async function saveSettings() {
       };
 
       if (src) {
-        const prevH = (serverCfg?.emby?.history?.libraries || []).map(String);
-        const prevR = (serverCfg?.emby?.ratings?.libraries || []).map(String);
-        const prevS = (serverCfg?.emby?.scrobble?.libraries || []).map(String);
+        const prevH = (prevEmby?.history?.libraries || []).map(String);
+        const prevR = (prevEmby?.ratings?.libraries || []).map(String);
+        const prevS = (prevEmby?.scrobble?.libraries || []).map(String);
 
         if (!same(src.H, prevH)) {
-          (cfg.emby ||= {}).history = Object.assign(
-            {},
-            cfg.emby.history || {},
-            { libraries: src.H || [] }
-          );
+          nextEmby.history = Object.assign({}, nextEmby.history || {}, { libraries: src.H || [] });
           changed = true;
         }
         if (!same(src.R, prevR)) {
-          (cfg.emby ||= {}).ratings = Object.assign(
-            {},
-            cfg.emby.ratings || {},
-            { libraries: src.R || [] }
-          );
+          nextEmby.ratings = Object.assign({}, nextEmby.ratings || {}, { libraries: src.R || [] });
           changed = true;
         }
         if (!same(src.S, prevS)) {
-          (cfg.emby ||= {}).scrobble = Object.assign(
-            {},
-            cfg.emby.scrobble || {},
-            { libraries: src.S || [] }
-          );
+          nextEmby.scrobble = Object.assign({}, nextEmby.scrobble || {}, { libraries: src.S || [] });
           changed = true;
         }
       }
     } catch (e) {
       console.warn("saveSettings: emby merge failed", e);
     }
-
-    
     try {
+      const instRaw = norm(document.getElementById("plex_instance")?.value || "");
+      const inst = (instRaw && instRaw.toLowerCase() !== "default") ? instRaw : "default";
+
+      const baseSrv = (serverCfg?.plex && typeof serverCfg.plex === "object") ? serverCfg.plex : {};
+      const prevPlex = inst === "default"
+        ? baseSrv
+        : ((baseSrv.instances && typeof baseSrv.instances === "object" && baseSrv.instances[inst]) ? baseSrv.instances[inst] : {});
+
+      const baseCfg = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
+      const nextPlex = (() => {
+        if (inst === "default") return baseCfg;
+        if (!baseCfg.instances || typeof baseCfg.instances !== "object") baseCfg.instances = {};
+        if (!baseCfg.instances[inst] || typeof baseCfg.instances[inst] !== "object") baseCfg.instances[inst] = {};
+        return baseCfg.instances[inst];
+      })();
+
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
       const uiUser = norm(document.getElementById("plex_username")?.value   || "");
       const uiAidS = norm(document.getElementById("plex_account_id")?.value || "");
 
-      
       let uiAid = null;
       if (uiAidS !== "") {
         const n = parseInt(uiAidS, 10);
         uiAid = Number.isFinite(n) && n > 0 ? n : 1;
       }
 
-      const prevUrl   = norm(serverCfg?.plex?.server_url);
-      const prevUser  = norm(serverCfg?.plex?.username);
-      const prevAidRaw = serverCfg?.plex?.account_id;
-      const prevAid =
-        Number.isFinite(prevAidRaw) && prevAidRaw > 0
-          ? prevAidRaw
-          : 1;
+      const prevUrl    = norm(prevPlex?.server_url);
+      const prevUser   = norm(prevPlex?.username);
+      const prevAidRaw = prevPlex?.account_id;
+      const prevAid    = Number.isFinite(prevAidRaw) && prevAidRaw > 0 ? prevAidRaw : 1;
 
       if (uiUrl && uiUrl !== prevUrl) {
-        (cfg.plex ||= {}).server_url = uiUrl;
+        nextPlex.server_url = uiUrl;
         changed = true;
       }
       if (uiUser && uiUser !== prevUser) {
-        (cfg.plex ||= {}).username = uiUser;
+        nextPlex.username = uiUser;
         changed = true;
       }
 
       if (uiAid !== null) {
         if (uiAid !== prevAid) {
-          (cfg.plex ||= {}).account_id = uiAid;
+          nextPlex.account_id = uiAid;
           changed = true;
         }
       } else if (!Number.isFinite(prevAidRaw) || prevAidRaw <= 0) {
-        (cfg.plex ||= {}).account_id = 1;
+        nextPlex.account_id = 1;
         changed = true;
       }
 
-      
-      const uiVerify   = !!document.getElementById("plex_verify_ssl")?.checked;
-      const prevVerify = !!(serverCfg?.plex?.verify_ssl);
+      const uiVerify = !!document.getElementById("plex_verify_ssl")?.checked;
+      const prevVerify = !!(prevPlex?.verify_ssl);
       if (uiVerify !== prevVerify) {
-        (cfg.plex ||= {}).verify_ssl = uiVerify;
+        nextPlex.verify_ssl = uiVerify;
         changed = true;
       }
-
 
       const plexHydrated =
         window.__plexHydrated === true ||
@@ -3947,20 +4046,20 @@ async function saveSettings() {
           return true;
         };
 
-        const prevHist = (serverCfg?.plex?.history?.libraries || []).map(Number);
-        const prevRate = (serverCfg?.plex?.ratings?.libraries || []).map(Number);
-        const prevScr  = (serverCfg?.plex?.scrobble?.libraries || []).map(Number);
+        const prevHist = (prevPlex?.history?.libraries || []).map(Number);
+        const prevRate = (prevPlex?.ratings?.libraries || []).map(Number);
+        const prevScr  = (prevPlex?.scrobble?.libraries || []).map(Number);
 
         if (!_same(hist, prevHist)) {
-          (cfg.plex ||= {}).history = Object.assign({}, cfg.plex.history || {}, { libraries: hist });
+          nextPlex.history = Object.assign({}, nextPlex.history || {}, { libraries: hist });
           changed = true;
         }
         if (!_same(rate, prevRate)) {
-          (cfg.plex ||= {}).ratings = Object.assign({}, cfg.plex.ratings || {}, { libraries: rate });
+          nextPlex.ratings = Object.assign({}, nextPlex.ratings || {}, { libraries: rate });
           changed = true;
         }
         if (!_same(scr, prevScr)) {
-          (cfg.plex ||= {}).scrobble = Object.assign({}, cfg.plex.scrobble || {}, { libraries: scr });
+          nextPlex.scrobble = Object.assign({}, nextPlex.scrobble || {}, { libraries: scr });
           changed = true;
         }
       }

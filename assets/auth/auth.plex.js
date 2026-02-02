@@ -20,6 +20,152 @@
 
   const PLEX_SUBTAB_KEY = "cw.ui.plex.auth.subtab.v1";
 
+const PLEX_INSTANCE_KEY = "cw.ui.plex.auth.instance.v1";
+
+function getPlexInstance() {
+  const el = $("plex_instance");
+  let v = el ? String(el.value || "").trim() : "";
+  if (!v) { try { v = localStorage.getItem(PLEX_INSTANCE_KEY) || ""; } catch {} }
+  v = (v || "").trim() || "default";
+  return v.toLowerCase() === "default" ? "default" : v;
+}
+
+function setPlexInstance(v) {
+  const id = (String(v || "").trim() || "default");
+  try { localStorage.setItem(PLEX_INSTANCE_KEY, id); } catch {}
+  const el = $("plex_instance");
+  if (el) el.value = id;
+}
+
+function plexApi(path) {
+  const p = String(path || "");
+  const sep = p.includes("?") ? "&" : "?";
+  return p + sep + "instance=" + encodeURIComponent(getPlexInstance()) + "&ts=" + Date.now();
+}
+
+function getPlexCfgBlock(cfg) {
+  cfg = cfg || {};
+  const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
+  const inst = getPlexInstance();
+  if (inst === "default") return base;
+  if (!base.instances || typeof base.instances !== "object") base.instances = {};
+  if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+  return base.instances[inst];
+}
+
+async function refreshPlexInstanceOptions(preserve = true) {
+  const sel = $("plex_instance");
+  if (!sel) return;
+  let want = preserve ? getPlexInstance() : "default";
+  try {
+    const r = await fetch("/api/provider-instances/plex?ts=" + Date.now(), { cache: "no-store" });
+    const arr = await r.json().catch(() => []);
+    const opts = Array.isArray(arr) ? arr : [];
+
+    sel.innerHTML = "";
+    const addOpt = (id, label) => {
+      const o = d.createElement("option");
+      o.value = String(id);
+      o.textContent = String(label || id);
+      sel.appendChild(o);
+    };
+
+    addOpt("default", "Default");
+    opts.forEach((o) => { if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
+
+    if (!Array.from(sel.options).some(o => o.value === want)) want = "default";
+    sel.value = want;
+    setPlexInstance(want);
+  } catch {}
+}
+
+function ensurePlexInstanceUI() {
+  const panel = q('#sec-plex .cw-meta-provider-panel[data-provider="plex"]');
+  const head = panel ? q(".cw-panel-head", panel) : null;
+  if (!head || head.__plexInstanceUI) return;
+  head.__plexInstanceUI = true;
+
+  const wrap = d.createElement("div");
+  wrap.className = "inline";
+  wrap.style.display = "flex";
+  wrap.style.gap = "8px";
+  wrap.style.alignItems = "center";
+  wrap.title = "Select which Plex account this config applies to.";
+
+  const lab = d.createElement("span");
+  lab.className = "muted";
+  lab.textContent = "Profile";
+
+  const sel = d.createElement("select");
+  sel.id = "plex_instance";
+  sel.className = "input";
+  sel.style.minWidth = "160px";
+
+  const btnNew = d.createElement("button");
+  btnNew.type = "button";
+  btnNew.className = "btn secondary";
+  btnNew.id = "plex_instance_new";
+  btnNew.textContent = "New";
+
+  const btnDel = d.createElement("button");
+  btnDel.type = "button";
+  btnDel.className = "btn secondary";
+  btnDel.id = "plex_instance_del";
+  btnDel.textContent = "Delete";
+
+  wrap.appendChild(lab);
+  wrap.appendChild(sel);
+  wrap.appendChild(btnNew);
+  wrap.appendChild(btnDel);
+  head.appendChild(wrap);
+
+  refreshPlexInstanceOptions(true);
+
+  sel.addEventListener("change", async () => {
+    setPlexInstance(sel.value);
+    try { await hydratePlexFromConfigRaw(); } catch {}
+    try { refreshPlexLibraries(); } catch {}
+    try { mountPlexUserPicker(); } catch {}
+    try { schedulePlexPmsProbe(200); } catch {}
+  });
+
+  btnNew.addEventListener("click", async () => {
+    try {
+      const r = await fetch(`/api/provider-instances/plex/next?ts=${Date.now()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      const id = String(j?.id || "").trim();
+      if (!r.ok || j?.ok === false || !id) throw new Error(String(j?.error || "create_failed"));
+      setPlexInstance(id);
+      await refreshPlexInstanceOptions(true);
+      sel.value = id;
+      try { await hydratePlexFromConfigRaw(); } catch {}
+      try { refreshPlexLibraries(); } catch {}
+      try { mountPlexUserPicker(); } catch {}
+      try { schedulePlexPmsProbe(200); } catch {}
+    } catch (e) {
+      notify("Could not create profile: " + (e?.message || e));
+    }
+  });
+
+  btnDel.addEventListener("click", async () => {
+    const id = getPlexInstance();
+    if (id === "default") return notify("Default profile cannot be deleted.");
+    if (!confirm(`Delete Plex profile "${id}"?`)) return;
+    try {
+      const r = await fetch(`/api/provider-instances/plex/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(String(j?.error || "delete_failed"));
+      setPlexInstance("default");
+      await refreshPlexInstanceOptions(false);
+      sel.value = "default";
+      try { await hydratePlexFromConfigRaw(); } catch {}
+    } catch (e) {
+      notify("Could not delete profile: " + (e?.message || e));
+    }
+  });
+}
+
+
   function plexAuthSubSelect(tab, opts = {}) {
     const root = q('#sec-plex .cw-meta-provider-panel[data-provider="plex"]') || q("#sec-plex .cw-panel");
     if (!root) return;
@@ -66,6 +212,7 @@
   function schedulePlexHydrate(delayMs = 0) {
     try { if (__plexHydrateTimer) clearTimeout(__plexHydrateTimer); } catch {}
     __plexHydrateTimer = setTimeout(async () => {
+      try { ensurePlexInstanceUI(); } catch {}
       try { mountPlexAuthTabs(); } catch {}
       if (!$("plex_token") || !$("plex_server_url") || !$("plex_username")) return;
       try { await hydratePlexFromConfigRaw(); } catch {}
@@ -129,7 +276,7 @@
     const tok = String($("plex_token")?.value || "").trim();
     if (!tok) { setPlexBannerDetail(null, ""); return; }
     try {
-      const r = await fetch("/api/plex/pms/probe" + bust(), { cache: "no-store" });
+      const r = await fetch(plexApi("/api/plex/pms/probe"), { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (r.ok && j?.reachable) {
         setPlexBannerDetail(null, "");
@@ -152,7 +299,7 @@
     let win = null; try { win = w.open("https://plex.tv/link", "_blank"); } catch {}
     let data = null;
     try {
-      const r = await fetch("/api/plex/pin/new", { method: "POST", cache: "no-store" });
+      const r = await fetch(plexApi("/api/plex/pin/new"), { method: "POST", cache: "no-store" });
       data = await r.json();
       if (!r.ok || data?.ok === false) throw new Error(data?.error || "PIN request failed");
     } catch (e) {
@@ -200,7 +347,7 @@
         cfg = await fetch("/api/config" + bust(), { cache: "no-store" }).then(r => r.json());
       } catch {}
 
-      const p = (cfg && cfg.plex) || {};
+      const p = getPlexCfgBlock(cfg || {});
       const tok = (p.account_token || "").trim();
 
       if (tok) {
@@ -253,7 +400,7 @@ async function plexDeleteToken() {
   const btn = d.querySelector('#sec-plex .btn.danger, #sec-plex [data-action="plex-delete"], #sec-plex button[id*="delete"]');
   try { if (btn) { btn.disabled = true; btn.classList.add("busy"); } } catch {}
   try {
-    const r = await fetch("/api/plex/token/delete", {
+    const r = await fetch(plexApi("/api/plex/token/delete"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -286,7 +433,7 @@ async function plexDeleteToken() {
   async function hydratePlexFromConfigRaw() {
     try {
       const r = await fetch("/api/config", { cache: "no-store" }); if (!r.ok) return;
-      const cfg = await r.json(); const p = cfg?.plex || {};
+      const cfg = await r.json(); const p = getPlexCfgBlock(cfg);
       await waitFor("#plex_server_url"); await waitFor("#plex_username");
       const set = (id, val) => { const el = $(id); if (el != null && val != null) el.value = String(val); };
       set("plex_token", p.account_token || "");
@@ -431,7 +578,7 @@ async function plexDeleteToken() {
       // Fetch /api/plex/pms for server suggestions
       let bestSuggestion = "";
       try {
-        const r = await fetch("/api/plex/pms?ts=" + Date.now(), { cache: "no-store" });
+        const r = await fetch(plexApi("/api/plex/pms"), { cache: "no-store" });
         if (r.ok) {
           const j = await r.json();
           const servers = Array.isArray(j?.servers) ? j.servers : [];
@@ -465,7 +612,7 @@ async function plexDeleteToken() {
 
       // Hydrate username/account_id via /api/plex/inspect
       try {
-        const rr = await fetch("/api/plex/inspect?ts=" + Date.now(), { cache: "no-store" });
+        const rr = await fetch(plexApi("/api/plex/inspect"), { cache: "no-store" });
         if (rr.ok) {
           const dta = await rr.json();
           const set = (id, val) => {
@@ -485,16 +632,19 @@ async function plexDeleteToken() {
   }
   
   // User picker
-  let __plexUsers = null;
+  const __plexUsersByInst = new Map();
 
   async function fetchPlexUsers() {
-    if (Array.isArray(__plexUsers)) return __plexUsers;
+    const inst = getPlexInstance();
+    if (__plexUsersByInst.has(inst)) return __plexUsersByInst.get(inst) || [];
+    let out = [];
     try {
-      const r = await fetch("/api/plex/pickusers" + bust(), { cache: "no-store" });
+      const r = await fetch(plexApi("/api/plex/pickusers"), { cache: "no-store" });
       const j = await r.json();
-      __plexUsers = Array.isArray(j?.users) ? j.users : [];
-    } catch { __plexUsers = []; }
-    return __plexUsers;
+      out = Array.isArray(j?.users) ? j.users : [];
+    } catch { out = []; }
+    __plexUsersByInst.set(inst, out);
+    return out;
   }
 
   function renderPlexUserList() {
@@ -503,8 +653,9 @@ async function plexDeleteToken() {
     const rank = { owner:0, managed:1, friend:2 };
     const by = new Map();
 
+    const src = __plexUsersByInst.get(getPlexInstance()) || [];
     // dedup by username/title; prefer PMS id, then better type, then smaller id
-    for (const u of (__plexUsers || [])) {
+    for (const u of src) {
       const uname = (u.username || u.title || `user#${u.id}`).trim();
       const key = uname.toLowerCase();
       const isPms = Number.isInteger(u.id) && u.id < 100000;
@@ -611,7 +762,7 @@ async function plexDeleteToken() {
   async function plexLoadLibraries() {
     let libs = [];
     try {
-      const r = await fetch("/api/plex/libraries" + bust(), { cache: "no-store" });
+      const r = await fetch(plexApi("/api/plex/libraries"), { cache: "no-store" });
       if (r.ok) {
         const j = await r.json();
         libs = Array.isArray(j?.libraries) ? j.libraries : [];
@@ -814,7 +965,7 @@ async function plexDeleteToken() {
     };
 
     cfg = cfg || (w.__cfg ||= {});
-    const plex = (cfg.plex = cfg.plex || {});
+    const plex = getPlexCfgBlock(cfg);
 
     const url  = v("#plex_server_url");
     const user = v("#plex_username");

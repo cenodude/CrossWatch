@@ -7,6 +7,29 @@
   const txt = (v) => (typeof v === "string" ? v : "").trim();
   const note = (m) => (typeof window.notify === "function" ? window.notify(m) : void 0);
 
+  const MDBLIST_INSTANCE_KEY = "cw.ui.mdblist.auth.instance.v1";
+
+  function getMDBListInstance() {
+    var s = el("mdblist_instance");
+    var v = s ? txt(s.value) : "";
+    if (!v) { try { v = localStorage.getItem(MDBLIST_INSTANCE_KEY) || ""; } catch (_) {} }
+    v = txt(v) || "default";
+    return v.toLowerCase() === "default" ? "default" : v;
+  }
+
+  function setMDBListInstance(v) {
+    var id = txt(String(v || "")) || "default";
+    try { localStorage.setItem(MDBLIST_INSTANCE_KEY, id); } catch (_) {}
+    var s = el("mdblist_instance");
+    if (s) s.value = id;
+  }
+
+  function mdblApi(path) {
+    var p = String(path || "");
+    var sep = p.indexOf("?") >= 0 ? "&" : "?";
+    return p + sep + "instance=" + encodeURIComponent(getMDBListInstance()) + "&ts=" + Date.now();
+  }
+
   async function fetchJSON(url, opts) {
     const r = await fetch(url, opts || {});
     let j = null; try { j = await r.json(); } catch {}
@@ -14,18 +37,152 @@
   }
 
   async function getCfg() {
-    const r = await fetchJSON("/api/config", { cache: "no-store" });
+    const r = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
     return r.ok ? (r.data || {}) : {};
   }
 
+  function getMDBListCfgBlock(cfg) {
+    cfg = cfg || {};
+    var base = (cfg.mdblist && typeof cfg.mdblist === "object") ? cfg.mdblist : (cfg.mdblist = {});
+    var inst = getMDBListInstance();
+    if (inst === "default") return base;
+    if (!base.instances || typeof base.instances !== "object") base.instances = {};
+    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+    return base.instances[inst];
+  }
+
+  async function refreshMDBListInstanceOptions(preserve) {
+    var sel = el("mdblist_instance");
+    if (!sel) return;
+    var want = preserve === false ? "default" : getMDBListInstance();
+    try {
+      var r = await fetch("/api/provider-instances/mdblist?ts=" + Date.now(), { cache: "no-store" });
+      var arr = await r.json().catch(function(){ return []; });
+      var opts = Array.isArray(arr) ? arr : [];
+      sel.innerHTML = "";
+      function addOpt(id, label) {
+        var o = document.createElement("option");
+        o.value = String(id);
+        o.textContent = String(label || id);
+        sel.appendChild(o);
+      }
+      addOpt("default", "Default");
+      opts.forEach(function(o){ if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
+      if (!Array.from(sel.options).some(function(o){ return o.value === want; })) want = "default";
+      sel.value = want;
+      setMDBListInstance(want);
+    } catch (_) {}
+  }
+
+  function ensureMDBListInstanceUI() {
+    var panel = document.querySelector('#sec-mdblist .cw-meta-provider-panel[data-provider="mdblist"]') || document.querySelector('#sec-mdblist .cw-meta-provider-panel') || document.querySelector('#sec-mdblist');
+    var head = panel ? panel.querySelector('.cw-panel-head') : null;
+    if (!head || head.__mdblistInstanceUI) return;
+    head.__mdblistInstanceUI = true;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'inline';
+    wrap.style.display = 'flex';
+    wrap.style.gap = '8px';
+    wrap.style.alignItems = 'center';
+    wrap.style.marginLeft = 'auto';
+    wrap.style.flexWrap = 'nowrap';
+    wrap.title = 'Select which MDBList profile this config applies to.';
+
+    var lab = document.createElement('span');
+    lab.className = 'muted';
+    lab.textContent = 'Profile';
+
+    var sel = document.createElement('select');
+    sel.id = 'mdblist_instance';
+    sel.className = 'input';
+    sel.style.minWidth = '160px';
+
+    // Match Trakt: keep it compact and let content drive the width.
+    sel.style.width = 'auto';
+    sel.style.maxWidth = '220px';
+    sel.style.flex = '0 0 auto';
+    var btnNew = document.createElement('button');
+    btnNew.type = 'button';
+    btnNew.className = 'btn secondary';
+    btnNew.id = 'mdblist_instance_new';
+    btnNew.textContent = 'New';
+
+    var btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.className = 'btn secondary';
+    btnDel.id = 'mdblist_instance_del';
+    btnDel.textContent = 'Delete';
+
+    wrap.appendChild(lab);
+    wrap.appendChild(sel);
+    wrap.appendChild(btnNew);
+    wrap.appendChild(btnDel);
+    head.appendChild(wrap);
+
+    refreshMDBListInstanceOptions(true);
+
+    if (sel && !sel._wired) {
+      sel._wired = true;
+      sel.addEventListener("change", function () {
+        setMDBListInstance(sel.value);
+        void hydrate();
+      });
+    }
+
+    var btnNew = el("mdblist_instance_new");
+    if (btnNew && !btnNew._wired) {
+      btnNew._wired = true;
+      btnNew.addEventListener("click", async function () {
+        try {
+          var r = await fetch("/api/provider-instances/mdblist/next?ts=" + Date.now(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+            cache: "no-store"
+          });
+          var j = await r.json().catch(function(){ return {}; });
+          var id = txt((j && j.id) || "");
+          if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || "create_failed"));
+          setMDBListInstance(id);
+          await refreshMDBListInstanceOptions(true);
+          void hydrate();
+        } catch (e) {
+          note("Could not create profile: " + (e && e.message ? e.message : e));
+        }
+      });
+    }
+
+    var btnDel = el("mdblist_instance_del");
+    if (btnDel && !btnDel._wired) {
+      btnDel._wired = true;
+      btnDel.addEventListener("click", async function () {
+        var id = getMDBListInstance();
+        if (id === "default") return note("Default profile cannot be deleted.");
+        if (!confirm('Delete MDBList profile "' + id + '"?')) return;
+        try {
+          var r = await fetch("/api/provider-instances/mdblist/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
+          var j = await r.json().catch(function(){ return {}; });
+          if (!r.ok || (j && j.ok === false)) throw new Error(String((j && j.error) || "delete_failed"));
+          setMDBListInstance("default");
+          await refreshMDBListInstanceOptions(false);
+          void hydrate();
+        } catch (e) {
+          note("Could not delete profile: " + (e && e.message ? e.message : e));
+        }
+      });
+    }
+  }
+
   async function saveKeyNarrow(key) {
-    const r = await fetchJSON("/api/mdblist/save", {
+    const r = await fetchJSON(mdblApi("/api/mdblist/save"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key })
     });
     if (!r.ok || (r.data && r.data.ok === false)) throw new Error("save_failed");
   }
+
   function setConn(ok, msg) {
     const m = el("mdblist_msg");
     if (!m) return;
@@ -37,9 +194,8 @@
 
   async function refresh() {
     try {
-      await fetch("/api/debug/clear_probe_cache", { method: "POST" }).catch(() => {});
-      const r = await fetchJSON("/api/status?fresh=1", { cache: "no-store" });
-      const ok = !!(r.ok && r.data && r.data.providers && r.data.providers.MDBLIST && r.data.providers.MDBLIST.connected);
+      const r = await fetchJSON(mdblApi("/api/mdblist/status"), { cache: "no-store" });
+      const ok = !!(r.ok && r.data && r.data.connected);
       setConn(ok);
       note(ok ? "MDBList verified ✓" : "MDBList not connected");
     } catch {
@@ -59,8 +215,10 @@
   }
 
   async function hydrate() {
+    ensureMDBListInstanceUI();
     const cfg = window._cfgCache || await getCfg();
-    const has = !!txt(cfg?.mdblist?.api_key);
+    const blk = getMDBListCfgBlock(cfg);
+    const has = !!txt(blk?.api_key);
     const i = el("mdblist_key");
     maskInput(i, has);
     el("mdblist_hint")?.classList.toggle("hidden", has);
@@ -87,7 +245,7 @@
 
   async function onDisc() {
     try {
-      const r = await fetchJSON("/api/mdblist/disconnect", { method: "POST" });
+      const r = await fetchJSON(mdblApi("/api/mdblist/disconnect"), { method: "POST" });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       const i = el("mdblist_key");
       maskInput(i, false);
@@ -112,11 +270,12 @@
     const host = document.getElementById("auth-providers");
     if (!host) return;
     if (watch._obs) return;
-    watch._obs = new MutationObserver(() => { wire(); });
+    watch._obs = new MutationObserver(() => { ensureMDBListInstanceUI(); wire(); });
     watch._obs.observe(host, { childList: true, subtree: true });
   }
 
   function boot() {
+    ensureMDBListInstanceUI();
     wire();
     watch();
     if (document.readyState === "loading") {
@@ -127,10 +286,18 @@
   }
 
   document.addEventListener("settings-collect", (ev) => {
-    const cfg = ev?.detail?.cfg; const v = txt(el("mdblist_key")?.value || "");
+    const cfg = ev?.detail?.cfg;
+    const v = txt(el("mdblist_key")?.value || "");
     if (!cfg || !v) return;
+    const inst = getMDBListInstance();
     cfg.mdblist = cfg.mdblist || {};
-    cfg.mdblist.api_key = v;
+    if (inst === "default") {
+      cfg.mdblist.api_key = v;
+      return;
+    }
+    cfg.mdblist.instances = cfg.mdblist.instances || {};
+    cfg.mdblist.instances[inst] = cfg.mdblist.instances[inst] || {};
+    cfg.mdblist.instances[inst].api_key = v;
   });
 
   window.initMDBListAuthUI = boot;
