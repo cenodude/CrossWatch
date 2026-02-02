@@ -116,6 +116,11 @@ def _cfg_pairs(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 def _gen_id(prefix: str = "pair") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
+
+def _norm_instance_id(v: Any) -> str:
+    s = str(v or "").strip()
+    return "default" if not s or s.lower() == "default" else s
+
 # Orchestrator state loading
 SUMMARY_LOCK = threading.Lock()
 SUMMARY: dict[str, Any] = {}
@@ -1759,6 +1764,8 @@ def api_sync_providers() -> JSONResponse:
 class PairIn(BaseModel):
     source: str
     target: str
+    source_instance: str | None = None
+    target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
     features: dict[str, Any] | None = None
@@ -1766,6 +1773,8 @@ class PairIn(BaseModel):
 class PairPatch(BaseModel):
     source: str | None = None
     target: str | None = None
+    source_instance: str | None = None
+    target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
     features: dict[str, Any] | None = None
@@ -1781,6 +1790,14 @@ def api_pairs_list() -> JSONResponse:
             newf = _normalize_features(it.get("features"))
             if newf != (it.get("features") or {}):
                 it["features"] = newf
+                dirty = True
+            si = _norm_instance_id(it.get("source_instance"))
+            ti = _norm_instance_id(it.get("target_instance"))
+            if it.get("source_instance") != si:
+                it["source_instance"] = si
+                dirty = True
+            if it.get("target_instance") != ti:
+                it["target_instance"] = ti
                 dirty = True
         if dirty:
             save_config(cfg)
@@ -1801,6 +1818,8 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
 
         item = payload.model_dump()
         item.setdefault("mode", "one-way")
+        item["source_instance"] = _norm_instance_id(item.get("source_instance"))
+        item["target_instance"] = _norm_instance_id(item.get("target_instance"))
         item["enabled"] = bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
         item["id"] = _gen_id("pair")
@@ -1870,6 +1889,10 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
             if str(it.get("id")) == str(pair_id):
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
+                if "source_instance" in upd:
+                    upd["source_instance"] = _norm_instance_id(upd.get("source_instance"))
+                if "target_instance" in upd:
+                    upd["target_instance"] = _norm_instance_id(upd.get("target_instance"))
                 for k, v in upd.items():
                     it[k] = v
                 save_config(cfg)
