@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import os
+
 from ._planner import diff_ratings
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
@@ -171,8 +173,8 @@ def _two_way_sync(
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
 
-    Ha = health_map.get(a) or {}
-    Hb = health_map.get(b) or {}
+    Ha = health_map.get(f"{a}#{src_inst}") or health_map.get(a) or {}
+    Hb = health_map.get(f"{b}#{dst_inst}") or health_map.get(b) or {}
     sa = _health_status(Ha)
     sb = _health_status(Hb)
     a_down = (sa == "down")
@@ -214,7 +216,8 @@ def _two_way_sync(
 
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
-        rem = _rate_remaining(health_map.get(pname))
+        inst = src_inst if pname == a else (dst_inst if pname == b else "default")
+        rem = _rate_remaining(health_map.get(f"{pname}#{inst}") or health_map.get(pname))
         if rem is not None and rem < 10:
             emit("rate:slow", provider=pname, remaining=rem, base_ms=base, extra_ms=1000)
             return base + 1000
@@ -1078,8 +1081,9 @@ def run_two_way_feature(
 
     emit = ctx.emit
 
-    Hs = health_map.get(str(src).upper()) or {}
-    Hd = health_map.get(str(dst).upper()) or {}
+    src_u = str(src).upper(); dst_u = str(dst).upper()
+    Hs = health_map.get(f"{src_u}#{src_inst}") or health_map.get(src_u) or {}
+    Hd = health_map.get(f"{dst_u}#{dst_inst}") or health_map.get(dst_u) or {}
 
     include_obs_override = None
     if _health_status(Hs) == "down" or _health_status(Hd) == "down":

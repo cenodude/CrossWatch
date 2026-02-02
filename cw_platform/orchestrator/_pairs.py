@@ -14,6 +14,7 @@ from ._pairs_utils import (
     supports_feature,
 )
 from ._pairs_metrics import ApiMetrics, persist_api_totals
+from ..provider_instances import build_pair_config_view, build_provider_config_view, normalize_instance_id
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 
@@ -38,23 +39,28 @@ except Exception:
 def _collect_health_for_run(ctx) -> dict[str, Any]:
     emit = ctx.emit
     provs = ctx.providers or {}
-    needed: set[str] = set()
 
-    for p in (ctx.config.get("pairs") or []):
+    cfg: Mapping[str, Any] = ctx.config or {}
+    needed: set[tuple[str, str]] = set()
+
+    for p in (cfg.get("pairs") or []):
         if not p.get("enabled", True):
             continue
         s = str(p.get("source") or "").upper().strip()
         t = str(p.get("target") or "").upper().strip()
+        si = normalize_instance_id(p.get("source_instance"))
+        ti = normalize_instance_id(p.get("target_instance"))
         if s:
-            needed.add(s)
+            needed.add((s, si))
         if t:
-            needed.add(t)
+            needed.add((t, ti))
 
     health_map: dict[str, Any] = {}
 
     @contextmanager
-    def _health_env(provider: str):
-        key = f"health:{str(provider).upper()}"
+    def _health_env(provider: str, instance_id: str):
+        suffix = f"{str(provider).upper()}#{normalize_instance_id(instance_id)}"
+        key = f"health:{suffix}"
         new = {
             "CW_PAIR_KEY": key,
             "CW_PAIR_SCOPE": key,
@@ -62,6 +68,8 @@ def _collect_health_for_run(ctx) -> dict[str, Any]:
             "CW_PAIR": key,
             "CW_PAIR_SRC": str(provider).upper(),
             "CW_PAIR_DST": str(provider).upper(),
+            "CW_PAIR_SRC_INSTANCE": normalize_instance_id(instance_id),
+            "CW_PAIR_DST_INSTANCE": normalize_instance_id(instance_id),
             "CW_PAIR_MODE": "health",
             "CW_PAIR_FEATURE": "health",
         }
@@ -76,24 +84,29 @@ def _collect_health_for_run(ctx) -> dict[str, Any]:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-    for name in sorted(n for n in needed):
+
+    for name, inst in sorted(needed):
         ops = provs.get(name)
         if not ops:
             continue
 
-        with _health_env(name):
+        cfg_view = build_provider_config_view(cfg, name, inst)
+
+        with _health_env(name, inst):
             inject_ctx_into_provider(ops, ctx)
             try:
-                h = ops.health(ctx.config, emit=emit) or {}
+                h = ops.health(cfg_view, emit=emit) or {}
             except TypeError:
-                h = ops.health(ctx.config) or {}
+                h = ops.health(cfg_view) or {}
             except Exception as e:
                 h = {"ok": False, "status": "down", "details": f"health exception: {e}"}
 
-        health_map[name] = h
+        health_key = f"{str(name).upper()}#{normalize_instance_id(inst)}"
+        health_map[health_key] = h
         emit(
             "health",
             provider=name,
+            instance=normalize_instance_id(inst),
             status=str(h.get("status") or "unknown").lower(),
             ok=bool(h.get("ok", True)),
             latency_ms=h.get("latency_ms"),
@@ -138,11 +151,17 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
 
 def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str) -> str:
     mode_norm = str(mode or "one-way").strip().lower()
+
+    si = normalize_instance_id(pair.get("source_instance"))
+    ti = normalize_instance_id(pair.get("target_instance"))
+    a = f"{str(src).upper()}#{si}"
+    b = f"{str(dst).upper()}#{ti}"
+
     if mode_norm == "two-way":
-        base = "-".join(sorted([str(src).upper(), str(dst).upper()]))
+        base = "-".join(sorted([a, b]))
         mode_norm = "two-way"
     else:
-        base = f"{str(src).upper()}-{str(dst).upper()}"
+        base = f"{a}-{b}"
         mode_norm = "one-way"
 
     raw_id = pair.get("id") or pair.get("pair_id") or pair.get("name") or pair.get("label") or ""
@@ -224,6 +243,9 @@ def run_pairs(ctx) -> dict[str, Any]:
     for i, pair in enumerate(pairs, 1):
         src = str(pair.get("source") or "").upper().strip()
         dst = str(pair.get("target") or "").upper().strip()
+        src_inst = normalize_instance_id(pair.get("source_instance"))
+        dst_inst = normalize_instance_id(pair.get("target_instance"))
+        pair_cfg_view = build_pair_config_view(cfg, src, src_inst, dst, dst_inst)
         feat_map = dict(pair.get("features") or {})
         mode = str(pair.get("mode") or "one-way").lower().strip()
 
@@ -250,6 +272,8 @@ def run_pairs(ctx) -> dict[str, Any]:
             n=len(pairs),
             src=src,
             dst=dst,
+            src_instance=src_inst,
+            dst_instance=dst_inst,
             mode=mode,
             features=features,
         )
@@ -260,8 +284,8 @@ def run_pairs(ctx) -> dict[str, Any]:
             emit_info(f"[!] Missing provider ops for {src}→{dst}")
             continue
 
-        ss = health_status(health_map.get(src) or {})
-        sd = health_status(health_map.get(dst) or {})
+        ss = health_status(health_map.get(f"{src}#{src_inst}") or health_map.get(src) or {})
+        sd = health_status(health_map.get(f"{dst}#{dst_inst}") or health_map.get(dst) or {})
         if ss == "auth_failed" or sd == "auth_failed":
             emit("pair:skip", src=src, dst=dst, reason="auth_failed", src_status=ss, dst_status=sd)
             continue
@@ -274,53 +298,58 @@ def run_pairs(ctx) -> dict[str, Any]:
                 continue
 
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
-                if not injected:
-                    inject_ctx_into_provider(sops, ctx)
-                    inject_ctx_into_provider(dops, ctx)
-                    injected = True
+                prev_cfg = ctx.config
+                ctx.config = pair_cfg_view
+                try:
+                    if not injected:
+                        inject_ctx_into_provider(sops, ctx)
+                        inject_ctx_into_provider(dops, ctx)
+                        injected = True
 
-                src_ok = supports_feature(sops, feature) and health_feature_ok(health_map.get(src), feature)
-                dst_ok = supports_feature(dops, feature) and health_feature_ok(health_map.get(dst), feature)
-                if (not src_ok) or (not dst_ok):
-                    emit(
-                        "feature:unsupported",
-                        src=src,
-                        dst=dst,
-                        feature=feature,
-                        src_supported=src_ok,
-                        dst_supported=dst_ok,
-                    )
-                    continue
+                    src_ok = supports_feature(sops, feature) and health_feature_ok(health_map.get(f"{src}#{src_inst}") or health_map.get(src), feature)
+                    dst_ok = supports_feature(dops, feature) and health_feature_ok(health_map.get(f"{dst}#{dst_inst}") or health_map.get(dst), feature)
+                    if (not src_ok) or (not dst_ok):
+                        emit(
+                            "feature:unsupported",
+                            src=src,
+                            dst=dst,
+                            feature=feature,
+                            src_supported=src_ok,
+                            dst_supported=dst_ok,
+                        )
+                        continue
 
-                features_ran.add(feature)
+                    features_ran.add(feature)
 
-                if mode == "two-way":
-                    res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                    added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
-                    removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
-                    unresolved_total += (
-                        int(res.get("unresolved", 0))
-                        + int(res.get("unresolved_to_A", 0))
-                        + int(res.get("unresolved_to_B", 0))
-                    )
-                    skipped_total += (
-                        int(res.get("skipped", 0))
-                        + int(res.get("skipped_to_A", 0))
-                        + int(res.get("skipped_to_B", 0))
-                    )
-                    errors_total += (
-                        int(res.get("errors", 0))
-                        + int(res.get("errors_to_A", 0))
-                        + int(res.get("errors_to_B", 0))
-                    )
-                else:
-                    res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
-                    added_total += int(res.get("added", 0))
-                    removed_total += int(res.get("removed", 0))
-                    unresolved_total += int(res.get("unresolved", 0))
-                    skipped_total += int(res.get("skipped", 0))
-                    errors_total += int(res.get("errors", 0))
+                    if mode == "two-way":
+                        res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                        added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
+                        removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
+                        unresolved_total += (
+                            int(res.get("unresolved", 0))
+                            + int(res.get("unresolved_to_A", 0))
+                            + int(res.get("unresolved_to_B", 0))
+                        )
+                        skipped_total += (
+                            int(res.get("skipped", 0))
+                            + int(res.get("skipped_to_A", 0))
+                            + int(res.get("skipped_to_B", 0))
+                        )
+                        errors_total += (
+                            int(res.get("errors", 0))
+                            + int(res.get("errors_to_A", 0))
+                            + int(res.get("errors_to_B", 0))
+                        )
+                    else:
+                        res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                        added_total += int(res.get("added", 0))
+                        removed_total += int(res.get("removed", 0))
+                        unresolved_total += int(res.get("unresolved", 0))
+                        skipped_total += int(res.get("skipped", 0))
+                        errors_total += int(res.get("errors", 0))
 
+                finally:
+                    ctx.config = prev_cfg
     if "watchlist" in features_ran:
         try:
             from ._tombstones import cascade_removals

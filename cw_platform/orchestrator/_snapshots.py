@@ -19,7 +19,7 @@ from ._types import InventoryOps
 from ..modules_registry import load_sync_ops
 
 SnapIndex = dict[str, dict[str, Any]]
-SnapCache = dict[tuple[str, str], tuple[float, SnapIndex]]
+SnapCache = dict[tuple[str, str, str], tuple[float, SnapIndex]]
 
 def _key_rank(k: str) -> int:
     s = str(k or "").strip().lower()
@@ -567,7 +567,8 @@ def build_snapshots_for_feature(
         if not provider_configured(config, name):
             continue
 
-        memo_key = (name, feature)
+        scope = pair_scope() or "unscoped"
+        memo_key = (scope, name, feature)
         if snap_ttl_sec > 0:
             ent = snap_cache.get(memo_key)
             if ent is not None:

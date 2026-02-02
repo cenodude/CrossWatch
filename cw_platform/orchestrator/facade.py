@@ -62,7 +62,7 @@ class Orchestrator:
     debug: bool = field(init=False, default=False)
     emitter: Emitter = field(init=False)
     warn_thresholds: dict[str, int] = field(init=False, default_factory=dict)
-    snap_cache: dict[tuple[str, str], tuple[float, dict[str, dict[str, Any]]]] = field(
+    snap_cache: dict[tuple[str, str, str], tuple[float, dict[str, dict[str, Any]]]] = field(
         init=False, default_factory=dict
     )
     snap_ttl_sec: int = field(init=False, default=0)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import os
+
 
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
@@ -149,6 +151,8 @@ def run_one_way_feature(
     health_map: Mapping[str, Any],
 ) -> dict[str, Any]:
     cfg, emit, dbg = ctx.config, ctx.emit, ctx.dbg
+    src_inst = str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default")
+    dst_inst = str(os.getenv("CW_PAIR_DST_INSTANCE") or "default")
     sync_cfg = (cfg.get("sync") or {})
     provs = ctx.providers
 
@@ -168,8 +172,8 @@ def run_one_way_feature(
     allow_adds = flags["allow_adds"]
     allow_removes = flags["allow_removals"]
 
-    Hs = health_map.get(src) or {}
-    Hd = health_map.get(dst) or {}
+    Hs = health_map.get(f"{src}#{src_inst}") or health_map.get(src) or {}
+    Hd = health_map.get(f"{dst}#{dst_inst}") or health_map.get(dst) or {}
     ss = _health_status(Hs)
     sd = _health_status(Hd)
     src_down = (ss == "down")
@@ -214,7 +218,8 @@ def run_one_way_feature(
 
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
-        rem = _rate_remaining(health_map.get(pname))
+        inst = src_inst if pname == src else (dst_inst if pname == dst else "default")
+        rem = _rate_remaining(health_map.get(f"{pname}#{inst}") or health_map.get(pname))
         if rem is not None and rem < 10:
             emit("rate:slow", provider=pname, remaining=rem, base_ms=base, extra_ms=1000)
             return base + 1000
