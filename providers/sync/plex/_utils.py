@@ -16,6 +16,7 @@ import requests
 from requests.exceptions import ConnectionError, SSLError
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import normalize_instance_id
 
 def _boolish(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
@@ -76,13 +77,30 @@ def _throttle(path: str) -> bool:
     return False
 
 
-def _plex(cfg: Mapping[str, Any]) -> dict[str, Any]:
+def _plex(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
     plex = cfg.get("plex")
     if not isinstance(plex, dict):
         plex = {}
         if isinstance(cfg, dict):
             cfg["plex"] = plex  # type: ignore[assignment]
-    return plex
+        return plex
+    inst = normalize_instance_id(instance_id)
+    if inst == "default":
+        return plex
+    insts = plex.get("instances")
+    if not isinstance(insts, dict):
+        if not isinstance(cfg, dict):
+            return {}
+        insts = {}
+        plex["instances"] = insts
+    blk = insts.get(inst)
+    if isinstance(blk, dict):
+        return blk
+    if not isinstance(cfg, dict):
+        return {}
+    out: dict[str, Any] = {}
+    insts[inst] = out
+    return out
 
 
 def _insert_key_first_inplace(d: dict[str, Any], key: str, value: Any) -> bool:
@@ -135,10 +153,10 @@ def _plex_headers(token: str) -> dict[str, str]:
     }
 
 
-def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str) -> bool:
+def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str, instance_id: Any = None) -> bool:
     if not str(url).lower().startswith("https"):
         return True
-    plex = (cfg.get("plex") or {}) if isinstance(cfg, dict) else {}
+    plex = _plex(cfg, instance_id)
     env = os.environ.get("CW_PLEX_VERIFY")
     if env is not None:
         return _boolish(env, True)
@@ -249,6 +267,141 @@ def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> str | N
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+def fetch_cloud_user_info(token: str, timeout: float = 8.0) -> dict[str, Any] | None:
+    t = (token or "").strip()
+    if not t:
+        return None
+    try:
+        response = requests.get("https://plex.tv/api/v2/user", headers=_plex_headers(t), timeout=timeout)
+        if not response.ok:
+            return None
+        data = response.json()
+        return data if isinstance(data, dict) else None
+    except Exception as e:  # noqa: BLE001
+        _warn("cloud_user_fetch_failed", error=str(e))
+        return None
+
+
+def fetch_cloud_home_users(token: str, timeout: float = 8.0) -> list[dict[str, Any]]:
+    t = (token or "").strip()
+    if not t:
+        return []
+
+    def from_xml(xml_text: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        try:
+            root = ET.fromstring(xml_text)
+            for u in root.findall(".//User") + root.findall(".//user"):
+                uid_raw = u.attrib.get("id") or u.attrib.get("ID")
+                try:
+                    uid = int(uid_raw or 0)
+                except Exception:  # noqa: BLE001
+                    uid = 0
+                if uid <= 0:
+                    continue
+                title = (u.attrib.get("title") or u.attrib.get("name") or "").strip()
+                uname = (u.attrib.get("username") or title or "").strip()
+                email = (u.attrib.get("email") or "").strip()
+                admin = (u.attrib.get("admin") or u.attrib.get("isAdmin") or "").strip().lower()
+                is_admin = admin in ("1", "true", "yes")
+                out.append({"id": uid, "username": uname, "title": title or uname, "email": email, "type": "owner" if is_admin else "managed"})
+        except Exception:  # noqa: BLE001
+            return []
+        return out
+
+    def from_json(data: Any) -> list[dict[str, Any]]:
+        arr: list[Any] = []
+        if isinstance(data, list):
+            arr = data
+        elif isinstance(data, dict):
+            cand = data.get("users") or data.get("homeUsers") or data.get("home_users")
+            if isinstance(cand, list):
+                arr = cand
+        out: list[dict[str, Any]] = []
+        for it in arr:
+            if not isinstance(it, dict):
+                continue
+            uid = it.get("id")
+            try:
+                uid_i = int(uid or 0)
+            except Exception:  # noqa: BLE001
+                uid_i = 0
+            if uid_i <= 0:
+                continue
+            title = str(it.get("title") or it.get("name") or "").strip()
+            uname = str(it.get("username") or title or "").strip()
+            email = str(it.get("email") or "").strip()
+            is_admin = bool(it.get("admin") or it.get("isAdmin") or it.get("is_admin"))
+            out.append({"id": uid_i, "username": uname, "title": title or uname, "email": email, "type": "owner" if is_admin else "managed"})
+        return out
+
+    urls = ("https://plex.tv/api/v2/home/users", "https://plex.tv/api/home/users")
+    headers = _plex_headers(t)
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            if not response.ok:
+                continue
+            text = (response.text or "").lstrip()
+            if text.startswith("<"):
+                users = from_xml(text)
+                if users:
+                    return users
+                continue
+            users = from_json(response.json())
+            if users:
+                return users
+        except Exception:  # noqa: BLE001
+            continue
+    return []
+
+
+def fetch_cloud_account_users(token: str, timeout: float = 8.0) -> list[dict[str, Any]]:
+    """Fetch all Plex account users (incl. friends) from plex.tv.
+
+    plex.tv/api/v2/home/users covers Plex Home only. The older plex.tv/api/users
+    endpoint returns a broader set including users you shared with.
+    """
+
+    t = (token or "").strip()
+    if not t:
+        return []
+
+    headers = _plex_headers(t)
+    headers["Accept"] = "application/xml"
+    urls = ("https://plex.tv/api/users", "https://plex.tv/api/users/")
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if not r.ok:
+                # Some deployments only accept the token as a query param.
+                r = requests.get(url, headers={k: v for k, v in headers.items() if k != "X-Plex-Token"}, params={"X-Plex-Token": t}, timeout=timeout)
+            if not r.ok:
+                continue
+            text = (r.text or "").lstrip()
+            if not text.startswith("<"):
+                continue
+            root = ET.fromstring(text)
+            out: list[dict[str, Any]] = []
+            for u in root.findall(".//User") + root.findall(".//user"):
+                uid_raw = u.attrib.get("id") or u.attrib.get("ID")
+                try:
+                    uid = int(uid_raw or 0)
+                except Exception:  # noqa: BLE001
+                    uid = 0
+                if uid <= 0:
+                    continue
+                title = (u.attrib.get("title") or u.attrib.get("name") or "").strip()
+                uname = (u.attrib.get("username") or title or "").strip()
+                email = (u.attrib.get("email") or "").strip()
+                out.append({"id": uid, "username": uname or title or f"user{uid}", "title": title or uname, "email": email, "type": "friend"})
+            if out:
+                return out
+        except Exception:  # noqa: BLE001
+            continue
+    return []
 
 
 def _pms_id_from_attr_map(attrs: Mapping[str, Any]) -> int | None:
@@ -389,9 +542,9 @@ def fetch_libraries(
     return libs
 
 
-def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
-    cfg = load_config()
-    plex = _plex(cfg)
+def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
+    cfg = load_config() if cfg is None else cfg
+    plex = _plex(cfg, instance_id)
     token = (plex.get("account_token") or "").strip()
     base = (plex.get("server_url") or "").strip()
     if not token:
@@ -404,7 +557,7 @@ def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
         base = base_url
     if not base:
         return []
-    verify = _resolve_verify_from_cfg(cfg, base)
+    verify = _resolve_verify_from_cfg(cfg, base, instance_id)
     libs = fetch_libraries(base, token, verify=verify)
     if not libs and verify:
         _info("libs_retry_insecure")
@@ -412,9 +565,9 @@ def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
     return libs
 
 
-def inspect_and_persist() -> dict[str, Any]:
-    cfg = load_config()
-    plex = _plex(cfg)
+def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> dict[str, Any]:
+    cfg = load_config() if cfg is None else cfg
+    plex = _plex(cfg, instance_id)
     token = (plex.get("account_token") or "").strip()
     base = (plex.get("server_url") or "").strip()
     username = plex.get("username") or ""
@@ -429,7 +582,7 @@ def inspect_and_persist() -> dict[str, Any]:
         base = base_url
 
     if token and base:
-        verify = _resolve_verify_from_cfg(cfg, base)
+        verify = _resolve_verify_from_cfg(cfg, base, instance_id)
         server_user: str | None = None
         server_aid: int | None = None
 
@@ -534,9 +687,9 @@ def resolve_user_scope(
     return username, (int(aid) if aid is not None else None)
 
 
-def ensure_whitelist_defaults() -> bool:
-    cfg = load_config()
-    plex = cfg.setdefault("plex", {})
+def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> bool:
+    cfg = load_config() if cfg is None else cfg
+    plex = _plex(cfg, instance_id)
     changed = False
     if not isinstance(plex.get("history"), dict):
         plex["history"] = {}

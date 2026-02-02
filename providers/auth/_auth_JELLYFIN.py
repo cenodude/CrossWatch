@@ -8,6 +8,8 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 from urllib.parse import urljoin
 
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
+
 try:
     from _logging import log as _real_log
 except ImportError:
@@ -119,18 +121,25 @@ class JellyfinAuth(AuthProvider):
             "entity_types": ["movie", "show", "episode"],
         }
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        jf = cfg.get("jellyfin") or {}
+    def get_status(self, cfg: Mapping[str, Any], instance_id: Any = None) -> AuthStatus:
+        jf: dict[str, Any] = {}
+        if isinstance(cfg, dict):
+            jf = ensure_instance_block(cfg, "jellyfin", normalize_instance_id(instance_id))
+        else:
+            jf = (cfg.get("jellyfin") or {}) if isinstance(cfg, Mapping) else {}
+
         server = (jf.get("server") or "").strip()
         token = (jf.get("access_token") or "").strip()
         user = (jf.get("user") or jf.get("username") or "").strip() or None
         return AuthStatus(connected=bool(server and token), label="Jellyfin", user=user)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: Any = None) -> dict[str, Any]:
         import requests
         from requests import exceptions as rx
 
-        jf = cfg.setdefault("jellyfin", {})
+        inst = normalize_instance_id(instance_id)
+
+        jf = ensure_instance_block(cfg, "jellyfin", inst)
         base = _clean_base(jf.get("server", ""))
         user = (jf.get("username") or "").strip()
         pw = (jf.get("password") or "").strip()
@@ -201,17 +210,19 @@ class JellyfinAuth(AuthProvider):
         return {"ok": True, "mode": "user_token", "user_id": jf.get("user_id") or ""}
 
     def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        return self.get_status(cfg)
+        return self.get_status(cfg, inst)
 
     def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg)
+        return self.get_status(cfg, inst)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        jf = cfg.setdefault("jellyfin", {})
+    def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+
+        jf = ensure_instance_block(cfg, "jellyfin", inst)
         for k in ("access_token", "user_id"):
             jf.pop(k, None)
         log("Jellyfin: disconnected", level="INFO", module="AUTH")
-        return self.get_status(cfg)
+        return self.get_status(cfg, inst)
 
 
 PROVIDER = JellyfinAuth()

@@ -11,6 +11,8 @@ import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
+from cw_platform.provider_instances import get_provider_block, ensure_instance_block, ensure_provider_block, normalize_instance_id
+
 try:
     from _logging import log as _real_log
 except ImportError:
@@ -30,6 +32,19 @@ def log(msg: str, *, level: str = "INFO", module: str = "AUTH", extra: dict[str,
             _real_log(msg, level=level, module=module, extra=extra or {})
     except Exception:
         pass
+
+
+def _blocks(cfg: Any, instance_id: Any) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    inst = normalize_instance_id(instance_id)
+    if not isinstance(cfg, dict):
+        return inst, {}, {}
+    base = ensure_provider_block(cfg, "anilist")
+    a = ensure_instance_block(cfg, "anilist", inst)
+    return inst, base, a
+
+
+def _read(cfg: Mapping[str, Any], instance_id: Any) -> dict[str, Any]:
+    return get_provider_block(cfg, "anilist", instance_id)
 
 
 def _gql_viewer(access_token: str) -> dict[str, Any] | None:
@@ -87,8 +102,8 @@ class AniListAuth(AuthProvider):
     def capabilities(self) -> dict[str, Any]:
         return {"features": {"watchlist": {"read": True, "write": True}}}
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        s = (cfg.get("anilist") or {}) if isinstance(cfg, Mapping) else {}
+    def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        s = _read(cfg, instance_id)
         tok = str(s.get("access_token") or "").strip()
         user = s.get("user") or {}
         uname = None
@@ -96,8 +111,8 @@ class AniListAuth(AuthProvider):
             uname = user.get("name")
         return AuthStatus(connected=bool(tok), label="AniList", user=str(uname) if uname else None)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
-        s = cfg.get("anilist") or {}
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, *, instance_id: Any = None) -> dict[str, Any]:
+        _, _, s = _blocks(cfg, instance_id)
         client_id = str(s.get("client_id") or "").strip()
         params = {"client_id": client_id, "response_type": "code", "redirect_uri": redirect_uri}
         url = f"{AUTH_URL}?{urlencode(params)}"
@@ -105,7 +120,8 @@ class AniListAuth(AuthProvider):
         return {"url": url}
 
     def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        s = cfg.setdefault("anilist", {})
+        inst = payload.get("instance_id")
+        _, _, s = _blocks(cfg, inst)
         code = str(payload.get("code") or "").strip()
         redirect_uri = str(payload.get("redirect_uri") or "").strip()
         client_id = str(s.get("client_id") or "").strip()
@@ -122,17 +138,16 @@ class AniListAuth(AuthProvider):
         if viewer:
             s["user"] = dict(viewer)
 
-        return self.get_status(cfg)
+        return self.get_status(cfg, instance_id=inst)
 
-    def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg)
+    def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        return self.get_status(cfg, instance_id=instance_id)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        s = cfg.setdefault("anilist", {})
+    def disconnect(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        _, _, s = _blocks(cfg, instance_id)
         s["access_token"] = ""
         s.pop("user", None)
-        return self.get_status(cfg)
-
+        return self.get_status(cfg, instance_id=instance_id)
 
 PROVIDER = AniListAuth()
 
@@ -153,40 +168,63 @@ def html() -> str:
       box-shadow: 0 0 12px rgba(168,85,247,.35);
     }
     #sec-anilist #btn-connect-anilist:hover{filter:brightness(1.06);box-shadow: 0 0 18px rgba(168,85,247,.5)}
+  
+    #sec-anilist .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   </style>
 
-  <div class="head" onclick="toggleSection('sec-anilist')">
+  <div class="head" onclick="toggleSection && toggleSection('sec-anilist')">
     <span class="chev">▶</span><strong>AniList</strong>
   </div>
+
   <div class="body">
-    <div class="grid2">
-      <div>
-        <label>Client ID</label>
-        <input id="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" oninput="updateAniListButtonState()" />
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="anilist">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">AniList</div>
+            <div class="muted">Connect your account and set API keys.</div>
+          </div>
+        </div>
+
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+        </div>
+
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+                  <div>
+                    <label>Client ID</label>
+                    <input id="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" oninput="updateAniListButtonState()" />
+                  </div>
+                  <div>
+                    <label>Client Secret</label>
+                    <input id="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" oninput="updateAniListButtonState()" />
+                  </div>
+                </div>
+            
+                <div id="anilist_hint" class="msg warn hidden">
+                You need an AniList API key. Create one at
+                <a href="https://anilist.co/settings/developer" target="_blank" rel="noopener">AniList Developer</a>.
+                Set the Redirect URL to <code id="redirect_uri_preview_anilist"></code>.
+                <button class="btn" style="margin-left:8px" onclick="copyAniListRedirect()">Copy Redirect URL</button>
+                </div>
+            
+            
+                <div class="inline" style="margin-top:10px">
+                  <button class="btn" id="btn-connect-anilist" onclick="startAniList()">Connect AniList</button>
+                  <button class="btn danger" onclick="anilistDeleteToken()">Disconnect</button>
+                  <span class="msg ok hidden" id="anilist_msg" role="status" aria-live="polite"></span>
+                </div>
+            
+                <div style="margin-top:10px">
+                  <label>Access Token</label>
+                  <input id="anilist_access_token" placeholder="(auto-filled after auth)" autocomplete="off" />
+                </div>
+          </div>
+        </div>
       </div>
-      <div>
-        <label>Client Secret</label>
-        <input id="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" oninput="updateAniListButtonState()" />
-      </div>
-    </div>
-
-    <div id="anilist_hint" class="msg warn hidden">
-    You need an AniList API key. Create one at
-    <a href="https://anilist.co/settings/developer" target="_blank" rel="noopener">AniList Developer</a>.
-    Set the Redirect URL to <code id="redirect_uri_preview_anilist"></code>.
-    <button class="btn" style="margin-left:8px" onclick="copyAniListRedirect()">Copy Redirect URL</button>
-    </div>
-
-
-    <div class="inline" style="margin-top:10px">
-      <button class="btn" id="btn-connect-anilist" onclick="startAniList()">Connect AniList</button>
-      <button class="btn danger" onclick="anilistDeleteToken()">Disconnect</button>
-      <span class="msg ok hidden" id="anilist_msg" role="status" aria-live="polite"></span>
-    </div>
-
-    <div style="margin-top:10px">
-      <label>Access Token</label>
-      <input id="anilist_access_token" placeholder="(auto-filled after auth)" autocomplete="off" />
     </div>
   </div>
-</div>'''
+</div>
+'''

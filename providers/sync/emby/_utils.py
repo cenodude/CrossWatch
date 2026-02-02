@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 import requests
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 
 UA = "CrossWatch/1.0"
 
@@ -42,40 +43,46 @@ def _headers(token: str | None, device_id: str) -> dict[str, str]:
     return h
 
 
-def ensure_whitelist_defaults() -> None:
-    cfg = load_config()
-    em = cfg.setdefault("emby", {})
+def _emby(cfg: dict[str, Any], instance_id: Any) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    return ensure_instance_block(cfg, "emby", inst)
+
+
+def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> None:
+    cfg2 = cfg or load_config()
+    em = _emby(cfg2, instance_id)
     changed = False
 
-    if "history" not in em or "libraries" not in em.get("history", {}):
+    if "history" not in em or "libraries" not in (em.get("history") or {}):
         em.setdefault("history", {}).setdefault("libraries", [])
         changed = True
 
-    if "ratings" not in em or "libraries" not in em.get("ratings", {}):
+    if "ratings" not in em or "libraries" not in (em.get("ratings") or {}):
         em.setdefault("ratings", {}).setdefault("libraries", [])
         changed = True
 
-    if "scrobble" not in em or "libraries" not in em.get("scrobble", {}):
+    if "scrobble" not in em or "libraries" not in (em.get("scrobble") or {}):
         em.setdefault("scrobble", {}).setdefault("libraries", [])
         changed = True
 
     if changed:
-        save_config(cfg)
+        save_config(cfg2)
 
 
-def _cfg_triplet() -> tuple[str, str | None, str]:
-    cfg = load_config()
-    em = cfg.get("emby") or {}
+def _cfg_triplet(cfg: dict[str, Any], instance_id: Any) -> tuple[str, str | None, str, bool, float]:
+    em = _emby(cfg, instance_id)
     server = _clean(em.get("server", ""))
     token = (em.get("access_token") or "").strip() or None
     devid = (em.get("device_id") or "crosswatch").strip() or "crosswatch"
-    return server, token, devid
+    verify = bool(em.get("verify_ssl", False))
+    timeout = float(em.get("timeout", 15) or 15)
+    return server, token, devid, verify, timeout
 
 
-def inspect_and_persist() -> dict[str, Any]:
-    cfg = load_config()
-    em = cfg.setdefault("emby", {})
-    server, token, devid = _cfg_triplet()
+def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> dict[str, Any]:
+    cfg2 = cfg or load_config()
+    em = _emby(cfg2, instance_id)
+    server, token, devid, verify, timeout = _cfg_triplet(cfg2, instance_id)
 
     out: dict[str, Any] = {
         "server_url": server or em.get("server", "") or "",
@@ -89,7 +96,8 @@ def inspect_and_persist() -> dict[str, Any]:
             r = requests.get(
                 urljoin(server, "Users/Me"),
                 headers=_headers(token, devid),
-                timeout=8,
+                timeout=timeout,
+                verify=verify,
             )
             if r.ok:
                 me = r.json() or {}
@@ -114,35 +122,37 @@ def inspect_and_persist() -> dict[str, Any]:
         changed = True
 
     if changed:
-        save_config(cfg)
+        save_config(cfg2)
 
     out["server_url"] = em.get("server") or out["server_url"]
     return out
 
 
-def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
-    server, token, devid = _cfg_triplet()
+def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
+    cfg2 = cfg or load_config()
+    server, token, devid, verify, timeout = _cfg_triplet(cfg2, instance_id)
     if not (server and token):
         return []
 
-    cfg = load_config()
-    em = cfg.get("emby") or {}
+    em = _emby(cfg2, instance_id)
     uid = (em.get("user_id") or "").strip()
     url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")
 
     try:
-        r = requests.get(url, headers=_headers(token, devid), timeout=10)
+        r = requests.get(url, headers=_headers(token, devid), timeout=timeout, verify=verify)
         if not r.ok:
             return []
 
         j = r.json() or {}
-        items = j.get("Items") or j.get("ItemsList") or j.get("Items") or []
+        items = j.get("Items") if isinstance(j, dict) else j
+        if not isinstance(items, list):
+            items = []
 
         libs: list[dict[str, Any]] = []
         for it in items:
-            lid = str(it.get("Id") or it.get("Key") or it.get("Id"))
-            title = (it.get("Name") or it.get("Title") or "Library").strip()
-            ctyp = (it.get("CollectionType") or it.get("Type") or "").lower()
+            lid = str((it or {}).get("Id") or (it or {}).get("Key") or "")
+            title = ((it or {}).get("Name") or (it or {}).get("Title") or "Library").strip()
+            ctyp = ((it or {}).get("CollectionType") or (it or {}).get("Type") or "").lower()
             if "movie" in ctyp:
                 typ = "movie"
             elif "series" in ctyp or "tv" in ctyp:

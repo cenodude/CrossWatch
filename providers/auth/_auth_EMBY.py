@@ -8,6 +8,8 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 from urllib.parse import urljoin
 
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
+
 try:
     from _logging import log as _real_log
 except ImportError:
@@ -118,18 +120,20 @@ class EmbyAuth(AuthProvider):
             "entity_types": ["movie", "show", "episode"],
         }
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        em = cfg.get("emby") or {}
+    def get_status(self, cfg: Mapping[str, Any], instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        em = (cfg.get("emby") or {}) if (inst == "default" or not isinstance(cfg, dict)) else ensure_instance_block(cfg, "emby", inst)
         server = (em.get("server") or "").strip()
         token = (em.get("access_token") or "").strip()
         user = (em.get("user") or em.get("username") or "").strip() or None
         return AuthStatus(connected=bool(server and token), label="Emby", user=user)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: Any = None) -> dict[str, Any]:
         import requests
         from requests import exceptions as rx
 
-        em = cfg.setdefault("emby", {})
+        inst = normalize_instance_id(instance_id)
+        em = ensure_instance_block(cfg, "emby", inst)
         base = _clean_base(em.get("server", ""))
         user = (em.get("username") or "").strip()
         pw = (em.get("password") or "").strip()
@@ -205,8 +209,9 @@ class EmbyAuth(AuthProvider):
     def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
         return self.get_status(cfg)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        em = cfg.setdefault("emby", {})
+    def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        em = ensure_instance_block(cfg, "emby", inst)
         for k in ("access_token", "user_id"):
             em.pop(k, None)
         log("Emby: disconnected", level="INFO", module="AUTH")

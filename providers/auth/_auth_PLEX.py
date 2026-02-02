@@ -12,11 +12,13 @@ import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import save_config
+from cw_platform.provider_instances import ensure_provider_block, ensure_instance_block, normalize_instance_id
 
 try:
     from _logging import log as _real_log
 except ImportError:
     _real_log = None
+
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     try:
@@ -27,10 +29,12 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     except Exception:
         pass
 
+
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
-__VERSION__ = "1.1.0"
+__VERSION__ = "1.2.1"
+
 
 class PlexAuth(AuthProvider):
     name = "PLEX"
@@ -59,18 +63,22 @@ class PlexAuth(AuthProvider):
         }
 
     def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        token = (cfg.get("plex") or {}).get("account_token") or ""
+        token = str(((cfg.get("plex") or {}) if isinstance(cfg, Mapping) else {}).get("account_token") or "").strip()
         return AuthStatus(connected=bool(token), label="Plex")
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
-        log("Plex: request PIN", level="INFO", module="AUTH")
-        plex = cfg.setdefault("plex", {})
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: Any = None) -> dict[str, Any]:
+        inst = normalize_instance_id(instance_id)
+        log(f"Plex[{inst}]: request PIN", level="INFO", module="AUTH")
 
-        cid = plex.get("client_id")
+        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
+        base = ensure_provider_block(cfgd, "plex")
+        plex = ensure_instance_block(cfgd, "plex", inst)
+
+        cid = str((base.get("client_id") or plex.get("client_id") or "")).strip()
         if not cid:
             cid = secrets.token_hex(12)
-            plex["client_id"] = cid
-            save_config(dict(cfg))
+            base["client_id"] = cid
+        plex["client_id"] = cid
 
         headers = {
             "Accept": "application/json",
@@ -85,23 +93,22 @@ class PlexAuth(AuthProvider):
         r.raise_for_status()
         j = r.json()
 
-        plex["_pending_pin"] = {
-            "id": j["id"],
-            "code": j["code"],
-            "created": int(time.time()),
-        }
-        save_config(dict(cfg))
+        plex["_pending_pin"] = {"id": j["id"], "code": j["code"], "created": int(time.time())}
+        save_config(cfgd)
 
-        log("Plex: PIN issued", level="SUCCESS", module="AUTH", extra={"pin_id": j["id"]})
-        return {"pin": j["code"], "verify_url": "https://plex.tv/pin"}
+        log(f"Plex[{inst}]: PIN issued", level="SUCCESS", module="AUTH", extra={"pin_id": j.get("id")})
+        return {"pin": j.get("code"), "verify_url": "https://plex.tv/pin"}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        plex = cfg.setdefault("plex", {})
+    def finish(self, cfg: MutableMapping[str, Any], instance_id: Any = None, **payload: Any) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
+        plex = ensure_instance_block(cfgd, "plex", inst)
         pend = plex.get("_pending_pin") or {}
         if not pend:
-            log("Plex: no pending PIN", level="WARNING", module="AUTH")
-            return self.get_status(cfg)
+            return AuthStatus(connected=bool(str(plex.get("account_token") or "").strip()), label="Plex")
 
+        base = ensure_provider_block(cfgd, "plex")
+        cid = str((base.get("client_id") or plex.get("client_id") or "")).strip()
         url = f"{PLEX_PIN_URL}/{pend['id']}"
         r = requests.get(
             url,
@@ -110,33 +117,33 @@ class PlexAuth(AuthProvider):
                 "User-Agent": UA,
                 "X-Plex-Product": "CrossWatch",
                 "X-Plex-Version": "1.0",
-                "X-Plex-Client-Identifier": cfg.get("plex", {}).get("client_id", ""),
+                "X-Plex-Client-Identifier": cid,
                 "X-Plex-Platform": "Web",
             },
             timeout=HTTP_TIMEOUT,
         )
         r.raise_for_status()
         j = r.json()
+
         if j.get("authToken"):
             plex["account_token"] = j["authToken"]
             plex.pop("_pending_pin", None)
-            save_config(dict(cfg))
-            log("Plex: token stored", level="SUCCESS", module="AUTH")
-        else:
-            log("Plex: token not ready", level="INFO", module="AUTH")
-        return self.get_status(cfg)
+            save_config(cfgd)
+            log(f"Plex[{inst}]: token stored", level="SUCCESS", module="AUTH")
+        return AuthStatus(connected=bool(str(plex.get("account_token") or "").strip()), label="Plex")
 
     def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        log("Plex: refresh noop", level="DEBUG", module="AUTH")
         return self.get_status(cfg)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        plex = cfg.setdefault("plex", {})
+    def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
+        plex = ensure_instance_block(cfgd, "plex", inst)
         plex.pop("account_token", None)
         plex.pop("_pending_pin", None)
-        save_config(dict(cfg))
-        log("Plex: disconnected", level="INFO", module="AUTH")
-        return self.get_status(cfg)
+        save_config(cfgd)
+        log(f"Plex[{inst}]: disconnected", level="INFO", module="AUTH")
+        return AuthStatus(connected=False, label="Plex")
 
 
 PROVIDER = PlexAuth()
@@ -405,6 +412,7 @@ def html() -> str:
     const $ = (id)=>document.getElementById(id);
     const esc = (s)=>String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
     let __users = null;
+    let __pickerTries = 0;
 
     (async ()=>{
       try{
@@ -426,7 +434,8 @@ def html() -> str:
     async function fetchUsers(){
       if (Array.isArray(__users) && __users.length) return __users;
       try{
-        const r = await fetch("/api/plex/users?ts="+Date.now(), { cache:"no-store" });
+        const inst = (document.getElementById("plex_instance")?.value || "default").trim() || "default";
+        const r = await fetch("/api/plex/users?instance="+encodeURIComponent(inst)+"&ts="+Date.now(), { cache:"no-store" });
         const j = await r.json();
         __users = Array.isArray(j?.users) ? j.users : [];
       }catch{ __users = []; }
@@ -461,6 +470,15 @@ def html() -> str:
     function closePicker(){ $("plex_user_pop")?.classList.add("hidden"); }
 
     function attachOnce(){
+      // Prefer the shared JS implementation from assets/auth/auth.plex.js.
+      // It supports instances and uses the richer /api/plex/pickusers endpoint.
+      if (typeof window.mountPlexUserPicker === "function") {
+        try { window.mountPlexUserPicker(); } catch {}
+        return;
+      }
+      // auth_loader might load after this inline script; give it a moment.
+      if (__pickerTries++ < 40) return setTimeout(attachOnce, 100);
+
       const pick = $("plex_user_pick_btn");
       if (pick && !pick.__wired){ pick.__wired = true; pick.addEventListener("click", openPicker); }
       const close = $("plex_user_close");

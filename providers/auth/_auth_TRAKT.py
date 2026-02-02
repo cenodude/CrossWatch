@@ -10,11 +10,13 @@ from typing import Any
 import requests
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 
 try:
     from _logging import log as _real_log
 except ImportError:
     _real_log = None
+
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     try:
@@ -24,6 +26,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
             print(f"[{module}] {level}: {msg}")
     except Exception:
         pass
+
 
 API = "https://api.trakt.tv"
 OAUTH_DEVICE_CODE = f"{API}/oauth/device/code"
@@ -39,32 +42,12 @@ _H: dict[str, str] = {
     "trakt-api-version": "2",
 }
 
-def _post(url: str, json_payload: dict[str, Any], client_id: str, timeout: int = 20) -> dict[str, Any]:
-    h = dict(_H)
-    h["trakt-api-key"] = client_id
-    try:
-        r = requests.post(url, headers=h, json=json_payload, timeout=timeout)
-    except Exception as e:
-        return {"ok": False, "error": "network_error", "detail": str(e)}
-    if not r.ok:
-        text = ""
-        try:
-            text = r.text[:500]
-        except Exception:
-            pass
-        return {"ok": False, "error": "http_error", "status": r.status_code, "body": text}
-    try:
-        return {"ok": True, "json": r.json()}
-    except Exception:
-        return {"ok": False, "error": "bad_json", "status": r.status_code, "body": r.text[:500]}
-
 
 def _now() -> int:
     return int(time.time())
 
 
 def _load_config() -> dict[str, Any]:
-    # Keep legacy helper but delegate to central config handling
     try:
         cfg = load_config()
         if isinstance(cfg, dict):
@@ -79,7 +62,6 @@ def _load_config() -> dict[str, Any]:
 
 
 def _save_config(cfg: dict[str, Any]) -> None:
-    # Keep legacy helper but delegate to central config handling
     try:
         save_config(cfg)
     except Exception:
@@ -90,11 +72,23 @@ def _save_config(cfg: dict[str, Any]) -> None:
             pass
 
 
-def _client(cfg: dict[str, Any]) -> dict[str, str]:
-    tr = cfg.get("trakt") or {}
+def _blocks(cfg: dict[str, Any], instance_id: Any) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    inst = normalize_instance_id(instance_id)
+    base = ensure_provider_block(cfg, "trakt")
+    tr = ensure_instance_block(cfg, "trakt", inst)
+    # Ensure the instance dict is self-contained for pair config views.
+    if base.get("client_id") and not tr.get("client_id"):
+        tr["client_id"] = base.get("client_id")
+    if base.get("client_secret") and not tr.get("client_secret"):
+        tr["client_secret"] = base.get("client_secret")
+    return inst, base, tr
+
+
+def _client(cfg: dict[str, Any], instance_id: Any) -> dict[str, str]:
+    _, base, tr = _blocks(cfg, instance_id)
     return {
-        "client_id": (tr.get("client_id") or "").strip(),
-        "client_secret": (tr.get("client_secret") or "").strip(),
+        "client_id": str(tr.get("client_id") or base.get("client_id") or "").strip(),
+        "client_secret": str(tr.get("client_secret") or base.get("client_secret") or "").strip(),
     }
 
 
@@ -119,18 +113,8 @@ class _TraktProvider:
             "label": self.label,
             "flow": "device_pin",
             "fields": [
-                {
-                    "key": "trakt.client_id",
-                    "label": "Client ID",
-                    "type": "text",
-                    "required": True,
-                },
-                {
-                    "key": "trakt.client_secret",
-                    "label": "Client Secret",
-                    "type": "password",
-                    "required": True,
-                },
+                {"key": "trakt.client_id", "label": "Client ID", "type": "text", "required": True},
+                {"key": "trakt.client_secret", "label": "Client Secret", "type": "password", "required": True},
             ],
             "actions": {"start": True, "finish": True, "refresh": True, "disconnect": True},
             "verify_url": VERIFY_URL,
@@ -138,99 +122,112 @@ class _TraktProvider:
         }
 
     def html(self, cfg: dict[str, Any] | None = None) -> str:
+        # HTML is static; multi-profile UI is injected by auth.trakt.js
         return r'''<div class="section" id="sec-trakt">
-    <style>
-      #sec-trakt .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      #sec-trakt .inline{display:flex;gap:8px;align-items:center}
-      #sec-trakt .muted{opacity:.7;font-size:.92em}
-      #sec-trakt .inline .msg{margin-left:auto;padding:8px 12px;border-radius:12px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
-      #sec-trakt .inline .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
-      #sec-trakt .inline .msg.hidden{display:none}
-      #sec-trakt .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
-      #sec-trakt .btn.danger:hover{ filter:brightness(1.08) }
-      
-      /* Connect TRAKT */
-      #sec-trakt #btn-connect-trakt{
-        background: linear-gradient(135deg,#00e084,#2ea859);
-        border-color: rgba(0,224,132,.45);
-        box-shadow: 0 0 14px rgba(0,224,132,.35);
-        color: #fff;
-      }
-      #sec-trakt #btn-connect-trakt:hover{
-        filter: brightness(1.06);
-        box-shadow: 0 0 18px rgba(0,224,132,.5);
-      }
+  <style>
+    #sec-trakt .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    #sec-trakt .inline{display:flex;gap:8px;align-items:center}
+    #sec-trakt .sub{opacity:.7;font-size:.92em}
+    #sec-trakt .inline .msg{margin-left:auto}
 
-    </style>
-    <div class="head" onclick="toggleSection('sec-trakt')">
-        <span class="chev">▶</span><strong>Trakt</strong>
-    </div>
-    <div class="body">
+    /* Connect TRAKT */
+    #sec-trakt #btn-connect-trakt{
+      background: linear-gradient(135deg,#00e084,#2ea859);
+      border-color: rgba(0,224,132,.45);
+      box-shadow: 0 0 14px rgba(0,224,132,.35);
+      color: #fff;
+    }
+    #sec-trakt #btn-connect-trakt:hover{
+      filter: brightness(1.06);
+      box-shadow: 0 0 18px rgba(0,224,132,.5);
+    }
+  </style>
 
-        <div class="grid2">
-        <div>
-            <label>Client ID</label>
-            <input id="trakt_client_id" placeholder="Enter your Trakt Client ID"
-                oninput="updateTraktHint()"
-                onchange="try{saveSetting('trakt.client_id', this.value); updateTraktHint();}catch(_){}">
-        </div>
-        <div>
-            <label>Client Secret</label>
-            <input id="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret"
-                oninput="updateTraktHint()"
-                onchange="try{saveSetting('trakt.client_secret', this.value); updateTraktHint();}catch(_){}">
-        </div>
+  <div class="head" onclick="toggleSection && toggleSection('sec-trakt')">
+    <span class="chev">▶</span><strong>Trakt</strong>
+  </div>
+
+  <div class="body">
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="trakt">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">Trakt</div>
+            <div class="muted">Connect your account and set API keys.</div>
+          </div>
         </div>
 
-        <div id="trakt_hint" class="msg warn hidden" style="margin-top:6px">
-        You need a Trakt API application. Create one at
-        <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>.
-        Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>.
-        <button class="btn" style="margin-left:8px" onclick="copyTraktRedirect()">Copy Redirect URL</button>
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
         </div>
 
-        <div class="sep"></div>
-
-        <div class="grid2">
-        <div>
-            <label>Current token</label>
-            <div style="display:flex;gap:8px">
-            <input id="trakt_token" placeholder="empty = not set" readonly>
-            <button id="btn-copy-trakt-token" class="btn copy" onclick="copyInputValue('trakt_token', this)">Copy</button>
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+              <div>
+                <label>Client ID</label>
+                <input id="trakt_client_id" placeholder="Enter your Trakt Client ID"
+                  oninput="updateTraktHint()"
+                  onchange="try{saveSetting('trakt.client_id', this.value); updateTraktHint();}catch(_){}">
+              </div>
+              <div>
+                <label>Client Secret</label>
+                <input id="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret"
+                  oninput="updateTraktHint()"
+                  onchange="try{saveSetting('trakt.client_secret', this.value); updateTraktHint();}catch(_){}">
+              </div>
             </div>
-        </div>
-        <div>
-            <label>Link code (PIN)</label>
-            <div style="display:flex;gap:8px">
-            <input id="trakt_pin" placeholder="" readonly>
-            <button id="btn-copy-trakt-pin" class="btn copy" onclick="copyInputValue('trakt_pin', this)">Copy</button>
+
+            <div id="trakt_hint" class="msg warn hidden" style="margin-top:8px">
+              You need a Trakt API application. Create one at
+              <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>.
+              Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>.
+              <button class="btn" style="margin-left:8px" onclick="copyTraktRedirect()">Copy Redirect URL</button>
             </div>
-        </div>
+
+            <div class="sep"></div>
+
+            <div class="grid2">
+              <div>
+                <label>Current token</label>
+                <div style="display:flex;gap:8px">
+                  <input id="trakt_token" placeholder="empty = not set" readonly>
+                  <button id="btn-copy-trakt-token" class="btn copy" onclick="copyInputValue('trakt_token', this)">Copy</button>
+                </div>
+              </div>
+              <div>
+                <label>Link code (PIN)</label>
+                <div style="display:flex;gap:8px">
+                  <input id="trakt_pin" placeholder="" readonly>
+                  <button id="btn-copy-trakt-pin" class="btn copy" onclick="copyInputValue('trakt_pin', this)">Copy</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="inline" style="margin-top:10px">
+              <button id="btn-connect-trakt" class="btn" onclick="requestTraktPin()">Connect TRAKT</button>
+              <button class="btn danger" onclick="try{ traktDeleteToken && traktDeleteToken(); }catch(_){;}">Delete</button>
+              <div class="sub">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
+              <div id="trakt_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
+            </div>
+          </div>
         </div>
 
-        <div class="inline" style="margin-top:8px">
-          <button id="btn-connect-trakt" class="btn" onclick="requestTraktPin()">Connect TRAKT</button>
-          <button class="btn danger" onclick="try{ traktDeleteToken && traktDeleteToken(); }catch(_){;}">Delete</button>
-          <div class="muted">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
-          <div id="trakt_msg" class="msg ok hidden" aria-live="polite"></div>
-        </div>
-
-        
-
-        <div class="sep"></div>
+      </div>
     </div>
-    </div>
+  </div>
+</div>
     '''
 
-    def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None) -> dict[str, Any]:
+    def start(self, cfg: dict[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
-        c = _client(cfg)
+        inst, _, tr = _blocks(cfg, instance_id)
+        c = _client(cfg, inst)
 
         cid = (c.get("client_id") or "").strip()
         if not cid:
             return {"ok": False, "error": "missing_client_id"}
-        
-        log("TRAKT: start OAuth", level="INFO", module="AUTH")
+
         log("TRAKT: request device code", level="INFO", module="AUTH")
 
         headers_primary = {
@@ -238,49 +235,32 @@ class _TraktProvider:
             "Content-Type": "application/json",
             "trakt-api-version": "2",
             "User-Agent": "CrossWatch/TraktAuth",
+            "trakt-api-key": cid,
         }
 
-        def _call(headers: dict[str, str]) -> tuple[requests.Response | None, int, str, dict[str, str]]:
-            try:
-                r = requests.post(
-                    OAUTH_DEVICE_CODE,
-                    json={"client_id": cid},
-                    headers=headers,
-                    timeout=20,
-                )
-                return r, r.status_code, (r.text or ""), dict(r.headers or {})
-            except requests.RequestException as e:
-                return None, 0, str(e), {}
+        try:
+            r = requests.post(OAUTH_DEVICE_CODE, json={"client_id": cid}, headers=headers_primary, timeout=20)
+        except requests.RequestException as e:
+            return {"ok": False, "error": "network_error", "detail": str(e)}
 
-        r, status, text, hdrs = _call(headers_primary)
-
-        if status != 200 or not r:
-            body = text if isinstance(text, str) else str(text)
-            return {
-                "ok": False,
-                "error": "http_error",
-                "status": int(status),
-                "body": body[:400],
-                "cf_ray": hdrs.get("CF-RAY"),
-                "content_type": hdrs.get("Content-Type"),
-            }
+        if r.status_code != 200:
+            return {"ok": False, "error": "http_error", "status": int(r.status_code), "body": (r.text or "")[:400]}
 
         try:
             data: dict[str, Any] = r.json() or {}
         except ValueError:
-            return {"ok": False, "error": "invalid_json", "body": (text[:400] if text else "")}
+            return {"ok": False, "error": "invalid_json", "body": (r.text or "")[:400]}
 
-        user_code = data.get("user_code") or ""
-        device_code = data.get("device_code") or ""
-        verification_url = data.get("verification_url") or VERIFY_URL
+        user_code = str(data.get("user_code") or "")
+        device_code = str(data.get("device_code") or "")
+        verification_url = str(data.get("verification_url") or VERIFY_URL)
         interval = int(data.get("interval", 5) or 5)
         expires_at = _now() + int(data.get("expires_in", 600) or 600)
 
         if not user_code or not device_code:
-            body = text if text else str(data)
-            return {"ok": False, "error": "invalid_response", "body": body[:400]}
+            return {"ok": False, "error": "invalid_response", "body": (r.text or "")[:400]}
 
-        pend = {
+        tr["_pending_device"] = {
             "user_code": user_code,
             "device_code": device_code,
             "verification_url": verification_url,
@@ -288,29 +268,33 @@ class _TraktProvider:
             "expires_at": expires_at,
             "created_at": _now(),
         }
-        cfg.setdefault("trakt", {})["_pending_device"] = pend
         _save_config(cfg)
-        
+
         log("TRAKT: device code received", level="INFO", module="AUTH")
+        return {
+            "ok": True,
+            "user_code": user_code,
+            "device_code": device_code,
+            "verification_url": verification_url,
+            "interval": interval,
+            "expires_at": expires_at,
+        }
 
-        out = dict(pend)
-        out["ok"] = True
-        return out
-
-    def finish(self, cfg: dict[str, Any] | None = None, *, device_code: str | None = None) -> dict[str, Any]:
+    def finish(self, cfg: dict[str, Any] | None = None, *, device_code: str | None = None, instance_id: Any = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
-        c = _client(cfg)
+        inst, _, tr = _blocks(cfg, instance_id)
+        c = _client(cfg, inst)
         if not c["client_id"] or not c["client_secret"]:
             return {"ok": False, "status": "missing_client"}
 
-        pend = (cfg.get("trakt") or {}).get("_pending_device") or {}
-        dc = device_code or pend.get("device_code")
+        pend = tr.get("_pending_device") or {}
+        dc = (device_code or pend.get("device_code") or "").strip()
         if not dc:
             return {"ok": False, "status": "no_device_code"}
         if _now() >= int(pend.get("expires_at") or 0):
             return {"ok": False, "status": "expired_token"}
-        
-        log("TRAKT: exchange code", level="INFO", module="AUTH")
+
+        log("TRAKT: exchange device code", level="INFO", module="AUTH")
 
         r = requests.post(
             OAUTH_DEVICE_TOKEN,
@@ -318,31 +302,29 @@ class _TraktProvider:
             headers=_headers(),
             timeout=30,
         )
+
         if r.status_code in (400, 401, 403):
             try:
-                err = r.json().get("error") or "authorization_pending"
+                err = str((r.json() or {}).get("error") or "authorization_pending")
             except Exception:
                 err = "authorization_pending"
             return {"ok": False, "status": err}
 
         r.raise_for_status()
         tok: dict[str, Any] = r.json() or {}
-        tr = cfg.setdefault("trakt", {})
+
         tr.update(
             {
-                "access_token": tok.get("access_token"),
-                "refresh_token": tok.get("refresh_token"),
+                "access_token": tok.get("access_token") or "",
+                "refresh_token": tok.get("refresh_token") or "",
                 "scope": tok.get("scope") or "public",
                 "token_type": tok.get("token_type") or "bearer",
-                "expires_at": _now() + int(tok.get("expires_in", 0)),
+                "expires_at": _now() + int(tok.get("expires_in", 0) or 0),
             }
         )
+
         try:
             tr.pop("_pending_device", None)
-        except Exception:
-            pass
-        try:
-            ((cfg.get("auth") or {}).get("trakt") or {}).clear()
         except Exception:
             pass
 
@@ -350,21 +332,21 @@ class _TraktProvider:
         log("TRAKT: tokens stored", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
 
-    def refresh(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    def refresh(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> dict[str, Any]:
         cfg = cfg or _load_config()
-        c = _client(cfg)
-        tr = (cfg.get("trakt") or {}) or {}
+        inst, _, tr = _blocks(cfg, instance_id)
+        c = _client(cfg, inst)
 
-        rt = (tr.get("refresh_token") or "").strip()
-        cid = (c.get("client_id") or "").strip()
-        secr = (c.get("client_secret") or "").strip()
+        rt = str(tr.get("refresh_token") or "").strip()
+        cid = str(c.get("client_id") or "").strip()
+        secr = str(c.get("client_secret") or "").strip()
 
         if not (cid and secr and rt):
             log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
             return {"ok": False, "status": "missing_refresh"}
 
         log("TRAKT: refresh token", level="INFO", module="AUTH")
-        
+
         payload: dict[str, Any] = {
             "refresh_token": rt,
             "client_id": cid,
@@ -384,11 +366,7 @@ class _TraktProvider:
                 body = r.json() or {}
             except Exception:
                 body = {}
-            err = (
-                str(body.get("error") or "")
-                or str(body.get("error_description") or "")
-                or (r.text or "")[:400]
-            )
+            err = str(body.get("error") or "") or str(body.get("error_description") or "") or (r.text or "")[:400]
             log(f"TRAKT: token refresh failed {r.status_code}: {err}", "ERROR")
             return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err}
 
@@ -398,12 +376,12 @@ class _TraktProvider:
             log(f"TRAKT: token refresh invalid JSON: {e}", "ERROR")
             return {"ok": False, "status": "bad_json"}
 
-        acc = (tok.get("access_token") or "").strip()
+        acc = str(tok.get("access_token") or "").strip()
         if not acc:
             log("TRAKT: token refresh succeeded but no access_token in response", "ERROR")
             return {"ok": False, "status": "no_access_token"}
 
-        new_rt = (tok.get("refresh_token") or rt or "").strip()
+        new_rt = str(tok.get("refresh_token") or rt or "").strip()
         exp_in = int(tok.get("expires_in") or 0)
         expires_at = _now() + exp_in if exp_in > 0 else 0
 
@@ -416,10 +394,10 @@ class _TraktProvider:
                 "expires_at": expires_at,
             }
         )
-        cfg["trakt"] = tr
         _save_config(cfg)
         log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
+
 
 PROVIDER = _TraktProvider()
 __all__ = ["PROVIDER", "_TraktProvider", "html", "__VERSION__"]

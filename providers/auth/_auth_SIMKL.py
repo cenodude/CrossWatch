@@ -11,6 +11,8 @@ from urllib.parse import urlencode
 import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
+from cw_platform.config_base import save_config
+from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 
 try:
     from _logging import log as _real_log
@@ -29,7 +31,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 SIMKL_AUTH = "https://simkl.com/oauth/authorize"
 SIMKL_TOKEN = "https://api.simkl.com/oauth/token"
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.1.0"
 
 class SimklAuth(AuthProvider):
     name = "SIMKL"
@@ -69,43 +71,73 @@ class SimklAuth(AuthProvider):
             "entity_types": ["movie", "show"],
         }
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        s = cfg.get("simkl") or {}
-        ok = bool(s.get("access_token"))
+    def get_status(self, cfg: Mapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        base: Mapping[str, Any] = {}
+        blk: Mapping[str, Any] = {}
+
+        s0 = cfg.get("simkl") if isinstance(cfg, Mapping) else None
+        if isinstance(s0, Mapping):
+            base = s0
+            blk = s0
+            if inst != "default":
+                insts = s0.get("instances")
+                sub = insts.get(inst) if isinstance(insts, Mapping) else None
+                if isinstance(sub, Mapping):
+                    blk = sub
+
+        ok = bool((blk.get("access_token") or "").strip())
+        try:
+            exp = int(blk.get("token_expires_at") or 0) or None
+        except Exception:
+            exp = None
+
         return AuthStatus(
             connected=ok,
             label="SIMKL",
-            user=s.get("account") or None,
-            expires_at=int(s.get("token_expires_at") or 0) or None,
-            scopes=s.get("scopes") or None,
+            user=blk.get("account") or None,
+            expires_at=exp,
+            scopes=blk.get("scopes") or None,
         )
 
-    def _apply_token_response(self, cfg: MutableMapping[str, Any], j: dict[str, Any]) -> None:
-        s = cfg.setdefault("simkl", {})
+    def _resolve_creds(self, cfg: MutableMapping[str, Any], instance_id: str | None) -> tuple[str, str, dict[str, Any]]:
+        inst = normalize_instance_id(instance_id)
+        if isinstance(cfg, dict):
+            base = ensure_provider_block(cfg, "simkl")
+            blk = ensure_instance_block(cfg, "simkl", inst)
+            client_id = str((blk.get("client_id") or "")).strip() or str((base.get("client_id") or "")).strip()
+            client_secret = str((blk.get("client_secret") or "")).strip() or str((base.get("client_secret") or "")).strip()
+            return client_id, client_secret, blk
+
+        s0 = cfg.get("simkl") if isinstance(cfg, dict) else (cfg.get("simkl") if hasattr(cfg, "get") else None)
+        base = dict(s0 or {}) if isinstance(s0, Mapping) else {}
+        client_id = str(base.get("client_id") or "").strip()
+        client_secret = str(base.get("client_secret") or "").strip()
+        return client_id, client_secret, base
+
+    def _apply_token_response(self, target: MutableMapping[str, Any], j: dict[str, Any]) -> None:
         if j.get("access_token"):
-            s["access_token"] = j["access_token"]
+            target["access_token"] = j["access_token"]
         if "refresh_token" in j and j.get("refresh_token") is not None:
-            s["refresh_token"] = j["refresh_token"]
+            target["refresh_token"] = j["refresh_token"]
+
         exp_in = j.get("expires_in")
         if isinstance(exp_in, (int, float)) and exp_in > 0:
-            s["token_expires_at"] = int(time.time()) + int(exp_in)
+            target["token_expires_at"] = int(time.time()) + int(exp_in)
         else:
-            if "token_expires_at" in j:
-                try:
-                    s["token_expires_at"] = int(j["token_expires_at"])
-                except Exception:
-                    pass
-            if "expires_at" in j:
-                try:
-                    s["token_expires_at"] = int(j["expires_at"])
-                except Exception:
-                    pass
-        if j.get("scope"):
-            s["scopes"] = j["scope"]
+            for k in ("token_expires_at", "expires_at"):
+                if k in j:
+                    try:
+                        target["token_expires_at"] = int(j[k])
+                        break
+                    except Exception:
+                        pass
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
-        s = cfg.get("simkl") or {}
-        client_id = s.get("client_id") or ""
+        if j.get("scope"):
+            target["scopes"] = j["scope"]
+
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: str | None = None) -> dict[str, Any]:
+        client_id, _, _ = self._resolve_creds(cfg, instance_id)
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -113,15 +145,18 @@ class SimklAuth(AuthProvider):
             "scope": "public write offline_access",
         }
         url = f"{SIMKL_AUTH}?{urlencode(params)}"
-        log("SIMKL: start OAuth", level="INFO", module="AUTH", extra={"redirect_uri": redirect_uri})
+        inst = normalize_instance_id(instance_id)
+        log("SIMKL: start OAuth", level="INFO", module="AUTH", extra={"instance": inst, "redirect_uri": redirect_uri})
         return {"url": url}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        s = cfg.setdefault("simkl", {})
+    def finish(self, cfg: MutableMapping[str, Any], instance_id: str | None = None, **payload: Any) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        client_id, client_secret, target = self._resolve_creds(cfg, inst)
+
         data = {
             "grant_type": "authorization_code",
-            "client_id": s.get("client_id", ""),
-            "client_secret": s.get("client_secret", ""),
+            "client_id": client_id,
+            "client_secret": client_secret,
             "redirect_uri": payload.get("redirect_uri", ""),
             "code": payload.get("code", ""),
         }
@@ -129,47 +164,79 @@ class SimklAuth(AuthProvider):
             "User-Agent": UA,
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "simkl-api-key": s.get("client_id", ""),
+            "simkl-api-key": client_id,
         }
-        log("SIMKL: exchange code", level="INFO", module="AUTH")
+        log("SIMKL: exchange code", level="INFO", module="AUTH", extra={"instance": inst})
         r = requests.post(SIMKL_TOKEN, json=data, headers=headers, timeout=12)
         r.raise_for_status()
         j = r.json() or {}
-        self._apply_token_response(cfg, j)
-        log("SIMKL: tokens stored", level="SUCCESS", module="AUTH")
-        return self.get_status(cfg)
 
-    def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        s = cfg.setdefault("simkl", {})
-        if not s.get("refresh_token"):
-            log("SIMKL: no refresh token", level="WARNING", module="AUTH")
-            return self.get_status(cfg)
+        self._apply_token_response(target, j)
+        try:
+            if isinstance(cfg, dict):
+                save_config(dict(cfg))
+        except Exception:
+            pass
+
+        log("SIMKL: tokens stored", level="SUCCESS", module="AUTH", extra={"instance": inst})
+        return self.get_status(cfg, inst)
+
+    def refresh(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        client_id, client_secret, target = self._resolve_creds(cfg, inst)
+
+        if not (target.get("refresh_token") or "").strip():
+            log("SIMKL: no refresh token", level="WARNING", module="AUTH", extra={"instance": inst})
+            return self.get_status(cfg, inst)
+
         data = {
             "grant_type": "refresh_token",
-            "client_id": s.get("client_id", ""),
-            "client_secret": s.get("client_secret", ""),
-            "refresh_token": s.get("refresh_token", ""),
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": target.get("refresh_token", ""),
         }
         headers = {
             "User-Agent": UA,
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "simkl-api-key": s.get("client_id", ""),
+            "simkl-api-key": client_id,
         }
-        log("SIMKL: refresh token", level="INFO", module="AUTH")
+        log("SIMKL: refresh token", level="INFO", module="AUTH", extra={"instance": inst})
         r = requests.post(SIMKL_TOKEN, json=data, headers=headers, timeout=12)
         r.raise_for_status()
         j = r.json() or {}
-        self._apply_token_response(cfg, j)
-        log("SIMKL: refresh ok", level="SUCCESS", module="AUTH")
-        return self.get_status(cfg)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        s = cfg.setdefault("simkl", {})
+        self._apply_token_response(target, j)
+        try:
+            if isinstance(cfg, dict):
+                save_config(dict(cfg))
+        except Exception:
+            pass
+
+        log("SIMKL: refresh ok", level="SUCCESS", module="AUTH", extra={"instance": inst})
+        return self.get_status(cfg, inst)
+
+    def disconnect(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        if isinstance(cfg, dict):
+            target = ensure_instance_block(cfg, "simkl", inst)
+        else:
+            target = cfg.setdefault("simkl", {})  # type: ignore[assignment]
+
         for k in ("access_token", "refresh_token", "token_expires_at", "scopes", "account"):
-            s.pop(k, None)
-        log("SIMKL: disconnected", level="INFO", module="AUTH")
-        return self.get_status(cfg)
+            try:
+                target.pop(k, None)
+            except Exception:
+                pass
+
+        try:
+            if isinstance(cfg, dict):
+                save_config(dict(cfg))
+        except Exception:
+            pass
+
+        log("SIMKL: disconnected", level="INFO", module="AUTH", extra={"instance": inst})
+        return self.get_status(cfg, inst)
 
 
 PROVIDER = SimklAuth()
@@ -197,46 +264,68 @@ def html() -> str:
       filter: brightness(1.06);
       box-shadow: 0 0 18px rgba(0,224,132,.5);
     }
+  
+    #sec-simkl .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   </style>
 
-  <div class="head" onclick="toggleSection('sec-simkl')">
+  <div class="head" onclick="toggleSection && toggleSection('sec-simkl')">
     <span class="chev">▶</span><strong>SIMKL</strong>
   </div>
+
   <div class="body">
-    <div class="grid2">
-      <div>
-        <label>Client ID</label>
-        <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="simkl">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">SIMKL</div>
+            <div class="muted">Connect your SIMKL account for watchlist/ratings sync.</div>
+          </div>
+        </div>
+
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+        </div>
+
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+                  <div>
+                    <label>Client ID</label>
+                    <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
+                  </div>
+                  <div>
+                    <label>Client Secret</label>
+                    <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
+                  </div>
+                </div>
+            
+                <div id="simkl_hint" class="msg warn hidden">
+                  You need a SIMKL API key. Create one at
+                  <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">SIMKL Developer</a>.
+                  Set the Redirect URL to <code id="redirect_uri_preview"></code>.
+                  <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
+                </div>
+            
+                <div class="inline" style="margin-top:8px">
+                  <button id="btn-connect-simkl" class="btn" onclick="startSimkl()">Connect SIMKL</button>
+                  <button class="btn danger" onclick="try{ simklDeleteToken && simklDeleteToken(); }catch(_){;}">Delete</button>
+                  <span id="simkl-countdown" style="min-width:60px;"></span>
+                  <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
+                  <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
+                </div>
+            
+                <div class="grid2" style="margin-top:8px">
+                  <div>
+                    <label>Access token</label>
+                    <input id="simkl_access_token" readonly placeholder="empty = not set">
+                  </div>
+                </div>
+            
+                <div class="sep"></div>
+          </div>
+        </div>
       </div>
-      <div>
-        <label>Client Secret</label>
-        <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
-      </div>
     </div>
-
-    <div id="simkl_hint" class="msg warn hidden">
-      You need a SIMKL API key. Create one at
-      <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">SIMKL Developer</a>.
-      Set the Redirect URL to <code id="redirect_uri_preview"></code>.
-      <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
-    </div>
-
-    <div class="inline" style="margin-top:8px">
-      <button id="btn-connect-simkl" class="btn" onclick="startSimkl()">Connect SIMKL</button>
-      <button class="btn danger" onclick="try{ simklDeleteToken && simklDeleteToken(); }catch(_){;}">Delete</button>
-      <span id="simkl-countdown" style="min-width:60px;"></span>
-      <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
-      <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
-    </div>
-
-    <div class="grid2" style="margin-top:8px">
-      <div>
-        <label>Access token</label>
-        <input id="simkl_access_token" readonly placeholder="empty = not set">
-      </div>
-    </div>
-
-    <div class="sep"></div>
   </div>
 </div>
 '''

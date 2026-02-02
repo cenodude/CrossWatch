@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 import requests
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 
 UA = "CrossWatch/1.0"
 
@@ -42,9 +43,16 @@ def _headers(token: str | None, device_id: str) -> dict[str, str]:
     return h
 
 
-def ensure_whitelist_defaults() -> None:
-    cfg = load_config()
-    jf = cfg.setdefault("jellyfin", {})
+
+
+def _jellyfin(cfg: dict[str, Any], instance_id: Any) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    return ensure_instance_block(cfg, "jellyfin", inst)
+
+
+def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> None:
+    cfg2 = cfg or load_config()
+    jf = _jellyfin(cfg2, instance_id)
     changed = False
 
     for sec in ("history", "ratings", "scrobble"):
@@ -56,22 +64,22 @@ def ensure_whitelist_defaults() -> None:
             changed = True
 
     if changed:
-        save_config(cfg)
+        save_config(cfg2)
 
 
-def _cfg_triplet() -> tuple[str, str | None, str]:
-    cfg = load_config()
-    jf = cfg.get("jellyfin") or {}
+def _cfg_triplet(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> tuple[str, str | None, str]:
+    cfg2 = cfg or load_config()
+    jf = _jellyfin(cfg2, instance_id)
     server = _clean(jf.get("server", ""))
     token = (jf.get("access_token") or "").strip() or None
     devid = (jf.get("device_id") or "crosswatch").strip() or "crosswatch"
     return server, token, devid
 
 
-def inspect_and_persist() -> dict[str, Any]:
-    cfg = load_config()
-    jf = cfg.setdefault("jellyfin", {})
-    server, token, devid = _cfg_triplet()
+def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> dict[str, Any]:
+    cfg2 = cfg or load_config()
+    jf = _jellyfin(cfg2, instance_id)
+    server, token, devid = _cfg_triplet(cfg2, instance_id)
 
     out: dict[str, Any] = {
         "server_url": server or jf.get("server", "") or "",
@@ -106,19 +114,19 @@ def inspect_and_persist() -> dict[str, Any]:
         changed = True
 
     if changed:
-        save_config(cfg)
+        save_config(cfg2)
 
     out["server_url"] = jf.get("server") or out["server_url"]
     return out
 
 
-def fetch_libraries_from_cfg() -> list[dict[str, Any]]:
-    server, token, devid = _cfg_triplet()
+def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
+    cfg2 = cfg or load_config()
+    server, token, devid = _cfg_triplet(cfg2, instance_id)
     if not (server and token):
         return []
 
-    cfg = load_config()
-    jf = cfg.get("jellyfin") or {}
+    jf = _jellyfin(cfg2, instance_id)
     uid = (jf.get("user_id") or "").strip()
     url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")
 

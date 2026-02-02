@@ -7,9 +7,23 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
-from cw_platform.config_base import save_config
+from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import get_provider_block, ensure_instance_block, normalize_instance_id
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.1.0"
+
+
+
+def _load_config() -> dict[str, Any]:
+    try:
+        return dict(load_config() or {})
+    except Exception:
+        return {}
+
+
+def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
+    return get_provider_block(cfg or {}, "tautulli", instance_id)
+
 
 
 class TautulliAuth(AuthProvider):
@@ -57,16 +71,20 @@ class TautulliAuth(AuthProvider):
     def capabilities(self) -> dict[str, Any]:
         return {"watchlist": False, "ratings": False, "history": True}
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        t = cfg.get("tautulli") or {}
+    def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        t = _block(cfg, inst)
         ok = bool(str(t.get("server_url") or "").strip() and str(t.get("api_key") or "").strip())
-        return AuthStatus(connected=ok, label="Tautulli")
+        label = "Tautulli" if inst == "default" else f"Tautulli ({inst})"
+        return AuthStatus(connected=ok, label=label)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
         return {}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        t = cfg.setdefault("tautulli", {})
+    def finish(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None, **payload: Any) -> AuthStatus:
+        cfgd = dict(cfg or _load_config() or {})
+        inst = normalize_instance_id(instance_id)
+        t = ensure_instance_block(cfgd, "tautulli", inst)
         t["server_url"] = str(payload.get("server_url") or payload.get("tautulli.server_url") or "").strip()
         t["api_key"] = str(payload.get("api_key") or payload.get("tautulli.api_key") or "").strip()
         if "verify_ssl" in payload or "tautulli.verify_ssl" in payload:
@@ -76,18 +94,20 @@ class TautulliAuth(AuthProvider):
         if user_id:
             t.setdefault("history", {})["user_id"] = user_id
 
-        save_config(dict(cfg))
-        return self.get_status(cfg)
+        save_config(cfgd)
+        return self.get_status(cfgd, instance_id=inst)
 
-    def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg)
+    def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        return self.get_status(cfg, instance_id=instance_id)
 
-    def disconnect(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        t = cfg.setdefault("tautulli", {})
+    def disconnect(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cfgd = dict(cfg or _load_config() or {})
+        inst = normalize_instance_id(instance_id)
+        t = ensure_instance_block(cfgd, "tautulli", inst)
         t["server_url"] = ""
         t["api_key"] = ""
-        save_config(dict(cfg))
-        return self.get_status(cfg)
+        save_config(cfgd)
+        return self.get_status(cfgd, instance_id=inst)
 
 
 def html() -> str:
@@ -108,36 +128,56 @@ def html() -> str:
     #sec-tautulli #tautulli_save:hover{filter:brightness(1.06);box-shadow:0 0 18px rgba(255,138,0,.5)}
   </style>
 
-  <div class="head" onclick="toggleSection('sec-tautulli')">
+  <div class="head" onclick="toggleSection && toggleSection('sec-tautulli')">
     <span class="chev">▶</span><strong>Tautulli</strong>
   </div>
 
   <div class="body">
-    <div class="grid2">
-      <div>
-        <label>Server URL</label>
-        <input id="tautulli_server" type="text" placeholder="http://localhost:8181" />
-        <label style="margin-top:10px">API Key</label>
-        <div style="display:flex;gap:8px">
-          <input id="tautulli_key" type="password" placeholder="••••••••" />
-          <button id="tautulli_save" class="btn">Connect</button>
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="tautulli">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">Tautulli</div>
+            <div class="muted">Connect your Tautulli server and API key.</div>
+          </div>
         </div>
-        <label style="margin-top:10px">User ID (optional)</label>
-        <input id="tautulli_user_id" type="text" placeholder="1" />
 
-        <div id="tautulli_hint" class="msg warn" style="margin-top:8px">
-          API key: Tautulli → Settings → Web Interface → API.
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
         </div>
-      </div>
 
-      <div>
-        <label>Status</label>
-        <div class="inline">
-          <button id="tautulli_verify" class="btn">Verify</button>
-          <button id="tautulli_disconnect" class="btn danger">Disconnect</button>
-          <div id="tautulli_msg" class="msg ok hidden" aria-live="polite"></div>
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="grid2">
+                  <div>
+                    <label>Server URL</label>
+                    <input id="tautulli_server" type="text" placeholder="http://localhost:8181" />
+                    <label style="margin-top:10px">API Key</label>
+                    <div style="display:flex;gap:8px">
+                      <input id="tautulli_key" type="password" placeholder="••••••••" />
+                      <button id="tautulli_save" class="btn">Connect</button>
+                    </div>
+                    <label style="margin-top:10px">User ID (optional)</label>
+                    <input id="tautulli_user_id" type="text" placeholder="1" />
+            
+                    <div id="tautulli_hint" class="msg warn" style="margin-top:8px">
+                      API key: Tautulli → Settings → Web Interface → API.
+                    </div>
+                  </div>
+            
+                  <div>
+                    <label>Status</label>
+                    <div class="inline">
+                      <button id="tautulli_verify" class="btn">Verify</button>
+                      <button id="tautulli_disconnect" class="btn danger">Disconnect</button>
+                      <div id="tautulli_msg" class="msg ok hidden" aria-live="polite"></div>
+                    </div>
+                  </div>
+                </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
-</div>"""
+</div>
+"""
