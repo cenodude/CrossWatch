@@ -1,14 +1,10 @@
-// connections.pairs.overlay.js — Pairs board UI 
+// connections.pairs.overlay.js - Pairs board UI 
 
 (function () {
-  // ────────────────────────────────────────────────────────────────────────────
   // Render guard
-  // ────────────────────────────────────────────────────────────────────────────
   let _renderBusy = false;
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Helpers
-  // ────────────────────────────────────────────────────────────────────────────
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt", JELLYFIN: "jellyfin", CROSSWATCH: "crosswatch", EMBY: "emby" }[key(k)] || "x");
   const truthy = (v) => {
@@ -17,18 +13,16 @@
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
   };
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Styles (scoped to #pairs_list)
-  // ────────────────────────────────────────────────────────────────────────────
   function ensureStyles() {
     const css = `
-/* ===== Pairs board (scoped) ===== */
+/* Pairs board */
 #pairs_list .pairs-board{display:flex!important;flex-wrap:wrap!important;gap:12px!important;align-items:flex-start!important;padding:6px 0 12px!important;overflow:visible!important}
 #pairs_list .pair-card{flex:0 0 auto!important;width:auto!important;margin:0!important}
 
-/* ===== Card ===== */
+/* Card */
 #pairs_list .pair-card{
-  --chip-w:128px; --btn:30px; --btn-gap:8px; --beads-w:96px;
+  --chip-w:176px; --btn:30px; --btn-gap:8px; --beads-w:96px;
   position:relative;border-radius:16px;padding:8px 12px;background:rgba(13,15,20,.92);
   border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,.32);
   transition:box-shadow .18s ease,transform .15s ease;display:inline-block;cursor:default!important;user-select:none
@@ -45,14 +39,14 @@
 }
 
 /* Pills */
-#pairs_list .pair-pill{display:inline-block;width:var(--chip-w);padding:6px 12px;border-radius:999px;font-weight:800;font-size:.9rem;letter-spacing:.02em;color:#f4f6ff;text-align:center;white-space:nowrap;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14)}
+#pairs_list .pair-pill{display:inline-block;width:var(--chip-w);padding:6px 12px;border-radius:999px;font-weight:800;font-size:.9rem;letter-spacing:.02em;color:#f4f6ff;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14)}
 #pairs_list .pair-pill.mode{width:var(--chip-w)}
 #pairs_list .arrow{color:#cfd3e1;opacity:.8;width:18px;text-align:center}
 
 /* Actions rail */
 #pairs_list .pair-actions{display:flex;align-items:center;gap:var(--btn-gap);justify-content:flex-end;margin-left:8px}
 
-/* Feature beads (neon) */
+/* Feature beads */
 #pairs_list .feat-beads{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12)}
 #pairs_list .feat-beads .bead{width:12px;height:12px;border-radius:50%;border:2px solid rgba(255,255,255,.28);background:transparent;display:inline-block;transition:transform .12s ease, box-shadow .12s ease}
 #pairs_list .feat-beads .bead:hover{transform:translateY(-1px)}
@@ -76,11 +70,11 @@
   position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;border:0!important;white-space:nowrap!important
 }
 
-/* Kill any DnD leftovers */
+/* Kill leftovers */
 #pairs_list [draggable]{user-drag:none;-webkit-user-drag:none}
 #pairs_list .pair-card.dragging, #pairs_list .drag-placeholder{display:none!important}
 
-/* Tooltip bubble (simple, passive) */
+/* Tooltip bubble */
 #pairs_list .cx-tip{position:fixed;z-index:99999;pointer-events:none;background:rgba(16,18,24,.96);color:#fff;border:1px solid rgba(255,255,255,.12);padding:6px 8px;border-radius:8px;font-size:12px;line-height:1.2;white-space:nowrap;box-shadow:0 8px 20px rgba(0,0,0,.34);opacity:0;transform:translateY(6px);transition:opacity .10s ease, transform .10s ease}
 #pairs_list .cx-tip.on{opacity:1;transform:none}
 `;
@@ -89,9 +83,7 @@
     s.textContent = css;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Host/board container
-  // ────────────────────────────────────────────────────────────────────────────
+  // Host container
   function ensureHost() {
     const host = document.getElementById("pairs_list");
     if (!host) return null;
@@ -100,9 +92,7 @@
     return { host, board };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Data loader (robust)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Data loader
   async function loadPairsIfNeeded() {
     if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return;
     if (typeof window.loadPairs === "function") { try { await window.loadPairs(); if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) return; } catch {} }
@@ -112,9 +102,7 @@
     } catch (e) { window.cx = window.cx || {}; if (!Array.isArray(window.cx.pairs)) window.cx.pairs = []; console.warn("[pairs.overlay] fetch failed", e); }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Tooltip (passive; 120ms delay)
-  // ────────────────────────────────────────────────────────────────────────────
+  // Tooltip
   function installTooltip(host) {
     let tip = host.querySelector(".cx-tip");
     if (!tip) { tip = document.createElement("div"); tip.className = "cx-tip"; host.appendChild(tip); }
@@ -158,9 +146,7 @@
     window.addEventListener("scroll", hide, { passive:true });
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Actions: edit / toggle / delete
-  // ────────────────────────────────────────────────────────────────────────────
   window.cxPairsEditClick = function (btn) {
     try {
       const id = btn.closest(".pair-card")?.dataset?.id; if (!id) return;
@@ -185,7 +171,7 @@
         // Update model
         const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
         const it = list.find(p => String(p.id) === String(id)); if (it) it.enabled = !!on;
-        // Persist (best-effort)
+        // Persist
         await fetch(`/api/pairs/${id}`, {
           method:"PUT", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ enabled: !!on })
         }).then(() => { try { document.dispatchEvent(new Event("cx-state-change")); } catch(_){} });
@@ -203,9 +189,7 @@
   }
   window.deletePairCard = deletePairCard;
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Render
-  // ────────────────────────────────────────────────────────────────────────────
+  // Renderer
   function renderPairsOverlay() {
     ensureStyles();
     const containers = ensureHost(); if (!containers) return;
@@ -273,23 +257,19 @@
 
     board.innerHTML = html;
 
-    // Tooltips (passive) and badges
+    // Tooltips and badges
     installTooltip(host);
     refreshBadges(board);
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Post-render: badge positions
-  // ────────────────────────────────────────────────────────────────────────────
   function refreshBadges(board) {
     [...board.querySelectorAll(".pair-card")].forEach((el, i) => {
       const b = el.querySelector(".ord-badge"); if (b) b.textContent = String(i + 1);
     });
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Reorder (buttons only)
-  // ────────────────────────────────────────────────────────────────────────────
   if (typeof window.movePair !== "function") {
     window.movePair = async function (id, dir) {
       try {
@@ -314,9 +294,7 @@
     };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Orchestration
-  // ────────────────────────────────────────────────────────────────────────────
   async function renderOrEnhance() {
     if (_renderBusy) return; _renderBusy = true;
     try { await loadPairsIfNeeded(); renderPairsOverlay(); }
