@@ -617,6 +617,8 @@ def _json_safe(obj: Any) -> Any:
 @asynccontextmanager
 async def _lifespan(app):
     app.state.watch = None
+    app.state.watch_groups = {}
+    app.state.watch_manager = None
     _apply_debug_env_from_config()
     _install_ui_log_forwarder()
 
@@ -635,63 +637,105 @@ async def _lifespan(app):
         except Exception: pass
 
     started = False
+    wm_available = False
     try:
-        w = autostart_from_config()
-        if w:
-            app.state.watch = w
-            globals()['WATCH'] = w
-            started = bool(getattr(w, "is_alive", lambda: False)())
-            _UIHostLogger("TRAKT", "WATCH")(
-                "watch autostarted" if started else "watch autostart returned but not alive",
-                level="INFO"
-            )
-        else:
-            cfg2 = load_config() or {}
-            sc2 = (cfg2.get("scrobble") or {})
-            watch2 = (sc2.get("watch") or {}) if isinstance(sc2.get("watch"), dict) else {}
-            if watch2.get("autostart") is False:
-                _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
-            else:
-                _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
-    except Exception as e:
-        try: _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
-        except Exception: pass
+        cfg = load_config() or {}
+        sc = (cfg.get("scrobble") or {}) or {}
+        watch = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
+        want_autostart = bool(sc.get("enabled")) and str(sc.get("mode") or "").lower() == "watch" and bool(watch.get("autostart"))
 
-    if not started:
-        try:
-            cfg = load_config()
-            sc = (cfg.get("scrobble") or {})
-            if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
-                from providers.scrobble.trakt.sink import TraktSink
-                prov = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
-                if prov == "emby":
-                    from providers.scrobble.emby.watch import make_default_watch as make_default_watch
-                elif prov == "jellyfin":
-                    from providers.scrobble.jellyfin.watch import make_default_watch as make_default_watch
-                else:
-                    from providers.scrobble.plex.watch import make_default_watch as make_default_watch
-                sinks_fb = _build_sinks_from_config(cfg)
-                w2 = make_default_watch(sinks=sinks_fb)
+        if want_autostart:
+            try:
+                from providers.scrobble.watch_manager import start_from_config as _wm_start
+                wm_available = True
+                res = _wm_start(app)
+                if isinstance(res, dict):
+                    started = any(bool(g.get("running")) for g in (res.get("groups") or []))
+                _UIHostLogger("TRAKT", "WATCH")(
+                    "watch routes autostarted" if started else "watch routes autostart returned but not running",
+                    level="INFO",
+                )
+            except Exception as e:
                 try:
-                    filters = ((sc.get("watch") or {}).get("filters") or {})
-                    if isinstance(filters, dict) and hasattr(w2, "set_filters"):
-                        getattr(w2, "set_filters")(filters)
+                    _UIHostLogger("TRAKT", "WATCH")(f"watch routes autostart failed: {e}", level="ERROR")
                 except Exception:
                     pass
+        else:
+            if watch.get("autostart") is False:
+                _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
+            else:
+                _UIHostLogger("TRAKT", "WATCH")("watch autostart not requested", level="INFO")
+    except Exception as e:
+        try:
+            _UIHostLogger("TRAKT", "WATCH")(f"watch autostart check failed: {e}", level="ERROR")
+        except Exception:
+            pass
 
-                if hasattr(w2, "start_async"):
-                    w2.start_async()
+    if not wm_available:
+        try:
+            w = autostart_from_config()
+            if w:
+                app.state.watch = w
+                globals()["WATCH"] = w
+                started = bool(getattr(w, "is_alive", lambda: False)())
+                _UIHostLogger(
+                    "TRAKT",
+                    "WATCH",
+                )(
+                    "watch autostarted" if started else "watch autostart returned but not alive",
+                    level="INFO",
+                )
+            else:
+                cfg2 = load_config() or {}
+                sc2 = (cfg2.get("scrobble") or {})
+                watch2 = (sc2.get("watch") or {}) if isinstance(sc2.get("watch"), dict) else {}
+                if watch2.get("autostart") is False:
+                    _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
                 else:
-                    import threading
-                    threading.Thread(target=w2.start, daemon=True).start()
-
-                app.state.watch = w2
-                globals()['WATCH'] = w2
-                started = True
-                _UIHostLogger("TRAKT", "WATCH")("fallback default watch started", level="INFO")
+                    _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
         except Exception as e:
-            try: _UIHostLogger("TRAKT", "WATCH")(f"fallback start failed: {e}", level="ERROR")
-            except Exception: pass
+            try:
+                _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
+            except Exception:
+                pass
+
+        if not started:
+            try:
+                cfg = load_config()
+                sc = (cfg.get("scrobble") or {})
+                if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
+                    from providers.scrobble.trakt.sink import TraktSink
+                    prov = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
+                    if prov == "emby":
+                        from providers.scrobble.emby.watch import make_default_watch as make_default_watch
+                    elif prov == "jellyfin":
+                        from providers.scrobble.jellyfin.watch import make_default_watch as make_default_watch
+                    else:
+                        from providers.scrobble.plex.watch import make_default_watch as make_default_watch
+                    sinks_fb = _build_sinks_from_config(cfg)
+                    w2 = make_default_watch(sinks=sinks_fb)
+                    try:
+                        filters = ((sc.get("watch") or {}).get("filters") or {})
+                        if isinstance(filters, dict) and hasattr(w2, "set_filters"):
+                            getattr(w2, "set_filters")(filters)
+                    except Exception:
+                        pass
+
+                    if hasattr(w2, "start_async"):
+                        w2.start_async()
+                    else:
+                        import threading
+                        threading.Thread(target=w2.start, daemon=True).start()
+
+                    app.state.watch = w2
+                    globals()["WATCH"] = w2
+                    started = True
+                    _UIHostLogger("TRAKT", "WATCH")("fallback default watch started", level="INFO")
+            except Exception as e:
+                try:
+                    _UIHostLogger("TRAKT", "WATCH")(f"fallback start failed: {e}", level="ERROR")
+                except Exception:
+                    pass
 
     try:
         global scheduler
@@ -721,6 +765,12 @@ async def _lifespan(app):
         except Exception as e:
             try: _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
             except Exception: pass
+
+        try:
+            from providers.scrobble.watch_manager import stop_all as _wm_stop
+            _wm_stop(app)
+        except Exception:
+            pass
 
         try:
             w = getattr(app.state, "watch", None) or (WATCH if 'WATCH' in globals() else None)

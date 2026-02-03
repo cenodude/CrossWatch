@@ -19,6 +19,18 @@ from cw_platform.provider_instances import build_provider_config_view, normalize
 from providers.scrobble.currently_watching import _state_file as _cw_state_file
 
 try:
+    from providers.scrobble.watch_manager import start_from_config as _wm_start_from_config
+    from providers.scrobble.watch_manager import status as _wm_status
+    from providers.scrobble.watch_manager import stop_all as _wm_stop_all
+    HAVE_WATCH_MANAGER = True
+except Exception:
+    _wm_start_from_config = None  # type: ignore[assignment]
+    _wm_status = None  # type: ignore[assignment]
+    _wm_stop_all = None  # type: ignore[assignment]
+    HAVE_WATCH_MANAGER = False
+
+
+try:
     from .maintenanceAPI import reset_currently_watching as _reset_currently_watching  # type: ignore[attr-defined]
 except Exception:
     _reset_currently_watching = None  # type: ignore[assignment]
@@ -436,13 +448,66 @@ def debug_watch_logs(
 
 @router.get("/api/watch/status")
 def debug_watch_status(request: Request) -> dict[str, Any]:
+    wm: dict[str, Any] = {"groups": [], "routes": []}
+    if HAVE_WATCH_MANAGER and callable(_wm_status):
+        try:
+            x = _wm_status(request.app)  # type: ignore[misc]
+            if isinstance(x, dict):
+                wm = x
+        except Exception:
+            wm = {"groups": [], "routes": []}
+
+    legacy_w = getattr(request.app.state, "watch", None)
+    try:
+        legacy_alive = bool(getattr(legacy_w, "is_alive", lambda: False)()) if legacy_w else False
+    except Exception:
+        legacy_alive = False
+
+    groups = wm.get("groups") or []
+    routes = wm.get("routes") or []
+
+    try:
+        route_running = any(bool((r or {}).get("running")) for r in (routes if isinstance(routes, list) else []))
+    except Exception:
+        route_running = False
+
+    alive = bool(route_running or legacy_alive)
+
+    provider = ""
+    if isinstance(groups, list) and len(groups) == 1:
+        provider = str((groups[0] or {}).get("provider") or "").strip().lower()
+    if not provider:
+        provider = _watch_kind(legacy_w) or ("multi" if groups else "")
+
+    sinks = sorted({str((r or {}).get("sink") or "").strip().lower() for r in (routes if isinstance(routes, list) else []) if (r or {}).get("sink")})
+
+    out: dict[str, Any] = dict(wm) if isinstance(wm, dict) else {"groups": [], "routes": []}
+    out.update(
+        {
+            "has_watch": bool(groups) or bool(legacy_w),
+            "alive": bool(alive),
+            "stop_set": False,
+            "provider": provider or None,
+            "sinks": sinks,
+        }
+    )
+    if legacy_w and not groups:
+        out["legacy"] = {"provider": _watch_kind(legacy_w), "alive": bool(legacy_alive)}
+    return out
+
+
+def _stop_legacy_watch(request: Request) -> bool:
     w = getattr(request.app.state, "watch", None)
-    return {
-        "has_watch": bool(w),
-        "alive": bool(getattr(w, "is_alive", lambda: False)()),
-        "stop_set": bool(getattr(w, "is_stopping", lambda: False)()),
-        "provider": _watch_kind(w),
-    }
+    if not w:
+        return True
+    stopped = _stop_watch_blocking(w)
+    if stopped:
+        request.app.state.watch = None
+        request.app.state.watch_meta = None
+    return bool(stopped)
+
+
+
 
 
 def _ensure_watch_started(
@@ -560,6 +625,18 @@ def debug_watch_start(
             _reset_currently_watching()
         except Exception:
             pass
+
+    _stop_legacy_watch(request)
+
+    if HAVE_WATCH_MANAGER and callable(_wm_start_from_config):
+        try:
+            _wm_start_from_config(request.app)  # type: ignore[misc]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"WatchManager start failed: {e}")
+        out = debug_watch_status(request)
+        out["ok"] = True
+        return out
+
     w = _ensure_watch_started(request, provider, sink)
     alive = bool(getattr(w, "is_alive", lambda: False)())
     meta = getattr(request.app.state, "watch_meta", None) or {}
@@ -567,11 +644,14 @@ def debug_watch_start(
 
 @router.post("/api/watch/stop")
 def debug_watch_stop(request: Request) -> dict[str, Any]:
-    w = getattr(request.app.state, "watch", None)
-    stopped = _stop_watch_blocking(w) if w else True
-    if stopped:
-        request.app.state.watch = None
-        request.app.state.watch_meta = None
+    stopped = True
+    if HAVE_WATCH_MANAGER and callable(_wm_stop_all):
+        try:
+            _wm_stop_all(request.app)  # type: ignore[misc]
+        except Exception:
+            stopped = False
+
+    legacy_stopped = _stop_legacy_watch(request)
 
     if callable(_reset_currently_watching):
         try:
@@ -579,7 +659,9 @@ def debug_watch_stop(request: Request) -> dict[str, Any]:
         except Exception:
             pass
 
-    return {"ok": True, "alive": False, "stopped": bool(stopped)}
+    out = debug_watch_status(request)
+    out.update({"ok": True, "stopped": bool(stopped and legacy_stopped)})
+    return out
 
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request) -> JSONResponse:

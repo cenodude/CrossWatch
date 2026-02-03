@@ -200,6 +200,13 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
     cfg: dict[str, Any] = dict(merged or {})
 
+    # Scrobble watcher: ensure routes exist when legacy fields are used
+    try:
+        from providers.scrobble.routes import ensure_routes
+        cfg, _ = ensure_routes(cfg)
+    except Exception:
+        pass
+
     sc = cfg.setdefault("scrobble", {})
     sc_enabled = bool(sc.get("enabled", False))
     mode = str(sc.get("mode") or "").strip().lower()
