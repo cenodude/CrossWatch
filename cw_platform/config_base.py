@@ -177,12 +177,12 @@ DEFAULT_CFG: dict[str, Any] = {
             "created_at": 0,                            # Epoch when device_code was created
         },
     },
-"tmdb_sync": {                                      # Tracker / sync adapter auth (TMDb v3)
-    "api_key": "",                                  # v3 API Key (required)
-    "session_id": "",                               # v3 Session ID (filled after Connect)
-    "account_id": "",                               # v3 Account ID (auto-filled)
-    "_pending_request_token": "",                   # Temporary token waiting for approval
-    "_pending_created_at": 0,                       # Epoch when request token was created
+"tmdb_sync": {                                          # Tracker / sync adapter auth (TMDb v3)
+    "api_key": "",                                      # v3 API Key (required)
+    "session_id": "",                                   # v3 Session ID (filled after Connect)
+    "account_id": "",                                   # v3 Account ID (auto-filled)
+    "_pending_request_token": "",                       # Temporary token waiting for approval
+    "_pending_created_at": 0,                           # Epoch when request token was created
     "timeout": 15.0,
     "max_retries": 3,
 },
@@ -363,6 +363,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
             "provider": "plex",                         # Active watcher either "plex|emby|Jellyfin" (default: "plex")
             "sink": "",                                 # "trakt" | "simkl" | "mdblist"
+            "routes": [],                               # Route-based config (preferred); empty = migrate legacy keys
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
@@ -566,7 +567,7 @@ def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
             v.setdefault("add", True)
             v.setdefault("remove", False)
 
-            # Ratings has extra fields - normalize carefully
+            # Ratings has extra fields
             if name == "ratings":
                 v = _normalize_ratings_feature(v)
             f[name] = v
