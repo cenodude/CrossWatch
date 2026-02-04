@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import time, threading, re, base64, hmac, hashlib
-from typing import Any, Iterable, Mapping, Callable
+from typing import Any, Iterable, Mapping, Callable, cast
 
 from plexapi.server import PlexServer
 from plexapi.alert import AlertListener
@@ -190,7 +190,16 @@ class WatchService:
 
     def sinks_count(self) -> int:
         try:
-            return len(getattr(self._dispatch, "_sinks", []) or [])
+            d = getattr(self, "_dispatch", None) or getattr(self, "_dispatcher", None)
+            if d is None:
+                return len(getattr(self, "_sinks", []) or [])
+            sc = getattr(d, "sinks_count", None)
+            if callable(sc):
+                return int(cast(Any, sc()))
+            ds = getattr(d, "_dispatchers", None)
+            if isinstance(ds, (list, tuple)):
+                return len(ds)
+            return len(getattr(d, "_sinks", []) or [])
         except Exception:
             return 0
 

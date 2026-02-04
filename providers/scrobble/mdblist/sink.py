@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import json
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 import requests
 
 from cw_platform.config_base import load_config
+from cw_platform.provider_instances import normalize_instance_id
 
 try:
     from _logging import log as BASE_LOG
@@ -63,6 +65,22 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         except Exception:
             pass
     print(f"[MDBLIST:{level}] {msg}")
+
+
+def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
+    base = cfg.get(key) if isinstance(cfg, Mapping) else None
+    blk = dict(base or {}) if isinstance(base, Mapping) else {}
+    inst = normalize_instance_id(instance_id)
+    if inst != "default":
+        insts = blk.get("instances")
+        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
+            overlay = dict(insts.get(inst) or {})
+            blk.pop("instances", None)
+            out = dict(blk)
+            out.update(overlay)
+            return out
+    blk.pop("instances", None)
+    return blk
 
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
@@ -433,7 +451,9 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
 
 
 class MDBListSink(ScrobbleSink):
-    def __init__(self) -> None:
+    def __init__(self, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
+        self._cfg_provider = cfg_provider
+        self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
         self._p_glob: dict[str, int] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
@@ -548,8 +568,12 @@ class MDBListSink(ScrobbleSink):
 
 
 
-    def send(self, ev: ScrobbleEvent) -> None:
-        cfg = _cfg()
+    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
+        cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg = dict(cfg)
+        cfg["mdblist"] = _merged_provider_block(cfg, "mdblist", self._instance_id)
         m = cfg.get("mdblist") or {}
         api_key = str(m.get("api_key") or "").strip()
 

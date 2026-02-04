@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import json, time
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 import requests
 
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import normalize_instance_id
 
 try:
     from _logging import log as BASE_LOG
@@ -31,7 +33,7 @@ except ImportError:
 
 TRAKT_API = "https://api.trakt.tv"
 APP_AGENT = "CrossWatch/Watcher/1.0"
-_TOKEN_OVERRIDE: str | None = None
+_TOKEN_OVERRIDE: dict[str, str] = {}
 _AR_TTL = 60
 
 
@@ -73,6 +75,22 @@ def _dbg(msg: str) -> None:
     _log(msg, "DEBUG")
 
 
+def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
+    base = cfg.get(key) if isinstance(cfg, Mapping) else None
+    blk = dict(base or {}) if isinstance(base, Mapping) else {}
+    inst = normalize_instance_id(instance_id)
+    if inst != "default":
+        insts = blk.get("instances")
+        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
+            overlay = dict(insts.get(inst) or {})
+            blk.pop("instances", None)
+            out = dict(blk)
+            out.update(overlay)
+            return out
+    blk.pop("instances", None)
+    return blk
+
+
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     rt = cfg.get("runtime") or {}
     ver = str(rt.get("version") or APP_AGENT)
@@ -83,11 +101,16 @@ def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
-    t = cfg.get("trakt") or {}
+def _hdr(cfg: dict[str, Any], instance_id: Any = None) -> dict[str, str]:
+    inst = normalize_instance_id(instance_id)
+    t = _merged_provider_block(cfg, "trakt", inst)
     client_id = str(t.get("client_id") or t.get("api_key") or "")
-    auth_trakt = (cfg.get("auth") or {}).get("trakt") or {}
-    token = _TOKEN_OVERRIDE or t.get("access_token") or auth_trakt.get("access_token") or ""
+
+    auth = cfg.get("auth") if isinstance(cfg, dict) else None
+    auth_trakt_base = (auth or {}).get("trakt") if isinstance(auth, dict) else {}
+    auth_trakt = _merged_provider_block({"trakt": auth_trakt_base} if isinstance(auth_trakt_base, dict) else {}, "trakt", inst)
+
+    token = _TOKEN_OVERRIDE.get(inst) or t.get("access_token") or auth_trakt.get("access_token") or ""
     h: dict[str, str] = {
         "Content-Type": "application/json",
         "trakt-api-version": "2",
@@ -99,27 +122,32 @@ def _hdr(cfg: dict[str, Any]) -> dict[str, str]:
     return h
 
 
-def _get(path: str, cfg: dict[str, Any]) -> requests.Response:
-    return requests.get(f"{TRAKT_API}{path}", headers=_hdr(cfg), timeout=10)
+def _get(path: str, cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
+    return requests.get(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), timeout=10)
 
 
-def _post(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Response:
-    return requests.post(f"{TRAKT_API}{path}", headers=_hdr(cfg), json=body, timeout=10)
+def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
+    return requests.post(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), json=body, timeout=10)
 
 
-def _del(path: str, cfg: dict[str, Any]) -> requests.Response:
-    return requests.delete(f"{TRAKT_API}{path}", headers=_hdr(cfg), timeout=10)
+def _del(path: str, cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
+    return requests.delete(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), timeout=10)
 
 
-def _tok_refresh(cfg: dict[str, Any]) -> bool:
-    global _TOKEN_OVERRIDE
+def _tok_refresh(instance_id: Any = None) -> bool:
+    inst = normalize_instance_id(instance_id)
 
     if AUTH_TRAKT is None:
         _log("AUTH_TRAKT provider missing, cannot refresh token", "ERROR")
         return False
 
     try:
-        res = AUTH_TRAKT.refresh(dict(cfg))
+        full_cfg = _cfg()
+    except Exception:
+        full_cfg = {}
+
+    try:
+        res = AUTH_TRAKT.refresh(full_cfg, instance_id=inst)
     except Exception as e:
         _log(f"Token refresh via AUTH_TRAKT failed: {e}", "ERROR")
         return False
@@ -128,18 +156,19 @@ def _tok_refresh(cfg: dict[str, Any]) -> bool:
         _log(f"Token refresh via AUTH_TRAKT failed: {res!r}", "ERROR")
         return False
 
-    try:
-        new_cfg = _cfg()
-    except Exception:
-        new_cfg = cfg
+    new_cfg = _cfg()
+    t = _merged_provider_block(new_cfg, "trakt", inst)
 
-    trakt = (new_cfg.get("trakt") or {}) if isinstance(new_cfg, dict) else {}
-    token = str(trakt.get("access_token") or "").strip()
+    auth = new_cfg.get("auth") if isinstance(new_cfg, dict) else None
+    auth_trakt_base = (auth or {}).get("trakt") if isinstance(auth, dict) else {}
+    auth_trakt = _merged_provider_block({"trakt": auth_trakt_base} if isinstance(auth_trakt_base, dict) else {}, "trakt", inst)
+
+    token = str(t.get("access_token") or auth_trakt.get("access_token") or "").strip()
     if not token:
         _log("Token refresh via AUTH_TRAKT succeeded but no access_token in config", "ERROR")
         return False
 
-    _TOKEN_OVERRIDE = token
+    _TOKEN_OVERRIDE[inst] = token
     _log("Trakt token refreshed via AUTH_TRAKT", "DEBUG")
     return True
 
@@ -234,19 +263,19 @@ def _quantize_progress(prog: float | int, step: int, action: str) -> int:
     return max(1, min(100, q))
 
 
-def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any]) -> dict[str, Any] | None:
+def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any], instance_id: Any = None) -> dict[str, Any] | None:
     ids = ev.ids or {}
     for key in ("imdb", "tvdb", "tmdb"):
         val = ids.get(key)
         if not val:
             continue
         try:
-            r = _get(f"/search/{key}/{val}?type=episode", cfg)
+            r = _get(f"/search/{key}/{val}?type=episode", cfg, instance_id)
         except Exception:
             continue
-        if r.status_code == 401 and _tok_refresh(cfg):
+        if r.status_code == 401 and _tok_refresh(instance_id):
             try:
-                r = _get(f"/search/{key}/{val}?type=episode", cfg)
+                r = _get(f"/search/{key}/{val}?type=episode", cfg, instance_id)
             except Exception:
                 continue
         if r.status_code != 200:
@@ -363,9 +392,9 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
     _log("Auto-remove skipped: no available remove-across implementation", "DEBUG")
 
 
-def _clear_active_checkin(cfg: dict[str, Any]) -> bool:
+def _clear_active_checkin(cfg: dict[str, Any], instance_id: Any = None) -> bool:
     try:
-        r = _del("/checkin", cfg)
+        r = _del("/checkin", cfg, instance_id)
         return r.status_code in (204, 200)
     except Exception:
         return False
@@ -410,7 +439,9 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
 
 
 class TraktSink(ScrobbleSink):
-    def __init__(self, logger: Any | None = None) -> None:
+    def __init__(self, logger: Any | None = None, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
+        self._cfg_provider = cfg_provider
+        self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
         self._p_glob: dict[str, int] = {}
@@ -492,13 +523,14 @@ class TraktSink(ScrobbleSink):
         return bodies or [{"progress": p, "episode": {"ids": ids}}]
 
     def _send_http(self, path: str, body: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+        inst = self._instance_id
         backoff = 1.0
         tried_refresh = False
         tried_checkin_clear = False
 
         for _ in range(6):
             try:
-                r = _post(path, body, cfg)
+                r = _post(path, body, cfg, inst)
             except Exception:
                 time.sleep(backoff)
                 backoff = min(8.0, backoff * 2)
@@ -507,7 +539,7 @@ class TraktSink(ScrobbleSink):
             s = r.status_code
             if s == 401 and not tried_refresh:
                 _log("401 Unauthorized → refreshing token", "WARN")
-                if _tok_refresh(cfg):
+                if _tok_refresh(inst):
                     tried_refresh = True
                     continue
                 return {"ok": False, "status": 401, "resp": "Unauthorized and token refresh failed"}
@@ -517,7 +549,7 @@ class TraktSink(ScrobbleSink):
                 if not tried_checkin_clear and ("expires_at" in txt or "watched_at" in txt):
                     _log("409 Conflict (active check-in) — clearing /checkin and retrying", "WARN")
                     tried_checkin_clear = True
-                    if _clear_active_checkin(cfg):
+                    if _clear_active_checkin(cfg, inst):
                         time.sleep(0.35)
                         continue
                 return {"ok": False, "status": 409, "resp": txt[:400]}
@@ -567,13 +599,23 @@ class TraktSink(ScrobbleSink):
             self._last_intent_prog[key] = int(prog)
         return ok
 
-    def send(self, ev: ScrobbleEvent) -> None:
-        cfg = _cfg()
+    def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
+        cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
+        if not isinstance(cfg, dict):
+            cfg = {}
 
-        t = cfg.get("trakt") or {}
-        auth_trakt = (cfg.get("auth") or {}).get("trakt") or {}
+        inst = self._instance_id
+        t = _merged_provider_block(cfg, "trakt", inst)
+
+        auth = cfg.get("auth") if isinstance(cfg, dict) else None
+        auth_trakt_base = (auth or {}).get("trakt") if isinstance(auth, dict) else {}
+        auth_trakt = _merged_provider_block({"trakt": auth_trakt_base} if isinstance(auth_trakt_base, dict) else {}, "trakt", inst)
+
+        cfg = dict(cfg)
+        cfg["trakt"] = dict(t)
+
         client_id = t.get("client_id") or t.get("api_key")
-        token = _TOKEN_OVERRIDE or t.get("access_token") or auth_trakt.get("access_token")
+        token = _TOKEN_OVERRIDE.get(inst) or t.get("access_token") or auth_trakt.get("access_token")
 
         if not client_id:
             if not self._warn_no_client:

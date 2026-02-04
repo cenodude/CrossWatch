@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import json, time
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 import requests
 
 from cw_platform.config_base import load_config
+from cw_platform.provider_instances import normalize_instance_id
 
 try:
     from _logging import log as BASE_LOG
@@ -59,6 +61,22 @@ def _log(msg: str, lvl: str = "INFO") -> None:
         except Exception:
             pass
     print(f"[SIMKL:{level}] {msg}")
+
+
+def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
+    base = cfg.get(key) if isinstance(cfg, Mapping) else None
+    blk = dict(base or {}) if isinstance(base, Mapping) else {}
+    inst = normalize_instance_id(instance_id)
+    if inst != "default":
+        insts = blk.get("instances")
+        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
+            overlay = dict(insts.get(inst) or {})
+            blk.pop("instances", None)
+            out = dict(blk)
+            out.update(overlay)
+            return out
+    blk.pop("instances", None)
+    return blk
 
 
 def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
@@ -377,7 +395,9 @@ def _bodies(ev: Any, p: float) -> list[dict[str, Any]]:
 
 
 class SimklSink(ScrobbleSink):
-    def __init__(self, logger: Any | None = None) -> None:
+    def __init__(self, logger: Any | None = None, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
+        self._cfg_provider = cfg_provider
+        self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
         self._p_glob: dict[str, int] = {}
@@ -433,8 +453,12 @@ class SimklSink(ScrobbleSink):
             self._last_intent_prog[key] = int(prog)
         return changed
 
-    def send(self, ev: Any) -> None:
-        cfg = _cfg()
+    def send(self, ev: Any, cfg: dict[str, Any] | None = None) -> None:
+        cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg = dict(cfg)
+        cfg["simkl"] = _merged_provider_block(cfg, "simkl", self._instance_id)
         s = cfg.get("simkl") or {}
         api_key = s.get("api_key") or s.get("client_id")
         token = s.get("access_token")

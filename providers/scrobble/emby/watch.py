@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re, time, threading
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 import requests
 
@@ -552,7 +552,7 @@ class EmbyWatchService:
         self._view_roots_cache: dict[str, tuple[float, set[str]]] = {}
         self._item_root_cache: dict[str, str | None] = {}
 
-        self._log(f"Ensuring Watcher is running; wired sinks: {len(self._sinks)}", "INFO")
+        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -569,6 +569,21 @@ class EmbyWatchService:
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
+
+    def sinks_count(self) -> int:
+        try:
+            d = getattr(self, "_dispatch", None) or getattr(self, "_dispatcher", None)
+            if d is None:
+                return len(getattr(self, "_sinks", []) or [])
+            sc = getattr(d, "sinks_count", None)
+            if callable(sc):
+                return int(cast(Any, sc()))
+            ds = getattr(d, "_dispatchers", None)
+            if isinstance(ds, (list, tuple)):
+                return len(ds)
+            return len(getattr(d, "_sinks", []) or [])
+        except Exception:
+            return 0
 
     def _scrobble_whitelist(self, cfg: dict[str, Any]) -> set[str]:
         try:
