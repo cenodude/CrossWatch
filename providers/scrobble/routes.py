@@ -75,14 +75,14 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
 def normalize_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     w = _watch_cfg(cfg)
     routes = w.get("routes")
-
     if isinstance(routes, list):
         out: list[dict[str, Any]] = []
         for i, raw in enumerate(routes):
             if not isinstance(raw, dict):
                 continue
             out.append(normalize_route(raw, f"R{i + 1}"))
-        return out
+        if out:
+            return out
 
     # Legacy migration (only used when routes is missing/invalid)
     prov = str(w.get("provider") or "").strip().lower()
@@ -112,10 +112,16 @@ def normalize_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 def ensure_routes(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     w = _watch_cfg(cfg)
 
-    # If routes key exists, respect it even if empty. Only normalize.
+    # If routes key exists, normalize
     if "routes" in w:
         if isinstance(w.get("routes"), list):
-            w["routes"] = normalize_routes(cfg)
+            before = w.get("routes")
+            out_routes = normalize_routes(cfg)
+            w["routes"] = out_routes
+            migrated = bool((not before) and out_routes and legacy_watch_present(cfg))
+            if migrated:
+                w["routes_migrated_from_legacy"] = True
+            return cfg, migrated
         return cfg, False
 
     routes = normalize_routes(cfg)

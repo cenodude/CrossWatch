@@ -673,6 +673,20 @@ def load_config() -> dict[str, Any]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
     _normalize_ui(cfg)
+
+    # Scrobble watcher: migrate legacy provider/sink into route mode when routes is empty.
+    try:
+        from providers.scrobble.routes import ensure_routes
+
+        cfg, migrated = ensure_routes(cfg)
+        if migrated:
+            try:
+                save_config(cfg)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     return cfg
 
 

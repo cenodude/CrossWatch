@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import time
 from dataclasses import dataclass
@@ -213,11 +214,31 @@ class Dispatcher:
         self._debounce: dict[str, float] = {}
         self._last_action: dict[str, str] = {}
         self._last_progress: dict[str, int] = {}
+        self._sink_accepts_cfg: dict[int, bool] = {}
 
-    def _passes_filters(self, ev: ScrobbleEvent) -> bool:
+    def _send_sink(self, sink: Any, ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
+        sid = id(sink)
+        ok = self._sink_accepts_cfg.get(sid)
+        if ok is None:
+            ok = False
+            try:
+                sig = inspect.signature(getattr(sink, "send"))
+                params = list(sig.parameters.values())
+                ok = any(p.kind == p.VAR_KEYWORD for p in params) or ("cfg" in sig.parameters)
+            except Exception:
+                ok = False
+            self._sink_accepts_cfg[sid] = ok
+        if not ok:
+            sink.send(ev)
+            return
+        try:
+            sink.send(ev, cfg=cfg)
+        except TypeError:
+            sink.send(ev, cfg)
+
+    def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         if ev.session_key and str(ev.session_key) in self._session_ok:
             return True
-        cfg = self._cfg_provider() or {}
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         wl = filt.get("username_whitelist")
         want_server = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
@@ -244,6 +265,22 @@ class Dispatcher:
         ):
             return _allow()
 
+        def find_user_id(o: Any) -> str:
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    if isinstance(k, str) and k.lower() in ("userid", "user_id"):
+                        return str(v or "").strip().lower()
+                for v in o.values():
+                    uid = find_user_id(v)
+                    if uid:
+                        return uid
+            elif isinstance(o, list):
+                for v in o:
+                    uid = find_user_id(v)
+                    if uid:
+                        return uid
+            return ""
+
         def find_psn(o: Any) -> list[dict[str, Any]] | None:
             if isinstance(o, dict):
                 for k, v in o.items():
@@ -263,6 +300,7 @@ class Dispatcher:
         n = (find_psn(ev.raw or {}) or [None])[0] or {}
         acc_id = str(n.get("accountID") or "")
         acc_uuid = str(n.get("accountUUID") or "").lower()
+        user_id = find_user_id(ev.raw or {})
 
         for e in wl_list:
             s = str(e).strip().lower()
@@ -270,14 +308,16 @@ class Dispatcher:
                 return _allow()
             if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid:
                 return _allow()
+            if s.startswith("id:") and user_id and s.split(":", 1)[1].strip().lower() == user_id:
+                return _allow()
+            if s.startswith("uuid:") and user_id and s.split(":", 1)[1].strip().lower() == user_id:
+                return _allow()
         return False
 
-    def _should_send(self, ev: ScrobbleEvent) -> bool:
+    def _should_send(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = ev.session_key or "?"
         last_a = self._last_action.get(sk)
         last_p = self._last_progress.get(sk, -1)
-
-        cfg = self._cfg_provider() or {}
         try:
             sup = int(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
             pause_db = float(((cfg.get("scrobble") or {}).get("watch") or {}).get("pause_debounce_seconds", 5))
@@ -303,13 +343,14 @@ class Dispatcher:
         return False
 
     def dispatch(self, ev: ScrobbleEvent) -> None:
-        if not self._passes_filters(ev):
+        cfg = self._cfg_provider() or {}
+        if not self._passes_filters(ev, cfg):
             return
-        if not self._should_send(ev):
+        if not self._should_send(ev, cfg):
             return
         for s in self._sinks:
             try:
-                s.send(ev)
+                self._send_sink(s, ev, cfg)
             except Exception as e:
                 _log(f"Sink error: {e}", "ERROR")
 
