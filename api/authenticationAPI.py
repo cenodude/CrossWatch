@@ -439,15 +439,21 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         ensure_provider_block(cfg, "jellyfin")
         jf = ensure_instance_block(cfg, "jellyfin", inst)
 
-        for k in ("server", "username", "password"):
+        for k in ("server", "username"):
             v = (payload.get(k) or "").strip()
             if v:
                 jf[k] = v
+
+        # FIX: Password may be empty for some Jellyfin installs
+        if "password" in payload:
+            jf["password"] = str(payload.get("password") or "")
         if "verify_ssl" in payload:
             jf["verify_ssl"] = bool(payload.get("verify_ssl"))
 
-        if not all(jf.get(k) for k in ("server", "username", "password")):
-            return JSONResponse({"ok": False, "error": "Missing: server/username/password"}, 400)
+        server = str(jf.get("server") or "").strip()
+        username = str(jf.get("username") or "").strip()
+        if not server or not username:
+            return JSONResponse({"ok": False, "error": "Missing: server/username"}, 400)
 
         try:
             prov = _import_provider("providers.auth._auth_JELLYFIN")
@@ -581,18 +587,24 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         base = ensure_provider_block(cfg, "emby")
         em = ensure_instance_block(cfg, "emby", inst)
 
-        for k in ("server", "username", "password"):
+        for k in ("server", "username"):
             v = (payload.get(k) or "").strip()
             if v:
                 em[k] = v
+
+        # FIX:Password may be empty for some Emby installs
+        if "password" in payload:
+            em["password"] = str(payload.get("password") or "")
 
         if "verify_ssl" in payload:
             em["verify_ssl"] = bool(payload.get("verify_ssl"))
         if "timeout" in payload:
             em["timeout"] = _to_int(payload.get("timeout"), 15)
 
-        if not all(em.get(k) for k in ("server", "username", "password")):
-            return JSONResponse({"ok": False, "error": "Missing: server/username/password"}, 400)
+        server = str(em.get("server") or "").strip()
+        username = str(em.get("username") or "").strip()
+        if not server or not username:
+            return JSONResponse({"ok": False, "error": "Missing: server/username"}, 400)
 
         try:
             prov = _import_provider("providers.auth._auth_EMBY")

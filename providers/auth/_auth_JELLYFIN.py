@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Mapping, MutableMapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin
 
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
@@ -27,7 +27,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.0.1"
+__VERSION__ = "1.0.2"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
 
@@ -103,7 +103,7 @@ class JellyfinAuth(AuthProvider):
                     "key": "jellyfin.password",
                     "label": "Password",
                     "type": "password",
-                    "required": True,
+                    "required": False,
                 },
             ],
             actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
@@ -122,12 +122,12 @@ class JellyfinAuth(AuthProvider):
         }
 
     def get_status(self, cfg: Mapping[str, Any], instance_id: Any = None) -> AuthStatus:
-        jf: dict[str, Any] = {}
-        if isinstance(cfg, dict):
-            jf = ensure_instance_block(cfg, "jellyfin", normalize_instance_id(instance_id))
-        else:
+        inst = normalize_instance_id(instance_id)
+        if inst == "default" or not isinstance(cfg, dict):
             jf = (cfg.get("jellyfin") or {}) if isinstance(cfg, Mapping) else {}
-
+        else:
+            cfg_dict = cast(dict[str, Any], cfg)
+            jf = ensure_instance_block(cfg_dict, "jellyfin", inst)
         server = (jf.get("server") or "").strip()
         token = (jf.get("access_token") or "").strip()
         user = (jf.get("user") or jf.get("username") or "").strip() or None
@@ -139,14 +139,15 @@ class JellyfinAuth(AuthProvider):
 
         inst = normalize_instance_id(instance_id)
 
-        jf = ensure_instance_block(cfg, "jellyfin", inst)
+        cfg_dict = cast(dict[str, Any], cfg)
+        jf = ensure_instance_block(cfg_dict, "jellyfin", inst)
         base = _clean_base(jf.get("server", ""))
         user = (jf.get("username") or "").strip()
-        pw = (jf.get("password") or "").strip()
+        pw = str(jf.get("password") or "").strip()
         if not base:
             raise RuntimeError("Malformed request: missing server")
-        if not user or not pw:
-            raise RuntimeError("Malformed request: missing username/password")
+        if not user:
+            raise RuntimeError("Malformed request: missing username")
 
         dev_id = (jf.get("device_id") or "").strip() or secrets.token_hex(16)
         jf["device_id"] = dev_id
@@ -210,15 +211,16 @@ class JellyfinAuth(AuthProvider):
         return {"ok": True, "mode": "user_token", "user_id": jf.get("user_id") or ""}
 
     def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        return self.get_status(cfg, inst)
+        return self.get_status(cfg)
 
     def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg, inst)
+        return self.get_status(cfg)
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
 
-        jf = ensure_instance_block(cfg, "jellyfin", inst)
+        cfg_dict = cast(dict[str, Any], cfg)
+        jf = ensure_instance_block(cfg_dict, "jellyfin", inst)
         for k in ("access_token", "user_id"):
             jf.pop(k, None)
         log("Jellyfin: disconnected", level="INFO", module="AUTH")

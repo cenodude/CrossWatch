@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Mapping, MutableMapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin
 
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
@@ -27,7 +27,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0.1"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
 
@@ -102,7 +102,7 @@ class EmbyAuth(AuthProvider):
                     "key": "emby.password",
                     "label": "Password",
                     "type": "password",
-                    "required": True,
+                    "required": False,
                 },
             ],
             actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
@@ -133,14 +133,15 @@ class EmbyAuth(AuthProvider):
         from requests import exceptions as rx
 
         inst = normalize_instance_id(instance_id)
-        em = ensure_instance_block(cfg, "emby", inst)
+        cfg_dict = cast(dict[str, Any], cfg)
+        em = ensure_instance_block(cfg_dict, "emby", inst)
         base = _clean_base(em.get("server", ""))
         user = (em.get("username") or "").strip()
-        pw = (em.get("password") or "").strip()
+        pw = str(em.get("password") or "").strip()
         if not base:
             raise RuntimeError("Malformed request: missing server")
-        if not user or not pw:
-            raise RuntimeError("Malformed request: missing username/password")
+        if not user:
+            raise RuntimeError("Malformed request: missing username")
 
         dev_id = (em.get("device_id") or "").strip() or secrets.token_hex(16)
         em["device_id"] = dev_id
@@ -211,11 +212,12 @@ class EmbyAuth(AuthProvider):
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        em = ensure_instance_block(cfg, "emby", inst)
+        cfg_dict = cast(dict[str, Any], cfg)
+        em = ensure_instance_block(cfg_dict, "emby", inst)
         for k in ("access_token", "user_id"):
             em.pop(k, None)
         log("Emby: disconnected", level="INFO", module="AUTH")
-        return self.get_status(cfg)
+        return self.get_status(cfg, inst)
 
 
 PROVIDER = EmbyAuth()
