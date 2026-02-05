@@ -10,10 +10,21 @@
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   };
+  const STICKY_NOTES = {};
+
 
   function setNote(id, msg, kind) {
     const n = d.getElementById(id);
     if (!n) return;
+    const sid = String(id || "");
+    if (!msg && STICKY_NOTES[sid]) {
+      const s = STICKY_NOTES[sid];
+      n.textContent = s.msg || "";
+      n.style.display = s.msg ? "" : "none";
+      n.classList.remove("err", "warn", "ok");
+      if (s.kind) n.classList.add(s.kind);
+      return;
+    }
     n.textContent = msg || "";
     const color = kind === "err" ? "#ff6b6b" : kind === "warn" ? "#f59e0b" : "var(--muted,#a7a7a7)";
     n.style.cssText =
@@ -21,6 +32,19 @@
       color +
       (kind === "warn" ? ";font-weight:700" : "");
   }
+
+
+function setStickyNote(id, msg, kind) {
+  const sid = String(id || "");
+  STICKY_NOTES[sid] = { msg: String(msg || ""), kind: kind || "" };
+  setNote(sid, msg, kind);
+}
+
+function clearStickyNote(id) {
+  const sid = String(id || "");
+  delete STICKY_NOTES[sid];
+  setNote(sid, "");
+}
 
   const HELP_TEXT = {
     "sc-help-auto-remove":
@@ -169,7 +193,20 @@
     #sc-provider option,#sc-sink option{color:#fff;background:#111}
 
     #sc-filters>summary,#sc-advanced>summary{display:flex;align-items:center;gap:8px;}
-    `;
+    
+    /* Routes UI */
+    .sc-route-table table{width:100%;border-collapse:separate;border-spacing:0 8px}
+    .sc-route-table th{font-size:12px;opacity:.8;text-align:left;padding:0 6px}
+    .sc-route-table td{padding:0 6px;vertical-align:middle}
+    .sc-route-row{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:12px}
+    .sc-route-row td{padding:8px 6px}
+    .sc-route-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+    .sc-route-table select.input{height:34px}
+    .sc-route-table .sc-prov-wrap{display:block;width:100%}
+    .sc-route-table .sc-prov-btn{width:100%;height:34px;padding:6px 10px}
+    .sc-route-table .sc-prov-menu{left:0;right:0;min-width:0}
+
+`;
     d.head.appendChild(s);
   }
 
@@ -283,6 +320,145 @@
     jellyfin: { label: "Jellyfin", icon: "/assets/img/JELLYFIN-log.svg", alt: "Jellyfin" },
   };
 
+  const SINK_META = {
+    trakt: { label: "Trakt", icon: "/assets/img/TRAKT-log.svg", alt: "Trakt" },
+    simkl: { label: "SIMKL", icon: "/assets/img/SIMKL-log.svg", alt: "SIMKL" },
+    mdblist: { label: "MDBList", icon: "/assets/img/MDBLIST-log.svg", alt: "MDBList" },
+  };
+
+  let ROUTE_DD_OPEN = null;
+
+  function closeRouteDd() {
+    const cur = ROUTE_DD_OPEN;
+    if (!cur) return;
+    cur.menu.classList.add("hidden");
+    cur.btn.setAttribute("aria-expanded", "false");
+    ROUTE_DD_OPEN = null;
+  }
+
+  function bindRouteDdAway() {
+    if (STATE.__scRouteDdAwayBound) return;
+    STATE.__scRouteDdAwayBound = true;
+    d.addEventListener("click", (e) => {
+      const cur = ROUTE_DD_OPEN;
+      if (!cur) return;
+      if (cur.menu.contains(e.target)) return;
+      if (cur.btn === e.target || cur.btn.contains(e.target)) return;
+      closeRouteDd();
+    });
+    d.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeRouteDd();
+    });
+  }
+
+  function makeRouteIconDropdown(sel, metaMap, labelFallback) {
+    const wrap = el("div", { className: "sc-prov-wrap sc-route-dd" });
+    const btn = el("button", { type: "button", className: "input sc-prov-btn" });
+    btn.style.width = "100%";
+    btn.setAttribute("aria-haspopup", "listbox");
+    btn.setAttribute("aria-expanded", "false");
+
+    const left = el("span", { className: "sc-prov-left" });
+    const ico = el("img", { className: "wh-logo sc-prov-ico", alt: "" });
+    const label = el("span", { className: "truncate" });
+    left.append(ico, label);
+
+    const caret = el("span", { className: "sc-prov-caret", textContent: "▾" });
+    caret.setAttribute("aria-hidden", "true");
+    btn.append(left, caret);
+
+    const menu = el("div", { className: "sc-prov-menu hidden", role: "listbox" });
+
+    const items = [];
+    [...sel.options].forEach((opt) => {
+      const v = String(opt.value || "").toLowerCase().trim();
+      if (!v) return;
+      const key = v === "embv" ? "emby" : v;
+      const meta = metaMap[key] || { label: opt.textContent || labelFallback || v, icon: "", alt: opt.textContent || v };
+      const it = el("button", { type: "button", className: "sc-prov-item", role: "option" });
+      it.dataset.value = v;
+      if (meta.icon) it.appendChild(el("img", { className: "wh-logo sc-prov-ico", src: meta.icon, alt: meta.alt || meta.label || v }));
+      it.appendChild(el("span", { textContent: meta.label || opt.textContent || v }));
+      menu.appendChild(it);
+      items.push(it);
+    });
+
+    sel.style.display = "none";
+
+    const sync = () => {
+      const v0 = String(sel.value || "").toLowerCase().trim();
+      const v = v0 === "embv" ? "emby" : v0;
+      const meta = metaMap[v] || { label: labelFallback || v0 || "", icon: "", alt: labelFallback || v0 || "" };
+      if (meta.icon) {
+        ico.src = meta.icon;
+        ico.alt = meta.alt || meta.label || v0;
+        ico.style.display = "";
+      } else {
+        ico.removeAttribute("src");
+        ico.alt = "";
+        ico.style.display = "none";
+      }
+      label.textContent = meta.label || v0 || "";
+      items.forEach((it) => it.setAttribute("aria-selected", String(it.dataset.value || "") === v0 ? "true" : "false"));
+    };
+
+    const open = () => {
+      bindRouteDdAway();
+      if (ROUTE_DD_OPEN && ROUTE_DD_OPEN.menu !== menu) closeRouteDd();
+      menu.classList.remove("hidden");
+      btn.setAttribute("aria-expanded", "true");
+      ROUTE_DD_OPEN = { menu, btn };
+      try {
+        const sc = d.getElementById("sc-routes");
+        if (sc) {
+          menu.style.top = "calc(100% + 6px)";
+          menu.style.bottom = "";
+          menu.style.visibility = "hidden";
+          const h = menu.offsetHeight || 0;
+          const rBtn = btn.getBoundingClientRect();
+          const rSc = sc.getBoundingClientRect();
+          const spaceBelow = rSc.bottom - rBtn.bottom;
+          const spaceAbove = rBtn.top - rSc.top;
+          if (h && spaceBelow < h && spaceAbove > h) {
+            menu.style.top = "auto";
+            menu.style.bottom = "calc(100% + 6px)";
+          }
+          menu.style.visibility = "";
+        }
+      } catch {}
+      sync();
+    };
+
+    const toggle = () => (menu.classList.contains("hidden") ? open() : closeRouteDd());
+
+    on(btn, "click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggle();
+    });
+
+    on(menu, "click", (e) => {
+      const it = e.target && e.target.closest ? e.target.closest("button[data-value]") : null;
+      if (!it) return;
+      e.preventDefault();
+      const v = String(it.dataset.value || "").toLowerCase().trim();
+      if (v && sel.value !== v) {
+        sel.value = v;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        sync();
+      }
+      closeRouteDd();
+    });
+
+    on(sel, "change", sync);
+
+    wrap.append(btn, menu, sel);
+    sync();
+    return wrap;
+  }
+
+
   function syncProviderPickerUi() {
     const sel = $("#sc-provider", STATE.mount);
     const btn = $("#sc-provider-btn", STATE.mount);
@@ -393,39 +569,45 @@
 
   const API = {
     cfgGet: () => j("/api/config"),
-    users: async () => {
+    providerInstances: (p) => j(`/api/provider-instances/${encodeURIComponent(String(p || ""))}`),
+    users: async (instanceId) => {
   const prov = provider();
+  const routesMode = isRoutesMode();
+  let routesOut = undefined;
+  const inst = String(instanceId || "default");
   if (prov === "emby") {
-    const x = await j("/api/emby/users");
+    const x = await j(`/api/emby/users?instance=${encodeURIComponent(inst)}`);
     const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
     return Array.isArray(a) ? a : [];
   }
   if (prov === "jellyfin") {
-    const x = await j("/api/jellyfin/users");
+    const x = await j(`/api/jellyfin/users?instance=${encodeURIComponent(inst)}`);
     const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
     return Array.isArray(a) ? a : [];
   }
-  const x = await j("/api/plex/users");
+  const x = await j(`/api/plex/users?instance=${encodeURIComponent(inst)}`);
   const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
   return Array.isArray(a) ? a : [];
 },
-serverUUID: async () => {
+serverUUID: async (instanceId) => {
   const prov = provider();
+  const inst = String(instanceId || "default");
   if (prov === "emby") {
-    const x = await j("/api/emby/inspect");
+    const x = await j(`/api/emby/inspect?instance=${encodeURIComponent(inst)}`);
     const uid = x?.user_id || x?.user?.Id || x?.id || "";
     return { id: uid };
   }
   if (prov === "jellyfin") {
-    const x = await j("/api/jellyfin/inspect");
+    const x = await j(`/api/jellyfin/inspect?instance=${encodeURIComponent(inst)}`);
     const uid = x?.user_id || x?.user?.Id || x?.id || "";
     return { id: uid };
   }
-  return j("/api/plex/server_uuid");
+  const x = await j(`/api/plex/inspect?instance=${encodeURIComponent(inst)}`);
+  return { server_uuid: x?.server_uuid || x?.uuid || x?.serverUUID || "" };
 },
     watch: {
       status: () => j("/api/watch/status"),
-      start: (prov, sink) => j(`/api/watch/start?provider=${encodeURIComponent(prov)}&sink=${encodeURIComponent(sink)}`, { method: "POST" }),
+      start: (prov, sink) => (prov && sink) ? j(`/api/watch/start?provider=${encodeURIComponent(prov)}&sink=${encodeURIComponent(sink)}`, { method: "POST" }) : j("/api/watch/start", { method: "POST" }),
       stop: () => j("/api/watch/stop", { method: "POST" }),
     },
   };
@@ -448,7 +630,484 @@ serverUUID: async () => {
     }
   }
 
-  function chip(text, onRemove, onClick) {
+  
+  // Routes mode support
+  const ROUTES_NOTICE_KEY = "cw.scrobble.migrated_notice.v1";
+  const ROUTES_TAB_KEY = "cw.ui.scrobbler.routes.active.v1";
+  const ROUTE_PROVIDERS = ["plex", "emby", "jellyfin"];
+  const ROUTE_SINKS = ["trakt", "simkl", "mdblist"];
+
+  const hasOwn = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
+
+  function isRoutesMode() {
+    const wcfg = STATE.cfg?.scrobble?.watch;
+    return !!wcfg && hasOwn(wcfg, "routes") && Array.isArray(wcfg.routes);
+  }
+
+  function getRoutes() {
+    const wcfg = STATE.cfg?.scrobble?.watch;
+    return Array.isArray(wcfg?.routes) ? wcfg.routes : [];
+  }
+
+  function setRoutes(routes) {
+    STATE.cfg.scrobble ||= {};
+    STATE.cfg.scrobble.watch ||= {};
+    STATE.cfg.scrobble.watch.routes = Array.isArray(routes) ? routes : [];
+  }
+
+  function deepClone(v) {
+    try { return typeof structuredClone === "function" ? structuredClone(v) : JSON.parse(JSON.stringify(v)); } catch { return v; }
+  }
+
+  function normalizeRoute(r, idFallback) {
+    const x = (r && typeof r === "object") ? r : {};
+    return {
+      id: String(x.id || idFallback || "").trim() || "R1",
+      enabled: x.enabled !== false,
+      provider: String(x.provider || "plex").toLowerCase(),
+      provider_instance: String(x.provider_instance || "default"),
+      sink: String(x.sink || "trakt").toLowerCase(),
+      sink_instance: String(x.sink_instance || "default"),
+      filters: deepClone(x.filters || {}),
+    };
+  }
+
+  function nextRouteId() {
+    const used = new Set(getRoutes().map(r => String(r?.id || "").trim()).filter(Boolean));
+    let i = 1;
+    while (used.has(`R${i}`)) i++;
+    return `R${i}`;
+  }
+
+  function legacyToRoutesIfMissing() {
+    const wcfg = STATE.cfg?.scrobble?.watch || {};
+    const hasRoutesKey = hasOwn(wcfg, "routes");
+    const routesArr = Array.isArray(wcfg.routes) ? wcfg.routes : null;
+    if (routesArr && routesArr.length) return { migrated: false };
+    if (hasRoutesKey && !routesArr) return { migrated: false }; // explicit non-array routes - leave to backend
+
+    const prov = String(wcfg.provider || "").trim();
+    const sink = String(wcfg.sink || "").trim();
+    if (!prov || !sink) return { migrated: false };
+    const sinks = sink.split(",").map(s => s.trim()).filter(Boolean);
+    const filters = deepClone(wcfg.filters || {});
+    const routes = sinks.map((s, i) => normalizeRoute({ id: `R${i + 1}`, enabled: true, provider: prov, provider_instance: "default", sink: s, sink_instance: "default", filters }, `R${i + 1}`));
+    STATE.cfg.scrobble ||= {};
+    STATE.cfg.scrobble.watch ||= {};
+    STATE.cfg.scrobble.watch.routes = routes;
+    STATE.cfg.scrobble.watch.routes_migrated_from_legacy = true;
+    return { migrated: true };
+  }
+
+  function activeRouteId() {
+    const routes = getRoutes();
+    if (!routes.length) return null;
+    const saved = String(localStorage.getItem(ROUTES_TAB_KEY) || "").trim();
+    if (saved && routes.some(r => r.id === saved)) return saved;
+    return routes[0].id;
+  }
+
+  function setActiveRouteId(id) {
+    const rid = String(id || "").trim();
+    if (!rid) return;
+    localStorage.setItem(ROUTES_TAB_KEY, rid);
+  }
+
+  function getActiveRoute() {
+    const rid = activeRouteId();
+    if (!rid) return null;
+    return getRoutes().find(r => r.id === rid) || null;
+  }
+
+  function routeLabel(r) {
+    const pi = String(r.provider_instance || "default");
+    const si = String(r.sink_instance || "default");
+    const p = String(r.provider || "plex");
+    const s = String(r.sink || "trakt");
+    return `${r.id} ${p}(${pi}) → ${s}(${si})`;
+  }
+
+
+function routeKey(r) {
+  const p = String(r?.provider || "").trim().toLowerCase();
+  const pi = String(r?.provider_instance || "default").trim().toLowerCase() || "default";
+  const s = String(r?.sink || "").trim().toLowerCase();
+  const si = String(r?.sink_instance || "default").trim().toLowerCase() || "default";
+  return `${p}|${pi}|${s}|${si}`;
+}
+
+function isDuplicateRoute(candidate, routes, selfId) {
+  const key = routeKey(candidate);
+  const sid = String(selfId || candidate?.id || "").trim();
+  if (!key || !sid) return false;
+  return (routes || []).some(r => String(r?.id || "").trim() !== sid && routeKey(r) === key);
+}
+
+function findDuplicateRouteKeys(routes) {
+  const map = new Map();
+  for (const r of (routes || [])) {
+    const k = routeKey(r);
+    if (!k) continue;
+    const arr = map.get(k) || [];
+    arr.push(String(r?.id || ""));
+    map.set(k, arr);
+  }
+  const dups = [];
+  for (const [k, ids] of map.entries()) {
+    if (ids.length > 1) dups.push({ key: k, ids });
+  }
+  return dups;
+}
+
+
+function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
+  const provs = [String(baseProv || "").trim(), "plex", "emby", "jellyfin"].filter(Boolean);
+  const sinks = [String(baseSink || "").trim(), "trakt", "simkl", "mdblist"].filter(Boolean);
+  const uniq = (arr) => {
+    const out = [];
+    const seen = new Set();
+    for (const v of arr) {
+      const k = String(v || "").trim().toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(k);
+    }
+    return out;
+  };
+
+  const P = uniq(provs);
+  const S = uniq(sinks);
+
+  for (const p of P) {
+    for (const s of S) {
+      const cand = { id: "__tmp__", provider: p, provider_instance: "default", sink: s, sink_instance: "default" };
+      if (!isDuplicateRoute(cand, routes, "__tmp__")) return { provider: p, sink: s };
+    }
+  }
+  return null;
+}
+
+  function applyRouteView(route) {
+    if (!route) return;
+    deepSet(STATE.cfg, "scrobble.watch.provider", String(route.provider || "plex"));
+    deepSet(STATE.cfg, "scrobble.watch.sink", String(route.sink || "trakt"));
+    deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
+    try {
+      const pvSel = $("#sc-provider", STATE.mount);
+      if (pvSel) pvSel.value = String(route.provider || "plex");
+      const skSel = $("#sc-sink", STATE.mount);
+      if (skSel) skSel.value = String(route.sink || "trakt");
+      try { syncProviderPickerUi(); } catch {}
+      try { syncSinkPillsFromSelect(); } catch {}
+    } catch {}
+  }
+
+  function syncActiveRouteFromView(filtersObj) {
+    const r = getActiveRoute();
+    if (!r) return;
+    const f = filtersObj || read("scrobble.watch.filters", {}) || {};
+    r.filters = deepClone(f);
+  }
+
+  function activeProviderInstance() {
+    const r = getActiveRoute();
+    return r ? String(r.provider_instance || "default") : "default";
+  }
+
+  async function getInstanceOptions(providerName) {
+    const p = String(providerName || "").toLowerCase();
+    if (!p) return [{ id: "default", name: "default" }];
+    STATE._routesCache ||= {};
+    if (STATE._routesCache[p]) return STATE._routesCache[p];
+    try {
+      const x = await API.providerInstances(p);
+      const items0 = Array.isArray(x) ? x : (x?.instances || []);
+      const items = (items0 || []).map(i => ({
+        id: String(i?.id || "").trim(),
+        name: String(i?.label || i?.name || i?.id || "").trim() || String(i?.id || "").trim(),
+      })).filter(i => i.id);
+
+      // Deduplicate by id (case-insensitive)
+      const seen = new Set();
+      const uniq = [];
+      for (const it of items) {
+        const k = it.id.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        uniq.push(it);
+      }
+
+      const hasDefault = uniq.some(i => i.id.toLowerCase() === "default");
+      const def = { id: "default", name: "Default" };
+      const list = hasDefault
+        ? uniq.map(i => (i.id.toLowerCase() === "default" ? { id: "default", name: i.name || "Default" } : i))
+        : [def].concat(uniq);
+
+      STATE._routesCache[p] = list;
+      return list;
+    } catch {
+      const fallback = [{ id: "default", name: "default" }];
+      STATE._routesCache[p] = fallback;
+      return fallback;
+    }
+  }
+
+  function overlayCfgFor(name, inst) {
+    const p = String(name || "").toLowerCase();
+    const iid = String(inst || "default");
+    const base = (STATE.cfg && STATE.cfg[p]) ? STATE.cfg[p] : {};
+    if (iid && iid !== "default" && base?.instances && base.instances[iid]) return Object.assign({}, base, base.instances[iid]);
+    return base || {};
+  }
+
+  function activeRouteContext() {
+    if (!isRoutesMode()) return { provider_instance: "default", sink_instance: "default" };
+    const r = getActiveRoute() || null;
+    return { provider_instance: String(r?.provider_instance || "default"), sink_instance: String(r?.sink_instance || "default") };
+  }
+
+  function activeProviderServerUrl() {
+    const prov = provider();
+    const ctx = activeRouteContext();
+    if (prov === "plex") return String(overlayCfgFor("plex", ctx.provider_instance)?.server_url || "");
+    if (prov === "emby") return String(overlayCfgFor("emby", ctx.provider_instance)?.server || "");
+    return String(overlayCfgFor("jellyfin", ctx.provider_instance)?.server || "");
+  }
+
+  function syncServerPreviewUi() {
+    const inp = $("#sc-pms-input", STATE.mount);
+    if (!inp) return;
+    inp.value = activeProviderServerUrl();
+    inp.disabled = true;
+  }
+
+  function syncRouteActiveRowUi(rid) {
+    const host = $("#sc-routes", STATE.mount);
+    if (!host) return;
+    $all("tr.sc-route-row", host).forEach((tr) => {
+      const id = String(tr?.dataset?.rid || "").trim();
+      tr.classList.toggle("sc-route-active", id && id === String(rid || "").trim());
+    });
+  }
+
+  function setActiveRouteFromUi(rid) {
+    const id = String(rid || "").trim();
+    if (!id || id === activeRouteId()) return;
+    try { syncActiveRouteFromView(); } catch {}
+    setActiveRouteId(id);
+    const r = getActiveRoute();
+    if (r) applyRouteView(r);
+    try {
+      const sel = $("#sc-route-select", STATE.mount);
+      if (sel) sel.value = id;
+    } catch {}
+    try { syncRouteActiveRowUi(id); } catch {}
+    try { syncServerPreviewUi(); } catch {}
+    try { applyModeDisable(); } catch {}
+  }
+
+  function providerAuthOkForRoute(r) {
+    const p = String(r?.provider || "").toLowerCase();
+    const ov = overlayCfgFor(p, r?.provider_instance);
+    if (p === "plex") return !!String(ov.account_token || "").trim() && isValidServerUrl(String(ov.server_url || ""));
+    if (p === "emby") return !!String(ov.access_token || "").trim();
+    if (p === "jellyfin") return !!String(ov.access_token || "").trim();
+    return false;
+  }
+
+  function sinkAuthOkForRoute(r) {
+    const s = String(r?.sink || "").toLowerCase();
+    const ov = overlayCfgFor(s, r?.sink_instance);
+    if (s === "trakt") return !!String(ov.access_token || "").trim();
+    if (s === "simkl") return !!String(ov.access_token || "").trim();
+    if (s === "mdblist") return !!String(ov.api_key || "").trim();
+    return false;
+  }
+
+  function anyStartableRoute() {
+    return getRoutes().some(r => r?.enabled && providerAuthOkForRoute(r) && sinkAuthOkForRoute(r));
+  }
+
+  async function renderRouteSelector() {
+    const wrap = $("#sc-route-filter-wrap", STATE.mount);
+    const sel = $("#sc-route-select", STATE.mount);
+    if (!wrap || !sel) return;
+    const on = isRoutesMode();
+    wrap.style.display = on ? "" : "none";
+    if (!on) return;
+    sel.innerHTML = "";
+    const routes = getRoutes();
+    routes.forEach((r) => sel.appendChild(el("option", { value: r.id, textContent: routeLabel(r) })));
+    const rid = activeRouteId();
+    if (rid) sel.value = rid;
+  }
+
+  function renderMigrateBanner(migrated) {
+    const host = $("#sc-migrate-banner", STATE.mount);
+    if (!host) return;
+    if (!migrated) { host.style.display = "none"; host.innerHTML = ""; return; }
+    if (localStorage.getItem(ROUTES_NOTICE_KEY) === "1") { host.style.display = "none"; host.innerHTML = ""; return; }
+
+    host.style.display = "";
+    host.innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span>Routes were migrated from legacy watcher config.</span>
+        <button type="button" id="sc-migrate-save" class="btn small">Upgrade watcher config</button>
+        <button type="button" id="sc-migrate-dismiss" class="btn small">Dismiss</button>
+      </div>
+    `;
+    const saveBtn = $("#sc-migrate-save", host);
+    const disBtn = $("#sc-migrate-dismiss", host);
+    on(saveBtn, "click", async () => {
+      localStorage.setItem(ROUTES_NOTICE_KEY, "1");
+      try {
+        const sc = getScrobbleConfig();
+        const serverCfg = await API.cfgGet();
+        const cfg = deepClone(serverCfg || {});
+        cfg.scrobble = sc;
+        const rp = getRootPatch();
+        cfg.plex = Object.assign({}, cfg.plex || {}, rp.plex || {});
+        cfg.emby = Object.assign({}, cfg.emby || {}, rp.emby || {});
+        cfg.jellyfin = Object.assign({}, cfg.jellyfin || {}, rp.jellyfin || {});
+        const r = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify(cfg) });
+        if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
+        w._cfgCache = cfg;
+        STATE.cfg = cfg;
+        setNote("sc-note", "Watcher config upgraded.");
+      } catch {
+        setNote("sc-note", "Couldn’t upgrade watcher config. Hit Save or check logs.", "err");
+      }
+      host.style.display = "none";
+      host.innerHTML = "";
+    });
+    on(disBtn, "click", () => {
+      localStorage.setItem(ROUTES_NOTICE_KEY, "1");
+      host.style.display = "none";
+      host.innerHTML = "";
+    });
+  }
+
+  async function renderRoutesUi() {
+    const wrap = $("#sc-routes-wrap", STATE.mount);
+    const host = $("#sc-routes", STATE.mount);
+    const legacy = $("#sc-legacy-picks", STATE.mount);
+    const onMode = isRoutesMode();
+    if (wrap) wrap.style.display = onMode ? "" : "none";
+    if (legacy) legacy.style.display = onMode ? "none" : "";
+    if (!host) return;
+    if (!onMode) { host.innerHTML = ""; return; }
+
+try {
+  if (!d.getElementById("sc-routes-style")) {
+    const st = d.createElement("style");
+    st.id = "sc-routes-style";
+    st.textContent = ".sc-route-row{cursor:pointer}.sc-route-active{box-shadow:0 0 0 2px rgba(34,197,94,.35) inset}.sc-route-dup{outline:2px solid rgba(220,53,69,.6);border-radius:6px}.sc-dup-badge{display:inline-block;font-size:11px;padding:2px 6px;border-radius:10px;background:rgba(220,53,69,.15);color:#dc3545;margin-right:8px}";
+    d.head.appendChild(st);
+  }
+} catch {}
+
+    const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+    setRoutes(routes);
+
+    const dups = findDuplicateRouteKeys(routes);
+    STATE._dupRouteIds = new Set(dups.flatMap(d => d.ids || []));
+
+    const rid0 = activeRouteId();
+    if (!rid0 && routes.length) setActiveRouteId(routes[0].id);
+
+    // Build table
+    const table = el("table");
+    const thead = el("thead");
+    thead.innerHTML = "<tr><th>On</th><th>Provider</th><th>Profile</th><th>Sink</th><th>Profile</th><th></th></tr>";
+    table.appendChild(thead);
+    const tbody = el("tbody");
+    table.appendChild(tbody);
+
+    const activeRid = activeRouteId();
+
+    for (const r of routes) {
+            const isActive = String(r.id || "") === String(activeRid || "");
+      const isDup = STATE._dupRouteIds && STATE._dupRouteIds.has(String(r.id || ""));
+      const tr = el("tr", { className: "sc-route-row" + (isActive ? " sc-route-active" : "") + (isDup ? " sc-route-dup" : "") });
+      tr.dataset.rid = r.id;
+
+      const cOn = el("td");
+      const chk = el("input", { type: "checkbox", checked: !!r.enabled });
+      chk.dataset.rid = r.id;
+      chk.dataset.f = "enabled";
+      cOn.appendChild(chk);
+      tr.appendChild(cOn);
+
+      const cP = el("td");
+      const pSel = el("select", { className: "input" });
+      ROUTE_PROVIDERS.forEach((p) => {
+        const meta = PROVIDER_META[p] || { label: p, icon: "", alt: p };
+        pSel.appendChild(el("option", { value: p, textContent: meta.label || p }));
+      });
+      pSel.value = r.provider;
+      pSel.dataset.rid = r.id;
+      pSel.dataset.f = "provider";
+      cP.appendChild(makeRouteIconDropdown(pSel, PROVIDER_META, "Provider"));
+      tr.appendChild(cP);
+
+      const cPI = el("td");
+      const piSel = el("select", { className: "input" });
+      const pOpts = await getInstanceOptions(r.provider);
+      pOpts.forEach(i => piSel.appendChild(el("option", { value: i.id, textContent: i.name })));
+      piSel.value = r.provider_instance || "default";
+      piSel.dataset.rid = r.id;
+      piSel.dataset.f = "provider_instance";
+      cPI.appendChild(piSel);
+      tr.appendChild(cPI);
+
+      const cS = el("td");
+      const sSel = el("select", { className: "input" });
+      ROUTE_SINKS.forEach((s) => {
+        const meta = SINK_META[s] || { label: s, icon: "", alt: s };
+        sSel.appendChild(el("option", { value: s, textContent: meta.label || s }));
+      });
+      sSel.value = r.sink;
+      sSel.dataset.rid = r.id;
+      sSel.dataset.f = "sink";
+      cS.appendChild(makeRouteIconDropdown(sSel, SINK_META, "Sink"));
+      tr.appendChild(cS);
+
+      const cSI = el("td");
+      const siSel = el("select", { className: "input" });
+      const sOpts = await getInstanceOptions(r.sink);
+      sOpts.forEach(i => siSel.appendChild(el("option", { value: i.id, textContent: i.name })));
+      siSel.value = r.sink_instance || "default";
+      siSel.dataset.rid = r.id;
+      siSel.dataset.f = "sink_instance";
+      cSI.appendChild(siSel);
+      tr.appendChild(cSI);
+
+      const cA = el("td", { className: "sc-route-actions" });
+      const filt = el("button", { type: "button", className: "btn small", textContent: "Filters" });
+      filt.dataset.act = "filters";
+      filt.dataset.rid = r.id;
+      const rm = el("button", { type: "button", className: "btn small", textContent: "Remove" });
+      rm.dataset.act = "remove";
+      rm.dataset.rid = r.id;
+      cA.append(filt, rm);
+      tr.appendChild(cA);
+
+      tbody.appendChild(tr);
+    }
+
+    host.innerHTML = "";
+    host.appendChild(table);
+
+    // Keep active view valid
+    const rid = activeRouteId();
+    if (!rid && routes.length) setActiveRouteId(routes[0].id);
+    const ar = getActiveRoute() || routes[0] || null;
+    if (ar) applyRouteView(ar);
+
+    await renderRouteSelector();
+    applyModeDisable();
+  }
+function chip(text, onRemove, onClick) {
     const c = el("span", { className: "chip" });
     const t = el("span", { textContent: text });
     if (onClick) {
@@ -716,7 +1375,7 @@ serverUUID: async () => {
     const now = it.at || Date.now();
     if (shouldDropMsg(it.msg, now)) return;
 
-    // Status / lifecycle
+    // Status
     if (/Watcher connected/i.test(it.msg)) {
       addLiveLine({ time: it.time, src: it.src, msg: "Connected" });
       return;
@@ -853,6 +1512,17 @@ serverUUID: async () => {
   const webhookOn = !!wh?.checked && useWebhook;
   const watcherOn = !!wa?.checked && useWatch;
 
+  // Routes mode: show routes editor and per-route filters
+  try {
+    const routesMode = isRoutesMode();
+    const legacy = $("#sc-legacy-picks", STATE.mount);
+    const routesWrap = $("#sc-routes-wrap", STATE.mount);
+    const routeFilterWrap = $("#sc-route-filter-wrap", STATE.mount);
+    if (legacy) legacy.style.display = routesMode ? "none" : "";
+    if (routesWrap) routesWrap.style.display = routesMode ? "" : "none";
+    if (routeFilterWrap) routeFilterWrap.style.display = routesMode ? "" : "none";
+  } catch {}
+
   $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
     if (!String(n.id || "").startsWith("sc-enable-webhook")) n.disabled = !webhookOn;
   });
@@ -861,12 +1531,20 @@ serverUUID: async () => {
   });
 
   const prov = provider();
+  const ctx = activeRouteContext();
+  const provInst = isRoutesMode() ? ctx.provider_instance : "default";
+  const sinkInst = isRoutesMode() ? ctx.sink_instance : "default";
+
+  const plexCfg = overlayCfgFor("plex", provInst);
+  const embyCfg = overlayCfgFor("emby", provInst);
+  const jellyCfg = overlayCfgFor("jellyfin", provInst);
+
   const srv =
     prov === "plex"
-      ? String(read("plex.server_url", "") || "")
+      ? String(plexCfg?.server_url || read("plex.server_url", "") || "")
       : prov === "emby"
-      ? String(read("emby.server", "") || "")
-      : String(read("jellyfin.server", "") || "");
+      ? String(embyCfg?.server || read("emby.server", "") || "")
+      : String(jellyCfg?.server || read("jellyfin.server", "") || "");
   const lbl = prov === "plex" ? "Plex Server" : prov === "emby" ? "Emby Server" : "Jellyfin Server";
   const req = $("#sc-server-required", STATE.mount);
   if (req) req.style.display = prov === "plex" ? "" : "none";
@@ -886,17 +1564,21 @@ serverUUID: async () => {
   const uuidInput = $("#sc-server-uuid", STATE.mount);
   if (uuidInput) uuidInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
 
-  const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
-  const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
-  const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
+  const plexTokenOk = !!String(plexCfg?.account_token || read("plex.account_token", "") || "").trim();
+  const embyTokenOk = !!String(embyCfg?.access_token || read("emby.access_token", "") || "").trim();
+  const jellyTokenOk = !!String(jellyCfg?.access_token || read("jellyfin.access_token", "") || "").trim();
 
   const sinkRaw = read("scrobble.watch.sink", "trakt");
   const sink = normSinkCsv(sinkRaw == null ? "trakt" : sinkRaw);
   const hasSink = !!sink;
 
-  const traktTokenOk = !!String(read("trakt.access_token", "") || "").trim();
-  const simklTokenOk = !!String(read("simkl.access_token", "") || "").trim();
-  const mdblTokenOk = !!String(read("mdblist.api_key", "") || "").trim();
+  const traktCfg = overlayCfgFor("trakt", sinkInst);
+  const simklCfg = overlayCfgFor("simkl", sinkInst);
+  const mdblCfg = overlayCfgFor("mdblist", sinkInst);
+
+  const traktTokenOk = !!String(traktCfg?.access_token || read("trakt.access_token", "") || "").trim();
+  const simklTokenOk = !!String(simklCfg?.access_token || read("simkl.access_token", "") || "").trim();
+  const mdblTokenOk = !!String(mdblCfg?.api_key || read("mdblist.api_key", "") || "").trim();
 
   let sinkOk = true;
   let sinkErr = "";
@@ -978,8 +1660,12 @@ serverUUID: async () => {
 
   const startBtn = $("#sc-watch-start", STATE.mount);
   if (startBtn) {
-    const providerOk = prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : prov === "emby" ? embyTokenOk : jellyTokenOk;
-    startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
+    if (isRoutesMode()) {
+      startBtn.disabled = !watcherOn || !anyStartableRoute();
+    } else {
+      const providerOk = prov === "plex" ? plexTokenOk && isValidServerUrl(srv) : prov === "emby" ? embyTokenOk : jellyTokenOk;
+      startBtn.disabled = !watcherOn || !providerOk || !sinkOk;
+    }
   }
 }
 
@@ -1175,6 +1861,7 @@ serverUUID: async () => {
           try { localStorage.setItem(tabKey, want); } catch {}
         }
       };
+      STATE._watcherSelectTab = selectTab;
 
       root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
         btn.addEventListener("click", () => selectTab(btn.dataset.sub || "plex"));
@@ -1248,7 +1935,7 @@ serverUUID: async () => {
 	            <span class="cx-toggle-text">Enable</span>
 	            <span class="cx-toggle-state" aria-hidden="true"></span>
 	          </label>
-          <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div id="sc-legacy-picks" style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <span style="opacity:.75;font-size:12px">Sink</span>
             <div id="sc-sink-pills" class="sc-pillbar" role="group" aria-label="Sink"></div>
             <select id="sc-sink" class="input" style="display:none;width:240px">
@@ -1294,7 +1981,20 @@ serverUUID: async () => {
           </div>
         </div>
 
-        <div id="sc-note" class="micro-note" style="margin:6px 0 10px"></div>
+        
+        <div id="sc-routes-wrap" class="sc-box" style="display:none;margin:8px 0 10px">
+          <div class="body">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+              <div style="font-size:12px;opacity:.8">Routes</div>
+              <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button type="button" id="sc-route-add" class="btn small">Add Route</button>
+              </div>
+            </div>
+            <div id="sc-routes" class="sc-route-table"></div>
+            <div id="sc-migrate-banner" class="micro-note" style="margin-top:8px;display:none"></div>
+          </div>
+        </div>
+<div id="sc-note" class="micro-note" style="margin:6px 0 10px"></div>
 
 	        <div class="cc-wrap">
 	          <div class="cc-card" id="sc-card-status">
@@ -1388,6 +2088,10 @@ serverUUID: async () => {
                 <div class="sc-box" id="sc-filters">
                   <div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-filters")}</div>
                   <div class="body">
+<div id="sc-route-filter-wrap" style="display:none;margin-bottom:10px">
+              <div class="muted">Filters for</div>
+              <select id="sc-route-select" class="input" style="width:100%;max-width:100%;margin-top:6px"></select>
+            </div>
 <div class="sc-filter-grid">
               <div>
                 <div class="muted">Username whitelist</div>
@@ -1450,6 +2154,8 @@ serverUUID: async () => {
           try { localStorage.setItem(tabKey, want); } catch {}
         }
       };
+      STATE._watcherSelectTab = selectTab;
+
 
       root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
         btn.addEventListener("click", () => selectTab(btn.dataset.sub || "watcher"));
@@ -1849,11 +2555,11 @@ serverUUID: async () => {
 
   async function fetchUsersForPicker(mode) {
     if (mode === "webhook") {
-      const x = await j("/api/plex/users");
+      const x = await j(`/api/plex/users?instance=${encodeURIComponent("default")}`);
       const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
       return Array.isArray(a) ? a : [];
     }
-    return API.users();
+    return API.users(activeProviderInstance());
   }
 
   async function openUserPicker(mode, anchorEl) {
@@ -2021,12 +2727,43 @@ serverUUID: async () => {
     const wrap = $("#sc-plexwatcher-url-wrap", STATE.mount);
     const code = $("#sc-plexwatcher-url", STATE.mount);
     if (!sel || !wrap || !code) return;
+
     const v = String(sel.value || "none").toLowerCase();
     const on = v !== "none";
     wrap.style.display = on ? "flex" : "none";
+
+    try {
+      const btn = $("#sc-copy-plexwatcher", STATE.mount);
+
+      // Clamp the URL row styles
+      wrap.style.width = "100%";
+      wrap.style.maxWidth = "100%";
+      wrap.style.minWidth = "0";
+      wrap.style.flex = "1 1 100%";
+      wrap.style.alignItems = "center";
+      wrap.style.gap = "8px";
+      wrap.style.flexWrap = "nowrap";
+      wrap.style.overflow = "hidden";
+      code.style.flex = "1 1 0";
+      code.style.width = "0";
+      code.style.minWidth = "0";
+      code.style.maxWidth = "100%";
+      code.style.display = "block";
+      code.style.boxSizing = "border-box";
+      code.style.overflow = "hidden";
+      code.style.textOverflow = "ellipsis";
+      code.style.whiteSpace = "nowrap";
+
+      if (btn) {
+        btn.style.flex = "0 0 auto";
+        btn.style.whiteSpace = "nowrap";
+      }
+    } catch {}
+
     if (on) code.textContent = `${location.origin}/webhook/plexwatcher`;
     else setNote("sc-plexwatcher-note", "");
   }
+
   async function refreshCfgBeforePopulate() {
     try {
       const fresh = await API.cfgGet();
@@ -2077,6 +2814,16 @@ serverUUID: async () => {
   }
 
   function populate() {
+  const mig = legacyToRoutesIfMissing();
+  try {
+    if (isRoutesMode()) {
+      const ar = getActiveRoute() || getRoutes()[0] || null;
+      if (ar) applyRouteView(ar);
+      // Render routes UI without blocking
+      renderRoutesUi().catch(() => {});
+      renderMigrateBanner(!!mig?.migrated);
+    }
+  } catch {}
   const enabled = !!read("scrobble.enabled", false);
   const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
   const useWebhook = enabled && mode === "webhook";
@@ -2135,14 +2882,7 @@ serverUUID: async () => {
   const auto = $("#sc-autostart", STATE.mount);
   if (auto) auto.checked = !!autostart;
 
-  const pmsInp = $("#sc-pms-input", STATE.mount);
-  const plexUrl = String(read("plex.server_url", "") || "");
-  const embyUrl = String(read("emby.server", "") || "");
-  const jellyUrl = String(read("jellyfin.server", "") || "");
-  if (pmsInp) {
-    pmsInp.value = prov === "plex" ? plexUrl : prov === "emby" ? embyUrl : jellyUrl;
-    pmsInp.disabled = true;
-  }
+  try { syncServerPreviewUi(); } catch {}
 
   const set = (id, v) => {
     const n = $(id, STATE.mount);
@@ -2202,6 +2942,17 @@ serverUUID: async () => {
   }
 
   async function onWatchStart() {
+  const routesMode = isRoutesMode();
+  if (routesMode) {
+    const routes = getRoutes();
+    if (!routes.length) return setNote("sc-note", "Add at least one route before starting the watcher.", "warn");
+    if (!anyStartableRoute()) return setNote("sc-note", "No startable routes. Check provider/sink authentication (and Plex server URL for that profile).", "warn");
+    const pick = routes.find(r => r.enabled && providerAuthOkForRoute(r) && sinkAuthOkForRoute(r)) || routes[0];
+    setActiveRouteId(pick.id);
+    applyRouteView(pick);
+    await renderRouteSelector();
+  }
+
   const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
     .toLowerCase()
     .trim();
@@ -2277,7 +3028,7 @@ serverUUID: async () => {
   }
 
   try {
-    await API.watch.start(prov, sink);
+    await API.watch.start(routesMode ? null : prov, routesMode ? null : sink);
   } catch {
     setNote("sc-pms-note", "Start failed", "err");
   }
@@ -2298,7 +3049,7 @@ serverUUID: async () => {
   async function fetchServerUUID() {
   try {
     const prov = provider();
-    const x = await API.serverUUID();
+    const x = await API.serverUUID(activeProviderInstance());
     const v = x?.server_uuid || x?.uuid || x?.id || "";
     const inp = $("#sc-server-uuid", STATE.mount);
     if (inp && v) {
@@ -2503,6 +3254,107 @@ async function hydrateJellyfin() {
       try {
         w.refreshWatchLogs?.();
       } catch {}
+    });
+
+    // Routes UI
+    on($("#sc-route-add", STATE.mount), "click", async (e) => {
+      e.preventDefault();
+      if (!isRoutesMode()) return;
+      const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+      const id = nextRouteId();
+      const routesUsed = routes.slice();
+      const baseProv = provider();
+      const baseSink = String(read("scrobble.watch.sink", "trakt") || "trakt").split(",")[0] || "trakt";
+      const tmpl = pickNonDuplicateTemplate(routesUsed, baseProv, baseSink);
+      if (!tmpl) {
+        setNote("sc-note", "No available unique route combinations left.", "warn");
+        return;
+      }
+      const nr = normalizeRoute({ id, enabled: true, provider: tmpl.provider, provider_instance: "default", sink: tmpl.sink, sink_instance: "default", filters: deepClone(read("scrobble.watch.filters", {}) || {}) }, id);
+      routes.push(nr);
+      setRoutes(routes);
+      setActiveRouteId(id);
+      applyRouteView(nr);
+      await renderRoutesUi();
+    });
+
+    const rSel = $("#sc-route-select", STATE.mount);
+    on(rSel, "change", async (e) => {
+      if (!isRoutesMode()) return;
+      syncActiveRouteFromView();
+      const rid = String(e.target.value || "").trim();
+      if (!rid) return;
+      setActiveRouteId(rid);
+      const r = getActiveRoute();
+      if (r) applyRouteView(r);
+      populate();
+      await renderRoutesUi();
+    });
+
+    const rHost = $("#sc-routes", STATE.mount);
+    on(rHost, "change", async (e) => {
+      if (!isRoutesMode()) return;
+      const t = e.target;
+      const rid = String(t?.dataset?.rid || "").trim();
+      const f = String(t?.dataset?.f || "").trim();
+      if (!rid || !f) return;
+      const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+      const r = routes.find(x => x.id === rid);
+      if (!r) return;
+      if (f === "enabled") r.enabled = !!t.checked;
+      else r[f] = String(t.value || "").trim() || (f.endsWith("_instance") ? "default" : r[f]);
+      if (f === "provider") { r.provider_instance = "default"; r.filters ||= {}; }
+      if (f === "sink") { r.sink_instance = "default"; }
+      setRoutes(routes);
+      try {
+        const dd = findDuplicateRouteKeys(getRoutes());
+        if (!dd.length) clearStickyNote("sc-note");
+      } catch {}
+
+      if (activeRouteId() !== rid) { try { syncActiveRouteFromView(); } catch {} }
+      setActiveRouteId(rid);
+      applyRouteView(r);
+      try { syncRouteActiveRowUi(rid); } catch {}
+      try { syncServerPreviewUi(); } catch {}
+      try { applyModeDisable(); } catch {}
+      await renderRoutesUi();
+    });
+
+    on(rHost, "click", async (e) => {
+      if (!isRoutesMode()) return;
+      const btn = e.target?.closest?.("button[data-act]");
+      if (!btn) {
+        const tr = e.target?.closest?.("tr.sc-route-row");
+        const rid = String(tr?.dataset?.rid || "").trim();
+        if (rid) setActiveRouteFromUi(rid);
+        return;
+      }
+      e.preventDefault();
+      const act = String(btn.dataset.act || "");
+      const rid = String(btn.dataset.rid || "");
+      if (!act || !rid) return;
+      if (act === "remove") {
+        const routes = getRoutes().filter(r => String(r?.id || "") !== rid);
+        setRoutes(routes);
+        try {
+          const dd = findDuplicateRouteKeys(getRoutes());
+          if (!dd.length) clearStickyNote("sc-note");
+        } catch {}
+
+        if (activeRouteId() === rid) setActiveRouteId(routes[0]?.id || "");
+        await renderRoutesUi();
+        populate();
+        return;
+      }
+      if (act === "filters") {
+        syncActiveRouteFromView();
+        setActiveRouteId(rid);
+        const r = getRoutes().find(x => x.id === rid) || null;
+        if (r) applyRouteView(r);
+        await renderRouteSelector();
+        try { STATE._watcherSelectTab?.("filters"); } catch {}
+        populate();
+      }
     });
     on($("#sc-live-toggle", STATE.mount), "click", (e) => {
       e.preventDefault();
@@ -2820,6 +3672,24 @@ async function hydrateJellyfin() {
     if (uid) filtersWatch.user_id = uid;
   }
 
+
+    const routesMode = isRoutesMode();
+    let routesOut = undefined;
+
+    if (routesMode) {
+      // Keep active route filters in sync with the visible filter controls.
+      syncActiveRouteFromView(filtersWatch);
+      routesOut = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+
+const dups = findDuplicateRouteKeys(routesOut);
+if (dups.length) {
+  const msg = "Duplicate routes are not allowed. Fix these before saving: " + dups.map(d => d.key).join(" · ");
+  setStickyNote("sc-note", msg, "err");
+  throw new Error(msg);
+}
+      setRoutes(routesOut);
+    }
+
   return {
     enabled,
     mode: mode === "watch" ? "watch" : "webhook",
@@ -2840,6 +3710,7 @@ async function hydrateJellyfin() {
     watch: {
       provider: prov,
       sink: normSinkCsv(read("scrobble.watch.sink", "trakt")),
+      routes: routesOut,
       autostart: !!read("scrobble.watch.autostart", false),
       plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
       plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),
@@ -2926,11 +3797,14 @@ async function init(opts = {}) {
     }
 
     await refreshCfgBeforePopulate();
+    try { legacyToRoutesIfMissing(); } catch {}
     try {
-      pfLoadStore();
-      const prov = provider();
-      if (STATE.pf.store?.[prov]) applyProviderFilters(prov);
-      else saveCurrentProviderFilters(prov);
+      if (!isRoutesMode()) {
+        pfLoadStore();
+        const prov = provider();
+        if (STATE.pf.store?.[prov]) applyProviderFilters(prov);
+        else saveCurrentProviderFilters(prov);
+      }
     } catch {}
     populate();
     await refreshWatcher();
