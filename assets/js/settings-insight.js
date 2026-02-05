@@ -25,6 +25,132 @@
     return k.toUpperCase();
   }
 
+
+  const _normInst = (v) => {
+    const s = String(v || "").trim();
+    return (!s || s.toLowerCase() === "default") ? "default" : s;
+  };
+  const _instLabel = (v) => {
+    const s = _normInst(v);
+    return (s === "default") ? "Default" : s;
+  };
+  const _has = (v) => (typeof v === "string") ? (v.trim().length > 0) : !!v;
+
+  function _profileConfigured(provider, blk, cfg) {
+    const p = String(provider || "").toLowerCase().trim();
+    const b = (blk && typeof blk === "object") ? blk : {};
+    if (p === "plex") return _has(b.account_token) || _has(b.token) || _has(b.access_token);
+    if (p === "emby") return _has(b.access_token) || _has(b.api_key) || _has(b.token);
+    if (p === "jellyfin") return _has(b.access_token) || _has(b.api_key) || _has(b.token);
+    if (p === "trakt") return _has(b.access_token) || _has(b.refresh_token);
+    if (p === "simkl") return _has(b.access_token) || _has(b.refresh_token);
+    if (p === "anilist") return _has(b.access_token) || _has(b.token);
+    if (p === "mdblist") return _has(b.api_key);
+    const t = (p === "tautulli") ? b : (cfg?.tautulli || cfg?.auth?.tautulli || {});
+    if (p === "tautulli") return _has(t.server_url || t.server);
+    if (p === "tmdb") {
+      const tm = b || {};
+      return _has(tm.api_key) && (_has(tm.session_id) || _has(tm.session));
+    }
+    return _has(b.access_token) || _has(b.account_token) || _has(b.api_key) || _has(b.token);
+  }
+
+  function _providerBlock(cfg, provider, instanceId) {
+    const p = String(provider || "").toLowerCase().trim();
+    const base = (cfg && cfg[p] && typeof cfg[p] === "object") ? cfg[p] : {};
+    const inst = _normInst(instanceId);
+    if (inst === "default") return base;
+    const insts = base.instances;
+    if (insts && typeof insts === "object" && !Array.isArray(insts)) {
+      const blk = insts[inst];
+      if (blk && typeof blk === "object") return blk;
+    }
+    return {};
+  }
+
+  function _countConfiguredProfiles(cfg, provider) {
+    const p = String(provider || "").toLowerCase().trim();
+    const base = _providerBlock(cfg, p, "default");
+    let n = _profileConfigured(p, base, cfg) ? 1 : 0;
+
+    const insts = (cfg?.[p] || {})?.instances;
+    if (insts && typeof insts === "object" && !Array.isArray(insts)) {
+      Object.keys(insts).forEach((id) => {
+        const blk = insts[id];
+        if (blk && typeof blk === "object" && _profileConfigured(p, blk, cfg)) n += 1;
+      });
+    }
+    return n;
+  }
+
+  function _configuredKeysFromCfg(cfg) {
+    const out = new Set();
+    const map = [
+      ["plex","PLEX"], ["emby","EMBY"], ["jellyfin","JELLYFIN"],
+      ["trakt","TRAKT"], ["simkl","SIMKL"], ["anilist","ANILIST"],
+      ["mdblist","MDBLIST"], ["tmdb","TMDB"], ["tautulli","TAUTULLI"],
+    ];
+    map.forEach(([p, k]) => { if (_countConfiguredProfiles(cfg, p) > 0) out.add(k); });
+
+    // TMDB legacy location (tmdb_sync)
+    const tm = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || null;
+    if (!out.has("TMDB") && tm && typeof tm === "object" && _profileConfigured("tmdb", tm, cfg)) out.add("TMDB");
+
+    out.add("crosswatch");
+    return out;
+  }
+
+  function _authProfileEntries(cfg) {
+    const order = [
+      { key: "PLEX", prov: "plex", label: "Plex" },
+      { key: "EMBY", prov: "emby", label: "Emby" },
+      { key: "JELLYFIN", prov: "jellyfin", label: "Jellyfin" },
+      { key: "TRAKT", prov: "trakt", label: "Trakt" },
+      { key: "SIMKL", prov: "simkl", label: "SIMKL" },
+      { key: "MDBLIST", prov: "mdblist", label: "MDBList" },
+      { key: "ANILIST", prov: "anilist", label: "AniList" },
+      { key: "TMDB", prov: "tmdb", label: "TMDB" },
+      { key: "TAUTULLI", prov: "tautulli", label: "Tautulli" },
+    ];
+    const entries = [];
+    let total = 0;
+    order.forEach((it) => {
+      let c = 0;
+      if (it.prov === "tmdb") {
+        c = _countConfiguredProfiles(cfg, "tmdb");
+        if (c === 0) {
+          const tm = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || null;
+          if (tm && typeof tm === "object" && _profileConfigured("tmdb", tm, cfg)) c = 1;
+        }
+      } else if (it.prov === "tautulli") {
+        const t = cfg?.tautulli || cfg?.auth?.tautulli || null;
+        c = (t && typeof t === "object" && _profileConfigured("tautulli", t, cfg)) ? 1 : 0;
+      } else {
+        c = _countConfiguredProfiles(cfg, it.prov);
+      }
+      if (c > 0) {
+        total += c;
+        entries.push({ key: it.key, label: it.label, count: c });
+      }
+    });
+    return { entries, total };
+  }
+
+  function authProfilesHTML(auth) {
+    const arr = Array.isArray(auth?.profiles) ? auth.profiles : [];
+    if (!arr.length) return "No profiles configured";
+    const chips = arr.map((p) => {
+      const key = String(p.key || "").toUpperCase();
+      const label = String(p.label || key);
+      const n = Number(p.count || 0) || 0;
+      const src = `/assets/img/${key}-log.svg`;
+      const title = `${label}: ${n} configured ${n === 1 ? "profile" : "profiles"}`;
+      return `<span class="si-pchip" title="${title}"><img src="${src}" alt="${label}"><span class="n">${n}</span></span>`;
+    }).join("");
+    return `<div class="si-pchips">${chips}</div>`;
+  }
+
+
   // Styles
   const css = `
   #cw-settings-grid{
@@ -120,6 +246,21 @@
     border: 1px solid rgba(140,120,255,0.22);
     line-height:1.2;
   }
+
+  /* Auth profile chips */
+  .si-pchips{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:2px; }
+  .si-pchip{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; font-weight:800; letter-spacing:.2px;
+    color:#E6EAFD;
+    padding:2px 6px;
+    border-radius:8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(120,128,160,0.16);
+    line-height:1.2;
+  }
+  .si-pchip img{ height:14px; width:auto; opacity:.95; }
+  .si-pchip .n{ font-size:12px; font-weight:900; color:#E6EAFD; line-height:1; }
 
   /* Wizard  */
   .si-empty {
@@ -265,6 +406,7 @@
     return Array.from(new Set(parts));
   }
 
+  
   function _scrobblerHeaderKeys(cfg, configured) {
     const keys = [];
     const sc = (cfg?.scrobble || {}) || {};
@@ -275,13 +417,30 @@
     const sinkMap = { trakt: "TRAKT", simkl: "SIMKL", mdblist: "MDBLIST" };
 
     if (mode === "watch") {
-      const prov = String(sc?.watch?.provider || "plex").toLowerCase().trim();
-      const pkey = provMap[prov] || "PLEX";
-      if (configured.has(pkey)) keys.push(pkey);
+      const w = (sc.watch || {}) || {};
+      const routes = Array.isArray(w.routes) ? w.routes : [];
 
-      const sinks = _parseSinkNames(sc?.watch?.sink || "trakt");
-      const sinkOrder = ["trakt", "simkl", "mdblist"];
-      sinkOrder.forEach((name) => {
+      const provs = [];
+      const sinks = [];
+      routes.forEach((r) => {
+        const p = String(r?.provider || "").trim().toLowerCase();
+        const s = String(r?.sink || "").trim().toLowerCase();
+        if (p && !provs.includes(p)) provs.push(p);
+        if (s && !sinks.includes(s)) sinks.push(s);
+      });
+
+      if (!provs.length) {
+        const prov = String(w?.provider || "plex").toLowerCase().trim();
+        if (prov) provs.push(prov);
+      }
+      if (!sinks.length) sinks.push(..._parseSinkNames(w?.sink || "trakt"));
+
+      provs.forEach((p) => {
+        const k = provMap[p] || p.toUpperCase();
+        if (configured.has(k)) keys.push(k);
+      });
+
+      ["trakt", "simkl", "mdblist"].forEach((name) => {
         if (!sinks.includes(name)) return;
         const skey = sinkMap[name];
         if (skey && configured.has(skey)) keys.push(skey);
@@ -290,23 +449,17 @@
       return keys;
     }
 
-    // Webhook mode: show configured sources + Trakt (webhook modules target Trakt).
     ["PLEX", "JELLYFIN", "EMBY"].forEach((k) => { if (configured.has(k)) keys.push(k); });
     if (configured.has("TRAKT")) keys.push("TRAKT");
     return keys;
   }
 
+
   function _updateSettingsHeaderIcons(cfg) {
     const page = d.getElementById("page-settings");
     if (!page) return;
 
-    const allowedRaw = (typeof w.getConfiguredProviders === "function")
-      ? w.getConfiguredProviders(cfg || {})
-      : new Set();
-
-    const configured = (allowedRaw instanceof Set)
-      ? allowedRaw
-      : new Set(Array.isArray(allowedRaw) ? allowedRaw : []);
+    const configured = _configuredKeysFromCfg(cfg || {});
 
     const authHead = page.querySelector("#sec-auth > .head");
     const authStrip = _findIconStrip(authHead);
@@ -317,35 +470,12 @@
     _applyIconStrip(scStrip, _scrobblerHeaderKeys(cfg, configured));
   }
 
-  function countAdditionalProfiles(cfg){
-    let total = 0;
-    const obj = cfg && typeof cfg === "object" ? cfg : {};
-    for (const k of Object.keys(obj)) {
-      const v = obj[k];
-      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-      const insts = v.instances;
-      if (!insts || typeof insts !== "object" || Array.isArray(insts)) continue;
-      total += Object.keys(insts).filter((id) => String(id || "").toLowerCase() !== "default").length;
-    }
-    return total;
-  }
 
 
+  
   async function getAuthSummary(cfg) {
-    const allowedRaw = (typeof w.getConfiguredProviders === "function")
-      ? w.getConfiguredProviders(cfg || {})
-      : new Set();
-
-    const configured = (allowedRaw instanceof Set)
-      ? allowedRaw
-      : new Set(Array.isArray(allowedRaw) ? allowedRaw : []);
-
-    const AUTH_KEYS = ["PLEX","EMBY","SIMKL","TRAKT","JELLYFIN","TAUTULLI","MDBLIST","ANILIST","TMDB"];
-    const configuredCount = AUTH_KEYS.filter((k) => configured.has(k)).length;
-
-    const profiles = countAdditionalProfiles(cfg);
-
-    return { configured: configuredCount, profiles };
+    const { entries, total } = _authProfileEntries(cfg || {});
+    return { configured: entries.length, profiles: entries, total_profiles: total };
   }
 
   async function getPairsSummary(cfg) {
@@ -404,38 +534,86 @@
     return { enabled, nextRun: next };
   }
 
+  
   async function getScrobblerSummary(cfg){
-    const sc=cfg?.scrobble||{}; const mode=(sc?.mode||"").toLowerCase(); const enabled=!!sc?.enabled;
-    let watcher={ alive:false, has_watch:false, stop_set:false };
-    let watchProvider = "";
-    if(enabled && mode==="watch"){
-      const s=await fetchJSON("/api/watch/status");
-      watcher={ alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set };
-      watchProvider = prettyWatchProvider(s?.provider ?? sc?.watch?.provider);
+    const sc = cfg?.scrobble || {};
+    const mode = String(sc?.mode || "").toLowerCase();
+    const enabled = !!sc?.enabled;
+
+    let watcher = { alive:false, has_watch:false, stop_set:false };
+    let providers = [];
+    let sinks = [];
+
+    if (enabled && mode === "watch") {
+      const s = await fetchJSON("/api/watch/status");
+      watcher = { alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set };
+
+      const groups = Array.isArray(s?.groups) ? s.groups : [];
+      const fromGroups = [];
+      groups.forEach((g) => {
+        const p = prettyWatchProvider(g?.provider);
+        if (p && !fromGroups.includes(p)) fromGroups.push(p);
+      });
+
+      const routesCfg = Array.isArray(sc?.watch?.routes) ? sc.watch.routes : [];
+      const fromCfg = [];
+      routesCfg.forEach((r) => {
+        const p = prettyWatchProvider(r?.provider);
+        if (p && !fromCfg.includes(p)) fromCfg.push(p);
+      });
+
+      providers = (fromGroups.length ? fromGroups : fromCfg);
+
+      const stSinks = Array.isArray(s?.sinks) ? s.sinks : [];
+      if (stSinks.length) {
+        sinks = stSinks.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean);
+      } else {
+        const cfgSinks = [];
+        routesCfg.forEach((r) => {
+          const sk = String(r?.sink || "").trim().toLowerCase();
+          if (sk && !cfgSinks.includes(sk)) cfgSinks.push(sk);
+        });
+        sinks = cfgSinks;
+      }
     }
-    return { mode: enabled ? (mode||"webhook") : "", enabled, watcher, watchProvider };
+
+    return { mode: enabled ? (mode || "webhook") : "", enabled, watcher, providers, sinks };
   }
 
+
   // Whitelisting summary
+  
   function getWhitelistingSummary(cfg){
     const providers = [
-      { key:"plex", label:"Plex" },
-      { key:"emby", label:"Emby" },
-      { key:"jellyfin", label:"Jellyfin" }
+      { key:"plex", label:"Plex", up:"PLEX" },
+      { key:"emby", label:"Emby", up:"EMBY" },
+      { key:"jellyfin", label:"Jellyfin", up:"JELLYFIN" }
     ];
     const cats = ["history","ratings","scrobble","watchlist","playlists"];
 
     const serverActive = [];
     for (const p of providers) {
       const base = cfg?.[p.key] || {};
-      const byCat = {};
+      const insts = (base && typeof base === "object") ? (base.instances || {}) : {};
+      const ids = ["default"].concat(
+        (insts && typeof insts === "object" && !Array.isArray(insts))
+          ? Object.keys(insts).map((x) => String(x))
+          : []
+      );
 
-      for (const c of cats) {
-        const libs = base?.[c]?.libraries;
-        if (Array.isArray(libs) && libs.length > 0) byCat[c] = libs.length;
+      for (const inst of ids) {
+        const blk = _providerBlock(cfg, p.key, inst);
+        if (!_profileConfigured(p.key, blk, cfg)) continue;
+
+        const byCat = {};
+        for (const c of cats) {
+          const libs = blk?.[c]?.libraries;
+          if (Array.isArray(libs) && libs.length > 0) byCat[c] = libs.length;
+        }
+        if (!Object.keys(byCat).length) continue;
+
+        serverActive.push({ label: `${p.label} (${_instLabel(inst)})`, byCat });
       }
-
-      if (Object.keys(byCat).length) serverActive.push({ label:p.label, byCat });
     }
 
     const pairsRaw = cfg?.pairs || cfg?.connections || [];
@@ -460,15 +638,24 @@
         }
       }
 
+      const s = String(pair?.source || pair?.a || "").toUpperCase();
+      const t = String(pair?.target || pair?.b || "").toUpperCase();
+      const si = _normInst(pair?.source_instance || pair?.a_instance || "default");
+      const ti = _normInst(pair?.target_instance || pair?.b_instance || "default");
+
       const byProv = {};
       for (const pk of provKeys) {
-        if (provSets[pk].size > 0) byProv[provLabel[pk]] = provSets[pk].size;
+        if (provSets[pk].size <= 0) continue;
+        let name = provLabel[pk] || pk;
+        if (pk === s && si !== "default") name += ` (${_instLabel(si)})`;
+        if (pk === t && ti !== "default") name += ` (${_instLabel(ti)})`;
+        byProv[name] = provSets[pk].size;
       }
 
       if (Object.keys(byProv).length) {
-        const s = String(pair?.source || "").toUpperCase();
-        const t = String(pair?.target || "").toUpperCase();
-        const label = (s && t) ? `${s}→${t}` : String(pair?.id || "pair");
+        const label = (s && t)
+          ? `${s}${si !== "default" ? `(${_instLabel(si)})` : ""}→${t}${ti !== "default" ? `(${_instLabel(ti)})` : ""}`
+          : String(pair?.id || "pair");
         if (!seen.has(label)) {
           seen.add(label);
           pairActive.push({ label, byProv });
@@ -478,6 +665,7 @@
 
     return { serverActive, pairActive };
   }
+
 
   // UI Rendering
   const I = (name, size) => `<span class="material-symbols-rounded" style="font-size:${size||30}px">${name}</span>`;
@@ -582,8 +770,7 @@
     if (data.auth.configured && data.pairs.count === 0 && !scrobReady) return renderPairsWizard();
 
     body.innerHTML="";
-    body.appendChild(row("lock","Authentication Providers",
-      `Configured providers: ${data.auth.configured}, Profiles: ${data.auth.profiles}`));
+        body.appendChild(row("lock","Authentication Providers", authProfilesHTML(data.auth)));
     body.appendChild(row("link","Synchronization Pairs",  `Pairs: ${data.pairs.count}`));
 
     const wlBlock = whitelistHTML(data.whitelist);
@@ -604,10 +791,11 @@
     }
     body.appendChild(row("schedule","Scheduling",
       data.sched.enabled ? `Enabled | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
-    const mode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");
-    const status = !data.scrob.enabled ? "" : (data.scrob.mode==="watch" ? (data.scrob.watcher.alive ? "Running" : "Stopped") : "—");
-    const watchProv = (data.scrob.enabled && data.scrob.mode === "watch") ? String(data.scrob.watchProvider || "").trim() : "";
-    body.appendChild(row("sensors","Scrobbler", `${mode}${mode && status ? " | " : ""}${status}${watchProv ? " | " + watchProv : ""}`));
+        const scMode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");
+    const scStatus = !data.scrob.enabled ? "" : (data.scrob.mode==="watch" ? (data.scrob.watcher.alive ? "Running" : "Stopped") : "—");
+    const provs = Array.isArray(data.scrob.providers) ? data.scrob.providers.filter(Boolean) : [];
+    const parts = [scMode, scStatus].concat(provs);
+    body.appendChild(row("sensors","Scrobbler", parts.filter(Boolean).join(" | ")));
   }
 
   // Layout sync

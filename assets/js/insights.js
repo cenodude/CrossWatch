@@ -6,7 +6,92 @@
   // Helpers
   const FEATS = ["watchlist","ratings","history","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
-  const clampFeature = (name) => FEATS.includes(String(name)) ? name : "watchlist";
+
+  const PREF_KEY = "insights.settings.v1";
+
+  const loadPrefs = () => {
+    try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}") || {}; }
+    catch { return {}; }
+  };
+
+  const savePrefs = (p) => {
+    try { localStorage.setItem(PREF_KEY, JSON.stringify(p || {})); } catch {}
+  };
+
+  const normalizePrefs = (p, instancesByProvider = {}) => {
+    const out = (p && typeof p === "object") ? JSON.parse(JSON.stringify(p)) : {};
+    const f = out.features && typeof out.features === "object" ? out.features : {};
+    out.features = {
+      watchlist: f.watchlist !== false,
+      ratings: f.ratings !== false,
+      history: f.history !== false,
+      playlists: f.playlists !== false,
+    };
+
+    const inst = out.instances && typeof out.instances === "object" ? out.instances : {};
+    out.instances = inst;
+
+    const known = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
+    out.known_instances = known;
+
+    for (const [prov, instList] of Object.entries(instancesByProvider || {})) {
+      const pkey = String(prov || "").toLowerCase();
+      if (!pkey) continue;
+
+      const all = Array.isArray(instList) && instList.length ? instList.map(String) : ["default"];
+      const prevKnown = Array.isArray(known[pkey]) && known[pkey].length ? known[pkey].map(String) : [];
+      const cur = inst[pkey];
+
+      if (cur !== undefined) {
+        const curArr = Array.isArray(cur) ? cur.map(String) : [];
+        const nowSet = new Set(all);
+        const prevSet = new Set(prevKnown);
+
+        // Keep only existing instances
+        const kept = curArr.filter(x => nowSet.has(x));
+
+        // Auto-enable brand new instances
+        for (const x of all) {
+          if (!prevSet.has(x) && !kept.includes(x)) kept.push(x);
+        }
+
+        inst[pkey] = kept;
+      }
+
+      // Update "known" snapshot
+      known[pkey] = all.slice();
+    }
+
+    if (!Object.values(out.features).some(Boolean)) out.features.watchlist = true;
+
+    return out;
+  };
+
+  const visibleFeatures = (p) => {
+    const f = (p && p.features) || {};
+    const v = FEATS.filter(k => f[k] !== false);
+    return v.length ? v : ["watchlist"];
+  };
+
+  const selectionDiffers = (p, instancesByProvider = {}) => {
+    const inst = (p && p.instances) || {};
+    for (const [prov, allList] of Object.entries(instancesByProvider || {})) {
+      const pkey = String(prov || "").toLowerCase();
+      const all = Array.isArray(allList) && allList.length ? allList.map(String) : ["default"];
+      const cur = inst[pkey];
+      if (cur === undefined) continue; // all
+      if (!Array.isArray(cur)) return true;
+      if (cur.length !== all.length) return true;
+      const A = new Set(all), C = new Set(cur.map(String));
+      for (const x of A) if (!C.has(x)) return true;
+    }
+    return false;
+  };
+
+  let _prefs = loadPrefs();
+  let _visibleFeats = visibleFeatures(_prefs);
+
+  const clampFeature = (name) => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
 
   const titleOf = x =>
@@ -52,20 +137,38 @@
     }
 
     const has = v => typeof v === "string" ? v.trim().length > 0 : !!v;
+    const hasAny = (blk, keys) => {
+      if (!blk || typeof blk !== "object") return false;
+      for (const k of (keys || [])) {
+        if (has(blk?.[k])) return true;
+      }
+      const insts = blk?.instances;
+      if (insts && typeof insts === "object") {
+        for (const v of Object.values(insts)) {
+          if (!v || typeof v !== "object") continue;
+          for (const k of (keys || [])) {
+            if (has(v?.[k])) return true;
+          }
+        }
+      }
+      return false;
+    };
+
     const S = new Set();
-    if (has(cfg?.plex?.account_token)) S.add("PLEX");
-    if (has(cfg?.trakt?.access_token)) S.add("TRAKT");
-    if (has(cfg?.simkl?.access_token)) S.add("SIMKL");
-    if (has(cfg?.anilist?.access_token) || has(cfg?.anilist?.token)) S.add("ANILIST");
-    if (has(cfg?.jellyfin?.access_token)) S.add("JELLYFIN");
-    if (has(cfg?.emby?.access_token) || has(cfg?.emby?.api_key) || has(cfg?.emby?.token)) S.add("EMBY");
-    if (has(cfg?.mdblist?.api_key)) S.add("MDBLIST");
+
+    if (hasAny(cfg?.plex, ["account_token", "token"])) S.add("PLEX");
+    if (hasAny(cfg?.trakt, ["access_token"])) S.add("TRAKT");
+    if (hasAny(cfg?.simkl, ["access_token"])) S.add("SIMKL");
+    if (hasAny(cfg?.anilist, ["access_token", "token"])) S.add("ANILIST");
+    if (hasAny(cfg?.jellyfin, ["access_token"])) S.add("JELLYFIN");
+    if (hasAny(cfg?.emby, ["access_token", "api_key", "token"])) S.add("EMBY");
+    if (hasAny(cfg?.mdblist, ["api_key"])) S.add("MDBLIST");
 
     const tm = cfg?.tmdb_sync || cfg?.tmdb || cfg?.auth?.tmdb_sync || {};
-    if (has(tm?.api_key) && (has(tm?.session_id) || has(tm?.session))) S.add("TMDB");
+    if (hasAny(tm, ["api_key"]) && hasAny(tm, ["session_id", "session"])) S.add("TMDB");
 
     const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
-    if (has(t?.server_url || t?.server)) S.add("TAUTULLI");
+    if (hasAny(t, ["server_url", "server"])) S.add("TAUTULLI");
 
     S.add("crosswatch");
 
@@ -73,6 +176,114 @@
     _cfgAt = Date.now();
     return S;
   }
+
+  // Preferences + settings modal
+  function injectInsightsPrefsCSS() {
+    if (d.getElementById("cw-insights-prefs-css")) return;
+    const el = d.createElement("style");
+    el.id = "cw-insights-prefs-css";
+    el.textContent = `
+    .ins-switch{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
+    .ins-switch .seg{flex:1;min-width:0;display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+    .ins-switch .seg::-webkit-scrollbar{display:none}
+    .ins-switch .seg .seg-btn{flex:0 0 auto;white-space:nowrap}
+
+    .ins-switch .ins-gear{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.18);color:#fff;border-radius:999px;padding:6px 10px;cursor:pointer;font-size:13px;line-height:1;opacity:.9}
+    .ins-switch .ins-gear:hover{opacity:1;background:rgba(255,255,255,.06)}
+    .ins-switch .ins-gear:active{transform:translateY(1px)}
+    `;
+    d.head.appendChild(el);
+  }
+
+  async function openInsightSettingsModal() {
+    try {
+      if (typeof w.openInsightSettingsModal === "function") {
+        await w.openInsightSettingsModal({});
+        return;
+      }
+      // Fallback: load modals module and open directly
+      const v = encodeURIComponent(String(w.__CW_VERSION__ || w.__CW_BUILD__ || Date.now()));
+      const mod = await import(`./modals.js?v=${v}`);
+      if (typeof mod.openModal === "function") await mod.openModal("insight-settings", {});
+    } catch (e) {
+      console.error("[Insights] Failed to open settings modal", e);
+    }
+  }
+
+  function _filteredProviderTotals(block, instancesByProvider) {
+    const raw = block?.raw || {};
+    const instCounts = raw.providers_instances || null;
+    const instMse = raw.providers_instances_mse || null;
+
+    const differs = selectionDiffers(_prefs, instancesByProvider || {});
+    if (!differs || !instCounts || typeof instCounts !== "object") {
+      return { providers: block.providers || {}, mse: raw.providers_mse || null, now: block.now };
+    }
+
+    const sel = (_prefs && _prefs.instances) || {};
+    const out = {};
+    const outMse = {};
+    const mseZero = () => ({ movies:0, shows:0, anime:0, episodes:0 });
+
+    for (const [prov, byInst] of Object.entries(instCounts)) {
+      const p = String(prov || "").toLowerCase();
+      const m = (byInst && typeof byInst === "object") ? byInst : {};
+      const keys = Object.keys(m);
+      const want = Array.isArray(sel[p]) ? sel[p].map(String) : (sel[p] === undefined ? keys : []);
+      let sum = 0;
+      for (const iid of want) sum += (m[iid] | 0);
+      out[p] = sum;
+
+      const mseByInst = (instMse && instMse[p] && typeof instMse[p] === "object") ? instMse[p] : {};
+      const agg = mseZero();
+      for (const iid of want) {
+        const part = mseByInst[iid];
+        if (!part || typeof part !== "object") continue;
+        agg.movies += part.movies | 0;
+        agg.shows += part.shows | 0;
+        agg.anime += part.anime | 0;
+        agg.episodes += part.episodes | 0;
+      }
+      outMse[p] = agg;
+    }
+
+    // Keep any providers that aren't instance-aware (fallback to original)
+    for (const [prov, v] of Object.entries(block.providers || {})) {
+      const p = String(prov || "").toLowerCase();
+      if (out[p] === undefined) out[p] = v | 0;
+    }
+    const baseMse = raw.providers_mse || {};
+    for (const [prov, v] of Object.entries(baseMse || {})) {
+      const p = String(prov || "").toLowerCase();
+      if (outMse[p] === undefined) outMse[p] = v;
+    }
+
+    const vals = Object.values(out).map(x => x | 0).filter(x => x > 0);
+    const now = vals.length ? Math.max(...vals) : (block.now | 0);
+
+    return { providers: out, mse: outMse, now };
+  }
+
+  function applyPrefsFromData(instancesByProvider) {
+    const before = JSON.stringify(_prefs || {});
+    _prefs = normalizePrefs(_prefs, instancesByProvider || {});
+    if (JSON.stringify(_prefs || {}) !== before) savePrefs(_prefs);
+    _visibleFeats = visibleFeatures(_prefs);
+    if (!_visibleFeats.includes(_feature)) {
+      _feature = _visibleFeats[0] || "watchlist";
+      localStorage.setItem("insights.feature", _feature);
+    }
+  }
+
+  w.addEventListener("insights:settings-changed", (ev) => {
+    _prefs = loadPrefs();
+    _visibleFeats = visibleFeatures(_prefs);
+    if (!_visibleFeats.includes(_feature)) {
+      _feature = _visibleFeats[0] || "watchlist";
+      localStorage.setItem("insights.feature", _feature);
+    }
+    refreshInsights(!!ev?.detail?.force || true);
+  });
 
   // Sparkline and animated counters/bars
   function renderSparkline(id, points) {
@@ -172,28 +383,40 @@
   // Feature switcher
   function ensureSwitch() {
     const wrap = footWrap();
+    injectInsightsPrefsCSS();
     let host = d.getElementById("insights-switch");
     if (!host) {
       host = d.createElement("div");
       host.id = "insights-switch"; host.className = "ins-switch";
-      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div>';
+      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div><button class="ins-gear" id="ins-open-settings" type="button" title="Insight settings" aria-label="Insight settings">⚙︎</button>';
       wrap.appendChild(host);
     } else if (host.parentNode !== wrap) {
       wrap.appendChild(host);
     }
     const seg = host.querySelector(".seg");
-    if (!host.dataset.init || !seg.querySelector(".seg-btn")) {
-      seg.innerHTML = FEATS.map(f=>{
-        const on = _feature===f;
-        return `<button class="seg-btn${on?' active':''}" data-key="${f}" role="tab" aria-selected="${on}">${FEAT_LABEL[f]}</button>`;
-      }).join("");
-      seg.addEventListener("click", ev=>{
-        const b = ev.target.closest(".seg-btn"); if (!b) return; switchFeature(b.dataset.key);
+
+    if (!host.dataset.bind) {
+      seg.addEventListener("click", ev => {
+        const b = ev.target.closest(".seg-btn"); if (!b) return;
+        switchFeature(b.dataset.key);
       });
-      host.dataset.init="1";
+      const gear = host.querySelector("#ins-open-settings");
+      if (gear) gear.addEventListener("click", () => openInsightSettingsModal());
+      host.dataset.bind = "1";
     }
-    placeSwitchBeforeTiles(); markActiveSwitcher(); footWrap.reserve();
-    return host;
+
+    const sig = (_visibleFeats || []).join(",");
+    if (host.dataset.feats !== sig) {
+      seg.innerHTML = (_visibleFeats || []).map(f => {
+        const on = _feature === f;
+        return `<button class="seg-btn${on ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${on}">${FEAT_LABEL[f]}</button>`;
+      }).join("");
+      host.dataset.feats = sig;
+    }
+
+    placeSwitchBeforeTiles();
+    markActiveSwitcher();
+    footWrap.reserve();
   }
   function placeSwitchBeforeTiles(){
     const wrap = footWrap(), sw=$("#insights-switch"), grid=$("#stat-providers"); if (!wrap||!sw) return;
@@ -208,12 +431,13 @@
   }
   function switchFeature(name){
     const want = clampFeature(name); if (want===_feature) return;
-    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
+    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(!!ev?.detail?.force || true);
   }
 
   // Provider tiles 
   function renderProviderStats(provTotals, provActive, configuredSet, breakdownMap) {
     const wrap = footWrap();
+    injectInsightsPrefsCSS();
     const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
     if (host.parentNode !== wrap) wrap.appendChild(host);
 
@@ -476,6 +700,8 @@
       return;
     }
 
+    applyPrefsFromData(data.instances_by_provider || {});
+
     let blk;
     try {
       blk = pickBlock(data, _feature);
@@ -486,6 +712,13 @@
 
     footWrap();
     ensureSwitch();
+
+    const fp = _filteredProviderTotals(blk, data.instances_by_provider || {});
+    if (fp && fp.providers) {
+      blk.providers = fp.providers;
+      blk.now = Number.isFinite(fp.now) ? fp.now : blk.now;
+      if (blk.raw) blk.raw.providers_mse = fp.mse || blk.raw.providers_mse;
+    }
 
     try {
       renderSparkline("sparkline", blk.series || []);
@@ -541,12 +774,23 @@
       return;
     }
 
+    applyPrefsFromData(data.instances_by_provider || {});
+
+    applyPrefsFromData(data.instances_by_provider || {});
+
     let blk;
     try {
       blk = pickBlock(data, _feature);
     } catch (e) {
       console.error("[Insights] Failed to resolve feature block (stats)", e);
       return;
+    }
+
+    const fp = _filteredProviderTotals(blk, data.instances_by_provider || {});
+    if (fp && fp.providers) {
+      blk.providers = fp.providers;
+      blk.now = Number.isFinite(fp.now) ? fp.now : blk.now;
+      if (blk.raw) blk.raw.providers_mse = fp.mse || blk.raw.providers_mse;
     }
 
     renderTopStats({
@@ -683,7 +927,7 @@
   w.subtitleOf     = subtitleOf;
 
   d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
-  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
+  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(!!ev?.detail?.force || true); });
 
   // Snapshot Picker
   let _cwSnapModal = null;
@@ -822,7 +1066,7 @@
           const label = name === "latest" ? "latest" : formatSnapshotLabel(name);
           window.cxToast(`Snapshot set: ${label}`);
         }
-        refreshInsights(true);
+        refreshInsights(!!ev?.detail?.force || true);
       });
     });
 
@@ -851,8 +1095,10 @@
     #insights-footer{position:static;margin-top:10px;}
   }
 
-  #insights-switch{display:flex;justify-content:center;}
-  #insights-switch .seg{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center;}
+  #insights-switch{display:flex;align-items:center;gap:10px;justify-content:flex-start;flex-wrap:nowrap;}
+  #insights-switch .seg{flex:1;min-width:0;display:flex;gap:.4rem;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scrollbar-width:none;}
+  #insights-switch .seg::-webkit-scrollbar{display:none;}
+  #insights-switch .seg-btn{flex:0 0 auto;white-space:nowrap;}
   #insights-switch .seg-btn{
     appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.2px;
     padding:.38rem .72rem;border-radius:.8rem;color:rgba(255,255,255,.85);
