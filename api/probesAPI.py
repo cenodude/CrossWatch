@@ -32,7 +32,8 @@ except Exception:
     HAVE_PLEXAPI = False
 
 # env
-HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "3"))
+HTTP_TIMEOUT = int(os.environ.get("CW_PROBE_HTTP_TIMEOUT", "6"))
+HTTP_RETRIES = int(os.environ.get("CW_PROBE_HTTP_RETRIES", "1"))
 STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
@@ -60,6 +61,22 @@ _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 _CACHE_LOCK = threading.Lock()
 _BUST_SEEN: set[str] = set()
+
+_HTTP_TL = threading.local()
+
+
+def _set_http_error(msg: str) -> None:
+    try:
+        _HTTP_TL.last_error = str(msg or "")
+    except Exception:
+        pass
+
+
+def _last_http_error() -> str:
+    try:
+        return str(getattr(_HTTP_TL, "last_error", "") or "")
+    except Exception:
+        return ""
 
 UA: dict[str, str] = {
     "Accept": "application/json",
@@ -226,18 +243,30 @@ def _http_get_with_headers(
     headers: dict[str, str],
     timeout: int = HTTP_TIMEOUT,
 ) -> tuple[int, bytes, dict[str, str]]:
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-            body = r.read()
-            hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
-            return r.getcode(), body, hdrs
-    except urllib.error.HTTPError as e:
-        body = e.read() if getattr(e, "fp", None) else b""
-        hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
-        return e.code, body, hdrs
-    except Exception:
-        return 0, b"", {}
+    retries = max(0, int(HTTP_RETRIES))
+    last_err = ""
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                body = r.read()
+                hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
+                _set_http_error("")
+                return r.getcode(), body, hdrs
+        except urllib.error.HTTPError as e:
+            body = e.read() if getattr(e, "fp", None) else b""
+            hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
+            _set_http_error("")
+            return e.code, body, hdrs
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            _set_http_error(last_err)
+            if attempt < retries:
+                time.sleep(min(0.5, 0.15 * (attempt + 1)))
+                continue
+            return 0, b"", {"x-cw-error": last_err}
+
+    return 0, b"", {"x-cw-error": last_err}
 
 def _http_get(url: str, headers: dict[str, str], timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
     code, body, _ = _http_get_with_headers(url, headers=headers, timeout=timeout)
@@ -251,18 +280,30 @@ def _http_post_with_headers(
     data: bytes,
     timeout: int = HTTP_TIMEOUT,
 ) -> tuple[int, bytes, dict[str, str]]:
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-            body = r.read()
-            hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
-            return r.getcode(), body, hdrs
-    except urllib.error.HTTPError as e:
-        body = e.read() if getattr(e, "fp", None) else b""
-        hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
-        return e.code, body, hdrs
-    except Exception:
-        return 0, b"", {}
+    retries = max(0, int(HTTP_RETRIES))
+    last_err = ""
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                body = r.read()
+                hdrs = {str(k).lower(): str(v) for k, v in (r.headers.items() if r.headers else [])}
+                _set_http_error("")
+                return r.getcode(), body, hdrs
+        except urllib.error.HTTPError as e:
+            body = e.read() if getattr(e, "fp", None) else b""
+            hdrs = {str(k).lower(): str(v) for k, v in (e.headers.items() if e.headers else [])}
+            _set_http_error("")
+            return e.code, body, hdrs
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            _set_http_error(last_err)
+            if attempt < retries:
+                time.sleep(min(0.5, 0.15 * (attempt + 1)))
+                continue
+            return 0, b"", {"x-cw-error": last_err}
+
+    return 0, b"", {"x-cw-error": last_err}
 
 
 def _http_post(url: str, headers: dict[str, str], data: bytes, timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
@@ -347,6 +388,9 @@ def _trakt_limits_used(
 
 def _reason_http(code: int, provider: str) -> str:
     if code == 0:
+        err = _last_http_error()
+        if err:
+            return f"{provider}: network error/timeout ({err})"
         return f"{provider}: network error/timeout"
     if code == 401:
         return f"{provider}: unauthorized (token expired/revoked)"
@@ -686,8 +730,11 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
             PROBE_DETAIL_CACHE[key] = (now, False, "MDBList: missing api_key")
         return False, "MDBList: missing api_key"
 
-    url = f"https://mdblist.com/api/?apikey={api_key}&s=batman"
-    code, body = _http_get(url, headers=UA, timeout=HTTP_TIMEOUT)
+    from urllib.parse import quote
+
+    url = f"https://api.mdblist.com/user?apikey={quote(api_key)}"
+    timeout = max(int(HTTP_TIMEOUT), 6)
+    code, body, _ = _http_get_with_headers(url, headers=UA, timeout=timeout)
 
     if code != 200:
         rsn = _reason_http(code, "MDBList")
@@ -696,7 +743,7 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
         return False, rsn
 
     j = _json_loads(body) or {}
-    ok = bool(isinstance(j, dict) and (j.get("title") or j.get("search")))
+    ok = bool(isinstance(j, dict) and (j.get("user_id") or j.get("username")))
     rsn = "" if ok else "MDBList: invalid response"
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
@@ -1238,11 +1285,74 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                         used.add((b, normalize_instance_id(p.get("target_instance") or "default")))
                 return used
 
-            used_targets = _pair_targets()
-            active_providers = {p for p, _ in used_targets}
-            targets: set[tuple[str, str]] = set(used_targets)
 
-            # Hide providers that are not part of any enabled pair.
+
+            def _canon_probe_code(v: Any) -> str:
+                s = str(v or "").upper().strip()
+                if not s:
+                    return ""
+                if s in ("MDB", "MDB_LIST", "MDBLIST"):
+                    return "MDBLIST"
+                if s == "TMDB_SYNC":
+                    return "TMDB"
+                return s
+
+            def _watcher_targets(cfg0: dict[str, Any]) -> set[tuple[str, str]]:
+                out: set[tuple[str, str]] = set()
+                sc = cfg0.get("scrobble") or {}
+                w = (sc.get("watch") or {}) if isinstance(sc, dict) else {}
+                routes = w.get("routes") if isinstance(w, dict) else None
+                routes = routes if isinstance(routes, list) else []
+
+                def _add(code: Any, inst: Any) -> None:
+                    c = _canon_probe_code(code)
+                    if c and c in DETAIL_PROBES:
+                        out.add((c, normalize_instance_id(inst or "default")))
+
+                any_enabled_route = any(isinstance(r, dict) and r.get("enabled", True) is not False and (r.get("provider") or r.get("sink")) for r in routes)
+                if any_enabled_route:
+                    for r in routes:
+                        if not isinstance(r, dict) or r.get("enabled", True) is False:
+                            continue
+                        _add(r.get("provider"), r.get("provider_instance") or r.get("providerInstance") or r.get("source_instance") or "default")
+                        _add(r.get("sink"), r.get("sink_instance") or r.get("sinkInstance") or r.get("target_instance") or "default")
+                    return out
+
+                # Legacy watcher: only count it as configured when sinks are set.
+                provider = _canon_probe_code(w.get("provider")) if isinstance(w, dict) else ""
+                sinks_raw = (w.get("sink") or "") if isinstance(w, dict) else ""
+                sinks = [s.strip() for s in str(sinks_raw).split(",") if s.strip()]
+                if not sinks:
+                    return out
+
+                _add(provider, "default")
+                for s in sinks:
+                    _add(s, "default")
+                return out
+
+            pair_targets = _pair_targets()
+            watcher_targets = _watcher_targets(cfg)
+
+            # Only probe things that are actually visible/used: enabled sync pairs and configured watcher routes.
+            targets: set[tuple[str, str]] = set()
+            prov_sources: dict[str, set[str]] = {}
+
+            for prov, inst in pair_targets:
+                c = _canon_probe_code(prov)
+                if not c:
+                    continue
+                targets.add((c, inst))
+                prov_sources.setdefault(c, set()).add("pair")
+
+            for prov, inst in watcher_targets:
+                c = _canon_probe_code(prov)
+                if not c:
+                    continue
+                targets.add((c, inst))
+                prov_sources.setdefault(c, set()).add("watcher")
+
+            active_providers = {p for p, _ in targets}
+
             debug = bool((cfg.get("runtime") or {}).get("debug"))
             if not targets:
                 data: dict[str, Any] = {
@@ -1263,33 +1373,6 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 STATUS_CACHE["ts"] = now
                 STATUS_CACHE["data"] = data
                 return JSONResponse(data, headers={"Cache-Control": "no-store"})
-
-            targets: set[tuple[str, str]] = set(used_targets)
-
-            def _pick_one_configured(prov: str) -> str | None:
-                ck = _cfg_key(prov)
-                ids: list[str] = []
-                try:
-                    ids = list_instance_ids(cfg, ck)
-                except Exception:
-                    ids = ["default"]
-                for inst in ids or ["default"]:
-                    view = _cfg_view_for(cfg, prov, inst)
-                    if not _probe_key(_cfg_key(prov), view).endswith("|unconfigured"):
-                        return normalize_instance_id(inst)
-                return None
-
-            for prov in DETAIL_PROBES.keys():
-                if any(p == prov for p, _ in targets):
-                    continue
-                picked = _pick_one_configured(prov)
-                if picked:
-                    targets.add((prov, picked))
-                    
-            active_providers = {p for p, _ in targets}
-
-            if not targets:
-                targets = {(prov, "default") for prov in DETAIL_PROBES.keys()}
 
             jobs_by_key: dict[str, tuple[str, dict[str, Any], Callable[..., tuple[bool, str]]]] = {}
             refs: dict[tuple[str, str], str] = {}
@@ -1421,6 +1504,44 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     ),
                 }
 
+
+
+            def _scope_for(prov: str) -> str:
+                ss = prov_sources.get(prov) or set()
+                if "pair" in ss:
+                    return "pair"
+                if "watcher" in ss:
+                    return "watcher"
+                return "pair"
+
+            def _used_by_for(prov: str) -> list[str]:
+                ss = prov_sources.get(prov) or set()
+                out: list[str] = []
+                if "pair" in ss:
+                    out.append("pair")
+                if "watcher" in ss:
+                    out.append("watcher")
+                return out
+
+            def _usage_hint(prov: str) -> str:
+                ss = prov_sources.get(prov) or set()
+                if "pair" in ss and "watcher" in ss:
+                    return "Used by: Sync + Watcher"
+                if "watcher" in ss:
+                    return "Used by: Watcher"
+                if "pair" in ss:
+                    return "Used by: Sync"
+                return ""
+
+            for k in list(providers_out.keys()):
+                used_by = _used_by_for(k)
+                providers_out[k]["scope"] = _scope_for(k)
+                providers_out[k]["used_by"] = used_by
+                providers_out[k]["used_in_pairs"] = "pair" in used_by
+                providers_out[k]["used_in_watcher"] = "watcher" in used_by
+                hint = _usage_hint(k)
+                if hint:
+                    providers_out[k]["usage_hint"] = hint
 
             data: dict[str, Any] = {
                 "plex_connected": plex_ok,
