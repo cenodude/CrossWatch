@@ -94,6 +94,101 @@ def _cfg(adapter: Any) -> dict[str, Any]:
     c = getattr(adapter, "config", {}) or {}
     return c.get("plex", {}) if isinstance(c, dict) else {}
 
+def _same_user(aid1: int | None, uname1: str | None, aid2: int | None, uname2: str | None) -> bool:
+    try:
+        if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
+            return True
+    except Exception:
+        pass
+    if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
+        return True
+    return False
+
+
+def _active_token(adapter: Any) -> str | None:
+    cli = getattr(adapter, "client", None)
+    try:
+        ses = getattr(cli, "session", None)
+        tok = ses.headers.get("X-Plex-Token") if ses and hasattr(ses, "headers") else None
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    srv = getattr(cli, "server", None)
+    try:
+        tok = getattr(srv, "_token", None) or getattr(srv, "token", None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    try:
+        tok = getattr(getattr(adapter, "cfg", None), "token", None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    return None
+
+
+def _cloud_token(adapter: Any) -> str | None:
+    cli = getattr(adapter, "client", None)
+    try:
+        tok = getattr(cli, "cloud_token", None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    return _active_token(adapter)
+
+
+def _enter_home_scope_if_needed(adapter: Any) -> bool:
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return False
+
+    desired_aid = getattr(cli, "selected_account_id", None)
+    desired_uname = getattr(cli, "selected_username", None)
+    active_aid = getattr(cli, "user_account_id", None)
+    active_uname = getattr(cli, "user_username", None)
+
+    need = bool(desired_aid or desired_uname) and not _same_user(desired_aid, desired_uname, active_aid, active_uname)
+    if not need:
+        return False
+
+    try:
+        if not bool(getattr(cli, "can_home_switch")()):
+            return False
+    except Exception:
+        return False
+
+    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
+    try:
+        ok = bool(
+            getattr(cli, "enter_home_user_scope")(
+                target_username=(str(desired_uname).strip() if desired_uname else None),
+                target_account_id=(int(desired_aid) if desired_aid is not None else None),
+                pin=pin,
+            )
+        )
+    except Exception:
+        ok = False
+
+    if not ok:
+        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
+    return ok
+
+
+def _exit_home_scope(adapter: Any, did_switch: bool) -> None:
+    if not did_switch:
+        return
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return
+    try:
+        getattr(cli, "exit_home_user_scope")()
+    except Exception:
+        pass
+
 
 def _cfg_int(d: Mapping[str, Any], key: str, default: int) -> int:
     try:
@@ -775,369 +870,383 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
 
 # Index build
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
-    if not token:
-        raise RuntimeError("Plex token is required for watchlist index")
-
-    session = adapter.client.session
-    timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
-    retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
-    cfg = _cfg(adapter)
-
-    prog_mk = getattr(adapter, "progress_factory", None)
-    prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
-
-    page_size = _cfg_int(cfg, "watchlist_page_size", 100)
-    base_params: dict[str, Any] = {"includeCollections": 1, "includeExternalMedia": 1}
-
-    out: dict[str, dict[str, Any]] = {}
-    done = 0
-    total: int | None = None
-    start = 0
-    raw = 0
-    coll = 0
-    typ: dict[str, int] = {}
-
-    while True:
-        params = dict(base_params)
-        params["X-Plex-Container-Start"] = start
-        params["X-Plex-Container-Size"] = page_size
-        cont = _get_container(
-            session,
-            f"{DISCOVER}/library/sections/watchlist/all",
-            token,
-            timeout=timeout,
-            retries=retries,
-            params=params,
-            accept_json=True,
-        )
-
-        mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
-        if total is None:
-            try:
-                t = (mc or {}).get("totalSize") or (mc or {}).get("size")
-                total = int(t) if t is not None and str(t).isdigit() else None
-            except Exception:
-                total = None
-
-        rows = list(_iter_meta_rows(cont))
-        raw += len(rows)
-
-        if prog is not None and start == 0:
-            try:
-                prog.tick(0, total=(total if total is not None else 0), force=True)
-            except Exception:
-                pass
-
-        if not rows:
-            break
-
-        stop = False
-        for row in rows:
-            m = normalize_discover_row(row, token=token)
-            k = canonical_key(m)
-            if k in out:
-                coll += 1
-            out[k] = m
-            t = (m.get("type") or "movie").lower()
-            typ[t] = typ.get(t, 0) + 1
-            done += 1
-            if prog is not None:
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        token = _cloud_token(adapter)
+        if not token:
+            raise RuntimeError("Plex token is required for watchlist index")
+    
+        session = adapter.client.session
+        timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
+        retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
+        cfg = _cfg(adapter)
+    
+        prog_mk = getattr(adapter, "progress_factory", None)
+        prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
+    
+        page_size = _cfg_int(cfg, "watchlist_page_size", 100)
+        base_params: dict[str, Any] = {"includeCollections": 1, "includeExternalMedia": 1}
+    
+        out: dict[str, dict[str, Any]] = {}
+        done = 0
+        total: int | None = None
+        start = 0
+        raw = 0
+        coll = 0
+        typ: dict[str, int] = {}
+    
+        while True:
+            params = dict(base_params)
+            params["X-Plex-Container-Start"] = start
+            params["X-Plex-Container-Size"] = page_size
+            cont = _get_container(
+                session,
+                f"{DISCOVER}/library/sections/watchlist/all",
+                token,
+                timeout=timeout,
+                retries=retries,
+                params=params,
+                accept_json=True,
+            )
+    
+            mc = (cont or {}).get("MediaContainer") if isinstance(cont, Mapping) else None
+            if total is None:
                 try:
-                    prog.tick(done, total=(total if total is not None else done))
+                    t = (mc or {}).get("totalSize") or (mc or {}).get("size")
+                    total = int(t) if t is not None and str(t).isdigit() else None
+                except Exception:
+                    total = None
+    
+            rows = list(_iter_meta_rows(cont))
+            raw += len(rows)
+    
+            if prog is not None and start == 0:
+                try:
+                    prog.tick(0, total=(total if total is not None else 0), force=True)
                 except Exception:
                     pass
-            if total is not None and done >= total:
-                stop = True
+    
+            if not rows:
                 break
+    
+            stop = False
+            for row in rows:
+                m = normalize_discover_row(row, token=token)
+                k = canonical_key(m)
+                if k in out:
+                    coll += 1
+                out[k] = m
+                t = (m.get("type") or "movie").lower()
+                typ[t] = typ.get(t, 0) + 1
+                done += 1
+                if prog is not None:
+                    try:
+                        prog.tick(done, total=(total if total is not None else done))
+                    except Exception:
+                        pass
+                if total is not None and done >= total:
+                    stop = True
+                    break
+    
+            if stop:
+                break
+            if total is None and start > 0 and len(rows) < page_size:
+                break
+            start += len(rows)
+    
+        _unfreeze_keys_if_present(out.keys())
+        _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)
+        return out
+    finally:
+        _exit_home_scope(adapter, did_switch)
 
-        if stop:
-            break
-        if total is None and start > 0 and len(rows) < page_size:
-            break
-        start += len(rows)
-
-    _unfreeze_keys_if_present(out.keys())
-    _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)
-    return out
 
 
 # Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
-    if not token:
-        raise RuntimeError("Plex token is required for watchlist writes")
-
-    session = adapter.client.session
-    acct = adapter.account()
-    cfg = _cfg(adapter)
-
-    allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
-    pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
-    pms_enabled = allow_pms or pms_first
-
-    timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
-    retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
-
-    qlimit = _cfg_int(cfg, "watchlist_query_limit", 25)
-    delay_ms = _cfg_int(cfg, "watchlist_write_delay_ms", 0)
-    allow_title = _cfg_bool(cfg, "watchlist_title_query", True)
-
-    if pms_enabled and not (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
-        gm, gs = _build_guid_index(adapter)
-        _GUID_INDEX_MOVIE.update(gm)
-        _GUID_INDEX_SHOW.update(gs)
-
-    ok = 0
-    unresolved: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for it in items:
-        ck = canonical_key(it)
-        if ck in seen:
-            continue
-        seen.add(ck)
-
-        if _is_frozen(it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
-        guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
-        kind = (it.get("type") or "movie").lower()
-        libtype = "show" if kind in ("show", "series", "tv") else "movie"
-        title = it.get("title")
-        year = it.get("year")
-        slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
-
-        if not (guids or title or slug):
-            unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-            _freeze_item(it, action="add", reasons=["no-external-ids"], guids_tried=guids)
-            continue
-
-        if pms_first and pms_enabled:
-            chosen = _pms_find_in_index(libtype, guids)
-            if chosen:
-                try:
-                    chosen.addToWatchlist(account=acct)
-                    ok += 1
-                    if _is_frozen(it):
-                        _unfreeze_keys_if_present([canonical_key(it)])
-                    continue
-                except Exception as e:
-                    msg = str(e).lower()
-                    if "already on the watchlist" in msg:
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        token = _cloud_token(adapter)
+        if not token:
+            raise RuntimeError("Plex token is required for watchlist writes")
+    
+        session = adapter.client.session
+        acct = adapter.account()
+        cfg = _cfg(adapter)
+    
+        allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
+        pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
+        pms_enabled = allow_pms or pms_first
+    
+        timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
+        retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
+    
+        qlimit = _cfg_int(cfg, "watchlist_query_limit", 25)
+        delay_ms = _cfg_int(cfg, "watchlist_write_delay_ms", 0)
+        allow_title = _cfg_bool(cfg, "watchlist_title_query", True)
+    
+        if pms_enabled and not (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
+            gm, gs = _build_guid_index(adapter)
+            _GUID_INDEX_MOVIE.update(gm)
+            _GUID_INDEX_SHOW.update(gs)
+    
+        ok = 0
+        unresolved: list[dict[str, Any]] = []
+        seen: set[str] = set()
+    
+        for it in items:
+            ck = canonical_key(it)
+            if ck in seen:
+                continue
+            seen.add(ck)
+    
+            if _is_frozen(it):
+                _dbg("skip_frozen", title=id_minimal(it).get("title"))
+                continue
+    
+            guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
+            kind = (it.get("type") or "movie").lower()
+            libtype = "show" if kind in ("show", "series", "tv") else "movie"
+            title = it.get("title")
+            year = it.get("year")
+            slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
+    
+            if not (guids or title or slug):
+                unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
+                _freeze_item(it, action="add", reasons=["no-external-ids"], guids_tried=guids)
+                continue
+    
+            if pms_first and pms_enabled:
+                chosen = _pms_find_in_index(libtype, guids)
+                if chosen:
+                    try:
+                        chosen.addToWatchlist(account=acct)
                         ok += 1
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _warn("pms_write_failed", op="add", error=str(e))
-
-        rk = _discover_resolve_rating_key(
-            session,
-            token,
-            guids,
-            libtype=libtype,
-            item_ids=(it.get("ids") or {}),
-            title=title,
-            year=year,
-            slug=slug,
-            timeout=timeout,
-            retries=retries,
-            query_limit=qlimit,
-            allow_title=allow_title,
-            cfg=cfg,
-        )
-
-        if rk:
-            ok_flag, status, body, transient = _discover_write_by_rk(
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "already on the watchlist" in msg:
+                            ok += 1
+                            if _is_frozen(it):
+                                _unfreeze_keys_if_present([canonical_key(it)])
+                            continue
+                        _warn("pms_write_failed", op="add", error=str(e))
+    
+            rk = _discover_resolve_rating_key(
                 session,
                 token,
-                rk,
-                action="add",
+                guids,
+                libtype=libtype,
+                item_ids=(it.get("ids") or {}),
+                title=title,
+                year=year,
+                slug=slug,
                 timeout=timeout,
                 retries=retries,
-                delay_ms=delay_ms,
+                query_limit=qlimit,
+                allow_title=allow_title,
+                cfg=cfg,
             )
-            if ok_flag:
-                ok += 1
-                if _is_frozen(it):
-                    _unfreeze_keys_if_present([canonical_key(it)])
-                continue
-            if transient:
-                unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
-                continue
-            _warn("discover_write_failed", op="add", rating_key=rk, status=status, body_snippet=body)
-
-        if not pms_first and pms_enabled:
-            chosen = _pms_find_in_index(libtype, guids)
-            if chosen:
-                try:
-                    chosen.addToWatchlist(account=acct)
+    
+            if rk:
+                ok_flag, status, body, transient = _discover_write_by_rk(
+                    session,
+                    token,
+                    rk,
+                    action="add",
+                    timeout=timeout,
+                    retries=retries,
+                    delay_ms=delay_ms,
+                )
+                if ok_flag:
                     ok += 1
                     if _is_frozen(it):
                         _unfreeze_keys_if_present([canonical_key(it)])
                     continue
-                except Exception as e:
-                    msg = str(e).lower()
-                    if "already on the watchlist" in msg:
+                if transient:
+                    unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
+                    continue
+                _warn("discover_write_failed", op="add", rating_key=rk, status=status, body_snippet=body)
+    
+            if not pms_first and pms_enabled:
+                chosen = _pms_find_in_index(libtype, guids)
+                if chosen:
+                    try:
+                        chosen.addToWatchlist(account=acct)
                         ok += 1
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _warn("pms_write_failed", op="add", error=str(e))
-                    unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
-                    continue
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "already on the watchlist" in msg:
+                            ok += 1
+                            if _is_frozen(it):
+                                _unfreeze_keys_if_present([canonical_key(it)])
+                            continue
+                        _warn("pms_write_failed", op="add", error=str(e))
+                        unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
+                        continue
+    
+            unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
+            _freeze_item(
+                it,
+                action="add",
+                reasons=[
+                    "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
+                    *(["library:guid-index-miss"] if pms_enabled else []),
+                ],
+                guids_tried=guids,
+            )
+    
+        _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
+        return ok, unresolved
+    finally:
+        _exit_home_scope(adapter, did_switch)
 
-        unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-        _freeze_item(
-            it,
-            action="add",
-            reasons=[
-                "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
-                *(["library:guid-index-miss"] if pms_enabled else []),
-            ],
-            guids_tried=guids,
-        )
-
-    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
-    return ok, unresolved
 
 # Remove
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    token = getattr(adapter, "cfg", None) and getattr(adapter.cfg, "token", None)
-    if not token:
-        raise RuntimeError("Plex token is required for watchlist writes")
-
-    session = adapter.client.session
-    acct = adapter.account()
-    cfg = _cfg(adapter)
-
-    allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
-    pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
-    pms_enabled = allow_pms or pms_first
-
-    timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
-    retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
-
-    qlimit = _cfg_int(cfg, "watchlist_query_limit", 25)
-    delay_ms = _cfg_int(cfg, "watchlist_write_delay_ms", 0)
-    allow_title = _cfg_bool(cfg, "watchlist_title_query", True)
-
-    if pms_enabled and not (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
-        gm, gs = _build_guid_index(adapter)
-        _GUID_INDEX_MOVIE.update(gm)
-        _GUID_INDEX_SHOW.update(gs)
-
-    ok = 0
-    unresolved: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for it in items:
-        ck = canonical_key(it)
-        if ck in seen:
-            continue
-        seen.add(ck)
-
-        if _is_frozen(it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
-        guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
-        kind = (it.get("type") or "movie").lower()
-        libtype = "show" if kind in ("show", "series", "tv") else "movie"
-        title = it.get("title")
-        year = it.get("year")
-        slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
-
-        if not (guids or title or slug):
-            unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-            _freeze_item(it, action="remove", reasons=["no-external-ids"], guids_tried=guids)
-            continue
-
-        if pms_first and pms_enabled:
-            chosen = _pms_find_in_index(libtype, guids)
-            if chosen:
-                try:
-                    chosen.removeFromWatchlist(account=acct)
-                    ok += 1
-                    if _is_frozen(it):
-                        _unfreeze_keys_if_present([canonical_key(it)])
-                    continue
-                except Exception as e:
-                    msg = str(e).lower()
-                    if "not on the watchlist" in msg or "is not on the watchlist" in msg:
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        token = _cloud_token(adapter)
+        if not token:
+            raise RuntimeError("Plex token is required for watchlist writes")
+    
+        session = adapter.client.session
+        acct = adapter.account()
+        cfg = _cfg(adapter)
+    
+        allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
+        pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
+        pms_enabled = allow_pms or pms_first
+    
+        timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
+        retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
+    
+        qlimit = _cfg_int(cfg, "watchlist_query_limit", 25)
+        delay_ms = _cfg_int(cfg, "watchlist_write_delay_ms", 0)
+        allow_title = _cfg_bool(cfg, "watchlist_title_query", True)
+    
+        if pms_enabled and not (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
+            gm, gs = _build_guid_index(adapter)
+            _GUID_INDEX_MOVIE.update(gm)
+            _GUID_INDEX_SHOW.update(gs)
+    
+        ok = 0
+        unresolved: list[dict[str, Any]] = []
+        seen: set[str] = set()
+    
+        for it in items:
+            ck = canonical_key(it)
+            if ck in seen:
+                continue
+            seen.add(ck)
+    
+            if _is_frozen(it):
+                _dbg("skip_frozen", title=id_minimal(it).get("title"))
+                continue
+    
+            guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
+            kind = (it.get("type") or "movie").lower()
+            libtype = "show" if kind in ("show", "series", "tv") else "movie"
+            title = it.get("title")
+            year = it.get("year")
+            slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
+    
+            if not (guids or title or slug):
+                unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
+                _freeze_item(it, action="remove", reasons=["no-external-ids"], guids_tried=guids)
+                continue
+    
+            if pms_first and pms_enabled:
+                chosen = _pms_find_in_index(libtype, guids)
+                if chosen:
+                    try:
+                        chosen.removeFromWatchlist(account=acct)
                         ok += 1
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _warn("pms_write_failed", op="remove", error=str(e))
-
-        rk = _discover_resolve_rating_key(
-            session,
-            token,
-            guids,
-            libtype=libtype,
-            item_ids=(it.get("ids") or {}),
-            title=title,
-            year=year,
-            slug=slug,
-            timeout=timeout,
-            retries=retries,
-            query_limit=qlimit,
-            allow_title=allow_title,
-            cfg=cfg,
-        )
-
-        if rk:
-            ok_flag, status, body, transient = _discover_write_by_rk(
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "not on the watchlist" in msg or "is not on the watchlist" in msg:
+                            ok += 1
+                            if _is_frozen(it):
+                                _unfreeze_keys_if_present([canonical_key(it)])
+                            continue
+                        _warn("pms_write_failed", op="remove", error=str(e))
+    
+            rk = _discover_resolve_rating_key(
                 session,
                 token,
-                rk,
-                action="remove",
+                guids,
+                libtype=libtype,
+                item_ids=(it.get("ids") or {}),
+                title=title,
+                year=year,
+                slug=slug,
                 timeout=timeout,
                 retries=retries,
-                delay_ms=delay_ms,
+                query_limit=qlimit,
+                allow_title=allow_title,
+                cfg=cfg,
             )
-            if ok_flag:
-                ok += 1
-                if _is_frozen(it):
-                    _unfreeze_keys_if_present([canonical_key(it)])
-                continue
-            if transient:
-                unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
-                continue
-            _warn("discover_write_failed", op="remove", rating_key=rk, status=status, body_snippet=body)
-
-        if not pms_first and pms_enabled:
-            chosen = _pms_find_in_index(libtype, guids)
-            if chosen:
-                try:
-                    chosen.removeFromWatchlist(account=acct)
+    
+            if rk:
+                ok_flag, status, body, transient = _discover_write_by_rk(
+                    session,
+                    token,
+                    rk,
+                    action="remove",
+                    timeout=timeout,
+                    retries=retries,
+                    delay_ms=delay_ms,
+                )
+                if ok_flag:
                     ok += 1
                     if _is_frozen(it):
                         _unfreeze_keys_if_present([canonical_key(it)])
                     continue
-                except Exception as e:
-                    msg = str(e).lower()
-                    if "not on the watchlist" in msg or "is not on the watchlist" in msg:
+                if transient:
+                    unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
+                    continue
+                _warn("discover_write_failed", op="remove", rating_key=rk, status=status, body_snippet=body)
+    
+            if not pms_first and pms_enabled:
+                chosen = _pms_find_in_index(libtype, guids)
+                if chosen:
+                    try:
+                        chosen.removeFromWatchlist(account=acct)
                         ok += 1
                         if _is_frozen(it):
                             _unfreeze_keys_if_present([canonical_key(it)])
                         continue
-                    _warn("pms_write_failed", op="remove", error=str(e))
-                    unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
-                    continue
-
-        unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-        _freeze_item(
-            it,
-            action="remove",
-            reasons=[
-                "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
-                *(["library:guid-index-miss"] if pms_enabled else []),
-            ],
-            guids_tried=guids,
-        )
-
-    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
-    return ok, unresolved
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "not on the watchlist" in msg or "is not on the watchlist" in msg:
+                            ok += 1
+                            if _is_frozen(it):
+                                _unfreeze_keys_if_present([canonical_key(it)])
+                            continue
+                        _warn("pms_write_failed", op="remove", error=str(e))
+                        unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
+                        continue
+    
+            unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
+            _freeze_item(
+                it,
+                action="remove",
+                reasons=[
+                    "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
+                    *(["library:guid-index-miss"] if pms_enabled else []),
+                ],
+                guids_tried=guids,
+            )
+    
+        _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+        return ok, unresolved
+    finally:
+        _exit_home_scope(adapter, did_switch)

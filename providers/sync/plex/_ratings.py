@@ -172,6 +172,90 @@ def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     v = c.get(key, default) if isinstance(c, Mapping) else default
     return default if v is None else v
 
+def _same_user(aid1: int | None, uname1: str | None, aid2: int | None, uname2: str | None) -> bool:
+    try:
+        if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
+            return True
+    except Exception:
+        pass
+    if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
+        return True
+    return False
+
+
+def _active_pms_token(adapter: Any) -> str | None:
+    cli = getattr(adapter, "client", None)
+    try:
+        ses = getattr(cli, "session", None)
+        tok = ses.headers.get("X-Plex-Token") if ses and hasattr(ses, "headers") else None
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    srv = getattr(cli, "server", None)
+    try:
+        tok = getattr(srv, "_token", None) or getattr(srv, "token", None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    try:
+        tok = getattr(getattr(cli, "cfg", None), "token", None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    return None
+
+
+def _enter_home_scope_if_needed(adapter: Any) -> bool:
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return False
+
+    desired_aid = getattr(cli, "selected_account_id", None)
+    desired_uname = getattr(cli, "selected_username", None)
+    active_aid = getattr(cli, "user_account_id", None)
+    active_uname = getattr(cli, "user_username", None)
+
+    need = bool(desired_aid or desired_uname) and not _same_user(desired_aid, desired_uname, active_aid, active_uname)
+    if not need:
+        return False
+
+    try:
+        if not bool(getattr(cli, "can_home_switch")()):
+            return False
+    except Exception:
+        return False
+
+    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
+    try:
+        ok = bool(
+            getattr(cli, "enter_home_user_scope")(
+                target_username=(str(desired_uname).strip() if desired_uname else None),
+                target_account_id=(int(desired_aid) if desired_aid is not None else None),
+                pin=pin,
+            )
+        )
+    except Exception:
+        ok = False
+
+    if not ok:
+        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
+    return ok
+
+
+def _exit_home_scope(adapter: Any, did_switch: bool) -> None:
+    if not did_switch:
+        return
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return
+    try:
+        getattr(cli, "exit_home_user_scope")()
+    except Exception:
+        pass
+
 
 def _as_epoch(v: Any) -> int | None:
     if v is None:
@@ -533,229 +617,225 @@ def _rate(srv: Any, rating_key: Any, rating_1to10: int) -> bool:
 
 
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
-    srv = getattr(getattr(adapter, "client", None), "server", None)
-    if not srv:
-        raise RuntimeError("PLEX server not bound")
-
-    prog_mk = getattr(adapter, "progress_factory", None)
-    prog: Any = prog_mk("ratings") if callable(prog_mk) else None
-
-    plex_cfg = _plex_cfg(adapter)
-    if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
-        _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "ratings"})
-    fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
-
-    base = _as_base_url(srv)
-    if not base:
-        base = str(getattr(srv, "baseurl", None) or getattr(srv, "_baseurl", None) or "").strip().rstrip("/")
-
-    client = getattr(adapter, "client", None)
-    ses = getattr(srv, "_session", None) or getattr(client, "session", None)
-
-    tok = (
-        getattr(srv, "token", None)
-        or getattr(srv, "_token", None)
-        or getattr(getattr(client, "cfg", None), "token", None)
-        or (getattr(getattr(client, "session", None), "headers", {}) or {}).get("X-Plex-Token")
-        or (getattr(ses, "headers", {}) or {}).get("X-Plex-Token")
-        or ""
-    )
-    tok = str(tok or "").strip()
-    configure_plex_context(baseurl=base, token=tok)
-
-
-    if not (base and tok and ses):
-        raise RuntimeError(f"PLEX ratings fast query unavailable (base={bool(base)} tok={bool(tok)} ses={bool(ses)})")
-
-    hdrs = plex_headers(tok)
-    tmo = float(_plex_cfg_get(adapter, "timeout", 10) or 10)
-    page_size = int(_plex_cfg_get(adapter, "ratings_page_size", 120) or 120)
-    page_size = max(10, min(page_size, 200))
-
-    allow = _allowed_ratings_sec_ids(adapter)
-
-    out: dict[str, dict[str, Any]] = {}
-    added = 0
-    scanned = 0
-    total = 0
-    fb_try = 0
-    fb_ok = 0
-
-    if prog is not None:
-        try:
-            prog.tick(0, total=0, force=True)
-        except Exception:
-            pass
-
-    # Plex library types: 1=movie, 2=show, 3=season, 4=episode
-    type_hint = {1: "movie", 2: "show", 3: "season", 4: "episode"}
-
-    show_ids_cache: dict[str, dict[str, Any]] = {}
-
-    def _show_ids_for_rating_key(rk: Any) -> dict[str, Any]:
-        rk_s = str(rk or "").strip()
-        if not rk_s:
-            return {}
-        if rk_s in show_ids_cache:
-            return show_ids_cache[rk_s]
-        try:
-            obj = srv.fetchItem(int(rk_s))
-        except Exception:
-            show_ids_cache[rk_s] = {}
-            return {}
-
-        norm = plex_normalize(obj) or {}
-        ids0 = dict((norm.get("ids") or {}) if isinstance(norm, Mapping) else {})
-        guid = getattr(obj, "guid", None)
-        try:
-            if isinstance(guid, Mapping):
-                ids0.update(ids_from(cast(Mapping[str, Any], guid)) or {})
-            elif isinstance(guid, str) and guid.strip():
-                ids0.update(ids_from({"guid": guid.strip()}) or {})
-        except Exception:
-            pass
-
-        out_ids: dict[str, Any] = {}
-        for k in ("imdb", "tmdb", "tvdb"):
-            v = ids0.get(k)
-            if v:
-                out_ids[k] = str(v)
-        show_ids_cache[rk_s] = out_ids
-        return out_ids
-
-    def _tick(force: bool = False) -> None:
-        if prog is None:
-            return
-        try:
-            prog.tick(scanned, total=max(total, scanned) if total else None, force=force)
-        except Exception:
-            pass
-
-    for tnum in (1, 2, 3, 4):
-        start = 0
-        while True:
-            params = {
-                "type": int(tnum),
-                "includeGuids": 1,
-                "includeUserState": 1,
-                "sort": "lastRatedAt:desc",
-                "X-Plex-Container-Start": start,
-                "X-Plex-Container-Size": page_size,
-                "userRating>>": 0,
-            }
-            r = ses.get(f"{base}/library/all", params=params, headers=hdrs, timeout=tmo)
-            if not r.ok:
-                raise RuntimeError(f"PLEX ratings fast query failed (status={r.status_code})")
-
-            cont = _container_from_plex_response(r)
-            if not cont:
-                head = (r.text or "")[:140].replace("\n", " ")
-                raise RuntimeError(f"PLEX ratings fast query parse failed (ct={(r.headers or {}).get('Content-Type')}; head={head!r})")
-
-            mc = cont.get("MediaContainer") or {}
-            if start == 0:
-                try:
-                    total += int(mc.get("totalSize") or 0)
-                except Exception:
-                    pass
-                _tick(force=True)
-
-            rows = mc.get("Metadata") or []
-            if not rows:
-                break
-
-            for row in rows:
-                scanned += 1
-
-                # /library/all is global; enforce library allow-list here.
-                sid = row.get("librarySectionID") or row.get("sectionID") or row.get("librarySectionId") or row.get("sectionId")
-                sid_s = str(sid).strip() if sid is not None else ""
-                if allow and sid_s and sid_s not in allow:
-                    _tick()
-                    continue
-
-                rating = _norm_rating(row.get("userRating"))
-                if not rating or rating <= 0:
-                    _tick()
-                    continue
-
-                m = normalize_discover_row(row, token=tok) or {}
-                if not m:
-                    _tick()
-                    continue
-
-                m = dict(m)
-                m["rating"] = rating
-                ts = _as_epoch(row.get("lastRatedAt"))
-                if ts:
-                    m["rated_at"] = _iso(ts)
-                m["type"] = str(m.get("type") or type_hint.get(tnum) or "movie").lower()
-
-                if m["type"] in ("season", "episode") and not m.get("show_ids"):
-       
-                    show_rk = row.get("parentRatingKey") if m["type"] == "season" else row.get("grandparentRatingKey")
-                    if show_rk is None:
-                        show_rk = row.get("grandparentRatingKey") or row.get("parentRatingKey")
-                    show_ids = _show_ids_for_rating_key(show_rk)
-                    if show_ids:
-                        m["show_ids"] = show_ids
-                        if show_ids.get("imdb"):
-                            ids0 = dict(m.get("ids") or {})
-                            ids0.setdefault("imdb", show_ids["imdb"])
-                            m["ids"] = ids0
-
-                # Keep fallback GUID enrichment intact.
-                if fallback_guid and not _has_ext_ids(m):
-                    fb_try += 1
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        srv = getattr(getattr(adapter, "client", None), "server", None)
+        if not srv:
+            raise RuntimeError("PLEX server not bound")
+    
+        prog_mk = getattr(adapter, "progress_factory", None)
+        prog: Any = prog_mk("ratings") if callable(prog_mk) else None
+    
+        plex_cfg = _plex_cfg(adapter)
+        if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
+            _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "ratings"})
+        fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+    
+        base = _as_base_url(srv)
+        if not base:
+            base = str(getattr(srv, "baseurl", None) or getattr(srv, "_baseurl", None) or "").strip().rstrip("/")
+    
+        client = getattr(adapter, "client", None)
+        ses = getattr(srv, "_session", None) or getattr(client, "session", None)
+    
+        tok = str(_active_pms_token(adapter) or "").strip()
+        configure_plex_context(baseurl=base, token=tok)
+    
+    
+        if not (base and tok and ses):
+            raise RuntimeError(f"PLEX ratings fast query unavailable (base={bool(base)} tok={bool(tok)} ses={bool(ses)})")
+    
+        hdrs = plex_headers(tok)
+        tmo = float(_plex_cfg_get(adapter, "timeout", 10) or 10)
+        page_size = int(_plex_cfg_get(adapter, "ratings_page_size", 120) or 120)
+        page_size = max(10, min(page_size, 200))
+    
+        allow = _allowed_ratings_sec_ids(adapter)
+    
+        out: dict[str, dict[str, Any]] = {}
+        added = 0
+        scanned = 0
+        total = 0
+        fb_try = 0
+        fb_ok = 0
+    
+        if prog is not None:
+            try:
+                prog.tick(0, total=0, force=True)
+            except Exception:
+                pass
+    
+        # Plex library types: 1=movie, 2=show, 3=season, 4=episode
+        type_hint = {1: "movie", 2: "show", 3: "season", 4: "episode"}
+    
+        show_ids_cache: dict[str, dict[str, Any]] = {}
+    
+        def _show_ids_for_rating_key(rk: Any) -> dict[str, Any]:
+            rk_s = str(rk or "").strip()
+            if not rk_s:
+                return {}
+            if rk_s in show_ids_cache:
+                return show_ids_cache[rk_s]
+            try:
+                obj = srv.fetchItem(int(rk_s))
+            except Exception:
+                show_ids_cache[rk_s] = {}
+                return {}
+    
+            norm = plex_normalize(obj) or {}
+            ids0 = dict((norm.get("ids") or {}) if isinstance(norm, Mapping) else {})
+            guid = getattr(obj, "guid", None)
+            try:
+                if isinstance(guid, Mapping):
+                    ids0.update(ids_from(cast(Mapping[str, Any], guid)) or {})
+                elif isinstance(guid, str) and guid.strip():
+                    ids0.update(ids_from({"guid": guid.strip()}) or {})
+            except Exception:
+                pass
+    
+            out_ids: dict[str, Any] = {}
+            for k in ("imdb", "tmdb", "tvdb"):
+                v = ids0.get(k)
+                if v:
+                    out_ids[k] = str(v)
+            show_ids_cache[rk_s] = out_ids
+            return out_ids
+    
+        def _tick(force: bool = False) -> None:
+            if prog is None:
+                return
+            try:
+                prog.tick(scanned, total=max(total, scanned) if total else None, force=force)
+            except Exception:
+                pass
+    
+        for tnum in (1, 2, 3, 4):
+            start = 0
+            while True:
+                params = {
+                    "type": int(tnum),
+                    "includeGuids": 1,
+                    "includeUserState": 1,
+                    "sort": "lastRatedAt:desc",
+                    "X-Plex-Container-Start": start,
+                    "X-Plex-Container-Size": page_size,
+                    "userRating>>": 0,
+                }
+                r = ses.get(f"{base}/library/all", params=params, headers=hdrs, timeout=tmo)
+                if not r.ok:
+                    raise RuntimeError(f"PLEX ratings fast query failed (status={r.status_code})")
+    
+                cont = _container_from_plex_response(r)
+                if not cont:
+                    head = (r.text or "")[:140].replace("\n", " ")
+                    raise RuntimeError(f"PLEX ratings fast query parse failed (ct={(r.headers or {}).get('Content-Type')}; head={head!r})")
+    
+                mc = cont.get("MediaContainer") or {}
+                if start == 0:
                     try:
-                        fb = minimal_from_history_row(row, token=tok, allow_discover=True)
+                        total += int(mc.get("totalSize") or 0)
                     except Exception:
-                        fb = None
-                    if isinstance(fb, Mapping):
-                        ids_fb = dict(fb.get("ids") or {})
-                        show_ids_fb = dict(fb.get("show_ids") or {})
-                    else:
-                        ids_fb = {}
-                        show_ids_fb = {}
-                    if ids_fb or show_ids_fb:
-                        fb_ok += 1
-                        ids0 = dict(m.get("ids") or {})
-                        ids0.update({k: v for k, v in ids_fb.items() if v})
-                        m["ids"] = ids0
-                        if show_ids_fb:
-                            si0 = dict(m.get("show_ids") or {})
-                            si0.update({k: v for k, v in show_ids_fb.items() if v})
-                            m["show_ids"] = si0
-                _force_episode_title(m)
-
-                k = canonical_key(m)
-                if k:
-                    out[k] = m
-                    added += 1
-                    if limit is not None and added >= limit:
-                        if prog is not None:
-                            try:
-                                prog.done(ok=True, total=max(total, scanned) if total else None)
-                            except Exception:
-                                pass
-                        _info("index_truncated", limit=limit)
-                        _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
-                        return out
-
-                _tick()
-
-            if len(rows) < page_size:
-                break
-            start += len(rows)
-
-    if prog is not None:
-        try:
-            prog.done(ok=True, total=max(total, scanned) if total else None)
-        except Exception:
-            pass
-
-    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
-    return out
+                        pass
+                    _tick(force=True)
+    
+                rows = mc.get("Metadata") or []
+                if not rows:
+                    break
+    
+                for row in rows:
+                    scanned += 1
+    
+                    # /library/all is global; enforce library allow-list here.
+                    sid = row.get("librarySectionID") or row.get("sectionID") or row.get("librarySectionId") or row.get("sectionId")
+                    sid_s = str(sid).strip() if sid is not None else ""
+                    if allow and sid_s and sid_s not in allow:
+                        _tick()
+                        continue
+    
+                    rating = _norm_rating(row.get("userRating"))
+                    if not rating or rating <= 0:
+                        _tick()
+                        continue
+    
+                    m = normalize_discover_row(row, token=tok) or {}
+                    if not m:
+                        _tick()
+                        continue
+    
+                    m = dict(m)
+                    m["rating"] = rating
+                    ts = _as_epoch(row.get("lastRatedAt"))
+                    if ts:
+                        m["rated_at"] = _iso(ts)
+                    m["type"] = str(m.get("type") or type_hint.get(tnum) or "movie").lower()
+    
+                    if m["type"] in ("season", "episode") and not m.get("show_ids"):
+           
+                        show_rk = row.get("parentRatingKey") if m["type"] == "season" else row.get("grandparentRatingKey")
+                        if show_rk is None:
+                            show_rk = row.get("grandparentRatingKey") or row.get("parentRatingKey")
+                        show_ids = _show_ids_for_rating_key(show_rk)
+                        if show_ids:
+                            m["show_ids"] = show_ids
+                            if show_ids.get("imdb"):
+                                ids0 = dict(m.get("ids") or {})
+                                ids0.setdefault("imdb", show_ids["imdb"])
+                                m["ids"] = ids0
+    
+                    # Keep fallback GUID enrichment intact.
+                    if fallback_guid and not _has_ext_ids(m):
+                        fb_try += 1
+                        try:
+                            fb = minimal_from_history_row(row, token=tok, allow_discover=True)
+                        except Exception:
+                            fb = None
+                        if isinstance(fb, Mapping):
+                            ids_fb = dict(fb.get("ids") or {})
+                            show_ids_fb = dict(fb.get("show_ids") or {})
+                        else:
+                            ids_fb = {}
+                            show_ids_fb = {}
+                        if ids_fb or show_ids_fb:
+                            fb_ok += 1
+                            ids0 = dict(m.get("ids") or {})
+                            ids0.update({k: v for k, v in ids_fb.items() if v})
+                            m["ids"] = ids0
+                            if show_ids_fb:
+                                si0 = dict(m.get("show_ids") or {})
+                                si0.update({k: v for k, v in show_ids_fb.items() if v})
+                                m["show_ids"] = si0
+                    _force_episode_title(m)
+    
+                    k = canonical_key(m)
+                    if k:
+                        out[k] = m
+                        added += 1
+                        if limit is not None and added >= limit:
+                            if prog is not None:
+                                try:
+                                    prog.done(ok=True, total=max(total, scanned) if total else None)
+                                except Exception:
+                                    pass
+                            _info("index_truncated", limit=limit)
+                            _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
+                            return out
+    
+                    _tick()
+    
+                if len(rows) < page_size:
+                    break
+                start += len(rows)
+    
+        if prog is not None:
+            try:
+                prog.done(ok=True, total=max(total, scanned) if total else None)
+            except Exception:
+                pass
+    
+        _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
+        return out
+    finally:
+        _exit_home_scope(adapter, did_switch)
 
 
 def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
@@ -767,82 +847,90 @@ def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    srv = getattr(getattr(adapter, "client", None), "server", None)
-    if not srv:
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        srv = getattr(getattr(adapter, "client", None), "server", None)
+        if not srv:
+            unresolved: list[dict[str, Any]] = []
+            for it in items or []:
+                _freeze_item(it, action="add", reasons=["no_plex_server"])
+                unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
+            _info("write_skipped", op="add", reason="no_server")
+            return 0, unresolved
+    
+        ok = 0
         unresolved: list[dict[str, Any]] = []
+    
         for it in items or []:
-            _freeze_item(it, action="add", reasons=["no_plex_server"])
-            unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
-        _info("write_skipped", op="add", reason="no_server")
-        return 0, unresolved
-
-    ok = 0
-    unresolved: list[dict[str, Any]] = []
-
-    for it in items or []:
-        if _is_frozen(it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
-        rating = _norm_rating(it.get("rating"))
-        if rating is None or rating <= 0:
-            _freeze_item(it, action="add", reasons=["missing_or_invalid_rating"])
-            unresolved.append({"item": id_minimal(it), "hint": "missing_or_invalid_rating"})
-            continue
-
-        rk = _resolve_rating_key(adapter, it)
-        if not rk:
-            _freeze_item(it, action="add", reasons=["not_in_library"])
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            continue
-
-        existing = _get_existing_rating(srv, rk)
-        if existing is not None and existing == rating:
-            _dbg("skip_same_rating", title=id_minimal(it).get("title"))
-            _unfreeze_keys_if_present([_event_key(it)])
-            continue
-
-        if _rate(srv, rk, rating):
-            ok += 1
-            _unfreeze_keys_if_present([_event_key(it)])
-        else:
-            _freeze_item(it, action="add", reasons=["rate_failed"])
-            unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
-
-    _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
-    return ok, unresolved
-
-
+            if _is_frozen(it):
+                _dbg("skip_frozen", title=id_minimal(it).get("title"))
+                continue
+    
+            rating = _norm_rating(it.get("rating"))
+            if rating is None or rating <= 0:
+                _freeze_item(it, action="add", reasons=["missing_or_invalid_rating"])
+                unresolved.append({"item": id_minimal(it), "hint": "missing_or_invalid_rating"})
+                continue
+    
+            rk = _resolve_rating_key(adapter, it)
+            if not rk:
+                _freeze_item(it, action="add", reasons=["not_in_library"])
+                unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
+                continue
+    
+            existing = _get_existing_rating(srv, rk)
+            if existing is not None and existing == rating:
+                _dbg("skip_same_rating", title=id_minimal(it).get("title"))
+                _unfreeze_keys_if_present([_event_key(it)])
+                continue
+    
+            if _rate(srv, rk, rating):
+                ok += 1
+                _unfreeze_keys_if_present([_event_key(it)])
+            else:
+                _freeze_item(it, action="add", reasons=["rate_failed"])
+                unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
+    
+        _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
+        return ok, unresolved
+    
+    
+    finally:
+        _exit_home_scope(adapter, did_switch)
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    srv = getattr(getattr(adapter, "client", None), "server", None)
-    if not srv:
+    did_switch = _enter_home_scope_if_needed(adapter)
+    try:
+        srv = getattr(getattr(adapter, "client", None), "server", None)
+        if not srv:
+            unresolved: list[dict[str, Any]] = []
+            for it in items or []:
+                _freeze_item(it, action="remove", reasons=["no_plex_server"])
+                unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
+            _info("write_skipped", op="remove", reason="no_server")
+            return 0, unresolved
+    
+        ok = 0
         unresolved: list[dict[str, Any]] = []
+    
         for it in items or []:
-            _freeze_item(it, action="remove", reasons=["no_plex_server"])
-            unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
-        _info("write_skipped", op="remove", reason="no_server")
-        return 0, unresolved
-
-    ok = 0
-    unresolved: list[dict[str, Any]] = []
-
-    for it in items or []:
-        if _is_frozen(it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
-        rk = _resolve_rating_key(adapter, it)
-        if not rk:
-            _freeze_item(it, action="remove", reasons=["not_in_library"])
-            unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
-            continue
-
-        if _rate(srv, rk, 0):
-            ok += 1
-            _unfreeze_keys_if_present([_event_key(it)])
-        else:
-            _freeze_item(it, action="remove", reasons=["clear_failed"])
-            unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
-
-    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
-    return ok, unresolved
+            if _is_frozen(it):
+                _dbg("skip_frozen", title=id_minimal(it).get("title"))
+                continue
+    
+            rk = _resolve_rating_key(adapter, it)
+            if not rk:
+                _freeze_item(it, action="remove", reasons=["not_in_library"])
+                unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
+                continue
+    
+            if _rate(srv, rk, 0):
+                ok += 1
+                _unfreeze_keys_if_present([_event_key(it)])
+            else:
+                _freeze_item(it, action="remove", reasons=["clear_failed"])
+                unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
+    
+        _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+        return ok, unresolved
+    finally:
+        _exit_home_scope(adapter, did_switch)

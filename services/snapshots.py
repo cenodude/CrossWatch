@@ -15,6 +15,7 @@ import uuid
 
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops
+from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
 Feature = Literal["watchlist", "ratings", "history"]
 CreateFeature = Literal["watchlist", "ratings", "history", "all"]
@@ -49,10 +50,12 @@ def _date_dir(ts: datetime) -> Path:
     return p
 
 
-def _snap_name(ts: datetime, provider: str, feature: str, label: str) -> str:
+def _snap_name(ts: datetime, provider: str, instance: str, feature: str, label: str) -> str:
     stamp = ts.strftime("%Y%m%dT%H%M%SZ")
     safe = _safe_label(label).replace(" ", "_")
-    return f"{stamp}__{provider.upper()}__{feature}__{safe}.json"
+    inst = re.sub(r"[^a-zA-Z0-9._-]+", "", str(instance or "").strip())
+    inst = inst if inst else "default"
+    return f"{stamp}__{provider.upper()}__{inst}__{feature}__{safe}.json"
 
 
 def _write_json_atomic(path: Path, data: Mapping[str, Any]) -> None:
@@ -151,12 +154,22 @@ def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, An
         except Exception:
             feats = {"watchlist": False, "ratings": False, "history": False}
 
+        insts = list_instance_ids(cfg, pid)
+        inst_meta: list[dict[str, Any]] = []
+        configured_any = False
+        for inst in insts:
+            cfg_view = build_provider_config_view(cfg, pid, inst)
+            ok = _configured(ops, cfg_view)
+            configured_any = configured_any or ok
+            inst_meta.append({"id": inst, "label": "Default" if inst == "default" else inst, "configured": ok})
+
         out.append(
             {
                 "id": pid,
                 "label": getattr(ops, "label", lambda: pid)() if callable(getattr(ops, "label", None)) else pid,
-                "configured": _configured(ops, cfg),
+                "configured": configured_any,
                 "features": feats,
+                "instances": inst_meta,
             }
         )
 
@@ -180,21 +193,25 @@ def _create_single_snapshot(
     ops: Any,
     cfg: Mapping[str, Any],
     pid: str,
+    instance: str,
     feat: Feature,
     label: str,
     ts: datetime,
 ) -> dict[str, Any]:
-    idx_raw = ops.build_index(cfg, feature=feat) or {}
+    cfg_view = build_provider_config_view(cfg, pid, instance)
+    idx_raw = ops.build_index(cfg_view, feature=feat) or {}
     idx = _index_dict(idx_raw)
     stats = _stats_for(feat, idx)
 
-    rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, feat, label)}"
+    inst = normalize_instance_id(instance)
+    rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, feat, label)}"
     path = _snapshots_dir() / rel
 
     payload: dict[str, Any] = {
         "kind": SNAPSHOT_KIND,
         "created_at": ts.isoformat(),
         "provider": pid,
+        "instance": inst,
         "feature": feat,
         "label": _safe_label(label),
         "stats": stats,
@@ -207,6 +224,7 @@ def _create_single_snapshot(
         "ok": True,
         "path": rel,
         "provider": pid,
+        "instance": inst,
         "feature": feat,
         "label": payload["label"],
         "created_at": payload["created_at"],
@@ -220,15 +238,19 @@ def create_snapshot(
     feature: CreateFeature | str,
     *,
     label: str = "",
+    instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     pid = _norm_provider(provider)
+    inst = normalize_instance_id(instance_id)
     feat_any = _norm_create_feature(str(feature or ""))
     ops = _ops_or_raise(pid)
 
-    if not _configured(ops, cfg):
-        raise ValueError(f"Provider not configured: {pid}")
+    cfg_view = build_provider_config_view(cfg, pid, inst)
+
+    if not _configured(ops, cfg_view):
+        raise ValueError(f"Provider not configured: {pid}#{inst}")
 
     ts = _utc_now()
 
@@ -242,7 +264,7 @@ def create_snapshot(
             if not _feature_enabled(ops, feat):
                 continue
             try:
-                child = _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, feat=feat, label=label, ts=ts)
+                child = _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, instance=inst, feat=feat, label=label, ts=ts)
                 children.append({"feature": feat, "path": child["path"], "stats": child["stats"]})
                 n = int((child.get("stats") or {}).get("count") or 0)
                 feats_total[feat] = n
@@ -253,7 +275,7 @@ def create_snapshot(
         if not children:
             raise ValueError(f"No snapshot-capable features for provider: {pid}")
 
-        rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, 'all', label)}"
+        rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, 'all', label)}"
         path = _snapshots_dir() / rel
         stats = {"feature": "all", "count": total, "features": feats_total}
 
@@ -261,6 +283,7 @@ def create_snapshot(
             "kind": SNAPSHOT_BUNDLE_KIND,
             "created_at": ts.isoformat(),
             "provider": pid,
+            "instance": inst,
             "feature": "all",
             "label": _safe_label(label),
             "stats": stats,
@@ -269,13 +292,13 @@ def create_snapshot(
         }
         _write_json_atomic(path, payload)
 
-        return {"ok": True, "path": rel, "provider": pid, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
+        return {"ok": True, "path": rel, "provider": pid, "instance": inst, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
 
     feat = _norm_feature(str(feat_any))
     if not _feature_enabled(ops, feat):
         raise ValueError(f"Feature not enabled for provider: {pid} / {feat}")
 
-    return _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, feat=feat, label=label, ts=ts)
+    return _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, instance=inst, feat=feat, label=label, ts=ts)
 def list_snapshots() -> list[dict[str, Any]]:
     base = _snapshots_dir()
     out: list[dict[str, Any]] = []
@@ -289,10 +312,17 @@ def list_snapshots() -> list[dict[str, Any]]:
         meta = {"path": rel, "size": p.stat().st_size, "mtime": int(p.stat().st_mtime)}
         name = p.name
         parts = name.split("__")
-        if len(parts) >= 3:
+        if len(parts) >= 5:
+            meta["stamp"] = parts[0]
+            meta["provider"] = parts[1]
+            meta["instance"] = normalize_instance_id(parts[2])
+            meta["feature"] = parts[3]
+            meta["label"] = parts[4].rsplit(".", 1)[0].replace("_", " ")
+        elif len(parts) >= 3:
             meta["stamp"] = parts[0]
             meta["provider"] = parts[1]
             meta["feature"] = parts[2]
+            meta["instance"] = "default"
             if len(parts) >= 4:
                 meta["label"] = parts[3].rsplit(".", 1)[0].replace("_", " ")
         out.append(meta)
@@ -317,6 +347,7 @@ def read_snapshot(path: str) -> dict[str, Any]:
         raise ValueError("Invalid snapshot file")
 
     raw["path"] = rel
+    raw["instance"] = normalize_instance_id(raw.get("instance") or raw.get("instance_id") or raw.get("profile"))
     kind = str(raw.get("kind") or "").strip().lower()
     feat_raw = str(raw.get("feature") or "").strip().lower()
 
@@ -362,17 +393,22 @@ def _restore_single_snapshot(
     path: str,
     *,
     mode: RestoreMode = "merge",
+    instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     snap = read_snapshot(path)
     pid = _norm_provider(str(snap.get("provider") or ""))
+    snap_inst = normalize_instance_id(snap.get("instance") or snap.get("instance_id") or snap.get("profile"))
+    inst = normalize_instance_id(instance_id) if instance_id else snap_inst
     feat = _norm_feature(str(snap.get("feature") or ""))
     ops = _ops_or_raise(pid)
 
-    if not _configured(ops, cfg):
-        raise ValueError(f"Provider not configured: {pid}")
+    cfg_view = build_provider_config_view(cfg, pid, inst)
+
+    if not _configured(ops, cfg_view):
+        raise ValueError(f"Provider not configured: {pid}#{inst}")
     if not _feature_enabled(ops, feat):
         raise ValueError(f"Feature not enabled for provider: {pid} / {feat}")
 
@@ -380,7 +416,7 @@ def _restore_single_snapshot(
     if not isinstance(snap_items, Mapping):
         snap_items = {}
 
-    cur_raw = ops.build_index(cfg, feature=feat) or {}
+    cur_raw = ops.build_index(cfg_view, feature=feat) or {}
     cur: dict[str, dict[str, Any]] = {}
     for k, v in (cur_raw.items() if isinstance(cur_raw, Mapping) else []):
         if not k or not isinstance(v, Mapping):
@@ -406,7 +442,7 @@ def _restore_single_snapshot(
     if rem_items:
         for batch in _chunk(rem_items, chunk_size):
             try:
-                res = ops.remove(cfg, batch, feature=feat, dry_run=False) or {}
+                res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
                 removed += int(res.get("count") or len(batch))
             except Exception as e:
                 errors.append(f"remove_failed: {e}")
@@ -417,7 +453,7 @@ def _restore_single_snapshot(
     if add_items:
         for batch in _chunk(add_items, chunk_size):
             try:
-                res = ops.add(cfg, batch, feature=feat, dry_run=False) or {}
+                res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
                 added += int(res.get("count") or len(batch))
             except Exception as e:
                 errors.append(f"add_failed: {e}")
@@ -425,6 +461,7 @@ def _restore_single_snapshot(
     return {
         "ok": len(errors) == 0,
         "provider": pid,
+        "instance": inst,
         "feature": feat,
         "mode": mode,
         "removed": removed,
@@ -498,6 +535,7 @@ def restore_snapshot(
     path: str,
     *,
     mode: RestoreMode = "merge",
+    instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
 ) -> dict[str, Any]:
@@ -508,9 +546,11 @@ def restore_snapshot(
 
     if kind == SNAPSHOT_BUNDLE_KIND or feat_raw == "all":
         pid = _norm_provider(str(snap.get("provider") or ""))
+        snap_inst = normalize_instance_id(snap.get("instance") or snap.get("instance_id") or snap.get("profile"))
+        inst = normalize_instance_id(instance_id) if instance_id else snap_inst
         ops = _ops_or_raise(pid)
-        if not _configured(ops, cfg):
-            raise ValueError(f"Provider not configured: {pid}")
+        if not _configured(ops, build_provider_config_view(cfg, pid, inst)):
+            raise ValueError(f"Provider not configured: {pid}#{inst}")
 
         children = snap.get("children")
         if not isinstance(children, list):
@@ -525,34 +565,37 @@ def restore_snapshot(
             if not child_path:
                 continue
             try:
-                results.append(_restore_single_snapshot(child_path, mode=mode, cfg=cfg, chunk_size=chunk_size))
+                results.append(_restore_single_snapshot(child_path, mode=mode, instance_id=inst, cfg=cfg, chunk_size=chunk_size))
             except Exception as e:
                 errors.append(str(e))
 
-        return {"ok": len(errors) == 0 and all(bool(r.get("ok")) for r in results), "provider": pid, "feature": "all", "mode": mode, "children": results, "errors": errors}
+        return {"ok": len(errors) == 0 and all(bool(r.get("ok")) for r in results), "provider": pid, "instance": inst, "feature": "all", "mode": mode, "children": results, "errors": errors}
 
-    return _restore_single_snapshot(path, mode=mode, cfg=cfg, chunk_size=chunk_size)
+    return _restore_single_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, chunk_size=chunk_size)
 def clear_provider_features(
     provider: str,
     features: Iterable[Feature],
     *,
+    instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     pid = _norm_provider(provider)
+    inst = normalize_instance_id(instance_id)
     ops = _ops_or_raise(pid)
-    if not _configured(ops, cfg):
-        raise ValueError(f"Provider not configured: {pid}")
+    cfg_view = build_provider_config_view(cfg, pid, inst)
+    if not _configured(ops, cfg_view):
+        raise ValueError(f"Provider not configured: {pid}#{inst}")
 
-    done: dict[str, Any] = {"ok": True, "provider": pid, "results": {}}
+    done: dict[str, Any] = {"ok": True, "provider": pid, "instance": inst, "results": {}}
     for f in features:
         feat = _norm_feature(f)
         if not _feature_enabled(ops, feat):
             done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
             continue
 
-        cur_raw = ops.build_index(cfg, feature=feat) or {}
+        cur_raw = ops.build_index(cfg_view, feature=feat) or {}
         cur: list[Mapping[str, Any]] = []
         if isinstance(cur_raw, Mapping):
             for v in cur_raw.values():
@@ -563,7 +606,7 @@ def clear_provider_features(
         errors: list[str] = []
         for batch in _chunk(cur, chunk_size):
             try:
-                res = ops.remove(cfg, batch, feature=feat, dry_run=False) or {}
+                res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
                 removed += int(res.get("count") or len(batch))
             except Exception as e:
                 errors.append(str(e))
