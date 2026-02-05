@@ -175,6 +175,8 @@ def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode
 @contextmanager
 def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str):
     key = _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
+    src_inst = normalize_instance_id(pair.get("source_instance"))
+    dst_inst = normalize_instance_id(pair.get("target_instance"))
     new = {
         "CW_PAIR_KEY": key,
         "CW_PAIR_SCOPE": key,
@@ -182,6 +184,8 @@ def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str,
         "CW_PAIR": key,
         "CW_PAIR_SRC": str(src).upper(),
         "CW_PAIR_DST": str(dst).upper(),
+        "CW_PAIR_SRC_INSTANCE": src_inst,
+        "CW_PAIR_DST_INSTANCE": dst_inst,
         "CW_PAIR_MODE": str(mode or "").strip().lower(),
         "CW_PAIR_FEATURE": str(feature or "").strip().lower(),
     }

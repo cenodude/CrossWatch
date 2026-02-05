@@ -234,6 +234,7 @@ def html() -> str:
     #sec-plex .tag{font-size:.75em;opacity:.9;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
     #sec-plex .tag.owner{color:#b066ff;border-color:#b066ff;box-shadow:0 0 6px rgba(176,102,255,.55)}
     #sec-plex .tag.friend{color:#00d1ff;border-color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
+    #sec-plex .tag.managed{color:#35ff8f;border-color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
     #sec-plex .fieldline{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 
     /* SSL toggle */

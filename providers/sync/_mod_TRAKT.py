@@ -209,10 +209,30 @@ class TRAKTClient:
 
     def _try_refresh(self) -> bool:
         try:
-            res = AUTH_TRAKT.refresh(dict(self.raw_cfg))
+            src_p = str(os.getenv("CW_PAIR_SRC") or "").upper().strip()
+            dst_p = str(os.getenv("CW_PAIR_DST") or "").upper().strip()
+            inst = "default"
+            if src_p == "TRAKT":
+                inst = str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default").strip() or "default"
+            elif dst_p == "TRAKT":
+                inst = str(os.getenv("CW_PAIR_DST_INSTANCE") or "default").strip() or "default"
+
+            res = AUTH_TRAKT.refresh(None, instance_id=inst)
             ok = bool(isinstance(res, dict) and res.get("ok"))
             if ok:
-                self._reload_token_from_cfg()
+                try:
+                    from cw_platform.config_base import load_config
+                    from cw_platform.provider_instances import get_provider_block, normalize_instance_id
+
+                    cfg = load_config() or {}
+                    blk = get_provider_block(cfg, "trakt", normalize_instance_id(inst))
+                    tok = str((blk or {}).get("access_token") or "").strip()
+                    if tok and tok != (self.cfg.access_token or ""):
+                        self.cfg.access_token = tok
+                        self._apply_headers(tok)
+                        _info("auth", "token_refreshed")
+                except Exception:
+                    pass
             else:
                 _warn("auth", "token_refresh_failed", result=repr(res))
             return ok

@@ -11,6 +11,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
+from cw_platform.provider_instances import normalize_instance_id
+
 from ._log import log as cw_log
 
 from .emby._common import normalize as emby_normalize, key_of as emby_key_of
@@ -77,6 +79,39 @@ __VERSION__ = "2.1.0"
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
 _DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
+
+
+def _pick_instance_id(provider: str) -> str:
+    prov = str(provider or "").upper().strip()
+    for k in ("CW_SNAPSHOT_INSTANCE", "CW_INSTANCE_ID", "CW_PROFILE", "CW_PROVIDER_INSTANCE", "CW_INSTANCE"):
+        v = (os.environ.get(k) or "").strip()
+        if v:
+            return normalize_instance_id(v)
+    if (os.environ.get("CW_PAIR_SRC") or "").upper().strip() == prov:
+        v = (os.environ.get("CW_PAIR_SRC_INSTANCE") or os.environ.get("CW_SRC_INSTANCE") or "").strip()
+        if v:
+            return normalize_instance_id(v)
+    if (os.environ.get("CW_PAIR_DST") or "").upper().strip() == prov:
+        v = (os.environ.get("CW_PAIR_DST_INSTANCE") or os.environ.get("CW_DST_INSTANCE") or "").strip()
+        if v:
+            return normalize_instance_id(v)
+    v = (os.environ.get("CW_PAIR_INSTANCE") or "").strip()
+    return normalize_instance_id(v)
+
+def _merge_instance_block(raw: Any, inst: str) -> dict[str, Any]:
+    base = dict(raw or {}) if isinstance(raw, Mapping) else {}
+    if inst == "default":
+        base.pop("instances", None)
+        return base
+    insts = base.get("instances")
+    if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
+        merged = dict(base)
+        merged.update(dict(insts.get(inst) or {}))
+        merged.pop("instances", None)
+        return merged
+    base.pop("instances", None)
+    return base
+
 
 
 def _dbg(msg: str, **fields: Any) -> None:
@@ -252,8 +287,9 @@ class EMBYClient:
 
 class EMBYModule:
     def __init__(self, cfg: Mapping[str, Any]):
-        em = dict((cfg or {}).get("emby") or {})
-        auth = dict((cfg or {}).get("auth") or {}).get("emby") or {}
+        inst = _pick_instance_id("EMBY")
+        em = _merge_instance_block((cfg or {}).get("emby") or {}, inst)
+        auth = _merge_instance_block(dict((cfg or {}).get("auth") or {}).get("emby") or {}, inst)
         em.setdefault("server", auth.get("server"))
         em.setdefault("access_token", auth.get("access_token"))
         em.setdefault("user_id", auth.get("user_id"))

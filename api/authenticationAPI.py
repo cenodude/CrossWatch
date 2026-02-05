@@ -357,7 +357,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                             "cloud_account_id": cloud_id,
                             "username": uname,
                             "type": kind,
-                            "label": ("Owner" if kind == "owner" else ("Managed" if kind == "managed" else "Friend")),
+                            "label": ("Owner" if kind == "owner" else ("Home" if kind == "managed" else "Friend")),
                         }
                         pms_rows.append(row)
                         if cloud_id is not None:

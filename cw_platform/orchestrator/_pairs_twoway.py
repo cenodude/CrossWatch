@@ -7,6 +7,8 @@ from typing import Any
 
 import os
 
+from ..provider_instances import normalize_instance_id
+
 from ._planner import diff_ratings
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
@@ -149,6 +151,8 @@ def _two_way_sync(
     import time as _t
 
     cfg, emit, info, dbg = ctx.config, ctx.emit, ctx.emit_info, ctx.dbg
+    src_inst = normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
+    dst_inst = normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
     sync_cfg = (cfg.get("sync") or {})
     provs = ctx.providers
     a = str(a).upper()
@@ -256,11 +260,35 @@ def _two_way_sync(
     manual_adds_B, manual_blocks_B = _manual_policy(prev_state, b, feature)
 
     prev_provs = (prev_state.get("providers") or {})
-    prevA = dict((((prev_provs.get(a, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
-    prevB = dict((((prev_provs.get(b, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
 
-    prev_cp_A = prev_checkpoint(prev_state, a, feature)
-    prev_cp_B = prev_checkpoint(prev_state, b, feature)
+    def _prev_items(pmap: Mapping[str, Any], prov: str, inst: str, feat: str) -> dict[str, Any]:
+        try:
+            pblk = pmap.get(prov) or {}
+            if not isinstance(pblk, Mapping):
+                return {}
+            if inst != "default":
+                insts = pblk.get("instances") or {}
+                if not isinstance(insts, Mapping):
+                    return {}
+                pblk = insts.get(inst) or {}
+                if not isinstance(pblk, Mapping):
+                    return {}
+            fblk = pblk.get(feat) or {}
+            if not isinstance(fblk, Mapping):
+                return {}
+            base = fblk.get("baseline") or {}
+            if not isinstance(base, Mapping):
+                return {}
+            items = base.get("items") or {}
+            return dict(items) if isinstance(items, Mapping) else {}
+        except Exception:
+            return {}
+
+    prevA = _prev_items(prev_provs, a, src_inst, feature)
+    prevB = _prev_items(prev_provs, b, dst_inst, feature)
+
+    prev_cp_A = prev_checkpoint(prev_state, a, feature, src_inst)
+    prev_cp_B = prev_checkpoint(prev_state, b, feature, dst_inst)
     now_cp_A = module_checkpoint(aops, cfg, feature)
     now_cp_B = module_checkpoint(bops, cfg, feature)
 
@@ -1004,12 +1032,15 @@ def _two_way_sync(
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
 
-        def _ensure_pf(pmap, prov, feat):
+        def _ensure_pf(pmap, prov, inst, feat):
             pprov = pmap.setdefault(prov, {})
+            if inst != "default":
+                insts = pprov.setdefault("instances", {})
+                pprov = insts.setdefault(inst, {})
             return pprov.setdefault(feat, {"baseline": {"items": {}}, "checkpoint": None})
 
-        def _commit_baseline(pmap, prov, feat, items):
-            pf = _ensure_pf(pmap, prov, feat)
+        def _commit_baseline(pmap, prov, inst, feat, items):
+            pf = _ensure_pf(pmap, prov, inst, feat)
             pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
 
             kept: dict[str, Any] = {}
@@ -1024,20 +1055,23 @@ def _two_way_sync(
                 if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
                     continue
 
-                kept[str(k)] = _minimal(v)
+                mv = _minimal(v)
+                if inst != "default":
+                    mv["_cw_instance"] = inst
+                kept[str(k)] = mv
 
             pf["baseline"] = {"items": kept}
 
-        def _commit_checkpoint(pmap, prov, feat, chk):
+        def _commit_checkpoint(pmap, prov, inst, feat, chk):
             if not chk:
                 return
-            pf = _ensure_pf(pmap, prov, feat)
+            pf = _ensure_pf(pmap, prov, inst, feat)
             pf["checkpoint"] = chk
 
-        _commit_baseline(provs_block, a, feature, A_eff)
-        _commit_baseline(provs_block, b, feature, B_eff)
-        _commit_checkpoint(provs_block, a, feature, now_cp_A)
-        _commit_checkpoint(provs_block, b, feature, now_cp_B)
+        _commit_baseline(provs_block, a, src_inst, feature, A_eff)
+        _commit_baseline(provs_block, b, dst_inst, feature, B_eff)
+        _commit_checkpoint(provs_block, a, src_inst, feature, now_cp_A)
+        _commit_checkpoint(provs_block, b, dst_inst, feature, now_cp_B)
 
         st["last_sync_epoch"] = int(_t.time())
         ctx.state_store.save_state(st)
@@ -1080,6 +1114,9 @@ def run_two_way_feature(
 ) -> dict[str, Any]:
 
     emit = ctx.emit
+
+    src_inst = normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
+    dst_inst = normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
 
     src_u = str(src).upper(); dst_u = str(dst).upper()
     Hs = health_map.get(f"{src_u}#{src_inst}") or health_map.get(src_u) or {}

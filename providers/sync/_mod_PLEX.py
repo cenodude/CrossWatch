@@ -323,6 +323,10 @@ class PLEXClient:
         self._account: MyPlexAccount | None = None
         self.session = build_session("PLEX", ctx, feature_label=label_plex)
 
+        # Token used for plex.tv + Discover/Metadata domains.
+        # This is NOT always the same as the PMS resource token when switching Home users.
+        self.cloud_token: str | None = None
+
         self.user_username: str | None = None
         self.user_account_id: int | None = None
 
@@ -337,7 +341,7 @@ class PLEXClient:
 
         self._home_users_cache: list[dict[str, Any]] | None = None
         self._home_users_cache_ts: float = 0.0
-        self._token_stack: list[tuple[str | None, str | None, int | None]] = []
+        self._token_stack: list[tuple[str | None, str | None, str | None, int | None]] = []
 
     def connect(self) -> PLEXClient:
         try:
@@ -352,6 +356,7 @@ class PLEXClient:
 
             token = self.cfg.token or self._account.authenticationToken
             self._pms_token = token
+            self.cloud_token = token
 
             cid = _plex_tv_client_id(self.cfg)
             self.session.headers.setdefault("X-Plex-Client-Identifier", cid)
@@ -552,7 +557,9 @@ class PLEXClient:
         else:
             prev_token = None
 
-        self._token_stack.append((prev_token, self.user_username, self.user_account_id))
+        prev_cloud = self.cloud_token
+        self.cloud_token = user_token
+        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id))
         self.session.headers["X-Plex-Token"] = pms_user_token
 
         try:
@@ -591,7 +598,7 @@ class PLEXClient:
     def exit_home_user_scope(self) -> None:
         if not self._token_stack:
             return
-        prev_token, prev_uname, prev_aid = self._token_stack.pop()
+        prev_token, prev_cloud, prev_uname, prev_aid = self._token_stack.pop()
         srv = self.server
         if prev_token:
             try:
@@ -616,6 +623,7 @@ class PLEXClient:
                 pass
         self.user_username = prev_uname
         self.user_account_id = prev_aid
+        self.cloud_token = prev_cloud
         _info("home_scope_exited")
 
     def account(self) -> MyPlexAccount:

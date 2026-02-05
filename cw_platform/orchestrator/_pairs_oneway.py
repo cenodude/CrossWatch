@@ -7,6 +7,7 @@ from typing import Any
 
 import os
 
+from ..provider_instances import normalize_instance_id
 
 from ..id_map import minimal as _minimal, canonical_key as _ck
 from ._snapshots import (
@@ -151,8 +152,8 @@ def run_one_way_feature(
     health_map: Mapping[str, Any],
 ) -> dict[str, Any]:
     cfg, emit, dbg = ctx.config, ctx.emit, ctx.dbg
-    src_inst = str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default")
-    dst_inst = str(os.getenv("CW_PAIR_DST_INSTANCE") or "default")
+    src_inst = normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
+    dst_inst = normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
     sync_cfg = (cfg.get("sync") or {})
     provs = ctx.providers
 
@@ -312,8 +313,32 @@ def run_one_way_feature(
     prev_state = ctx.state_store.load_state() or {}
     manual_adds, manual_blocks = _manual_policy(prev_state, src, feature)
     prev_provs = (prev_state.get("providers") or {})
-    prev_src = dict((((prev_provs.get(src, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
-    prev_dst = dict((((prev_provs.get(dst, {}) or {}).get(feature, {}) or {}).get("baseline", {}) or {}).get("items") or {})
+
+    def _prev_items(pmap: Mapping[str, Any], prov: str, inst: str, feat: str) -> dict[str, Any]:
+        try:
+            pblk = pmap.get(prov) or {}
+            if not isinstance(pblk, Mapping):
+                return {}
+            if inst != "default":
+                insts = pblk.get("instances") or {}
+                if not isinstance(insts, Mapping):
+                    return {}
+                pblk = insts.get(inst) or {}
+                if not isinstance(pblk, Mapping):
+                    return {}
+            fblk = pblk.get(feat) or {}
+            if not isinstance(fblk, Mapping):
+                return {}
+            base = fblk.get("baseline") or {}
+            if not isinstance(base, Mapping):
+                return {}
+            items = base.get("items") or {}
+            return dict(items) if isinstance(items, Mapping) else {}
+        except Exception:
+            return {}
+
+    prev_src = _prev_items(prev_provs, src, src_inst, feature)
+    prev_dst = _prev_items(prev_provs, dst, dst_inst, feature)
 
     drop_guard = bool(sync_cfg.get("drop_guard", False))
     suspect_min_prev = int((cfg.get("runtime") or {}).get("suspect_min_prev", 20))
@@ -321,7 +346,7 @@ def run_one_way_feature(
     suspect_debug = bool((cfg.get("runtime") or {}).get("suspect_debug", True))
 
     if drop_guard:
-        prev_cp_src = prev_checkpoint(prev_state, src, feature)
+        prev_cp_src = prev_checkpoint(prev_state, src, feature, src_inst)
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         eff_src, src_suspect, src_reason = coerce_suspect_snapshot(
             provider=src, ops=src_ops,
@@ -333,7 +358,7 @@ def run_one_way_feature(
         if src_suspect:
             dbg("snapshot.guard", provider=src, feature=feature, reason=src_reason)
 
-        prev_cp_dst = prev_checkpoint(prev_state, dst, feature)
+        prev_cp_dst = prev_checkpoint(prev_state, dst, feature, dst_inst)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
         eff_dst, dst_suspect, dst_reason = coerce_suspect_snapshot(
             provider=dst, ops=dst_ops,
@@ -683,12 +708,15 @@ def run_one_way_feature(
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
 
-        def _ensure_pf(pmap, prov, feat):
+        def _ensure_pf(pmap, prov, inst, feat):
             pprov = pmap.setdefault(prov, {})
+            if inst != "default":
+                insts = pprov.setdefault("instances", {})
+                pprov = insts.setdefault(inst, {})
             return pprov.setdefault(feat, {"baseline": {"items": {}}, "checkpoint": None})
 
-        def _commit_baseline(pmap, prov, feat, items):
-            pf = _ensure_pf(pmap, prov, feat)
+        def _commit_baseline(pmap, prov, inst, feat, items):
+            pf = _ensure_pf(pmap, prov, inst, feat)
             pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
 
             kept: dict[str, Any] = {}
@@ -703,21 +731,24 @@ def run_one_way_feature(
                 if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
                     continue
 
-                kept[str(k)] = _minimal(v)
+                mv = _minimal(v)
+                if inst != "default":
+                    mv["_cw_instance"] = inst
+                kept[str(k)] = mv
 
             pf["baseline"] = {"items": kept}
 
 
-        def _commit_checkpoint(pmap, prov, feat, chk):
+        def _commit_checkpoint(pmap, prov, inst, feat, chk):
             if not chk:
                 return
-            pf = _ensure_pf(pmap, prov, feat)
+            pf = _ensure_pf(pmap, prov, inst, feat)
             pf["checkpoint"] = chk
 
-        _commit_baseline(provs_block, src, feature, src_idx)
-        _commit_baseline(provs_block, dst, feature, dst_full)
-        _commit_checkpoint(provs_block, src, feature, now_cp_src)
-        _commit_checkpoint(provs_block, dst, feature, now_cp_dst)
+        _commit_baseline(provs_block, src, src_inst, feature, src_idx)
+        _commit_baseline(provs_block, dst, dst_inst, feature, dst_full)
+        _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)
+        _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
 
         import time as _t
         st["last_sync_epoch"] = int(_t.time())

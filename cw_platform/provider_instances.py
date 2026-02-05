@@ -20,6 +20,14 @@ def provider_key(provider_name: str) -> str:
     return str(provider_name or "").strip().lower()
 
 
+def _config_key_for(cfg: Mapping[str, Any], provider_name: str) -> str:
+    k = provider_key(provider_name)
+    # TMDb sync stores auth under tmdb_sync (metadata uses tmdb).
+    if k == "tmdb":
+        return "tmdb_sync"
+    return k
+
+
 def get_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: Any = None) -> dict[str, Any]:
     key = provider_key(provider_name)
     base = cfg.get(key) if isinstance(cfg, Mapping) else None
@@ -51,8 +59,8 @@ def list_instance_ids(cfg: Mapping[str, Any], provider_name: str) -> list[str]:
 def build_config_view(cfg: Mapping[str, Any], selections: Mapping[str, Any]) -> dict[str, Any]:
     out = dict(cfg or {})
     for prov, inst in (selections or {}).items():
-        k = provider_key(str(prov))
-        out[k] = copy.deepcopy(get_provider_block(cfg, prov, inst))
+        ck = _config_key_for(cfg, str(prov))
+        out[ck] = copy.deepcopy(get_provider_block(cfg, ck, inst))
     return out
 
 

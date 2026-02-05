@@ -104,7 +104,18 @@ class SimklAuth(AuthProvider):
         inst = normalize_instance_id(instance_id)
         if isinstance(cfg, dict):
             base = ensure_provider_block(cfg, "simkl")
-            blk = ensure_instance_block(cfg, "simkl", inst)
+            view_like = inst != "default" and "instances" not in base and any(k in base for k in ("access_token", "refresh_token", "token_expires_at"))
+            if view_like:
+                blk = base
+            else:
+                blk = ensure_instance_block(cfg, "simkl", inst)
+                if base.get("client_id") and not blk.get("client_id"):
+                    blk["client_id"] = base.get("client_id")
+                if base.get("client_secret") and not blk.get("client_secret"):
+                    blk["client_secret"] = base.get("client_secret")
+                if base.get("client_id") and not blk.get("api_key"):
+                    blk["api_key"] = base.get("client_id")
+
             client_id = str((blk.get("client_id") or "")).strip() or str((base.get("client_id") or "")).strip()
             client_secret = str((blk.get("client_secret") or "")).strip() or str((base.get("client_secret") or "")).strip()
             return client_id, client_secret, blk
@@ -219,7 +230,9 @@ class SimklAuth(AuthProvider):
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
         if isinstance(cfg, dict):
-            target = ensure_instance_block(cfg, "simkl", inst)
+            base = ensure_provider_block(cfg, "simkl")
+            view_like = inst != "default" and "instances" not in base and any(k in base for k in ("access_token", "refresh_token", "token_expires_at"))
+            target = base if view_like else ensure_instance_block(cfg, "simkl", inst)
         else:
             target = cfg.setdefault("simkl", {})  # type: ignore[assignment]
 

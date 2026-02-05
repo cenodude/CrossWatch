@@ -15,6 +15,7 @@ import time
 import datetime as _dt
 
 from ..id_map import canonical_key, KEY_PRIORITY
+from ..provider_instances import normalize_instance_id
 from ._types import InventoryOps
 from ..modules_registry import load_sync_ops
 
@@ -276,22 +277,28 @@ def module_checkpoint(ops: InventoryOps, config: Mapping[str, Any], feature: str
     except Exception:
         return None
 
-def prev_checkpoint(state: Mapping[str, Any], prov: str, feature: str) -> str | None:
-    try:
-        providers_block = state.get("providers")
-        if not isinstance(providers_block, Mapping):
-            return None
-        prov_block = providers_block.get(prov)
-        if not isinstance(prov_block, Mapping):
-            return None
-        feat_block = prov_block.get(feature)
-        if not isinstance(feat_block, Mapping):
-            return None
-        cp = feat_block.get("checkpoint")
-        return _coerce_checkpoint_value(cp)
-    except Exception:
+def prev_checkpoint(state: Mapping[str, Any], prov: str, feature: str, instance: Any = None) -> str | None:
+    providers_block = state.get("providers")
+    if not isinstance(providers_block, Mapping):
+        return None
+    prov_block = providers_block.get(prov)
+    if not isinstance(prov_block, Mapping):
         return None
 
+    inst = normalize_instance_id(instance)
+    if inst != "default":
+        insts = prov_block.get("instances")
+        if not isinstance(insts, Mapping):
+            return None
+        inst_block = insts.get(inst)
+        if not isinstance(inst_block, Mapping):
+            return None
+        prov_block = inst_block
+
+    feat_block = prov_block.get(feature)
+    if not isinstance(feat_block, Mapping):
+        return None
+    return _coerce_checkpoint_value(feat_block.get("checkpoint"))
 def _parse_ts(v: Any) -> int | None:
     if v in (None, "", 0):
         return None
