@@ -479,14 +479,6 @@ def _get_index_html_static() -> str:
 	      <div class="section" id="sec-scrobbler">
         <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
           <span class="chev">▶</span><strong>Scrobbler</strong>
-          <span id="scrobble-active-icons" title="Active routes" style="margin-left:auto;display:flex;gap:6px;align-items:center">
-            <img data-scrob="PLEX" src="/assets/img/PLEX-log.svg" alt="Plex" style="display:none;height:18px;width:auto;opacity:.9">
-            <img data-scrob="JELLYFIN" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="display:none;height:18px;width:auto;opacity:.9">
-            <img data-scrob="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" style="display:none;height:24px;width:auto;opacity:.9">
-            <img data-scrob="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" style="display:none;height:18px;width:auto;opacity:.9">
-            <img data-scrob="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="display:none;height:18px;width:auto;opacity:.9">
-            <img data-scrob="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="display:none;height:18px;width:auto;opacity:.9">
-          </span>
         </div>
         <div class="body" id="scrobble-mount">
           <div class="section" id="sc-sec-webhook">
@@ -959,90 +951,6 @@ function _cwScrobNorm(v){
   return s;
 }
 
-function _cwScrobLabel(key){
-  const k=String(key||'').toUpperCase();
-  const map={PLEX:'Plex',JELLYFIN:'Jellyfin',EMBY:'Emby',TRAKT:'Trakt',SIMKL:'SIMKL',MDBLIST:'MDBlist',ANILIST:'AniList'};
-  return map[k] || titleCase(k);
-}
-
-function getActiveScrobbleKeys(cfg){
-  const c=cfg||__cfg||{};
-  const w=c?.scrobble?.watch || {};
-  const routes=Array.isArray(w.routes) ? w.routes : [];
-  const keys=new Set();
-
-  const push=(v)=>{ const k=_cwScrobNorm(v); if(k) keys.add(k); };
-  const anyEnabledRoute = routes.some(r => r && r.enabled !== false && (r.provider || r.sink));
-
-  if(anyEnabledRoute){
-    routes.forEach(r => {
-      if(!r || r.enabled===false) return;
-      push(r.provider);
-      push(r.sink);
-    });
-    return keys;
-  }
-
-  // legacy fallback
-  push(w.provider);
-  String(w.sink || '').split(',').map(s=>s.trim()).filter(Boolean).forEach(push);
-  return keys;
-}
-
-function _cwScrobTitle(cfg){
-  const c=cfg||__cfg||{};
-  const w=c?.scrobble?.watch || {};
-  const routes=Array.isArray(w.routes) ? w.routes : [];
-
-  const groups=new Map(); // provider -> Set(sinks)
-  const add=(p,s)=>{
-    const pk=_cwScrobNorm(p), sk=_cwScrobNorm(s);
-    if(!pk) return;
-    if(!groups.has(pk)) groups.set(pk,new Set());
-    if(sk) groups.get(pk).add(sk);
-  };
-
-  const anyEnabledRoute = routes.some(r => r && r.enabled !== false && (r.provider || r.sink));
-  if(anyEnabledRoute){
-    routes.forEach(r => {
-      if(!r || r.enabled===false) return;
-      add(r.provider, r.sink);
-    });
-  }else{
-    const p=w.provider;
-    const sinks=String(w.sink||'').split(',').map(x=>x.trim()).filter(Boolean);
-    if(sinks.length){
-      sinks.forEach(s => add(p, s));
-    }else{
-      add(p, '');
-    }
-  }
-
-  if(!groups.size) return 'No watcher routes';
-  const parts=[];
-  for(const [p,setS] of groups.entries()){
-    const sinks=[...setS];
-    if(sinks.length){
-      parts.push(`${_cwScrobLabel(p)} → ${sinks.map(_cwScrobLabel).join(', ')}`);
-    }else{
-      parts.push(`${_cwScrobLabel(p)}`);
-    }
-  }
-  return parts.join(' · ');
-}
-
-function refreshScrobbleHeaderIcons(cfg){
-  const host=document.getElementById('scrobble-active-icons');
-  if(!host) return;
-  const active=getActiveScrobbleKeys(cfg);
-  host.title = _cwScrobTitle(cfg);
-
-  const imgs=host.querySelectorAll('img[data-scrob]');
-  imgs.forEach(img => {
-    const key=String(img.dataset.scrob || '').toUpperCase();
-    img.style.display = active.has(key) ? 'inline-block' : 'none';
-  });
-}
 
 
 // Auth provider configured dots
@@ -1076,7 +984,6 @@ function ensureAuthDot(secId, on){
 async function refreshAuthDots(force=false){
   const cfg = await getConfig(force);
   refreshAuthHeaderIcons(cfg);
-  refreshScrobbleHeaderIcons(cfg);
   const map = [
     ["sec-plex",     "PLEX"],
     ["sec-emby",     "EMBY"],
@@ -1300,7 +1207,20 @@ function render(payload){
       }
     }
 
-    const el = makeConn({ name, connected, vip, detail });
+    // Usage hint (Sync/Watcher) from /api/status providers payload
+    const usageHintRaw = (d && typeof d === 'object') ? String(d.usage_hint || '') : '';
+    const usageHint = usageHintRaw ? usageHintRaw.replace(/\s*\+\s*/g, ' and ') : '';
+    let usage = usageHint;
+    if (!usage && d && typeof d === 'object') {
+      const usedBy = Array.isArray(d.used_by) ? d.used_by : [];
+      if (usedBy.length) {
+        const pretty = usedBy.map(x => (String(x).toLowerCase() === 'pair') ? 'Sync' : 'Watcher');
+        usage = `Used by: ${pretty.join(' and ')}`;
+      }
+    }
+    if (usage) detail = detail ? (detail + '\n' + usage) : usage;
+
+    const el = makeConn({ name, connected, vip, detail, key: K });
     el.style.margin = '0';
     items.push(el);
   });
