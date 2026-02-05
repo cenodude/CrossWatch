@@ -16,6 +16,17 @@ from cw_platform.provider_instances import list_instance_ids, provider_key, norm
 
 router = APIRouter(prefix="/api", tags=["provider-instances"])
 
+_CFG_KEY_ALIAS = {
+    "tmdb": "tmdb_sync",
+    "tmdb_sync": "tmdb_sync",
+}
+
+
+def _cfg_key(provider: str) -> str:
+    k = provider_key(provider)
+    return _CFG_KEY_ALIAS.get(k, k)
+
+
 
 @lru_cache(maxsize=1)
 def _known_providers_from_registry() -> tuple[str, ...]:
@@ -91,7 +102,7 @@ def _create_instance(insts: dict[str, Any], inst: str, payload: dict[str, Any]) 
 
 
 def _provider_block(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
-    k = provider_key(provider)
+    k = _cfg_key(provider)
     raw = cfg.get(k)
     if isinstance(raw, dict):
         return raw
@@ -107,7 +118,7 @@ def _strip_instances(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def _instances_map_for(cfg: dict[str, Any], provider: str) -> list[dict[str, str]]:
-    ids = list_instance_ids(cfg, provider)
+    ids = list_instance_ids(cfg, _cfg_key(provider))
     out: list[dict[str, str]] = []
     for i in ids:
         lab = "Default" if i == "default" else i
@@ -124,12 +135,15 @@ def api_provider_instances_all() -> JSONResponse:
             continue
         insts = v.get("instances")
         if isinstance(insts, dict) and insts:
-            out[str(k).upper()] = _instances_map_for(cfg, k)
+            out_key = "TMDB" if str(k) == "tmdb_sync" else str(k).upper()
+            if out_key not in out:
+                out[out_key] = _instances_map_for(cfg, out_key)
     # Always include defaults for known providers if present in cfg
     for prov in _known_providers_from_registry():
-        k = provider_key(prov)
-        if k in cfg and k.upper() not in out:
-            out[k.upper()] = _instances_map_for(cfg, k)
+        ck = _cfg_key(prov)
+        out_key = "TMDB" if provider_key(prov) == "tmdb" else provider_key(prov).upper()
+        if ck in cfg and out_key not in out:
+            out[out_key] = _instances_map_for(cfg, out_key)
     return JSONResponse(out)
 
 

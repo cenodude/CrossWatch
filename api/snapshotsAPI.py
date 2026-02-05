@@ -64,10 +64,11 @@ def api_snapshots_read(path: str = Query(..., description="Relative path under /
 @router.post("/create")
 def api_snapshots_create(body: dict[str, Any] = Body(...)) -> JSONResponse:
     provider = str(body.get("provider") or "").strip()
+    instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
     feature = str(body.get("feature") or "").strip().lower()
     label = str(body.get("label") or "").strip()
     try:
-        res = create_snapshot(provider, feature, label=label)  # type: ignore[arg-type]
+        res = create_snapshot(provider, feature, label=label, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"snapshot": res})
     except Exception as e:
         return _err(str(e))
@@ -77,8 +78,9 @@ def api_snapshots_create(body: dict[str, Any] = Body(...)) -> JSONResponse:
 def api_snapshots_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
     path = str(body.get("path") or "").strip()
     mode = str(body.get("mode") or "merge").strip().lower()
+    instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
     try:
-        res = restore_snapshot(path, mode=mode)  # type: ignore[arg-type]
+        res = restore_snapshot(path, mode=mode, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
         return _err(str(e))
@@ -98,6 +100,7 @@ def api_snapshots_delete(body: dict[str, Any] = Body(...)) -> JSONResponse:
 @router.post("/tools/clear")
 def api_snapshots_tools_clear(body: dict[str, Any] = Body(...)) -> JSONResponse:
     provider = str(body.get("provider") or "").strip()
+    instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
     feats = body.get("features") or []
     features: list[str] = []
     if isinstance(feats, list):
@@ -106,7 +109,7 @@ def api_snapshots_tools_clear(body: dict[str, Any] = Body(...)) -> JSONResponse:
             if s:
                 features.append(s)
     try:
-        res = clear_provider_features(provider, features)  # type: ignore[arg-type]
+        res = clear_provider_features(provider, features, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
         return _err(str(e))

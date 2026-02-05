@@ -2231,8 +2231,6 @@ async function loadCrossWatchSnapshots(cfg) {
   }
 }
 
-/*! Settings */
-
 
 /* Settings Hub: UI / Security / CW Tracker */
 
@@ -4076,9 +4074,14 @@ async function saveSettings() {
           changed = true;
         }
       }
-    } catch (e) {
-      console.warn("saveSettings: scrobbler merge failed", e);
-    }
+
+} catch (e) {
+  console.warn("saveSettings: scrobbler merge failed", e);
+  const msg = String((e && e.message) || e || "Scrobbler settings invalid");
+  // Abort saving to avoid persisting an invalid/partial scrobbler config
+  abortSave(msg);
+}
+
 
     
     try {
@@ -4209,7 +4212,10 @@ async function saveSettings() {
       try { cwShowRestartBanner(msg, { showApply: true, applyText, kind }); } catch {}
       showToast(msg, true);
     })();
-  } catch (err) {
+  
+} catch (err) {
+    // @ts-ignore
+    if (err && err.__cwAbortSave) return;
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);
     throw err;

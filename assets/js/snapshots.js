@@ -310,8 +310,9 @@ const toast = (msg, ok = true) => {
   function bundleKey(s) {
     const stamp = String((s && s.stamp) || "");
     const prov = String((s && s.provider) || "").toLowerCase();
+    const inst = String((s && (s.instance || s.instance_id || s.profile)) || "default").toLowerCase();
     const label = String((s && s.label) || "").toLowerCase();
-    return stamp + "|" + prov + "|" + label;
+    return stamp + "|" + prov + "|" + inst + "|" + label;
   }
 
   function buildBundleIndex(allRows) {
@@ -369,6 +370,10 @@ const toast = (msg, ok = true) => {
           </div>
 
           <div class="ss-field" style="margin-top:10px">
+            <select id="ss-prov-inst" class="input grow"></select>
+          </div>
+
+          <div class="ss-field" style="margin-top:10px">
             <select id="ss-feature"></select>
             <span class="chev">v</span>
           </div>
@@ -409,6 +414,9 @@ const toast = (msg, ok = true) => {
               <b>Merge</b> adds missing items only. <b>Clear + restore</b> wipes the provider feature first, then restores exactly the snapshot.
             </div>
             <div class="ss-row" style="margin-top:12px">
+              <select id="ss-restore-inst" class="input grow"></select>
+            </div>
+            <div class="ss-row" style="margin-top:12px">
               <select id="ss-restore-mode" class="input grow">
                 <option value="merge">Merge</option>
                 <option value="clear_restore">Clear + restore</option>
@@ -429,6 +437,9 @@ const toast = (msg, ok = true) => {
             <h3>Tools</h3>
             <div class="ss-row">
               <select id="ss-tools-prov" class="input grow"></select>
+            </div>
+            <div class="ss-row" style="margin-top:10px">
+              <select id="ss-tools-inst" class="input grow"></select>
             </div>
             <div class="ss-grid2" style="margin-top:12px">
               <button class="btn danger" id="ss-clear-watchlist">Clear watchlist</button>
@@ -457,20 +468,22 @@ const toast = (msg, ok = true) => {
       setTimeout(() => { if (!state.busy) setRefreshSpinning(false); }, 600);
     });
     $("#ss-create", page)?.addEventListener("click", () => onCreate());
-    $("#ss-prov", page)?.addEventListener("change", () => repopFeatures());
+    $("#ss-prov", page)?.addEventListener("change", () => { repopFeatures(); repopCreateInstances(); });
     $("#ss-filter", page)?.addEventListener("input", () => { state.showAll = false; renderList(); });
     $("#ss-filter-provider", page)?.addEventListener("change", () => { state.showAll = false; renderList(); });
     $("#ss-filter-feature", page)?.addEventListener("change", () => { state.showAll = false; renderList(); });
 
     $("#ss-restore", page)?.addEventListener("click", () => onRestore());
     $("#ss-delete", page)?.addEventListener("click", () => onDeleteSelected());
+    $("#ss-restore-inst", page)?.addEventListener("change", () => updateRestoreAvailability());
     updateRestoreAvailability();
 
     $("#ss-clear-watchlist", page)?.addEventListener("click", () => onClearTool(["watchlist"]));
     $("#ss-clear-ratings", page)?.addEventListener("click", () => onClearTool(["ratings"]));
     $("#ss-clear-history", page)?.addEventListener("click", () => onClearTool(["history"]));
     $("#ss-clear-all", page)?.addEventListener("click", () => onClearTool(["watchlist", "ratings", "history"]));
-    $("#ss-tools-prov", page)?.addEventListener("change", () => updateToolsAvailability());
+    $("#ss-tools-prov", page)?.addEventListener("change", () => { repopToolsInstances(); updateToolsAvailability(); });
+    $("#ss-tools-inst", page)?.addEventListener("change", () => updateToolsAvailability());
   }
 
 
@@ -496,12 +509,23 @@ const toast = (msg, ok = true) => {
     if (!page) return;
     const b = $("#ss-restore", page);
     const d = $("#ss-delete", page);
+    const instSel = $("#ss-restore-inst", page);
     if (!b) return;
-    b.disabled = state.busy || !state.selectedPath;
-    b.title = state.selectedPath ? "" : "Select a snapshot first";
+    const pid = String(state.selectedSnap?.provider || "").toUpperCase();
+    const targetInst = String($("#ss-restore-inst", page)?.value || "default");
+    const p = _providerById(pid);
+    const instMeta = Array.isArray(p?.instances) ? p.instances.find((x) => String(x?.id || "") === targetInst) : null;
+    const instOk = instMeta ? !!instMeta.configured : true;
+
+    b.disabled = state.busy || !state.selectedPath || !instOk;
+    b.title = !state.selectedPath ? "Select a snapshot first" : (!instOk ? "Target profile not configured" : "");
     if (d) {
       d.disabled = state.busy || !state.selectedPath;
       d.title = state.selectedPath ? "" : "Select a snapshot first";
+    }
+
+    if (instSel) {
+      instSel.disabled = state.busy || !state.selectedPath || instSel.options.length <= 1;
     }
   }
 
@@ -560,7 +584,81 @@ const toast = (msg, ok = true) => {
     _rebuildBrandSelectMenu(fProv);
 
     repopFeatures();
+    repopCreateInstances();
+    repopToolsInstances();
+    repopRestoreInstances(state.selectedSnap);
     updateToolsAvailability();
+  }
+
+  function _providerById(pid) {
+    const id = String(pid || "").toUpperCase();
+    return (state.providers || []).find((x) => String(x.id || "").toUpperCase() === id) || null;
+  }
+
+  function _fillInstanceSelect(sel, pid, prefer) {
+    if (!sel) return;
+    const p = _providerById(pid);
+    const insts = Array.isArray(p?.instances) ? p.instances : [{ id: "default", label: "Default", configured: true }];
+    const cur = String(prefer ?? sel.value ?? "");
+    sel.innerHTML = "";
+
+    const options = insts.length ? insts : [{ id: "default", label: "Default", configured: true }];
+    options.forEach((it) => {
+      const id = String(it?.id || "default");
+      const label = String(it?.label || id || "default");
+      const configured = (typeof it?.configured === "boolean") ? !!it.configured : true;
+
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = configured ? label : `${label} (not configured)`;
+      o.disabled = !configured;
+      sel.appendChild(o);
+    });
+
+    const has = Array.from(sel.options).some((o) => String(o.value) === cur && !o.disabled);
+    if (has) {
+      sel.value = cur;
+    } else {
+      const firstOk = Array.from(sel.options).find((o) => !o.disabled);
+      sel.value = firstOk ? String(firstOk.value) : "default";
+    }
+
+    sel.disabled = sel.options.length <= 1;
+  }
+
+  function repopCreateInstances() {
+    const page = document.getElementById("page-snapshots");
+    if (!page) return;
+    const pid = String($("#ss-prov", page)?.value || "").toUpperCase();
+    const sel = $("#ss-prov-inst", page);
+    _fillInstanceSelect(sel, pid, null);
+  }
+
+  function repopToolsInstances() {
+    const page = document.getElementById("page-snapshots");
+    if (!page) return;
+    const pid = String($("#ss-tools-prov", page)?.value || "").toUpperCase();
+    const sel = $("#ss-tools-inst", page);
+    _fillInstanceSelect(sel, pid, null);
+  }
+
+  function repopRestoreInstances(snap) {
+    const page = document.getElementById("page-snapshots");
+    if (!page) return;
+    const s = snap || state.selectedSnap || {};
+    const pid = String(s.provider || "").toUpperCase();
+    const inst = String(s.instance || s.instance_id || s.profile || "default");
+    const sel = $("#ss-restore-inst", page);
+    _fillInstanceSelect(sel, pid, inst);
+
+    if (sel && pid && inst && !Array.from(sel.options).some((o) => String(o.value) === inst)) {
+      const o = document.createElement("option");
+      o.value = inst;
+      o.textContent = `${inst} (missing)`;
+      o.disabled = true;
+      sel.appendChild(o);
+      sel.value = inst;
+    }
   }
 
   function repopFeatures() {
@@ -714,6 +812,8 @@ const toast = (msg, ok = true) => {
 
       const feat = String(s.feature || "-").toLowerCase();
       const isBundle = feat === "all";
+      const inst = String(s.instance || s.instance_id || s.profile || "default");
+      const showInst = inst && String(inst).toLowerCase() !== "default";
       const exp = !!(state.expandedBundles && state.expandedBundles[String(s.path || "")]);
 
       const extra = isBundle && childCount
@@ -724,6 +824,7 @@ const toast = (msg, ok = true) => {
         <div style="flex:1 1 auto;min-width:0">
           <div class="ss-meta">
             <span class="ss-badge ok">${(s.provider || "-").toUpperCase()}</span>
+            ${showInst ? `<span class="ss-badge">${inst}</span>` : ``}
             <span class="ss-badge">${feat}</span>
             ${s.label ? `<span class="ss-badge warn">${String(s.label).slice(0, 40)}</span>` : ``}
             ${extra}
@@ -798,6 +899,8 @@ function renderSelected() {
     const stats = s.stats || {};
     const by = stats.by_type || {};
     const featStats = stats.features || null;
+    const inst = String(s.instance || s.instance_id || s.profile || "default");
+    const showInst = inst && String(inst).toLowerCase() !== "default";
     const pills = featStats ? Object.keys(featStats).slice(0, 6).map((k) =>
       `<span class="ss-pill"><strong>${featStats[k]}</strong><span class="ss-muted">${k}</span></span>`
     ).join("")
@@ -809,6 +912,7 @@ function renderSelected() {
     host.innerHTML = `
       <div class="ss-row" style="gap:8px;flex-wrap:wrap">
         <span class="ss-badge ok">${String(s.provider || "").toUpperCase()}</span>
+        ${showInst ? `<span class="ss-badge">${inst}</span>` : ``}
         <span class="ss-badge">${String(s.feature || "").toLowerCase()}</span>
         ${s.label ? `<span class="ss-badge warn">${String(s.label).slice(0, 40)}</span>` : ``}
       </div>
@@ -859,6 +963,8 @@ function renderSelected() {
           state.selectedPath = "";
           state.selectedSnap = null;
           renderSelected();
+        } else {
+          try { repopRestoreInstances(state.selectedSnap); } catch {}
         }
       }
     } catch (e) {
@@ -879,6 +985,7 @@ function renderSelected() {
       const r = await API()(`/api/snapshots/read?path=${encodeURIComponent(path)}`);
       state.selectedPath = path;
       state.selectedSnap = r && r.snapshot ? r.snapshot : null;
+      repopRestoreInstances(state.selectedSnap);
       renderList();
       renderSelected();
       updateRestoreAvailability();
@@ -899,6 +1006,7 @@ function renderSelected() {
     if (!page) return;
 
     const provider = String($("#ss-prov", page)?.value || "").toUpperCase();
+    const instance = String($("#ss-prov-inst", page)?.value || "default");
     const feature = String($("#ss-feature", page)?.value || "").toLowerCase();
     const label = String($("#ss-label", page)?.value || "").trim();
 
@@ -911,7 +1019,7 @@ function renderSelected() {
       const r = await apiJson("/api/snapshots/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, feature, label }),
+        body: JSON.stringify({ provider, instance, feature, label }),
       });
 
       const snap = r && r.snapshot ? r.snapshot : null;
@@ -934,7 +1042,7 @@ function renderSelected() {
       }
     } finally {
       setProgress("#ss-create-progress", false, "", "accent");
-setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -993,6 +1101,7 @@ setBusy(false);
 
     if (!state.selectedPath) return toast("Select a snapshot first", false);
     const mode = String($("#ss-restore-mode", page)?.value || "merge").toLowerCase();
+    const instance = String($("#ss-restore-inst", page)?.value || "default");
 
     if (mode === "clear_restore") {
       const ok = confirm("Clear + restore will wipe the provider feature before restoring. Continue?");
@@ -1005,7 +1114,7 @@ setBusy(false);
       const r = await apiJson("/api/snapshots/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: state.selectedPath, mode }),
+        body: JSON.stringify({ path: state.selectedPath, mode, instance }),
       });
 
       const res = r && r.result ? r.result : {};
@@ -1018,12 +1127,12 @@ setBusy(false);
       toast(res.ok ? "Restore complete" : "Restore finished with errors", !!res.ok);
     } catch (e) {
       console.warn("[snapshots] restore failed", e);
-toast(`Restore failed: ${e.message || e}`, false);
+      toast(`Restore failed: ${e.message || e}`, false);
       const out = $("#ss-restore-out", page);
       if (out) out.textContent = `Restore failed: ${e.message || e}`;
     } finally {
       setProgress("#ss-restore-progress", false, "", "danger");
-setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -1032,10 +1141,11 @@ setBusy(false);
     if (!page) return;
 
     const provider = String($("#ss-tools-prov", page)?.value || "").toUpperCase();
+    const instance = String($("#ss-tools-inst", page)?.value || "default");
     if (!provider) return toast("Pick a provider first", false);
 
     const what = (features || []).join(", ");
-    const ok = confirm(`This will clear ${what} on ${provider}. Continue?`);
+    const ok = confirm(`This will clear ${what} on ${provider} (${instance}). Continue?`);
     if (!ok) return;
 
     setProgress("#ss-tools-progress", true, `Clearing ${what}…`, "danger");
@@ -1044,7 +1154,7 @@ setBusy(false);
       const r = await apiJson("/api/snapshots/tools/clear", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, features }),
+        body: JSON.stringify({ provider, instance, features }),
       });
 
       const res = r && r.result ? r.result : {};
@@ -1071,7 +1181,7 @@ setBusy(false);
       if (out) out.textContent = `Clear failed: ${e.message || e}`;
     } finally {
       setProgress("#ss-tools-progress", false, "", "danger");
-setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -1081,15 +1191,18 @@ setBusy(false);
     if (!page) return;
 
     const pid = String($("#ss-tools-prov", page)?.value || "").toUpperCase();
+    const inst = String($("#ss-tools-inst", page)?.value || "default");
     const p = (state.providers || []).find((x) => String(x.id || "").toUpperCase() === pid);
     const feats = (p && p.features) ? p.features : {};
+    const instMeta = Array.isArray(p?.instances) ? p.instances.find((x) => String(x?.id || "") === inst) : null;
+    const instOk = instMeta ? !!instMeta.configured : true;
 
     const setBtn = (id, enabled, why) => {
       const b = $(id, page);
       if (!b) return;
-      const ok = !!enabled && !!pid;
+      const ok = !!enabled && !!pid && !!instOk;
       b.disabled = !ok || !!state.busy;
-      b.title = ok ? "" : (why || "Not supported by provider");
+      b.title = ok ? "" : (!pid ? "Pick a provider" : (!instOk ? "Profile not configured" : (why || "Not supported by provider")));
     };
 
     setBtn("#ss-clear-watchlist", !!feats.watchlist, "Watchlist not supported");

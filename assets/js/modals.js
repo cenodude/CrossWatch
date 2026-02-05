@@ -1,8 +1,9 @@
-// assets/js/modals.js
+/* assets/js/modals.js */
+/* CrossWatch - JavaScript Modal Management Module */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 const _cwGetV = () => {
   try {
-    // Prefer explicit global version
     return (window.__CW_VERSION__ || window.__CW_BUILD__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
   } catch {
     return (window.__CW_VERSION__ || window.__CW_BUILD__ || Date.now());
@@ -22,6 +23,7 @@ ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js'))
 ModalRegistry.register('analyzer',     () => import(_cwVer('./modals/analyzer/index.js')));
 ModalRegistry.register('exporter',     () => import(_cwVer('./modals/exporter/index.js')));
 ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
+ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight-settings/index.js')));
 ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.js')));
 ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
 ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-warning/index.js')));
@@ -55,3 +57,5 @@ window.cxOpenModalFor = async (pairOrId = null) => {
   await ModalRegistry.open('pair-config', { pairOrId });
   return true;
 };
+
+window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-settings', props);

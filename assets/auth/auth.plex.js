@@ -650,34 +650,52 @@ async function plexDeleteToken() {
   function renderPlexUserList() {
     const listEl = $("plex_user_list"); if (!listEl) return;
     const qv = ($("plex_user_filter")?.value || "").trim().toLowerCase();
-    const rank = { owner:0, managed:1, friend:2 };
+    const rankType = { owner:0, managed:1, friend:2 };
+    const rankSrc  = { cloud:0, pms:1 };
     const by = new Map();
 
     const src = __plexUsersByInst.get(getPlexInstance()) || [];
-    // dedup by username/title; prefer PMS id, then better type, then smaller id
+
     for (const u of src) {
       const uname = (u.username || u.title || `user#${u.id}`).trim();
+      if (!uname) continue;
       const key = uname.toLowerCase();
-      const isPms = Number.isInteger(u.id) && u.id < 100000;
+      const id = Number(u.id ?? u.account_id ?? 0);
+      if (!Number.isFinite(id) || id <= 0) continue;
+
+      const type = String(u.type || "friend").toLowerCase();
+      const label = String(u.label || "");
+      const source = String(u.source || "").toLowerCase();
+
       const cur = by.get(key);
-      if (!cur) { by.set(key, { id:u.id, username:uname, type:u.type||"friend" }); continue; }
-      const curIsPms = Number.isInteger(cur.id) && cur.id < 100000;
-      const better = (isPms && !curIsPms) ||
-                    (rank[(u.type||"friend")] < rank[cur.type||"friend"]) ||
-                    (Number.isInteger(u.id) && Number.isInteger(cur.id) && u.id < cur.id);
-      if (better) by.set(key, { id:u.id, username:uname, type:u.type||"friend" });
+      if (!cur) { by.set(key, { id, username: uname, type, label, source }); continue; }
+
+      const srNew = rankSrc[source] ?? 9;
+      const srCur = rankSrc[cur.source] ?? 9;
+      const trNew = rankType[type] ?? 9;
+      const trCur = rankType[cur.type] ?? 9;
+
+      const better = (srNew < srCur) ||
+        (srNew === srCur && trNew < trCur) ||
+        (srNew === srCur && trNew === trCur && id < cur.id);
+
+      if (better) by.set(key, { id, username: uname, type, label, source });
     }
 
     let users = Array.from(by.values());
-    users = users.filter(u => !qv || (u.username.toLowerCase().includes(qv) || (u.type||"").toLowerCase().includes(qv)));
-    users.sort((a,b)=> (rank[a.type||"friend"] - rank[b.type||"friend"]) || a.username.localeCompare(b.username));
+    users = users.filter(u => {
+      if (!qv) return true;
+      const hay = `${u.username} ${u.type || ""} ${u.label || ""} ${u.source || ""}`.toLowerCase();
+      return hay.includes(qv);
+    });
+    users.sort((a,b)=> ((rankType[a.type||"friend"] ?? 9) - (rankType[b.type||"friend"] ?? 9)) || a.username.localeCompare(b.username));
 
     const esc = s => String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     listEl.innerHTML = users.length ? users.map(u => `
       <button type="button" class="userrow" data-uid="${esc(u.id)}" data-username="${esc(u.username)}">
         <div class="row1">
           <strong>${esc(u.username)}</strong>
-          <span class="tag ${esc(u.type)}">${esc(u.type)}</span>
+          <span class="tag ${esc(u.type)}">${esc(u.label || u.type)}</span>
         </div>
       </button>
     `).join("") : '<div class="sub">No users found.</div>';
