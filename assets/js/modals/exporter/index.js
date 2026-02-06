@@ -213,6 +213,10 @@ export default {
             <select id="ex-prov" class="input"></select>
           </div>
           <div class="field">
+            <label>Instance</label>
+            <select id="ex-inst" class="input"></select>
+          </div>
+          <div class="field">
             <label>Feature</label>
             <select id="ex-feat" class="input">
               <option value="watchlist">Watchlist</option>
@@ -291,6 +295,7 @@ export default {
     const badge   = $("#ex-badge", shell);
     const countEl = $("#ex-count", shell);
     const provSel = $("#ex-prov", shell);
+    const instSel = $("#ex-inst", shell);
     const featSel = $("#ex-feat", shell);
     const fmtSel  = $("#ex-fmt", shell);
     const qInput  = $("#ex-q", shell);
@@ -312,7 +317,7 @@ export default {
     const PREFS_KEY = "cw.exporter.prefs";
     const prefs = LS.get(PREFS_KEY, {});
     const savePrefs = () => LS.set(PREFS_KEY, {
-      provider: provSel.value, feature: featSel.value, format: fmtSel.value,
+      provider: provSel.value, instance: instSel.value, feature: featSel.value, format: fmtSel.value,
       q: qInput.value, all: allChk.checked
     });
 
@@ -324,6 +329,18 @@ export default {
       };
       return Object.keys(optCounts).map(seg).join(" • ");
     };
+
+    function syncInstances() {
+      const prov = provSel.value;
+      const list = (OPTS?.instances && OPTS.instances[prov]) || [{ id: "default", label: "Default" }];
+      const opts = [`<option value="all">All</option>`].concat(
+        (list || []).map(x => `<option value="${x.id}">${x.label || x.id}</option>`)
+      );
+      instSel.innerHTML = opts.join("");
+      const want = prefs.instance;
+      if (want && (want === "all" || (list || []).some(x => x.id === want))) instSel.value = want;
+      if (!instSel.value) instSel.value = "all";
+    }
 
     function syncFormats() {
       const f = featSel.value;
@@ -366,7 +383,7 @@ export default {
       try {
         const limit = 50;
         lastQuery = qInput.value || "";
-        const u = `/api/export/sample?provider=${encodeURIComponent(provSel.value)}&feature=${encodeURIComponent(featSel.value)}&limit=${limit}&q=${encodeURIComponent(lastQuery)}`;
+        const u = `/api/export/sample?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&limit=${limit}&q=${encodeURIComponent(lastQuery)}`;
         const data = await fjson(u);
         filteredTotal = data.total || 0;
 
@@ -411,7 +428,7 @@ export default {
       btnExp.textContent = "Preparing…";
       showWait("Preparing file…");
       try {
-        const base = `/api/export/file?provider=${encodeURIComponent(provSel.value)}&feature=${encodeURIComponent(featSel.value)}&format=${encodeURIComponent(fmtSel.value)}`;
+        const base = `/api/export/file?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&format=${encodeURIComponent(fmtSel.value)}`;
         const q = `&q=${encodeURIComponent(lastQuery)}`;
         let extra = "";
         if (mode === "manual" && selected.size > 0) extra = "&ids=" + encodeURIComponent(Array.from(selected).join(","));
@@ -451,9 +468,10 @@ export default {
 
       if (OPTS.providers?.length) {
         provSel.innerHTML = OPTS.providers.map(p => `<option value="${p}">${p}</option>`).join("");
+        instSel.disabled = false;
       } else {
         provSel.innerHTML = `<option value="" disabled>(no providers)</option>`;
-        provSel.disabled = true; featSel.disabled = false; fmtSel.disabled = false;
+        provSel.disabled = true; instSel.disabled = true; instSel.innerHTML = `<option value="all">All</option>`; featSel.disabled = false; fmtSel.disabled = false;
       }
 
       if (OPTS.providers?.includes(prefs.provider)) provSel.value = prefs.provider;
@@ -461,6 +479,7 @@ export default {
       qInput.value = prefs.q || "";
       allChk.checked = prefs.all !== false;
 
+      syncInstances();
       syncFormats();
       enableColumnResize(table);
     } finally {
@@ -471,7 +490,8 @@ export default {
     const debounced = (fn, ms=250) => { let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
     const autoRefresh = debounced(() => renderPreview({ auto:true }), 200);
 
-    provSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; savePrefs(); autoRefresh(); });
+    provSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; syncInstances(); savePrefs(); autoRefresh(); });
+    instSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; savePrefs(); autoRefresh(); });
     featSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; syncFormats(); savePrefs(); autoRefresh(); });
     fmtSel .addEventListener("change", savePrefs);
     qInput.addEventListener("input", () => { savePrefs(); autoRefresh(); });

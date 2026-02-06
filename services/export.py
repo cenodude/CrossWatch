@@ -31,17 +31,79 @@ def _providers_in_state(s: dict[str, Any]) -> list[str]:
     return sorted((s.get("providers") or {}).keys())
 
 
-def _items_bucket(s: dict[str, Any], provider: str, feature: str) -> dict[str, Any]:
+_DEFAULT_INSTANCE = "default"
+
+def _prov_block(s: dict[str, Any], provider: str) -> dict[str, Any]:
+    p = (s.get("providers") or {}).get(provider)
+    return p if isinstance(p, dict) else {}
+
+def _iter_provider_instance_blocks(s: dict[str, Any], provider: str) -> Iterable[tuple[str, dict[str, Any]]]:
+    p = _prov_block(s, provider)
+    if not p:
+        return
+    yield _DEFAULT_INSTANCE, p
+    insts = p.get("instances")
+    if isinstance(insts, dict):
+        for inst_id, blk in insts.items():
+            if isinstance(blk, dict):
+                yield str(inst_id), blk
+
+def _feature_items(block: dict[str, Any], feature: str) -> dict[str, Any]:
     try:
-        return s["providers"][provider][feature]["baseline"]["items"]  # type: ignore[index]
-    except KeyError:
+        b = block[feature]["baseline"]["items"]  # type: ignore[index]
+    except Exception:
         return {}
+    return b if isinstance(b, dict) else {}
 
+def _item_score(it: dict[str, Any]) -> int:
+    ids = _norm_ids(it.get("ids") or {})
+    return sum(1 for v in ids.values() if v)
 
-def _iter_items(s: dict[str, Any], provider: str, feature: str) -> Iterable[tuple[str, dict[str, Any]]]:
-    b = _items_bucket(s, provider, feature)
+def _merge_best(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    if not a:
+        return dict(b or {})
+    if not b:
+        return dict(a or {})
+    sa, sb = _item_score(a), _item_score(b)
+    best = a if sa >= sb else b
+    other = b if best is a else a
+    out = dict(best)
+    for k, v in (other or {}).items():
+        if k not in out or out[k] in (None, "", [], {}):
+            out[k] = v
+    if isinstance(best.get("ids"), dict) or isinstance(other.get("ids"), dict):
+        ids = dict(other.get("ids") or {})
+        ids.update(dict(best.get("ids") or {}))
+        out["ids"] = ids
+    return out
+
+def _items_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> dict[str, Any]:
+    inst = str(instance_id or "").strip()
+    inst_lc = inst.lower()
+    if not inst or inst_lc in {"all", "any", "*"}:
+        merged: dict[str, Any] = {}
+        for _iid, blk in _iter_provider_instance_blocks(s, provider):
+            items = _feature_items(blk, feature)
+            if not items:
+                continue
+            for k, it in items.items():
+                prev = merged.get(str(k))
+                merged[str(k)] = _merge_best(prev or {}, (it or {}) if isinstance(it, dict) else {})
+        return merged
+    if inst_lc == "default":
+        return _feature_items(_prov_block(s, provider), feature)
+    pblk = _prov_block(s, provider)
+    insts = pblk.get("instances")
+    if isinstance(insts, dict):
+        blk = insts.get(inst)
+        if isinstance(blk, dict):
+            return _feature_items(blk, feature)
+    return {}
+
+def _iter_items(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> Iterable[tuple[str, dict[str, Any]]]:
+    b = _items_bucket(s, provider, feature, instance_id=instance_id)
     for k, it in (b or {}).items():
-        yield k, (it or {})
+        yield str(k), (it or {})
 
 
 def _norm_ids(ids: dict[str, Any]) -> dict[str, str]:
@@ -114,9 +176,9 @@ def _match_query(key: str, it: dict[str, Any], q: str) -> bool:
     return all(tok in hay for tok in tokens)
 
 
-def _filter_keys(s: dict[str, Any], provider: str, feature: str, q: str) -> list[str]:
+def _filter_keys(s: dict[str, Any], provider: str, feature: str, q: str, instance_id: str | None = None) -> list[str]:
     keys: list[str] = []
-    for k, it in _iter_items(s, provider, feature):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
         if _match_query(k, it, q):
             keys.append(k)
     return keys
@@ -157,8 +219,8 @@ def _title_type_for_imdb(t: str) -> str:
     return "movie" if t == "movie" else "tvSeries"
 
 
-def _build_letterboxd(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
-    src_iter = ((k, it) for k, it in _iter_items(s, provider, feature) if (not keys or k in keys))
+def _build_letterboxd(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
+    src_iter = ((k, it) for k, it in _iter_items(s, provider, feature, instance_id=instance_id) if (not keys or k in keys))
     if feature == "watchlist":
         header = ["imdbID", "tmdbID", "Title", "Year"]
         rows = (
@@ -193,12 +255,12 @@ def _build_letterboxd(provider: str, feature: str, s: dict[str, Any], keys: list
     return _csv_response(f"letterboxd_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_imdb(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _build_imdb(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     if feature != "watchlist":
         raise HTTPException(400, "IMDb export supports watchlist only")
     header = ["const"]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, "watchlist"):
+    for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id):
         if keys and k not in keys:
             continue
         _, _, _, _, ids = _row_base(it)
@@ -208,10 +270,10 @@ def _build_imdb(provider: str, feature: str, s: dict[str, Any], keys: list[str])
     return _csv_response(f"imdb_watchlist_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     header = ["tmdbID", "imdbID", "Title", "Year", "Type"]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, feature):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
         if keys and k not in keys:
             continue
         t, title, year, _wd, ids = _row_base(it)
@@ -220,10 +282,10 @@ def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[
     return _csv_response(f"justwatch_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     header = ["imdbID", "tmdbID", "Title", "Year", "Rating", "WatchedDate", "Feature", "Provider"]
     rows: list[list[str]] = []
-    for k, it in _iter_items(s, provider, feature):
+    for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
         if keys and k not in keys:
             continue
         t, title, year, watched, ids = _row_base(it)
@@ -243,7 +305,7 @@ def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[s
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"yamtrack_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
-def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     ts = time.strftime("%Y%m%d")
     if feature == "watchlist":
         header = [
@@ -267,7 +329,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
         ]
         rows: list[list[str]] = []
         pos = 0
-        for k, it in _iter_items(s, provider, "watchlist"):
+        for k, it in _iter_items(s, provider, "watchlist", instance_id=instance_id):
             if keys and k not in keys:
                 continue
             t, title, year, _wd, ids = _row_base(it)
@@ -315,7 +377,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
             "Directors",
         ]
         rows: list[list[str]] = []
-        for k, it in _iter_items(s, provider, "ratings"):
+        for k, it in _iter_items(s, provider, "ratings", instance_id=instance_id):
             if keys and k not in keys:
                 continue
             t, title, year, watched, ids = _row_base(it)
@@ -346,7 +408,7 @@ def _tmdb_build_imdb_v3(provider: str, feature: str, s: dict[str, Any], keys: li
     raise HTTPException(400, "TMDB supports watchlist and ratings only")
 
 
-def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     header = [
         "rated_at",
         "type",
@@ -374,7 +436,7 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: l
     ts = time.strftime("%Y%m%d")
     rows: list[list[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
-    for k, it in _iter_items(s, provider, src):
+    for k, it in _iter_items(s, provider, src, instance_id=instance_id):
         if keys and k not in keys:
             continue
         t, title, year, watched, ids = _row_base(it)
@@ -408,7 +470,7 @@ def _tmdb_build_trakt_v2(provider: str, feature: str, s: dict[str, Any], keys: l
     return _csv_response(f"tmdb_traktv2_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     header = [
         "SIMKL_ID",
         "Title",
@@ -426,7 +488,7 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: l
     ts = time.strftime("%Y%m%d")
     rows: list[list[str]] = []
     src = "ratings" if feature == "ratings" else "watchlist"
-    for k, it in _iter_items(s, provider, src):
+    for k, it in _iter_items(s, provider, src, instance_id=instance_id):
         if keys and k not in keys:
             continue
         t, title, year, watched, ids = _row_base(it)
@@ -450,7 +512,7 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: l
     return _csv_response(f"tmdb_simklv1_{src}_{provider.lower()}_{ts}.csv", header, rows)
 
 
-def _build_tmdb(provider: str, feature: str, s: dict[str, Any], keys: list[str]) -> Response:
+def _build_tmdb(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     p = provider.upper().strip()
     if p == "TRAKT":
         return _tmdb_build_trakt_v2(provider, feature, s, keys)
@@ -459,7 +521,7 @@ def _build_tmdb(provider: str, feature: str, s: dict[str, Any], keys: list[str])
     return _tmdb_build_imdb_v3(provider, feature, s, keys)
 
 
-_BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str]], Response]] = {
+_BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None], Response]] = {
     "letterboxd": _build_letterboxd,
     "imdb": _build_imdb,
     "justwatch": _build_justwatch,
@@ -473,9 +535,29 @@ def api_export_options() -> dict[str, Any]:
     s = _load_state()
     provs = _providers_in_state(s)
     features = ["watchlist", "history", "ratings"]
+
+    def insts_for(p: str) -> list[dict[str, str]]:
+        blk = _prov_block(s, p)
+        if not blk:
+            return []
+        out: list[dict[str, str]] = [{"id": "default", "label": "Default"}]
+        insts = blk.get("instances")
+        if isinstance(insts, dict):
+            for inst_id in sorted(insts.keys(), key=lambda x: str(x)):
+                out.append({"id": str(inst_id), "label": str(inst_id)})
+        return out
+
+    instances: dict[str, list[dict[str, str]]] = {p: insts_for(p) for p in provs}
     counts: dict[str, dict[str, int]] = {
-        p: {f: len(_items_bucket(s, p, f) or {}) for f in features} for p in provs
+        p: {f: len(_items_bucket(s, p, f, instance_id="all") or {}) for f in features} for p in provs
     }
+    counts_instances: dict[str, dict[str, dict[str, int]]] = {}
+    for p in provs:
+        counts_instances[p] = {}
+        for inst in instances.get(p) or []:
+            iid = inst.get("id") or "default"
+            counts_instances[p][iid] = {f: len(_items_bucket(s, p, f, instance_id=iid) or {}) for f in features}
+
     formats = {
         "watchlist": ["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb"],
         "history": ["letterboxd", "justwatch", "yamtrack"],
@@ -488,25 +570,37 @@ def api_export_options() -> dict[str, Any]:
         "yamtrack": "Yamtrack",
         "tmdb": "TMDB (Auto: IMDb/Trakt/SIMKL)",
     }
-    return {"providers": provs, "counts": counts, "formats": formats, "labels": labels}
+    return {
+        "providers": provs,
+        "instances": instances,
+        "counts": counts,
+        "counts_instances": counts_instances,
+        "formats": formats,
+        "labels": labels,
+    }
 
 
 @router.get("/export/sample", response_class=JSONResponse)
 def api_export_sample(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
+    provider_instance: str = Query("all", description="default|all|<instance_id>"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
 ) -> dict[str, Any]:
     s = _load_state()
     provider = (provider or "").upper().strip()
+    inst = (provider_instance or "all").strip() or "all"
     if provider and provider in _providers_in_state(s):
-        keys = _filter_keys(s, provider, feature, q)
+        keys = _filter_keys(s, provider, feature, q, instance_id=inst)
+        bucket = _items_bucket(s, provider, feature, instance_id=inst)
     else:
         keys = []
+        bucket = {}
+
     items: list[dict[str, Any]] = []
     for i, k in enumerate(keys):
-        it = _items_bucket(s, provider, feature).get(k, {})
+        it = bucket.get(k, {})
         t, title, year, watched, ids = _row_base(it)
         items.append(
             {
@@ -527,15 +621,19 @@ def api_export_sample(
 @router.get("/export/file")
 def api_export_file(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
+    provider_instance: str = Query("all", description="default|all|<instance_id>"),
     feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
 ) -> Response:
     s = _load_state()
-    provider = (provider or "").upper().strip()
+    provider_in = (provider or "").upper().strip()
+    provider_eff = provider_in or "TRAKT"
     feature = feature.lower().strip()
     fmt = format.lower().strip()
+    inst = (provider_instance or "all").strip() or "all"
+
     if fmt not in _BUILDERS:
         raise HTTPException(400, "Unknown format")
     if feature not in ("watchlist", "ratings", "history"):
@@ -546,6 +644,6 @@ def api_export_file(
     if ids.strip():
         keys = [k.strip() for k in ids.split(",") if k.strip()]
     else:
-        keys = _filter_keys(s, provider, feature, q) if provider in _providers_in_state(s) else []
+        keys = _filter_keys(s, provider_eff, feature, q, instance_id=inst) if provider_eff in _providers_in_state(s) else []
 
-    return _BUILDERS[fmt](provider or "TRAKT", feature, s, keys)
+    return _BUILDERS[fmt](provider_eff, feature, s, keys, inst)
