@@ -10,6 +10,28 @@ from cw_platform.config_base import load_config
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
 from .syncAPI import _load_state
 
+
+def _tmdb_api_key(cfg: dict[str, Any]) -> str:
+    def _pick_from_block(blk: Any) -> str:
+        if not isinstance(blk, dict):
+            return ""
+        k = str(blk.get("api_key") or "").strip()
+        if k:
+            return k
+        insts = blk.get("instances")
+        if isinstance(insts, dict):
+            for v in insts.values():
+                kk = str((v or {}).get("api_key") or "").strip() if isinstance(v, dict) else ""
+                if kk:
+                    return kk
+        return ""
+
+    for key in ("tmdb", "tmdb_sync"):
+        found = _pick_from_block(cfg.get(key))
+        if found:
+            return found
+    return ""
+
 def _load_wall_snapshot() -> list[dict[str, Any]]:
     try:
         st = _load_state() or {}
@@ -49,7 +71,7 @@ def register_wall(app: FastAPI) -> None:
     ) -> dict[str, Any]:
         cfg = load_config() or {}
         st = _load_state() or {}
-        api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
+        api_key = _tmdb_api_key(cfg)
 
         items = build_watchlist(st, tmdb_ok=bool(api_key)) or []
         active = {pid.lower(): True for pid in _configured_provider_ids(cfg)}

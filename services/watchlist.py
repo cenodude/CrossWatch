@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from cw_platform.config_base import CONFIG
 from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops
+from cw_platform.provider_instances import build_config_view, list_instance_ids, normalize_instance_id
 
 try:
     from plexapi.myplex import MyPlexAccount
@@ -106,20 +107,110 @@ def _configured_via_registry(pid: str, cfg: dict[str, Any]) -> bool:
         feats = ops.features() or {}
         if feats and not _feat_enabled(feats, "watchlist"):
             return False
-        return bool(ops.is_configured(cfg))
+        if ops.is_configured(cfg):
+            return True
+        for inst_id in list_instance_ids(cfg, pid):
+            if inst_id == "default":
+                continue
+            try:
+                view = build_config_view(cfg, {pid: inst_id})
+                if ops.is_configured(view):
+                    return True
+            except Exception:
+                continue
+        return False
     except Exception:
         return False
 
+_DEFAULT_INSTANCE = "default"
+
 
 def _prov(state: dict[str, Any], provider: str) -> dict[str, Any]:
-    return (state.get("providers") or {}).get(provider.upper()) or {}
+    return (state.get("providers") or {}).get((provider or "").upper().strip()) or {}
 
 
-def _get_provider_items(state: dict[str, Any], provider: str) -> dict[str, Any]:
+def _iter_provider_instance_blocks(
+    state: dict[str, Any],
+    provider: str,
+) -> list[tuple[str, dict[str, Any]]]:
     p = _prov(state, provider)
-    wl = (((p.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
-    return wl or (p.get("items") or {})
+    out: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(p, dict) and p:
+        out.append((_DEFAULT_INSTANCE, p))
+        insts = p.get("instances") or {}
+        if isinstance(insts, dict):
+            for inst_id, blk in insts.items():
+                if isinstance(blk, dict) and blk:
+                    out.append((str(inst_id), blk))
+    return out
 
+
+def _items_from_block(block: dict[str, Any]) -> dict[str, Any]:
+    wl = (((block.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
+    if isinstance(wl, dict) and wl:
+        return wl
+    legacy = block.get("items") or {}
+    return legacy if isinstance(legacy, dict) else {}
+
+
+def _pick_best_item(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    if not a:
+        return dict(b or {})
+    if not b:
+        return dict(a or {})
+    sa, sb = _rich_ids_score(a), _rich_ids_score(b)
+    best = a if sa >= sb else b
+    other = b if best is a else a
+    out = dict(best)
+    for k, v in (other or {}).items():
+        if k not in out or out[k] in (None, "", [], {}):
+            out[k] = v
+    if isinstance(best.get("ids"), dict) or isinstance(other.get("ids"), dict):
+        ids = dict(other.get("ids") or {})
+        ids.update(dict(best.get("ids") or {}))
+        out["ids"] = ids
+    return out
+
+
+def _get_provider_item_refs(
+    state: dict[str, Any],
+    provider: str,
+    instance_id: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    want = (instance_id or "").strip()
+    want_lc = want.lower()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for inst_id, blk in _iter_provider_instance_blocks(state, provider):
+        if want and want_lc not in {"all", "any", "*"} and inst_id != want:
+            continue
+        items = _items_from_block(blk)
+        if not isinstance(items, dict) or not items:
+            continue
+        for k, it in items.items():
+            if not it:
+                continue
+            d = dict(it)
+            if inst_id != _DEFAULT_INSTANCE:
+                d.setdefault("_cw_instance", inst_id)
+            out.setdefault(str(k), []).append(d)
+    return out
+
+
+def _get_provider_items(
+    state: dict[str, Any],
+    provider: str,
+    instance_id: str | None = None,
+) -> dict[str, Any]:
+    refs = _get_provider_item_refs(state, provider, instance_id=instance_id)
+    out: dict[str, Any] = {}
+    for k, arr in refs.items():
+        best: dict[str, Any] = {}
+        for it in arr:
+            best = _pick_best_item(best, it)
+        if best:
+            best.pop("_cw_instance", None)
+            out[k] = best
+    return out
 
 def _find_item_in_state(state: dict[str, Any], key: str) -> dict[str, Any]:
     for prov in _registry_sync_providers():
@@ -128,13 +219,13 @@ def _find_item_in_state(state: dict[str, Any], key: str) -> dict[str, Any]:
             return dict(it)
     return {}
 
-
 def _find_item_in_state_for_provider(
     state: dict[str, Any],
     key: str,
     provider: str,
+    instance_id: str | None = None,
 ) -> dict[str, Any]:
-    it = _get_provider_items(state, provider).get(key)
+    it = _get_provider_items(state, provider, instance_id=instance_id).get(key)
     return dict(it) if it else {}
 
 
@@ -683,28 +774,56 @@ def _get_items(state: dict[str, Any], prov: str) -> dict[str, Any]:
 
 def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]]:
     providers = _registry_sync_providers()
-    bag: dict[str, dict[str, Any]] = {
-        p: (_get_items(state, p) or {}) for p in providers
-    }
-    all_keys: set[str] = set().union(
-        *(set(d.keys()) for d in bag.values() if isinstance(d, dict))
-    )
     hidden = _load_hide_set()
-    out: list[dict[str, Any]] = []
+    by_key: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
 
-    for key in all_keys:
-        if key in hidden:
-            continue
-        candidates: list[tuple[str, dict[str, Any]]] = [
-            (p.lower(), bag[p].get(key) or {}) for p in providers if bag[p].get(key)
-        ]
+    for p in providers:
+        refs = _get_provider_item_refs(state, p, instance_id="all")
+        for k, arr in refs.items():
+            if str(k) in hidden:
+                continue
+            for it in arr or []:
+                inst = str((it or {}).get("_cw_instance") or _DEFAULT_INSTANCE)
+                by_key.setdefault(str(k), []).append((p.lower(), inst, it))
+
+    out: list[dict[str, Any]] = []
+    for key, candidates in by_key.items():
         if not candidates:
             continue
-        cand_map = dict(candidates)
-        info = max(candidates, key=lambda kv: _rich_ids_score(kv[1]))[1]
 
-        declared = {_norm_type(it.get("type")) for _, it in candidates if it}
+        sources = sorted({n for n, _, _ in candidates})
+        if not sources:
+            continue
+
+        sources_by_provider: dict[str, list[str]] = {}
+        info_best: dict[str, Any] = {}
+        declared = {_norm_type((it or {}).get("type")) for _, _, it in candidates if it}
         declared.discard("")
+
+        added_src = sources[0]
+        added_instance = _DEFAULT_INSTANCE
+        added_epoch = 0
+        added_when: str | None = None
+
+        for n, inst, it in candidates:
+            sources_by_provider.setdefault(n, [])
+            if inst not in sources_by_provider[n]:
+                sources_by_provider[n].append(inst)
+
+            info_best = _pick_best_item(info_best, it or {})
+
+            ep = _iso_to_epoch(_pick_added(it or {}))
+            if ep and ep > added_epoch:
+                added_src, added_instance, added_epoch = n, inst, ep
+                added_when = _pick_added(it or {})
+
+        for n in sources_by_provider:
+            insts = sources_by_provider[n]
+            sources_by_provider[n] = sorted(insts, key=lambda x: (x != _DEFAULT_INSTANCE, x))
+
+        info = dict(info_best or {})
+        info.pop("_cw_instance", None)
+
         if "anime" in declared:
             typ = "anime"
         elif "tv" in declared:
@@ -722,16 +841,10 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
         title = info.get("title") or info.get("name") or ""
         year = info.get("year") or info.get("release_year")
         tmdb_id = (info.get("ids") or {}).get("tmdb") or info.get("tmdb")
-        sources = [n for n, it in candidates if it]
 
-        epoch_map = {n: _iso_to_epoch(_pick_added(cand_map[n])) for n in sources}
-        if epoch_map and any(epoch_map.values()):
-            added_src, added_epoch = max(
-                epoch_map.items(),
-                key=lambda kv: kv[1],
-            )
-        else:
-            added_src, added_epoch = (sources[0], 0) if sources else ("", 0)
+        if not added_epoch:
+            added_when = _pick_added(info)
+            added_epoch = _iso_to_epoch(added_when)
 
         status = f"{sources[0]}_only" if len(sources) == 1 else "both"
 
@@ -747,9 +860,11 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
                 "tmdb": tmdb_value,
                 "status": status,
                 "sources": sources,
+                "sources_by_provider": sources_by_provider,
                 "added_epoch": added_epoch,
-                "added_when": _pick_added(cand_map.get(added_src) or {}),
+                "added_when": added_when,
                 "added_src": added_src,
+                "added_instance": added_instance,
                 "categories": [],
                 "ids": _ids_from_key_or_item(key, info),
             }
@@ -761,28 +876,47 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
     )
     return out
 
-
-# Provider item deletion helpers
 def _del_key_from_provider_items(
     state: dict[str, Any],
     provider: str,
     key: str,
+    instance_id: str | None = None,
 ) -> bool:
     prov = (provider or "").upper().strip()
     providers = state.get("providers") or {}
+    if prov not in providers:
+        return False
+
+    want = (instance_id or "").strip()
+    want_lc = want.lower()
     changed = False
-    if prov in providers:
-        p = providers[prov] or {}
-        wl = ((p.get("watchlist") or {}).get("baseline") or {}).get("items")
+
+    def _del_from(block: dict[str, Any]) -> bool:
+        hit = False
+        wl = (((block.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
         if isinstance(wl, dict) and key in wl:
             wl.pop(key, None)
-            changed = True
-        legacy = p.get("items")
+            hit = True
+        legacy = block.get("items") or {}
         if isinstance(legacy, dict) and key in legacy:
             legacy.pop(key, None)
-            changed = True
-    return changed
+            hit = True
+        return hit
 
+    p = providers[prov] or {}
+    if not want or want_lc in {"all", "any", "*"} or want == _DEFAULT_INSTANCE:
+        changed |= _del_from(p)
+
+    insts = (p.get("instances") or {})
+    if isinstance(insts, dict):
+        for inst_id, blk in insts.items():
+            if not isinstance(blk, dict):
+                continue
+            if want and want_lc not in {"all", "any", "*"} and str(inst_id) != want:
+                continue
+            changed |= _del_from(blk)
+
+    return changed
 
 def _delete_on_plex_single(
     key: str,
@@ -1147,75 +1281,121 @@ def delete_watchlist_batch(
     prov: str,
     state: dict[str, Any],
     cfg: dict[str, Any],
+    provider_instance: str | None = None,
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     prov = (prov or "").upper().strip()
     keys = [k for k in (keys or []) if isinstance(k, str) and k.strip()]
     if not keys:
-        return {"deleted": 0, "provider": prov, "note": "no-keys"}
+        return {"ok": False, "deleted": 0, "provider": prov, "status": "noop", "note": "no-keys"}
 
-    def _build_items(for_provider: str | None) -> list[dict[str, Any]]:
+    state_path = state_path or _state_path()
+    inst_raw = str(provider_instance or "").strip()
+    inst_lc = inst_raw.lower()
+    inst_sel = None if not inst_raw or inst_lc in {"all", "any", "*", "auto"} else normalize_instance_id(inst_raw)
+    if prov == "ALL":
+        inst_sel = None
+
+    def _instance_targets(p: str) -> list[str]:
+        hits: set[str] = set()
+        for inst_id, blk in _iter_provider_instance_blocks(state, p):
+            if inst_sel and inst_id != inst_sel:
+                continue
+            items = _items_from_block(blk)
+            if not isinstance(items, dict) or not items:
+                continue
+            for k in keys:
+                if k in items:
+                    hits.add(inst_id)
+        if not hits and inst_sel:
+            hits.add(inst_sel)
+        if not hits:
+            hits.add(_DEFAULT_INSTANCE)
+        return sorted(hits, key=lambda x: (x != _DEFAULT_INSTANCE, x))
+
+    def _build_items(for_provider: str, inst_id: str) -> list[dict[str, Any]]:
         arr: list[dict[str, Any]] = []
         for k in keys:
-            if for_provider:
+            it = _find_item_in_state_for_provider(state, k, for_provider, instance_id=inst_id) or {}
+            if not it and inst_id != _DEFAULT_INSTANCE:
                 it = _find_item_in_state_for_provider(state, k, for_provider) or {}
-            else:
-                it = _find_item_in_state(state, k) or {}
-            arr.append(
-                {
-                    "key": k,
-                    "item": it,
-                    "type": _type_from_item_or_guess(it, k),
-                }
-            )
+            arr.append({"key": k, "item": it, "type": _type_from_item_or_guess(it, k)})
         return arr
 
-    handlers: dict[str, Any] = {
-        "CROSSWATCH": lambda items: _delete_on_crosswatch_batch(items, cfg),
-        "ANILIST": lambda items: _delete_on_anilist_batch(items, cfg),
-        "PLEX": lambda items: _delete_on_plex_batch(items, state, cfg),
-        "SIMKL": lambda items: _delete_on_simkl_batch(items, cfg.get("simkl", {}) or {}),
-        "TRAKT": lambda items: _delete_on_trakt_batch(items, cfg.get("trakt", {}) or {}),
-        "TMDB": lambda items: _delete_on_tmdb_batch(items, cfg),
-        "JELLYFIN": lambda items: _delete_on_jellyfin_batch(items, cfg.get("jellyfin", {}) or {}),
-        "EMBY": lambda items: _delete_on_emby_batch(items, cfg.get("emby", {}) or {}),
-        "MDBLIST": lambda items: _delete_on_mdblist_batch(items, cfg.get("mdblist", {}) or {}),
-    }
+    def _call_handler(p: str, items: list[dict[str, Any]], cfg_view: dict[str, Any]) -> None:
+        if p == "PLEX":
+            _delete_on_plex_batch(items, state, cfg_view)
+            return
+        if p == "SIMKL":
+            _delete_on_simkl_batch(items, cfg_view.get("simkl", {}) or {})
+            return
+        if p == "TRAKT":
+            _delete_on_trakt_batch(items, cfg_view.get("trakt", {}) or {})
+            return
+        if p == "TMDB":
+            _delete_on_tmdb_batch(items, cfg_view)
+            return
+        if p == "JELLYFIN":
+            _delete_on_jellyfin_batch(items, cfg_view.get("jellyfin", {}) or {})
+            return
+        if p == "EMBY":
+            _delete_on_emby_batch(items, cfg_view.get("emby", {}) or {})
+            return
+        if p == "MDBLIST":
+            _delete_on_mdblist_batch(items, cfg_view.get("mdblist", {}) or {})
+            return
+        if p == "ANILIST":
+            _delete_on_anilist_batch(items, cfg_view)
+            return
+        if p == "CROSSWATCH":
+            _delete_on_crosswatch_batch(items, cfg_view)
+            return
+        raise RuntimeError(f"delete not supported: {p}")
+
+    def _delete_for_provider(p: str) -> dict[str, Any]:
+        removed: set[str] = set()
+        per_instance: dict[str, Any] = {}
+        for inst in _instance_targets(p):
+            cfg_view = build_config_view(cfg, {p: inst})
+            try:
+                _call_handler(p, _build_items(p, inst), cfg_view)
+                for k in keys:
+                    if _del_key_from_provider_items(state, p, k, instance_id=inst):
+                        removed.add(k)
+                per_instance[inst] = {"ok": True, "removed": len(removed)}
+            except Exception as e:
+                per_instance[inst] = {"ok": False, "error": str(e)}
+        return {"ok": any(v.get("ok") for v in per_instance.values()), "per_instance": per_instance, "removed": len(removed)}
+
+    supported = {"CROSSWATCH", "ANILIST", "PLEX", "SIMKL", "TRAKT", "TMDB", "JELLYFIN", "EMBY", "MDBLIST"}
 
     if prov == "ALL":
-        details: dict[str, dict[str, Any]] = {}
+        details: dict[str, Any] = {}
         ok_any = False
+        deleted_sum = 0
+
         for p in _registry_sync_providers():
-            if p not in handlers:
+            if p not in supported:
                 details[p] = {"ok": False, "error": "delete not supported"}
                 continue
-            try:
-                handlers[p](_build_items(p))
-                ok_any = True
-                details[p] = {"ok": True}
-            except Exception as e:
-                details[p] = {"ok": False, "error": str(e)}
-        if any(
-            _del_key_from_provider_items(state, p, k)
-            for p in _registry_sync_providers()
-            for k in keys
-        ):
-            _save_state_dict(_state_path(), state)
-        return {
-            "ok": ok_any,
-            "deleted": len(keys),
-            "provider": "ALL",
-            "details": details,
-        }
+            res = _delete_for_provider(p)
+            details[p] = res
+            ok_any |= bool(res.get("ok"))
+            deleted_sum += int(res.get("removed") or 0)
 
-    if prov not in handlers:
+        if deleted_sum:
+            _save_state_dict(state_path, state)
+
+        return {"ok": ok_any, "deleted": deleted_sum, "provider": "ALL", "details": details, "status": "ok" if ok_any else "error"}
+
+    if prov not in supported:
         raise RuntimeError(f"unknown provider: {prov}")
 
-    handlers[prov](_build_items(prov))
-    if any(_del_key_from_provider_items(state, prov, k) for k in keys):
-        _save_state_dict(_state_path(), state)
+    res = _delete_for_provider(prov)
+    if int(res.get("removed") or 0) > 0:
+        _save_state_dict(state_path, state)
 
-    return {"ok": True, "deleted": len(keys), "provider": prov, "status": "ok"}
-
+    return {"ok": bool(res.get("ok")), "deleted": int(res.get("removed") or 0), "provider": prov, "details": res.get("per_instance"), "status": "ok" if res.get("ok") else "error"}
 
 def delete_watchlist_item(
     key: str,
@@ -1223,9 +1403,13 @@ def delete_watchlist_item(
     cfg: dict[str, Any],
     log: Any = None,
     provider: str | None = None,
+    provider_instance: str | None = None,
 ) -> dict[str, Any]:
-    prov = (provider or "PLEX").upper()
-    state = _load_state_dict(state_path)
+    prov = (provider or "ALL").upper().strip()
+    try:
+        state = _load_state_dict(state_path)
+    except Exception as e:
+        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": str(e)}
 
     def _log(level: str, msg: str) -> None:
         try:
@@ -1234,168 +1418,22 @@ def delete_watchlist_item(
         except Exception:
             pass
 
-    def _present() -> bool:
-        return any(
-            _get_provider_items(state, p).get(key)
-            for p in _registry_sync_providers()
-        )
-
-    def _delete_and_drop(p: str, fn: Any) -> None:
-        it = _find_item_in_state(state, key) or {}
-        fn(
-            [
-                {
-                    "key": key,
-                    "item": it,
-                    "type": _type_from_item_or_guess(it, key),
-                }
-            ]
-        )
-        _del_key_from_provider_items(state, p, key)
-
     try:
-        if prov == "PLEX":
-            _delete_on_plex_single(key, state, cfg)
-            _del_key_from_provider_items(state, "PLEX", key)
-        elif prov == "CROSSWATCH":
-            _delete_and_drop(
-                "CROSSWATCH",
-                lambda items: _delete_on_crosswatch_batch(items, cfg),
-            )
-        elif prov == "ANILIST":
-            _delete_and_drop(
-                "ANILIST",
-                lambda items: _delete_on_anilist_batch(items, cfg),
-            )
-        elif prov == "SIMKL":
-            _delete_and_drop(
-                "SIMKL",
-                lambda items: _delete_on_simkl_batch(
-                    items,
-                    cfg.get("simkl", {}) or {},
-                ),
-            )
-        elif prov == "TRAKT":
-            _delete_and_drop(
-                "TRAKT",
-                lambda items: _delete_on_trakt_batch(
-                    items,
-                    cfg.get("trakt", {}) or {},
-                ),
-            )
-        elif prov == "JELLYFIN":
-            _delete_and_drop(
-                "JELLYFIN",
-                lambda items: _delete_on_jellyfin_batch(
-                    items,
-                    cfg.get("jellyfin", {}) or {},
-                ),
-            )
-        elif prov == "EMBY":
-            _delete_and_drop(
-                "EMBY",
-                lambda items: _delete_on_emby_batch(
-                    items,
-                    cfg.get("emby", {}) or {},
-                ),
-            )
-        elif prov == "MDBLIST":
-            _delete_and_drop(
-                "MDBLIST",
-                lambda items: _delete_on_mdblist_batch(
-                    items,
-                    cfg.get("mdblist", {}) or {},
-                ),
-            )
-        elif prov == "ALL":
-            details: dict[str, dict[str, Any]] = {}
-            for p in _registry_sync_providers():
-                try:
-                    if p == "PLEX":
-                        _delete_on_plex_single(key, state, cfg)
-                        _del_key_from_provider_items(state, "PLEX", key)
-                    elif p == "CROSSWATCH":
-                        _delete_and_drop(
-                            "CROSSWATCH",
-                            lambda items: _delete_on_crosswatch_batch(items, cfg),
-                        )
-                    elif p == "ANILIST":
-                        _delete_and_drop(
-                            "ANILIST",
-                            lambda items: _delete_on_anilist_batch(items, cfg),
-                        )
-                    elif p == "SIMKL":
-                        _delete_and_drop(
-                            "SIMKL",
-                            lambda items: _delete_on_simkl_batch(
-                                items,
-                                cfg.get("simkl", {}) or {},
-                            ),
-                        )
-                    elif p == "TRAKT":
-                        _delete_and_drop(
-                            "TRAKT",
-                            lambda items: _delete_on_trakt_batch(
-                                items,
-                                cfg.get("trakt", {}) or {},
-                            ),
-                        )
-                    elif p == "JELLYFIN":
-                        _delete_and_drop(
-                            "JELLYFIN",
-                            lambda items: _delete_on_jellyfin_batch(
-                                items,
-                                cfg.get("jellyfin", {}) or {},
-                            ),
-                        )
-                    elif p == "EMBY":
-                        _delete_and_drop(
-                            "EMBY",
-                            lambda items: _delete_on_emby_batch(
-                                items,
-                                cfg.get("emby", {}) or {},
-                            ),
-                        )
-                    elif p == "MDBLIST":
-                        _delete_and_drop(
-                            "MDBLIST",
-                            lambda items: _delete_on_mdblist_batch(
-                                items,
-                                cfg.get("mdblist", {}) or {},
-                            ),
-                        )
-                    else:
-                        details[p] = {"ok": False, "error": "delete not supported"}
-                        continue
-                    details[p] = {"ok": True}
-                except Exception as e:
-                    _log("TRBL", f"[WATCHLIST] {p} delete failed: {e}")
-                    details[p] = {"ok": False, "error": str(e)}
-            if not _present():
-                hide = _load_hide_set()
-                hide.add(key)
-                _save_hide_set(hide)
-            _save_state_dict(state_path, state)
-            return {
-                "ok": any(v["ok"] for v in details.values()),
-                "deleted": key,
-                "provider": "ALL",
-                "details": details,
-            }
-        else:
-            return {"ok": False, "error": f"unknown provider '{prov}'"}
-
-        if not _present():
-            hide = _load_hide_set()
-            hide.add(key)
-            _save_hide_set(hide)
-        _save_state_dict(state_path, state)
-        return {"ok": True, "deleted": key, "provider": prov}
+        res = delete_watchlist_batch(
+            keys=[key],
+            prov=prov,
+            state=state,
+            cfg=cfg,
+            provider_instance=provider_instance,
+            state_path=state_path,
+        ) or {}
+        _log("SYNC", f"[WL] delete {key} on {prov}: {'OK' if res.get('ok') else 'NOOP'}")
+        res.setdefault("key", key)
+        return res
     except Exception as e:
-        _log("TRBL", f"[WATCHLIST] {prov} delete failed: {e}")
-        return {"ok": False, "error": str(e), "provider": prov}
+        _log("SYNC", f"[WL] delete {key} on {prov} failed: {e}")
+        return {"ok": False, "status": "error", "provider": prov, "key": key, "error": str(e)}
 
-# Registered providers detection
 def detect_available_watchlist_providers(
     cfg: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -1408,16 +1446,20 @@ def detect_available_watchlist_providers(
         st = _load_state() or {}
         P = st.get("providers") or {}
         for pid in providers:
-            items = (
-                ((P.get(pid) or {}).get("watchlist") or {})
-                .get("baseline", {})
-                .get("items")
-                or {}
-            )
-            if isinstance(items, (dict, list, set, tuple)):
-                counts[pid] = len(items)
-            else:
-                counts[pid] = 0
+            pblk = P.get(pid) or {}
+            keys: set[str] = set()
+            base = (((pblk.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
+            if isinstance(base, dict):
+                keys |= set(base.keys())
+            insts = pblk.get("instances") or {}
+            if isinstance(insts, dict):
+                for blk in insts.values():
+                    if not isinstance(blk, dict):
+                        continue
+                    items = (((blk.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
+                    if isinstance(items, dict):
+                        keys |= set(items.keys())
+            counts[pid] = len(keys)
     except Exception:
         pass
 
@@ -1425,9 +1467,7 @@ def detect_available_watchlist_providers(
         try:
             from cw_platform.orchestrator import Orchestrator
 
-            snaps = Orchestrator(config=cfg).build_snapshots(
-                feature="watchlist"
-            ) or {}
+            snaps = Orchestrator(config=cfg).build_snapshots(feature="watchlist") or {}
             for pid in providers:
                 counts[pid] = len(snaps.get(pid) or {})
         except Exception:
@@ -1447,15 +1487,16 @@ def detect_available_watchlist_providers(
             }
         )
 
-    any_conf = any(p["configured"] for p in arr)
-    arr.append(
+    arr.insert(
+        0,
         {
             "id": "ALL",
-            "label": "All providers",
-            "configured": any_conf,
+            "label": "All Providers",
+            "configured": True,
             "supports_delete": True,
             "supports_batch": True,
-            "count": sum(p["count"] for p in arr),
-        }
+            "count": sum(counts.values()),
+        },
     )
     return arr
+

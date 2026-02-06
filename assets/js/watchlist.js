@@ -144,6 +144,17 @@
     opacity:.75;
   }
 
+
+#page-watchlist .metric .m-sub{
+  font-size:11px;
+  opacity:.55;
+  margin-top:2px;
+  max-width:160px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
   /* Snackbar */
   .wl-snack{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#1a1a22;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center;z-index:9999}
   .wl-hidden{display:none!important}
@@ -697,47 +708,75 @@
 
   let providerActive = (p, have) => (have ? providerChip(p) : "");
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
-
   function updateMetrics() {
-    const ICON = {
-      PLEX: "movie",
-      JELLYFIN: "movie",
-      EMBY: "movie",
-      TRAKT: "featured_play_list",
-      SIMKL: "featured_play_list",
-      ANILIST: "featured_play_list",
-      MDBLIST: "featured_play_list",
-      TMDB: "featured_play_list",
-      CROSSWATCH: "save"
-    };
-    const LABEL = {
-      CROSSWATCH: "CW"
-    };
-    const ORDER = ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
+  const ICON = {
+    PLEX: "movie",
+    JELLYFIN: "movie",
+    EMBY: "movie",
+    TRAKT: "featured_play_list",
+    SIMKL: "featured_play_list",
+    ANILIST: "featured_play_list",
+    MDBLIST: "featured_play_list",
+    TMDB: "featured_play_list",
+    CROSSWATCH: "save"
+  };
+  const LABEL = {
+    CROSSWATCH: "CW"
+  };
+  const ORDER = ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","MDBLIST","JELLYFIN","EMBY","CROSSWATCH"];
 
-    const counts = ORDER.reduce((acc, p) => {
-      acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
-      return acc;
-    }, {});
+  const instsOf = (it, p) => {
+    const sbp = it?.sources_by_provider || it?.sourcesByProvider || {};
+    const arr = sbp?.[String(p || "").toLowerCase()];
+    return Array.isArray(arr) ? arr.map(x => String(x || "").trim()).filter(Boolean) : [];
+  };
 
-    const cards = ORDER
-      .filter(p => activeProviders.has(p))
-      .map(p => {
-        const label = LABEL[p] || p;
-        return `<div class="metric" data-w="${p}">
-          <span class="material-symbol">${ICON[p]}</span>
-          <div>
-            <div class="m-val">${counts[p]}</div>
-            <div class="m-lbl">${label}</div>
-          </div>
-        </div>`;
-      })
-      .join("");
+  const instHint = (arr) => {
+    if (!Array.isArray(arr) || !arr.length) return "";
+    const shown = arr.slice(0, 2);
+    const extra = arr.length - shown.length;
+    return shown.join(", ") + (extra > 0 ? ` +${extra}` : "");
+  };
 
-    metricsEl.innerHTML = cards
-      ? `<div class="metric-row">${cards}</div>`
-      : "";
-  }
+  const counts = ORDER.reduce((acc, p) => {
+    acc[p] = filtered.reduce((n, it) => n + (providersOf(it).includes(p) ? 1 : 0), 0);
+    return acc;
+  }, {});
+
+  const instsByProv = ORDER.reduce((acc, p) => {
+    const set = new Set();
+    for (const it of filtered) {
+      if (!providersOf(it).includes(p)) continue;
+      for (const inst of instsOf(it, p)) set.add(inst);
+    }
+    const arr = [...set].filter(Boolean);
+    arr.sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b));
+    acc[p] = arr;
+    return acc;
+  }, {});
+
+  const cards = ORDER
+    .filter(p => activeProviders.has(p))
+    .map(p => {
+      const label = LABEL[p] || p;
+      const insts = instsByProv[p] || [];
+      const sub = instHint(insts);
+      const title = insts.length ? `Profiles: ${insts.join(", ")}` : "";
+      return `<div class="metric" data-w="${p}"${title ? ` title="${esc(title)}"` : ""}>
+        <span class="material-symbol">${ICON[p]}</span>
+        <div>
+          <div class="m-val">${counts[p]}</div>
+          <div class="m-lbl">${label}</div>
+          ${sub ? `<div class="m-sub">${esc(sub)}</div>` : ""}
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  metricsEl.innerHTML = cards
+    ? `<div class="metric-row">${cards}</div>`
+    : "";
+}
 
   /* Sorting */
   const _t = it => String(it.title || "").toLowerCase();

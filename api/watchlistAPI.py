@@ -44,6 +44,28 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
         out.insert(0, "CROSSWATCH")
     return out
 
+
+def _tmdb_api_key(cfg: dict[str, Any]) -> str:
+    def _pick_from_block(blk: Any) -> str:
+        if not isinstance(blk, dict):
+            return ""
+        k = str(blk.get("api_key") or "").strip()
+        if k:
+            return k
+        insts = blk.get("instances")
+        if isinstance(insts, dict):
+            for v in insts.values():
+                kk = str((v or {}).get("api_key") or "").strip() if isinstance(v, dict) else ""
+                if kk:
+                    return kk
+        return ""
+
+    for key in ("tmdb", "tmdb_sync"):
+        found = _pick_from_block(cfg.get(key))
+        if found:
+            return found
+    return ""
+
 def _type_from_item_or_guess(item: dict[str, Any], key: str = "") -> str:
     t = str(item.get("type") or item.get("media_type") or item.get("entity") or "").lower().strip()
     if t in ("tv", "show", "shows", "series", "episode", "season", "anime"):
@@ -92,7 +114,7 @@ def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
             out.append(k)
     return out
 
-def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
+def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | None = None) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import STATS, _append_log
     from .syncAPI import _load_state
@@ -107,6 +129,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
     state = _load_state() or {}
     active = _active_providers(cfg)
     prov = (provider or "ALL").upper().strip()
+    inst_p = provider_instance if prov != "ALL" else None
 
     if prov == "ALL":
         targets = active[:]
@@ -125,12 +148,12 @@ def _bulk_delete(provider: str, keys_raw: list[Any]) -> dict[str, Any]:
             per_key: list[dict[str, Any]] = []
             deleted = 0
             for k in keys:
-                if not _find_item_in_state_for_provider(state, k, p):
+                if not _find_item_in_state_for_provider(state, k, p, instance_id=inst_p):
                     per_key.append({"key": k, "deleted": 0, "attempted": False, "reason": "not_in_state"})
                     continue
                 kind, label = _item_label(state, k, p)
                 safe_label = (label or "").replace("'", "’")
-                r = delete_watchlist_batch([k], p, state, cfg) or {}
+                r = delete_watchlist_batch([k], p, state, cfg, provider_instance=inst_p) or {}
                 d = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
                 per_key.append({"key": k, "deleted": d, "attempted": True})
                 deleted += d
@@ -332,7 +355,7 @@ def api_watchlist(
 
     cfg = load_config()
     st = _load_state()
-    api_key = ((cfg.get("tmdb") or {}).get("api_key") or "").strip()
+    api_key = _tmdb_api_key(cfg)
     has_key = bool(api_key)
 
     if not st:
@@ -421,6 +444,7 @@ def api_watchlist(
 def api_watchlist_delete(
     key: str = FPath(...),
     provider: str | None = Query("ALL", description="Provider id or ALL"),
+    provider_instance: str | None = Query(None, description="Provider instance id (optional)"),
 ) -> JSONResponse:
     from cw_platform.config_base import load_config
     from crosswatch import STATE_PATH, STATS, _append_log
@@ -435,6 +459,7 @@ def api_watchlist_delete(
         state_path=STATE_PATH,
         cfg=load_config(),
         provider=prov,
+        provider_instance=provider_instance,
         log=_append_log,
     )
 
@@ -459,12 +484,14 @@ def api_watchlist_delete(
 @router.post("/delete")
 def api_watchlist_delete_multi(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     provider = str(payload.get("provider") or "ALL").strip().upper()
+    provider_instance = payload.get("provider_instance")
     keys = payload.get("keys") or []
-    return _bulk_delete(provider, keys)
+    return _bulk_delete(provider, keys, provider_instance=provider_instance)
 
 
 @router.post("/delete_batch")
 def api_watchlist_delete_batch(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     provider = str(payload.get("provider") or "ALL").strip().upper()
+    provider_instance = payload.get("provider_instance")
     keys = payload.get("keys") or []
-    return _bulk_delete(provider, keys)
+    return _bulk_delete(provider, keys, provider_instance=provider_instance)
