@@ -951,3 +951,6 @@ html.cw-compact main#layout{padding-bottom:24px}
 
 #sec-scrobbler.open>.body{max-height:2000px}
 #sec-scrobbler.open>.body{max-height:none!important;overflow:visible!important;padding-bottom:18px!important}
+
+#sc-routes.sc-routes-auto{max-height:none!important;overflow:visible!important}
+#sc-routes.sc-routes-auto thead th{position:static!important}

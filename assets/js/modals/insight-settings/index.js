@@ -14,6 +14,85 @@ const fjson = async (url, opts = {}) => {
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => (window.CSS?.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&"));
+const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+
+const canonProv = (v) => {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  const up = s.toUpperCase();
+  if (up === "TMDB_SYNC") return "TMDB";
+  if (up === "MDB" || up === "MDB_LIST" || up === "MDBLIST") return "MDBLIST";
+  return up;
+};
+
+const canonProvKey = (v) => canonProv(v).toLowerCase();
+
+const cfgHas = (v) => {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return Number.isFinite(v) && v !== 0;
+  if (typeof v === "string") return !!v.trim();
+  return true;
+};
+
+const providerConfigured = (cfg, key) => {
+  const k = String(key || "").toLowerCase();
+  if (!cfg || typeof cfg !== "object" || !k) return false;
+
+  const blockFor = (name) => {
+    const kk = String(name || "").toLowerCase();
+    return (cfg?.[kk] && typeof cfg[kk] === "object") ? cfg[kk] : {};
+  };
+
+  const anyInstance = (blk, fn) => {
+    if (fn(blk)) return true;
+    const insts = blk?.instances;
+    if (insts && typeof insts === "object") {
+      for (const v of Object.values(insts)) {
+        if (v && typeof v === "object" && fn(v)) return true;
+      }
+    }
+    return false;
+  };
+
+  if (k === "plex") {
+    const blk = blockFor("plex");
+    return anyInstance(blk, b => cfgHas(b?.account_token));
+  }
+  if (k === "simkl") {
+    const blk = blockFor("simkl");
+    return anyInstance(blk, b => cfgHas(b?.access_token) && cfgHas(b?.client_id));
+  }
+  if (k === "trakt") {
+    const blk = blockFor("trakt");
+    return anyInstance(blk, b => cfgHas(b?.access_token || b?.token) && cfgHas(b?.client_id));
+  }
+  if (k === "anilist") {
+    const blk = blockFor("anilist");
+    return anyInstance(blk, b => cfgHas(b?.access_token || b?.token));
+  }
+  if (k === "jellyfin") {
+    const blk = blockFor("jellyfin");
+    return anyInstance(blk, b => cfgHas(b?.server) && cfgHas(b?.access_token || b?.token));
+  }
+  if (k === "emby") {
+    const blk = blockFor("emby");
+    return anyInstance(blk, b => cfgHas(b?.server) && cfgHas(b?.access_token || b?.token || b?.api_key));
+  }
+  if (k === "tmdb") {
+    const blk = blockFor("tmdb_sync");
+    return anyInstance(blk, b => cfgHas(b?.api_key));
+  }
+  if (k === "mdblist") {
+    const blk = blockFor("mdblist");
+    return anyInstance(blk, b => cfgHas(b?.api_key || b?.key));
+  }
+  if (k === "tautulli") {
+    const blk = blockFor("tautulli");
+    return anyInstance(blk, b => cfgHas(b?.server_url) && cfgHas(b?.api_key));
+  }
+  return false;
+};
 
 const loadPrefs = () => {
   try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}") || {}; }
@@ -52,6 +131,8 @@ function injectCSS() {
   .cw-insight-set .opt-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.18)}
   .cw-insight-set .opt-row:hover{background:rgba(255,255,255,.06)}
   .cw-insight-set .feat-name{font-weight:900;font-size:14px}
+  .cw-insight-set .switch{flex:0 0 auto;align-self:center;}
+  .cw-insight-set .switch .slider{display:block;}
   .cw-insight-set .switch{--w:58px;--h:32px;--dot:24px;--pad:4px;--bw:1px;position:relative;display:inline-block;width:var(--w);height:var(--h)}
   .cw-insight-set .switch input{width:0;height:0;position:absolute;opacity:0}
   .cw-insight-set .switch .slider{position:absolute;inset:0;border-radius:999px;border:var(--bw) solid rgba(255,255,255,.16);background:rgba(0,0,0,.22);transition:.2s;box-sizing:border-box}
@@ -67,6 +148,8 @@ function injectCSS() {
   .cw-insight-set .prov-actions{display:flex;gap:8px;align-items:center}
   .cw-insight-set .mini{border:1px solid rgba(255,255,255,.14);background:transparent;color:#dbe8ff;border-radius:999px;padding:4px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;opacity:.85}
   .cw-insight-set .mini:hover{opacity:1;background:rgba(255,255,255,.05)}
+  .cw-insight-set [data-list]{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
+  .cw-insight-set .pill{min-height:34px;box-sizing:border-box}
   .cw-insight-set .actions{padding:10px 16px;border-top:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:space-between;gap:12px;background:#05060c}
   .cw-insight-set .btn{min-width:110px}
   .cw-insight-set .btn.good{background:var(--grad2);border-color:rgba(25,195,125,.45);box-shadow:0 0 14px var(--glow2);color:#fff}
@@ -116,7 +199,23 @@ function providerLabel(p) {
   if (up === "JELLYFIN") return "Jellyfin";
   if (up === "MDBLIST") return "MDBList";
   if (up === "CROSSWATCH") return "CrossWatch";
+  if (up === "TMDB" || up === "TMDB_SYNC") return "TMDb";
   return up.slice(0, 1) + up.slice(1).toLowerCase();
+}
+
+function parseInstanceList(raw) {
+  const out = { ids: [], labels: {} };
+  const arr = Array.isArray(raw) ? raw : [];
+  for (const it of arr) {
+    const id = (typeof it === "string") ? it : String(it?.id || "").trim();
+    if (!id) continue;
+    if (!out.ids.includes(id)) out.ids.push(id);
+    const label = (typeof it === "object" && it) ? String(it.label || "").trim() : "";
+    if (label) out.labels[id] = label;
+  }
+  if (!out.ids.includes("default")) out.ids.unshift("default");
+  if (!out.labels["default"]) out.labels["default"] = "Default";
+  return out;
 }
 
 export default {
@@ -168,74 +267,62 @@ export default {
       window.cxCloseModal?.();
     });
 
-    let data = {};
-    try {
-      data = await fjson("/api/insights?limit_samples=0&history=0");
-    } catch (e) {
-      toast("Failed to load insights metadata.");
-      console.error("[InsightsSettings] failed to load /api/insights", e);
-      data = {};
-    }
+    let cfg = {};
+    try { cfg = await fjson("/api/config?cb=" + Date.now()); } catch { cfg = {}; }
+
+    let status = {};
+    try { status = await fjson("/api/status?fresh=0&cb=" + Date.now()); } catch { status = {}; }
 
     let pairs = [];
-    try {
-      pairs = await fjson("/api/pairs");
-    } catch (e) {
-      pairs = [];
-    }
+    try { pairs = await fjson("/api/pairs?cb=" + Date.now()); } catch { pairs = []; }
 
-    const usedProviders = new Set();
+    const provFromPairs = new Set();
     for (const p of (Array.isArray(pairs) ? pairs : [])) {
-      const a = p?.source;
-      const b = p?.target;
-      if (a) usedProviders.add(String(a).toLowerCase());
-      if (b) usedProviders.add(String(b).toLowerCase());
+      if (p?.enabled === false) continue;
+      if (p?.source) provFromPairs.add(canonProvKey(p.source));
+      if (p?.target) provFromPairs.add(canonProvKey(p.target));
     }
 
-    if (!usedProviders.size) {
-      for (const k of Object.keys(data.instances_by_provider || {})) {
-        usedProviders.add(String(k).toLowerCase());
-      }
+    const provFromStatus = new Set();
+    for (const k of Object.keys((status && status.providers) || {})) {
+      const key = canonProvKey(k);
+      if (key) provFromStatus.add(key);
     }
+
+    const probed = ["plex","simkl","trakt","anilist","jellyfin","emby","tmdb","mdblist","tautulli"];
+    const provFromCfg = new Set();
+    for (const k of probed) {
+      if (providerConfigured(cfg, k)) provFromCfg.add(String(k));
+    }
+
+    const providersToShow = new Set([...provFromCfg, ...provFromStatus, ...provFromPairs]);
 
     let instApi = {};
-    try {
-      instApi = await fjson("/api/provider-instances");
-    } catch (e) {
-      instApi = {};
-    }
+    try { instApi = await fjson("/api/provider-instances?cb=" + Date.now()); } catch { instApi = {}; }
 
     const labelsByProvider = {};
     const instancesByProvider = {};
 
-    const findInstKey = (provKey) => {
-      const want = String(provKey || "").toLowerCase();
-      for (const k of Object.keys(instApi || {})) {
-        if (String(k || "").toLowerCase() === want) return k;
+    const getRawInstances = async (provKey) => {
+      const key = String(provKey || "").toLowerCase();
+      const up = canonProv(key);
+      const cand = [up, key, up.toLowerCase()];
+      if (up === "TMDB") cand.push("TMDB_SYNC", "tmdb_sync");
+      for (const k of cand) {
+        if (k && instApi && Object.prototype.hasOwnProperty.call(instApi, k)) return instApi[k];
       }
-      return null;
+      try {
+        return await fjson("/api/provider-instances/" + encodeURIComponent(key) + "?cb=" + Date.now());
+      } catch {
+        return null;
+      }
     };
 
-    for (const prov of Array.from(usedProviders).sort((a, b) => a.localeCompare(b))) {
-      const k = findInstKey(prov);
-      const rawList = k ? instApi[k] : null;
-      const ids = [];
-      const labs = {};
-      if (Array.isArray(rawList) && rawList.length) {
-        for (const it of rawList) {
-          const id = typeof it === "string" ? it : String(it?.id || "").trim();
-          if (!id) continue;
-          if (!ids.includes(id)) ids.push(id);
-          const label = typeof it === "object" && it ? String(it.label || "").trim() : "";
-          if (label) labs[id] = label;
-        }
-      }
-
-      if (!ids.includes("default")) ids.unshift("default");
-      if (!labs["default"]) labs["default"] = "Default";
-
-      instancesByProvider[prov] = ids;
-      labelsByProvider[prov] = labs;
+    for (const prov of Array.from(providersToShow).sort((a, b) => a.localeCompare(b))) {
+      const raw = await getRawInstances(prov);
+      const parsed = parseInstanceList(raw);
+      instancesByProvider[prov] = parsed.ids;
+      labelsByProvider[prov] = parsed.labels;
     }
 
     let prefs = normalizePrefs(loadPrefs(), instancesByProvider);
@@ -248,12 +335,12 @@ export default {
           <div class="opt-row is-feat-row">
             <div class="feat-name">${FEAT_LABEL[k] || k}</div>
             <label class="switch" for="is-feat-${esc(k)}">
-              <input type="checkbox" id="is-feat-${esc(k)}" data-feat="${esc(k)}" ${on ? "checked" : ""}>
+              <input type="checkbox" id="is-feat-${esc(k)}" data-feat="${h(k)}" ${on ? "checked" : ""}>
               <span class="slider"></span>
             </label>
           </div>`;
       }).join("");
-}
+    }
 
     const loading = $("#is-loading", root);
     const provGrid = $("#is-prov-grid", root);
@@ -278,11 +365,12 @@ export default {
         const section = document.createElement("div");
         section.className = "card";
         section.dataset.provider = pkey;
+        section.dataset.providerSection = "1";
 
         const badge = `${selected.length}/${all.length}`;
         section.innerHTML = `
           <div class="prov-head">
-            <div class="prov-name">${providerLabel(pkey)}</div>
+            <div class="prov-name">${h(providerLabel(pkey))}</div>
             <div class="prov-actions">
               <span class="prov-badge" data-badge>${badge}</span>
               <button class="mini" type="button" data-all>All</button>
@@ -299,8 +387,8 @@ export default {
             const on = selectedSet.has(id);
             return `
               <label class="pill" for="is-${esc(pkey)}-${esc(id)}">
-                <input type="checkbox" id="is-${esc(pkey)}-${esc(id)}" data-provider="${esc(pkey)}" data-inst="${esc(id)}" ${on ? "checked" : ""}>
-                <span class="lab">${lab}</span>
+                <input type="checkbox" id="is-${esc(pkey)}-${esc(id)}" data-inst="${h(id)}" ${on ? "checked" : ""}>
+                <span class="lab">${h(lab)}</span>
               </label>`;
           }).join("");
         }
@@ -341,7 +429,7 @@ export default {
       if (!Object.values(next.features).some(Boolean)) next.features.watchlist = true;
 
       next.instances = next.instances && typeof next.instances === "object" ? next.instances : {};
-      const provSections = Array.from(root.querySelectorAll('[data-provider]'));
+      const provSections = Array.from(root.querySelectorAll('[data-provider-section="1"]'));
       for (const sec of provSections) {
         const prov = String(sec.dataset.provider || "").toLowerCase();
         const checks = Array.from(sec.querySelectorAll('input[type="checkbox"][data-inst]'));
