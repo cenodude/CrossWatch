@@ -51,7 +51,7 @@ function stateAsBool(v) {
   return !!v;
 }
 
-// Shared provider instance helpers
+// Shared provider instance helpers (routes UI, scrobbler, etc.)
 const __cwInstCache = {};
 async function cwGetProviderInstances(provider, opts = {}) {
   const p = String(provider || "").trim().toLowerCase();
@@ -4786,11 +4786,28 @@ async function updateWatchlistPreview() {
 }
 
 async function hasTmdbKey(){
+  const pick = (cfg) => {
+    const fromBlock = (blk) => {
+      if (!blk || typeof blk !== "object") return "";
+      const k = String(blk.api_key || "").trim();
+      if (k) return k;
+      const insts = blk.instances;
+      if (insts && typeof insts === "object") {
+        for (const id of Object.keys(insts)) {
+          const v = insts[id];
+          const kk = v && typeof v === "object" ? String(v.api_key || "").trim() : "";
+          if (kk) return kk;
+        }
+      }
+      return "";
+    };
+    return fromBlock(cfg?.tmdb) || fromBlock(cfg?.tmdb_sync);
+  };
   try{
-    if(window._cfgCache) return !!(window._cfgCache.tmdb?.api_key||"").trim();
-    const cfg=await fetch("/api/config").then(r=>r.json());
+    if(window._cfgCache) return !!pick(window._cfgCache);
+    const cfg=await fetch("/api/config", { cache: "no-store" }).then(r=>r.json());
     window._cfgCache=cfg;
-    return !!(cfg.tmdb?.api_key||"").trim();
+    return !!pick(cfg);
   }catch{ return false; }
 }
 
