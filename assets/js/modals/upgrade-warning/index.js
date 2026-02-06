@@ -212,18 +212,18 @@ async function saveNow(btn) {
     if (btn) {
       btn.disabled = true;
       btn.classList.add("busy");
-      btn.textContent = "Saving...";
+      btn.textContent = "Migrating...";
     }
   } catch {}
 
   try {
     await _saveConfigNoUi();
-    notify("Saved. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.");
+    notify("Migrated. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.");
 
     try {
       if (btn) {
         btn.classList.remove("busy");
-        btn.textContent = "SAVED";
+        btn.textContent = "MIGRATED";
         btn.disabled = true;
         btn.dataset.done = "1";
       }
@@ -241,7 +241,7 @@ async function saveNow(btn) {
         if (!btn.dataset || btn.dataset.done !== "1") {
           btn.disabled = false;
           btn.classList.remove("busy");
-          btn.textContent = "SAVE";
+          btn.textContent = "MIGRATE";
         }
       }
     } catch {}
@@ -418,7 +418,7 @@ export default {
         ` : `
         <div class="card">
           <div class="h">What this means</div>
-          <div class="p">Nothing is broken. Click <b>SAVE</b> once so CrossWatch can apply the updated config structure.</div>
+          <div class="p">Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch can apply the updated config structure.</div>
         </div>
 
         <div class="card">
@@ -438,7 +438,7 @@ export default {
         <button class="btn ghost" type="button" data-x="close">Close</button>
         ${legacy
           ? `<button class="btn danger" type="button" data-x="migrate">MIGRATE</button>`
-          : `<button class="btn primary" type="button" data-x="save">SAVE</button>`
+          : `<button class="btn primary" type="button" data-x="save">MIGRATE</button>`
         }
       </div>
     </div>
