@@ -51,6 +51,87 @@ function stateAsBool(v) {
   return !!v;
 }
 
+// Shared provider instance helpers
+const __cwInstCache = {};
+async function cwGetProviderInstances(provider, opts = {}) {
+  const p = String(provider || "").trim().toLowerCase();
+  if (!p) return [{ id: "default", name: "default" }];
+  const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
+  const force = !!opts.force;
+
+  const now = Date.now();
+  const c = __cwInstCache[p];
+  if (!force && c && (now - (c.t || 0) < ttlMs) && Array.isArray(c.list)) return c.list;
+
+  try {
+    const r = await fetch(`/api/provider-instances/${encodeURIComponent(p)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const list = [{ id: "default", name: "default" }].concat(
+      (data.instances || []).map(i => ({ id: i.id, name: i.name || i.id }))
+    );
+    __cwInstCache[p] = { t: now, list };
+    return list;
+  } catch {
+    const fallback = [{ id: "default", name: "default" }];
+    __cwInstCache[p] = { t: now, list: fallback };
+    return fallback;
+  }
+}
+
+async function cwGetProviderUsers(provider, instanceId = "default") {
+  const p = String(provider || "").trim().toLowerCase();
+  const inst = String(instanceId || "default");
+  if (!p) return [];
+  try {
+    const r = await fetch(`/api/${encodeURIComponent(p)}/users?instance=${encodeURIComponent(inst)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch {
+    return [];
+  }
+}
+
+function cwEnsureScrobbleRoutes(cfg) {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  cfg.scrobble = cfg.scrobble || {};
+  cfg.scrobble.watch = cfg.scrobble.watch || {};
+
+  const w = cfg.scrobble.watch;
+  if (Array.isArray(w.routes) && w.routes.length) return cfg;
+
+  const prov = w.provider;
+  const sink = w.sink;
+  const filters = w.filters || {};
+  if (!prov || !sink) { w.routes = []; return cfg; }
+
+  const sinks = String(sink).split(",").map(s => s.trim()).filter(Boolean);
+  w.routes = sinks.map((s, i) => ({
+    id: `R${i + 1}`,
+    enabled: true,
+    provider: String(prov).trim(),
+    provider_instance: "default",
+    sink: s,
+    sink_instance: "default",
+    filters: JSON.parse(JSON.stringify(filters)),
+  }));
+  return cfg;
+}
+
+function cwNextRouteId(routes) {
+  const used = new Set((routes || []).map(r => r?.id).filter(Boolean));
+  let i = 1;
+  while (used.has(`R${i}`)) i++;
+  return `R${i}`;
+}
+
+try {
+  window.cwGetProviderInstances = window.cwGetProviderInstances || cwGetProviderInstances;
+  window.cwGetProviderUsers = window.cwGetProviderUsers || cwGetProviderUsers;
+  window.cwEnsureScrobbleRoutes = window.cwEnsureScrobbleRoutes || cwEnsureScrobbleRoutes;
+  window.cwNextRouteId = window.cwNextRouteId || cwNextRouteId;
+} catch {}
+
 
 function applyServerSecret(inputId, hasValue) {
   const el = document.getElementById(inputId);
@@ -1263,8 +1344,7 @@ document.addEventListener("DOMContentLoaded", refreshInsights);
   setInterval(run, INTERVAL);
 })();
 
-
-// Find the actions row and insert the pill right after it
+// Ensure main update slot exists
 function ensureMainUpdateSlot() {
   let slot = document.getElementById('st-main-update');
   if (slot) return slot;
@@ -2230,6 +2310,8 @@ async function loadCrossWatchSnapshots(cfg) {
     console.warn("CrossWatch snapshot list failed", e);
   }
 }
+
+/*! Settings */
 
 
 /* Settings Hub: UI / Security / CW Tracker */
@@ -4074,14 +4156,9 @@ async function saveSettings() {
           changed = true;
         }
       }
-
-} catch (e) {
-  console.warn("saveSettings: scrobbler merge failed", e);
-  const msg = String((e && e.message) || e || "Scrobbler settings invalid");
-  // Abort saving to avoid persisting an invalid/partial scrobbler config
-  abortSave(msg);
-}
-
+    } catch (e) {
+      console.warn("saveSettings: scrobbler merge failed", e);
+    }
 
     
     try {
@@ -4212,10 +4289,7 @@ async function saveSettings() {
       try { cwShowRestartBanner(msg, { showApply: true, applyText, kind }); } catch {}
       showToast(msg, true);
     })();
-  
-} catch (err) {
-    // @ts-ignore
-    if (err && err.__cwAbortSave) return;
+  } catch (err) {
     console.error("saveSettings failed", err);
     showToast("Save failed — see console", false);
     throw err;
