@@ -15,12 +15,48 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.provider_instances import normalize_instance_id
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
 MANUAL_STATE_PATH = CONFIG_DIR / "state.manual.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
 _LOCK = threading.Lock()
+
+_DEFAULT_INSTANCE = "default"
+_PROV_TOKEN_SEPS = ("@", "#", ":")
+
+def _split_prov_token(v: Any) -> tuple[str, str]:
+    raw = str(v or "").strip()
+    if not raw:
+        return "", _DEFAULT_INSTANCE
+    for sep in _PROV_TOKEN_SEPS:
+        if sep in raw:
+            a, b = raw.split(sep, 1)
+            return str(a or "").upper().strip(), normalize_instance_id(b)
+    return raw.upper(), _DEFAULT_INSTANCE
+
+def _split_prov_token_ex(v: Any) -> tuple[str, str, bool]:
+    raw = str(v or "").strip()
+    if not raw:
+        return "", _DEFAULT_INSTANCE, False
+    for sep in _PROV_TOKEN_SEPS:
+        if sep in raw:
+            a, b = raw.split(sep, 1)
+            return str(a or "").upper().strip(), normalize_instance_id(b), True
+    return raw.upper(), _DEFAULT_INSTANCE, False
+
+
+def _prov_token(prov: str, inst: Any = None) -> str:
+    p = str(prov or "").upper().strip()
+    i = normalize_instance_id(inst)
+    return p if i == _DEFAULT_INSTANCE else f"{p}@{i}"
+
+def _norm_prov_token(v: Any) -> str:
+    base, inst = _split_prov_token(v)
+    return _prov_token(base, inst)
+
+
 
 
 def _cfg() -> dict[str, Any]:
@@ -32,20 +68,51 @@ def _cfg() -> dict[str, Any]:
 
 
 def _tmdb_key() -> str:
-    return ((_cfg().get("tmdb") or {}).get("api_key") or "").strip()
-
+    cfg = _cfg()
+    for root_key in ("tmdb", "tmdb_sync"):
+        blk = cfg.get(root_key)
+        if isinstance(blk, dict):
+            k = str(blk.get("api_key") or "").strip()
+            if k:
+                return k
+            insts = blk.get("instances")
+            if isinstance(insts, dict):
+                for _, ib in insts.items():
+                    if isinstance(ib, dict):
+                        k2 = str(ib.get("api_key") or "").strip()
+                        if k2:
+                            return k2
+    return ""
 
 def _trakt_headers() -> dict[str, str]:
-    t = _cfg().get("trakt") or {}
+    cfg = _cfg()
+    base = cfg.get("trakt")
+    blocks: list[dict[str, Any]] = []
+    if isinstance(base, dict):
+        blocks.append(base)
+        insts = base.get("instances")
+        if isinstance(insts, dict):
+            for _, ib in insts.items():
+                if isinstance(ib, dict):
+                    blocks.append(ib)
+
+    client_id = ""
+    token = ""
+    for b in blocks:
+        if not client_id:
+            client_id = str(b.get("client_id") or "").strip()
+        if not token:
+            token = str(b.get("access_token") or "").strip()
+        if client_id and token:
+            break
+
     h: dict[str, str] = {
         "trakt-api-version": "2",
-        "trakt-api-key": (t.get("client_id") or "").strip(),
+        "trakt-api-key": client_id,
     }
-    tok = (t.get("access_token") or "").strip()
-    if tok:
-        h["Authorization"] = f"Bearer {tok}"
+    if token:
+        h["Authorization"] = f"Bearer {token}"
     return h
-
 
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
@@ -115,44 +182,72 @@ def _load_state_handles(pairs_raw: str | None) -> list[dict[str, Any]]:
 
 def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
     merged: dict[str, Any] = {"providers": {}}
+
+    def merge_feat(dst_blk: dict[str, Any], src_blk: dict[str, Any], feat: str) -> None:
+        items = (((src_blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
+        if not isinstance(items, dict):
+            return
+        mb = dst_blk.setdefault(feat, {}).setdefault("baseline", {}).setdefault("items", {})
+        if not isinstance(mb, dict):
+            return
+
+        for k, it in items.items():
+            if k not in mb:
+                mb[k] = dict(it or {})
+                continue
+
+            a = mb.get(k)
+            if not isinstance(a, dict) or not isinstance(it, dict):
+                continue
+
+            ida = dict(a.get("ids") or {})
+            idb = dict(it.get("ids") or {})
+            for ns, vv in idb.items():
+                if ns not in ida and vv:
+                    ida[ns] = vv
+            if ida:
+                a["ids"] = ida
+
+            for fld in ("title", "year", "type", "series_title", "season", "episode"):
+                if fld not in a and fld in it:
+                    a[fld] = it.get(fld)
+
     for h in handles:
         s = h.get("state") or {}
         provs = s.get("providers") if isinstance(s, dict) else None
         if not isinstance(provs, dict):
             continue
+
         for prov, pv in provs.items():
-            mpv = merged["providers"].setdefault(prov, {})  # type: ignore[index]
             if not isinstance(pv, dict):
                 continue
-            for feat, fv in pv.items():
-                if feat not in ("history", "watchlist", "ratings"):
-                    continue
-                items = (((fv or {}).get("baseline") or {}).get("items") or {})
-                if not isinstance(items, dict):
-                    continue
-                mb = mpv.setdefault(feat, {}).setdefault("baseline", {}).setdefault("items", {})
-                if not isinstance(mb, dict):
-                    continue
-                for k, it in items.items():
-                    if k not in mb:
-                        mb[k] = dict(it or {})
-                        continue
-         
-                    a = mb[k]
-                    if not isinstance(a, dict) or not isinstance(it, dict):
-                        continue
-                    ida = dict(a.get("ids") or {})
-                    idb = dict(it.get("ids") or {})
-                    for ns, vv in idb.items():
-                        if ns not in ida and vv:
-                            ida[ns] = vv
-                    if ida:
-                        a["ids"] = ida
-                    for fld in ("title", "year", "type"):
-                        if fld not in a and fld in it:
-                            a[fld] = it.get(fld)
-    return merged
+            mpv = merged["providers"].setdefault(prov, {})  # type: ignore[index]
+            if not isinstance(mpv, dict):
+                continue
 
+            for feat in ("history", "watchlist", "ratings"):
+                merge_feat(mpv, pv, feat)
+
+            insts = pv.get("instances")
+            if not isinstance(insts, dict) or not insts:
+                continue
+
+            minst = mpv.setdefault("instances", {})
+            if not isinstance(minst, dict):
+                minst = {}
+                mpv["instances"] = minst
+
+            for inst_id, blk in insts.items():
+                if not isinstance(blk, dict):
+                    continue
+                dib = minst.setdefault(str(inst_id), {})
+                if not isinstance(dib, dict):
+                    dib = {}
+                    minst[str(inst_id)] = dib
+                for feat in ("history", "watchlist", "ratings"):
+                    merge_feat(dib, blk, feat)
+
+    return merged
 
 def _load_state(pairs_raw: str | None = None) -> dict[str, Any]:
     handles = _load_state_handles(pairs_raw)
@@ -199,19 +294,110 @@ def _manual_add_blocks(manual: dict[str, Any]) -> dict[tuple[str, str], set[str]
     return out
 
 def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, Any]]]:
-    for prov, pv in (s.get("providers") or {}).items():
-        for feat in ("history", "watchlist", "ratings"):
-            items = (((pv or {}).get(feat) or {}).get("baseline") or {}).get("items") or {}
-            for k, it in items.items():
-                yield prov, feat, k, (it or {})
+    provs = s.get("providers") if isinstance(s, dict) else None
+    if not isinstance(provs, dict):
+        return
+    for prov, pv in provs.items():
+        if not isinstance(pv, dict):
+            continue
 
+        for feat in ("history", "watchlist", "ratings"):
+            items = (((pv.get(feat) or {}).get("baseline") or {}).get("items") or {})
+            if isinstance(items, dict):
+                for k, it in items.items():
+                    yield _prov_token(str(prov)), feat, str(k), (it or {})
+
+        insts = pv.get("instances")
+        if not isinstance(insts, dict) or not insts:
+            continue
+        for inst_id, blk in insts.items():
+            if not isinstance(blk, dict):
+                continue
+            tok = _prov_token(str(prov), inst_id)
+            for feat in ("history", "watchlist", "ratings"):
+                items = (((blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
+                if not isinstance(items, dict):
+                    continue
+                for k, it in items.items():
+                    yield tok, feat, str(k), (it or {})
 
 def _bucket(s: dict[str, Any], prov: str, feat: str) -> dict[str, Any] | None:
-    try:
-        return s["providers"][prov][feat]["baseline"]["items"]  # type: ignore[index]
-    except KeyError:
+    provs = s.get("providers") if isinstance(s, dict) else None
+    if not isinstance(provs, dict):
         return None
 
+    p, inst, _ = _split_prov_token_ex(prov)
+    if not p:
+        return None
+
+    pv = provs.get(p)
+    if not isinstance(pv, dict):
+        return None
+
+    blk: dict[str, Any] = pv
+    if inst != _DEFAULT_INSTANCE:
+        insts = pv.get("instances")
+        if isinstance(insts, dict) and isinstance(insts.get(inst), dict):
+            blk = insts.get(inst) or {}
+        else:
+            return None
+
+    try:
+        items = blk[feat]["baseline"]["items"]  # type: ignore[index]
+        return items if isinstance(items, dict) else None
+    except Exception:
+        return None
+
+def _iter_buckets_for_selector(
+    s: dict[str, Any],
+    prov_selector: str,
+    feat: str,
+) -> Iterable[tuple[str, dict[str, Any]]]:
+    provs = s.get("providers") if isinstance(s, dict) else None
+    if not isinstance(provs, dict):
+        return
+
+    p, inst, explicit = _split_prov_token_ex(prov_selector)
+    if not p:
+        return
+    pv = provs.get(p)
+    if not isinstance(pv, dict):
+        return
+
+    if explicit:
+        tok = _prov_token(p, inst)
+        b = _bucket(s, tok, feat)
+        if b is not None:
+            yield tok, b
+        return
+
+    b0 = _bucket(s, p, feat)
+    if b0 is not None:
+        yield _prov_token(p, _DEFAULT_INSTANCE), b0
+
+    insts = pv.get("instances")
+    if not isinstance(insts, dict):
+        return
+    for inst_id, blk in insts.items():
+        if not isinstance(blk, dict):
+            continue
+        tok = _prov_token(p, inst_id)
+        b = _bucket(s, tok, feat)
+        if b is not None:
+            yield tok, b
+
+
+def _find_items(
+    s: dict[str, Any],
+    prov_selector: str,
+    feat: str,
+    key: str,
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    hits: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for tok, b in _iter_buckets_for_selector(s, prov_selector, feat):
+        if key in b and isinstance(b.get(key), dict):
+            hits.append((tok, b, b[key]))
+    return hits
 
 def _find_item(
     s: dict[str, Any],
@@ -219,32 +405,30 @@ def _find_item(
     feat: str,
     key: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    b = _bucket(s, prov, feat)
-    if b is None or key not in b:
+    hits = _find_items(s, prov, feat, key)
+    if not hits:
         return None, None
-    return b, b[key]
-
+    _, b, it = hits[0]
+    return b, it
 
 def _counts(s: dict[str, Any]) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
-    for prov, pv in (s.get("providers") or {}).items():
+    for prov, feat, _, _ in _iter_items(s):
         cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "total": 0})
-        total = 0
-        for feat in ("history", "watchlist", "ratings"):
-            items = (((pv or {}).get(feat) or {}).get("baseline") or {}).get("items") or {}
-            n = len(items)
-            cur[feat] = n
-            total += n
-        cur["total"] = total
+        if feat in ("history", "watchlist", "ratings"):
+            cur[feat] = int(cur.get(feat, 0)) + 1
+            cur["total"] = int(cur.get("total", 0)) + 1
     return out
-
 
 def _collect_items(s: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for prov, feat, k, it in _iter_items(s):
+    for prov_tok, feat, k, it in _iter_items(s):
+        base, inst = _split_prov_token(prov_tok)
         out.append(
             {
-                "provider": prov,
+                "provider": prov_tok,
+                "provider_base": base,
+                "instance": None if inst == _DEFAULT_INSTANCE else inst,
                 "feature": feat,
                 "key": k,
                 "title": it.get("title"),
@@ -257,6 +441,7 @@ def _collect_items(s: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return out
+
 
 _ID_RX: dict[str, re.Pattern[str]] = {
     "imdb": re.compile(r"^tt\d{5,}$"),
@@ -339,12 +524,20 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
             mp[k].append(dst)
 
     for pr in pairs:
+        if not isinstance(pr, dict):
+            continue
+
         src = str(pr.get("src") or pr.get("source") or "").upper().strip()
         dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
         if not (src and dst):
             continue
         if pr.get("enabled") is False:
             continue
+
+        si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
+        ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
+        src_tok = _prov_token(src, si)
+        dst_tok = _prov_token(dst, ti)
 
         mode = str(pr.get("mode") or "one-way").lower()
         feats = pr.get("features")
@@ -360,14 +553,15 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
             feats_list = ["history"]
 
         for f in feats_list:
-            add(src, f, dst)
+            add(src_tok, f, dst_tok)
             if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
-                add(dst, f, src)
+                add(dst_tok, f, src_tok)
+
     return mp
 
-
 def _supports_pair_libs(prov: str) -> bool:
-    return str(prov or "").upper() in ("PLEX", "EMBY", "JELLYFIN")
+    base, _ = _split_prov_token(prov)
+    return base in ("PLEX", "EMBY", "JELLYFIN")
 
 
 _TYPE_TOKEN_MAP: dict[str, str] = {
@@ -390,8 +584,8 @@ _PROVIDER_ALLOWED_TYPES: dict[str, set[str]] = {
 
 def _provider_allowed_types(prov: str, feat: str) -> set[str] | None:
     _ = feat
-    return _PROVIDER_ALLOWED_TYPES.get(str(prov or "").upper())
-
+    base, _ = _split_prov_token(prov)
+    return _PROVIDER_ALLOWED_TYPES.get(base)
 
 def _item_type(it: dict[str, Any]) -> str:
     t = str((it or {}).get("type") or "").strip().lower()
@@ -430,12 +624,17 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
     for pr in cfg.get("pairs") or []:
         if not isinstance(pr, dict):
             continue
-        src = str(pr.get("source") or "").upper().strip()
-        dst = str(pr.get("target") or "").upper().strip()
+        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
         if not src or not dst:
             continue
         if pr.get("enabled") is False:
             continue
+
+        si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
+        ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
+        src_tok = _prov_token(src, si)
+        dst_tok = _prov_token(dst, ti)
 
         mode = str(pr.get("mode") or "one-way").lower()
         feats = pr.get("features") or {}
@@ -451,38 +650,40 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
             if raw_types is not None:
                 if isinstance(raw_types, dict):
                     merge_dir(
-                        src,
-                        dst,
+                        src_tok,
+                        dst_tok,
                         feat,
                         norm_types(
-                            raw_types.get(src)
+                            raw_types.get(src_tok)
+                            or raw_types.get(src)
                             or raw_types.get(src.lower())
                             or raw_types.get(src.upper())
                         ),
                     )
                     if mode in two_way:
                         merge_dir(
-                            dst,
-                            src,
+                            dst_tok,
+                            src_tok,
                             feat,
                             norm_types(
-                                raw_types.get(dst)
+                                raw_types.get(dst_tok)
+                                or raw_types.get(dst)
                                 or raw_types.get(dst.lower())
                                 or raw_types.get(dst.upper())
                             ),
                         )
                 else:
-                    merge_dir(src, dst, feat, norm_types(raw_types))
+                    merge_dir(src_tok, dst_tok, feat, norm_types(raw_types))
                     if mode in two_way:
-                        merge_dir(dst, src, feat, norm_types(raw_types))
+                        merge_dir(dst_tok, src_tok, feat, norm_types(raw_types))
 
-            prov_types = _provider_allowed_types(dst, feat)
+            prov_types = _provider_allowed_types(dst_tok, feat)
             if prov_types:
-                merge_dir(src, dst, feat, prov_types)
+                merge_dir(src_tok, dst_tok, feat, prov_types)
             if mode in two_way:
-                prov_types_rev = _provider_allowed_types(src, feat)
+                prov_types_rev = _provider_allowed_types(src_tok, feat)
                 if prov_types_rev:
-                    merge_dir(dst, src, feat, prov_types_rev)
+                    merge_dir(dst_tok, src_tok, feat, prov_types_rev)
 
     return out
 
@@ -491,21 +692,20 @@ def _passes_pair_type_filter(
     prov: str,
     feat: str,
     dst: str,
-    it: dict[str, Any],
+    item: dict[str, Any],
 ) -> bool:
     if not pair_types:
         return True
-    p = str(prov or "").upper()
+    p = _norm_prov_token(prov)
     f = str(feat or "").lower()
-    d = str(dst or "").upper()
+    d = _norm_prov_token(dst)
     allowed = pair_types.get((p, f, d))
     if not allowed:
         return True
-    t = _item_type(it)
+    t = _item_type(item)
     if not t:
         return True
     return t in allowed
-
 
 def _item_library_id(it: dict[str, Any]) -> str | None:
     if not isinstance(it, dict):
@@ -545,6 +745,11 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
         if pr.get("enabled") is False:
             continue
 
+        si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
+        ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
+        src_tok = _prov_token(src, si)
+        dst_tok = _prov_token(dst, ti)
+
         mode = str(pr.get("mode") or "one-way").lower()
         feats = pr.get("features") or {}
         if not isinstance(feats, dict):
@@ -559,18 +764,23 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
             if not isinstance(libs_dict, dict):
                 libs_dict = {}
 
-            def add_dir(a: str, b: str) -> None:
-                if not _supports_pair_libs(a):
+            def add_dir(a_tok: str, a_base: str, b_tok: str) -> None:
+                if not _supports_pair_libs(a_tok):
                     return
-                raw = libs_dict.get(a) or libs_dict.get(a.lower()) or libs_dict.get(a.upper())
+                raw = (
+                    libs_dict.get(a_tok)
+                    or libs_dict.get(a_base)
+                    or libs_dict.get(a_base.lower())
+                    or libs_dict.get(a_base.upper())
+                )
                 if isinstance(raw, (list, tuple)) and raw:
                     allowed = {str(x).strip() for x in raw if str(x).strip()}
                     if allowed:
-                        out[(a, feat, b)] = allowed
+                        out[(a_tok, feat, b_tok)] = allowed
 
-            add_dir(src, dst)
+            add_dir(src_tok, src, dst_tok)
             if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
-                add_dir(dst, src)
+                add_dir(dst_tok, dst, src_tok)
 
     return out
 
@@ -583,9 +793,9 @@ def _passes_pair_lib_filter(
 ) -> bool:
     if not pair_libs:
         return True
-    p = str(prov or "").upper()
+    p = _norm_prov_token(prov)
     f = str(feat or "").lower()
-    d = str(dst or "").upper()
+    d = _norm_prov_token(dst)
     allowed = pair_libs.get((p, f, d))
     if not allowed:
         return True
@@ -616,7 +826,7 @@ def _has_peer_by_pairs(
     if feat not in ("history", "watchlist", "ratings"):
         return True
 
-    prov_key = str(prov or "").upper()
+    prov_key = _norm_prov_token(prov)
     feat_key = str(feat or "").lower()
     targets = pairs.get((prov_key, feat_key), [])
     if not targets:
@@ -624,7 +834,7 @@ def _has_peer_by_pairs(
 
     filtered_targets: list[str] = []
     for dst in targets:
-        if _passes_pair_lib_filter(pair_libs, prov, feat, dst, item) and _passes_pair_type_filter(pair_types, prov, feat, dst, item):
+        if _passes_pair_lib_filter(pair_libs, prov_key, feat_key, dst, item) and _passes_pair_type_filter(pair_types, prov_key, feat_key, dst, item):
             filtered_targets.append(dst)
     if not filtered_targets:
         return True
@@ -633,7 +843,8 @@ def _has_peer_by_pairs(
     vv["_key"] = item_key
     keys = set(_alias_keys(vv))
     for dst in filtered_targets:
-        idx = idx_cache.get((dst, feat)) or {}
+        dst_key = _norm_prov_token(dst)
+        idx = idx_cache.get((dst_key, feat_key)) or {}
         if any(k in idx for k in keys):
             return True
     return False
@@ -761,12 +972,7 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
         return None
 
     def title_key(rec: dict[str, Any]) -> tuple[str, int | None] | None:
-        title = (
-            rec.get("series_title")
-            or rec.get("show_title")
-            or rec.get("title")
-            or rec.get("name")
-        )
+        title = rec.get("series_title") or rec.get("show_title") or rec.get("title") or rec.get("name")
         if not title:
             return None
         t = str(title).strip().lower()
@@ -786,15 +992,10 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
             return None
         by_ns: dict[str, set[str]] = {}
         for s0 in sigs:
-            if ":" not in s0:
-                continue
-            ns, v = s0.split(":", 1)
-            by_ns.setdefault(ns, set()).add(v)
-        for vals in by_ns.values():
-            if len(vals) > 1:
-                return None
+            ns = s0.split(":", 1)[0] if ":" in s0 else ""
+            by_ns.setdefault(ns, set()).add(s0)
         order = {"imdb": 0, "tmdb": 1, "tvdb": 2, "slug": 3}
-        best: str | None = None
+        best = None
         best_p = 999
         for s0 in sigs:
             ns = s0.split(":", 1)[0] if ":" in s0 else ""
@@ -820,30 +1021,52 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
             return pick_sig(rec.get("show_ids") or {})
         return None
 
+    def ensure_label(sig: str) -> None:
+        if sig in labels:
+            return
+        if sig.startswith("imdb:"):
+            labels[sig] = sig.split(":", 1)[1].upper()
+        elif sig.startswith("tmdb:"):
+            labels[sig] = sig
+        elif sig.startswith("tvdb:"):
+            labels[sig] = sig
+        else:
+            labels[sig] = sig
+
     prov_block = (s.get("providers") or {}) if isinstance(s, dict) else {}
 
     title_ids: dict[str, set[str]] = {}
     title_year_ids: dict[tuple[str, int | None], set[str]] = {}
 
+    def iter_hist_items(blk: dict[str, Any]) -> Iterable[dict[str, Any]]:
+        hist = (blk or {}).get("history") or {}
+        node = hist.get("baseline") if isinstance(hist, dict) else None
+        node = node or hist
+        items = node.get("items") if isinstance(node, dict) else None
+        if not isinstance(items, dict):
+            return []
+        return [v for v in items.values() if isinstance(v, dict)]
+
     for prov_data in prov_block.values():
         if not isinstance(prov_data, dict):
             continue
-        hist = (prov_data or {}).get("history") or {}
-        node = hist.get("baseline") or hist
-        items = node.get("items") or {}
-        recs = items.values() if isinstance(items, dict) else (items if isinstance(items, list) else [])
-        for rec in recs:
-            if not isinstance(rec, dict):
-                continue
-            tk = title_key(rec)
-            if not tk:
-                continue
-            sig = show_id_sig(rec)
-            if not sig:
-                continue
-            t, y = tk
-            title_ids.setdefault(t, set()).add(sig)
-            title_year_ids.setdefault((t, y), set()).add(sig)
+        blocks = [prov_data]
+        insts = prov_data.get("instances")
+        if isinstance(insts, dict):
+            for blk in insts.values():
+                if isinstance(blk, dict):
+                    blocks.append(blk)
+
+        for blk in blocks:
+            for rec in iter_hist_items(blk):
+                show_sig = show_id_sig(rec)
+                if not show_sig:
+                    continue
+                ensure_label(show_sig)
+                tk = title_key(rec)
+                if tk:
+                    title_ids.setdefault(tk[0], set()).add(show_sig)
+                    title_year_ids.setdefault(tk, set()).add(show_sig)
 
     title_best: dict[str, str] = {}
     for t, sigs in title_ids.items():
@@ -858,76 +1081,54 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
             title_year_best[k] = b
 
     for prov_name, prov_data in prov_block.items():
-        prov = str(prov_name or "").upper().strip()
-        if not prov or not isinstance(prov_data, dict):
+        base = str(prov_name or "").upper().strip()
+        if not base or not isinstance(prov_data, dict):
             continue
 
-        hist = (prov_data or {}).get("history") or {}
-        node = hist.get("baseline") or hist
-        items = node.get("items") or {}
-
-        if isinstance(items, dict):
-            recs = items.values()
-        elif isinstance(items, list):
-            recs = items
-        else:
-            continue
-
-        p_shows: set[str] = set()
-
-        for rec in recs:
-            if not isinstance(rec, dict):
-                continue
-
-            def ensure_label(sig: str) -> None:
-                if sig in labels:
-                    return
-                title = (
-                    rec.get("series_title")
-                    or rec.get("show_title")
-                    or rec.get("title")
-                    or rec.get("name")
-                )
-                year = rec.get("series_year") or rec.get("year")
-                if title:
-                    base = str(title).strip()
-                    if year not in (None, ""):
-                        lbl = f"{base} ({year}) [{sig}]"
-                    else:
-                        lbl = f"{base} [{sig}]"
-                else:
-                    lbl = sig
-                labels[sig] = lbl
-
-            typ = str(rec.get("type") or "").strip().lower()
-            if typ not in ("episode", "show") and not (
-                rec.get("show_ids") or rec.get("series_title") or rec.get("show_title")
-            ):
-                continue
-
-            tk = title_key(rec)
+        # default instance
+        tok0 = _prov_token(base, _DEFAULT_INSTANCE)
+        p_shows0: set[str] = set()
+        for rec in iter_hist_items(prov_data):
             show_sig = show_id_sig(rec)
-
-            mapped: str | None = None
-            if tk:
-                mapped = title_year_best.get(tk)
-                if mapped is None:
-                    mapped = title_best.get(tk[0])
-
+            if not show_sig:
+                continue
+            tk = title_key(rec)
+            mapped = title_year_best.get(tk) if tk else None
+            if not mapped and tk:
+                mapped = title_best.get(tk[0])
             if mapped and sig_prio(mapped) < sig_prio(show_sig):
                 show_sig = mapped
-
             if show_sig is None and tk:
                 show_sig = f"{tk[0]}|year:{tk[1]}"
-
             if show_sig:
-                p_shows.add(show_sig)
+                p_shows0.add(show_sig)
                 ensure_label(show_sig)
+        show_sets[tok0] = p_shows0
 
-        show_sets[prov] = p_shows
+        insts = prov_data.get("instances")
+        if not isinstance(insts, dict):
+            continue
+        for inst_id, blk in insts.items():
+            if not isinstance(blk, dict):
+                continue
+            tok = _prov_token(base, inst_id)
+            p_shows: set[str] = set()
+            for rec in iter_hist_items(blk):
+                show_sig = show_id_sig(rec)
+                if not show_sig:
+                    continue
+                tk = title_key(rec)
+                mapped = title_year_best.get(tk) if tk else None
+                if mapped and sig_prio(mapped) < sig_prio(show_sig):
+                    show_sig = mapped
+                if show_sig is None and tk:
+                    show_sig = f"{tk[0]}|year:{tk[1]}"
+                if show_sig:
+                    p_shows.add(show_sig)
+                    ensure_label(show_sig)
+            show_sets[tok] = p_shows
 
     return show_sets, labels
-
 
 def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
@@ -942,12 +1143,12 @@ def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
     for (src, feat), targets in pairs.items():
         if feat != "history":
             continue
-        a = str(src or "").upper().strip()
+        a = _norm_prov_token(src)
         if not a:
             continue
 
         for dst in targets:
-            b = str(dst or "").upper().strip()
+            b = _norm_prov_token(dst)
             if not b or a == b:
                 continue
 
@@ -1362,7 +1563,7 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
 def _tmdb(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     k = _tmdb_key()
     if not k:
-        raise HTTPException(400, "tmdb.api_key missing in config.json")
+        raise HTTPException(400, "tmdb.api_key missing in config.json (tmdb or tmdb_sync)")
 
     query: dict[str, Any] = {}
     if params:
@@ -1775,4 +1976,3 @@ def api_delete(payload: dict[str, Any], pairs: str | None = None) -> dict[str, A
     if touched == 0:
         raise HTTPException(404, "Item not found")
     return {"ok": True}
-
