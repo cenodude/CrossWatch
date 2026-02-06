@@ -17,7 +17,9 @@
 </p>
 
 <p align="center" style="font-size:14px;">
-  <b>⭐ Star this repository to get updates</b>
+<b>⭐ Star this repository to get updates</b><br>
+<b>Version 0.9.x provides <i>Profiles</i> (Multi-users / Multi-servers per instance)</b><br>
+<b><i>Experimental support</i></b>
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
@@ -57,16 +59,7 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-
-> **Not supported (yet): Multi-users / Multi-servers per instance**  
-> CrossWatch currently supports **one user and one server per instance**.  
-> Need multiple users/servers? Run **multiple containers** (one per user/server).
-
-<p align="center">
-  <b> Important: Multi-user / multi-server support is in progress.</b><br>
-  Track progress here: <a href="https://github.com/cenodude/CrossWatch/issues/73">Issue #73</a>
-</p>
-
+Supported: **Profiles** (Multi-users / Multi-servers per instance)
 
 <img
   align="right"
@@ -78,6 +71,7 @@ Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMD
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
+* **Profiles** Create seperate media server and/or tracker instances.
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
 * **Flexible sync directions** Between media server and trackers.
