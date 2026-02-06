@@ -54,7 +54,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "0.1.0"
+__VERSION__ = "1.0.0"
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:

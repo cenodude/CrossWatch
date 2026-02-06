@@ -10,7 +10,7 @@ from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import get_provider_block, ensure_instance_block, normalize_instance_id
 
-__VERSION__ = "1.1.0"
+__VERSION__ = "2.0.0"
 
 
 

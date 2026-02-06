@@ -29,7 +29,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 API_BASE = "https://api.mdblist.com"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
-__VERSION__ = "1.1.0"
+__VERSION__ = "2.0.0"
 
 def _load_config() -> dict[str, Any]:
     try:

@@ -33,7 +33,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 PLEX_PIN_URL = "https://plex.tv/api/v2/pins"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
-__VERSION__ = "1.2.1"
+__VERSION__ = "2.0.0"
 
 
 class PlexAuth(AuthProvider):

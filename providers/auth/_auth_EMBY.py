@@ -27,7 +27,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.0.1"
+__VERSION__ = "2.0.0"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
 

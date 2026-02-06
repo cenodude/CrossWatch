@@ -31,7 +31,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
 SIMKL_AUTH = "https://simkl.com/oauth/authorize"
 SIMKL_TOKEN = "https://api.simkl.com/oauth/token"
 UA = "CrossWatch/1.0"
-__VERSION__ = "1.1.0"
+__VERSION__ = "2.0.0"
 
 class SimklAuth(AuthProvider):
     name = "SIMKL"

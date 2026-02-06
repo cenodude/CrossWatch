@@ -26,7 +26,7 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
         pass
 
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "2.0.0"
 
 
 class TMDbAuth(AuthProvider):
@@ -141,8 +141,6 @@ def _tmdb_sync_html() -> str:
     #sec-tmdb-sync .msg.hidden{display:none}
     #sec-tmdb-sync .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
     #sec-tmdb-sync .btn.danger:hover{ filter:brightness(1.08) }
-
-    /* TMDb Connect (match MDBList look) */
     #sec-tmdb-sync #tmdb_sync_connect{
       background: linear-gradient(135deg,#00e084,#2ea859);
       border-color: rgba(0,224,132,.45);

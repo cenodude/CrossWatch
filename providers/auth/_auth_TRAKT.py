@@ -34,7 +34,7 @@ OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
 VERIFY_URL = "https://trakt.tv/activate"
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "2.0.0"
 
 _H: dict[str, str] = {
     "Accept": "application/json",
