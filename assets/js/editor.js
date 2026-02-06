@@ -652,6 +652,7 @@
     kind: "watchlist",
     snapshot: "",
     pair: "",
+    instance: "default",
     pairs: [],
     baselineItems: {},
     manualAdds: {},
@@ -668,6 +669,7 @@
     importEnabled: false,
     importProviders: [],
     importProvider: "",
+    importProviderInstance: "default",
     importMode: "replace",
     importFeatures: { watchlist: true, history: true, ratings: true },
     hasChanges: false,
@@ -798,6 +800,11 @@
                 <select id="cw-snapshot" class="cw-select">
                   <option value="">Latest</option>
                 </select>
+
+                <label id="cw-instance-label" style="display:none">Profile</label>
+                <select id="cw-instance" class="cw-select" style="display:none">
+                  <option value="default">Default</option>
+                </select>
               </div>
             </div>
 
@@ -836,6 +843,7 @@
                 <div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px">
                   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
                     <select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select>
+                    <select id="cw-import-instance" class="cw-select" style="min-width:180px"></select>
                     <select id="cw-import-mode" class="cw-select" style="min-width:180px">
                       <option value="replace">Replace baseline</option>
                       <option value="merge">Merge (keep old)</option>
@@ -994,6 +1002,8 @@
   const pairSel = $("cw-pair");
   const snapLabel = $("cw-snapshot-label");
   const snapSel = $("cw-snapshot");
+  const instanceLabel = $("cw-instance-label");
+  const instanceSel = $("cw-instance");
   const filterInput = $("cw-filter");
   const reloadBtn = $("cw-reload");
   const addBtn = $("cw-add");
@@ -1029,6 +1039,7 @@
 
   const importRow = $("cw-import-row");
   const importProviderSel = $("cw-import-provider");
+  const importInstanceSel = $("cw-import-instance");
   const importWatchlistCb = $("cw-import-watchlist");
   const importHistoryCb = $("cw-import-history");
   const importRatingsCb = $("cw-import-ratings");
@@ -1150,6 +1161,47 @@
     if (importRatingsCb) importRatingsCb.disabled = disabled || importRatingsCb.disabled;
   }
 
+  
+  function _escapeHtml(s) {
+    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function renderInstanceOptions(selectEl, instances, current) {
+    if (!selectEl) return "default";
+    const list = Array.isArray(instances) ? instances : [];
+    const norm = list
+      .map(x => ({
+        id: String((x && x.id) ? x.id : ""),
+        label: String((x && x.label) ? x.label : (x && x.id) ? x.id : ""),
+      }))
+      .filter(x => x.id);
+
+    if (!norm.some(x => x.id === "default")) norm.unshift({ id: "default", label: "Default" });
+
+    const ids = norm.map(x => x.id);
+    let next = String(current || "");
+    if (!next || !ids.includes(next)) next = "default";
+    const opts = norm.map(x => `<option value="${_escapeHtml(x.id)}">${_escapeHtml(x.label || x.id)}</option>`).join("");
+    selectEl.innerHTML = opts;
+    selectEl.value = next;
+    selectEl.disabled = !ids.length;
+    return next;
+  }
+
+  async function loadInstanceOptions(provider, selectEl, current) {
+    if (!selectEl) return "default";
+    if (!provider) {
+      return renderInstanceOptions(selectEl, [{ id: "default", label: "Default" }], current);
+    }
+    try {
+      const data = await fetchJSON(`/api/provider-instances/${encodeURIComponent(provider)}`);
+      return renderInstanceOptions(selectEl, Array.isArray(data) ? data : [], current);
+    } catch (_) {
+      return renderInstanceOptions(selectEl, [{ id: "default", label: "Default" }], current);
+    }
+  }
+
+
   function syncImportUI() {
     if (!importRow) return;
     const show = state.source === "state" && state.importEnabled;
@@ -1189,6 +1241,17 @@
     const sel = state.importProvider || (importProviderSel ? importProviderSel.value : "");
     const p = list.find(x => String((x || {}).name || "") === String(sel || ""));
     const feats = (p && p.features) ? p.features : {};
+
+    if (importInstanceSel) {
+      const ids = (p && Array.isArray(p.instances)) ? p.instances : ["default"];
+      const instObjs = ids.map(x => ({ id: String(x), label: String(x) }));
+      const nextInst = renderInstanceOptions(importInstanceSel, instObjs, state.importProviderInstance);
+      if (nextInst !== state.importProviderInstance) {
+        state.importProviderInstance = nextInst;
+        persistUIState();
+      }
+      importInstanceSel.style.display = state.importProvider ? "" : "none";
+    }
 
     const setCb = (wrap, cb, key) => {
       const supported = !!feats[key];
@@ -1261,7 +1324,7 @@
       const res = await fetchJSON("/api/editor/state/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, features, mode }),
+        body: JSON.stringify({ provider, provider_instance: state.importProviderInstance || "default", features, mode }),
       });
 
       const featsOut = (res && res.features) ? res.features : {};
@@ -1283,6 +1346,7 @@
       if (window.cxToast) window.cxToast(done);
 
       state.snapshot = provider;
+      state.instance = state.importProviderInstance || "default";
       persistUIState();
       await loadSnapshots();
       await loadState();
@@ -1412,9 +1476,16 @@
     if (pairLabel) pairLabel.style.display = isPair ? "" : "none";
     if (pairSel) pairSel.style.display = isPair ? "" : "none";
     if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
+    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
+    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
     if (backupCard) backupCard.style.display = isState ? "none" : "";
     if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
     if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
+
+    if (!isState && state.instance && state.instance !== "default") {
+      state.instance = "default";
+      persistUIState();
+    }
 
     if (!isState && state.blockedOnly) {
       state.blockedOnly = false;
@@ -2596,6 +2667,8 @@
     const isState = state.source === "state";
     const isPair = state.source === "pair";
     if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
+    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
+    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
 
     if (isState || isPair) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
@@ -2687,6 +2760,18 @@
         const data = await fetchJSON(`/api/editor/state/providers`);
         state.snapshots = Array.isArray(data.providers) ? data.providers : [];
         rebuildSnapshots();
+
+        const prov = state.snapshot || (snapSel ? (snapSel.value || "") : "");
+        if (prov) {
+          const nextInst = await loadInstanceOptions(prov, instanceSel, state.instance);
+          if (nextInst !== state.instance) {
+            state.instance = nextInst;
+            persistUIState();
+          }
+        } else {
+          state.instance = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default" }], "default");
+        }
+
         if (!state.snapshots.length) showStateHint("state");
         else showStateHint(null);
         return;
@@ -2803,7 +2888,10 @@
     try {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
-      if (state.source === "state" && state.snapshot) params.set("provider", state.snapshot);
+      if (state.source === "state" && state.snapshot) {
+        params.set("provider", state.snapshot);
+        params.set("provider_instance", state.instance || "default");
+      }
       if (state.source === "pair") {
         if (state.pair) params.set("pair", state.pair);
         if (state.snapshot) params.set("dataset", state.snapshot);
@@ -2816,6 +2904,11 @@
         state.baselineItems = data.items || {};
         state.manualAdds = data.manual_adds || {};
         state.manualBlocks = Array.isArray(data.manual_blocks) ? data.manual_blocks : [];
+
+        if (data && typeof data.provider_instance === "string") {
+          state.instance = data.provider_instance;
+          if (instanceSel) instanceSel.value = state.instance;
+        }
 
         const merged = Object.assign({}, state.baselineItems || {});
         for (const [k, v] of Object.entries(state.manualAdds || {})) {
@@ -2974,6 +3067,7 @@
       }
       if (state.source === "state") {
         payload.provider = state.snapshot;
+        payload.provider_instance = state.instance || "default";
         payload.blocks = blocks;
       }
 
@@ -3202,10 +3296,29 @@
     });
   }
 
-  if (importProviderSel) {
+  
+  if (instanceSel) {
+    instanceSel.addEventListener("change", async () => {
+      state.instance = instanceSel.value || "default";
+      state.page = 0;
+      persistUIState();
+      await loadState();
+    });
+  }
+
+if (importProviderSel) {
     importProviderSel.addEventListener("change", () => {
       state.importProvider = importProviderSel.value || "";
+      state.importProviderInstance = "default";
+      persistUIState();
       syncImportUI();
+    });
+  }
+
+  if (importInstanceSel) {
+    importInstanceSel.addEventListener("change", () => {
+      state.importProviderInstance = importInstanceSel.value || "default";
+      persistUIState();
     });
   }
 
