@@ -661,16 +661,25 @@ serverUUID: async (instanceId) => {
 
   function normalizeRoute(r, idFallback) {
     const x = (r && typeof r === "object") ? r : {};
+    const p0 = x.provider;
+    const s0 = x.sink;
+    const pi0 = x.provider_instance;
+    const si0 = x.sink_instance;
+    const p = (p0 === undefined || p0 === null) ? "plex" : String(p0);
+    const s = (s0 === undefined || s0 === null) ? "trakt" : String(s0);
+    const pi = (pi0 === undefined || pi0 === null) ? "default" : String(pi0);
+    const si = (si0 === undefined || si0 === null) ? "default" : String(si0);
     return {
       id: String(x.id || idFallback || "").trim() || "R1",
       enabled: x.enabled !== false,
-      provider: String(x.provider || "plex").toLowerCase(),
-      provider_instance: String(x.provider_instance || "default"),
-      sink: String(x.sink || "trakt").toLowerCase(),
-      sink_instance: String(x.sink_instance || "default"),
+      provider: p.trim().toLowerCase(),
+      provider_instance: pi.trim() || "default",
+      sink: s.trim().toLowerCase(),
+      sink_instance: si.trim() || "default",
       filters: deepClone(x.filters || {}),
     };
   }
+
 
   function nextRouteId() {
     const used = new Set(getRoutes().map(r => String(r?.id || "").trim()).filter(Boolean));
@@ -684,7 +693,7 @@ serverUUID: async (instanceId) => {
     const hasRoutesKey = hasOwn(wcfg, "routes");
     const routesArr = Array.isArray(wcfg.routes) ? wcfg.routes : null;
     if (routesArr && routesArr.length) return { migrated: false };
-    if (hasRoutesKey && !routesArr) return { migrated: false }; // explicit non-array routes - leave to backend
+    if (hasRoutesKey && !routesArr) return { migrated: false };
 
     const prov = String(wcfg.provider || "").trim();
     const sink = String(wcfg.sink || "").trim();
@@ -722,16 +731,19 @@ serverUUID: async (instanceId) => {
   function routeLabel(r) {
     const pi = String(r.provider_instance || "default");
     const si = String(r.sink_instance || "default");
-    const p = String(r.provider || "plex");
-    const s = String(r.sink || "trakt");
+    const p0 = String(r.provider || "").trim();
+    const s0 = String(r.sink || "").trim();
+    const p = p0 ? p0 : "—";
+    const s = s0 ? s0 : "—";
     return `${r.id} ${p}(${pi}) → ${s}(${si})`;
   }
 
 
 function routeKey(r) {
   const p = String(r?.provider || "").trim().toLowerCase();
-  const pi = String(r?.provider_instance || "default").trim().toLowerCase() || "default";
   const s = String(r?.sink || "").trim().toLowerCase();
+  if (!p || !s) return "";
+  const pi = String(r?.provider_instance || "default").trim().toLowerCase() || "default";
   const si = String(r?.sink_instance || "default").trim().toLowerCase() || "default";
   return `${p}|${pi}|${s}|${si}`;
 }
@@ -789,14 +801,16 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
 
   function applyRouteView(route) {
     if (!route) return;
-    deepSet(STATE.cfg, "scrobble.watch.provider", String(route.provider || "plex"));
-    deepSet(STATE.cfg, "scrobble.watch.sink", String(route.sink || "trakt"));
-    deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
+    const prov = String(route.provider || "").trim().toLowerCase();
+    const sink = String(route.sink || "").trim().toLowerCase();
+    if (prov) deepSet(STATE.cfg, "scrobble.watch.provider", prov);
+    if (sink) deepSet(STATE.cfg, "scrobble.watch.sink", sink);
+    if (prov && sink) deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
     try {
       const pvSel = $("#sc-provider", STATE.mount);
-      if (pvSel) pvSel.value = String(route.provider || "plex");
+      if (pvSel && prov) pvSel.value = prov;
       const skSel = $("#sc-sink", STATE.mount);
-      if (skSel) skSel.value = String(route.sink || "trakt");
+      if (skSel && sink) skSel.value = sink;
       try { syncProviderPickerUi(); } catch {}
       try { syncSinkPillsFromSelect(); } catch {}
     } catch {}
@@ -816,7 +830,7 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
 
   async function getInstanceOptions(providerName) {
     const p = String(providerName || "").toLowerCase();
-    if (!p) return [{ id: "default", name: "default" }];
+    if (!p) return [{ id: "default", name: "Default" }];
     STATE._routesCache ||= {};
     if (STATE._routesCache[p]) return STATE._routesCache[p];
     try {
@@ -827,7 +841,7 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
         name: String(i?.label || i?.name || i?.id || "").trim() || String(i?.id || "").trim(),
       })).filter(i => i.id);
 
-      // Deduplicate by id (case-insensitive)
+      // Deduplicate by id
       const seen = new Set();
       const uniq = [];
       for (const it of items) {
@@ -846,7 +860,7 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
       STATE._routesCache[p] = list;
       return list;
     } catch {
-      const fallback = [{ id: "default", name: "default" }];
+      const fallback = [{ id: "default", name: "Default" }];
       STATE._routesCache[p] = fallback;
       return fallback;
     }
@@ -1040,6 +1054,7 @@ try {
 
       const cP = el("td");
       const pSel = el("select", { className: "input" });
+      pSel.appendChild(el("option", { value: "", textContent: "Select…" }));
       ROUTE_PROVIDERS.forEach((p) => {
         const meta = PROVIDER_META[p] || { label: p, icon: "", alt: p };
         pSel.appendChild(el("option", { value: p, textContent: meta.label || p }));
@@ -1052,9 +1067,11 @@ try {
 
       const cPI = el("td");
       const piSel = el("select", { className: "input" });
-      const pOpts = await getInstanceOptions(r.provider);
+      const hasP = !!String(r.provider || "").trim();
+      const pOpts = hasP ? await getInstanceOptions(r.provider) : [{ id: "default", name: "Default" }];
       pOpts.forEach(i => piSel.appendChild(el("option", { value: i.id, textContent: i.name })));
       piSel.value = r.provider_instance || "default";
+      piSel.disabled = !hasP;
       piSel.dataset.rid = r.id;
       piSel.dataset.f = "provider_instance";
       cPI.appendChild(piSel);
@@ -1062,6 +1079,7 @@ try {
 
       const cS = el("td");
       const sSel = el("select", { className: "input" });
+      sSel.appendChild(el("option", { value: "", textContent: "Select…" }));
       ROUTE_SINKS.forEach((s) => {
         const meta = SINK_META[s] || { label: s, icon: "", alt: s };
         sSel.appendChild(el("option", { value: s, textContent: meta.label || s }));
@@ -1074,9 +1092,11 @@ try {
 
       const cSI = el("td");
       const siSel = el("select", { className: "input" });
-      const sOpts = await getInstanceOptions(r.sink);
+      const hasS = !!String(r.sink || "").trim();
+      const sOpts = hasS ? await getInstanceOptions(r.sink) : [{ id: "default", name: "Default" }];
       sOpts.forEach(i => siSel.appendChild(el("option", { value: i.id, textContent: i.name })));
       siSel.value = r.sink_instance || "default";
+      siSel.disabled = !hasS;
       siSel.dataset.rid = r.id;
       siSel.dataset.f = "sink_instance";
       cSI.appendChild(siSel);
@@ -1097,6 +1117,7 @@ try {
 
     host.innerHTML = "";
     host.appendChild(table);
+    try { host.classList.toggle("sc-routes-auto", routes.length <= 3); } catch {}
 
     // Keep active view valid
     const rid = activeRouteId();
@@ -2734,8 +2755,6 @@ function chip(text, onRemove, onClick) {
 
     try {
       const btn = $("#sc-copy-plexwatcher", STATE.mount);
-
-      // Clamp the URL row styles
       wrap.style.width = "100%";
       wrap.style.maxWidth = "100%";
       wrap.style.minWidth = "0";
@@ -2819,7 +2838,6 @@ function chip(text, onRemove, onClick) {
     if (isRoutesMode()) {
       const ar = getActiveRoute() || getRoutes()[0] || null;
       if (ar) applyRouteView(ar);
-      // Render routes UI without blocking
       renderRoutesUi().catch(() => {});
       renderMigrateBanner(!!mig?.migrated);
     }
@@ -3262,19 +3280,10 @@ async function hydrateJellyfin() {
       if (!isRoutesMode()) return;
       const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
       const id = nextRouteId();
-      const routesUsed = routes.slice();
-      const baseProv = provider();
-      const baseSink = String(read("scrobble.watch.sink", "trakt") || "trakt").split(",")[0] || "trakt";
-      const tmpl = pickNonDuplicateTemplate(routesUsed, baseProv, baseSink);
-      if (!tmpl) {
-        setNote("sc-note", "No available unique route combinations left.", "warn");
-        return;
-      }
-      const nr = normalizeRoute({ id, enabled: true, provider: tmpl.provider, provider_instance: "default", sink: tmpl.sink, sink_instance: "default", filters: deepClone(read("scrobble.watch.filters", {}) || {}) }, id);
+      const nr = normalizeRoute({ id, enabled: true, provider: "", provider_instance: "default", sink: "", sink_instance: "default", filters: {} }, id);
       routes.push(nr);
       setRoutes(routes);
       setActiveRouteId(id);
-      applyRouteView(nr);
       await renderRoutesUi();
     });
 
@@ -3677,9 +3686,20 @@ async function hydrateJellyfin() {
     let routesOut = undefined;
 
     if (routesMode) {
-      // Keep active route filters in sync with the visible filter controls.
       syncActiveRouteFromView(filtersWatch);
-      routesOut = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+      const routesRaw = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+      const routesKeep = routesRaw.filter((r) => {
+        const p = String(r?.provider || "").trim();
+        const s = String(r?.sink || "").trim();
+        return !!(p && s);
+      });
+      const dropped = routesRaw.length - routesKeep.length;
+      if (dropped > 0) {
+        const msg = `Ignored ${dropped} incomplete route${dropped === 1 ? "" : "s"} (pick Provider + Sink).`;
+        if (!(STICKY_NOTES["sc-note"] && STICKY_NOTES["sc-note"].kind === "err")) setNote("sc-note", msg, "warn");
+      }
+
+      routesOut = routesKeep;
 
 const dups = findDuplicateRouteKeys(routesOut);
 if (dups.length) {
@@ -3687,7 +3707,7 @@ if (dups.length) {
   setStickyNote("sc-note", msg, "err");
   throw new Error(msg);
 }
-      setRoutes(routesOut);
+      setRoutes(routesRaw);
     }
 
   return {
