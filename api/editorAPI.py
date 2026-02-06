@@ -18,6 +18,7 @@ from cw_platform.id_map import canonical_key, minimal
 from cw_platform.modules_registry import load_sync_ops
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
 from services.editor import (
     Kind,
@@ -112,22 +113,36 @@ def _merge_blocks(a: list[str], b: list[str]) -> list[str]:
     return out
 
 
-def _load_policy_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[str]]:
+
+def _load_policy_manual(kind: Kind, provider: str, provider_instance: str | None = None) -> tuple[dict[str, Any], list[str]]:
     raw = _load_policy()
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
         return {}, []
+
     node = providers.get(provider)
     if not isinstance(node, dict):
+        pl = str(provider).lower()
         for k, v in providers.items():
-            if str(k).lower() == str(provider).lower() and isinstance(v, dict):
+            if str(k).lower() == pl and isinstance(v, dict):
                 node = v
                 break
     if not isinstance(node, dict):
         return {}, []
+
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances") or {}
+        if not isinstance(insts, dict):
+            return {}, []
+        node = insts.get(inst)
+        if not isinstance(node, dict):
+            return {}, []
+
     f = node.get(kind) or {}
     if not isinstance(f, dict):
         return {}, []
+
     blocks_raw = f.get("blocks") or []
     blocks: list[str] = []
     seen: set[str] = set()
@@ -153,7 +168,7 @@ def _load_policy_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list
             blocks.append(s)
 
     adds_raw = f.get("adds") or {}
-    adds_items = {}
+    adds_items: dict[str, Any] = {}
     if isinstance(adds_raw, dict):
         items = adds_raw.get("items") or {}
         if isinstance(items, dict):
@@ -161,7 +176,13 @@ def _load_policy_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list
     return adds_items, blocks
 
 
-def _save_policy_manual(kind: Kind, provider: str, adds_items: dict[str, Any], blocks: list[str]) -> None:
+def _save_policy_manual(
+    kind: Kind,
+    provider: str,
+    adds_items: dict[str, Any],
+    blocks: list[str],
+    provider_instance: str | None = None,
+) -> None:
     raw = _load_policy()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -186,6 +207,18 @@ def _save_policy_manual(kind: Kind, provider: str, adds_items: dict[str, Any], b
         node = {}
         providers[key] = node
 
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            node["instances"] = insts
+        in_node = insts.get(inst)
+        if not isinstance(in_node, dict):
+            in_node = {}
+            insts[inst] = in_node
+        node = in_node
+
     f = node.get(kind)
     if not isinstance(f, dict):
         f = {}
@@ -207,14 +240,10 @@ def _policy_from_state() -> dict[str, Any]:
     provs = raw.get("providers") or {}
     if not isinstance(provs, dict):
         return {"version": 1, "providers": {}}
-    out: dict[str, Any] = {"version": 1, "providers": {}}
-    dst = out["providers"]
-    for p, node in provs.items():
-        if not isinstance(node, dict):
-            continue
-        manual = node.get("manual")
+
+    def _extract(manual: Any) -> dict[str, Any]:
         if not isinstance(manual, dict):
-            continue
+            return {}
         entry: dict[str, Any] = {}
         for kind in ("watchlist", "history", "ratings"):
             f = manual.get(kind)
@@ -222,15 +251,40 @@ def _policy_from_state() -> dict[str, Any]:
                 continue
             blocks = f.get("blocks") or []
             adds = f.get("adds") or {}
-            if not isinstance(adds, dict):
-                adds = {}
-            items = adds.get("items") or {}
+            items = (adds.get("items") if isinstance(adds, dict) else None) or {}
             if not isinstance(items, dict):
                 items = {}
             if blocks or items:
-                entry[kind] = {"blocks": list(blocks) if isinstance(blocks, list) else list(blocks.keys()) if isinstance(blocks, dict) else [], "adds": {"items": dict(items)}}
+                bl = list(blocks) if isinstance(blocks, list) else list(blocks.keys()) if isinstance(blocks, dict) else []
+                entry[kind] = {"blocks": bl, "adds": {"items": dict(items)}}
+        return entry
+
+    out: dict[str, Any] = {"version": 1, "providers": {}}
+    dst = out["providers"]
+
+    for p, node in provs.items():
+        if not isinstance(node, dict):
+            continue
+        entry: dict[str, Any] = {}
+
+        root_entry = _extract(node.get("manual"))
+        entry.update(root_entry)
+
+        insts = node.get("instances") or {}
+        if isinstance(insts, dict):
+            inst_out: dict[str, Any] = {}
+            for inst_id, inst_node in insts.items():
+                if not isinstance(inst_node, dict):
+                    continue
+                inst_entry = _extract(inst_node.get("manual"))
+                if inst_entry:
+                    inst_out[str(inst_id)] = inst_entry
+            if inst_out:
+                entry["instances"] = inst_out
+
         if entry:
             dst[str(p)] = entry
+
     return out
 
 
@@ -253,21 +307,15 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
     if not isinstance(prov_in, dict):
         return out
 
-    for p, node in prov_in.items():
-        if not isinstance(node, dict):
-            continue
-        target = prov_out.get(p)
-        if not isinstance(target, dict):
-            target = {}
-            prov_out[p] = target
+    def _merge_feature_block(tgt: dict[str, Any], node: dict[str, Any]) -> None:
         for kind in ("watchlist", "history", "ratings"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
-            t = target.get(kind)
+            t = tgt.get(kind)
             if not isinstance(t, dict):
                 t = {}
-                target[kind] = t
+                tgt[kind] = t
 
             blocks_in = f.get("blocks") or []
             blocks_in_list: list[str] = []
@@ -299,6 +347,34 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
                 merged.update({str(k): v for k, v in items_in.items()})
                 adds_out["items"] = merged
 
+    for p, node in prov_in.items():
+        if not isinstance(node, dict):
+            continue
+        target = prov_out.get(p)
+        if not isinstance(target, dict):
+            target = {}
+            prov_out[p] = target
+
+        _merge_feature_block(target, node)
+
+        insts_in = node.get("instances") or {}
+        if not isinstance(insts_in, dict):
+            continue
+
+        insts_out = target.get("instances")
+        if not isinstance(insts_out, dict):
+            insts_out = {}
+            target["instances"] = insts_out
+
+        for inst_id, inst_node in insts_in.items():
+            if not isinstance(inst_node, dict):
+                continue
+            tgt_inst = insts_out.get(inst_id)
+            if not isinstance(tgt_inst, dict):
+                tgt_inst = {}
+                insts_out[inst_id] = tgt_inst
+            _merge_feature_block(tgt_inst, inst_node)
+
     return out
 
 
@@ -327,6 +403,16 @@ def _mirror_policy_into_state() -> None:
                 return str(k)
         return name
 
+    def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
+        nonlocal changed
+        cur = parent.get(key)
+        if isinstance(cur, dict):
+            return cur
+        out: dict[str, Any] = {}
+        parent[key] = out
+        changed = True
+        return out
+
     for p, node in prov_pol.items():
         if not isinstance(node, dict):
             continue
@@ -336,25 +422,19 @@ def _mirror_policy_into_state() -> None:
             cur = {}
             provs[key] = cur
             changed = True
-        manual = cur.get("manual")
-        if not isinstance(manual, dict):
-            manual = {}
-            cur["manual"] = manual
-            changed = True
+
+        manual = _ensure_dict(cur, "manual")
+
         for kind in ("watchlist", "history", "ratings"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
-            t = manual.get(kind)
-            if not isinstance(t, dict):
-                t = {}
-                manual[kind] = t
-                changed = True
+            t = _ensure_dict(manual, kind)
 
-            adds_in, blocks_in = _load_policy_manual(kind, str(p))
-            adds_state, blocks_state = _load_state_manual(kind, key)
+            adds_in, blocks_in = _load_policy_manual(kind, str(p), "default")
+            adds_state, blocks_state = _load_state_manual(kind, key, "default")
 
-            merged_blocks = _merge_blocks(blocks_state, blocks_in)
+            merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
             if t.get("blocks") != merged_blocks:
                 t["blocks"] = merged_blocks
                 changed = True
@@ -374,9 +454,59 @@ def _mirror_policy_into_state() -> None:
                 adds["items"] = merged_items
                 changed = True
 
+        insts = node.get("instances") or {}
+        if not isinstance(insts, dict) or not insts:
+            continue
+
+        cur_insts = cur.get("instances")
+        if not isinstance(cur_insts, dict):
+            cur_insts = {}
+            cur["instances"] = cur_insts
+            changed = True
+
+        for inst_id, inst_node in insts.items():
+            if not isinstance(inst_node, dict):
+                continue
+            inst_id_n = normalize_instance_id(inst_id)
+            inst_blk = cur_insts.get(inst_id_n)
+            if not isinstance(inst_blk, dict):
+                inst_blk = {}
+                cur_insts[inst_id_n] = inst_blk
+                changed = True
+
+            inst_manual = _ensure_dict(inst_blk, "manual")
+
+            for kind in ("watchlist", "history", "ratings"):
+                f = inst_node.get(kind)
+                if not isinstance(f, dict):
+                    continue
+                t = _ensure_dict(inst_manual, kind)
+
+                adds_in, blocks_in = _load_policy_manual(kind, str(p), inst_id_n)
+                adds_state, blocks_state = _load_state_manual(kind, key, inst_id_n)
+
+                merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
+                if t.get("blocks") != merged_blocks:
+                    t["blocks"] = merged_blocks
+                    changed = True
+
+                adds = t.get("adds")
+                if not isinstance(adds, dict):
+                    adds = {}
+                    t["adds"] = adds
+                    changed = True
+                items_out = adds.get("items")
+                if not isinstance(items_out, dict):
+                    items_out = {}
+                merged_items = dict(items_out)
+                merged_items.update(adds_state)
+                merged_items.update(adds_in)
+                if items_out != merged_items:
+                    adds["items"] = merged_items
+                    changed = True
+
     if changed:
         _atomic_write_json(_STATE_PATH, raw)
-
 
 def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
     prov = pol.get("providers") or {}
@@ -411,14 +541,32 @@ def _state_providers(raw: dict[str, Any]) -> list[str]:
         return []
     return sorted([str(k) for k in providers.keys() if str(k).strip()])
 
-def _load_state_items(kind: Kind, provider: str) -> dict[str, Any]:
+
+def _load_state_items(kind: Kind, provider: str, provider_instance: str | None = None) -> dict[str, Any]:
     raw = _load_current_state()
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
         return {}
-    node = providers.get(provider) or {}
+
+    node = providers.get(provider)
+    if not isinstance(node, dict):
+        pl = str(provider).lower()
+        for k, v in providers.items():
+            if str(k).lower() == pl and isinstance(v, dict):
+                node = v
+                break
     if not isinstance(node, dict):
         return {}
+
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances") or {}
+        if not isinstance(insts, dict):
+            return {}
+        node = insts.get(inst)
+        if not isinstance(node, dict):
+            return {}
+
     feature = node.get(kind) or {}
     if not isinstance(feature, dict):
         return {}
@@ -428,16 +576,44 @@ def _load_state_items(kind: Kind, provider: str) -> dict[str, Any]:
     items = baseline.get("items") or {}
     return items if isinstance(items, dict) else {}
 
-def _save_state_items(kind: Kind, provider: str, items: dict[str, Any]) -> None:
+
+def _save_state_items(kind: Kind, provider: str, items: dict[str, Any], provider_instance: str | None = None) -> None:
     raw = _load_current_state()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
         providers = {}
         raw["providers"] = providers
-    node = providers.get(provider)
+
+    key = None
+    if provider in providers:
+        key = provider
+    else:
+        pl = str(provider).lower()
+        for k in providers.keys():
+            if str(k).lower() == pl:
+                key = str(k)
+                break
+    if key is None:
+        key = provider
+        providers[key] = {}
+
+    node = providers.get(key)
     if not isinstance(node, dict):
         node = {}
-        providers[provider] = node
+        providers[key] = node
+
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            node["instances"] = insts
+        in_node = insts.get(inst)
+        if not isinstance(in_node, dict):
+            in_node = {}
+            insts[inst] = in_node
+        node = in_node
+
     feature = node.get(kind)
     if not isinstance(feature, dict):
         feature = {"baseline": {"items": {}}, "checkpoint": None}
@@ -450,25 +626,37 @@ def _save_state_items(kind: Kind, provider: str, items: dict[str, Any]) -> None:
     _atomic_write_json(_STATE_PATH, raw)
 
 
-def _load_state_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[str]]:
+def _load_state_manual(kind: Kind, provider: str, provider_instance: str | None = None) -> tuple[dict[str, Any], list[str]]:
     raw = _load_current_state()
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
         return {}, []
     node = providers.get(provider)
     if not isinstance(node, dict):
+        pl = str(provider).lower()
         for k, v in providers.items():
-            if str(k).lower() == str(provider).lower() and isinstance(v, dict):
+            if str(k).lower() == pl and isinstance(v, dict):
                 node = v
                 break
     if not isinstance(node, dict):
         return {}, []
+
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances") or {}
+        if not isinstance(insts, dict):
+            return {}, []
+        node = insts.get(inst)
+        if not isinstance(node, dict):
+            return {}, []
+
     manual = node.get("manual") or {}
     if not isinstance(manual, dict):
         return {}, []
     f = manual.get(kind) or {}
     if not isinstance(f, dict):
         return {}, []
+
     blocks_raw = f.get("blocks") or []
     blocks: list[str] = []
     seen: set[str] = set()
@@ -494,7 +682,7 @@ def _load_state_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[
             blocks.append(s)
 
     adds_raw = f.get("adds") or {}
-    adds_items = {}
+    adds_items: dict[str, Any] = {}
     if isinstance(adds_raw, dict):
         items = adds_raw.get("items") or {}
         if isinstance(items, dict):
@@ -503,7 +691,13 @@ def _load_state_manual(kind: Kind, provider: str) -> tuple[dict[str, Any], list[
     return adds_items, blocks
 
 
-def _save_state_manual(kind: Kind, provider: str, adds_items: dict[str, Any], blocks: list[str]) -> None:
+def _save_state_manual(
+    kind: Kind,
+    provider: str,
+    adds_items: dict[str, Any],
+    blocks: list[str],
+    provider_instance: str | None = None,
+) -> None:
     raw = _load_current_state()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -527,6 +721,18 @@ def _save_state_manual(kind: Kind, provider: str, adds_items: dict[str, Any], bl
     if not isinstance(node, dict):
         node = {}
         providers[key] = node
+
+    inst = normalize_instance_id(provider_instance)
+    if inst != "default":
+        insts = node.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            node["instances"] = insts
+        in_node = insts.get(inst)
+        if not isinstance(in_node, dict):
+            in_node = {}
+            insts[inst] = in_node
+        node = in_node
 
     manual = node.get("manual")
     if not isinstance(manual, dict):
@@ -560,12 +766,14 @@ def api_editor_state_providers() -> dict[str, Any]:
     raw_policy = _load_policy()
     return {"providers": _union_providers(raw_state, raw_policy)}
 
+
 @router.get("")
 def api_editor_get_state(
     kind: str = Query("watchlist"),
     snapshot: str | None = Query(None),
     source: str = Query("tracker"),
     provider: str | None = Query(None),
+    provider_instance: str | None = Query(None),
     pair: str | None = Query(None),
     dataset: str | None = Query(None),
 ) -> dict[str, Any]:
@@ -581,6 +789,7 @@ def api_editor_get_state(
             "source": "tracker",
             "snapshot": snapshot,
             "provider": None,
+            "provider_instance": None,
             "ts": state.get("ts"),
             "count": len(items),
             "items": items,
@@ -624,6 +833,7 @@ def api_editor_get_state(
                 "source": "state",
                 "snapshot": None,
                 "provider": None,
+                "provider_instance": None,
                 "ts": None,
                 "count": 0,
                 "items": {},
@@ -631,13 +841,15 @@ def api_editor_get_state(
                 "manual_blocks": [],
             }
 
+        inst = normalize_instance_id(provider_instance)
+
         if _STATE_PATH.exists() and _POLICY_PATH.exists():
             _mirror_policy_into_state()
             raw_state = _load_current_state()
 
-        items = _load_state_items(k, chosen) if raw_state else {}
-        st_adds, st_blocks = _load_state_manual(k, chosen) if raw_state else ({}, [])
-        pol_adds, pol_blocks = _load_policy_manual(k, chosen)
+        items = _load_state_items(k, chosen, inst) if raw_state else {}
+        st_adds, st_blocks = _load_state_manual(k, chosen, inst) if raw_state else ({}, [])
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst)
 
         manual_adds = dict(st_adds or {})
         manual_adds.update(dict(pol_adds or {}))
@@ -656,6 +868,7 @@ def api_editor_get_state(
             "source": "state",
             "snapshot": None,
             "provider": chosen,
+            "provider_instance": inst,
             "ts": ts,
             "count": len(items),
             "items": items,
@@ -705,6 +918,7 @@ def _normalize_items(items: Any) -> dict[str, Any]:
         return out
     return {}
 
+
 @router.post("")
 def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     kind = _normalize_kind(str(payload.get("kind") or "watchlist"))
@@ -718,6 +932,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
             "kind": kind,
             "source": "tracker",
             "provider": None,
+            "provider_instance": None,
             "count": len(items),
             "ts": state.get("ts"),
         }
@@ -740,6 +955,9 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail="Missing provider for source=state")
+
+        inst = normalize_instance_id(payload.get("provider_instance"))
+
         blocks_raw = payload.get("blocks") or []
         blocks: list[str] = []
         seen: set[str] = set()
@@ -764,9 +982,9 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
                 seen.add(sl)
                 blocks.append(s)
 
-        _save_policy_manual(kind, provider, items, blocks)
+        _save_policy_manual(kind, provider, items, blocks, inst)
         if _STATE_PATH.exists():
-            _save_state_manual(kind, provider, items, blocks)
+            _save_state_manual(kind, provider, items, blocks, inst)
         if _STATE_PATH.exists() and _POLICY_PATH.exists():
             _mirror_policy_into_state()
         ts = None
@@ -779,6 +997,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
             "kind": kind,
             "source": "state",
             "provider": provider,
+            "provider_instance": inst,
             "count": len(items),
             "blocks": len(blocks),
             "ts": ts,
@@ -864,22 +1083,35 @@ def _state_store() -> StateStore:
     return StateStore(_STATE_PATH.parent)
 
 
+
 def _rebuild_watchlist_wall(state: dict[str, Any]) -> None:
     providers = state.get("providers")
     if not isinstance(providers, dict):
         return
 
     wall: list[dict[str, Any]] = []
-    for _, fmap in providers.items():
-        fentry = (fmap or {}).get("watchlist") or {}
+
+    def _collect_from(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        fentry = node.get("watchlist") or {}
+        if not isinstance(fentry, dict):
+            return
         base = ((fentry.get("baseline") or {}).get("items") or {})
         if not isinstance(base, dict):
-            continue
+            return
         for v in base.values():
             try:
                 wall.append(minimal(v))
             except Exception:
                 wall.append(dict(v) if isinstance(v, dict) else {"title": str(v)})
+
+    for _, pnode in providers.items():
+        _collect_from(pnode)
+        insts = (pnode or {}).get("instances") if isinstance(pnode, dict) else None
+        if isinstance(insts, dict):
+            for _, inode in insts.items():
+                _collect_from(inode)
 
     seen: set[str] = set()
     uniq: list[dict[str, Any]] = []
@@ -901,7 +1133,7 @@ def api_editor_state_import_providers() -> dict[str, Any]:
         return {"enabled": False, "providers": []}
 
     cfg = load_config()
-    names = ["PLEX", "SIMKL", "TRAKT", "ANILIST", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"]
+    names = ["PLEX", "SIMKL", "TRAKT", "TMDB", "ANILIST", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"]
     out: list[dict[str, Any]] = []
 
     for name in names:
@@ -917,15 +1149,29 @@ def api_editor_state_import_providers() -> dict[str, Any]:
         except Exception:
             feats = {}
         try:
-            configured = bool(getattr(ops, "is_configured", lambda _cfg: True)(cfg))
+            inst_ids = list_instance_ids(cfg, name)
         except Exception:
-            configured = False
+            inst_ids = ["default"]
+
+        configured = False
+        if hasattr(ops, "is_configured"):
+            for inst in inst_ids:
+                try:
+                    cfg_view = build_provider_config_view(cfg, name, inst)
+                    configured = bool(ops.is_configured(cfg_view))
+                except Exception:
+                    configured = False
+                if configured:
+                    break
+        else:
+            configured = True
 
         out.append(
             {
                 "name": name,
                 "label": label or name,
                 "configured": configured,
+                "instances": inst_ids,
                 "features": {
                     "watchlist": bool(feats.get("watchlist")),
                     "history": bool(feats.get("history")),
@@ -944,6 +1190,7 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         raise HTTPException(status_code=403, detail="State import is disabled (enable runtime.debug_mods).")
 
     provider = str((payload or {}).get("provider") or "").strip().upper()
+    provider_instance = normalize_instance_id((payload or {}).get("provider_instance"))
     feats_in = (payload or {}).get("features")
     mode = str((payload or {}).get("mode") or "replace").strip().lower()
     dry_run = bool((payload or {}).get("dry_run") or False)
@@ -965,18 +1212,20 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         raise HTTPException(status_code=400, detail="No features selected")
 
     cfg = load_config()
+    cfg_view = build_provider_config_view(cfg, provider, provider_instance)
+
     ops = load_sync_ops(provider)
     if not ops:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
     if hasattr(ops, "is_configured"):
         try:
-            if not ops.is_configured(cfg):
-                raise HTTPException(status_code=400, detail=f"Provider not configured: {provider}")
+            if not ops.is_configured(cfg_view):
+                raise HTTPException(status_code=400, detail=f"Provider not configured: {provider} ({provider_instance})")
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Provider not configured: {provider}")
+            raise HTTPException(status_code=400, detail=f"Provider not configured: {provider} ({provider_instance})")
 
     try:
         feats_supported = dict(getattr(ops, "features", lambda: {})())
@@ -991,12 +1240,30 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         providers_block = {}
         state["providers"] = providers_block
 
-    prov_node = providers_block.setdefault(provider, {})
-    if not isinstance(prov_node, dict):
-        prov_node = {}
-        providers_block[provider] = prov_node
+    base_node = providers_block.setdefault(provider, {})
+    if not isinstance(base_node, dict):
+        base_node = {}
+        providers_block[provider] = base_node
 
-    imported: dict[str, Any] = {"provider": provider, "mode": mode, "dry_run": dry_run, "features": {}} 
+    if provider_instance == "default":
+        prov_node = base_node
+    else:
+        insts = base_node.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            base_node["instances"] = insts
+        prov_node = insts.get(provider_instance)
+        if not isinstance(prov_node, dict):
+            prov_node = {}
+            insts[provider_instance] = prov_node
+
+    imported: dict[str, Any] = {
+        "provider": provider,
+        "provider_instance": provider_instance,
+        "mode": mode,
+        "dry_run": dry_run,
+        "features": {},
+    }
 
     import time as _t
 
@@ -1007,12 +1274,12 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
 
         t0 = _t.time()
         try:
-            idx = dict(ops.build_index(cfg, feature=feature) or {})
+            idx = dict(ops.build_index(cfg_view, feature=feature) or {})
         except Exception as e:
             imported["features"][feature] = {"ok": False, "error": str(e)}
             continue
 
-        items_min = {}
+        items_min: dict[str, Any] = {}
         for k, v in idx.items():
             try:
                 items_min[str(k)] = minimal(v)
@@ -1020,7 +1287,7 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
                 items_min[str(k)] = dict(v) if isinstance(v, dict) else {"title": str(v)}
 
         try:
-            cp = module_checkpoint(ops, cfg, feature)
+            cp = module_checkpoint(ops, cfg_view, feature)
         except Exception:
             cp = None
 
@@ -1039,19 +1306,19 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
             feat_node = {}
             prov_node[feature] = feat_node
 
-        base_node = feat_node.setdefault("baseline", {})
-        if not isinstance(base_node, dict):
-            base_node = {}
-            feat_node["baseline"] = base_node
+        base_feat = feat_node.setdefault("baseline", {})
+        if not isinstance(base_feat, dict):
+            base_feat = {}
+            feat_node["baseline"] = base_feat
 
         if mode == "merge":
-            cur = base_node.get("items")
+            cur = base_feat.get("items")
             cur_items = dict(cur) if isinstance(cur, dict) else {}
             for k, v in items_min.items():
                 cur_items[k] = v
-            base_node["items"] = cur_items
+            base_feat["items"] = cur_items
         else:
-            base_node["items"] = items_min
+            base_feat["items"] = items_min
 
         feat_node["checkpoint"] = cp
 
@@ -1062,3 +1329,4 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         store.save_state(state)
 
     return {"ok": True, **imported}
+

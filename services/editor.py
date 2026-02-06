@@ -368,12 +368,14 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
     tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
 
+
 def _pair_meta_from_scope(scope: str) -> dict[str, Any]:
     scope_s = str(scope or "").strip()
     mode = None
     src = None
     dst = None
     pair_id = None
+
     m = _PAIR_SCOPE_RE.match(scope_s)
     if m:
         mode = m.group("mode") or None
@@ -385,10 +387,18 @@ def _pair_meta_from_scope(scope: str) -> dict[str, Any]:
         else:
             src = link or None
         pair_id = m.group("pid") or None
-    label = scope_s
-    if mode and src and dst:
-        label = f"{mode} {src}→{dst}"
-    return {"mode": mode, "src": src, "dst": dst, "pair_id": pair_id, "label": label}
+        label = scope_s
+        if mode and src and dst:
+            label = f"{mode} {src}→{dst}"
+        return {"mode": mode, "src": src, "dst": dst, "pair_id": pair_id, "label": label}
+
+    if scope_s.startswith("one-way_"):
+        mode = "one-way"
+    elif scope_s.startswith("two-way_"):
+        mode = "two-way"
+
+    return {"mode": mode, "src": None, "dst": None, "pair_id": None, "label": scope_s}
+
 
 def list_pairs() -> dict[str, Any]:
     root = _cw_state_dir()
@@ -410,7 +420,10 @@ def list_pairs() -> dict[str, Any]:
             except Exception:
                 scope = None
 
-        if not scope or "pair_" not in scope:
+        if not scope:
+            continue
+
+        if ("pair_" not in scope) and (not scope.startswith("one-way_")) and (not scope.startswith("two-way_")):
             continue
 
         try:
