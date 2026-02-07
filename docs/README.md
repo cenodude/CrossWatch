@@ -56,10 +56,11 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-NOT supported: **Multi-users/servers**
+Supported: **Profiles** Multi-users/servers
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
+* **Be your own Sync Hub** Create profiles for seperate media servers and/or tracker instances.
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
 * **Flexible sync directions** Between media server and trackers.
