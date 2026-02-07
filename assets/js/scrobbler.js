@@ -602,7 +602,8 @@ serverUUID: async (instanceId) => {
     const uid = x?.user_id || x?.user?.Id || x?.id || "";
     return { id: uid };
   }
-  const x = await j(`/api/plex/inspect?instance=${encodeURIComponent(inst)}`);
+  // Plex: inspect no longer returns server UUID; use the dedicated endpoint.
+  const x = await j(`/api/plex/server_uuid?instance=${encodeURIComponent(inst)}`);
   return { server_uuid: x?.server_uuid || x?.uuid || x?.serverUUID || "" };
 },
     watch: {
