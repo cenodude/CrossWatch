@@ -480,6 +480,37 @@
 
   document.addEventListener("input", (ev) => { if (ev.target?.id === "jfy_lib_filter") applyFilter(); }, true);
 
+  async function jfyPickUser(ev) {
+    try { ev?.preventDefault?.(); } catch {}
+    if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
+      window.notify?.("User picker not available", "warn");
+      return;
+    }
+    const inst = getJfyInstance();
+    window.cwMediaUserPicker.open({
+      provider: "jellyfin",
+      instance: inst,
+      anchorEl: Q("#jfy_pick_user") || null,
+      title: "Pick Jellyfin user",
+      onPick: (u) => {
+        const id = String(u?.id || "").trim();
+        const name = String(u?.name || "").trim();
+        const idEl = Q("#jfy_user_id");
+        if (idEl) idEl.value = id;
+        const nameEl = Q("#jfy_username");
+        if (nameEl && name) nameEl.value = name;
+        const authNameEl = Q("#jfy_user");
+        if (authNameEl && name) authNameEl.value = name;
+        window.notify?.(name ? `Selected: ${name}` : "User selected", "ok");
+      },
+    });
+  }
+
+  document.addEventListener("click", (ev) => {
+    const t = ev?.target;
+    if (t && t.id === "jfy_pick_user") jfyPickUser(ev);
+  }, true);
+
   window.jfyAuto = jfyAuto;
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;

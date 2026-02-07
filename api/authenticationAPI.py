@@ -63,6 +63,63 @@ def _to_int(val: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+def _clean_media_base(url: Any) -> str:
+    u = str(url or "").strip()
+    if not u:
+        return ""
+    if not (u.startswith("http://") or u.startswith("https://")):
+        u = "http://" + u
+    return u.rstrip("/")
+
+def _parse_users_payload(data: Any) -> tuple[list[dict[str, Any]], int | None]:
+    # Returns (users, total_record_count) if available.
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)], None
+    if isinstance(data, dict):
+        for k in ("Items", "items", "Users", "users", "Results", "results"):
+            v = data.get(k)
+            if isinstance(v, list):
+                total = None
+                try:
+                    total = int(data.get("TotalRecordCount") or data.get("total") or data.get("totalRecordCount") or 0) or None
+                except Exception:
+                    total = None
+                return [x for x in v if isinstance(x, dict)], total
+        # Sometimes the payload is a single user object.
+        if ("Id" in data or "id" in data) and ("Name" in data or "name" in data):
+            return [data], 1
+    return [], None
+
+
+def _map_user(u: dict[str, Any]) -> dict[str, Any]:
+    pol = u.get("Policy") if isinstance(u.get("Policy"), dict) else {}
+    return {
+        "id": u.get("Id") or u.get("id"),
+        "username": u.get("Name") or u.get("name") or "",
+        "IsAdministrator": bool(pol.get("IsAdministrator")) if isinstance(pol, dict) else bool(u.get("IsAdministrator") or False),
+        "IsHidden": bool(pol.get("IsHidden")) if isinstance(pol, dict) else bool(u.get("IsHidden") or False),
+        "IsDisabled": bool(pol.get("IsDisabled")) if isinstance(pol, dict) else bool(u.get("IsDisabled") or False),
+    }
+
+
+def _req_error_user_msg(provider: str, e: Exception) -> str:
+    msg = str(e) or e.__class__.__name__
+    m = msg.lower()
+    p = (provider or "server").strip()
+    if "timed out" in m or "timeout" in m:
+        return f"{p} server not reachable (timeout)."
+    if "connection refused" in m:
+        return f"{p} server refused the connection. Is it running?"
+    if "name or service not known" in m or "getaddrinfo" in m or "nodename nor servname" in m:
+        return f"{p} server hostname could not be resolved."
+    if "ssl" in m:
+        return f"{p} server SSL error. Check https/http and verify_ssl."
+    if "max retries" in m or "connection" in m:
+        return f"{p} server not reachable (connection error)."
+    return f"{p} server error: {msg}"
+
+
+
 def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, probe_cache: Optional[dict[str, Any]] = None) -> None:
     def _probe_bust(name: str) -> None:
         try:
@@ -340,7 +397,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
                         if cloud_id is not None and int(cloud_id) <= 0:
                             cloud_id = None
-                        # Friends/shared users frequently show up with a cloud-ish "id" on /accounts.
+                        # Friends/shared users frequently show up with a cloud-ish ids
                         if cloud_id is None and pid.isdigit() and not is_local_id(pid):
                             cloud_id = _to_int(pid, 0) or None
 
@@ -517,15 +574,18 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             "instance": inst,
         }
 
-    @app.get("/api/jellyfin/users", tags=["media providers"])
-    def jf_users(instance: str | None = Query(None)):
+    @app.get("/api/jellyfin/users", tags=["media providers"], response_model=None)
+    def jf_users(instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
         jf = ensure_instance_block(cfg, "jellyfin", inst)
-        server = str((jf.get("server") or "")).rstrip("/")
-        token = str((jf.get("access_token") or "")).strip()
+
+        server = _clean_media_base(jf.get("server"))
+        access_token = str((jf.get("access_token") or "")).strip()
+        api_key = str((jf.get("api_key") or jf.get("apikey") or "")).strip()
+        token = access_token or api_key
         if not server or not token:
-            return JSONResponse({"ok": False, "error": "Not connected to Jellyfin"}, 401)
+            raise HTTPException(status_code=401, detail="Not connected to Jellyfin (missing server/token).")
 
         timeout = float(jf.get("timeout", 15) or 15)
         verify = bool(jf.get("verify_ssl", False))
@@ -539,39 +599,60 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             "Authorization": auth,
             "X-Emby-Authorization": auth,
             "X-MediaBrowser-Token": token,
+            "X-Emby-Token": token,
         }
 
-        users: list[dict[str, Any]] = []
+        def _get(url: str, *, params: dict[str, Any] | None = None, use_headers: bool = True) -> requests.Response:
+            return requests.get(
+                url,
+                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"},
+                params=params,
+                timeout=timeout,
+                verify=verify,
+            )
+
         try:
-            r = requests.get(f"{server}/Users", headers=headers, timeout=timeout, verify=verify)
+            r = _get(f"{server}/Users")
+            raw: list[dict[str, Any]] = []
+            total: int | None = None
             if r.ok:
-                data = r.json() or []
-                arr = data.get("Items") if isinstance(data, dict) else data
-                if isinstance(arr, list):
-                    for u in arr:
-                        pol = (u or {}).get("Policy") if isinstance((u or {}).get("Policy"), dict) else {}
-                        users.append(
-                            {
-                                "id": (u or {}).get("Id") or (u or {}).get("id"),
-                                "username": (u or {}).get("Name") or (u or {}).get("name") or "",
-                                "IsAdministrator": bool((pol or {}).get("IsAdministrator"))
-                                if isinstance(pol, dict)
-                                else bool((u or {}).get("IsAdministrator") or False),
-                                "IsHidden": bool((pol or {}).get("IsHidden"))
-                                if isinstance(pol, dict)
-                                else bool((u or {}).get("IsHidden") or False),
-                                "IsDisabled": bool((pol or {}).get("IsDisabled"))
-                                if isinstance(pol, dict)
-                                else bool((u or {}).get("IsDisabled") or False),
-                            }
-                        )
-            else:
-                mr = requests.get(f"{server}/Users/Me", headers=headers, timeout=timeout, verify=verify)
-                if mr.ok:
-                    me = mr.json() or {}
-                    users = [{"id": me.get("Id") or me.get("id"), "username": me.get("Name") or me.get("name") or ""}]
+                raw, total = _parse_users_payload(r.json() or {})
+
+            # If the token is scoped (common), /Users may return only one user.
+            if (not r.ok) or (len(raw) <= 1):
+                key = api_key or token
+                r2 = _get(f"{server}/Users", params={"api_key": key}, use_headers=False)
+                if r2.ok:
+                    raw2, total2 = _parse_users_payload(r2.json() or {})
+                    if len(raw2) > len(raw):
+                        raw, total = raw2, total2
+
+            if total and len(raw) < total:
+                r3 = _get(f"{server}/Users", params={"StartIndex": 0, "Limit": max(total, 500)})
+                if r3.ok:
+                    raw3, _ = _parse_users_payload(r3.json() or {})
+                    if len(raw3) > len(raw):
+                        raw = raw3
+
+            if not raw:
+                me_r = _get(f"{server}/Users/Me")
+                if me_r.ok:
+                    me = me_r.json() or {}
+                    me_mapped = _map_user(me) if isinstance(me, dict) else {}
+                    me_out = [me_mapped] if me_mapped.get("username") else []
+                    return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing current user only."}
+
+            if not raw:
+                code = r.status_code if not r.ok else 502
+                detail = f"Jellyfin users request failed (HTTP {r.status_code})."
+                raise HTTPException(status_code=502 if code >= 500 else code, detail=detail)
+
+            users = [_map_user(u) for u in raw if isinstance(u, dict)]
+        except HTTPException:
+            raise
         except Exception as e:
-            return JSONResponse({"ok": False, "error": str(e)}, _status_from_msg(str(e)))
+            msg = _req_error_user_msg("Jellyfin", e)
+            raise HTTPException(status_code=_status_from_msg(str(e)), detail=msg)
 
         users = [u for u in users if (u or {}).get("username")]
         return {"users": users, "count": len(users), "instance": inst}
@@ -671,7 +752,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         try:
             if not (out or {}).get("user_id"):
                 em = ensure_instance_block(cfg, "emby", inst)
-                server = (em.get("server") or "").rstrip("/")
+                server = _clean_media_base(em.get("server"))
                 token = (em.get("access_token") or "").strip()
                 if server and token:
                     r = requests.get(
@@ -706,45 +787,81 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"libraries": libs, "instance": inst}
 
     @app.get("/api/emby/users", tags=["media providers"], response_model=None)
-    def emby_users(instance: str | None = Query(None)) -> dict[str, Any] | JSONResponse:
+    def emby_users(instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
         em = ensure_instance_block(cfg, "emby", inst)
 
-        server = (em.get("server") or "").rstrip("/")
-        token = (em.get("access_token") or "").strip()
+        server = _clean_media_base(em.get("server"))
+        access_token = str((em.get("access_token") or "")).strip()
+        api_key = str((em.get("api_key") or em.get("apikey") or "")).strip()
+        token = access_token or api_key
         if not server or not token:
-            return JSONResponse({"ok": False, "error": "Not connected to Emby"}, 401)
+            raise HTTPException(status_code=401, detail="Not connected to Emby (missing server/token).")
 
         timeout = float(em.get("timeout", 15) or 15)
         verify = bool(em.get("verify_ssl", False))
-        headers = {"X-Emby-Token": token, "Accept": "application/json"}
+        device_id = str(em.get("device_id") or "crosswatch").strip() or "crosswatch"
+        auth = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0", Token="{token}"'
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "CrossWatch/1.0",
+            "Authorization": auth,
+            "X-Emby-Authorization": auth,
+            "X-Emby-Token": token,
+            "X-MediaBrowser-Token": token,
+        }
 
-        users: list[dict[str, Any]] = []
+        def _get(url: str, *, params: dict[str, Any] | None = None, use_headers: bool = True) -> requests.Response:
+            return requests.get(
+                url,
+                headers=headers if use_headers else {"Accept": "application/json", "User-Agent": "CrossWatch/1.0"},
+                params=params,
+                timeout=timeout,
+                verify=verify,
+            )
+
         try:
-            r = requests.get(f"{server}/Users", headers=headers, timeout=timeout, verify=verify)
+            r = _get(f"{server}/Users")
+            raw: list[dict[str, Any]] = []
+            total: int | None = None
             if r.ok:
-                data = r.json() or []
-                arr = data.get("Items") if isinstance(data, dict) else data
-                if isinstance(arr, list):
-                    for u in arr:
-                        pol = (u or {}).get("Policy") if isinstance((u or {}).get("Policy"), dict) else {}
-                        users.append(
-                            {
-                                "id": (u or {}).get("Id") or (u or {}).get("id"),
-                                "username": (u or {}).get("Name") or (u or {}).get("name") or "",
-                                "IsAdministrator": bool((pol or {}).get("IsAdministrator")) if isinstance(pol, dict) else bool((u or {}).get("IsAdministrator") or False),
-                                "IsHidden": bool((pol or {}).get("IsHidden")) if isinstance(pol, dict) else bool((u or {}).get("IsHidden") or False),
-                                "IsDisabled": bool((pol or {}).get("IsDisabled")) if isinstance(pol, dict) else bool((u or {}).get("IsDisabled") or False),
-                            }
-                        )
-            else:
-                mr = requests.get(f"{server}/Users/Me", headers=headers, timeout=timeout, verify=verify)
-                if mr.ok:
-                    me = mr.json() or {}
-                    users = [{"id": me.get("Id") or me.get("id"), "username": me.get("Name") or me.get("name") or ""}]
+                raw, total = _parse_users_payload(r.json() or {})
+
+            if (not r.ok) or (len(raw) <= 1):
+                key = api_key or token
+                r2 = _get(f"{server}/Users", params={"api_key": key}, use_headers=False)
+                if r2.ok:
+                    raw2, total2 = _parse_users_payload(r2.json() or {})
+                    if len(raw2) > len(raw):
+                        raw, total = raw2, total2
+
+            if total and len(raw) < total:
+                r3 = _get(f"{server}/Users", params={"StartIndex": 0, "Limit": max(total, 500)})
+                if r3.ok:
+                    raw3, _ = _parse_users_payload(r3.json() or {})
+                    if len(raw3) > len(raw):
+                        raw = raw3
+
+            if not raw:
+                me_r = _get(f"{server}/Users/Me")
+                if me_r.ok:
+                    me = me_r.json() or {}
+                    me_mapped = _map_user(me) if isinstance(me, dict) else {}
+                    me_out = [me_mapped] if me_mapped.get("username") else []
+                    return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing current user only."}
+
+            if not raw:
+                code = r.status_code if not r.ok else 502
+                detail = f"Emby users request failed (HTTP {r.status_code})."
+                raise HTTPException(status_code=502 if code >= 500 else code, detail=detail)
+
+            users = [_map_user(u) for u in raw if isinstance(u, dict)]
+        except HTTPException:
+            raise
         except Exception as e:
-            return JSONResponse({"ok": False, "error": str(e)}, _status_from_msg(str(e)))
+            msg = _req_error_user_msg("Emby", e)
+            raise HTTPException(status_code=_status_from_msg(str(e)), detail=msg)
 
         users = [u for u in users if (u or {}).get("username")]
         return {"users": users, "count": len(users), "instance": inst}

@@ -658,6 +658,14 @@ serverUUID: async (instanceId) => {
   function deepClone(v) {
     try { return typeof structuredClone === "function" ? structuredClone(v) : JSON.parse(JSON.stringify(v)); } catch { return v; }
   }
+  function canonicalInstanceId(id){
+    const fn = (window.cwMediaUserPicker && typeof window.cwMediaUserPicker.canonicalInstanceId === "function") ? window.cwMediaUserPicker.canonicalInstanceId : null;
+    if (fn) return fn(id);
+    const s = String(id || "").trim();
+    const out = s.replace(/:\d+$/, "").trim();
+    return out || "default";
+  }
+
 
   function normalizeRoute(r, idFallback) {
     const x = (r && typeof r === "object") ? r : {};
@@ -673,9 +681,9 @@ serverUUID: async (instanceId) => {
       id: String(x.id || idFallback || "").trim() || "R1",
       enabled: x.enabled !== false,
       provider: p.trim().toLowerCase(),
-      provider_instance: pi.trim() || "default",
+      provider_instance: canonicalInstanceId(pi),
       sink: s.trim().toLowerCase(),
-      sink_instance: si.trim() || "default",
+      sink_instance: canonicalInstanceId(si),
       filters: deepClone(x.filters || {}),
     };
   }
@@ -825,7 +833,7 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
 
   function activeProviderInstance() {
     const r = getActiveRoute();
-    return r ? String(r.provider_instance || "default") : "default";
+    return r ? canonicalInstanceId(r.provider_instance || "default") : "default";
   }
 
   async function getInstanceOptions(providerName) {
@@ -2584,10 +2592,22 @@ function chip(text, onRemove, onClick) {
   }
 
   async function openUserPicker(mode, anchorEl) {
-    ensureUserPickerPop();
     USER_PICK.mode = mode === "webhook" ? "webhook" : "watch";
     USER_PICK.anchor = anchorEl || null;
     USER_PICK.prov = USER_PICK.mode === "webhook" ? "plex" : provider();
+
+    if (USER_PICK.mode === "watch" && (USER_PICK.prov === "emby" || USER_PICK.prov === "jellyfin") && window.cwMediaUserPicker && typeof window.cwMediaUserPicker.open === "function") {
+      window.cwMediaUserPicker.open({
+        provider: USER_PICK.prov,
+        instance: activeProviderInstance(),
+        anchorEl: USER_PICK.anchor,
+        title: USER_PICK.prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user",
+        onPick: (u) => applyPickedUser({ name: u?.name, id: u?.id }),
+      });
+      return;
+    }
+
+    ensureUserPickerPop();
 
     const pop = d.getElementById("sc_user_pop");
     const title = d.getElementById("sc_user_title");

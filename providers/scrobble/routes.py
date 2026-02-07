@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any
+from cw_platform.provider_instances import normalize_instance_id
+
 
 
 DEFAULT_INSTANCE_ID = "default"
@@ -52,11 +54,13 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
         prov = "plex"
     prov_inst = str(r.get("provider_instance") or r.get("providerInstance") or DEFAULT_INSTANCE_ID).strip() or DEFAULT_INSTANCE_ID
 
+    prov_inst = normalize_instance_id(prov_inst)
     sink = str(r.get("sink") or "").strip().lower() or "trakt"
     if sink not in ROUTE_SINKS:
         sink = "trakt"
     sink_inst = str(r.get("sink_instance") or r.get("sinkInstance") or DEFAULT_INSTANCE_ID).strip() or DEFAULT_INSTANCE_ID
 
+    sink_inst = normalize_instance_id(sink_inst)
     filters = r.get("filters")
     if not isinstance(filters, dict):
         filters = {}

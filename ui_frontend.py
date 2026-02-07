@@ -817,6 +817,7 @@ def _get_index_html_static() -> str:
 <script src="/assets/helpers/events.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/legacy-bridge.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>
 <script src="/assets/js/syncbar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/main.js?v=__CW_VERSION__" defer></script>

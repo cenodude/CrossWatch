@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 import copy
+import re
 
 _DEFAULT_INSTANCE = "default"
 _INSTANCES_KEY = "instances"
@@ -13,6 +14,12 @@ _INSTANCES_KEY = "instances"
 
 def normalize_instance_id(v: Any) -> str:
     s = str(v or "").strip()
+    if not s or s.lower() == _DEFAULT_INSTANCE:
+        return _DEFAULT_INSTANCE
+
+    m = re.match(r"^(?P<id>.+?):(?P<n>\d+)$", s)
+    if m:
+        s = m.group("id").strip()
     return _DEFAULT_INSTANCE if not s or s.lower() == _DEFAULT_INSTANCE else s
 
 

@@ -346,7 +346,11 @@ def html() -> str:
               <input id="jfy_username" placeholder="Display name">
 
               <label style="margin-top:10px">User_ID</label>
-              <input id="jfy_user_id" placeholder="e.g. 6f7a0b3b-... (GUID)">
+              <div class="inp-row">
+                <input id="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <button id="jfy_pick_user" class="btn" type="button">Pick user</button>
+              </div>
+              <div class="sub">Uses your current token. Admin tokens show all users; otherwise you'll only see yourself.</div>
 
               <div class="inline" style="gap:12px;margin-top:12px">
                 <button class="btn" onclick="(window.jfyAuto||function(){})();">Auto-Fetch</button>

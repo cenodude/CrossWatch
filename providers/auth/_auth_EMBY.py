@@ -339,7 +339,11 @@ def html() -> str:
               <input id="emby_username" placeholder="Display name">
 
               <label style="margin-top:10px">User_ID</label>
-              <input id="emby_user_id" placeholder="e.g. 6f7a0b3b-... (GUID)">
+              <div class="inp-row">
+                <input id="emby_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <button id="emby_pick_user" class="btn" type="button" data-cw-emby="pick-user">Pick user</button>
+              </div>
+              <div class="sub">Uses your current token. Admin tokens show all users; otherwise you'll only see yourself.</div>
 
               <div class="inline" style="gap:12px;margin-top:12px">
                 <button class="btn" onclick="(window.embyAuto||function(){})();">Auto-Fetch</button>

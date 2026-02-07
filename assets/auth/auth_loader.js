@@ -28,6 +28,12 @@
 
   const loaded = new Map();
 
+  function _prefetch(host) {
+    try {
+      if (host?.querySelector?.("#sec-emby")) load("emby").catch(() => {});
+    } catch (_) {}
+  }
+
   function _ver() {
     return String(w.__CW_BUILD__ || w.__CW_VERSION__ || "").trim();
   }
@@ -46,7 +52,8 @@
     const p = new Promise((resolve, reject) => {
       const s = d.createElement("script");
       s.src = url.toString();
-      s.defer = true;
+      // Dynamic scripts: let them execute as soon as they load.
+      s.async = true;
       s.onload = () => resolve(true);
       s.onerror = () => reject(new Error(`Failed to load auth script: ${key}`));
       d.head.appendChild(s);
@@ -99,18 +106,23 @@
       true
     );
 
-    const mo = new MutationObserver(() => _scanOpen(host));
+    const mo = new MutationObserver(() => {
+      _prefetch(host);
+      _scanOpen(host);
+    });
     mo.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 
     d.addEventListener(
       "tab-changed",
       (ev) => {
         if (!_isSettingsTab(ev)) return;
+        _prefetch(host);
         _scanOpen(host);
       },
       true
     );
 
+    _prefetch(host);
     _scanOpen(host);
   }
 
