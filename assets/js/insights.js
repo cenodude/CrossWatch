@@ -282,7 +282,7 @@
       _feature = _visibleFeats[0] || "watchlist";
       localStorage.setItem("insights.feature", _feature);
     }
-    refreshInsights(!!ev?.detail?.force || true);
+    refreshInsights(true);
   });
 
   // Sparkline and animated counters/bars
@@ -431,7 +431,7 @@
   }
   function switchFeature(name){
     const want = clampFeature(name); if (want===_feature) return;
-    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(!!ev?.detail?.force || true);
+    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
   }
 
   // Provider tiles 
@@ -927,7 +927,7 @@
   w.subtitleOf     = subtitleOf;
 
   d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
-  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(!!ev?.detail?.force || true); });
+  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
 
   // Snapshot Picker
   let _cwSnapModal = null;
@@ -1066,7 +1066,7 @@
           const label = name === "latest" ? "latest" : formatSnapshotLabel(name);
           window.cxToast(`Snapshot set: ${label}`);
         }
-        refreshInsights(!!ev?.detail?.force || true);
+        refreshInsights(true);
       });
     });
 
