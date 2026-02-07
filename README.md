@@ -71,7 +71,7 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
-* **Profiles** Create seperate media server and/or tracker instances.
+* **Be your own Sync Hub** Create profiles for seperate media servers and/or tracker instances.
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
 * **Flexible sync directions** Between media server and trackers.
