@@ -1008,7 +1008,8 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     title = (item.get("title") or "").strip()
     series_title = (item.get("series_title") or "").strip()
     query_title = series_title if is_episode and series_title else title
-    if not query_title:
+    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
+    if not query_title and not ids:
         return None
 
     year = item.get("year")
@@ -1036,7 +1037,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             except Exception:
                 pass
 
-    if not hits:
+    if not hits and query_title and not strict:
         for sec in adapter.libraries(types=sec_types) or []:
             section_id = str(getattr(sec, "key", "")).strip()
             if allow and section_id not in allow:
@@ -1050,7 +1051,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             except Exception:
                 continue
 
-    if not hits:
+    if not hits and query_title and not strict:
         try:
             mediatype = "episode" if is_episode else "movie"
             search_hits = srv.search(query_title, mediatype=mediatype) or []

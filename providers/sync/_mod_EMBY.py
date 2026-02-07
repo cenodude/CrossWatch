@@ -75,7 +75,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.0.0"
+__VERSION__ = "3.1.0"
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
 _DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
@@ -197,6 +197,7 @@ class EMBYConfig:
     verify_ssl: bool = True
     timeout: float = 15.0
     max_retries: int = 3
+    strict_id_matching: bool = False
     watchlist_mode: str = "favorites"
     watchlist_playlist_name: str = "Watchlist"
     watchlist_query_limit: int = 25
@@ -350,6 +351,7 @@ class EMBYModule:
             verify_ssl=bool(em.get("verify_ssl", True)),
             timeout=float((cfg or {}).get("timeout", em.get("timeout", 15.0))),
             max_retries=int((cfg or {}).get("max_retries", em.get("max_retries", 3))),
+            strict_id_matching=bool(em.get("strict_id_matching", False)),
             watchlist_mode=wl_mode,
             watchlist_playlist_name=wl_pname,
             watchlist_query_limit=wl_qlim,

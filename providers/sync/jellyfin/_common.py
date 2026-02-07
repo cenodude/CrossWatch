@@ -927,6 +927,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     episode = it.get("episode")
     series_title = (it.get("series_title") or "").strip()
 
+    strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
+
     prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
     pairs = all_ext_pairs(ids, prio)
 
@@ -946,7 +948,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             if iid:
                 _trc('resolve hit', kind='movie', method='provider_index', pref=pref, item_id=iid)
                 return iid
-        if title:
+        if title and not strict:
             try:
                 q: dict[str, Any] = {
                     "userId": uid,
@@ -987,7 +989,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             if iid:
                 _dbg('resolve hit', kind='series', method='provider_index', title=(title or ''), pref=pref, year=year, item_id=str(iid))
                 return iid
-        if title:
+        if title and not strict:
             try:
                 q = {
                     "userId": uid,
@@ -1027,7 +1029,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         series_row = find_series_in_index(adapter, pairs)
         if series_row:
             _trc('resolve series candidate', method='provider_index')
-    if not series_row and series_title:
+    if not series_row and series_title and not strict:
         try:
             q = {
                 "userId": uid,
@@ -1067,7 +1069,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                         _trc('resolve hit', kind='episode', method='series_episodes', season=int(season), episode=int(episode), item_id=str(iid))
                         return str(iid)
 
-    if title:
+    if title and not strict:
         try:
             q = {
                 "userId": uid,

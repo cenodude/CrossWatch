@@ -38,6 +38,9 @@ const HELP_TEXT = {
 
   "plx-fallback-guid": "Plex: Fallback GUID\nAlso searches Plex’s database beyond your visible libraries (including hidden/old items) to recover older matches.\nWarning: enable only for a single run, it increases duration and resource usage.",
   "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
+  "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
+  "jf-strict-ids": "Jellyfin: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Jellyfin IDs + external IDs). Title/year searches are disabled.",
+  "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
 };
 
 // Provider helpers
@@ -167,6 +170,7 @@ function defaultState(){
       history:{enable:false,add:false,remove:false},
       playlists:{enable:false,add:true,remove:false}
     },
+    pairProviders:{},
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     emby:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     globals:{
@@ -177,6 +181,23 @@ function defaultState(){
     cfgRaw:null,
     visited:new Set()
   }
+}
+
+function normalizePairProviders(p){
+  const out={};
+  if(!p||typeof p!=="object")return out;
+  for(const k of Object.keys(p)){
+    const key=String(k||"").trim().toLowerCase();
+    if(!key)continue;
+    const v=p[k];
+    if(typeof v==="boolean"){out[key]={strict_id_matching:!!v};continue;}
+    if(v&&typeof v==="object"){
+      const blk=Object.assign({},v);
+      if("strict_id_matching" in blk) blk.strict_id_matching=!!blk.strict_id_matching;
+      out[key]=blk;
+    }
+  }
+  return out;
 }
 
 // Data
@@ -670,6 +691,10 @@ function renderFeaturePanel(state){
     const hist=plex.history||{};
     const jf=cfg.jellyfin||{};
     const em=cfg.emby||{};
+    const pp=state.pairProviders||{};
+    const plexPair=pp.plex||{};
+    const jfPair=pp.jellyfin||{};
+    const emPair=pp.emby||{};
 
     if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
     if (rightWrap) rightWrap.style.display = "none";
@@ -681,7 +706,7 @@ function renderFeaturePanel(state){
           <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
           <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
           <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
-          <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
+          <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${plexPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
        </div>
         <div class="prov-box" id="plx-pair-libs">
           <div class="panel-title small">Pair library whitelist</div>
@@ -704,6 +729,7 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
+            <div class="opt-row"><label for="jf-strict-ids">Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${jfPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="jf-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -727,6 +753,7 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
             <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
+            <div class="opt-row"><label for="em-strict-ids">Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${emPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="em-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -1258,8 +1285,16 @@ function bindChangeHandlers(state,root){
   });
 
   root.addEventListener("change",(e)=>{
-    const id=e.target.id,
-          map={
+    const id=e.target.id, el=e.target;
+
+    if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"){
+      state.pairProviders=state.pairProviders||{};
+      if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
+      if(id==="jf-strict-ids") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {strict_id_matching:!!el.checked});
+      if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
+      return;
+    }
+    const map={
             "cx-wl-enable":"cx-wl-remove",
             "cx-rt-enable":"cx-rt-remove",
             "cx-hs-enable":"cx-hs-remove",
@@ -1688,6 +1723,15 @@ function buildPayload(state,wrap){
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),playlists:get("playlists")}};
+  const prov={};
+  const pp=state.pairProviders||{};
+  const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
+  const useJf=(String(src).toUpperCase()==="JELLYFIN"||String(dst).toUpperCase()==="JELLYFIN");
+  const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
+  if(usePlex) prov.plex={strict_id_matching:!!(pp.plex&&pp.plex.strict_id_matching)};
+  if(useJf) prov.jellyfin={strict_id_matching:!!(pp.jellyfin&&pp.jellyfin.strict_id_matching)};
+  if(useEm) prov.emby={strict_id_matching:!!(pp.emby&&pp.emby.strict_id_matching)};
+  if(Object.keys(prov).length) payload.providers=prov;
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
 }
 
@@ -1725,6 +1769,7 @@ export default{
       state.options.playlists=safe(f.playlists,state.options.playlists);
       const r0=state.options.ratings, rI=f.ratings||{};
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
+      state.pairProviders = normalizePairProviders(pair.providers);
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
     }
 

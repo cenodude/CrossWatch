@@ -36,7 +36,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "4.0.0"
+__VERSION__ = "4.1.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -314,6 +314,7 @@ class PLEXConfig:
     max_retries: int = 3
     watchlist_allow_pms_fallback: bool = True
     watchlist_page_size: int = 100
+    strict_id_matching: bool = False
 
 
 class PLEXClient:
@@ -701,6 +702,7 @@ class PLEXModule:
             max_retries=int(plex_cfg.get("max_retries", cfg.get("max_retries", 3))),
             watchlist_allow_pms_fallback=bool(plex_cfg.get("watchlist_allow_pms_fallback", True)),
             watchlist_page_size=int(plex_cfg.get("watchlist_page_size", 100)),
+            strict_id_matching=bool(plex_cfg.get("strict_id_matching", False)),
         )
 
         configure_plex_context(baseurl=self.cfg.baseurl or "", token=self.cfg.token or "")

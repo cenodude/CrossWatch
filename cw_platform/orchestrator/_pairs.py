@@ -250,6 +250,22 @@ def run_pairs(ctx) -> dict[str, Any]:
         src_inst = normalize_instance_id(pair.get("source_instance"))
         dst_inst = normalize_instance_id(pair.get("target_instance"))
         pair_cfg_view = build_pair_config_view(cfg, src, src_inst, dst, dst_inst)
+        pair_prov = pair.get("providers") or {}
+        if isinstance(pair_prov, dict) and pair_prov:
+            for pk, pv in pair_prov.items():
+                k = str(pk or "").strip().lower()
+                if not k:
+                    continue
+                blk = pair_cfg_view.get(k)
+                if not isinstance(blk, dict):
+                    blk = {}
+                    pair_cfg_view[k] = blk
+                if isinstance(pv, dict):
+                    if "strict_id_matching" in pv:
+                        blk["strict_id_matching"] = bool(pv.get("strict_id_matching"))
+                elif pv is not None and k in {"plex", "jellyfin", "emby"}:
+                    blk["strict_id_matching"] = bool(pv)
+
         feat_map = dict(pair.get("features") or {})
         mode = str(pair.get("mode") or "one-way").lower().strip()
 

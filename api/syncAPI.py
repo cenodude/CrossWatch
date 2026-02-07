@@ -106,6 +106,31 @@ def _normalize_features(f: dict | None) -> dict:
             v.setdefault("remove", False)
     return f
 
+def _normalize_pair_providers(p: Any) -> dict[str, Any]:
+    if not isinstance(p, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in p.items():
+        key = str(k or "").strip().lower()
+        if not key:
+            continue
+        if isinstance(v, bool):
+            out[key] = {"strict_id_matching": bool(v)}
+            continue
+        if not isinstance(v, dict):
+            continue
+        blk: dict[str, Any] = {}
+        if "strict_id_matching" in v:
+            blk["strict_id_matching"] = bool(v.get("strict_id_matching"))
+        for kk, vv in v.items():
+            if kk == "strict_id_matching":
+                continue
+            blk[str(kk)] = vv
+        if blk:
+            out[key] = blk
+    return out
+
+
 def _cfg_pairs(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     arr = cfg.get("pairs")
     if not isinstance(arr, list):
@@ -1768,6 +1793,7 @@ class PairIn(BaseModel):
     target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
+    providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
 
 class PairPatch(BaseModel):
@@ -1777,6 +1803,7 @@ class PairPatch(BaseModel):
     target_instance: str | None = None
     mode: str | None = None
     enabled: bool | None = None
+    providers: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
 
 @router.get("/pairs")
@@ -1799,6 +1826,11 @@ def api_pairs_list() -> JSONResponse:
             if it.get("target_instance") != ti:
                 it["target_instance"] = ti
                 dirty = True
+            if it.get("providers") is not None:
+                newp = _normalize_pair_providers(it.get("providers"))
+                if newp != (it.get("providers") or {}):
+                    it["providers"] = newp
+                    dirty = True
         if dirty:
             save_config(cfg)
         return JSONResponse(arr)
@@ -1822,6 +1854,11 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
         item["enabled"] = bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
+        prov = _normalize_pair_providers(item.get("providers"))
+        if prov:
+            item["providers"] = prov
+        else:
+            item.pop("providers", None)
         item["id"] = _gen_id("pair")
 
         arr.append(item)
@@ -1889,6 +1926,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
             if str(it.get("id")) == str(pair_id):
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
+                if "providers" in upd:
+                    upd["providers"] = _normalize_pair_providers(upd.get("providers"))
                 if "source_instance" in upd:
                     upd["source_instance"] = _norm_instance_id(upd.get("source_instance"))
                 if "target_instance" in upd:

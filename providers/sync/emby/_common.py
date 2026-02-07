@@ -1163,6 +1163,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     season = it.get("season")
     episode = it.get("episode")
     series_title = (it.get("series_title") or "").strip()
+
+    strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
     series_ids = dict(it.get("show_ids") or {})
     prio = _merged_guid_priority(adapter)
     ep_pairs = all_ext_pairs(ids, prio)
@@ -1327,7 +1329,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         except Exception:
             _log_detail("safe-json: treating response as empty")
             return []
-    if t == "movie" and title:
+    if t == "movie" and title and not strict:
         try:
             q = {
                 "UserId": uid,
@@ -1357,7 +1359,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     return str(iid)
         except Exception:
             pass
-    if t in ("show", "series") and title:
+    if t in ("show", "series") and title and not strict:
         try:
             q = {
                 "UserId": uid,
@@ -1389,7 +1391,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     return str(iid)
         except Exception:
             pass
-    if t == "episode" and title:
+    if t == "episode" and title and not strict:
         try:
             q = {
                 "UserId": uid,

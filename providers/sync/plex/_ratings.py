@@ -472,7 +472,8 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     title = (it.get("title") or "").strip()
     series_title = (it.get("series_title") or "").strip()
     query_title = series_title if (is_episode or is_season) and series_title else title
-    if not query_title:
+    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
+    if not query_title and not ids:
         return None
 
     year = it.get("year")
@@ -500,31 +501,33 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             except Exception:
                 pass
 
-    for sec in adapter.libraries(types=sec_types) or []:
-        sid = str(getattr(sec, "key", "")).strip()
-        if allow and sid not in allow:
-            continue
-        try:
-            found = sec.search(title=query_title) or []
-            for o in found:
-                if _accept_obj(o):
-                    hits.append(o)
-        except Exception:
-            continue
+    if not strict and query_title:
+        for sec in adapter.libraries(types=sec_types) or []:
+            sid = str(getattr(sec, "key", "")).strip()
+            if allow and sid not in allow:
+                continue
+            try:
+                found = sec.search(title=query_title) or []
+                for o in found:
+                    if _accept_obj(o):
+                        hits.append(o)
+            except Exception:
+                continue
 
-    if not hits:
-        try:
-            med = "episode" if is_episode else ("season" if is_season else ("show" if is_show else "movie"))
-            hs = srv.search(query_title, mediatype=med) or []
-            for o in hs:
-                if not _accept_obj(o):
-                    continue
-                sid = str(getattr(o, "librarySectionID", "") or getattr(o, "sectionID", "") or "")
-                if allow and sid and sid not in allow:
-                    continue
-                hits.append(o)
-        except Exception:
-            pass
+        if not hits:
+            try:
+                med = "episode" if is_episode else ("season" if is_season else ("show" if is_show else "movie"))
+                hs = srv.search(query_title, mediatype=med) or []
+                for o in hs:
+                    if not _accept_obj(o):
+                        continue
+                    sid = str(getattr(o, "librarySectionID", "") or getattr(o, "sectionID", "") or "")
+                    if allow and sid and sid not in allow:
+                        continue
+                    hits.append(o)
+            except Exception:
+                pass
+
 
     if not hits:
         return None
