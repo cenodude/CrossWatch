@@ -97,6 +97,7 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
         <li>Sync ratings (one-/two-way)</li>
         <li>Sync history (one-/two-way)</li>
         <li>Keep snapshots with CW tracker</li>
+        <li>Profiles configurations</li>
         <li>Auto-remove from watchlist after finish</li>
       </ul>
     </td>
