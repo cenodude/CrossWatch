@@ -1,25 +1,24 @@
-<div align="center"><img src=".gitbook/assets/CrossWatch.png" alt="CrossWatch" width="480"></div>
+<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
 
 <!-- Screenshots row  -->
 <p align="center">
   <a href="images/screenshot1.jpg">
-    <img src=".gitbook/assets/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="180" style="border-radius:10px; margin:6px;">
+    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="180" style="border-radius:10px; margin:6px;">
   </a>
   <a href="images/screenshot2.jpg">
-    <img src=".gitbook/assets/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="180" style="border-radius:10px; margin:6px;">
+    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="180" style="border-radius:10px; margin:6px;">
   </a>
   <a href="images/screenshot3.jpg">
-    <img src=".gitbook/assets/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="180" style="border-radius:10px; margin:6px;">
+    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="180" style="border-radius:10px; margin:6px;">
   </a>
   <a href="images/screenshot4.jpg">
-    <img src=".gitbook/assets/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="180" style="border-radius:10px; margin:6px;">
+    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="180" style="border-radius:10px; margin:6px;">
   </a>
 </p>
 
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
 <b>Version 0.9.x provides <i>Profiles</i>(multi-users/servers - be your own sync hub)</b><br>
-<b><i>Experimental support</i></b>
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
