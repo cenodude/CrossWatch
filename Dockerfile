@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
-LABEL org.opencontainers.image.description="A lightweight tool to synchronize your watchlists and playlists across Plex, SIMKL, Trakt, and more."
+LABEL org.opencontainers.image.description="One brain for all your media syncs A single place to configure everything."
 
 # --- env ---
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -58,5 +58,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=5 \
 EXPOSE 8787
 VOLUME ["/config"]
 
-# Keep root so entrypoint can chown /config then su to appuser
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
