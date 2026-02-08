@@ -1,4 +1,5 @@
 /* assets/helpers/core.js */
+/* CrossWatch - Core JavaScript Helpers for Provider Status and Sync Management */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 /* Utilities */
@@ -805,11 +806,14 @@ function flashCopy(btn, ok, msg) {
 
 function recomputeRunDisabled() {
   const btn = document.getElementById("run");
-  if (!btn) return;
+  const menuBtn = document.getElementById("run-menu");
+  if (!btn && !menuBtn) return;
   const busyNow = !!window.busy;
   const canRun = !window._ui?.status ? true : !!window._ui.status.can_run;
   const running = !!(window._ui?.summary && window._ui.summary.running);
-  btn.disabled = busyNow || running || !canRun;
+  const disabled = busyNow || running || !canRun;
+  if (btn) btn.disabled = disabled;
+  if (menuBtn) menuBtn.disabled = disabled;
 }
 
 
@@ -1175,25 +1179,284 @@ function setBusy(v) {
   recomputeRunDisabled();
 }
 
+function _cwSyncEscapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[c] || c));
+}
+
+function _cwProvLabel(k) {
+  const map = {
+    PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", TMDB: "TMDb",
+    JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch"
+  };
+  const kk = String(k || "").trim().toUpperCase();
+  return map[kk] || (kk || "?");
+}
+
+function _cwFeatEnabled(v) {
+  if (v === true) return true;
+  if (!v || typeof v !== "object") return false;
+  return !!(v.enable ?? v.enabled);
+}
+
+function _cwPairCanRun(p) {
+  if (!p || p.enabled === false) return false;
+  const f = p.features || {};
+  const keys = ["watchlist", "ratings", "history", "playlists"];
+  if (!p.features) return true;
+  for (const k of keys) {
+    if (_cwFeatEnabled(f[k])) return true;
+  }
+  return false;
+}
+
+function _cwPairTitle(p) {
+  const src = _cwProvLabel(p.source);
+  const dst = _cwProvLabel(p.target);
+  const si = String(p.source_instance || "").trim();
+  const ti = String(p.target_instance || "").trim();
+  const src2 = si && si.toLowerCase() !== "default" ? `${src} · ${si}` : src;
+  const dst2 = ti && ti.toLowerCase() !== "default" ? `${dst} · ${ti}` : dst;
+  return `${src2} → ${dst2}`;
+}
+
+function cwClampMenuToViewport(menu, margin = 10) {
+  if (!menu || typeof menu.getBoundingClientRect !== "function") return;
+  try { menu.style.transform = ""; } catch {}
+  const r = menu.getBoundingClientRect();
+  let dx = 0;
+  if (r.right > window.innerWidth - margin) dx -= (r.right - (window.innerWidth - margin));
+  if (r.left < margin) dx += (margin - r.left);
+  if (dx) {
+    try { menu.style.transform = `translateX(${Math.round(dx)}px)`; } catch {}
+  }
+}
+
+function cwPortalMenuToBody(menu) {
+  if (!menu) return;
+  try {
+    if (!window.__cwSyncMenuHome) {
+      window.__cwSyncMenuHome = { parent: menu.parentNode, next: menu.nextSibling };
+    }
+    if (menu.parentNode !== document.body) {
+      document.body.appendChild(menu);
+    }
+  } catch {}
+}
+
+function cwRestoreMenuHome(menu) {
+  const home = window.__cwSyncMenuHome;
+  if (!menu || !home || !home.parent) return;
+  try {
+    if (menu.parentNode === home.parent) return;
+    if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(menu, home.next);
+    else home.parent.appendChild(menu);
+  } catch {}
+}
+
+function cwPositionSyncMenu(anchor, menu) {
+  if (!anchor || !menu || typeof anchor.getBoundingClientRect !== "function") return;
+  const r = anchor.getBoundingClientRect();
+  const gap = 10;
+  const margin = 10;
+  try {
+    menu.style.position = "fixed";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.transform = "";
+    menu.style.zIndex = "99999";
+  } catch {}
+
+  const mw = Math.max(240, menu.offsetWidth || 0);
+  const mh = Math.max(120, menu.offsetHeight || 0);
+
+  let left = r.right - mw;
+  let top = r.bottom + gap;
+
+  if (left < margin) left = margin;
+  if (left + mw > window.innerWidth - margin) left = window.innerWidth - margin - mw;
+
+  // If it doesn't fit below, try above.
+  if (top + mh > window.innerHeight - margin) {
+    const top2 = r.top - gap - mh;
+    if (top2 >= margin) top = top2;
+    else top = Math.max(margin, window.innerHeight - margin - mh);
+  }
+
+  try {
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+  } catch {}
+}
+
+
+function cwCloseSyncMenu() {
+  const btn = document.getElementById("run-menu");
+  const menu = document.getElementById("cw-sync-menu");
+  if (!menu) return;
+  menu.classList.add("hidden");
+  try { menu.style.transform = ""; } catch {}
+  try { menu.style.visibility = ""; } catch {}
+  try {
+    menu.style.left = "";
+    menu.style.top = "";
+    menu.style.right = "";
+    menu.style.bottom = "";
+    menu.style.position = "";
+    menu.style.zIndex = "";
+  } catch {}
+  if (btn) btn.setAttribute("aria-expanded", "false");
+
+  try { cwRestoreMenuHome(menu); } catch {}
+
+  try {
+    if (window.__cwSyncMenuOutside) {
+      document.removeEventListener("mousedown", window.__cwSyncMenuOutside, true);
+      window.__cwSyncMenuOutside = null;
+    }
+    if (window.__cwSyncMenuEsc) {
+      document.removeEventListener("keydown", window.__cwSyncMenuEsc, true);
+      window.__cwSyncMenuEsc = null;
+    }
+    if (window.__cwSyncMenuPos) {
+      window.removeEventListener("resize", window.__cwSyncMenuPos, true);
+      window.removeEventListener("scroll", window.__cwSyncMenuPos, true);
+      window.__cwSyncMenuPos = null;
+    }
+  } catch {}
+}
+
+async function cwBuildSyncMenu() {
+  const menu = document.getElementById("cw-sync-menu");
+  if (!menu) return;
+
+  menu.innerHTML = "";
+
+  const mkBtn = (label, onClick, extraClass = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cw-menu-item" + (extraClass ? ` ${extraClass}` : "");
+    b.setAttribute("role", "menuitem");
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+
+  menu.appendChild(mkBtn("Sync all", () => { cwCloseSyncMenu(); runSync(); }));
+
+  let pairs = [];
+  try {
+    if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) pairs = window.cx.pairs;
+    else if (typeof window.loadPairs === "function") pairs = await window.loadPairs();
+    else pairs = await fetch("/api/pairs", { cache: "no-store" }).then(r => r.json());
+  } catch {}
+
+  const runnable = (Array.isArray(pairs) ? pairs : []).filter(_cwPairCanRun);
+  if (!runnable.length) {
+    const div = document.createElement("div");
+    div.className = "cw-sync-menu-empty";
+    div.textContent = "No enabled pairs";
+    menu.appendChild(div);
+    return;
+  }
+
+  for (const p of runnable) {
+    const title = _cwPairTitle(p);
+    const mode = String(p.mode || "").toLowerCase();
+    const modeLabel = mode === "two-way" ? "two-way" : (mode === "one-way" ? "one-way" : "");
+
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cw-menu-item";
+    b.setAttribute("role", "menuitem");
+    b.innerHTML = `<span class="cw-sync-menu-title">${_cwSyncEscapeHtml(title)}</span>${modeLabel ? `<span class=\"cw-sync-menu-meta\">${_cwSyncEscapeHtml(modeLabel)}</span>` : ""}`;
+    b.addEventListener("click", () => {
+      cwCloseSyncMenu();
+      runSync({ pair_id: String(p.id || "").trim() });
+    });
+    menu.appendChild(b);
+  }
+}
+
+async function cwToggleSyncMenu(ev) {
+  try { ev?.preventDefault?.(); ev?.stopPropagation?.(); } catch {}
+  const btn = document.getElementById("run-menu");
+  const menu = document.getElementById("cw-sync-menu");
+  if (!btn || !menu) return;
+  if (!menu.classList.contains("hidden")) { cwCloseSyncMenu(); return; }
+
+  await cwBuildSyncMenu();
+  cwPortalMenuToBody(menu);
+  try { menu.style.visibility = "hidden"; } catch {}
+  menu.classList.remove("hidden");
+  try {
+    requestAnimationFrame(() => {
+      cwPositionSyncMenu(btn, menu);
+      try { menu.style.visibility = ""; } catch {}
+    });
+  } catch {}
+  btn.setAttribute("aria-expanded", "true");
+
+  window.__cwSyncMenuPos = () => {
+    const m = document.getElementById("cw-sync-menu");
+    const b = document.getElementById("run-menu");
+    if (!m || !b || m.classList.contains("hidden")) return;
+    cwPositionSyncMenu(b, m);
+  };
+  window.addEventListener("resize", window.__cwSyncMenuPos, true);
+  window.addEventListener("scroll", window.__cwSyncMenuPos, true);
+
+  window.__cwSyncMenuOutside = (e) => {
+    const t = e?.target;
+    if (!t) return;
+    if (t === btn) return;
+    if (menu.contains(t)) return;
+    cwCloseSyncMenu();
+  };
+  window.__cwSyncMenuEsc = (e) => {
+    if (e?.key === "Escape") cwCloseSyncMenu();
+  };
+  document.addEventListener("mousedown", window.__cwSyncMenuOutside, true);
+  document.addEventListener("keydown", window.__cwSyncMenuEsc, true);
+}
+
 // Run Sync
-async function runSync(){
+async function runSync(opts) {
   if (busy) return;
+  try { cwCloseSyncMenu?.(); } catch {}
+
+  let pairId = "";
+  try {
+    if (typeof opts === "string") pairId = opts;
+    else if (opts && typeof opts === "object") pairId = String(opts.pair_id || opts.pairId || opts.id || "");
+  } catch {}
+  pairId = String(pairId || "").trim();
+
   setBusy?.(true);
 
   const undoOptimisticSyncUI = () => {
-    try{ window.SyncBar?.reset?.(); }catch{}
-    try{
+    try { window.SyncBar?.reset?.(); } catch {}
+    try {
       const btn = document.getElementById("run");
-      if (btn){
-        btn.removeAttribute("disabled");
-        btn.setAttribute("aria-busy", "false");
-        btn.classList.remove("glass");
-        btn.title = "Run synchronization";
+      const menuBtn = document.getElementById("run-menu");
+      for (const b of [btn, menuBtn]) {
+        if (!b) continue;
+        b.removeAttribute("disabled");
+        b.setAttribute("aria-busy", "false");
+        b.classList.remove("glass");
       }
-    }catch{}
+      if (btn) btn.title = pairId ? "Run synchronization (single pair)" : "Run synchronization";
+      if (menuBtn) menuBtn.title = "Sync options";
+    } catch {}
   };
 
-  try{ window.UX?.updateTimeline({ start:true, pre:false, post:false, done:false }); window.UX?.updateProgress({ pct:0 }); }catch{}
+  try {
+    window.UX?.updateTimeline({ start: true, pre: false, post: false, done: false });
+    window.UX?.updateProgress({ pct: 0 });
+  } catch {}
 
   try {
     const detLog = document.getElementById("det-log");
@@ -1204,32 +1467,41 @@ async function runSync(){
 
   try { typeof openDetailsLog === "function" && openDetailsLog(); } catch {}
 
-  try{
-    const resp = await fetch("/api/run", { method:"POST" });
-    let j = null; try{ j = await resp.json(); }catch{}
-    if (!resp.ok || !j || j.ok !== true){
+  try {
+    const init = { method: "POST" };
+    if (pairId) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify({ pair_id: pairId });
+    }
+
+    const resp = await fetch("/api/run", init);
+    let j = null;
+    try { j = await resp.json(); } catch {}
+
+    if (!resp.ok || !j || j.ok !== true) {
       typeof setSyncHeader === "function" && setSyncHeader("sync-bad", `Failed to start${j?.error ? ` – ${j.error}` : ""}`);
       undoOptimisticSyncUI();
-      try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
+      try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
       return;
     }
-    if (j?.skipped){
+
+    if (j?.skipped) {
       const msg = (j.skipped === "no_pairs_configured")
         ? "No pairs configured — skipping sync"
         : `Sync skipped — ${j.skipped}`;
       typeof setSyncHeader === "function" && setSyncHeader("sync-warn", msg);
       undoOptimisticSyncUI();
-      try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
+      try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
       return;
     }
-  }catch(_){
+  } catch (_) {
     typeof setSyncHeader === "function" && setSyncHeader("sync-bad", "Failed to reach server");
     undoOptimisticSyncUI();
-    try{ window.UX?.updateTimeline({ start:false, pre:false, post:false, done:false }); }catch{}
-  }finally{
+    try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
+  } finally {
     setBusy?.(false);
     typeof recomputeRunDisabled === "function" && recomputeRunDisabled();
-    if (AUTO_STATUS) try{ refreshStatus(false); }catch{}
+    if (AUTO_STATUS) try { refreshStatus(false); } catch {}
   }
 }
 
@@ -5268,6 +5540,8 @@ try {
     cxSavePair,
     renderConnections,
     fixFormLabels,
+    cwToggleSyncMenu,
+    cwCloseSyncMenu,
   });
 } catch (_) {}
 

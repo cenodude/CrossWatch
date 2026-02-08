@@ -463,6 +463,29 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         return t
 
     try:
+        load_config, _save = _env()
+        cfg = load_config()
+
+        req_pair_id = ""
+        try:
+            req_pair_id = str((overrides or {}).get("pair_id") or (overrides or {}).get("pair_scope") or "").strip()
+        except Exception:
+            req_pair_id = ""
+
+        if req_pair_id:
+            pair = next((p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") == req_pair_id), None)
+            if not pair or pair.get("enabled", True) is False:
+                _sync_progress_ui(f"[!] Pair not found or disabled: {req_pair_id}")
+                _sync_progress_ui("[SYNC] exit code: 1")
+                return
+            cfg = dict(cfg)
+            cfg["pairs"] = [pair]
+            pair_scope = req_pair_id
+            pair_src = str(pair.get("source") or pair_src)
+            pair_dst = str(pair.get("target") or pair_dst)
+            pair_mode = str(pair.get("mode") or pair_mode).strip().lower() or pair_mode
+            _sync_progress_ui(f"[i] Running single pair: {pair_src} → {pair_dst} ({req_pair_id})")
+
         with _orch_scope_env():
             orch_mod = importlib.import_module("cw_platform.orchestrator")
             try:
@@ -471,8 +494,6 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 pass
             OrchestratorClass = getattr(orch_mod, "Orchestrator")
             _sync_progress_ui(f"[i] Orchestrator module: {getattr(orch_mod, '__file__', '?')}")
-            load_config, _save = _env()
-            cfg = load_config()
 
             def _pair_has_enabled_features(p: dict) -> bool:
                 fmap = p.get("features") or {}
@@ -2173,6 +2194,21 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             return {"ok": False, "error": "Sync already running"}
         cfg = _env()[0]()
         pairs = list((cfg or {}).get("pairs") or [])
+
+        pair_id = ""
+        try:
+            if isinstance(payload, dict):
+                pair_id = str(payload.get("pair_id") or payload.get("pairId") or "").strip()
+        except Exception:
+            pair_id = ""
+
+        if pair_id:
+            pair = next((p for p in pairs if str(p.get("id") or "") == pair_id), None)
+            if not pair:
+                return {"ok": False, "error": f"Pair not found: {pair_id}"}
+            if pair.get("enabled", True) is False:
+                return {"ok": False, "error": f"Pair disabled: {pair_id}"}
+            pairs = [pair]
         if not any(p.get("enabled", True) for p in pairs):
             _summary_reset()
             _summary_set("raw_started_ts", str(time.time()))

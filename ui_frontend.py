@@ -316,7 +316,11 @@ def _get_index_html_static() -> str:
 
     <div class="action-row">
       <div class="action-buttons">
-        <button id="run" class="btn acc" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
+        <div class="cw-split-run" id="cw-sync-split">
+        <button id="run" class="btn acc cw-split-main" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
+        <button id="run-menu" class="btn acc cw-split-edge" type="button" title="Sync options" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)">▾</button>
+        <div class="cw-menu cw-sync-menu hidden" id="cw-sync-menu" role="menu" aria-labelledby="run-menu"></div>
+      </div>
         <button class="btn" onclick="toggleDetails()">View details</button>
         <button class="btn" onclick="openAnalyzer()">Analyzer</button>
         <button class="btn" onclick="openExporter()">Exporter</button>
