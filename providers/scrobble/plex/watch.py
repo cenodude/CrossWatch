@@ -577,7 +577,7 @@ class WatchService:
                     fstop = _force_stop_at(cfg)
                     if ev.progress < fstop and age < 2.0:
                         self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={fstop} age={age:.2f}s")
-                        return
+                        # Keep STOP to close the session; do not drop it.
 
             if ev.session_key:
                 self._last_seen[str(ev.session_key)] = time.time()

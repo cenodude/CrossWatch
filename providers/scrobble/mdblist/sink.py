@@ -646,8 +646,6 @@ class MDBListSink(ScrobbleSink):
                 _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"
                 p_send = last_sess
-            elif p_send < thr:
-                action = "pause"
 
         step = _progress_step(cfg)
         p_payload = int(float(p_send))
