@@ -1,5 +1,5 @@
 # _logging.py
-# CrossWatch - Logging module
+# CrossWatch - logging: A simple logging utility with color and JSON support.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
