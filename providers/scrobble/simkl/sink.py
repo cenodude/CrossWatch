@@ -400,6 +400,8 @@ class SimklSink(ScrobbleSink):
         self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
+        self._p_step: dict[tuple[str, str], int] = {}
+        self._a_sess: dict[tuple[str, str], str] = {}
         self._p_glob: dict[str, int] = {}
         self._best: dict[str, dict[str, Any]] = {}
         self._ids_logged: set[str] = set()
@@ -486,6 +488,9 @@ class SimklSink(ScrobbleSink):
         p_sess = self._p_sess.get((sk, mk), -1)
         p_glob = self._p_glob.get(mk, -1)
 
+        last_act = self._a_sess.get((sk, mk))
+        last_bucket = self._p_step.get((sk, mk), -1)
+
         name = _media_name(ev)
         key = self._ckey(ev)
 
@@ -535,23 +540,25 @@ class SimklSink(ScrobbleSink):
                 p_send = last_sess
             elif p_send < thr:
                 action = "pause"
-                
+
         step = _progress_step(cfg)
-        p_gate = int(float(p_send))
+        p_payload = int(float(p_send))
+        bucket: int | None = None
         if action == "start" and step > 1:
-            p_i = int(float(p_send))
-            bucket = (p_i // step) * step
-            if p_sess >= 0 and bucket <= int(p_sess):
+            bucket = (int(float(p_send)) // step) * step
+            if bucket < 1:
+                bucket = 1
+            if last_act == "start" and last_bucket >= 0 and bucket <= int(last_bucket):
+                self._p_sess[(sk, mk)] = int(p_send)
+                if int(p_send) > (p_glob if p_glob >= 0 else -1):
+                    self._p_glob[mk] = int(p_send)
                 return
-            if p_i % step == 0:
-                p_gate = bucket
-            else:
-                p_gate = (bucket + step) if bucket > 0 else step
-        p_gate = max(1, min(100, int(p_gate)))
-        if p_gate != p_sess:
-            self._p_sess[(sk, mk)] = p_gate
-        if p_send > (p_glob if p_glob >= 0 else -1):
-            self._p_glob[mk] = p_send
+            if last_act == "start":
+                p_payload = bucket
+
+        self._p_sess[(sk, mk)] = int(p_send)
+        if int(p_send) > (p_glob if p_glob >= 0 else -1):
+            self._p_glob[mk] = int(p_send)
 
         comp_thr = max(_force_stop_at(cfg), comp or 0)
         if not (action == "stop" and p_send >= comp_thr):
@@ -563,16 +570,16 @@ class SimklSink(ScrobbleSink):
         best_skel: dict[str, Any] | None = None
         best_desc = "title/year"
         if isinstance(best, dict):
-            sk = best.get("skeleton")
-            if isinstance(sk, dict):
-                best_skel = sk
+            skel = best.get("skeleton")
+            if isinstance(skel, dict):
+                best_skel = skel
                 bd = best.get("ids_desc")
                 if isinstance(bd, str):
                     best_desc = bd
 
-        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_send))]
+        bodies = [{**b, **_app_meta(cfg)} for b in _bodies(ev, float(p_payload))]
         if best_skel is not None:
-            b0 = {"progress": float(p_send), **best_skel, **_app_meta(cfg)}
+            b0 = {"progress": float(p_payload), **best_skel, **_app_meta(cfg)}
             if self._should_log_intent(key, path, int(float(b0.get("progress") or p_send))):
                 _log(f"simkl intent {path} using cached {best_desc}, prog={b0.get('progress')}", "DEBUG")
             bodies = [b0] + [b for b in bodies if _body_ids_desc(b) != best_desc]
@@ -603,6 +610,9 @@ class SimklSink(ScrobbleSink):
                     pass
                 if action == "stop" and p_send >= comp_thr:
                     _auto_remove_across(ev, cfg)
+                self._a_sess[(sk, mk)] = action
+                if action == "start" and step > 1 and bucket is not None:
+                    self._p_step[(sk, mk)] = int(bucket)
                 return
             last_err = res
             if res.get("status") == 404:

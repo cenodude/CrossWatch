@@ -444,6 +444,8 @@ class TraktSink(ScrobbleSink):
         self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
         self._p_sess: dict[tuple[str, str], int] = {}
+        self._p_step: dict[tuple[str, str], int] = {}
+        self._a_sess: dict[tuple[str, str], str] = {}
         self._p_glob: dict[str, int] = {}
         self._best: dict[str, dict[str, Any]] = {}
         self._last_intent_path: dict[str, str] = {}
@@ -636,6 +638,9 @@ class TraktSink(ScrobbleSink):
         p_sess = self._p_sess.get((sk, mk), -1)
         p_glob = self._p_glob.get(mk, -1)
 
+        last_act = self._a_sess.get((sk, mk))
+        last_bucket = self._p_step.get((sk, mk), -1)
+
         name = _media_name(ev)
         key = self._ckey(ev)
 
@@ -690,21 +695,23 @@ class TraktSink(ScrobbleSink):
                 action = "pause"
 
         step = _trakt_progress_step(cfg)
-        p_gate = int(float(p_send))
+        p_payload = int(float(p_send))
+        bucket: int | None = None
         if action == "start" and step > 1:
-            p_i = int(float(p_send))
-            bucket = (p_i // step) * step
-            if p_sess >= 0 and bucket <= int(p_sess):
+            bucket = (int(float(p_send)) // step) * step
+            if bucket < 1:
+                bucket = 1
+            if last_act == "start" and last_bucket >= 0 and bucket <= int(last_bucket):
+                self._p_sess[(sk, mk)] = int(p_send)
+                if int(p_send) > (p_glob if p_glob >= 0 else -1):
+                    self._p_glob[mk] = int(p_send)
                 return
-            if p_i % step == 0:
-                p_gate = bucket
-            else:
-                p_gate = (bucket + step) if bucket > 0 else step
-        p_gate = max(1, min(100, int(p_gate)))
-        if p_gate != p_sess:
-            self._p_sess[(sk, mk)] = p_gate
-        if p_send > (p_glob if p_glob >= 0 else -1):
-            self._p_glob[mk] = p_send
+            if last_act == "start":
+                p_payload = bucket
+
+        self._p_sess[(sk, mk)] = int(p_send)
+        if int(p_send) > (p_glob if p_glob >= 0 else -1):
+            self._p_glob[mk] = int(p_send)
 
         comp_thr = max(_force_stop_at(cfg), comp or 0)
         if not (action == "stop" and p_send >= comp_thr):
@@ -734,7 +741,7 @@ class TraktSink(ScrobbleSink):
 
         bodies: list[dict[str, Any]] = []
         if best and isinstance(best.get("skeleton"), dict):
-            b0 = {"progress": p_send, **best["skeleton"], **_app_meta(cfg)}
+            b0 = {"progress": p_payload, **best["skeleton"], **_app_meta(cfg)}
             if self._should_log_intent(key, path, int(b0.get("progress") or p_send)):
                 _log(
                     f"trakt intent {path} using cached {best.get('ids_desc','title/year')}, "
@@ -743,11 +750,11 @@ class TraktSink(ScrobbleSink):
                 )
             bodies.append(b0)
         else:
-            bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_send)]
+            bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_payload)]
 
         for i, body in enumerate(bodies):
             if not (best and i == 0):
-                prog_i = int(float(body.get("progress") or p_send))
+                prog_i = int(float(body.get("progress") or p_payload))
                 if self._should_log_intent(key, path, prog_i):
                     _log(f"trakt intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
@@ -765,6 +772,9 @@ class TraktSink(ScrobbleSink):
                 }
                 if action == "stop" and p_send >= comp_thr:
                     _auto_remove_across(ev, cfg)
+                self._a_sess[(sk, mk)] = action
+                if action == "start" and step > 1 and bucket is not None:
+                    self._p_step[(sk, mk)] = int(bucket)
                 try:
                     _log(
                         f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}",
@@ -783,7 +793,7 @@ class TraktSink(ScrobbleSink):
             epi_ids = _guid_search(ev, cfg)
             if epi_ids:
                 body = {
-                    "progress": p_send,
+                    "progress": p_payload,
                     "episode": {"ids": epi_ids},
                     **_app_meta(cfg),
                 }
@@ -808,6 +818,9 @@ class TraktSink(ScrobbleSink):
                     }
                     if action == "stop" and p_send >= comp_thr:
                         _auto_remove_across(ev, cfg)
+                    self._a_sess[(sk, mk)] = action
+                    if action == "start" and step > 1 and bucket is not None:
+                        self._p_step[(sk, mk)] = int(bucket)
                     try:
                         _log(
                             f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}",
