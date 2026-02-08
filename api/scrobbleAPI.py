@@ -1,5 +1,5 @@
 # /api/scrobbleAPI.py
-# CrossWatch - Scrobble API for multiple services
+# CrossWatch - Scrobbling and Webhook API
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
-from providers.scrobble.currently_watching import _state_file as _cw_state_file
+from providers.scrobble.currently_watching import state_file as _cw_state_file
 
 try:
     from providers.scrobble.watch_manager import start_from_config as _wm_start_from_config
@@ -393,6 +393,8 @@ def api_plex_pms(instance: str | None = Query(None)) -> JSONResponse:
 @router.get("/api/watch/currently_watching")
 def api_currently_watching() -> JSONResponse:
     data: Any = None
+    streams: list[dict[str, Any]] = []
+    streams_count = 0
     try:
         path = _cw_state_file()
     except Exception:
@@ -413,10 +415,40 @@ def api_currently_watching() -> JSONResponse:
                 except Exception:
                     pass
 
-    return JSONResponse(
-        {"ok": True, "currently_watching": data},
-        headers={"Cache-Control": "no-store"},
-    )
+    # v2 state: { "v": 2, "streams": { "<key>": {payload}, ... } }
+    if isinstance(data, dict) and int(data.get("v") or 0) == 2 and isinstance(data.get("streams"), dict):
+        try:
+            s = data.get("streams") or {}
+            items: list[dict[str, Any]] = []
+            for k, v in (s.items() if isinstance(s, dict) else []):
+                if isinstance(v, dict):
+                    vv = dict(v)
+                    vv["_key"] = str(k)
+                    items.append(vv)
+            items.sort(key=lambda x: int(x.get("updated") or 0), reverse=True)
+            streams = items
+
+
+            def _is_active(st: Any) -> bool:
+                v = str(st or "").lower()
+                return v in ("playing", "paused", "buffering")
+
+            active_items = [it for it in items if _is_active(it.get("state"))]
+            streams_count = len(active_items)
+
+            primary = active_items[0] if active_items else (items[0] if items else None)
+            data = primary
+        except Exception:
+            pass
+
+    if not streams_count:
+        streams_count = len(streams) if streams else (1 if isinstance(data, dict) and data.get("title") else 0)
+
+    payload: dict[str, Any] = {"ok": True, "currently_watching": data, "streams_count": streams_count, "ts": int(time.time())}
+    if streams:
+        payload["streams"] = streams
+
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/watch/logs")
@@ -1173,3 +1205,4 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
     )
+    

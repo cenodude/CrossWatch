@@ -41,13 +41,21 @@
     return v === "playing" || v === "paused" || v === "buffering";
   };
 
-  const keyOf = (p) => [
-    p.media_type || p.type || "",
-    p.title || "",
-    p.year || "",
-    p.season || "",
-    p.episode || ""
-  ].join("|");
+  const keyOf = (p) => {
+    const k = String(p?._key || "").trim();
+    if (k) return k;
+    const src = String(p?.source || "").trim();
+    const sk = String(p?.session_key || "").trim();
+    if (src && sk) return `${src}:${sk}`;
+    return [
+      p.source || "",
+      p.media_type || p.type || "",
+      p.title || "",
+      p.year || "",
+      p.season || "",
+      p.episode || ""
+    ].join("|");
+  };
 
   const tmdbIdOf = (p) => {
     const mt = String(p.media_type || p.type || "").toLowerCase();
@@ -122,15 +130,14 @@
     return src;
   };
 
-  const agoLabel = (updatedSec) => {
-    const ts = Number(updatedSec);
-    if (!ts) return "";
-    const diffMs = Date.now() - ts * 1000;
-    if (diffMs < 0) return "";
-    const sec = Math.floor(diffMs / 1000);
-    if (sec < 60) return "just now";
-    const min = Math.floor(sec / 60);
-    if (min < 60) return `${min} min ago`;
+  const sinceLabel = (nowSec, startedSec) => {
+    const now = Number(nowSec) || 0;
+    const started = Number(startedSec) || 0;
+    if (!now || !started) return "";
+    const diff = Math.max(0, now - started);
+    if (diff < 60) return `${diff}s ago`;
+    const min = Math.floor(diff / 60);
+    if (min < 60) return `${min}m ago`;
     const hr = Math.floor(min / 60);
     if (hr < 24) return `${hr}h ago`;
     const d = Math.floor(hr / 24);
@@ -200,6 +207,7 @@
   let _cwCacheKey = "";
   let _cwCacheAt = 0;
   let _cwCacheVal = null;
+  const _cwCountByKey = new Map();
   const CW_TTL_MS = 30000;
 
   const fetchCurrentlyWatching = async (wantKey) => {
@@ -217,11 +225,28 @@
         const r = await fetch("/api/watch/currently_watching", { cache: "no-store" });
         if (!r.ok) return null;
         const j = await r.json();
-        const v = j?.currently_watching || null;
+        let v = j?.currently_watching || null;
+        const sc = Number(j?.streams_count) || (Array.isArray(j?.streams) ? j.streams.length : 0);
+        const ts = Number(j?.ts) || 0;
+
+        // Back-compat: some builds may return the raw v2 state directly
+        if (v && v.streams && !v.title) {
+          const items = Object.values(v.streams || {}).filter(x => x && typeof x === "object");
+          items.sort((a,b) => (Number(b.updated)||0) - (Number(a.updated)||0));
+          v = items.find(it => isActiveState(it.state)) || items[0] || null;
+        }
+
         if (v) {
+          const k = wk || keyOf(v) || "";
           _cwCacheVal = v;
-          _cwCacheKey = wk || keyOf(v) || "";
+          _cwCacheKey = k;
           _cwCacheAt = Date.now();
+          if (sc > 1) _cwCountByKey.set(k, sc);
+          else _cwCountByKey.delete(k);
+          if (typeof v === "object") {
+            v._streams_count = sc;
+            if (ts) v._server_ts = ts;
+          }
         }
         return v;
       } catch {
@@ -360,6 +385,9 @@
     font-size:11px;
     letter-spacing:.02em;
     text-transform:uppercase;
+  }
+  .pc-chip-streams{
+    background:rgba(255,255,255,.10);
   }
 
   #playing-detail .pc-overview{
@@ -628,15 +656,70 @@
   let lastKey = null;
   let dismissedKey = null;
   let lastUpdatedSec = 0;
+  let lastStartedSec = 0;
+  let lastServerTsSec = 0;
   let lastStatusLabel = "";
+  let _cwStatusPoll = null;
+
+  const stopStatusPoll = () => {
+    if (_cwStatusPoll) {
+      try { clearInterval(_cwStatusPoll); } catch {}
+      _cwStatusPoll = null;
+    }
+  };
 
   const hide = () => {
     detail.classList.remove("show");
+    stopStatusPoll();
     lastKey = null;
     lastUpdatedSec = 0;
+    lastStartedSec = 0;
+    lastServerTsSec = 0;
     lastStatusLabel = "";
   };
 
+
+  const startStatusPoll = () => {
+    if (_cwStatusPoll) return;
+    _cwStatusPoll = setInterval(async () => {
+      try {
+        if (!detail.classList.contains("show")) return;
+        if (document.hidden) return;
+
+        const api = await fetchCurrentlyWatching(lastKey || "");
+        if (!api) return;
+
+        const k = keyOf(api);
+        if (!k || k !== lastKey) return;
+
+        const st = String(api.state || api.status || "").toLowerCase();
+        if (!isActiveState(st)) {
+          hide();
+          dismissedKey = null;
+          return;
+        }
+
+        const startedSec = Number(api.started) || lastStartedSec || 0;
+        if (startedSec) lastStartedSec = startedSec;
+
+        const serverTs = Number(api._server_ts) || 0;
+        if (serverTs) lastServerTsSec = serverTs;
+
+        const nowSec = lastServerTsSec || Math.floor(Date.now() / 1000);
+        const since = lastStartedSec ? sinceLabel(nowSec, lastStartedSec) : "";
+        if (!since) return;
+
+        let label =
+          st === "paused" ? "Paused" :
+          st === "buffering" ? "Buffering..." :
+          "Now Playing";
+
+        label += ` • ${since}`;
+        statusEl.textContent = label;
+        lastStatusLabel = label;
+      } catch {}
+    }, 60_000);
+  };
   closeBtn.addEventListener("click", () => {
     if (lastKey) dismissedKey = lastKey;
     hide();
@@ -671,6 +754,10 @@
     else if (rawSrc.includes("jellyfin")) srcClass = "pc-chip-source-jellyfin";
     if (srcLabel) addChip(srcLabel, srcClass);
     if (typeLabel) addChip(typeLabel);
+    const k = keyOf(p);
+    const scRaw = (p._streams_count ?? _cwCountByKey.get(k) ?? 0);
+    const sc = Number(scRaw) || 0;
+    if (sc > 1) addChip(`${sc} streams`, "pc-chip-streams");
 
     let yearLabel = "";
 
@@ -795,7 +882,7 @@
       return;
     }
 
-    if (!tmdbIdOf(p)) {
+    if (!tmdbIdOf(p) || !p.started) {
       const wantKey = keyOf(p);
       const api = await fetchCurrentlyWatching(wantKey);
       if (api) {
@@ -851,15 +938,21 @@
       st === "stopped" ? "Stopped" :
       "Now Playing";
 
-    const ago = updatedSec ? agoLabel(updatedSec) : "";
-    if (ago) {
-      statusLabel += ` • ${ago}`;
-    } else if (lastStatusLabel && lastStatusLabel.startsWith("Now Playing •")) {
-      statusLabel = lastStatusLabel;
-    }
+    // Prefer a stable started timestamp (doesn't reset on progress updates)
+    let startedSec = Number(p.started) || 0;
+    if (!startedSec && lastStartedSec && lastKey === k) startedSec = lastStartedSec;
+
+    const serverTs = Number(p._server_ts) || 0;
+    if (serverTs) lastServerTsSec = serverTs;
+
+    const nowSec = lastServerTsSec || Math.floor(Date.now() / 1000);
+    const since = startedSec ? sinceLabel(nowSec, startedSec) : "";
+
+    if (startedSec) lastStartedSec = startedSec;
+    if (since) statusLabel += ` • ${since}`;
 
     statusEl.textContent = statusLabel;
-    statusEl.title = `source=${p.source || ""}, state=${state || ""}, updated=${updatedSec || ""}`;
+    statusEl.title = `source=${p.source || ""}, state=${state || ""}, started=${startedSec || ""}, updated=${updatedSec || ""}`;
     lastStatusLabel = statusLabel;  // remember what we actually showed
 
     const mediaType = String(p.media_type || p.type || "").toLowerCase();
@@ -882,6 +975,9 @@
     else if (rawSrc.includes("jellyfin")) baseSrcClass = "pc-chip-source-jellyfin";
     if (baseSrcLabel) addChip(baseSrcLabel, baseSrcClass);
     if (typeLabel) addChip(typeLabel);
+    const scRaw = (p._streams_count ?? _cwCountByKey.get(k) ?? 0);
+    const sc = Number(scRaw) || 0;
+    if (sc > 1) addChip(`${sc} streams`, "pc-chip-streams");
     if (mediaType === "episode" && p.season && p.episode) {
       addChip(`S${String(p.season).padStart(2,"0")}E${String(p.episode).padStart(2,"0")}`);
     } else if (p.year) {
@@ -923,6 +1019,7 @@
 
     detail.style.setProperty("--pc-backdrop", "none");
     detail.classList.add("show");
+    startStatusPoll();
 
     const meta = await getMetaFor(p);
     if (!meta) return;
@@ -931,15 +1028,24 @@
   }
 
   window.addEventListener("currently-watching-updated", (ev) => {
-    try {
-      const d = ev.detail || {};
-      if (!d || d.state === "stopped") {
-        hide();
-        dismissedKey = null;
-        return;
-      }
-      render(d);
-    } catch {}
+    (async () => {
+      try {
+        const d = ev.detail || {};
+        const st = String(d?.state || d?.status || "").toLowerCase();
+        const wantKey = keyOf(d) || lastKey || "";
+        const api = await fetchCurrentlyWatching(wantKey);
+        if (api && isActiveState(api.state || api.status)) {
+          await render(api);
+          return;
+        }
+        if (!d || st === "stopped") {
+          hide();
+          dismissedKey = null;
+          return;
+        }
+        await render(d);
+      } catch {}
+    })();
   });
 
   window.updatePlayingCard = render;

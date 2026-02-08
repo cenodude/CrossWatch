@@ -126,8 +126,8 @@ const MIN_SCROBBLE_FETCH_MS=2000;
 
 /* State */
 let S={enabled:false,running:false,next:0,busy:false},
-    W={enabled:false,alive:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null},
-    H={enabled:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null};
+    W={enabled:false,alive:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null,streams_count:0},
+    H={enabled:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null,streams_count:0};
 
 let _schedLastAt=0, _schedQueued=false, _schedQueuedForce=false;
 let _scrobLastAt=0, _scrobQueued=false, _scrobQueuedForceCfg=false, _scrobQueuedForce=false;
@@ -206,7 +206,9 @@ function renderWatch(){
   chip.classList.toggle('ok',live);
   chip.classList.toggle('bad',!live);
   chip.classList.toggle('live',hasPlay);
-  sub.textContent=hasPlay?`Watcher: ${W.title}`:`Watcher: ${live?'running':'not running'}`;
+  const sc = Number(W.streams_count)||0;
+  const scLabel = (hasPlay && sc > 1) ? ` (${sc} streams)` : '';
+  sub.textContent=hasPlay?`Watcher: ${W.title}${scLabel}`:`Watcher: ${live?'running':'not running'}`;
 
   const pct=Math.max(0,Math.min(100,Number(W.progress)||0));
 
@@ -218,7 +220,8 @@ function renderWatch(){
       season:W.season??null,
       episode:W.episode??null,
       progress:pct,
-      state:W.state||'playing'
+      state:W.state||'playing',
+      _streams_count: sc
     });
   }else{
     emitCurrentlyWatching('watcher',{ state:'stopped' });
@@ -234,7 +237,9 @@ function renderHook(){
   chip.classList.toggle('ok',true);
   chip.classList.toggle('bad',false);
   chip.classList.toggle('live',hasPlay);
-  sub.textContent=hasPlay?`Webhook: ${H.title}`:'Webhook: enabled';
+  const sc = Number(H.streams_count)||0;
+  const scLabel = (hasPlay && sc > 1) ? ` (${sc} streams)` : '';
+  sub.textContent=hasPlay?`Webhook: ${H.title}${scLabel}`:'Webhook: enabled';
 
   const pct=Math.max(0,Math.min(100,Number(H.progress)||0));
 
@@ -246,7 +251,8 @@ function renderHook(){
       season:H.season??null,
       episode:H.episode??null,
       progress:pct,
-      state:H.state||'playing'
+      state:H.state||'playing',
+      _streams_count: sc
     });
   }else{
     emitCurrentlyWatching('webhook',{ state:'stopped' });
@@ -284,8 +290,8 @@ try{
   H.enabled=enabled && mode==='webhook';
 
   /* Reset details */
-  W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null;
-  H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null;
+  W.title=null; W.media_type=null; W.year=null; W.season=null; W.episode=null; W.progress=0; W.state=null; W.streams_count=0;
+  H.title=null; H.media_type=null; H.year=null; H.season=null; H.episode=null; H.progress=0; H.state=null; H.streams_count=0;
 
   if(W.enabled){
     const s=await fetch('/api/watch/status?t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():{}).catch(()=>({}));
@@ -301,6 +307,7 @@ try{
     .then(r => r.ok ? r.json() : null)
     .catch((e) => (e && e.name === 'AbortError') ? null : null);
   const cur = cw && (cw.currently_watching || cw);
+  const sc = Number(cw?.streams_count) || 0;
 
   if(cur && cur.state && cur.state!=='stopped'){
     const src=String(cur.source||'').toLowerCase();
@@ -316,6 +323,7 @@ try{
     tgt.episode=cur.episode??null;
     tgt.progress=+cur.progress||0;
     tgt.state=cur.state||null;
+    tgt.streams_count = sc;
   }
 }catch{
   W.enabled=false; W.alive=false; H.enabled=false;
