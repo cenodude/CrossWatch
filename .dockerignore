@@ -1,4 +1,4 @@
-# --- VCS / IDE ---
+# --- VCS ---
 .git
 .gitignore
 .vscode
