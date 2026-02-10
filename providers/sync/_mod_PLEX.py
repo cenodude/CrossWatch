@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import os
-import socket
 import time
-import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -56,6 +54,8 @@ from .plex._common import (
     key_of as plex_key_of,
     plex_headers,
     DISCOVER,
+    stable_client_id,
+    set_client_id,
 )
 from .plex._utils import resolve_user_scope
 from ._mod_common import (
@@ -119,33 +119,6 @@ def _as_int(v: Any) -> int | None:
         return None
 
 
-def _stable_client_id() -> str:
-    for k in ("CW_PLEX_CID", "PLEX_CLIENT_IDENTIFIER", "X_PLEX_CLIENT_IDENTIFIER"):
-        v = os.environ.get(k)
-        if v and v.strip():
-            return v.strip()
-
-    state_dir = "/config/.cw_state" if os.path.isdir("/config") else ".cw_state"
-    try:
-        os.makedirs(state_dir, exist_ok=True)
-    except Exception:
-        pass
-
-    cid_path = os.path.join(state_dir, "plex_client_id.txt")
-    try:
-        if os.path.isfile(cid_path):
-            with open(cid_path, "r", encoding="utf-8") as f:
-                existing = (f.read() or "").strip()
-            if existing:
-                return existing
-        new_id = f"crosswatch-{uuid.uuid4().hex[:16]}"
-        with open(cid_path, "w", encoding="utf-8") as f:
-            f.write(new_id)
-        return new_id
-    except Exception:
-        host = socket.gethostname() or "host"
-        return f"crosswatch-{host}"
-
 
 def _plex_tv_client_id(cfg: Any) -> str:
     v = getattr(cfg, "client_id", None)
@@ -153,7 +126,7 @@ def _plex_tv_client_id(cfg: Any) -> str:
         s = str(v).strip()
         if s:
             return s
-    return _stable_client_id()
+    return stable_client_id()
 
 
 def _plex_tv_session(token: str, client_id: str) -> requests.Session:
@@ -259,8 +232,17 @@ def _pick_home_user(
 ) -> dict[str, Any] | None:
     if target_id is not None:
         tid = int(target_id)
+
+        # Prefer Home user ids first (owner is usually id=1)
         for u in home_users:
-            for k in ("id", "userId", "user_id", "accountId", "account_id"):
+            for k in ("id", "userId", "user_id"):
+                uid = _as_int(u.get(k))
+                if uid is not None and uid == tid:
+                    return u
+
+        # Fall back to Plex account ids
+        for u in home_users:
+            for k in ("accountId", "account_id"):
                 uid = _as_int(u.get(k))
                 if uid is not None and uid == tid:
                     return u
@@ -324,13 +306,13 @@ class PLEXClient:
         self._account: MyPlexAccount | None = None
         self.session = build_session("PLEX", ctx, feature_label=label_plex)
 
-        # Token used for plex.tv + Discover/Metadata domains.
+        # Token used for plex.tv and Discover/Metadata domains.
         # This is NOT always the same as the PMS resource token when switching Home users.
         self.cloud_token: str | None = None
 
         self.user_username: str | None = None
         self.user_account_id: int | None = None
-
+        self.user_home_id: int | None = None
         self.token_username: str | None = None
         self.token_account_id: int | None = None
 
@@ -342,7 +324,7 @@ class PLEXClient:
 
         self._home_users_cache: list[dict[str, Any]] | None = None
         self._home_users_cache_ts: float = 0.0
-        self._token_stack: list[tuple[str | None, str | None, str | None, int | None]] = []
+        self._token_stack: list[tuple[str | None, str | None, str | None, int | None, int | None]] = []
 
     def connect(self) -> PLEXClient:
         try:
@@ -560,7 +542,7 @@ class PLEXClient:
 
         prev_cloud = self.cloud_token
         self.cloud_token = user_token
-        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id))
+        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id, self.user_home_id))
         self.session.headers["X-Plex-Token"] = pms_user_token
 
         try:
@@ -592,14 +574,23 @@ class PLEXClient:
             return False
 
         self.user_username = (str(picked.get("title") or "").strip() or target_username)
-        self.user_account_id = _as_int(picked.get("id")) or target_account_id
-        _info("home_scope_entered", user=str(self.user_username), account_id=self.user_account_id)
+        self.user_home_id = user_id
+        account_id = _as_int(
+            picked.get("accountId") or picked.get("account_id") or picked.get("userId") or picked.get("user_id")
+        ) or target_account_id
+        self.user_account_id = account_id
+        _info(
+            "home_scope_entered",
+            user=str(self.user_username),
+            home_user_id=user_id,
+            account_id=self.user_account_id,
+        )
         return True
 
     def exit_home_user_scope(self) -> None:
         if not self._token_stack:
             return
-        prev_token, prev_cloud, prev_uname, prev_aid = self._token_stack.pop()
+        prev_token, prev_cloud, prev_uname, prev_aid, prev_hid = self._token_stack.pop()
         srv = self.server
         if prev_token:
             try:
@@ -624,8 +615,8 @@ class PLEXClient:
                 pass
         self.user_username = prev_uname
         self.user_account_id = prev_aid
+        self.user_home_id = prev_hid
         self.cloud_token = prev_cloud
-        _info("home_scope_exited")
 
     def account(self) -> MyPlexAccount:
         if not self._account:
@@ -712,9 +703,7 @@ class PLEXModule:
             os.environ.setdefault("PLEX_CLIENT_IDENTIFIER", cid)
             os.environ.setdefault("CW_PLEX_CID", cid)
             try:
-                from .plex import _common as plex_common
-
-                plex_common.CLIENT_ID = cid  # type: ignore[assignment]
+                set_client_id(cid)
             except Exception:
                 pass
 

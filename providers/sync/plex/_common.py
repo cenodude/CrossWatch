@@ -8,8 +8,10 @@ import os
 import re
 import shutil
 import time
+from datetime import datetime, timezone
 import unicodedata
 import uuid
+import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from threading import RLock
@@ -110,36 +112,92 @@ def configure_plex_context(*, baseurl: str | None, token: str | None) -> None:
 DISCOVER = "https://discover.provider.plex.tv"
 METADATA = "https://metadata.provider.plex.tv"
 
-CLIENT_ID = (
-    os.environ.get("CW_PLEX_CID")
-    or os.environ.get("PLEX_CLIENT_IDENTIFIER")
-    or str(uuid.uuid4())
-)
+
+_CLIENT_ID_LOCK: RLock = RLock()
+_CLIENT_ID_CACHE: str | None = None
 
 
-def _dbg(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "common", "debug", event, **fields)
+def stable_client_id() -> str:
+    global _CLIENT_ID_CACHE
+    for k in ("CW_PLEX_CID", "PLEX_CLIENT_IDENTIFIER", "X_PLEX_CLIENT_IDENTIFIER"):
+        v = os.environ.get(k)
+        if v and v.strip():
+            return v.strip()
 
-
-def _info(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "common", "info", event, **fields)
-
-
-def _warn(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "common", "warn", event, **fields)
-
-
-def _error(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "common", "error", event, **fields)
-
-
-def _log(msg: str) -> None:
-    _dbg(msg)
-
-
-def _emit(evt: dict[str, Any]) -> None:
+    base_state_dir = "/config/.cw_state" if os.path.isdir("/config") else ".cw_state"
+    cid_dir = os.path.join(base_state_dir, "id")
     try:
-        feat = str(evt.get("feature") or "common")
+        os.makedirs(cid_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    cid_path = os.path.join(cid_dir, "plex_client_id.txt")
+    legacy_path = os.path.join(base_state_dir, "plex_client_id.txt")
+    with _CLIENT_ID_LOCK:
+        if _CLIENT_ID_CACHE:
+            return _CLIENT_ID_CACHE
+        try:
+            if os.path.isfile(cid_path):
+                existing = (Path(cid_path).read_text("utf-8") or "").strip()
+                if existing:
+                    _CLIENT_ID_CACHE = existing
+                    return existing
+            if os.path.isfile(legacy_path):
+                legacy = (Path(legacy_path).read_text("utf-8") or "").strip()
+                if legacy:
+                    try:
+                        Path(cid_path).write_text(legacy, "utf-8")
+                        try:
+                            os.remove(legacy_path)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    _CLIENT_ID_CACHE = legacy
+                    return legacy
+            new_id = f"crosswatch-{uuid.uuid4().hex[:16]}"
+            Path(cid_path).write_text(new_id, "utf-8")
+            _CLIENT_ID_CACHE = new_id
+            return new_id
+        except Exception:
+            host = socket.gethostname() or "host"
+            cid = f"crosswatch-{host}"
+            _CLIENT_ID_CACHE = cid
+            return cid
+
+
+def set_client_id(cid: str) -> None:
+    global CLIENT_ID, _CLIENT_ID_CACHE
+    v = str(cid or "").strip()
+    if not v:
+        return
+    with _CLIENT_ID_LOCK:
+        _CLIENT_ID_CACHE = v
+    CLIENT_ID = v
+
+
+CLIENT_ID = stable_client_id()
+
+
+
+def make_logger(feature: str):
+    feat = str(feature or "common")
+    def dbg(event: str, **fields: Any) -> None:
+        cw_log("PLEX", feat, "debug", event, **fields)
+    def info(event: str, **fields: Any) -> None:
+        cw_log("PLEX", feat, "info", event, **fields)
+    def warn(event: str, **fields: Any) -> None:
+        cw_log("PLEX", feat, "warn", event, **fields)
+    def error(event: str, **fields: Any) -> None:
+        cw_log("PLEX", feat, "error", event, **fields)
+    def log(msg: str) -> None:
+        dbg(msg)
+    return dbg, info, warn, error, log
+
+
+def emit(evt: dict[str, Any], *, default_feature: str = "common") -> None:
+    try:
+        feat = str(evt.get("feature") or default_feature)
         event = str(evt.get("event") or "event")
         action = evt.get("action")
         fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
@@ -149,6 +207,19 @@ def _emit(evt: dict[str, Any]) -> None:
     except Exception:
         pass
 
+
+def _plex_cfg(adapter: Any) -> Mapping[str, Any]:
+    cfg = getattr(adapter, "config", {}) or {}
+    return cfg.get("plex", {}) if isinstance(cfg, dict) else {}
+
+
+_dbg, _info, _warn, _error, _log = make_logger("common")
+
+
+def _emit(evt: dict[str, Any]) -> None:
+    emit(evt, default_feature="common")
+
+
 def key_of(item: Mapping[str, Any]) -> str:
     try:
         m = normalize(item)
@@ -156,16 +227,28 @@ def key_of(item: Mapping[str, Any]) -> str:
         m = id_minimal(item)
     return canonical_key(m) or ""
 
-def plex_headers(token: str) -> dict[str, str]:
-    return {
-        "X-Plex-Product": "CrossWatch",
-        "X-Plex-Platform": "CrossWatch",
-        "X-Plex-Version": "3.1.0",
-        "X-Plex-Client-Identifier": CLIENT_ID,
+def plex_headers(
+    token: str,
+    *,
+    product: str = "CrossWatch",
+    platform: str = "CrossWatch",
+    version: str = "4.1.0",
+    client_id: str | None = None,
+    accept: str = "application/json, application/xml;q=0.9, */*;q=0.5",
+    user_agent: str | None = None,
+) -> dict[str, str]:
+    cid = str(client_id or CLIENT_ID or "").strip() or stable_client_id()
+    headers = {
+        "X-Plex-Product": product,
+        "X-Plex-Platform": platform,
+        "X-Plex-Version": version,
+        "X-Plex-Client-Identifier": cid,
         "X-Plex-Token": token,
-        "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",
+        "Accept": accept,
     }
-
+    if user_agent:
+        headers["User-Agent"] = str(user_agent)
+    return headers
 
 def _safe_int(v: Any) -> int | None:
     try:
@@ -388,19 +471,17 @@ _HYDRATE_LOCK: RLock = RLock()
 
 
 def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
-    root = ET.fromstring(xml_text)
-    mc = root if root.tag.endswith("MediaContainer") else root.find(".//MediaContainer")
-    if mc is None:
-        return {"MediaContainer": {"Metadata": []}}
-    rows: list[Mapping[str, Any]] = []
-    for md in mc.findall("./Metadata"):
-        a = md.attrib
-        row: dict[str, Any] = {
+    def _meta_row(elem: ET.Element) -> dict[str, Any]:
+        a = elem.attrib
+        return {
             "type": a.get("type"),
             "title": a.get("title"),
             "year": _safe_int(a.get("year")),
             "guid": a.get("guid"),
             "ratingKey": a.get("ratingKey"),
+            "parentGuid": a.get("parentGuid"),
+            "parentRatingKey": a.get("parentRatingKey"),
+            "parentTitle": a.get("parentTitle"),
             "grandparentGuid": a.get("grandparentGuid"),
             "grandparentRatingKey": a.get("grandparentRatingKey"),
             "grandparentTitle": a.get("grandparentTitle"),
@@ -412,11 +493,53 @@ def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
                 or a.get("librarySectionId")
                 or a.get("sectionId")
             ),
-            "Guid": [{"id": (g.attrib.get("id") or "")} for g in md.findall("./Guid") if g.attrib.get("id")],
+            "userRating": a.get("userRating"),
+            "lastRatedAt": a.get("lastRatedAt"),
+            "Guid": [{"id": (g.attrib.get("id") or "")} for g in elem.findall("./Guid") if g.attrib.get("id")],
         }
-        rows.append(row)
-    return {"MediaContainer": {"Metadata": rows}}
 
+    root = ET.fromstring(xml_text)
+    mc = root if root.tag.endswith("MediaContainer") else root.find(".//MediaContainer")
+    if mc is None:
+        return {"MediaContainer": {"Metadata": [], "SearchResults": []}}
+
+    out_mc: dict[str, Any] = {}
+    for k in ("totalSize", "size", "offset"):
+        if k in mc.attrib:
+            out_mc[k] = _safe_int(mc.attrib.get(k))
+
+    rows: list[Mapping[str, Any]] = []
+    for elem in list(mc):
+        if getattr(elem, "tag", "") == "SearchResults":
+            continue
+        a = getattr(elem, "attrib", {}) or {}
+        if not a:
+            continue
+        if not (a.get("ratingKey") or a.get("guid") or a.get("type")):
+            continue
+        rows.append(_meta_row(elem))
+
+    sr_list: list[Mapping[str, Any]] = []
+    for sr in mc.findall("./SearchResults"):
+        sr_obj: dict[str, Any] = {
+            "id": sr.attrib.get("id"),
+            "title": sr.attrib.get("title"),
+            "size": _safe_int(sr.attrib.get("size")),
+            "SearchResult": [],
+        }
+        for it in sr.findall("./SearchResult"):
+            md = it.find("./Metadata")
+            if md is not None:
+                sr_obj["SearchResult"].append({"Metadata": _meta_row(md)})
+                continue
+            md_attr = it.attrib.get("Metadata")
+            if md_attr and md_attr != "[object Object]":
+                sr_obj["SearchResult"].append({"Metadata": {"title": md_attr}})
+        sr_list.append(sr_obj)
+
+    out_mc["Metadata"] = rows
+    out_mc["SearchResults"] = sr_list
+    return {"MediaContainer": out_mc}
 
 def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str, str]:
     if not token or not rating_key:
@@ -624,9 +747,31 @@ def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) 
     return res
 
 
-def sort_guid_candidates(guids: list[str]) -> list[str]:
+def sort_guid_candidates(guids: list[str], *, priority: list[str] | None = None) -> list[str]:
     if not guids:
         return []
+
+    if priority:
+        pri = [str(p).strip().lower() for p in priority if str(p).strip()]
+        if not pri:
+            pri = []
+        def score(g: str) -> tuple[int, int]:
+            s = g.lower()
+            order: list[int] = []
+            for p in pri:
+                if p == "imdb" and s.startswith("imdb://"):
+                    order.append(0)
+                elif p == "tmdb" and s.startswith("tmdb://"):
+                    order.append(1)
+                elif p == "tvdb" and s.startswith("tvdb://"):
+                    order.append(2)
+                elif p.startswith("agent:themoviedb") and s.startswith("com.plexapp.agents.themoviedb://"):
+                    order.append(3 if (":en" in p and "?lang=en" in s) else 4)
+                elif p == "agent:imdb" and s.startswith("com.plexapp.agents.imdb://"):
+                    order.append(5)
+            return (min(order) if order else 99, len(s))
+        return sorted(list(guids), key=score)
+
     pri: list[str] = []
     rest = list(guids)
 
@@ -645,8 +790,7 @@ def sort_guid_candidates(guids: list[str]) -> list[str]:
     pri += pick("com.plexapp.agents.imdb://")
     return pri + rest
 
-
-def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
+def candidate_guids_from_ids(it: Mapping[str, Any], *, include_raw_ids: bool = False) -> list[str]:
     ids = it.get("ids") or {}
     ids = ids if isinstance(ids, dict) else {}
     out: list[str] = []
@@ -664,20 +808,25 @@ def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
         add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en")
         add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en-US")
         add(f"com.plexapp.agents.themoviedb://{tmdb}")
+        if include_raw_ids:
+            add(str(tmdb))
     if imdb:
         add(f"imdb://{imdb}")
         add(f"com.plexapp.agents.imdb://{imdb}")
+        if include_raw_ids:
+            add(str(imdb))
     if tvdb:
         add(f"tvdb://{tvdb}")
         add(f"com.plexapp.agents.thetvdb://{tvdb}")
         add(f"com.plexapp.agents.thetvdb://{tvdb}?lang=en")
         add(f"com.plexapp.agents.thetvdb://{tvdb}?lang=en-US")
+        if include_raw_ids:
+            add(str(tvdb))
 
     g = it.get("guid")
     if g:
         add(str(g))
     return out
-
 
 def _iso8601_any(v: Any) -> str | None:
     try:
@@ -1244,3 +1393,201 @@ def minimal_from_history_row(
     _FBGUID_MEMO[key] = dict(m)
     _fb_cache_save()
     return m
+
+
+def home_scope_enter(adapter: Any) -> tuple[bool, bool, int | None, str | None]:
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return False, False, None, None
+
+    desired_aid = getattr(cli, "selected_account_id", None)
+    desired_uname = getattr(cli, "selected_username", None)
+    active_aid = getattr(cli, "user_account_id", None)
+    active_uname = getattr(cli, "user_username", None)
+
+    def _same_user(aid1: Any, uname1: Any, aid2: Any, uname2: Any) -> bool:
+        try:
+            if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
+                return True
+        except Exception:
+            pass
+        if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
+            return True
+        return False
+
+    need = bool(desired_aid or desired_uname) and not _same_user(desired_aid, desired_uname, active_aid, active_uname)
+
+    try:
+        sel_aid = int(desired_aid) if desired_aid is not None else None
+    except Exception:
+        sel_aid = None
+    try:
+        sel_uname = (str(desired_uname).strip() or None) if desired_uname is not None else None
+    except Exception:
+        sel_uname = None
+
+    if not need:
+        return False, False, sel_aid, sel_uname
+
+    try:
+        if not bool(getattr(cli, "can_home_switch")()):
+            return True, False, sel_aid, sel_uname
+    except Exception:
+        return True, False, sel_aid, sel_uname
+
+    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
+    try:
+        ok = bool(
+            getattr(cli, "enter_home_user_scope")(
+                target_username=(str(desired_uname).strip() if desired_uname else None),
+                target_account_id=(int(desired_aid) if desired_aid is not None else None),
+                pin=pin,
+            )
+        )
+    except Exception:
+        ok = False
+
+    if not ok:
+        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
+    return True, ok, sel_aid, sel_uname
+
+
+def home_scope_exit(adapter: Any, did_switch: bool) -> None:
+    if not did_switch:
+        return
+    cli = getattr(adapter, "client", None)
+    if not cli:
+        return
+    try:
+        getattr(cli, "exit_home_user_scope")()
+    except Exception:
+        pass
+
+
+def as_epoch(v: Any) -> int | None:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, datetime):
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return int(v.timestamp())
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit():
+            try:
+                n = int(s)
+                return n // 1000 if len(s) >= 13 else n
+            except Exception:
+                return None
+        try:
+            return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            return None
+    return None
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def iso_from_epoch(ts: int) -> str:
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def episode_code(season: Any, episode: Any) -> str | None:
+    try:
+        s = int(season or 0)
+        e = int(episode or 0)
+    except Exception:
+        return None
+    if s <= 0 or e <= 0:
+        return None
+    return f"S{s:02d}E{e:02d}"
+
+
+def force_episode_title(row: dict[str, Any]) -> None:
+    if (row.get("type") or "").lower() != "episode":
+        return
+    code = episode_code(row.get("season"), row.get("episode"))
+    if code:
+        row["title"] = code
+
+
+
+class UnresolvedStore:
+    def __init__(self, feature: str):
+        self.feature = str(feature or "common").strip().lower() or "common"
+
+    def path(self) -> Path:
+        return state_file(f"plex_{self.feature}.unresolved.json")
+
+    def load(self) -> dict[str, Any]:
+        return dict(read_json(self.path()) or {})
+
+    def save(self, data: Mapping[str, Any]) -> None:
+        try:
+            write_json(self.path(), data)
+        except Exception as e:
+            _warn("unresolved_save_failed", feature=self.feature, path=str(self.path()), error=str(e))
+
+    def event_key(self, item: Mapping[str, Any]) -> str:
+        try:
+            base = canonical_key(id_minimal(item)) or canonical_key(item) or ""
+        except Exception:
+            base = canonical_key(item) if "canonical_key" in globals() else ""
+        if self.feature == "history":
+            ts = as_epoch(item.get("watched_at"))
+            return f"{base}@{ts}" if (base and ts) else (base or "")
+        return base or ""
+
+    def freeze(self, item: Mapping[str, Any], *, action: str, reasons: Iterable[str], extra: Mapping[str, Any] | None = None) -> str:
+        key = self.event_key(item)
+        if not key:
+            return ""
+        data = self.load()
+        now = now_iso()
+        entry = data.get(key) or {"feature": self.feature, "action": action, "first_seen": now, "attempts": 0}
+        entry.update({"item": id_minimal(item), "last_attempt": now})
+        if self.feature == "history" and item.get("watched_at") is not None:
+            entry["watched_at"] = item.get("watched_at")
+
+        rset = set(entry.get("reasons", [])) | set([str(x) for x in (reasons or []) if x])
+        entry["reasons"] = sorted(rset)
+
+        if extra:
+            if "guids_tried" in extra:
+                cur = set(entry.get("guids_tried", []))
+                add = [str(x) for x in (extra.get("guids_tried") or []) if x]
+                cur |= set(add[:8])
+                entry["guids_tried"] = sorted(cur)
+            for k, v in extra.items():
+                if k == "guids_tried":
+                    continue
+                entry[k] = v
+
+        entry["attempts"] = int(entry.get("attempts", 0)) + 1
+        data[key] = entry
+        self.save(data)
+        return key
+
+    def unfreeze(self, keys: Iterable[str]) -> int:
+        data = self.load()
+        changed = 0
+        for k in list(keys or []):
+            if k in data:
+                del data[k]
+                changed += 1
+        if changed:
+            self.save(data)
+        return changed
+
+    def is_frozen(self, item: Mapping[str, Any]) -> bool:
+        key = self.event_key(item)
+        return bool(key) and key in self.load()
+
+
+def unresolved_store(feature: str) -> UnresolvedStore:
+    return UnresolvedStore(feature)
+

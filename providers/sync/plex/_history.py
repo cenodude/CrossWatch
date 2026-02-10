@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,27 +10,33 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from pathlib import Path
 
-from .._log import log as cw_log
-
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 from ._common import (
-    read_json,
-    state_file,
-    write_json,
-    plex_headers,
     _as_base_url,
     _xml_to_container,
+    as_epoch as _as_epoch,
+    candidate_guids_from_ids,
+    force_episode_title as _force_episode_title,
+    home_scope_enter,
+    home_scope_exit,
+    iso_from_epoch as _iso,
+    minimal_from_history_row,
     normalize as plex_normalize,
     normalize_discover_row,
-    minimal_from_history_row,
+    plex_headers,
+    read_json,
     server_find_rating_key_by_guid,
-    candidate_guids_from_ids,
     sort_guid_candidates,
+    state_file,
+    unresolved_store,
+    write_json,
+    emit,
+    make_logger,
+    _plex_cfg,
 )
 
-def _unresolved_path() -> Path:
-    return state_file("plex_history.unresolved.json")
+_UNRES = unresolved_store("history")
 
 def _shadow_path() -> Path:
     return state_file("plex_history.shadow.json")
@@ -39,10 +44,8 @@ def _shadow_path() -> Path:
 def _marked_state_path() -> Path:
     return state_file("plex_history.marked_watched.json")
 
-
 def _load_marked_state() -> dict[str, Any]:
     return read_json(_marked_state_path())
-
 
 def _save_marked_state(data: Mapping[str, Any]) -> None:
     try:
@@ -50,100 +53,18 @@ def _save_marked_state(data: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
+_FETCH_CACHE: dict[str, dict[str, Any]] = {}
 
-
-
-
-def _dbg(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "history", "debug", event, **fields)
-
-
-def _info(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "history", "info", event, **fields)
-
-
-def _warn(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "history", "warn", event, **fields)
-
-
-def _error(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "history", "error", event, **fields)
-
-
-def _log(msg: str) -> None:
-    _dbg(msg)
+_dbg, _info, _warn, _error, _log = make_logger("history")
 
 
 def _emit(evt: dict[str, Any]) -> None:
-    try:
-        feat = str(evt.get("feature") or "history")
-        event = str(evt.get("event") or "event")
-        action = evt.get("action")
-        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
-        if action is not None:
-            fields["action"] = action
-        cw_log("PLEX", feat, "info", event, **fields)
-    except Exception:
-        pass
-
-
-def _as_epoch(v: Any) -> int | None:
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        return int(v)
-    if isinstance(v, datetime):
-        if v.tzinfo is None:
-            v = v.replace(tzinfo=timezone.utc)
-        return int(v.timestamp())
-    if isinstance(v, str):
-        s = v.strip()
-        if s.isdigit():
-            try:
-                n = int(s)
-                return n // 1000 if len(s) >= 13 else n
-            except Exception:
-                return None
-        try:
-            return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
-        except Exception:
-            return None
-    return None
-
-
-def _iso(ts: int) -> str:
-    return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _episode_code(season: Any, episode: Any) -> str | None:
-    try:
-        s = int(season or 0)
-        e = int(episode or 0)
-    except Exception:
-        return None
-    if s <= 0 or e <= 0:
-        return None
-    return f"S{s:02d}E{e:02d}"
-
-
-def _force_episode_title(row: dict[str, Any]) -> None:
-    if (row.get("type") or "").lower() != "episode":
-        return
-    code = _episode_code(row.get("season"), row.get("episode"))
-    if code:
-        row["title"] = code
-
-
-def _plex_cfg(adapter: Any) -> Mapping[str, Any]:
-    cfg = getattr(adapter, "config", {}) or {}
-    return cfg.get("plex", {}) if isinstance(cfg, dict) else {}
-
+    emit(evt, default_feature="history")
 
 def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     cfg = _plex_cfg(adapter)
     val = cfg.get(key, default) if isinstance(cfg, dict) else default
     return default if val is None else val
-
 
 def _history_cfg(adapter: Any) -> Mapping[str, Any]:
     try:
@@ -154,12 +75,10 @@ def _history_cfg(adapter: Any) -> Mapping[str, Any]:
     except Exception:
         return {}
 
-
 def _history_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     cfg = _history_cfg(adapter)
     val = cfg.get(key, default) if isinstance(cfg, dict) else default
     return default if val is None else val
-
 
 def _get_workers(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
     try:
@@ -173,7 +92,6 @@ def _get_workers(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
             n = default
     return max(1, min(n, 64))
 
-
 def _allowed_history_sec_ids(adapter: Any) -> set[str]:
     try:
         cfg = getattr(adapter, "config", {}) or {}
@@ -182,7 +100,6 @@ def _allowed_history_sec_ids(adapter: Any) -> set[str]:
         return {str(int(x)) for x in arr if str(x).strip()}
     except Exception:
         return set()
-
 
 def _row_section_id(h: Any) -> str | None:
     for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
@@ -199,62 +116,14 @@ def _row_section_id(h: Any) -> str | None:
             return m.group(1)
     return None
 
-
-def _load_unresolved() -> dict[str, Any]:
-    return read_json(_unresolved_path())
-
-
-def _save_unresolved(data: Mapping[str, Any]) -> None:
-    try:
-        write_json(_unresolved_path(), data)
-    except Exception as e:
-        _warn("unresolved_save_failed", path=str(_unresolved_path()), error=str(e))
-
-
 def _event_key(item: Mapping[str, Any]) -> str:
-    minimal = id_minimal(item)
-    key = canonical_key(minimal) or canonical_key(item) or ""
-    ts = _as_epoch(item.get("watched_at"))
-    return f"{key}@{ts}" if ts else key
-
-
-def _freeze_item(item: Mapping[str, Any], *, action: str, reasons: Iterable[str]) -> None:
-    now_iso = _iso(int(datetime.now(timezone.utc).timestamp()))
-    key = _event_key(item)
-    data = _load_unresolved()
-    entry = data.get(key) or {"feature": "history", "action": action, "first_seen": now_iso, "attempts": 0}
-    entry["item"] = id_minimal(item)
-    entry["watched_at"] = item.get("watched_at")
-    entry["last_attempt"] = now_iso
-    existing_reasons = set(entry.get("reasons", []))
-    entry["reasons"] = sorted(existing_reasons | set(reasons))
-    entry["attempts"] = int(entry.get("attempts", 0)) + 1
-    data[key] = entry
-    _save_unresolved(data)
-
-
-def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
-    data = _load_unresolved()
-    changed = False
-    for key in list(keys or []):
-        if key in data:
-            del data[key]
-            changed = True
-    if changed:
-        _save_unresolved(data)
-
-
-def _is_frozen(item: Mapping[str, Any]) -> bool:
-    return _event_key(item) in _load_unresolved()
-
+    return unresolved_store("history").event_key(item)
 
 def _load_shadow() -> dict[str, Any]:
     return read_json(_shadow_path())
 
-
 def _save_shadow(data: Mapping[str, Any]) -> None:
     write_json(_shadow_path(), data)
-
 
 def _shadow_add(item: Mapping[str, Any]) -> None:
     try:
@@ -274,7 +143,6 @@ def _shadow_add(item: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
-
 def _has_external_ids(minimal: Mapping[str, Any]) -> bool:
     ids = minimal.get("ids") or {}
     show_ids = minimal.get("show_ids") or {}
@@ -289,12 +157,10 @@ def _has_external_ids(minimal: Mapping[str, Any]) -> bool:
         or show_ids.get("trakt")
     )
 
-
 def _guid_from_minimal(minimal: Mapping[str, Any]) -> str:
     ids = minimal.get("ids") or {}
     guid = minimal.get("guid") or ids.get("guid") or ids.get("plex_guid")
     return str(guid).lower() if guid else ""
-
 
 def _keep_in_snapshot(adapter: Any, minimal: Mapping[str, Any]) -> bool:
     ignore_local = bool(_plex_cfg_get(adapter, "history_ignore_local_guid", False))
@@ -308,82 +174,6 @@ def _keep_in_snapshot(adapter: Any, minimal: Mapping[str, Any]) -> bool:
             return False
     return True
 
-
-def _same_user(aid1: Any, uname1: Any, aid2: Any, uname2: Any) -> bool:
-    try:
-        if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
-            return True
-    except Exception:
-        pass
-    if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
-        return True
-    return False
-
-
-def _enter_home_scope_if_needed(adapter: Any) -> tuple[bool, bool, int | None, str | None]:
-    cli = getattr(adapter, "client", None)
-    if not cli:
-        return False, False, None, None
-
-    desired_aid = getattr(cli, "selected_account_id", None)
-    desired_uname = getattr(cli, "selected_username", None)
-    active_aid = getattr(cli, "user_account_id", None)
-    active_uname = getattr(cli, "user_username", None)
-
-    need = bool(desired_aid or desired_uname) and not _same_user(desired_aid, desired_uname, active_aid, active_uname)
-
-    sel_aid: int | None
-    sel_uname: str | None
-    try:
-        sel_aid = int(desired_aid) if desired_aid is not None else None
-    except Exception:
-        sel_aid = None
-    try:
-        sel_uname = (str(desired_uname).strip() or None) if desired_uname is not None else None
-    except Exception:
-        sel_uname = None
-
-    if not need:
-        return False, False, sel_aid, sel_uname
-
-    try:
-        if not bool(getattr(cli, "can_home_switch")()):
-            return True, False, sel_aid, sel_uname
-    except Exception:
-        return True, False, sel_aid, sel_uname
-
-    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
-    try:
-        ok = bool(
-            getattr(cli, "enter_home_user_scope")(
-                target_username=(str(desired_uname).strip() if desired_uname else None),
-                target_account_id=(int(desired_aid) if desired_aid is not None else None),
-                pin=pin,
-            )
-        )
-    except Exception:
-        ok = False
-
-    if not ok:
-        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
-    return True, ok, sel_aid, sel_uname
-
-
-def _exit_home_scope(adapter: Any, did_switch: bool) -> None:
-    if not did_switch:
-        return
-    cli = getattr(adapter, "client", None)
-    if not cli:
-        return
-    try:
-        getattr(cli, "exit_home_user_scope")()
-    except Exception:
-        pass
-
-
-_FETCH_CACHE: dict[str, Any] = {}
-
-
 def _fetch_one(srv: Any, rating_key: str) -> dict[str, Any] | None:
     try:
         obj = srv.fetchItem(int(rating_key))
@@ -393,34 +183,6 @@ def _fetch_one(srv: Any, rating_key: str) -> dict[str, Any] | None:
         return meta if meta else None
     except Exception:
         return None
-
-
-def _is_marked_watched(obj: Any) -> bool:
-    try:
-        if getattr(obj, "isWatched", None):
-            return True
-    except Exception:
-        pass
-    try:
-        view_count = getattr(obj, "viewCount", None)
-        if view_count is not None and int(view_count) > 0:
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def _last_view_ts(obj: Any) -> int | None:
-    for attr in ("lastViewedAt", "viewedAt"):
-        try:
-            value = getattr(obj, attr, None)
-        except Exception:
-            value = None
-        ts = _as_epoch(value)
-        if ts:
-            return ts
-    return None
-
 
 def _iter_marked_watched_from_library(
     adapter: Any,
@@ -535,9 +297,8 @@ def _iter_marked_watched_from_library(
 
     return results
 
-
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
-    need_home_scope, did_home_switch, sel_aid, sel_uname = _enter_home_scope_if_needed(adapter)
+    need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
@@ -893,17 +654,16 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _info("index_done", count=len(out), ignored=ignored, since=since, scanned=total, workers=workers, unique=len(unique_rks), selected=(acct_id or uname), token_acct_id=_int_or_zero(getattr(getattr(adapter, 'client', None), 'user_account_id', None)), include_marked=include_marked)
         return out
     finally:
-        _exit_home_scope(adapter, did_home_switch)
-
+        home_scope_exit(adapter, did_home_switch)
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    need_home_scope, did_home_switch, sel_aid, sel_uname = _enter_home_scope_if_needed(adapter)
+    need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for item in items or []:
-                _freeze_item(item, action="add", reasons=["no_plex_server"])
+                _UNRES.freeze(item, action="add", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
             _info("write_skipped", op="add", reason="no_server")
             return 0, unresolved
@@ -918,40 +678,40 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         ok = 0
         unresolved: list[dict[str, Any]] = []
         for item in items or []:
-            if _is_frozen(item):
+            if _UNRES.is_frozen(item):
                 _dbg("skip_frozen", title=id_minimal(item).get("title"))
                 continue
             ts = _as_epoch(item.get("watched_at"))
             if not ts:
-                _freeze_item(item, action="add", reasons=["missing_watched_at"])
+                _UNRES.freeze(item, action="add", reasons=["missing_watched_at"])
                 unresolved.append({"item": id_minimal(item), "hint": "missing_watched_at"})
                 continue
             rating_key = _resolve_rating_key(adapter, item)
             if not rating_key:
-                _freeze_item(item, action="add", reasons=["not_in_library"])
+                _UNRES.freeze(item, action="add", reasons=["not_in_library"])
                 unresolved.append({"item": id_minimal(item), "hint": "not_in_library"})
                 continue
             if _scrobble_with_date(srv, rating_key, ts):
                 ok += 1
-                _unfreeze_keys_if_present([_event_key(item)])
+                _UNRES.unfreeze([_event_key(item)])
                 _shadow_add(item)
             else:
-                _freeze_item(item, action="add", reasons=["scrobble_failed"])
+                _UNRES.freeze(item, action="add", reasons=["scrobble_failed"])
                 unresolved.append({"item": id_minimal(item), "hint": "scrobble_failed"})
         _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
         return ok, unresolved
 
     finally:
-        _exit_home_scope(adapter, did_home_switch)
+        home_scope_exit(adapter, did_home_switch)
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    need_home_scope, did_home_switch, sel_aid, sel_uname = _enter_home_scope_if_needed(adapter)
+    need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for item in items or []:
-                _freeze_item(item, action="remove", reasons=["no_plex_server"])
+                _UNRES.freeze(item, action="remove", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
             _info("write_skipped", op="remove", reason="no_server")
             return 0, unresolved
@@ -966,25 +726,25 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         ok = 0
         unresolved: list[dict[str, Any]] = []
         for item in items or []:
-            if _is_frozen(item):
+            if _UNRES.is_frozen(item):
                 _dbg("skip_frozen", title=id_minimal(item).get("title"))
                 continue
             rating_key = _resolve_rating_key(adapter, item)
             if not rating_key:
-                _freeze_item(item, action="remove", reasons=["not_in_library"])
+                _UNRES.freeze(item, action="remove", reasons=["not_in_library"])
                 unresolved.append({"item": id_minimal(item), "hint": "not_in_library"})
                 continue
             if _unscrobble(srv, rating_key):
                 ok += 1
-                _unfreeze_keys_if_present([_event_key(item)])
+                _UNRES.unfreeze([_event_key(item)])
             else:
-                _freeze_item(item, action="remove", reasons=["unscrobble_failed"])
+                _UNRES.freeze(item, action="remove", reasons=["unscrobble_failed"])
                 unresolved.append({"item": id_minimal(item), "hint": "unscrobble_failed"})
         _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
         return ok, unresolved
 
     finally:
-        _exit_home_scope(adapter, did_home_switch)
+        home_scope_exit(adapter, did_home_switch)
 
 def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
     try:
@@ -1024,7 +784,6 @@ def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | Non
     except Exception:
         pass
     return None
-
 
 def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     ids = ids_from(item)
@@ -1143,7 +902,6 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     rk_val = getattr(best, "ratingKey", None)
     return str(rk_val) if rk_val else None
 
-
 def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
     try:
         try:
@@ -1180,7 +938,6 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
     except Exception as e:
         _warn("scrobble_exception", rating_key=str(rating_key), error=str(e))
         return False
-
 
 def _unscrobble(srv: Any, rating_key: Any) -> bool:
     try:

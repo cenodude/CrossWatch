@@ -3,84 +3,37 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import os
 import random
 import time
-import uuid
-import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
-from pathlib import Path
 
-from .._log import log as cw_log
-
-from ._common import read_json, state_file, write_json
-
-import requests
-
-from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
-from .._mod_common import request_with_retries
-
-def _unresolved_path() -> Path:
-    return state_file("plex_watchlist.unresolved.json")
-
-
-DISCOVER = "https://discover.provider.plex.tv"
-METADATA = "https://metadata.provider.plex.tv"
-
-CLIENT_ID = (
-    os.environ.get("CW_PLEX_CID")
-    or os.environ.get("PLEX_CLIENT_IDENTIFIER")
-    or str(uuid.uuid4())
+from ._common import (
+    DISCOVER,
+    METADATA,
+    _xml_to_container,
+    candidate_guids_from_ids,
+    hydrate_external_ids,
+    home_scope_enter,
+    home_scope_exit,
+    ids_from_discover_row,
+    normalize_discover_row,
+    plex_headers,
+    sort_guid_candidates,
+    unresolved_store,
+    make_logger,
 )
 
 
-def plex_headers(token: str) -> dict[str, str]:
-    return {
-        "X-Plex-Product": "CrossWatch",
-        "X-Plex-Platform": "CrossWatch",
-        "X-Plex-Version": "2.1.0",
-        "X-Plex-Client-Identifier": CLIENT_ID,
-        "X-Plex-Token": token,
-        "Accept": "application/json, application/xml;q=0.9, */*;q=0.5",
-    }
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
+from .. import _mod_common as mod_common
 
+_UNRES = unresolved_store("watchlist")
 
-# Utils
-def _safe_int(v: Any) -> int | None:
-    try:
-        if v is None:
-            return None
-        s = str(v).strip()
-        return int(s) if s else None
-    except Exception:
-        return None
+# PMS GUID index cache (optional fallback for managed users)
+_GUID_INDEX_MOVIE: dict[str, Any] = {}
+_GUID_INDEX_SHOW: dict[str, Any] = {}
 
-
-def _dbg(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "watchlist", "debug", event, **fields)
-
-
-def _info(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "watchlist", "info", event, **fields)
-
-
-def _warn(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "watchlist", "warn", event, **fields)
-
-
-def _error(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "watchlist", "error", event, **fields)
-
-
-def _log(msg: str) -> None:
-    _dbg(msg)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
+_dbg, _info, _warn, _error, _log = make_logger("watchlist")
 
 def _sleep_ms(ms: int) -> None:
     try:
@@ -89,21 +42,9 @@ def _sleep_ms(ms: int) -> None:
     except Exception:
         pass
 
-
 def _cfg(adapter: Any) -> dict[str, Any]:
     c = getattr(adapter, "config", {}) or {}
     return c.get("plex", {}) if isinstance(c, dict) else {}
-
-def _same_user(aid1: int | None, uname1: str | None, aid2: int | None, uname2: str | None) -> bool:
-    try:
-        if aid1 is not None and aid2 is not None and int(aid1) == int(aid2):
-            return True
-    except Exception:
-        pass
-    if uname1 and uname2 and str(uname1).strip().lower() == str(uname2).strip().lower():
-        return True
-    return False
-
 
 def _active_token(adapter: Any) -> str | None:
     cli = getattr(adapter, "client", None)
@@ -129,7 +70,6 @@ def _active_token(adapter: Any) -> str | None:
         pass
     return None
 
-
 def _cloud_token(adapter: Any) -> str | None:
     cli = getattr(adapter, "client", None)
     try:
@@ -140,62 +80,11 @@ def _cloud_token(adapter: Any) -> str | None:
         pass
     return _active_token(adapter)
 
-
-def _enter_home_scope_if_needed(adapter: Any) -> bool:
-    cli = getattr(adapter, "client", None)
-    if not cli:
-        return False
-
-    desired_aid = getattr(cli, "selected_account_id", None)
-    desired_uname = getattr(cli, "selected_username", None)
-    active_aid = getattr(cli, "user_account_id", None)
-    active_uname = getattr(cli, "user_username", None)
-
-    need = bool(desired_aid or desired_uname) and not _same_user(desired_aid, desired_uname, active_aid, active_uname)
-    if not need:
-        return False
-
-    try:
-        if not bool(getattr(cli, "can_home_switch")()):
-            return False
-    except Exception:
-        return False
-
-    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
-    try:
-        ok = bool(
-            getattr(cli, "enter_home_user_scope")(
-                target_username=(str(desired_uname).strip() if desired_uname else None),
-                target_account_id=(int(desired_aid) if desired_aid is not None else None),
-                pin=pin,
-            )
-        )
-    except Exception:
-        ok = False
-
-    if not ok:
-        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
-    return ok
-
-
-def _exit_home_scope(adapter: Any, did_switch: bool) -> None:
-    if not did_switch:
-        return
-    cli = getattr(adapter, "client", None)
-    if not cli:
-        return
-    try:
-        getattr(cli, "exit_home_user_scope")()
-    except Exception:
-        pass
-
-
 def _cfg_int(d: Mapping[str, Any], key: str, default: int) -> int:
     try:
         return int(d.get(key, default))
     except Exception:
         return default
-
 
 def _cfg_bool(d: Mapping[str, Any], key: str, default: bool) -> bool:
     v = d.get(key, default)
@@ -208,209 +97,11 @@ def _cfg_bool(d: Mapping[str, Any], key: str, default: bool) -> bool:
         return False
     return default
 
-
 def _cfg_list(d: Mapping[str, Any], key: str, default: list[str]) -> list[str]:
     v = d.get(key, default)
     if isinstance(v, list):
         return [str(x) for x in v]
     return list(default)
-
-
-def _xml_meta_attribs(elem: ET.Element) -> dict[str, Any]:
-    a = elem.attrib
-    row: dict[str, Any] = {
-        "type": a.get("type"),
-        "title": a.get("title"),
-        "year": _safe_int(a.get("year")),
-        "guid": a.get("guid"),
-        "ratingKey": a.get("ratingKey"),
-        "grandparentGuid": a.get("grandparentGuid"),
-        "grandparentRatingKey": a.get("grandparentRatingKey"),
-        "grandparentTitle": a.get("grandparentTitle"),
-        "index": _safe_int(a.get("index")),
-        "parentIndex": _safe_int(a.get("parentIndex")),
-        "librarySectionID": _safe_int(
-            a.get("librarySectionID")
-            or a.get("sectionID")
-            or a.get("librarySectionId")
-            or a.get("sectionId")
-        ),
-        "Guid": [{"id": (g.attrib.get("id") or "")} for g in elem.findall("./Guid") if g.attrib.get("id")],
-    }
-    return row
-
-
-def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
-    root = ET.fromstring(xml_text)
-    mc_elem = root if root.tag.endswith("MediaContainer") else root.find(".//MediaContainer")
-    if mc_elem is None:
-        return {"MediaContainer": {"Metadata": [], "SearchResults": []}}
-
-    meta_rows: list[Mapping[str, Any]] = []
-    for md in mc_elem.findall("./Metadata"):
-        meta_rows.append(_xml_meta_attribs(md))
-
-    sr_list: list[Mapping[str, Any]] = []
-    for sr in mc_elem.findall("./SearchResults"):
-        sr_obj: dict[str, Any] = {
-            "id": sr.attrib.get("id"),
-            "title": sr.attrib.get("title"),
-            "size": _safe_int(sr.attrib.get("size")),
-            "SearchResult": [],
-        }
-        for it in sr.findall("./SearchResult"):
-            md = it.find("./Metadata")
-            if md is not None:
-                sr_obj["SearchResult"].append({"Metadata": _xml_meta_attribs(md)})
-            else:
-                md_attr = it.attrib.get("Metadata")
-                if md_attr and md_attr != "[object Object]":
-                    sr_obj["SearchResult"].append({"Metadata": {"title": md_attr}})
-        sr_list.append(sr_obj)
-
-    return {"MediaContainer": {"Metadata": meta_rows, "SearchResults": sr_list}}
-
-
-# Discover
-def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
-    ids: dict[str, str] = {}
-    g = row.get("guid")
-    if g:
-        ids.update(ids_from_guid(str(g)))
-    for gg in (row.get("Guid") or []):
-        try:
-            gid = gg.get("id") or gg.get("Id") or gg.get("ID")
-            if gid:
-                ids.update(ids_from_guid(str(gid)))
-        except Exception:
-            continue
-    rk = row.get("ratingKey")
-    if rk:
-        ids["plex"] = str(rk)
-    return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
-
-
-def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str, str]:
-    if not token or not rating_key:
-        return {}
-    rk = str(rating_key)
-    url = f"{METADATA}/library/metadata/{rk}"
-    try:
-        r = requests.get(url, headers=plex_headers(token), timeout=10)
-        if r.status_code == 401:
-            raise RuntimeError("Unauthorized (bad Plex token)")
-        if not r.ok:
-            return {}
-        ctype = (r.headers.get("content-type") or "").lower()
-        ids: dict[str, str] = {}
-        if "application/json" in ctype:
-            data = r.json()
-            mc = data.get("MediaContainer") or data
-            md = mc.get("Metadata") or []
-            if md and isinstance(md, list):
-                for gg in (md[0].get("Guid") or []):
-                    gid = gg.get("id")
-                    if gid:
-                        ids.update(ids_from_guid(str(gid)))
-        else:
-            cont = _xml_to_container(r.text or "")
-            mc = cont.get("MediaContainer") or {}
-            md = mc.get("Metadata") or []
-            if md and isinstance(md, list):
-                for gg in (md[0].get("Guid") or []):
-                    gid = gg.get("id")
-                    if gid:
-                        ids.update(ids_from_guid(str(gid)))
-        return {k: v for k, v in ids.items() if v}
-    except Exception:
-        return {}
-
-
-def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) -> dict[str, Any]:
-    t = (row.get("type") or "movie").lower()
-    ids = ids_from_discover_row(row)
-    if not any(k in ids for k in ("imdb", "tmdb", "tvdb")) and token:
-        rk = row.get("ratingKey")
-        ids.update(hydrate_external_ids(token, str(rk) if rk else None))
-        ids = {k: v for k, v in ids.items() if v}
-    base: dict[str, Any] = {
-        "type": t,
-        "title": row.get("title"),
-        "year": row.get("year"),
-        "guid": row.get("guid"),
-        "ids": ids,
-    }
-    lid = (
-        row.get("library_id")
-        or row.get("librarySectionID")
-        or row.get("sectionID")
-        or row.get("librarySectionId")
-        or row.get("sectionId")
-    )
-    if lid is not None:
-        lid_i = _safe_int(lid)
-        if lid_i is not None:
-            base["library_id"] = lid_i
-
-    if t in ("season", "episode"):
-        gp = row.get("grandparentGuid")
-        gp_rk = row.get("grandparentRatingKey")
-        if gp:
-            base["show_ids"] = {k: v for k, v in ids_from_guid(str(gp)).items() if v}
-        if gp_rk:
-            base.setdefault("show_ids", {})
-            base["show_ids"]["plex"] = str(gp_rk)
-
-    if t == "season":
-        base["season"] = _safe_int(row.get("index"))
-    if t == "episode":
-        base["season"] = _safe_int(row.get("parentIndex"))
-        base["episode"] = _safe_int(row.get("index"))
-        base["series_title"] = row.get("grandparentTitle")
-
-    keep_show_ids = base.get("show_ids") if t in ("season", "episode") else None
-    res = id_minimal(base)
-    if keep_show_ids:
-        res["show_ids"] = keep_show_ids
-    if "library_id" in base:
-        res["library_id"] = base["library_id"]
-    return res
-
-
-# GUID candidates
-def candidate_guids_from_ids(it: Mapping[str, Any]) -> list[str]:
-    ids = (it.get("ids") or {}) if isinstance(it.get("ids"), dict) else {}
-    out: list[str] = []
-
-    def add(v: str | None) -> None:
-        if v:
-            vv = str(v)
-            if vv and vv not in out:
-                out.append(vv)
-
-    imdb = ids.get("imdb")
-    tmdb = ids.get("tmdb")
-    tvdb = ids.get("tvdb")
-
-    if tmdb:
-        add(f"tmdb://{tmdb}")
-        add(f"themoviedb://{tmdb}")
-        add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en")
-        add(f"com.plexapp.agents.themoviedb://{tmdb}?lang=en-US")
-        add(f"com.plexapp.agents.themoviedb://{tmdb}")
-        add(str(tmdb))
-    if imdb:
-        add(f"imdb://{imdb}")
-        add(f"com.plexapp.agents.imdb://{imdb}")
-        add(str(imdb))
-    if tvdb:
-        add(f"tvdb://{tvdb}")
-        add(f"com.plexapp.agents.thetvdb://{tvdb}")
-        add(str(tvdb))
-    g = it.get("guid")
-    if g:
-        add(str(g))
-    return out
 
 def _get_container(
     session: Any,
@@ -428,7 +119,7 @@ def _get_container(
             headers = dict(headers)
             headers["Accept"] = "application/json"
 
-        r = request_with_retries(
+        r = mod_common.request_with_retries(
             session,
             "GET",
             url,
@@ -503,7 +194,6 @@ def _iter_search_rows(container: Mapping[str, Any] | None):
                     if isinstance(m, Mapping):
                         yield m
 
-
 # GUID proiority and sorting
 def _guid_priority(cfg: Mapping[str, Any]) -> list[str]:
     return _cfg_list(
@@ -511,30 +201,6 @@ def _guid_priority(cfg: Mapping[str, Any]) -> list[str]:
         "watchlist_guid_priority",
         ["imdb", "tmdb", "tvdb", "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"],
     )
-
-
-def _sort_guid_candidates(guids: list[str], priority: list[str]) -> list[str]:
-    if not guids:
-        return []
-
-    def score(g: str) -> tuple[int, int]:
-        s = g.lower()
-        order: list[int] = []
-        for p in priority:
-            if p == "imdb" and s.startswith("imdb://"):
-                order.append(0)
-            elif p == "tmdb" and s.startswith("tmdb://"):
-                order.append(1)
-            elif p == "tvdb" and s.startswith("tvdb://"):
-                order.append(2)
-            elif p.startswith("agent:themoviedb") and s.startswith("com.plexapp.agents.themoviedb://"):
-                order.append(3 if ":en" in p and "?lang=en" in s else 4)
-            elif p == "agent:imdb" and s.startswith("com.plexapp.agents.imdb://"):
-                order.append(5)
-        return (min(order) if order else 99, len(s))
-
-    return sorted(guids, key=score)
-
 
 def _clean_query_tokens(*, title: str | None, year: int | None, slug: str | None) -> list[str]:
     out: list[str] = []
@@ -554,7 +220,6 @@ def _clean_query_tokens(*, title: str | None, year: int | None, slug: str | None
         add(slug.replace("-", " "))
     return out[:8]
 
-
 def _id_pairs_from_guid(g: str) -> set[tuple[str, str]]:
     s: set[tuple[str, str]] = set()
     try:
@@ -564,7 +229,6 @@ def _id_pairs_from_guid(g: str) -> set[tuple[str, str]]:
     except Exception:
         pass
     return s
-
 
 # ID resolver via METADATA.matches
 def _metadata_match_by_ids(
@@ -614,7 +278,6 @@ def _metadata_match_by_ids(
                 return rk
     return None
 
-
 # Fallback resolver via Discover search
 def _discover_resolve_rating_key(
     session: Any,
@@ -660,7 +323,7 @@ def _discover_resolve_rating_key(
         return None
 
     pri = _guid_priority(cfg)
-    targets = [(_g, _id_pairs_from_guid(_g)) for _g in _sort_guid_candidates(guid_candidates or [], pri)]
+    targets = [(_g, _id_pairs_from_guid(_g)) for _g in sort_guid_candidates(guid_candidates or [], priority=pri)]
 
     def ids_match(rk: str, row: Mapping[str, Any]) -> bool:
         row_ids = ids_from_discover_row(row) if isinstance(row, Mapping) else {}
@@ -711,7 +374,6 @@ def _discover_resolve_rating_key(
         _sleep_ms(random.randint(5, 40))
     return None
 
-
 # Write
 def _discover_write_by_rk(
     session: Any,
@@ -729,7 +391,7 @@ def _discover_write_by_rk(
     url = f"{DISCOVER}/actions/{path}"
     try:
         _sleep_ms(delay_ms)
-        r = request_with_retries(
+        r = mod_common.request_with_retries(
             session,
             "PUT",
             url,
@@ -771,60 +433,7 @@ def _discover_write_by_rk(
     except Exception as e:
         return False, 0, str(e), True
 
-
 # Unresolved items store
-def _load_unresolved() -> dict[str, Any]:
-    return read_json(_unresolved_path())
-
-
-def _save_unresolved(data: Mapping[str, Any]) -> None:
-    try:
-        write_json(_unresolved_path(), data)
-    except Exception as e:
-        _warn("unresolved_save_failed", path=str(_unresolved_path()), error=str(e))
-
-
-def _freeze_item(
-    item: Mapping[str, Any],
-    *,
-    action: str,
-    reasons: list[str],
-    guids_tried: list[str],
-) -> None:
-    key = canonical_key(item)
-    data = _load_unresolved()
-    now = _now_iso()
-    entry = data.get(key) or {"feature": "watchlist", "action": action, "first_seen": now, "attempts": 0}
-    entry.update({"item": id_minimal(item), "last_attempt": now})
-    rset = set(entry.get("reasons", [])) | set(reasons or [])
-    gset = set(entry.get("guids_tried", [])) | set((guids_tried or [])[:8])
-    entry["reasons"] = sorted(rset)
-    entry["guids_tried"] = sorted(gset)
-    entry["attempts"] = int(entry.get("attempts", 0)) + 1
-    data[key] = entry
-    _save_unresolved(data)
-
-
-def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
-    data = _load_unresolved()
-    changed = False
-    for k in list(keys or []):
-        if k in data:
-            del data[k]
-            changed = True
-    if changed:
-        _save_unresolved(data)
-
-
-def _is_frozen(item: Mapping[str, Any]) -> bool:
-    return canonical_key(item) in _load_unresolved()
-
-
-# PMS GUID index
-_GUID_INDEX_MOVIE: dict[str, Any] = {}
-_GUID_INDEX_SHOW: dict[str, Any] = {}
-
-
 def meta_guids(meta_obj: Any) -> list[str]:
     vals: list[str] = []
     try:
@@ -837,7 +446,6 @@ def meta_guids(meta_obj: Any) -> list[str]:
     except Exception:
         pass
     return vals
-
 
 def _build_guid_index(adapter: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     gi_m: dict[str, Any] = {}
@@ -859,7 +467,6 @@ def _build_guid_index(adapter: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     _info("guid_index_done", movies=len(gi_m), shows=len(gi_s))
     return gi_m, gi_s
 
-
 def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
     src = _GUID_INDEX_SHOW if libtype == "show" else _GUID_INDEX_MOVIE
     for g in guid_candidates or []:
@@ -867,10 +474,9 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
             return src[g]
     return None
 
-
 # Index build
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    did_switch = _enter_home_scope_if_needed(adapter)
+    _, did_switch, _, _ = home_scope_enter(adapter)
     try:
         token = _cloud_token(adapter)
         if not token:
@@ -954,17 +560,15 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 break
             start += len(rows)
     
-        _unfreeze_keys_if_present(out.keys())
+        _UNRES.unfreeze(out.keys())
         _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)
         return out
     finally:
-        _exit_home_scope(adapter, did_switch)
-
-
+        home_scope_exit(adapter, did_switch)
 
 # Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    did_switch = _enter_home_scope_if_needed(adapter)
+    _, did_switch, _, _ = home_scope_enter(adapter)
     try:
         token = _cloud_token(adapter)
         if not token:
@@ -1000,11 +604,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
             seen.add(ck)
     
-            if _is_frozen(it):
+            if _UNRES.is_frozen(it):
                 _dbg("skip_frozen", title=id_minimal(it).get("title"))
                 continue
     
-            guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
+            guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
             kind = (it.get("type") or "movie").lower()
             libtype = "show" if kind in ("show", "series", "tv") else "movie"
             title = it.get("title")
@@ -1013,7 +617,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     
             if not (guids or title or slug):
                 unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-                _freeze_item(it, action="add", reasons=["no-external-ids"], guids_tried=guids)
+                _UNRES.freeze(it, action="add", reasons=["no-external-ids"], extra={"guids_tried": guids})
                 continue
     
             if pms_first and pms_enabled:
@@ -1022,15 +626,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     try:
                         chosen.addToWatchlist(account=acct)
                         ok += 1
-                        if _is_frozen(it):
-                            _unfreeze_keys_if_present([canonical_key(it)])
+                        if _UNRES.is_frozen(it):
+                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "already on the watchlist" in msg:
                             ok += 1
-                            if _is_frozen(it):
-                                _unfreeze_keys_if_present([canonical_key(it)])
+                            if _UNRES.is_frozen(it):
+                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("pms_write_failed", op="add", error=str(e))
     
@@ -1062,8 +666,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 if ok_flag:
                     ok += 1
-                    if _is_frozen(it):
-                        _unfreeze_keys_if_present([canonical_key(it)])
+                    if _UNRES.is_frozen(it):
+                        _UNRES.unfreeze([canonical_key(it)])
                     continue
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
@@ -1076,40 +680,39 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     try:
                         chosen.addToWatchlist(account=acct)
                         ok += 1
-                        if _is_frozen(it):
-                            _unfreeze_keys_if_present([canonical_key(it)])
+                        if _UNRES.is_frozen(it):
+                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "already on the watchlist" in msg:
                             ok += 1
-                            if _is_frozen(it):
-                                _unfreeze_keys_if_present([canonical_key(it)])
+                            if _UNRES.is_frozen(it):
+                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("pms_write_failed", op="add", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
     
             unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-            _freeze_item(
+            _UNRES.freeze(
                 it,
                 action="add",
                 reasons=[
                     "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
                     *(["library:guid-index-miss"] if pms_enabled else []),
                 ],
-                guids_tried=guids,
+                extra={"guids_tried": guids},
             )
     
         _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
-        _exit_home_scope(adapter, did_switch)
-
+        home_scope_exit(adapter, did_switch)
 
 # Remove
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    did_switch = _enter_home_scope_if_needed(adapter)
+    _, did_switch, _, _ = home_scope_enter(adapter)
     try:
         token = _cloud_token(adapter)
         if not token:
@@ -1145,11 +748,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 continue
             seen.add(ck)
     
-            if _is_frozen(it):
+            if _UNRES.is_frozen(it):
                 _dbg("skip_frozen", title=id_minimal(it).get("title"))
                 continue
     
-            guids = _sort_guid_candidates(candidate_guids_from_ids(it), _guid_priority(cfg))
+            guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
             kind = (it.get("type") or "movie").lower()
             libtype = "show" if kind in ("show", "series", "tv") else "movie"
             title = it.get("title")
@@ -1158,7 +761,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     
             if not (guids or title or slug):
                 unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-                _freeze_item(it, action="remove", reasons=["no-external-ids"], guids_tried=guids)
+                _UNRES.freeze(it, action="remove", reasons=["no-external-ids"], extra={"guids_tried": guids})
                 continue
     
             if pms_first and pms_enabled:
@@ -1167,15 +770,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     try:
                         chosen.removeFromWatchlist(account=acct)
                         ok += 1
-                        if _is_frozen(it):
-                            _unfreeze_keys_if_present([canonical_key(it)])
+                        if _UNRES.is_frozen(it):
+                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "not on the watchlist" in msg or "is not on the watchlist" in msg:
                             ok += 1
-                            if _is_frozen(it):
-                                _unfreeze_keys_if_present([canonical_key(it)])
+                            if _UNRES.is_frozen(it):
+                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("pms_write_failed", op="remove", error=str(e))
     
@@ -1207,8 +810,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 )
                 if ok_flag:
                     ok += 1
-                    if _is_frozen(it):
-                        _unfreeze_keys_if_present([canonical_key(it)])
+                    if _UNRES.is_frozen(it):
+                        _UNRES.unfreeze([canonical_key(it)])
                     continue
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
@@ -1221,32 +824,32 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     try:
                         chosen.removeFromWatchlist(account=acct)
                         ok += 1
-                        if _is_frozen(it):
-                            _unfreeze_keys_if_present([canonical_key(it)])
+                        if _UNRES.is_frozen(it):
+                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "not on the watchlist" in msg or "is not on the watchlist" in msg:
                             ok += 1
-                            if _is_frozen(it):
-                                _unfreeze_keys_if_present([canonical_key(it)])
+                            if _UNRES.is_frozen(it):
+                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("pms_write_failed", op="remove", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
     
             unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-            _freeze_item(
+            _UNRES.freeze(
                 it,
                 action="remove",
                 reasons=[
                     "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
                     *(["library:guid-index-miss"] if pms_enabled else []),
                 ],
-                guids_tried=guids,
+                extra={"guids_tried": guids},
             )
     
         _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
-        _exit_home_scope(adapter, did_switch)
+        home_scope_exit(adapter, did_switch)

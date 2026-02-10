@@ -10,14 +10,13 @@ import ipaddress
 import xml.etree.ElementTree as ET
 from typing import Any, Mapping
 
-from .._log import log as cw_log
-
 import requests
 from requests.exceptions import ConnectionError, SSLError
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import normalize_instance_id
 
+from ._common import make_logger, plex_headers
 def _boolish(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -31,24 +30,7 @@ def _boolish(value: Any, default: bool) -> bool:
     return default
 
 
-def _dbg(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "utils", "debug", event, **fields)
-
-
-def _info(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "utils", "info", event, **fields)
-
-
-def _warn(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "utils", "warn", event, **fields)
-
-
-def _error(event: str, **fields: Any) -> None:
-    cw_log("PLEX", "utils", "error", event, **fields)
-
-
-def _log(msg: str) -> None:
-    _dbg(msg)
+_dbg, _info, _warn, _error, _log = make_logger("utils")
 
 
 _LIB_TTL_S = int(os.environ.get("CW_PLEX_LIB_TTL_S", "600"))
@@ -141,17 +123,13 @@ def _is_empty(value: Any) -> bool:
 
 
 def _plex_headers(token: str) -> dict[str, str]:
-    cid = os.environ.get("CW_PLEX_CID") or os.environ.get("PLEX_CLIENT_IDENTIFIER") or "CrossWatch"
-    return {
-        "X-Plex-Product": "CrossWatch",
-        "X-Plex-Platform": "Web",
-        "X-Plex-Version": "1.0",
-        "X-Plex-Client-Identifier": cid,
-        "X-Plex-Token": token or "",
-        "Accept": "application/xml, application/json;q=0.9,*/*;q=0.5",
-        "User-Agent": "CrossWatch/1.0",
-    }
-
+    return plex_headers(
+        token or "",
+        platform="Web",
+        version="1.0",
+        accept="application/xml, application/json;q=0.9,*/*;q=0.5",
+        user_agent="CrossWatch/1.0",
+    )
 
 def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str, instance_id: Any = None) -> bool:
     if not str(url).lower().startswith("https"):
@@ -720,19 +698,3 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         _info("whitelist_defaults_ensured")
     return changed
 
-
-def patch_history_with_account_id(data: Any, account_id: int | None) -> Any:
-    if account_id is None:
-        return data
-    aid = int(account_id)
-
-    def apply(item: Any) -> Any:
-        if isinstance(item, dict):
-            for key in ("account_id", "accountID", "accountId", "user_id", "userID", "userId"):
-                if not item.get(key):
-                    item[key] = aid
-        return item
-
-    if isinstance(data, list):
-        return [apply(it) for it in data]
-    return apply(data)
