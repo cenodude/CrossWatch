@@ -11,14 +11,25 @@ import pytest
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    here = Path(__file__).resolve()
+    for p in here.parents:
+        if (p / "cw_platform").is_dir():
+            return p
+    return here.parents[1]
 
 
 def _ensure_sys_path() -> None:
-    root = str(_project_root())
-    if root not in sys.path:
-        sys.path.insert(0, root)
+    root = _project_root()
+    roots = [root]
 
+    # Providers live under <repo>/providers, but some test runs may start in that folder.
+    if (root / "providers").is_dir():
+        roots.append(root / "providers")
+
+    for p in roots:
+        sp = str(p)
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
 
 def _get_ids(obj: Any) -> dict[str, str]:
     ids: dict[str, str] = {}
@@ -114,6 +125,15 @@ def _install_stub(module_name: str) -> Any:
 
 
 def _ensure_cw_platform_stubs() -> None:
+    # If running inside the full CrossWatch repo, prefer the real cw_platform package.
+    try:
+        import cw_platform.id_map  # noqa: F401
+        import cw_platform.provider_instances  # noqa: F401
+        import cw_platform.config_base  # noqa: F401
+        return
+    except Exception:
+        pass
+
     for base in (
         "cw_platform",
         "cw_platform.id_map",
@@ -139,73 +159,29 @@ def _ensure_cw_platform_stubs() -> None:
             out.update(_ids_from_guid(str(guid)))
         return out
 
-    # cw_platform.id_map
     id_map = sys.modules["cw_platform.id_map"]
     id_map.canonical_key = _canonical_key  # type: ignore[attr-defined]
     id_map.minimal = _minimal  # type: ignore[attr-defined]
     id_map.ids_from = _ids_from_item  # type: ignore[attr-defined]
     id_map.ids_from_guid = _ids_from_guid  # type: ignore[attr-defined]
 
-    # cw_platform.idutils 
+    # Compat shim
     idutils = sys.modules["cw_platform.idutils"]
     idutils.canonical_key = _canonical_key  # type: ignore[attr-defined]
     idutils.minimal = _minimal  # type: ignore[attr-defined]
     idutils.ids_from = _ids_from_item  # type: ignore[attr-defined]
     idutils.ids_from_guid = _ids_from_guid  # type: ignore[attr-defined]
 
-    # cw_platform.provider_instances (minimal multi-profile support)
     prov = sys.modules["cw_platform.provider_instances"]
-
-    def _provider_key(name: str) -> str:
-        return str(name or "").strip().lower()
-
-    def _ensure_provider_block(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
-        key = _provider_key(provider)
-        blk = cfg.get(key)
-        if isinstance(blk, dict):
-            return blk
-        out: dict[str, Any] = {}
-        cfg[key] = out
-        return out
-
-    def _ensure_instance_block2(cfg: dict[str, Any], provider: str, instance_id: Any = None) -> dict[str, Any]:
-        inst = _normalize_instance_id(instance_id)
-        base = _ensure_provider_block(cfg, provider)
-        if inst == "default":
-            return base
-        insts = base.get("instances")
-        if not isinstance(insts, dict):
-            insts = {}
-            base["instances"] = insts
-        blk = insts.get(inst)
-        if isinstance(blk, dict):
-            return blk
-        out: dict[str, Any] = {}
-        insts[inst] = out
-        return out
-
-    def _get_provider_block2(cfg: dict[str, Any], provider: str, instance_id: Any = None) -> dict[str, Any]:
-        key = _provider_key(provider)
-        base = cfg.get(key)
-        base_block = dict(base or {}) if isinstance(base, Mapping) else {}
-        inst = _normalize_instance_id(instance_id)
-        if inst == "default":
-            return base_block
-        insts = base_block.get("instances")
-        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
-            return dict(insts.get(inst) or {})
-        return {}
-
-    prov.provider_key = _provider_key  # type: ignore[attr-defined]
     prov.normalize_instance_id = _normalize_instance_id  # type: ignore[attr-defined]
-    prov.ensure_provider_block = _ensure_provider_block  # type: ignore[attr-defined]
-    prov.ensure_instance_block = _ensure_instance_block2  # type: ignore[attr-defined]
-    prov.get_provider_block = _get_provider_block2  # type: ignore[attr-defined]
 
-    # cw_platform.config_base (in-memory config for tests)
     cfg = sys.modules["cw_platform.config_base"]
     cfg.load_config = _load_config  # type: ignore[attr-defined]
     cfg.save_config = _save_config  # type: ignore[attr-defined]
+    cfg.normalize_instance_id = _normalize_instance_id  # type: ignore[attr-defined]
+    cfg.ensure_instance_block = _ensure_instance_block  # type: ignore[attr-defined]
+    cfg.get_provider_block = _get_provider_block  # type: ignore[attr-defined]
+
 
 
 class _AuthProviderStub:
