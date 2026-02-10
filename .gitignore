@@ -37,6 +37,9 @@ config.json
 Thumbs.db
 
 # Tests / Coverage
+**/tests/
+**/pytest.ini
+pytest.ini
 .pytest_cache/
 .coverage
 .coverage.*
