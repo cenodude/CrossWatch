@@ -16,6 +16,8 @@ __pycache__/
 .eggs/
 
 # --- Test / Coverage ---
+**/pytest.ini
+
 .pytest_cache/
 .coverage
 .coverage.*
@@ -49,7 +51,8 @@ Thumbs.db
 # --- Build artifacts ---
 dist/
 build/
-tests/
+**/tests/
+**/tests/**
 *.egg
 *.whl
 images/
