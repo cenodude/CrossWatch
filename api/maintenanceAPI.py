@@ -15,6 +15,8 @@ from fastapi import APIRouter, Body
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
+CW_STATE_KEEP_DIRS = {"id"}
+
 
 def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
     from .syncAPI import _load_state
@@ -40,6 +42,11 @@ def _clear_cw_state_files() -> list[str]:
     if not CW_STATE_DIR.exists():
         return removed
     for p in CW_STATE_DIR.iterdir():
+        if p.is_dir():
+            # Preserve identity cache (.cw_state/id)
+            if p.name in CW_STATE_KEEP_DIRS:
+                continue
+            continue
         if p.is_file():
             try:
                 p.unlink(missing_ok=True)
@@ -294,6 +301,62 @@ def clear_cache() -> dict[str, Any]:
 def provider_cache_status() -> dict[str, Any]:
     info = _scan_provider_cache()
     return {"ok": True, **info}
+
+
+@router.post("/reset-all-default")
+def reset_all_to_default() -> dict[str, Any]:
+    _, CONFIG_DIR, *_rest = _cw()
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    report: dict[str, Any] = {
+        "ok": True,
+        "config_dir": str(CONFIG_DIR),
+        "backup": None,
+        "removed_files": [],
+        "removed_dirs": [],
+        "errors": [],
+    }
+
+    # Back up config.json first
+    cfg_path = CONFIG_DIR / "config.json"
+    if cfg_path.exists():
+        base = f"config.json.backup_{ts}"
+        dst = CONFIG_DIR / base
+        i = 1
+        while dst.exists():
+            dst = CONFIG_DIR / f"{base}_{i}"
+            i += 1
+        try:
+            cfg_path.rename(dst)
+            report["backup"] = str(dst)
+        except Exception as e:
+            report["ok"] = False
+            report["errors"].append(f"config_backup_failed: {e}")
+            return report
+
+    files = ["last_sync.json", "state.json", "statistics.json"]
+    dirs = [".cw_state", "sync_reports", ".cw_provider", "cache", "tls"]
+
+    for name in files:
+        p = CONFIG_DIR / name
+        if p.exists():
+            if _safe_remove_path(p):
+                report["removed_files"].append(name)
+            else:
+                report["ok"] = False
+                report["errors"].append(f"remove_failed: {name}")
+
+    for name in dirs:
+        p = CONFIG_DIR / name
+        if p.exists():
+            if _safe_remove_path(p):
+                report["removed_dirs"].append(name)
+            else:
+                report["ok"] = False
+                report["errors"].append(f"remove_failed: {name}")
+
+    return report
+
 
 @router.post("/restart")
 def restart_crosswatch() -> dict[str, Any]:

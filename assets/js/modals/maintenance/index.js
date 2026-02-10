@@ -283,6 +283,11 @@ function injectCSS() {
   .cw-maint .action-row[data-op="playing"] .action-icon {
     background: radial-gradient(circle at 0 0,#c3c8ff,#333a7b);
   }
+
+  .cw-maint .action-row[data-op="defaults"] .action-icon {
+    background: radial-gradient(circle at 0 0,#ff3b3b,#4b0d0d);
+  }
+
   .cw-maint .status {
     font-size: 12px;
     margin-top: 4px;
@@ -466,6 +471,26 @@ export default {
               <button type="button" class="run-btn" data-label="Reset statistics">Run</button>
             </div>
 
+
+            <div class="action-row" data-op="defaults">
+              <div class="action-main">
+                <div class="action-icon">
+                  <span class="material-symbols-rounded" aria-hidden="true">warning</span>
+                </div>
+                <div class="action-copy">
+                  <div class="action-line">
+                    <div class="action-title">Reset all to default</div>
+                    <span class="action-tag">DANGER</span>
+                  </div>
+                  <div class="action-desc">
+                    Resets CrossWatch to a clean install state by deleting local state, caches, tracker files, reports and TLS material, and backing up <code>config.json</code>.
+                    Snapshots in <code>/config/snapshots</code> are kept.
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="run-btn" data-label="Reset all to default">Run</button>
+            </div>
+
             <div class="action-row" data-op="playing">
               <div class="action-main">
                 <div class="action-icon">
@@ -523,7 +548,7 @@ export default {
         $("#cxm-cache-count", root).textContent =
           `Provider cache: ${cCount} file${cCount === 1 ? "" : "s"}`;
       } catch {
-        // ignore; summary just stays generic
+
       }
     }
 
@@ -572,6 +597,49 @@ export default {
             headers: { "Content-Type": "application/json" },
             body: "{}",
           });
+
+        } else if (kind === "defaults") {
+          const warn = [
+            "⚠️ Reset all to default",
+            "",
+            "This will delete local state, provider cache, tracker files, reports, metadata cache and TLS material.",
+            "It will also move /config/config.json to a timestamped backup file.",
+            "",
+            "Snapshots are NOT deleted ( /config/snapshots ).",
+            "",
+            "Are you absolutely sure you want to continue?"
+          ].join("\n");
+
+          if (!confirm(warn)) return;
+
+          const typed = prompt('Type RESET to continue');
+          if (String(typed || "").trim().toUpperCase() !== "RESET") {
+            setStatus("Cancelled.", "");
+            return;
+          }
+
+          res = await fjson("/api/maintenance/reset-all-default", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+
+          // Restart with overlay/timer (restart_apply.js)
+          try {
+            if (window.cxCloseModal) window.cxCloseModal();
+          } catch (_) {}
+
+          setTimeout(() => {
+            if (window.cwRestartCrossWatchWithOverlay) {
+              window.cwRestartCrossWatchWithOverlay();
+            } else {
+              fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }).finally(() => {
+                window.location.reload();
+              });
+            }
+          }, 150);
+          return;
+
         } else if (kind === "playing") {
           res = await fjson("/api/maintenance/reset-currently-watching", {
             method: "POST",
@@ -601,6 +669,7 @@ export default {
       tracker: "tracker",
       stats: "stats",
       playing: "playing",
+      defaults: "defaults",
     };
 
     Object.entries(map).forEach(([key, kind]) => {
