@@ -114,24 +114,98 @@ def _install_stub(module_name: str) -> Any:
 
 
 def _ensure_cw_platform_stubs() -> None:
-    for base in ("cw_platform", "cw_platform.idutils", "cw_platform.config_base"):
+    for base in (
+        "cw_platform",
+        "cw_platform.id_map",
+        "cw_platform.provider_instances",
+        "cw_platform.config_base",
+        # Back-compat alias used by older provider code.
+        "cw_platform.idutils",
+    ):
         if base not in sys.modules:
             _install_stub(base)
 
     sys.modules["cw_platform"].__path__ = []  # type: ignore[attr-defined]
 
-    id_map = sys.modules["cw_platform.idutils"]
+    def _ids_from_item(item: Any) -> dict[str, str]:
+        if not isinstance(item, Mapping):
+            return _ids_from(item)
+        out = _minimal(item)
+        ids = item.get("ids")
+        if isinstance(ids, Mapping):
+            out.update(_minimal(ids))
+        guid = item.get("guid") or (ids.get("guid") if isinstance(ids, Mapping) else None)
+        if guid:
+            out.update(_ids_from_guid(str(guid)))
+        return out
+
+    # cw_platform.id_map
+    id_map = sys.modules["cw_platform.id_map"]
     id_map.canonical_key = _canonical_key  # type: ignore[attr-defined]
     id_map.minimal = _minimal  # type: ignore[attr-defined]
-    id_map.ids_from = _ids_from  # type: ignore[attr-defined]
+    id_map.ids_from = _ids_from_item  # type: ignore[attr-defined]
     id_map.ids_from_guid = _ids_from_guid  # type: ignore[attr-defined]
 
+    # cw_platform.idutils 
+    idutils = sys.modules["cw_platform.idutils"]
+    idutils.canonical_key = _canonical_key  # type: ignore[attr-defined]
+    idutils.minimal = _minimal  # type: ignore[attr-defined]
+    idutils.ids_from = _ids_from_item  # type: ignore[attr-defined]
+    idutils.ids_from_guid = _ids_from_guid  # type: ignore[attr-defined]
+
+    # cw_platform.provider_instances (minimal multi-profile support)
+    prov = sys.modules["cw_platform.provider_instances"]
+
+    def _provider_key(name: str) -> str:
+        return str(name or "").strip().lower()
+
+    def _ensure_provider_block(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
+        key = _provider_key(provider)
+        blk = cfg.get(key)
+        if isinstance(blk, dict):
+            return blk
+        out: dict[str, Any] = {}
+        cfg[key] = out
+        return out
+
+    def _ensure_instance_block2(cfg: dict[str, Any], provider: str, instance_id: Any = None) -> dict[str, Any]:
+        inst = _normalize_instance_id(instance_id)
+        base = _ensure_provider_block(cfg, provider)
+        if inst == "default":
+            return base
+        insts = base.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            base["instances"] = insts
+        blk = insts.get(inst)
+        if isinstance(blk, dict):
+            return blk
+        out: dict[str, Any] = {}
+        insts[inst] = out
+        return out
+
+    def _get_provider_block2(cfg: dict[str, Any], provider: str, instance_id: Any = None) -> dict[str, Any]:
+        key = _provider_key(provider)
+        base = cfg.get(key)
+        base_block = dict(base or {}) if isinstance(base, Mapping) else {}
+        inst = _normalize_instance_id(instance_id)
+        if inst == "default":
+            return base_block
+        insts = base_block.get("instances")
+        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
+            return dict(insts.get(inst) or {})
+        return {}
+
+    prov.provider_key = _provider_key  # type: ignore[attr-defined]
+    prov.normalize_instance_id = _normalize_instance_id  # type: ignore[attr-defined]
+    prov.ensure_provider_block = _ensure_provider_block  # type: ignore[attr-defined]
+    prov.ensure_instance_block = _ensure_instance_block2  # type: ignore[attr-defined]
+    prov.get_provider_block = _get_provider_block2  # type: ignore[attr-defined]
+
+    # cw_platform.config_base (in-memory config for tests)
     cfg = sys.modules["cw_platform.config_base"]
     cfg.load_config = _load_config  # type: ignore[attr-defined]
     cfg.save_config = _save_config  # type: ignore[attr-defined]
-    cfg.normalize_instance_id = _normalize_instance_id  # type: ignore[attr-defined]
-    cfg.ensure_instance_block = _ensure_instance_block  # type: ignore[attr-defined]
-    cfg.get_provider_block = _get_provider_block  # type: ignore[attr-defined]
 
 
 class _AuthProviderStub:
