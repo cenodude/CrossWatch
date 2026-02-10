@@ -415,11 +415,31 @@ def html() -> str:
     let __users = null;
     let __pickerTries = 0;
 
+    const PLEX_INSTANCE_KEY = "cw.ui.plex.auth.instance.v1";
+
+    function getInst(){
+      let v = (document.getElementById("plex_instance")?.value || "").trim();
+      if (!v) { try { v = localStorage.getItem(PLEX_INSTANCE_KEY) || ""; } catch {} }
+      v = (v || "").trim() || "default";
+      return v.toLowerCase() === "default" ? "default" : v;
+    }
+
+    function getPlexBlk(cfg){
+      cfg = cfg || {};
+      const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
+      const inst = getInst();
+      if (inst === "default") return base;
+      if (!base.instances || typeof base.instances !== "object") base.instances = {};
+      if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+      return base.instances[inst];
+    }
+
     (async ()=>{
       try{
         const r = await fetch("/api/config",{cache:"no-store"});
         const cfg = await r.json();
-        const on = !!(cfg?.plex?.verify_ssl);
+        const blk = getPlexBlk(cfg);
+        const on = !!(blk?.verify_ssl);
         const cb = $("plex_verify_ssl"); if (cb) cb.checked = on;
       }catch{}
     })();
@@ -427,8 +447,8 @@ def html() -> str:
     document.addEventListener("settings-collect",(ev)=>{
       try{
         const cfg = ev?.detail?.cfg || (window.__cfg ||= {});
-        const plex = (cfg.plex ||= {});
-        plex.verify_ssl = !!$("plex_verify_ssl")?.checked;
+        const blk = getPlexBlk(cfg);
+        blk.verify_ssl = !!$("plex_verify_ssl")?.checked;
       }catch{}
     }, true);
 

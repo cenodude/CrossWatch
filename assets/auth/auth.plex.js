@@ -332,6 +332,8 @@ function ensurePlexInstanceUI() {
     let i = 0;
     let detailTries = 0;
     let autoTried = false;
+    let inspectTried = false;
+    let lastTok = "";
 
     const poll = async () => {
       if (Date.now() >= deadline) { plexPoll = null; return; }
@@ -351,6 +353,7 @@ function ensurePlexInstanceUI() {
       const tok = (p.account_token || "").trim();
 
       if (tok) {
+        if (tok !== lastTok) { lastTok = tok; inspectTried = false; }
         try {
           const tokenEl = $("plex_token");
           if (tokenEl) tokenEl.value = tok;
@@ -359,22 +362,36 @@ function ensurePlexInstanceUI() {
           const userEl = $("plex_username");
           const idEl   = $("plex_account_id");
 
-          const cfgUrl  = (p.server_url || "").trim();
-          const cfgUser = (p.username || "").trim();
-          const cfgId   = (p.account_id != null ? String(p.account_id) : "").trim();
+          // Force an inspect once a token exists
+          if (!inspectTried) {
+            inspectTried = true;
+            try { await fetch(plexApi("/api/plex/inspect"), { cache: "no-store" }); } catch {}
+            try { await hydratePlexFromConfigRaw(); } catch {}
+          }
 
-          if (urlEl && !urlEl.value && cfgUrl)  urlEl.value = cfgUrl;
-          if (userEl && !userEl.value && cfgUser) userEl.value = cfgUser;
-          if (idEl && !idEl.value && cfgId)    idEl.value = cfgId;
+          // Re-read config 
+          try {
+            cfg = await fetch("/api/config" + bust(), { cache: "no-store" }).then(r => r.json());
+          } catch {}
 
-          if (!autoTried && typeof plexAuto === "function" && (!cfgUser || !cfgId)) {
+          const p2 = getPlexCfgBlock(cfg || {});
+          const cfgUrl  = (p2.server_url || "").trim();
+          const cfgUser = (p2.username || "").trim();
+          const cfgId   = (p2.account_id != null ? String(p2.account_id) : "").trim();
+
+          // Token poll is a post-auth synchronizer
+          if (urlEl && cfgUrl && urlEl.value.trim() !== cfgUrl)  urlEl.value = cfgUrl;
+          if (userEl && cfgUser && userEl.value.trim() !== cfgUser) userEl.value = cfgUser;
+          if (idEl && cfgId && idEl.value.trim() !== cfgId)    idEl.value = cfgId;
+
+          if (!autoTried && typeof plexAuto === "function" && (!cfgUser || !cfgId || !cfgUrl)) {
             autoTried = true;
             try { await plexAuto(); } catch {}
           }
 
           const haveDetails = !!(cfgUrl || cfgUser || cfgId);
 
-          if (haveDetails || detailTries++ >= 5) {
+          if (haveDetails || detailTries++ >= 15) {
             try { setPlexSuccess(true); } catch {}
             try { await plexProbePmsReachability(); } catch {}
             plexPoll = null;
@@ -444,6 +461,7 @@ async function plexDeleteToken() {
       set("plex_server_url", p.server_url || "");
       set("plex_username", p.username || "");
       set("plex_account_id", p.account_id ?? "");
+      try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
 
       const st = getPlexState();
       st.hist = new Set((p.history?.libraries || []).map(x => String(x)));
@@ -570,8 +588,9 @@ async function plexDeleteToken() {
         const rCfg = await fetch("/api/config?ts=" + Date.now(), { cache: "no-store" });
         if (rCfg.ok) {
           const cfg = await rCfg.json();
-          cfgUrl = (cfg?.plex?.server_url || "").trim();
-          if (cfgUrl && urlEl) urlEl.value = cfgUrl;
+          const blk = getPlexCfgBlock(cfg || {});
+          cfgUrl = (blk?.server_url || "").trim();
+          setIfEmpty(urlEl, cfgUrl);
         }
       } catch {}
 
@@ -1001,6 +1020,8 @@ async function plexDeleteToken() {
       if (!Number.isFinite(n) || n <= 0) n = 1;
       plex.account_id = n;
     }
+
+    try { const cb = $("plex_verify_ssl"); if (cb) plex.verify_ssl = !!cb.checked; } catch {}
 
     const st = getPlexState();
     const uiReady = !!st.hydrated ||
