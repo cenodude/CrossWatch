@@ -8,6 +8,7 @@ import time
 import re
 import threading
 import urllib.parse
+import xml.etree.ElementTree as ET
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, HTTPException
@@ -17,6 +18,8 @@ from urllib.parse import parse_qs
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble.currently_watching import state_file as _cw_state_file
+
+import providers.sync.plex._utils as plex_utils
 
 try:
     from providers.scrobble.watch_manager import start_from_config as _wm_start_from_config
@@ -238,6 +241,97 @@ def _list_plex_users(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     if owner:
         users.append(owner)
     users.extend(managed)
+
+    # Prefer PMS-local account IDs for Home user scope switching.
+    # Cloud IDs are still kept (as cloud_account_id) when known.
+    try:
+        plex = cfg.get("plex") or {}
+        token = (plex.get("account_token") or "").strip()
+        base = (plex.get("server_url") or "").strip().rstrip("/")
+        verify = bool(plex.get("verify_ssl"))
+
+        def _is_local_id(x: Any) -> bool:
+            try:
+                n = int(str(x).strip())
+                return 0 < n < 100000
+            except Exception:
+                return False
+
+        pms_by_cloud: dict[int, int] = {}
+        pms_by_name: dict[str, int] = {}
+        owner_local: int | None = None
+
+        if token and base:
+            s = plex_utils._build_session(token, verify)
+            r = plex_utils._try_get(s, base, "/accounts", timeout=10.0)
+            if (not r or not getattr(r, "ok", False)) and verify:
+                s2 = plex_utils._build_session(token, False)
+                r = plex_utils._try_get(s2, base, "/accounts", timeout=10.0)
+            if r and getattr(r, "ok", False) and (r.text or "").lstrip().startswith("<"):
+                root = ET.fromstring(r.text)
+                for acc in root.findall(".//Account"):
+                    pid = str(acc.attrib.get("id") or acc.attrib.get("ID") or "").strip()
+                    pms_id = int(pid) if _is_local_id(pid) else None
+
+                    cloud_id = (
+                        acc.attrib.get("accountID")
+                        or acc.attrib.get("accountId")
+                        or acc.attrib.get("account_id")
+                        or acc.attrib.get("cloudID")
+                        or acc.attrib.get("cloudId")
+                        or acc.attrib.get("cloud_id")
+                    )
+                    try:
+                        cloud_id_i = int(str(cloud_id).strip()) if str(cloud_id or "").strip().isdigit() else None
+                    except Exception:
+                        cloud_id_i = None
+                    if cloud_id_i is not None and cloud_id_i <= 0:
+                        cloud_id_i = None
+                    if cloud_id_i is None and pid.isdigit() and not _is_local_id(pid):
+                        try:
+                            cloud_id_i = int(pid)
+                        except Exception:
+                            cloud_id_i = None
+
+                    uname = (acc.attrib.get("name") or acc.attrib.get("username") or acc.attrib.get("title") or "").strip()
+                    kind = (acc.attrib.get("type") or "").strip().lower()
+
+                    if pms_id is not None:
+                        if uname:
+                            pms_by_name[uname.lower()] = pms_id
+                        if cloud_id_i is not None:
+                            pms_by_cloud[int(cloud_id_i)] = pms_id
+                        if kind == "owner":
+                            owner_local = pms_id
+
+        # Patch IDs in-place.
+        for u in users:
+            uid = str(u.get("id") or "").strip()
+            if uid.isdigit():
+                try:
+                    cid = int(uid)
+                except Exception:
+                    cid = 0
+            else:
+                cid = 0
+
+            uname = str(u.get("username") or u.get("title") or "").strip().lower()
+            local = pms_by_cloud.get(cid) or (pms_by_name.get(uname) if uname else None)
+            if local is not None:
+                u.setdefault("cloud_account_id", cid)
+                u["id"] = str(local)
+
+        # Owner should be local id 1 
+        for u in users:
+            if u.get("type") == "owner":
+                u["id"] = str(owner_local or 1)
+                break
+    except Exception:
+        # If mapping fails, still enforce the owner id behavior.
+        for u in users:
+            if u.get("type") == "owner":
+                u["id"] = "1"
+                break
 
     rank = {"owner": 3, "managed": 2, "friend": 1}
     out: dict[str, dict[str, Any]] = {}

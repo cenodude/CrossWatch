@@ -422,6 +422,29 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 except Exception:
                     pass
 
+        def _local_id_for_cloud_id(cloud_aid: Any, uname: str | None = None) -> int | None:
+            try:
+                cid = int(cloud_aid) if cloud_aid is not None else None
+            except Exception:
+                cid = None
+            if cid is not None and cid in pms_by_cloud:
+                v = pms_by_cloud[cid].get("pms_account_id")
+                try:
+                    return int(v) if v is not None else None
+                except Exception:
+                    return None
+            u0 = (uname or "").strip().lower()
+            if u0:
+                for row in pms_rows:
+                    if (row.get("username") or "").strip().lower() == u0:
+                        v = row.get("pms_account_id")
+                        try:
+                            return int(v) if v is not None else None
+                        except Exception:
+                            return None
+            return None
+
+
         try:
             cloud = plex_utils.fetch_cloud_user_info(token) or {}
             cloud_user = (cloud.get("username") or cloud.get("title") or "").strip()
@@ -429,6 +452,17 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except Exception:
             cloud_user = ""
             cloud_id = None
+
+        owner_local_id: int | None = None
+        if pms_rows:
+            try:
+                owner_local_id = next((int(r.get("pms_account_id")) for r in pms_rows if r.get("type") == "owner" and r.get("pms_account_id") is not None), None)
+            except Exception:
+                owner_local_id = None
+        if owner_local_id is None:
+            owner_local_id = _local_id_for_cloud_id(cloud_id, cloud_user)
+        if owner_local_id is None and cloud_user:
+            owner_local_id = 1
 
         users: list[dict[str, Any]] = []
         seen: set[tuple[str, int]] = set()
@@ -456,22 +490,31 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             users.append(u)
 
         if cloud_user:
-            add({"username": cloud_user, "account_id": cloud_id or 1, "type": "owner", "label": "Owner", "source": "cloud"})
+            add({"username": cloud_user, "account_id": owner_local_id or 1, "cloud_account_id": cloud_id, "type": "owner", "label": "Owner", "source": "cloud"})
 
         for u in (plex_utils.fetch_cloud_home_users(token) or []):
-            add({"username": u.get("username") or u.get("title") or "", "account_id": u.get("id"), "type": u.get("type") or "managed", "label": "Home", "source": "cloud"})
+            uname = (u.get("username") or u.get("title") or "").strip()
+            cid = u.get("id")
+            local = _local_id_for_cloud_id(cid, uname)
+            add({"username": uname, "account_id": local or cid, "cloud_account_id": cid, "type": u.get("type") or "managed", "label": "Home", "source": "cloud"})
 
         # Friends / shared users: plex.tv/api/users
         for u in (plex_utils.fetch_cloud_account_users(token) or []):
-            add({"username": u.get("username") or u.get("title") or "", "account_id": u.get("id"), "type": "friend", "label": "Friend", "source": "cloud"})
+            uname = (u.get("username") or u.get("title") or "").strip()
+            cid = u.get("id")
+            local = _local_id_for_cloud_id(cid, uname)
+            add({"username": uname, "account_id": local or cid, "cloud_account_id": cid, "type": "friend", "label": "Friend", "source": "cloud"})
         if cloud_id is not None and int(cloud_id) in pms_by_cloud:
             r0 = pms_by_cloud[int(cloud_id)]
-            add({"username": r0.get("username") or cloud_user, "account_id": cloud_id, "type": r0.get("type") or "owner", "label": r0.get("label") or "Owner", "source": "pms"})
+            add({"username": r0.get("username") or cloud_user, "account_id": r0.get("pms_account_id") or 1, "cloud_account_id": cloud_id, "type": r0.get("type") or "owner", "label": r0.get("label") or "Owner", "source": "pms"})
 
         for row in pms_rows:
             add({
                 "username": row.get("username") or "",
-                "account_id": row.get("cloud_account_id") or row.get("pms_account_id") or 1,
+                # Prefer PMS-local IDs (needed for Home user scope switching).
+                "account_id": row.get("pms_account_id") or row.get("cloud_account_id") or 1,
+                "pms_account_id": row.get("pms_account_id"),
+                "cloud_account_id": row.get("cloud_account_id"),
                 "type": row.get("type") or "friend",
                 "label": row.get("label") or "Friend",
                 "source": "pms",
