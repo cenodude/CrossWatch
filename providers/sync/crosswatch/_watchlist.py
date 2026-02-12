@@ -15,7 +15,9 @@ except Exception:  # pragma: no cover
     def cw_log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:  # type: ignore[no-redef]
         pass
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.config_base import load_config, save_config
+from cw_platform.id_map import canonical_key, merge_ids, minimal as id_minimal
+from cw_platform.metadata import MetadataManager
 
 from ._common import (
     _pair_scope,
@@ -41,6 +43,70 @@ def _warn(msg: str, **fields: Any) -> None:
 
 def _error(msg: str, **fields: Any) -> None:
     cw_log("CROSSWATCH", "watchlist", "error", msg, **fields)
+
+
+_META: MetadataManager | None = None
+
+
+def _meta() -> MetadataManager | None:
+    global _META
+    if _META is not None:
+        return _META
+    try:
+        _META = MetadataManager(load_config, save_config)
+        return _META
+    except Exception:
+        _META = None
+        return None
+
+
+def _type_to_entity(typ: Any) -> str:
+    t = str(typ or "").lower().strip()
+    return "movie" if t == "movie" else "show"
+
+
+def _normalize_imdb(v: Any) -> str:
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"tt{s}"
+    if not s.startswith("tt"):
+        return f"tt{s}"
+    return s
+
+
+def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
+    ids = dict(item.get("ids") or {}) if isinstance(item.get("ids"), dict) else {}
+    if ids.get("tmdb") or item.get("tmdb"):
+        if item.get("tmdb") and not ids.get("tmdb"):
+            ids = merge_ids(ids, {"tmdb": item.get("tmdb")})
+            item["ids"] = ids
+            return True
+        return False
+
+    imdb = _normalize_imdb(ids.get("imdb") or item.get("imdb"))
+    if not imdb:
+        return False
+
+    mm = _meta()
+    if not mm:
+        return False
+
+    try:
+        res = mm.resolve(
+            entity=_type_to_entity(item.get("type")),
+            ids={"imdb": imdb},
+            need={"poster": False, "backdrop": False, "overview": False},
+        )
+        tmdb = ((res or {}).get("ids") or {}).get("tmdb")
+        if not tmdb:
+            return False
+        ids = merge_ids(ids, {"imdb": imdb, "tmdb": tmdb})
+        item["ids"] = ids
+        return True
+    except Exception:
+        return False
 
 
 def _root(adapter: Any) -> Path:
@@ -309,6 +375,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     prog: Any = prog_factory("watchlist") if callable(prog_factory) else None
     state = _load_state(adapter)
     items = dict(state.get("items") or {})
+
+    changed = 0
+    for v in items.values():
+        if not isinstance(v, dict):
+            continue
+        if _ensure_tmdb_for_item(v):
+            changed += 1
+
+    if changed:
+        _snapshot_state(adapter, items)
+        _save_state(adapter, items)
     out: dict[str, dict[str, Any]] = {}
     for key, value in items.items():
         if not isinstance(value, Mapping):
@@ -351,6 +428,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved_src.append(obj)
             continue
         existing = cur.get(key)
+        if isinstance(existing, dict):
+            ex_ids = existing.get("ids") if isinstance(existing.get("ids"), dict) else {}
+            in_ids = minimal.get("ids") if isinstance(minimal.get("ids"), dict) else {}
+            merged = merge_ids(ex_ids, in_ids)
+            if merged:
+                minimal["ids"] = merged
+
+        _ensure_tmdb_for_item(minimal)
+
         if existing != minimal:
             cur[key] = minimal
             changed += 1
