@@ -47,7 +47,9 @@
   .wl-matrix{display:flex;gap:10px;align-items:center}
   .wl-mat{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#14141c}
   .wl-mat img{height:14px}.wl-mat .material-symbol{font-size:16px}
-  .wl-mat.ok{border-color:rgba(120,255,180,.35)} .wl-mat.miss{opacity:.6}
+  .wl-mat.ok{border-color:rgba(120,255,180,.35)}
+  /* Keep provider slots aligned: missing providers reserve space but stay visually hidden */
+  .wl-mat.miss{visibility:hidden}
 
   /* Sidebar */
   #page-watchlist .wl-side{
@@ -699,14 +701,16 @@
   const PROV_LABEL = { CROSSWATCH: "CW", ANILIST: "AL", TMDB: "TMDb" };
   const provLabel = p => PROV_LABEL[String(p || "").toUpperCase()] || String(p || "");
 
-  const providerChip = name => {
+  const providerChip = (name, state = "ok") => {
     const src = SRC_LOGOS[name];
-    return `<span class="wl-mat ok" title="${name} present">${
+    const stateTxt = state === "ok" ? "present" : "missing";
+    return `<span class="wl-mat ${state}" title="${name} ${stateTxt}">${
       src ? `<img src="${src}" alt="${name}">` : `<span class="wl-badge">${name}</span>`
     }<span class="material-symbol">check_circle</span></span>`;
   };
 
-  let providerActive = (p, have) => (have ? providerChip(p) : "");
+  // Initialized later once we know which providers are active for this install.
+  let providerActive = (p, have) => (have ? providerChip(p, "ok") : "");
   const mapProvidersByKey = list => new Map(list.map(it => [normKey(it), new Set(providersOf(it))]).filter(([k]) => !!k));
   function updateMetrics() {
   const ICON = {
@@ -1295,7 +1299,7 @@
 
     activeProviders = active;
     providerActive = (p, have) =>
-      (activeProviders.has(p) && have ? providerChip(p) : "");
+      (activeProviders.has(p) ? providerChip(p, have ? "ok" : "miss") : "");
     items = await fetchWatchlist();
     populateGenreOptions(buildGenreIndex(items));
     applyOverlayPrefUI(); applyFilters(); rebuildDeleteProviderOptions(); wireSortableHeaders();
