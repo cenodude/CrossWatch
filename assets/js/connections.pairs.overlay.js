@@ -3,6 +3,11 @@
 (function () {
   // Render guard
   let _renderBusy = false;
+  let _lastHost = null;
+  let _lastBoard = null;
+  let _resizeTimer = 0;
+  let _limitTimer = 0;
+  let _limitTries = 0;
 
   // Helpers
   const key = (s) => String(s || "").trim().toUpperCase();
@@ -13,12 +18,13 @@
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
   };
 
-  // Styles (scoped to #pairs_list)
+  // Styles scoped to #pairs_list
   function ensureStyles() {
     const css = `
 /* Pairs board */
-#pairs_list .pairs-board{display:flex!important;flex-wrap:wrap!important;gap:12px!important;align-items:flex-start!important;padding:6px 0 12px!important;overflow:visible!important}
-#pairs_list .pair-card{flex:0 0 auto!important;width:auto!important;margin:0!important}
+#pairs_list{scrollbar-gutter:stable;overscroll-behavior:contain}
+#pairs_list .pairs-board{display:grid!important;grid-template-columns:1fr!important;gap:12px!important;align-items:start!important;padding:6px 0 12px!important;overflow:visible!important}
+#pairs_list .pair-card{width:100%!important;margin:0!important;display:block!important}
 
 /* Card */
 #pairs_list .pair-card{
@@ -28,7 +34,7 @@
   transition:box-shadow .18s ease,transform .15s ease;display:inline-block;cursor:default!important;user-select:none
 }
 #pairs_list .pair-card:hover{transform:translateY(-1px);box-shadow:0 12px 36px rgba(0,0,0,.50)}
-#pairs_list .pair-row{display:flex;align-items:center;gap:16px}
+#pairs_list .pair-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 #pairs_list .pair-left{display:flex;align-items:center;gap:12px;min-width:0}
 
 /* Index badge */
@@ -81,6 +87,41 @@
     let s = document.getElementById("cx-pairs-style");
     if (!s) { s = document.createElement("style"); s.id = "cx-pairs-style"; document.head.appendChild(s); }
     s.textContent = css;
+  }
+
+  function scheduleViewportLimit(delay = 0) {
+    clearTimeout(_limitTimer);
+    _limitTimer = setTimeout(() => applyPairsViewportLimit(5), delay);
+  }
+
+  function applyPairsViewportLimit(visibleCount = 5) {
+    const host = _lastHost;
+    const board = _lastBoard;
+    if (!host || !board) return;
+
+    if (!host.offsetParent) {
+      if (_limitTries++ < 10) scheduleViewportLimit(80);
+      return;
+    }
+    _limitTries = 0;
+
+    const cards = [...board.querySelectorAll(".pair-card")];
+    if (cards.length <= visibleCount) {
+      host.style.maxHeight = "";
+      host.style.overflowY = "";
+      host.style.paddingRight = "";
+      return;
+    }
+
+    const nth = cards[visibleCount - 1];
+    if (!nth || nth.offsetHeight < 12) { scheduleViewportLimit(60); return; }
+
+    const pb = parseFloat(getComputedStyle(board).paddingBottom || "0") || 0;
+    const max = nth.offsetTop + nth.offsetHeight + pb;
+
+    host.style.maxHeight = Math.ceil(max) + "px";
+    host.style.overflowY = "auto";
+    host.style.paddingRight = "6px";
   }
 
   // Host container
@@ -195,6 +236,9 @@
     const containers = ensureHost(); if (!containers) return;
     const { host, board } = containers;
 
+    _lastHost = host;
+    _lastBoard = board;
+
     const pairs = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
     if (!pairs.length) { host.style.display = "none"; board.innerHTML = ""; return; }
     host.style.display = "block";
@@ -257,6 +301,9 @@
 
     board.innerHTML = html;
 
+    // Keep the Pairs list usable when many pairs exist.
+    scheduleViewportLimit(0);
+
     // Tooltips and badges
     installTooltip(host);
     refreshBadges(board);
@@ -295,14 +342,33 @@
   }
 
   // Orchestration
+  function watchSyncSection() {
+    const sec = document.getElementById("sec-sync");
+    if (!sec || sec.dataset.cxPairsWatch) return;
+    sec.dataset.cxPairsWatch = "1";
+
+    const obs = new MutationObserver(() => {
+      if (sec.classList.contains("open")) scheduleViewportLimit(120);
+    });
+    obs.observe(sec, { attributes: true, attributeFilter: ["class"] });
+  }
+
   async function renderOrEnhance() {
     if (_renderBusy) return; _renderBusy = true;
     try { await loadPairsIfNeeded(); renderPairsOverlay(); }
     finally { _renderBusy = false; }
   }
 
-  document.addEventListener("DOMContentLoaded", renderOrEnhance);
+  document.addEventListener("DOMContentLoaded", () => {
+    watchSyncSection();
+    renderOrEnhance();
+  });
   document.addEventListener("cx-state-change", renderOrEnhance);
+
+  window.addEventListener("resize", () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => scheduleViewportLimit(0), 120);
+  }, { passive: true });
 
   const _origRender = window.renderConnections;
   window.renderConnections = function () { try { if (typeof _origRender === "function") _origRender(); } catch {} renderOrEnhance(); };
