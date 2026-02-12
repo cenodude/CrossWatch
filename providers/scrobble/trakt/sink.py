@@ -621,13 +621,13 @@ class TraktSink(ScrobbleSink):
 
         if not client_id:
             if not self._warn_no_client:
-                _log("Missing trakt.client_id/api_key in config.json — skipping scrobble", "ERROR")
+                _log("Missing trakt.client_id/api_key in config.json — skipping scrobble", "WARNING")
                 self._warn_no_client = True
             return
 
         if not token:
             if not self._warn_no_token:
-                _log("Missing Trakt access_token — connect Trakt to enable scrobble", "ERROR")
+                _log("Missing Trakt access_token — connect Trakt to enable scrobble", "WARNING")
                 self._warn_no_token = True
             return
 

@@ -97,7 +97,9 @@ class WatchGroup:
 
 
 def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_id: str) -> Any:
-    sink = (name or "").strip().lower() or "trakt"
+    sink = (name or "").strip().lower()
+    if not sink:
+        raise ValueError("Empty sink")
     cls: Any | None = None
     if sink == "trakt":
         from providers.scrobble.trakt.sink import TraktSink
@@ -191,10 +193,19 @@ class WatchManager:
                         return build_route_cfg(load_config() or {}, route_obj)
 
                     sink_name = str(route.get("sink") or "").strip().lower()
+                    if not sink_name:
+                        continue
                     sink_inst = str(route.get("sink_instance") or "default").strip() or "default"
-                    sink = _make_sink(sink_name, route_cfg_provider, sink_inst)
+                    try:
+                        sink = _make_sink(sink_name, route_cfg_provider, sink_inst)
+                    except Exception as e:
+                        _log(f"Skipping route with invalid sink '{sink_name}': {e}", "WARNING")
+                        continue
                     disp = Dispatcher([sink], cfg_provider=route_cfg_provider)
                     runners.append(RouteRunner(route=route, sink=sink, dispatcher=disp))
+
+                if not runners:
+                    continue
 
                 md = MultiDispatcher([rr.dispatcher for rr in runners])
 

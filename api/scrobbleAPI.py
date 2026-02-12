@@ -651,14 +651,16 @@ def _ensure_watch_started(
     prov = (provider or watch_cfg.get("provider") or "plex").lower().strip()
 
     if sink is not None:
-        sink_cfg = sink
+        sink_cfg = str(sink or "").strip()
+        if not sink_cfg:
+            raise HTTPException(status_code=400, detail="No sinks configured")
     else:
-        sink_cfg = (watch_cfg.get("sink") or "") if ("sink" in watch_cfg) else "trakt"
-    if not str(sink_cfg).strip():
-        raise HTTPException(status_code=400, detail="No sinks configured")
+        sink_cfg = str(watch_cfg.get("sink") or "").strip()
 
-    names = [s.strip().lower() for s in re.split(r"[,&+]", str(sink_cfg)) if s and s.strip()]
-    want_sinks = sorted(set(names or ["trakt"]))
+    want_sinks: list[str] = []
+    if sink_cfg:
+        names = [s.strip().lower() for s in re.split(r"[,&+]", sink_cfg) if s and s.strip()]
+        want_sinks = sorted(set(names))
 
     if w and getattr(w, "is_alive", lambda: False)():
         cur_prov = str(meta.get("provider") or _watch_kind(w) or prov).lower().strip()
@@ -697,10 +699,6 @@ def _ensure_watch_started(
             sinks.append(MDBListSink())
             added.add("mdblist")
 
-    if not sinks:
-        from providers.scrobble.trakt.sink import TraktSink
-        sinks = [TraktSink()]
-        added = {"trakt"}
 
     make_watch: Any | None = None
     if prov == "emby":
