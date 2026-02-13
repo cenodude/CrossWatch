@@ -29,7 +29,8 @@
   .wl-table-wrap{border:1px solid rgba(255,255,255,.12);border-radius:10px;overflow:auto}
   .wl-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
   .wl-table col.c-sel{width:44px}
-  .wl-table th,.wl-table td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left}
+  .wl-table col.c-poster{width:60px}
+  .wl-table th,.wl-table td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;text-align:left;overflow:hidden}
   .wl-table th{position:sticky;top:0;background:#101018;font-weight:600;z-index:1}
   .wl-table tr:last-child td{border-bottom:none}
   .wl-table .wl-title{white-space:normal; text-transform:none; letter-spacing:normal; font-weight:inherit}
@@ -41,10 +42,17 @@
   .wl-table th.sort-desc::after{content:"▼"}
 
   /* Poster thumb in list */
-  .wl-mini{width:36px;height:54px;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
+  .wl-mini{width:36px!important;height:54px!important;min-width:36px;min-height:54px;max-width:36px;max-height:54px;display:block;box-sizing:border-box;border-radius:4px;object-fit:cover;background:#0f0f13;border:1px solid rgba(255,255,255,.08)}
+  .wl-table td.wl-poster-cell{vertical-align:middle;background:transparent!important;border-radius:0!important}
+  .wl-table td.sync{white-space:normal}
+
+  /* Column visibility */
+  .wl-col-hidden{display:none!important}
+  .wl-cols{display:flex;flex-wrap:wrap;gap:8px}
+  .wl-colchip{display:inline-flex;align-items:center;gap:6px;border-radius:9999px;padding:6px 10px;background:#14141c;border:1px solid rgba(255,255,255,.12);white-space:nowrap}
 
   /* Sync matrix */
-  .wl-matrix{display:flex;gap:10px;align-items:center}
+  .wl-matrix{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;row-gap:6px}
   .wl-mat{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#14141c}
   .wl-mat img{height:14px}.wl-mat .material-symbol{font-size:16px}
   .wl-mat.ok{border-color:rgba(120,255,180,.35)}
@@ -255,7 +263,9 @@
   const host=document.getElementById("page-watchlist"); if(!host) return;
   const readPrefs=()=>{try{return JSON.parse(localStorage.getItem("wl.prefs")||"{}")}catch{return{}}};
   const writePrefs=p=>{try{localStorage.setItem("wl.prefs",JSON.stringify(p))}catch{}};
-  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",sortKey:"title",sortDir:"asc",moreOpen:false,cols:{}},readPrefs());
+  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",sortKey:"title",sortDir:"asc",moreOpen:false,cols:{},colVis:{}},readPrefs());
+  prefs.colVis = Object.assign({ poster:true, title:true, rel:true, genre:true, type:true, sync:true }, prefs.colVis || {});
+  prefs.colVis.title = true;
   host.innerHTML=`
     <div class="wl-topline">
       <div>
@@ -274,15 +284,15 @@
 
         <div id="wl-list" class="wl-table-wrap" style="display:none">
           <table class="wl-table">
-            <colgroup><col class="c-sel"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"><col class="c-poster"></colgroup>
+            <colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup>
             <thead><tr>
               <th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th>
+              <th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th>
               <th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th>
               <th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th>
               <th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th>
               <th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th>
               <th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th>
-              <th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th>
             </tr></thead>
             <tbody id="wl-tbody"></tbody>
           </table>
@@ -344,6 +354,15 @@
 
             <label>Genre</label>
             <select id="wl-genre" class="wl-input"><option value="">All</option></select>
+
+            <label id="wl-cols-label">Columns</label>
+            <div id="wl-cols" class="wl-cols">
+              <label class="wl-colchip"><input type="checkbox" data-col="poster">Poster</label>
+              <label class="wl-colchip"><input type="checkbox" data-col="rel">Release</label>
+              <label class="wl-colchip"><input type="checkbox" data-col="genre">Genre</label>
+              <label class="wl-colchip"><input type="checkbox" data-col="type">Type</label>
+              <label class="wl-colchip"><input type="checkbox" data-col="sync">Sync</label>
+            </div>
           </div></div>
 
           <div class="ins-row" style="justify-content:flex-end;gap:8px">
@@ -417,6 +436,8 @@
   const overlaysSel = $("wl-overlays");
   const overlaysLabel = $("wl-overlays-label");
   const genreSel    = $("wl-genre");
+  const colsLabel  = $("wl-cols-label");
+  const colsBox    = $("wl-cols");
   const trailerModal= $("wl-trailer");
   const trailerClose= $("wl-trailer-close");
   const pagerEl     = $("wl-pagination");
@@ -426,7 +447,9 @@
 
   /* Column sizing */
   const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
-  const minPx  = { title: 120, rel: 90, genre: 140, type: 70, sync: 140, poster: 48 };
+  const minPx  = { title: 120, rel: 90, genre: 140, type: 70, sync: 160, poster: 60 };
+  try{const pw=parseInt((prefs.cols||{}).poster||"",10);if(pw&&pw>120){prefs.cols=prefs.cols||{};prefs.cols.poster=minPx.poster+"px";writePrefs(prefs);}}catch{}
+  const isColVisible = k => k === "title" ? true : (prefs.colVis?.[k] !== false);
 
   function applyCols(init=false){
     const cg=document.querySelector(".wl-table colgroup"); if(!cg) return;
@@ -435,6 +458,7 @@
       const col=cg.querySelector(sel); if(!col) continue;
       let w=prefs.cols[k];
       if(!w && init){
+        if(k==="poster"){prefs.cols[k]=w=`${minPx[k]}px`;writePrefs(prefs);col.style.width=w;continue;}
         const th=document.querySelector(`.wl-table thead th[data-col="${k}"]`);
         const base=(th?getComputedStyle(th).width:getComputedStyle(col).width)||"";
         prefs.cols[k]=w=`${parseInt(base,10)||minPx[k]}px`; writePrefs(prefs);
@@ -461,7 +485,10 @@
         const startX = e.clientX, base = px(c);
 
         const sumOther = () =>
-          selColW() + Object.keys(colSel).reduce((s, kk) => kk === k ? s : s + (px(getCol(kk)) || minPx[kk]), 0);
+          selColW() + Object.keys(colSel).reduce((s, kk) => {
+            if (kk === k || !isColVisible(kk)) return s;
+            return s + (px(getCol(kk)) || minPx[kk]);
+          }, 0);
 
         const maxW = () => Math.max(minPx[k], (listWrapEl.clientWidth - 2) - sumOther());
 
@@ -847,7 +874,38 @@
     [overlaysLabel, overlaysSel].forEach(el => el.style.display = show ? "" : "none");
   };
 
-  const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" : "both");
+  
+  function applyColVisibility(){
+    const cg = document.querySelector(".wl-table colgroup");
+    if (!cg) return;
+    for (const k of Object.keys(colSel)) {
+      const on = isColVisible(k);
+      cg.querySelector(colSel[k])?.classList.toggle("wl-col-hidden", !on);
+      document.querySelectorAll(`.wl-table [data-col="${k}"]`).forEach(el => el.classList.toggle("wl-col-hidden", !on));
+    }
+  }
+
+  const applyColPrefUI = () => {
+    const show = viewMode === "list";
+    [colsLabel, colsBox].forEach(el => el && (el.style.display = show ? "" : "none"));
+    if (!colsBox) return;
+    colsBox.querySelectorAll('input[type="checkbox"][data-col]').forEach(cb => {
+      cb.checked = isColVisible(cb.dataset.col);
+    });
+  };
+
+  colsBox?.addEventListener("change", e => {
+    const cb = e.target?.closest?.('input[type="checkbox"][data-col]');
+    if (!cb) return;
+    const k = cb.dataset.col;
+    prefs.colVis = prefs.colVis || {};
+    prefs.colVis[k] = !!cb.checked;
+    prefs.colVis.title = true;
+    writePrefs(prefs);
+    applyColVisibility();
+  }, true);
+
+const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" : "both");
 
   function applyFilters() {
     currentPage = 1;
@@ -1020,6 +1078,7 @@
     const posters = viewMode === "posters";
     _show(postersEl, posters); _show(listWrapEl, !posters); _show(sizeInput, posters); _show(sizeLabel, posters);
     applyOverlayPrefUI();
+    applyColPrefUI();
 
     computePageInfo();
 
@@ -1102,12 +1161,12 @@
 
       tr.innerHTML = `
         <td style="text-align:center"><input type="checkbox" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
-        <td class="title"><div>${esc(it.title || "")}</div></td>
-        <td class="rel">${esc(d.relFmt)}</td>
-        <td class="genre" title="${esc(d.genresText)}">${esc(d.genresText)}</td>
-        <td>${esc(typeLabel)}</td>
-        <td>${matrix}</td>
-        <td><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
+        <td class="wl-poster-cell" data-col="poster" style="text-align:center"><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
+        <td class="title" data-col="title"><div>${esc(it.title || "")}</div></td>
+        <td class="rel" data-col="rel">${esc(d.relFmt)}</td>
+        <td class="genre" data-col="genre" title="${esc(d.genresText)}">${esc(d.genresText)}</td>
+        <td data-col="type">${esc(typeLabel)}</td>
+        <td class="sync" data-col="sync">${matrix}</td>
       `;
 
       if (!d.relFmt || !d.genresText) setTimeout(() => hydrateRow(it, tr), 0);
@@ -1124,6 +1183,7 @@
     listBodyEl.appendChild(frag);
     listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
     updateSortHeaderUI();
+    applyColVisibility();
   }
 
   let snackTimer = null;
