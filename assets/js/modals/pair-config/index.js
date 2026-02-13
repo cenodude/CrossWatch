@@ -194,6 +194,17 @@ function normalizePairProviders(p){
     if(v&&typeof v==="object"){
       const blk=Object.assign({},v);
       if("strict_id_matching" in blk) blk.strict_id_matching=!!blk.strict_id_matching;
+      if(key==="trakt"){
+        if("history_collection" in blk) blk.history_collection=!!blk.history_collection;
+        const raw=blk.history_collection_types;
+        let types=[];
+        if(typeof raw==="string") types=raw.split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);
+        else if(Array.isArray(raw)) types=raw.map(x=>String(x).trim().toLowerCase()).filter(Boolean);
+        types=types.filter(x=>x==="movies"||x==="shows");
+        if(blk.history_collection && !types.length) types=["movies"];
+        if(types.length) blk.history_collection_types=types;
+        else delete blk.history_collection_types;
+      }
       out[key]=blk;
     }
   }
@@ -669,7 +680,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
@@ -1082,17 +1093,43 @@ function renderFeaturePanel(state){
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
 
+        const trPair = (state.pairProviders?.trakt) || {};
+    const trColOn = !!trPair.history_collection;
+    const trColTypesRaw = trPair.history_collection_types;
+    let trColTypes = [];
+    if (typeof trColTypesRaw === "string") trColTypes = trColTypesRaw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+    else if (Array.isArray(trColTypesRaw)) trColTypes = trColTypesRaw.map(x => String(x).trim().toLowerCase()).filter(Boolean);
+    trColTypes = trColTypes.filter(x => x === "movies" || x === "shows");
+    if (trColOn && !trColTypes.length) trColTypes = ["movies"];
+    const colMovies = trColTypes.includes("movies");
+    const colShows = trColTypes.includes("shows");
+
     const trColRow = hasTrakt(state)
-      ? `<div class="opt-row">
-          <label for="cx-tr-hs-col">Add collections to Trakt</label>
+      ? `<div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-tr-hs-col">Add to Trakt Collection</label>
           <label class="switch">
-            <input id="cx-tr-hs-col" type="checkbox" ${trCfg.history_collection ? "checked" : ""}>
+            <input id="cx-tr-hs-col" type="checkbox" ${trColOn ? "checked" : ""}>
             <span class="slider"></span>
           </label>
+        </div>
+        <div class="grid2 compact" id="cx-tr-hs-col-types" style="grid-column:1/-1; padding-left:8px; margin-top:-6px; ${trColOn ? "" : "display:none;"}">
+          <div class="opt-row">
+            <label for="cx-tr-hs-col-movies">Movies</label>
+            <label class="switch">
+              <input id="cx-tr-hs-col-movies" type="checkbox" ${colMovies ? "checked" : ""}>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="opt-row">
+            <label for="cx-tr-hs-col-shows">Shows</label>
+            <label class="switch">
+              <input id="cx-tr-hs-col-shows" type="checkbox" ${colShows ? "checked" : ""}>
+              <span class="slider"></span>
+            </label>
+          </div>
         </div>`
       : "";
-
-    left.innerHTML = `
+left.innerHTML = `
       <div class="panel-title">History — basics</div>
       <div class="opt-row">
         <label for="cx-hs-enable">Enable</label>
@@ -1294,6 +1331,36 @@ function bindChangeHandlers(state,root){
       if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
       return;
     }
+    if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"){
+      state.pairProviders=state.pairProviders||{};
+      const tr=Object.assign({},state.pairProviders.trakt||{});
+      const on=!!ID("cx-tr-hs-col")?.checked;
+      tr.history_collection=on;
+
+      const box=ID("cx-tr-hs-col-types");
+      if(box) box.style.display=on?"":"none";
+
+      let mOn=!!ID("cx-tr-hs-col-movies")?.checked;
+      let sOn=!!ID("cx-tr-hs-col-shows")?.checked;
+
+      if(on && !mOn && !sOn){
+        mOn=true;
+        const m=ID("cx-tr-hs-col-movies"); if(m) m.checked=true;
+      }
+
+      if(on){
+        const types=[];
+        if(mOn) types.push("movies");
+        if(sOn) types.push("shows");
+        tr.history_collection_types=types;
+      }else{
+        delete tr.history_collection_types;
+      }
+
+      state.pairProviders.trakt=tr;
+      return;
+    }
+
     const map={
             "cx-wl-enable":"cx-wl-remove",
             "cx-rt-enable":"cx-rt-remove",
@@ -1638,10 +1705,8 @@ async function saveConfigBits(state){
     if(hasTR){
       const tr=Object.assign({},cfg.trakt||{});
       const numfb=ID("cx-tr-hs-numfb");
-      const col=ID("cx-tr-hs-col");
       const unres=ID("cx-tr-hs-unres");
       if(numfb) tr.history_number_fallback = !!numfb.checked; 
-      if(col)   tr.history_collection       = !!col.checked;
       if(unres) tr.history_unresolved       = !!unres.checked;
 
       const n = x => parseInt((ID(x)?.value||"").trim(), 10);
@@ -1728,9 +1793,21 @@ function buildPayload(state,wrap){
   const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
   const useJf=(String(src).toUpperCase()==="JELLYFIN"||String(dst).toUpperCase()==="JELLYFIN");
   const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
+  const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
   if(usePlex) prov.plex={strict_id_matching:!!(pp.plex&&pp.plex.strict_id_matching)};
   if(useJf) prov.jellyfin={strict_id_matching:!!(pp.jellyfin&&pp.jellyfin.strict_id_matching)};
   if(useEm) prov.emby={strict_id_matching:!!(pp.emby&&pp.emby.strict_id_matching)};
+  if(useTr){
+    const trSrc=pp.trakt||{};
+    const colOn=!!trSrc.history_collection;
+    let types=Array.isArray(trSrc.history_collection_types)?trSrc.history_collection_types.map(x=>String(x).trim().toLowerCase()):[];
+    types=types.filter(x=>x==="movies"||x==="shows");
+    if(colOn && !types.length) types=["movies"];
+    if(colOn || types.length){
+      prov.trakt={history_collection:colOn};
+      if(types.length) prov.trakt.history_collection_types=types;
+    }
+  }
   if(Object.keys(prov).length) payload.providers=prov;
   const eid=wrap.dataset&&wrap.dataset.editingId?String(wrap.dataset.editingId||""):"";if(eid)payload.id=eid;return payload;
 }

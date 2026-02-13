@@ -166,7 +166,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
         "history_unresolved": False,                    # bool, default false (enable the freeze file)
         "history_number_fallback": False,               # episode number fallback (no S/E-based resolution when episode IDs are missing)
-        "history_collection": False,                    # mirroring history adds into your Trakt Collection
 
         "_pending_device": {
             "user_code": "",                            # Temporary device code state for PIN login
@@ -686,6 +685,56 @@ def load_config() -> dict[str, Any]:
                 pass
     except Exception:
         pass
+
+    # Migrate legacy global Trakt history_collection into pair-scoped overrides (pairs > global).
+    migrated_trakt_collection = False
+    try:
+        t = cfg.get("trakt")
+        if isinstance(t, dict) and ("history_collection" in t or "history_collection_types" in t):
+            enabled = bool(t.pop("history_collection", False))
+            raw_types = t.pop("history_collection_types", None)
+            allowed = {"movies", "shows"}
+            types: list[str] = []
+            if isinstance(raw_types, str):
+                types = [x.strip().lower() for x in raw_types.split(",") if x and x.strip()]
+            elif isinstance(raw_types, list):
+                types = [str(x).strip().lower() for x in raw_types if str(x).strip()]
+            types = [x for x in types if x in allowed]
+            if enabled and not types:
+                types = ["movies"]
+
+            pairs = cfg.get("pairs")
+            if isinstance(pairs, list):
+                for p in pairs:
+                    if not isinstance(p, dict):
+                        continue
+                    src = str(p.get("source") or "").upper().strip()
+                    dst = str(p.get("target") or "").upper().strip()
+                    if "TRAKT" not in {src, dst}:
+                        continue
+                    prov = p.get("providers")
+                    if not isinstance(prov, dict):
+                        prov = {}
+                        p["providers"] = prov
+                    trp = prov.get("trakt")
+                    if not isinstance(trp, dict):
+                        trp = {}
+                        prov["trakt"] = trp
+                    if "history_collection" not in trp:
+                        trp["history_collection"] = enabled
+                        migrated_trakt_collection = True
+                    if enabled and types and "history_collection_types" not in trp:
+                        trp["history_collection_types"] = types
+                        migrated_trakt_collection = True
+            else:
+                migrated_trakt_collection = True
+    except Exception:
+        pass
+    if migrated_trakt_collection:
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
 
     return cfg
 

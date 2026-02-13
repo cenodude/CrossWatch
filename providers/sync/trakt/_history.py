@@ -185,6 +185,21 @@ def _history_collection_enabled(adapter: Any) -> bool:
     return bool(_cfg_get(adapter, "history_collection", False))
 
 
+def _history_collection_types(adapter: Any) -> set[str]:
+    raw = _cfg_get(adapter, "history_collection_types", None)
+    allowed = {"movies", "shows"}
+    vals: list[str] = []
+    if isinstance(raw, str):
+        vals = [x.strip().lower() for x in raw.split(",") if x and x.strip()]
+    elif isinstance(raw, list):
+        vals = [str(x).strip().lower() for x in raw if str(x).strip()]
+    out = {x for x in vals if x in allowed}
+    if _history_collection_enabled(adapter) and not out:
+        out = {"movies"}
+    return out
+
+
+
 def _load_unresolved() -> dict[str, Any]:
     if _pair_scope() is None:
         return {}
@@ -913,70 +928,76 @@ def _batch_remove(
     return body, unresolved, accepted_keys, accepted_minimals
 
 
-def _history_body_to_collection(body: Mapping[str, Any]) -> dict[str, Any]:
+def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dict[str, Any]:
+
     out: dict[str, Any] = {}
-    seen_movies: set[str] = set()
-    for m in body.get("movies") or []:
-        ids = (m or {}).get("ids") or {}
-        if not ids:
-            continue
-        k = json.dumps(ids, sort_keys=True)
-        if k in seen_movies:
-            continue
-        seen_movies.add(k)
-        out.setdefault("movies", []).append(
-            {
-                "ids": ids,
-                "collected_at": m.get("watched_at") or _now_iso(),
-            }
-        )
-    seen_eps: set[str] = set()
-    for e in body.get("episodes") or []:
-        ids = (e or {}).get("ids") or {}
-        if not ids:
-            continue
-        k = json.dumps(ids, sort_keys=True)
-        if k in seen_eps:
-            continue
-        seen_eps.add(k)
-        out.setdefault("episodes", []).append(
-            {
-                "ids": ids,
-                "collected_at": e.get("watched_at") or _now_iso(),
-            }
-        )
-    shows = body.get("shows") or []
-    if shows:
-        coll_shows: list[dict[str, Any]] = []
-        for sh in shows:
-            ids = (sh or {}).get("ids") or {}
-            seasons_in = (sh or {}).get("seasons") or []
-            if not ids or not seasons_in:
+    if "movies" in types:
+        seen_movies: set[str] = set()
+        for m in body.get("movies") or []:
+            ids = (m or {}).get("ids") or {}
+            if not ids:
                 continue
-            seasons_out: list[dict[str, Any]] = []
-            for s in seasons_in:
-                num = s.get("number")
-                eps = s.get("episodes") or []
-                if num is None or not eps:
+            k = json.dumps(ids, sort_keys=True)
+            if k in seen_movies:
+                continue
+            seen_movies.add(k)
+            out.setdefault("movies", []).append(
+                {
+                    "ids": ids,
+                    "collected_at": m.get("watched_at") or _now_iso(),
+                }
+            )
+
+    if "shows" in types:
+        seen_eps: set[str] = set()
+        for e in body.get("episodes") or []:
+            ids = (e or {}).get("ids") or {}
+            if not ids:
+                continue
+            k = json.dumps(ids, sort_keys=True)
+            if k in seen_eps:
+                continue
+            seen_eps.add(k)
+            out.setdefault("episodes", []).append(
+                {
+                    "ids": ids,
+                    "collected_at": e.get("watched_at") or _now_iso(),
+                }
+            )
+
+        shows = body.get("shows") or []
+        if shows:
+            coll_shows: list[dict[str, Any]] = []
+            for sh in shows:
+                ids = (sh or {}).get("ids") or {}
+                seasons_in = (sh or {}).get("seasons") or []
+                if not ids or not seasons_in:
                     continue
-                eps_out: list[dict[str, Any]] = []
-                for ep in eps:
-                    n = ep.get("number")
-                    if n is None:
+                seasons_out: list[dict[str, Any]] = []
+                for s in seasons_in:
+                    num = s.get("number")
+                    eps = s.get("episodes") or []
+                    if num is None or not eps:
                         continue
-                    eps_out.append(
-                        {
-                            "number": int(n),
-                            "collected_at": ep.get("watched_at") or _now_iso(),
-                        }
-                    )
-                if eps_out:
-                    seasons_out.append({"number": int(num), "episodes": eps_out})
-            if seasons_out:
-                coll_shows.append({"ids": ids, "seasons": seasons_out})
-        if coll_shows:
-            out["shows"] = coll_shows
+                    eps_out: list[dict[str, Any]] = []
+                    for ep in eps:
+                        n = ep.get("number")
+                        if n is None:
+                            continue
+                        eps_out.append(
+                            {
+                                "number": int(n),
+                                "collected_at": ep.get("watched_at") or _now_iso(),
+                            }
+                        )
+                    if eps_out:
+                        seasons_out.append({"number": int(num), "episodes": eps_out})
+                if seasons_out:
+                    coll_shows.append({"ids": ids, "seasons": seasons_out})
+            if coll_shows:
+                out["shows"] = coll_shows
     return out
+
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -1025,7 +1046,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
             if _history_collection_enabled(adapter):
-                coll_body = _history_body_to_collection(body)
+                coll_body = _history_body_to_collection(body, _history_collection_types(adapter))
                 if coll_body:
                     try:
                         rc = request_with_retries(

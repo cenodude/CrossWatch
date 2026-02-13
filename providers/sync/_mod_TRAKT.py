@@ -82,7 +82,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "4.0.0"
+__VERSION__ = "4.1.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 
@@ -162,6 +162,7 @@ class TRAKTConfig:
     max_retries: int = 3
     history_number_fallback: bool = False
     history_collection: bool = False
+    history_collection_types: list[str] | None = None
 
 
 class TRAKTClient:
@@ -289,6 +290,16 @@ class TRAKTClient:
 class TRAKTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         t = dict(cfg.get("trakt") or {})
+        raw_types = t.get("history_collection_types")
+        allowed = {"movies", "shows"}
+        types: list[str] = []
+        if isinstance(raw_types, str):
+            types = [x.strip().lower() for x in raw_types.split(",") if x and x.strip()]
+        elif isinstance(raw_types, list):
+            types = [str(x).strip().lower() for x in raw_types if str(x).strip()]
+        types = [x for x in types if x in allowed]
+        if bool(t.get("history_collection")) and not types:
+            types = ["movies"]
         self.cfg = TRAKTConfig(
             client_id=str(t.get("client_id") or "").strip(),
             access_token=str(t.get("access_token") or "").strip(),
@@ -296,6 +307,7 @@ class TRAKTModule:
             max_retries=int(t.get("max_retries", cfg.get("max_retries", 3))),
             history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
+            history_collection_types=types or None,
         )
         if not self.cfg.client_id or not self.cfg.access_token:
             raise TRAKTAuthError("Missing Trakt client_id/access_token")

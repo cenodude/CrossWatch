@@ -18,6 +18,20 @@ from ..provider_instances import build_pair_config_view, build_provider_config_v
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 
+def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
+    for k, v in (src or {}).items():
+        kk = str(k)
+        if kk == "strict_id_matching":
+            dst["strict_id_matching"] = bool(v)
+            continue
+        cur = dst.get(kk)
+        if isinstance(cur, dict) and isinstance(v, Mapping):
+            _deep_merge_provider_overrides(cur, v)
+        else:
+            dst[kk] = v
+
+
+
 try:
     from ._blackbox import prune_once as _bb_prune_once  # type: ignore[attr-defined]
 except Exception:
@@ -260,9 +274,8 @@ def run_pairs(ctx) -> dict[str, Any]:
                 if not isinstance(blk, dict):
                     blk = {}
                     pair_cfg_view[k] = blk
-                if isinstance(pv, dict):
-                    if "strict_id_matching" in pv:
-                        blk["strict_id_matching"] = bool(pv.get("strict_id_matching"))
+                if isinstance(pv, Mapping):
+                    _deep_merge_provider_overrides(blk, pv)
                 elif pv is not None and k in {"plex", "jellyfin", "emby"}:
                     blk["strict_id_matching"] = bool(pv)
 
