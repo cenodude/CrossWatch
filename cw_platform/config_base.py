@@ -295,6 +295,8 @@ DEFAULT_CFG: dict[str, Any] = {
         # Global write gates (pair/feature settings will override these by design):
         "enable_add": True,                             # Allow additions by default
         "enable_remove": False,                         # Safer default: do not remove items unless explicitly enabled
+        "one_way_remove_mode": "source_deletes",        # "source_deletes" | "mirror" (mirror = destructive; use with care)
+
 
         # Execution behavior:
         "verify_after_write": False,                    # When supported, re-check destination after writes

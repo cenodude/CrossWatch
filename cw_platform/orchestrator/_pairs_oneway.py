@@ -295,6 +295,19 @@ def run_one_way_feature(
                 return True
         return False
 
+    def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        ck = _ck(it)
+        if ck and ck in idx:
+            v = idx.get(ck)
+            return v if isinstance(v, Mapping) else None
+        for tok in _typed_tokens(it):
+            dk = alias.get(tok)
+            if not dk:
+                continue
+            v = idx.get(dk)
+            return v if isinstance(v, Mapping) else None
+        return None
+
     pair_providers = {src: src_ops, dst: dst_ops}
 
     snaps = build_snapshots_for_feature(
@@ -371,6 +384,8 @@ def run_one_way_feature(
             dbg("snapshot.guard", provider=dst, feature=feature, reason=dst_reason)
     else:
         eff_src, eff_dst = dict(src_cur), dict(dst_cur)
+        src_suspect = False
+        dst_suspect = False
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
 
@@ -402,36 +417,72 @@ def run_one_way_feature(
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
 
+    remove_mode = str(fcfg.get("remove_mode") or (sync_cfg.get("one_way_remove_mode") or "source_deletes")).strip().lower()
+    if remove_mode not in ("source_deletes", "mirror"):
+        remove_mode = "source_deletes"
+
+    mirror_removes: list[dict[str, Any]] = []
     if feature == "ratings":
         src_idx  = _ratings_filter_index(src_idx,  fcfg)
         dst_full = _ratings_filter_index(dst_full, fcfg)
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
-        adds, removes = diff_ratings(src_idx, dst_full)
+        adds, mirror_removes = diff_ratings(src_idx, dst_full)
     else:
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
-        adds, removes = diff(src_idx, dst_full)
+        adds, mirror_removes = diff(src_idx, dst_full)
 
     src_alias = _alias_index(src_idx)
     dst_alias = _alias_index(dst_full)
 
-    if feature == "ratings":
-        if removes:
-            removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-            try:
-                removes = [it for it in removes if _ck(it) in prev_dst]
-            except Exception:
-                pass
-    else:
-        if adds:
-            adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
-        if removes:
-            removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-            try:
-                removes = [it for it in removes if _ck(it) in prev_dst]
-            except Exception:
-                pass
+    if feature != "ratings" and adds:
+        adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
+
+    removes: list[dict[str, Any]] = []
+    if allow_removes:
+        if remove_mode == "mirror":
+            removes = list(mirror_removes or [])
+            if feature == "ratings":
+                if removes:
+                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                    try:
+                        removes = [it for it in removes if _ck(it) in prev_dst]
+                    except Exception:
+                        pass
+            else:
+                if removes:
+                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                    try:
+                        removes = [it for it in removes if _ck(it) in prev_dst]
+                    except Exception:
+                        pass
+        else:
+            if include_observed and not src_suspect and src_sem != "delta" and prev_src:
+                src_obs = dict(src_cur or {})
+                if manual_adds:
+                    src_obs = _merge_manual_adds(src_obs, manual_adds)
+                src_obs_alias = _alias_index(src_obs)
+
+                observed: list[Mapping[str, Any]] = []
+                for it in (prev_src or {}).values():
+                    if not isinstance(it, Mapping):
+                        continue
+                    if not _present(src_obs, src_obs_alias, it):
+                        observed.append(it)
+
+                if observed:
+                    seen: set[str] = set()
+                    for it in observed:
+                        dv = _find_in_idx(dst_full, dst_alias, it)
+                        if not dv:
+                            continue
+                        rk = _ck(dv) or _ck(it)
+                        if rk and rk in seen:
+                            continue
+                        if rk:
+                            seen.add(rk)
+                        removes.append(_minimal(dv))
 
     if not allow_adds:
         adds = []
