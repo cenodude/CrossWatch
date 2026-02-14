@@ -526,11 +526,17 @@ function instancesTooltip(info) {
   const ok = Number(sum?.ok);
   const total = Number(sum?.total);
   const rep = String(sum?.rep || info?.rep_instance || "");
+  const used = Array.isArray(sum?.used) ? sum.used : (Array.isArray(info?.instances_used) ? info.instances_used : []);
 
   const parts = [];
 
   if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) {
     parts.push(`Instances: ${ok}/${total}`);
+  }
+
+  if (used && used.length && (Number.isFinite(total) ? total > 1 : true)) {
+    const labs = used.slice(0, 4).map((id) => (id === "default" ? "Default" : String(id)));
+    parts.push(`Used: ${labs.join(", ")}${used.length > 4 ? "…" : ""}`);
   }
 
   const entries = Object.entries(inst)

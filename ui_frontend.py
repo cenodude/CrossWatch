@@ -1104,6 +1104,41 @@ document.addEventListener('DOMContentLoaded',placeRefreshTopRight,{once:true});
   }
 })();
 
+// Instance tooltip from /api/status providers payload
+function instancesDetail(d){
+  const inst = (d && typeof d === 'object') ? d.instances : null;
+  const sum  = (d && typeof d === 'object') ? d.instances_summary : null;
+  if (!inst || typeof inst !== 'object') return '';
+
+  const total = Number(sum && sum.total);
+  if (!Number.isFinite(total) || total <= 1) return '';
+
+  const ok = Number(sum && sum.ok);
+  const used = Array.isArray(sum && sum.used) ? sum.used : [];
+
+  const lines = [];
+
+  if (Number.isFinite(ok)) lines.push(`Profiles: ${ok}/${total} connected`);
+  else lines.push(`Profiles: ${total}`);
+
+  if (used.length) {
+    const labs = used.slice(0, 4).map(id => (String(id).toLowerCase() === 'default' ? 'Default' : String(id)));
+    lines.push(`Used: ${labs.join(', ')}${used.length > 4 ? '…' : ''}`);
+  }
+
+  const entries = Object.entries(inst).slice(0, 6).map(([id, v]) => {
+    const label = (String(id).toLowerCase() === 'default' ? 'Default' : String(id));
+    const c = !!(v && typeof v === 'object' ? v.connected : v);
+    return `${label}=${c ? 'OK' : 'NO'}`;
+  });
+  if (entries.length) lines.push(entries.join(' · '));
+
+  const rep = (sum && sum.rep) ? String(sum.rep) : '';
+  if (rep && rep.toLowerCase() !== 'default') lines.push(`Rep: ${rep}`);
+
+  return lines.join('\n');
+}
+
 // Render status
 function render(payload){
   const host = document.getElementById('conn-badges');
@@ -1153,6 +1188,7 @@ function render(payload){
     const connected = !!d.connected;
     let vip = false;
     let detail = '';
+    const instDetail = instancesDetail(d);
 
     if (!connected) {
       detail = d.reason || `${name} not connected`;
@@ -1211,6 +1247,9 @@ function render(payload){
         if (nm) detail = `User: ${nm}`;
       }
     }
+
+
+    if (instDetail) detail = detail ? (instDetail + '\n' + detail) : instDetail;
 
     // Usage hint (Sync/Watcher) from /api/status providers payload
     const usageHintRaw = (d && typeof d === 'object') ? String(d.usage_hint || '') : '';

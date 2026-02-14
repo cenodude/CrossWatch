@@ -147,6 +147,10 @@ def _cfg_view_for(cfg: Mapping[str, Any], provider_code: str, instance_id: Any) 
         return dict(cfg or {})
     out = dict(cfg or {})
     out[ck] = _instance_block(cfg, ck, instance_id)
+    try:
+        out["_cw_probe"] = {"provider": str(provider_code or "").upper().strip(), "instance": normalize_instance_id(instance_id)}
+    except Exception:
+        out["_cw_probe"] = {"provider": str(provider_code or "").upper().strip(), "instance": "default"}
     return out
 
 
@@ -617,11 +621,28 @@ def _probe_simkl_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     return ok, rsn
 
 def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    inst = "default"
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), dict) else None
+        inst = normalize_instance_id((hint or {}).get("instance"))
+    except Exception:
+        inst = "default"
+
     key = _probe_key("trakt", cfg)
     bust_ts = _consume_bust("trakt")
     now = time.time()
+    # If the token is about to expire, bypass cache
+    expiring = False
+    try:
+        t0 = cfg.get("trakt") or {}
+        rt0 = str((t0.get("refresh_token") or "")).strip()
+        exp0 = int(t0.get("expires_at") or 0)
+        expiring = bool(rt0 and exp0 and (exp0 - int(now)) <= 120)
+    except Exception:
+        expiring = False
+
     cached = PROBE_DETAIL_CACHE.get(key)
-    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+    if (not expiring) and cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
         return cached[1], cached[2]
 
     auth_tr: dict[str, Any] = {}
@@ -631,9 +652,18 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
     except Exception:
         auth_tr = {}
 
-    t = cfg.get("trakt") or {}
-    cid = str((t.get("client_id") or auth_tr.get("client_id") or "")).strip()
-    tok = str((t.get("access_token") or t.get("token") or auth_tr.get("access_token") or "")).strip()
+    def _extract_tokens(vcfg: dict[str, Any]) -> tuple[str, str, str, int]:
+        t = vcfg.get("trakt") or {}
+        cid = str((t.get("client_id") or auth_tr.get("client_id") or "")).strip()
+        tok = str((t.get("access_token") or t.get("token") or auth_tr.get("access_token") or "")).strip()
+        rt = str((t.get("refresh_token") or auth_tr.get("refresh_token") or "")).strip()
+        try:
+            exp = int(t.get("expires_at") or 0)
+        except Exception:
+            exp = 0
+        return cid, tok, rt, exp
+
+    cid, tok, rt, exp = _extract_tokens(cfg)
     if not cid:
         with _CACHE_LOCK:
             PROBE_DETAIL_CACHE[key] = (now, False, "TRAKT: missing client_id")
@@ -643,9 +673,36 @@ def _probe_trakt_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             PROBE_DETAIL_CACHE[key] = (now, False, "TRAKT: missing access token")
         return False, "TRAKT: missing access token"
 
+    #  Refresh expiring tokens across instances.
+    try:
+        if TRAKT_AUTH_PROVIDER is not None and rt and exp and (exp - int(time.time())) <= 120:
+            res = TRAKT_AUTH_PROVIDER.refresh(None, instance_id=inst)
+            if isinstance(res, dict) and res.get("ok"):
+                fresh_cfg = dict(_load_config() or {})
+                cfg = _cfg_view_for(fresh_cfg, "TRAKT", inst)
+                key = _probe_key("trakt", cfg)
+                cid, tok, rt, exp = _extract_tokens(cfg)
+    except Exception:
+        pass
+
     url = "https://api.trakt.tv/users/settings"
     headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid, "Authorization": f"Bearer {tok}"}
     code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+
+    # One retry after refresh if token expired/revoked.
+    if code in (401, 403):
+        try:
+            if TRAKT_AUTH_PROVIDER is not None and rt:
+                res = TRAKT_AUTH_PROVIDER.refresh(None, instance_id=inst)
+                if isinstance(res, dict) and res.get("ok"):
+                    fresh_cfg = dict(_load_config() or {})
+                    cfg2 = _cfg_view_for(fresh_cfg, "TRAKT", inst)
+                    cid2, tok2, _, _ = _extract_tokens(cfg2)
+                    if cid2 and tok2:
+                        headers = {**UA, "Content-Type": "application/json", "trakt-api-version": "2", "trakt-api-key": cid2, "Authorization": f"Bearer {tok2}"}
+                        code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        except Exception:
+            pass
 
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Trakt")
@@ -1336,6 +1393,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             # Only probe things that are actually visible/used: enabled sync pairs and configured watcher routes.
             targets: set[tuple[str, str]] = set()
             prov_sources: dict[str, set[str]] = {}
+            used_instances: dict[str, set[str]] = {}
 
             for prov, inst in pair_targets:
                 c = _canon_probe_code(prov)
@@ -1343,6 +1401,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     continue
                 targets.add((c, inst))
                 prov_sources.setdefault(c, set()).add("pair")
+                used_instances.setdefault(c, set()).add(normalize_instance_id(inst))
 
             for prov, inst in watcher_targets:
                 c = _canon_probe_code(prov)
@@ -1350,29 +1409,17 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     continue
                 targets.add((c, inst))
                 prov_sources.setdefault(c, set()).add("watcher")
+                used_instances.setdefault(c, set()).add(normalize_instance_id(inst))
+
+            # Always probe the default profile + any configured instances so the UI can show profile tooltips.
+            for prov in DETAIL_PROBES.keys():
+                ck = _cfg_key(prov)
+                for inst in list_instance_ids(cfg, ck):
+                    targets.add((prov, normalize_instance_id(inst)))
 
             active_providers = {p for p, _ in targets}
 
             debug = bool((cfg.get("runtime") or {}).get("debug"))
-            if not targets:
-                data: dict[str, Any] = {
-                    "plex_connected": False,
-                    "simkl_connected": False,
-                    "trakt_connected": False,
-                    "anilist_connected": False,
-                    "jellyfin_connected": False,
-                    "emby_connected": False,
-                    "tmdb_connected": False,
-                    "mdblist_connected": False,
-                    "tautulli_connected": False,
-                    "debug": debug,
-                    "can_run": bool(any_pair_ready),
-                    "ts": int(now),
-                    "providers": {},
-                }
-                STATUS_CACHE["ts"] = now
-                STATUS_CACHE["data"] = data
-                return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
             jobs_by_key: dict[str, tuple[str, dict[str, Any], Callable[..., tuple[bool, str]]]] = {}
             refs: dict[tuple[str, str], str] = {}
@@ -1400,33 +1447,37 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 ok, rsn = results_by_key.get(pkey, (False, ""))
                 per.setdefault(prov, {})[inst] = (ok, rsn, _cfg_view_for(cfg, prov, inst))
 
-            def _pick_rep(prov: str) -> tuple[bool, str, dict[str, Any]]:
+            def _default_tuple(prov: str) -> tuple[bool, str, dict[str, Any]]:
                 items = per.get(prov) or {}
-                if not items:
-                    return False, "not configured", dict(cfg)
-
-                if "default" in items and items["default"][0]:
-                    return items["default"]
-                for inst, tup in items.items():
-                    if tup[0]:
-                        return tup
                 if "default" in items:
                     return items["default"]
-                return next(iter(items.values()))
+                return False, "not configured", _cfg_view_for(cfg, prov, "default")
 
-            rep = {prov: _pick_rep(prov) for prov in active_providers}
+            def _rep_instance(prov: str) -> str:
+                used = used_instances.get(prov) or set()
+                non_default = sorted([i for i in used if i != "default"])
+                if non_default:
+                    return non_default[0]
+                if "default" in used:
+                    return "default"
+                # Fallback: first connected instance if any
+                items = per.get(prov) or {}
+                if "default" in items and items["default"][0]:
+                    return "default"
+                for inst, tup in items.items():
+                    if tup[0]:
+                        return inst
+                return "default"
 
-            plex_ok, plex_reason, cfg_plex = rep.get("PLEX", (False, "", dict(cfg)))
-            simkl_ok, simkl_reason, cfg_simkl = rep.get("SIMKL", (False, "", dict(cfg)))
-            trakt_ok, trakt_reason, cfg_trakt = rep.get("TRAKT", (False, "", dict(cfg)))
-            jelly_ok, jelly_reason, cfg_jelly = rep.get("JELLYFIN", (False, "", dict(cfg)))
-            emby_ok, emby_reason, cfg_emby = rep.get("EMBY", (False, "", dict(cfg)))
-            tmdb_ok, tmdb_reason, cfg_tmdb = rep.get("TMDB", (False, "", dict(cfg)))
-            mdbl_ok, mdbl_reason, cfg_mdbl = rep.get("MDBLIST", (False, "", dict(cfg)))
-            taut_ok, taut_reason, cfg_taut = rep.get("TAUTULLI", (False, "", dict(cfg)))
-            anilist_ok, anilist_reason, cfg_anilist = rep.get("ANILIST", (False, "", dict(cfg)))
-
-            debug = bool((cfg.get("runtime") or {}).get("debug"))
+            plex_ok, plex_reason, cfg_plex = _default_tuple("PLEX")
+            simkl_ok, simkl_reason, cfg_simkl = _default_tuple("SIMKL")
+            trakt_ok, trakt_reason, cfg_trakt = _default_tuple("TRAKT")
+            jelly_ok, jelly_reason, cfg_jelly = _default_tuple("JELLYFIN")
+            emby_ok, emby_reason, cfg_emby = _default_tuple("EMBY")
+            tmdb_ok, tmdb_reason, cfg_tmdb = _default_tuple("TMDB")
+            mdbl_ok, mdbl_reason, cfg_mdbl = _default_tuple("MDBLIST")
+            taut_ok, taut_reason, cfg_taut = _default_tuple("TAUTULLI")
+            anilist_ok, anilist_reason, cfg_anilist = _default_tuple("ANILIST")
 
             info_plex = _safe_userinfo(plex_user_info, cfg_plex, max_age_sec=user_age) if plex_ok else {}
             info_trakt = _safe_userinfo(trakt_user_info, cfg_trakt, max_age_sec=user_age) if trakt_ok else {}
@@ -1457,35 +1508,107 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     trakt_block["last_limit_error"] = {"feature": str(last_err.get("feature")), "ts": str(last_err.get("ts"))}
 
             providers_out: dict[str, Any] = {}
+
+            def _instances_payload(prov: str) -> tuple[dict[str, Any], dict[str, Any]]:
+                items = per.get(prov) or {}
+                inst_ids = sorted(items.keys(), key=lambda x: (x != "default", x))
+                used = used_instances.get(prov) or set()
+                inst_map: dict[str, Any] = {}
+                ok_count = 0
+                for inst in inst_ids:
+                    ok, rsn, _ = items.get(inst) or (False, "", {})
+                    if ok:
+                        ok_count += 1
+                    payload: dict[str, Any] = {"connected": bool(ok)}
+                    if not ok and rsn:
+                        payload["reason"] = rsn
+                    if inst in used:
+                        payload["used"] = True
+                    inst_map[inst] = payload
+                rep_inst = _rep_instance(prov)
+                summary: dict[str, Any] = {
+                    "ok": int(ok_count),
+                    "total": int(len(inst_ids)),
+                    "rep": rep_inst,
+                    "used": sorted(used, key=lambda x: (x != "default", x)),
+                }
+                return inst_map, summary
             if "PLEX" in active_providers:
+                inst_map, inst_sum = _instances_payload("PLEX")
                 providers_out["PLEX"] = {
                     "connected": plex_ok,
                     **({} if plex_ok else {"reason": plex_reason}),
                     **({} if not info_plex else {"plexpass": bool(info_plex.get("plexpass")), "subscription": info_plex.get("subscription") or {}}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
                 }
             if "SIMKL" in active_providers:
-                providers_out["SIMKL"] = {"connected": simkl_ok, **({} if simkl_ok else {"reason": simkl_reason})}
+                inst_map, inst_sum = _instances_payload("SIMKL")
+                providers_out["SIMKL"] = {
+                    "connected": simkl_ok,
+                    **({} if simkl_ok else {"reason": simkl_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "ANILIST" in active_providers:
+                inst_map, inst_sum = _instances_payload("ANILIST")
                 providers_out["ANILIST"] = {
                     "connected": anilist_ok,
                     **({} if anilist_ok else {"reason": anilist_reason}),
                     **({} if not info_anilist else {"user": (info_anilist.get("user") or {})}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
                 }
             if "TRAKT" in active_providers:
-                providers_out["TRAKT"] = trakt_block
+                inst_map, inst_sum = _instances_payload("TRAKT")
+                providers_out["TRAKT"] = {
+                    **trakt_block,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "JELLYFIN" in active_providers:
-                providers_out["JELLYFIN"] = {"connected": jelly_ok, **({} if jelly_ok else {"reason": jelly_reason})}
+                inst_map, inst_sum = _instances_payload("JELLYFIN")
+                providers_out["JELLYFIN"] = {
+                    "connected": jelly_ok,
+                    **({} if jelly_ok else {"reason": jelly_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "EMBY" in active_providers:
+                inst_map, inst_sum = _instances_payload("EMBY")
                 providers_out["EMBY"] = {
                     "connected": emby_ok,
                     **({} if emby_ok else {"reason": emby_reason}),
                     **({} if not info_emby else {"premiere": bool(info_emby.get("premiere"))}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
                 }
             if "TMDB" in active_providers:
-                providers_out["TMDB"] = {"connected": tmdb_ok, **({} if tmdb_ok else {"reason": tmdb_reason})}
+                inst_map, inst_sum = _instances_payload("TMDB")
+                providers_out["TMDB"] = {
+                    "connected": tmdb_ok,
+                    **({} if tmdb_ok else {"reason": tmdb_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "TAUTULLI" in active_providers:
-                providers_out["TAUTULLI"] = {"connected": taut_ok, **({} if taut_ok else {"reason": taut_reason})}
+                inst_map, inst_sum = _instances_payload("TAUTULLI")
+                providers_out["TAUTULLI"] = {
+                    "connected": taut_ok,
+                    **({} if taut_ok else {"reason": taut_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "MDBLIST" in active_providers:
+                inst_map, inst_sum = _instances_payload("MDBLIST")
                 providers_out["MDBLIST"] = {
                     "connected": mdbl_ok,
                     **({} if mdbl_ok else {"reason": mdbl_reason}),
@@ -1502,6 +1625,9 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                             },
                         }
                     ),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
                 }
 
 
