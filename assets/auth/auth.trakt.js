@@ -169,16 +169,11 @@
       var secr = _str((_el('trakt_client_secret') || {}).value);
       var cfg = await fetchConfig();
       if (!cfg) return;
-      var base = (cfg.trakt && typeof cfg.trakt === 'object') ? cfg.trakt : (cfg.trakt = {});
-      var inst = getTraktInstance();
-      if (cid) base.client_id = cid;
-      if (secr) base.client_secret = secr;
-      if (inst !== 'default') {
-        if (!base.instances || typeof base.instances !== 'object') base.instances = {};
-        if (!base.instances[inst] || typeof base.instances[inst] !== 'object') base.instances[inst] = {};
-        base.instances[inst].client_id = cid;
-        base.instances[inst].client_secret = secr;
-      }
+      var t = getTraktCfgBlock(cfg);
+      if (cid) t.client_id = cid;
+      else try { delete t.client_id; } catch (_) {}
+      if (secr) t.client_secret = secr;
+      else try { delete t.client_secret; } catch (_) {}
       await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
     } catch (_) {}
   }
@@ -187,8 +182,8 @@
     try {
       var msg = _el('trakt_msg');
       if (!msg) return;
-      var pin = _str(_el('trakt_pin')?.value);
-      var tok = _str(_el('trakt_token')?.value);
+      var pinEl = _el('trakt_pin'); var pin = _str(pinEl ? pinEl.value : '');
+      var tokEl = _el('trakt_token'); var tok = _str(tokEl ? tokEl.value : '');
       msg.classList.remove('hidden', 'ok', 'warn');
       if (tok) { msg.classList.add('ok'); msg.textContent = 'Connected.'; return; }
       if (pin) { msg.classList.add('warn'); msg.textContent = 'Code: ' + pin; return; }
@@ -469,7 +464,8 @@
     var cid   = _str(cidEl ? cidEl.value : "");
     var secr  = _str(secEl ? secEl.value : "");
 
-    if (!cid) { _notify("Vul je Trakt Client ID in"); return; }
+    if (!cid) { _notify('Enter your Trakt Client ID'); return; }
+    if (!secr) { _notify('Enter your Trakt Client Secret'); return; }
 
     var win = null;
     try { win = window.open("https://trakt.tv/activate", "_blank"); } catch (_) {}

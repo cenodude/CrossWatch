@@ -1280,13 +1280,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         cfg = load_config()
         inst = normalize_instance_id(instance_id)
-        # Ensure instance has client keys so pair config views remain self-contained.
-        base = ensure_provider_block(cfg, "trakt")
-        tr = ensure_instance_block(cfg, "trakt", inst)
-        if base.get("client_id") and not tr.get("client_id"):
-            tr["client_id"] = base.get("client_id")
-        if base.get("client_secret") and not tr.get("client_secret"):
-            tr["client_secret"] = base.get("client_secret")
+        ensure_instance_block(cfg, "trakt", inst)
         res = prov.start(cfg, redirect_uri="", instance_id=inst)  # type: ignore[attr-defined]
         save_config(cfg)
 
@@ -1352,14 +1346,17 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 secr = str(payload.get("client_secret") or "").strip()
                 if cid or secr:
                     cfg = load_config()
-                    base = ensure_provider_block(cfg, "trakt")
                     tr = ensure_instance_block(cfg, "trakt", inst)
                     if cid:
-                        base["client_id"] = cid
                         tr["client_id"] = cid
                     if secr:
-                        base["client_secret"] = secr
                         tr["client_secret"] = secr
+                    if inst == "default":
+                        base = ensure_provider_block(cfg, "trakt")
+                        if cid:
+                            base["client_id"] = cid
+                        if secr:
+                            base["client_secret"] = secr
                     save_config(cfg)
 
             info = trakt_request_pin(inst)

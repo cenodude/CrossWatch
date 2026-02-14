@@ -34,7 +34,7 @@ OAUTH_DEVICE_TOKEN = f"{API}/oauth/device/token"
 OAUTH_TOKEN = f"{API}/oauth/token"
 VERIFY_URL = "https://trakt.tv/activate"
 
-__VERSION__ = "2.0.0"
+__VERSION__ = "2.2.0"
 
 _H: dict[str, str] = {
     "Accept": "application/json",
@@ -76,19 +76,15 @@ def _blocks(cfg: dict[str, Any], instance_id: Any) -> tuple[str, dict[str, Any],
     inst = normalize_instance_id(instance_id)
     base = ensure_provider_block(cfg, "trakt")
     tr = ensure_instance_block(cfg, "trakt", inst)
-    # Ensure the instance dict is self-contained for pair config views.
-    if base.get("client_id") and not tr.get("client_id"):
-        tr["client_id"] = base.get("client_id")
-    if base.get("client_secret") and not tr.get("client_secret"):
-        tr["client_secret"] = base.get("client_secret")
     return inst, base, tr
 
 
 def _client(cfg: dict[str, Any], instance_id: Any) -> dict[str, str]:
-    _, base, tr = _blocks(cfg, instance_id)
+    inst, base, tr = _blocks(cfg, instance_id)
+    src = base if inst == "default" else tr
     return {
-        "client_id": str(tr.get("client_id") or base.get("client_id") or "").strip(),
-        "client_secret": str(tr.get("client_secret") or base.get("client_secret") or "").strip(),
+        "client_id": str(src.get("client_id") or "").strip(),
+        "client_secret": str(src.get("client_secret") or "").strip(),
     }
 
 
