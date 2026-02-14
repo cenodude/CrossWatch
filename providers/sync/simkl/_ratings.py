@@ -41,7 +41,7 @@ def _shadow_path() -> str:
     return str(state_file("simkl.ratings.shadow.json"))
 
 
-ID_KEYS = ("imdb", "tmdb", "tvdb", "simkl")
+ID_KEYS = ("tmdb", "imdb", "tvdb", "simkl")
 
 _ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
 _ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
@@ -783,7 +783,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
                 ids_hint = ""
                 ids_map = m.get("ids")
                 if isinstance(ids_map, Mapping):
-                    for k2 in ("imdb", "tvdb", "tmdb", "simkl"):
+                    for k2 in ("tmdb", "imdb", "tvdb", "simkl"):
                         v2 = ids_map.get(k2)
                         if v2:
                             ids_hint = f"{k2.upper()}:{v2}"

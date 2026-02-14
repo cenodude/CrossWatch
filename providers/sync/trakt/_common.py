@@ -247,7 +247,7 @@ def build_headers(arg1: Any, access_token: str | None = None) -> dict[str, str]:
 
 
 # ids / keys
-_ALLOWED_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt")
+_ALLOWED_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt")
 
 
 def _fix_imdb(ids: dict[str, Any]) -> None:

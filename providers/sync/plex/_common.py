@@ -643,7 +643,7 @@ def normalize(obj: Any) -> dict[str, Any]:
             base["show_ids"] = sid
 
         def has_ext(m: Any) -> bool:
-            return bool(isinstance(m, dict) and any(m.get(k) for k in ("imdb", "tmdb", "tvdb")))
+            return bool(isinstance(m, dict) and any(m.get(k) for k in ("tmdb", "imdb", "tvdb")))
 
         if not has_ext(base.get("show_ids")):
             extra = _hydrate_show_ids_from_pms(obj)
@@ -697,7 +697,7 @@ def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) 
         token = _PLEX_CTX["token"]
     t = (row.get("type") or "movie").lower()
     ids = ids_from_discover_row(row)
-    if not any(k in ids for k in ("imdb", "tmdb", "tvdb")) and token:
+    if not any(k in ids for k in ("tmdb", "imdb", "tvdb")) and token:
         rk = row.get("ratingKey")
         ids.update(hydrate_external_ids(token, str(rk) if rk else None))
         ids = {k: v for k, v in ids.items() if v}
@@ -727,7 +727,7 @@ def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) 
         if gp_rk:
             base.setdefault("show_ids", {})
             base["show_ids"]["plex"] = str(gp_rk)
-        if token and not any(base.get("show_ids", {}).get(k) for k in ("imdb", "tmdb", "tvdb")):
+        if token and not any(base.get("show_ids", {}).get(k) for k in ("tmdb", "imdb", "tvdb")):
             extra2 = hydrate_external_ids(token, str(gp_rk) if gp_rk else None)
             if extra2:
                 base.setdefault("show_ids", {})
@@ -757,19 +757,20 @@ def sort_guid_candidates(guids: list[str], *, priority: list[str] | None = None)
             pri = []
         def score(g: str) -> tuple[int, int]:
             s = g.lower()
-            order: list[int] = []
-            for p in pri:
+            for i, p in enumerate(pri):
+                if p == "tmdb" and s.startswith("tmdb://"):
+                    return (i, len(s))
                 if p == "imdb" and s.startswith("imdb://"):
-                    order.append(0)
-                elif p == "tmdb" and s.startswith("tmdb://"):
-                    order.append(1)
-                elif p == "tvdb" and s.startswith("tvdb://"):
-                    order.append(2)
-                elif p.startswith("agent:themoviedb") and s.startswith("com.plexapp.agents.themoviedb://"):
-                    order.append(3 if (":en" in p and "?lang=en" in s) else 4)
-                elif p == "agent:imdb" and s.startswith("com.plexapp.agents.imdb://"):
-                    order.append(5)
-            return (min(order) if order else 99, len(s))
+                    return (i, len(s))
+                if p == "tvdb" and s.startswith("tvdb://"):
+                    return (i, len(s))
+                if p == "agent:themoviedb:en" and s.startswith("com.plexapp.agents.themoviedb://") and "?lang=en" in s:
+                    return (i, len(s))
+                if p == "agent:themoviedb" and s.startswith("com.plexapp.agents.themoviedb://"):
+                    return (i, len(s))
+                if p == "agent:imdb" and s.startswith("com.plexapp.agents.imdb://"):
+                    return (i, len(s))
+            return (99, len(s))
         return sorted(list(guids), key=score)
 
     pri: list[str] = []
@@ -908,7 +909,7 @@ def ids_from_history_row(row: Any) -> dict[str, str]:
 
 def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
     try:
-        return any(str(ids.get(k) or "").strip() for k in ("imdb", "tmdb", "tvdb"))
+        return any(str(ids.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb"))
     except Exception:
         return False
 
@@ -947,7 +948,7 @@ def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> dict[str, Any]:
         if gp_rk:
             sids["plex"] = str(gp_rk)
         if not sids and base.get("season") is not None and base.get("episode") is not None:
-            ext = {k: v for k, v in (base.get("ids") or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+            ext = {k: v for k, v in (base.get("ids") or {}).items() if k in ("tmdb", "imdb", "tvdb") and v}
             if ext:
                 sids.update(ext)
         if sids:
@@ -1351,7 +1352,7 @@ def minimal_from_history_row(
             nd = normalize_discover_row(md, token=tok)
 
             def _pairs(d: Mapping[str, Any] | None) -> set[tuple[str, str]]:
-                return {(k, v) for (k, v) in (d or {}).items() if k in ("imdb", "tmdb", "tvdb") and v}
+                return {(k, v) for (k, v) in (d or {}).items() if k in ("tmdb", "imdb", "tvdb") and v}
 
             cur_ids = _pairs(m.get("ids"))
             new_ids = _pairs(nd.get("ids"))
@@ -1368,7 +1369,7 @@ def minimal_from_history_row(
                     nd_ids = {k: v for k, v in (nd.get("ids", {}) or {}).items() if v}
                     m["ids"].update(nd_ids)
                     if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})) and not _has_ext_ids(nd.get("show_ids", {})):
-                        m.setdefault("show_ids", {}).update({k: v for k, v in nd_ids.items() if k in ("imdb", "tmdb", "tvdb")})
+                        m.setdefault("show_ids", {}).update({k: v for k, v in nd_ids.items() if k in ("tmdb", "imdb", "tvdb")})
 
                 if kind == "episode" and _has_ext_ids(nd.get("show_ids", {})):
                     m.setdefault("show_ids", {}).update({k: v for k, v in (nd.get("show_ids", {}) or {}).items() if v})

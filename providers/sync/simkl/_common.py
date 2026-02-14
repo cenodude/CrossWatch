@@ -386,7 +386,7 @@ def key_of(item: Mapping[str, Any]) -> str:
         if not show_ids:
             ids_raw = item.get("ids")
             ids = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
-            show_ids = {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "simkl") if ids.get(k)}
+            show_ids = {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
         if show_ids and s_num and e_num:
             show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""

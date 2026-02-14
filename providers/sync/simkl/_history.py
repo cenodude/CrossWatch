@@ -48,7 +48,7 @@ def _show_map_path() -> str:
     return str(state_file("simkl.show.map.json"))
 
 
-ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb")
+ID_KEYS = ("simkl", "tmdb", "imdb", "tvdb")
 
 _EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 
@@ -268,8 +268,8 @@ def _episode_lookup(
     candidates = [
         str(ids.get("simkl") or "").strip(),
         str(ids.get("tvdb") or "").strip(),
-        str(ids.get("imdb") or "").strip(),
         str(ids.get("tmdb") or "").strip(),
+        str(ids.get("imdb") or "").strip(),
     ]
     candidates = [c for c in candidates if c]
     if not candidates:

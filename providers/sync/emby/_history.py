@@ -624,7 +624,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             pids = (row.get("ProviderIds") or {}) if isinstance(row, Mapping) else {}
             if (
                 isinstance(pids, Mapping)
-                and (pids.get("Imdb") or pids.get("imdb") or pids.get("Tmdb") or pids.get("tmdb"))
+                and (pids.get("Tmdb") or pids.get("tmdb") or pids.get("Imdb") or pids.get("imdb"))
                 and not row.get("SeriesId")
             ):
                 return True
@@ -764,16 +764,17 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     smeta = _series_minimal_from_episode(http, uid, row, series_cache)
                     show_ids_raw = (smeta.get("ids") or {}) if isinstance(smeta, Mapping) else {}
                     show_ids: dict[str, str] = {}
-                    v = str(show_ids_raw.get("imdb") or "").strip()
-                    if v:
-                        show_ids["imdb"] = v if v.startswith("tt") else f"tt{v}"
-                    for k in ("tmdb", "tvdb"):
+                    for k in ("tmdb", "imdb", "tvdb"):
                         vv = str(show_ids_raw.get(k) or "").strip()
-                        if vv:
-                            try:
-                                show_ids[k] = str(int(vv))
-                            except Exception:
-                                pass
+                        if not vv:
+                            continue
+                        if k == "imdb":
+                            show_ids["imdb"] = vv if vv.startswith("tt") else f"tt{vv}"
+                            continue
+                        try:
+                            show_ids[k] = str(int(vv))
+                        except Exception:
+                            pass
                     if not show_ids and sid:
                         # Fallback to direct item lookup (cached) if the series item couldn't be resolved.
                         show_ids = _item_ids_for(http, sid)
@@ -817,16 +818,17 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     epi_ids = (m.get("ids") or {}) if isinstance(m.get("ids"), Mapping) else {}
                     if epi_ids:
                         safe_epi: dict[str, str] = {}
-                        v = str(epi_ids.get("imdb") or "").strip()
-                        if v:
-                            safe_epi["imdb"] = v if v.startswith("tt") else f"tt{v}"
-                        for k in ("tmdb", "tvdb"):
+                        for k in ("tmdb", "imdb", "tvdb"):
                             vv = str(epi_ids.get(k) or "").strip()
-                            if vv:
-                                try:
-                                    safe_epi[k] = str(int(vv))
-                                except Exception:
-                                    pass
+                            if not vv:
+                                continue
+                            if k == "imdb":
+                                safe_epi["imdb"] = vv if vv.startswith("tt") else f"tt{vv}"
+                                continue
+                            try:
+                                safe_epi[k] = str(int(vv))
+                            except Exception:
+                                pass
                         if safe_epi:
                             event["ids"] = safe_epi
                 else:

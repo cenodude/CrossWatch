@@ -199,7 +199,7 @@ def _guid_priority(cfg: Mapping[str, Any]) -> list[str]:
     return _cfg_list(
         cfg,
         "watchlist_guid_priority",
-        ["imdb", "tmdb", "tvdb", "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"],
+        ["tmdb", "imdb", "tvdb", "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"],
     )
 
 def _clean_query_tokens(*, title: str | None, year: int | None, slug: str | None) -> list[str]:
@@ -241,7 +241,7 @@ def _metadata_match_by_ids(
     timeout: float,
     retries: int,
 ) -> str | None:
-    order = [("imdb", ids.get("imdb")), ("tmdb", ids.get("tmdb")), ("tvdb", ids.get("tvdb"))]
+    order = [("tmdb", ids.get("tmdb")), ("imdb", ids.get("imdb")), ("tvdb", ids.get("tvdb"))]
     for key, val in order:
         v = str(val).strip() if val else ""
         if not v:
@@ -297,19 +297,19 @@ def _discover_resolve_rating_key(
 ) -> str | None:
     ids: dict[str, Any] = {}
     if isinstance(item_ids, Mapping):
-        for k in ("imdb", "tmdb", "tvdb"):
+        for k in ("tmdb", "imdb", "tvdb"):
             if item_ids.get(k):
                 ids[k] = str(item_ids.get(k))
     for g in guid_candidates or []:
         try:
             for k, v in (ids_from_guid(g) or {}).items():
-                if k in ("imdb", "tmdb", "tvdb") and v and k not in ids:
+                if k in ("tmdb", "imdb", "tvdb") and v and k not in ids:
                     ids[k] = str(v)
         except Exception:
             pass
 
     use_match = _cfg_bool(cfg, "watchlist_use_metadata_match", True)
-    if use_match and any(ids.get(k) for k in ("imdb", "tmdb", "tvdb")):
+    if use_match and any(ids.get(k) for k in ("tmdb", "imdb", "tvdb")):
         rk0 = _metadata_match_by_ids(session, token, ids, libtype, year, timeout=timeout, retries=retries)
         if rk0:
             return rk0

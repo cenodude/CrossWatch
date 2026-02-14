@@ -875,7 +875,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
                 if s_ok and e_ok:
                     score += 2
             meta_ids = (plex_normalize(obj).get("ids") or {})
-            for key in ("imdb", "tmdb", "tvdb"):
+            for key in ("tmdb", "imdb", "tvdb"):
                 if key in meta_ids and key in ids and meta_ids[key] == ids[key]:
                     score += 4
         except Exception:

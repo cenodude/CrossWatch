@@ -573,7 +573,7 @@ _EP_RESOLVE_CACHE: dict[str, dict[str, str]] = {}
 
 def _stable_show_key(ids: Mapping[str, Any]) -> str:
     return json.dumps(
-        {k: ids.get(k) for k in ("slug", "trakt", "imdb", "tvdb", "tmdb") if ids.get(k)},
+        {k: ids.get(k) for k in ("slug", "trakt", "tmdb", "imdb", "tvdb") if ids.get(k)},
         sort_keys=True,
     )
 
@@ -617,7 +617,7 @@ def _resolve_show_path_id(
         return path_id
     sess = adapter.client.session
     headers = _trakt_headers_for(adapter)
-    for k in ("imdb", "tvdb", "tmdb"):
+    for k in ("tmdb", "imdb", "tvdb"):
         v = (show_ids or {}).get(k)
         if not v:
             continue
@@ -683,7 +683,7 @@ def _resolve_episode_ids_via_trakt(
                 ids = {
                     ik: str(iv)
                     for ik, iv in (row.get("ids") or {}).items()
-                    if ik in ("imdb", "tvdb", "trakt", "tmdb") and iv
+                    if ik in ("tmdb", "imdb", "tvdb", "trakt") and iv
                 }
                 if isinstance(num, int) and ids:
                     epmap[num] = ids
@@ -710,7 +710,7 @@ def _resolve_episode_ids_via_trakt(
         ids = {
             ik: str(iv)
             for ik, iv in (d.get("ids") or {}).items()
-            if ik in ("imdb", "tvdb", "trakt", "tmdb") and iv
+            if ik in ("tmdb", "imdb", "tvdb", "trakt") and iv
         }
         if ids:
             _EP_RESOLVE_CACHE[cache_key] = ids
@@ -723,7 +723,7 @@ def _extract_show_ids_for_episode(it: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = dict(it.get("show_ids") or {})
     if not show_ids and (it.get("season") is not None and it.get("episode") is not None):
         show_ids = dict(it.get("ids") or {})
-    return {k: show_ids[k] for k in ("trakt", "slug", "imdb", "tmdb", "tvdb") if show_ids.get(k)}
+    return {k: show_ids[k] for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
 
 
 def _batch_add(
@@ -739,7 +739,7 @@ def _batch_add(
 
     def _show_key(ids: Mapping[str, Any]) -> str:
         return json.dumps(
-            {k: ids[k] for k in ("trakt", "slug", "imdb", "tmdb", "tvdb") if k in ids and ids[k]},
+            {k: ids[k] for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if k in ids and ids[k]},
             sort_keys=True,
         )
 
@@ -840,7 +840,7 @@ def _batch_remove(
 
     def _show_key(ids: Mapping[str, Any]) -> str:
         return json.dumps(
-            {k: ids[k] for k in ("trakt", "slug", "imdb", "tmdb", "tvdb") if k in ids and ids[k]},
+            {k: ids[k] for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if k in ids and ids[k]},
             sort_keys=True,
         )
 

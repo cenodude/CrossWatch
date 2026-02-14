@@ -239,29 +239,32 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             ids_src = show_ids
 
     ids: dict[str, Any] = dict(ids_src or {})
-    imdb = _imdb_ok(ids.get("imdb") or ids.get("imdb_id")) or ""
 
     base = ""
-    if imdb:
-        base = f"imdb:{imdb}"
-    else:
-        tmdb_val = ids.get("tmdb") or ids.get("tmdb_id")
-        if tmdb_val is not None:
+    tmdb_val = ids.get("tmdb") or ids.get("tmdb_id")
+    if tmdb_val is not None:
+        try:
+            base = f"tmdb:{int(tmdb_val)}"
+        except Exception:
+            base = ""
+
+    if not base:
+        imdb = _imdb_ok(ids.get("imdb") or ids.get("imdb_id")) or ""
+        if imdb:
+            base = f"imdb:{imdb}"
+
+    if not base:
+        tvdb_val = ids.get("tvdb") or ids.get("tvdb_id")
+        if tvdb_val is not None:
             try:
-                base = f"tmdb:{int(tmdb_val)}"
+                base = f"tvdb:{int(tvdb_val)}"
             except Exception:
                 base = ""
-        if not base:
-            tvdb_val = ids.get("tvdb") or ids.get("tvdb_id")
-            if tvdb_val is not None:
-                try:
-                    base = f"tvdb:{int(tvdb_val)}"
-                except Exception:
-                    base = ""
-        if not base:
-            mdbl = ids.get("mdblist") or ids.get("id")
-            if mdbl:
-                base = f"mdblist:{mdbl}"
+
+    if not base:
+        mdbl = ids.get("mdblist") or ids.get("id")
+        if mdbl:
+            base = f"mdblist:{mdbl}"
 
     if kind in ("season", "episode") and not base:
         title = str(obj.get("series_title") or obj.get("title") or "").strip()
@@ -293,7 +296,6 @@ def _key_of(obj: Mapping[str, Any]) -> str:
     if title and year_val:
         return f"title:{title}|year:{year_val}"
     return f"obj:{hash(json.dumps(obj, sort_keys=True)) & 0xffffffff}"
-
 
 def _valid_rating(value: Any) -> int | None:
     try:
@@ -690,10 +692,10 @@ def build_index(
 
 
 def _show_key(ids: Mapping[str, Any]) -> str:
-    if ids.get("imdb"):
-        return f"imdb:{ids['imdb']}"
     if ids.get("tmdb"):
         return f"tmdb:{ids['tmdb']}"
+    if ids.get("imdb"):
+        return f"imdb:{ids['imdb']}"
     if ids.get("tvdb"):
         return f"tvdb:{ids['tvdb']}"
     return json.dumps(ids, sort_keys=True)

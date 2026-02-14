@@ -202,7 +202,7 @@ def _shadow_ttl_seconds() -> float:
         return 300.0
 
 
-_ALLOWED_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb")
+_ALLOWED_ID_KEYS = ("simkl", "tmdb", "imdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb")
 
 
 def _ids_filter(ids_in: Mapping[str, Any]) -> dict[str, Any]:

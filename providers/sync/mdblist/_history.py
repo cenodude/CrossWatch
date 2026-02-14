@@ -594,7 +594,7 @@ def build_index(
 
 
 def _stable_show_key(ids: Mapping[str, Any]) -> str:
-    keep = {k: ids.get(k) for k in ("imdb", "tmdb", "tvdb", "trakt", "mdblist") if ids.get(k) is not None}
+    keep = {k: ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "mdblist") if ids.get(k) is not None}
     return json.dumps(keep, sort_keys=True)
 
 

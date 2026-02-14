@@ -11,7 +11,7 @@ from cw_platform.id_map import canonical_key, ids_from_guid
 from ._common import make_logger
 
 
-_EXT_ID_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "simkl")
+_EXT_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl")
 _log = make_logger("history")
 
 

@@ -150,7 +150,7 @@ def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = ("trakt", "tmdb", "tvdb", "imdb") if kind == "episodes" else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "imdb", "tmdb", "tvdb")
+    allowed = ("trakt", "tmdb", "tvdb", "imdb") if kind == "episodes" else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "tmdb", "imdb", "tvdb")
     out: dict[str, Any] = {}
     for k in allowed:
         v = ids.get(k)
@@ -166,7 +166,7 @@ def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]
 def _merge_by_canonical(dst: dict[str, Any], src: Iterable[Mapping[str, Any]]) -> None:
     def q(x: Mapping[str, Any]) -> tuple[int, str]:
         ids = x.get("ids") or {}
-        score = sum(1 for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k))
+        score = sum(1 for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k))
         return score, str(x.get("rated_at") or "")
 
     for m in src or []:

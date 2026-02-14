@@ -108,7 +108,7 @@ def _norm_rating(v: Any) -> int | None:
 
 def _has_ext_ids(m: Mapping[str, Any]) -> bool:
     ids = (m.get("ids") if isinstance(m, Mapping) else None) or {}
-    return bool(ids.get("imdb") or ids.get("tmdb") or ids.get("tvdb"))
+    return bool(ids.get("tmdb") or ids.get("imdb") or ids.get("tvdb"))
 
 def _event_key(it: Mapping[str, Any]) -> str:
     return unresolved_store("ratings").event_key(it)
@@ -301,7 +301,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     sc += 2
             norm = plex_normalize(obj) or {}
             mids = norm.get("ids") or {}
-            for k in ("imdb", "tmdb", "tvdb"):
+            for k in ("tmdb", "imdb", "tvdb"):
                 if k in mids and k in ids and mids[k] == ids[k]:
                     sc += 4
         except Exception:
@@ -436,7 +436,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 pass
     
             out_ids: dict[str, Any] = {}
-            for k in ("imdb", "tmdb", "tvdb"):
+            for k in ("tmdb", "imdb", "tvdb"):
                 v = ids0.get(k)
                 if v:
                     out_ids[k] = str(v)
