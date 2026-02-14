@@ -16,6 +16,7 @@ from services.snapshots import (
     restore_snapshot,
     snapshot_manifest,
     delete_snapshot,
+    diff_snapshots,
 )
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
@@ -60,6 +61,20 @@ def api_snapshots_read(path: str = Query(..., description="Relative path under /
     except Exception as e:
         return _err(str(e))
 
+
+
+@router.get("/diff")
+def api_snapshots_diff(
+    a: str = Query(..., description="Snapshot A path (relative under /config/snapshots)"),
+    b: str = Query(..., description="Snapshot B path (relative under /config/snapshots)"),
+    limit: int = Query(200, ge=1, le=2000),
+    max_changes: int = Query(25, ge=1, le=200),
+) -> JSONResponse:
+    try:
+        res = diff_snapshots(a, b, limit=limit, max_changes=max_changes)
+        return _ok({"diff": res})
+    except Exception as e:
+        return _err(str(e))
 
 @router.post("/create")
 def api_snapshots_create(body: dict[str, Any] = Body(...)) -> JSONResponse:

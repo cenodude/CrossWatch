@@ -616,3 +616,145 @@ def clear_provider_features(
         done["results"][feat] = {"ok": ok, "removed": removed, "errors": errors, "count": len(cur)}
 
     return done
+
+
+def _brief_item(x: Any) -> dict[str, Any]:
+    if not isinstance(x, Mapping):
+        return {"value": x}
+    out: dict[str, Any] = {}
+    for k in ("type", "title", "year", "season", "episode", "status"):
+        if k in x:
+            out[k] = x.get(k)
+    ids = x.get("ids")
+    if isinstance(ids, Mapping):
+        # Keep common external IDs only; these are the most useful for humans.
+        keep = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "anidb", "mal", "anilist", "kitsu")
+        out["ids"] = {k: ids.get(k) for k in keep if k in ids}
+    return out or dict(x)
+
+
+def _path_join(base: str, key: str) -> str:
+    k = str(key)
+    if not base:
+        return k
+    return base + "." + k
+
+
+def _diff_any(a: Any, b: Any, *, path: str, out: list[dict[str, Any]], max_depth: int, max_changes: int, depth: int = 0) -> None:
+    if len(out) >= max_changes:
+        return
+    if a == b:
+        return
+    if depth >= max_depth:
+        out.append({"path": path or "<root>", "old": a, "new": b})
+        return
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        keys = sorted(set(str(k) for k in a.keys()).union(set(str(k) for k in b.keys())))
+        for k in keys:
+            if len(out) >= max_changes:
+                break
+            has_a = k in a
+            has_b = k in b
+            p = _path_join(path, k)
+            if not has_a:
+                out.append({"path": p, "old": None, "new": b.get(k)})
+                continue
+            if not has_b:
+                out.append({"path": p, "old": a.get(k), "new": None})
+                continue
+            _diff_any(a.get(k), b.get(k), path=p, out=out, max_depth=max_depth, max_changes=max_changes, depth=depth + 1)
+        return
+    if isinstance(a, Sequence) and not isinstance(a, (str, bytes)) and isinstance(b, Sequence) and not isinstance(b, (str, bytes)):
+        out.append({"path": path or "<root>", "old": a, "new": b})
+        return
+    out.append({"path": path or "<root>", "old": a, "new": b})
+
+
+def diff_snapshots(
+    a_path: str,
+    b_path: str,
+    *,
+    limit: int = 200,
+    max_depth: int = 4,
+    max_changes: int = 25,
+) -> dict[str, Any]:
+    a = read_snapshot(a_path)
+    b = read_snapshot(b_path)
+
+    kind_a = str(a.get("kind") or "").strip().lower()
+    kind_b = str(b.get("kind") or "").strip().lower()
+    feat_a = str(a.get("feature") or "").strip().lower()
+    feat_b = str(b.get("feature") or "").strip().lower()
+
+    if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
+        raise ValueError("Snapshot A is a bundle. Pick a watchlist/ratings/history snapshot.")
+    if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
+        raise ValueError("Snapshot B is a bundle. Pick a watchlist/ratings/history snapshot.")
+
+    items_a = a.get("items") or {}
+    items_b = b.get("items") or {}
+    if not isinstance(items_a, Mapping) or not isinstance(items_b, Mapping):
+        raise ValueError("Invalid snapshot contents")
+
+    keys_a = set(str(k) for k in items_a.keys())
+    keys_b = set(str(k) for k in items_b.keys())
+
+    added_keys = sorted(keys_b - keys_a)
+    removed_keys = sorted(keys_a - keys_b)
+
+    common = sorted(keys_a & keys_b)
+    updated_keys: list[str] = []
+    for k in common:
+        if items_a.get(k) != items_b.get(k):
+            updated_keys.append(k)
+
+    unchanged = len(common) - len(updated_keys)
+
+    def meta(s: Mapping[str, Any]) -> dict[str, Any]:
+        stats_raw = s.get("stats")
+        stats: Mapping[str, Any] = stats_raw if isinstance(stats_raw, Mapping) else {}
+        return {
+            "path": str(s.get("path") or ""),
+            "provider": str(s.get("provider") or ""),
+            "instance": str(s.get("instance") or s.get("instance_id") or s.get("profile") or "default"),
+            "feature": str(s.get("feature") or ""),
+            "label": str(s.get("label") or ""),
+            "created_at": str(s.get("created_at") or ""),
+            "count": int(stats.get("count") or 0),
+        }
+
+    lim = max(1, min(int(limit or 200), 2000))
+
+    added = [{"key": k, "item": _brief_item(items_b.get(k))} for k in added_keys[:lim]]
+    removed = [{"key": k, "item": _brief_item(items_a.get(k))} for k in removed_keys[:lim]]
+
+    updated: list[dict[str, Any]] = []
+    for k in updated_keys[:lim]:
+        va = items_a.get(k)
+        vb = items_b.get(k)
+        changes: list[dict[str, Any]] = []
+        _diff_any(va, vb, path="", out=changes, max_depth=max_depth, max_changes=max_changes)
+        updated.append({"key": k, "old": _brief_item(va), "new": _brief_item(vb), "changes": changes})
+
+    return {
+        "ok": True,
+        "a": meta(a),
+        "b": meta(b),
+        "summary": {
+            "total_a": len(keys_a),
+            "total_b": len(keys_b),
+            "added": len(added_keys),
+            "removed": len(removed_keys),
+            "updated": len(updated_keys),
+            "unchanged": unchanged,
+        },
+        "added": added,
+        "removed": removed,
+        "updated": updated,
+        "truncated": {
+            "added": len(added_keys) > lim,
+            "removed": len(removed_keys) > lim,
+            "updated": len(updated_keys) > lim,
+        },
+        "limit": lim,
+    }
