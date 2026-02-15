@@ -271,7 +271,7 @@ def _get_index_html_static() -> str:
   <div class="tabs">
     <div id="tab-main" class="tab active" onclick="showTab('main')">Main</div>
     <div id="tab-watchlist" class="tab" onclick="showTab('watchlist')">Watchlist</div>
-    <div id="tab-snapshots" class="tab" onclick="showTab('snapshots')">Snapshots</div>
+    <div id="tab-snapshots" class="tab" onclick="showTab('snapshots')">Captures</div>
     <div id="tab-editor" class="tab" onclick="showTab('editor')">Editor</div>
     <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
     <div class="cw-tabmenu" id="tab-about-menu">
