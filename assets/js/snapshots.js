@@ -124,7 +124,31 @@
     #page-snapshots .ss-wrap{grid-template-columns:1fr;gap:14px}
     #page-snapshots .ss-list{max-height:420px}
   }
-  `;
+  
+  /* Compare (captures) */
+  #page-snapshots .ss-right{display:flex;align-items:center;gap:10px}
+  #page-snapshots .ss-chk{width:18px;height:18px;accent-color:#6f6cff}
+  #page-snapshots .ss-comparehint{display:flex;align-items:center;gap:8px;font-size:12px;opacity:.78;margin:10px 0 12px 0}
+  #page-snapshots .ss-comparehint .material-symbol{font-size:18px;opacity:.9}
+  #page-snapshots .ss-ab{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;border-radius:999px;border:1px solid rgba(255,255,255,.14);font-size:11px;font-weight:900;letter-spacing:.03em;opacity:.92}
+  #page-snapshots .ss-ab.a{border-color:rgba(111,108,255,.42)}
+  #page-snapshots .ss-ab.b{border-color:rgba(255,180,80,.38)}
+  #page-snapshots .ss-picked{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #page-snapshots .ss-pick-card{padding:12px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);min-width:0;cursor:grab;user-select:none}
+  #page-snapshots .ss-pick-card:active{cursor:grabbing}
+  #page-snapshots .ss-pick-date{font-weight:900;font-size:18px}
+  #page-snapshots .ss-pick-meta{margin-top:6px;font-size:12px;opacity:.82}
+  #page-snapshots .ss-pick-card.dragging{opacity:.65}
+  #page-snapshots [data-coll-body="compare"]{overflow-x:hidden}
+  #page-snapshots .ss-diffrow{margin-top:10px;padding:12px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)}
+  #page-snapshots .ss-diffhead{display:flex;align-items:center;gap:10px}
+  #page-snapshots .ss-difftitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+  @media (max-width: 520px){#page-snapshots .ss-picked{grid-template-columns:1fr}}
+
+  #page-snapshots .ss-diff-summary{display:flex;flex-wrap:nowrap;gap:8px;align-items:center}
+  #page-snapshots .ss-diff-summary .ss-pill{justify-content:center;padding:5px 8px;font-size:11px;gap:5px;flex:0 1 auto;white-space:nowrap}
+  #page-snapshots .ss-diff-summary .lbl{white-space:nowrap}
+`;
 
   function injectCss() {
     if (document.getElementById("cw-snapshots-css")) return;
@@ -146,6 +170,15 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
+
+  function _uiCaptureLabel(label) {
+    const t = String(label || "").trim();
+    if (!t) return "";
+    const low = t.toLowerCase();
+    if (low === "snapshot" || low === "snapshots" || low === "capture" || low === "captures") return "CAPTURE";
+    return t;
+  }
+
 
   const API = () => (window.CW && window.CW.API && window.CW.API.j) ? window.CW.API.j : async (u, opt) => {
     const r = await fetch(u, { cache: "no-store", ...(opt || {}) });
@@ -347,7 +380,118 @@ const toast = (msg, ok = true) => {
     return d.toLocaleString();
   }
 
-  function bundleKey(s) {
+  function _findSnapByPath(path) {
+  const rows = Array.isArray(state.snapshots) ? state.snapshots : [];
+  const p = String(path || "");
+  if (!p) return null;
+  for (const s of rows) {
+    if (s && String(s.path || "") === p) return s;
+  }
+  return null;
+}
+
+function _stampEpoch(stamp) {
+  const m = String(stamp || "").match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!m) return 0;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+}
+
+function _snapEpoch(s) {
+  if (!s) return 0;
+  if (s.stamp) return _stampEpoch(s.stamp);
+  if (s.mtime) return Number(s.mtime) * 1000;
+  return 0;
+}
+
+function _diffScope() {
+  const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+  if (!picks.length) return null;
+  const s0 = _findSnapByPath(String(picks[0] || ""));
+  if (!s0) return null;
+  return {
+    provider: String(s0.provider || "").toLowerCase(),
+    feature: String(s0.feature || "").toLowerCase(),
+  };
+}
+
+function _snapMatchesScope(s, scope) {
+  if (!s || !scope) return true;
+  const p = String(s.provider || "").toLowerCase();
+  const f = String(s.feature || "").toLowerCase();
+  return p === scope.provider && f === scope.feature;
+}
+
+function _diffPickAB() {
+  const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+  if (picks.length !== 2) return { a: "", b: "", sa: null, sb: null };
+  const p0 = String(picks[0] || "");
+  const p1 = String(picks[1] || "");
+  const s0 = _findSnapByPath(p0);
+  const s1 = _findSnapByPath(p1);
+  if (state.diffManualOrder) return { a: p0, b: p1, sa: s0, sb: s1 };
+
+  const t0 = _snapEpoch(s0);
+  const t1 = _snapEpoch(s1);
+  if (t0 && t1 && t0 > t1) return { a: p1, b: p0, sa: s1, sb: s0 };
+  if (t0 === t1 && p0 > p1) return { a: p1, b: p0, sa: s1, sb: s0 };
+  return { a: p0, b: p1, sa: s0, sb: s1 };
+}
+
+function clearDiffPicks() {
+  state.diffPick = [];
+  state.diffManualOrder = false;
+  state.diffResult = null;
+  state.diffAPath = "";
+  state.diffBPath = "";
+  try { renderList(); } catch {}
+  try { renderDiffPicked(); } catch {}
+  try { renderDiff(); } catch {}
+  try { updateDiffAvailability(); } catch {}
+}
+
+function toggleDiffPick(path, checked) {
+  const p = String(path || "");
+  if (!p) return;
+
+  const snap = _findSnapByPath(p);
+  const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+  const scope = _diffScope();
+
+  if (checked) {
+    if (!snap) return;
+    if (scope && !_snapMatchesScope(snap, scope)) return;
+    if (!picks.includes(p)) {
+      if (picks.length >= 2) picks.shift();
+      picks.push(p);
+    }
+    state.diffManualOrder = false;
+  } else {
+    const ix = picks.indexOf(p);
+    if (ix !== -1) picks.splice(ix, 1);
+    if (picks.length < 2) state.diffManualOrder = false;
+  }
+
+  state.diffPick = picks;
+
+  try {
+    if (checked) {
+      setCollapsed("restore", true);
+      setCollapsed("compare", false);
+    } else {
+      setCollapsed("compare", true);
+      setCollapsed("restore", false);
+    }
+  } catch {}
+
+  if (picks.length < 2) state.diffResult = null;
+
+  renderList();
+  renderDiffPicked();
+  renderDiff();
+  updateDiffAvailability();
+}
+
+function bundleKey(s) {
     const stamp = String((s && s.stamp) || "");
     const prov = String((s && s.provider) || "").toLowerCase();
     const inst = String((s && (s.instance || s.instance_id || s.profile)) || "default").toLowerCase();
@@ -393,8 +537,8 @@ const toast = (msg, ok = true) => {
     page.innerHTML = `
       <div class="ss-top">
         <div>
-          <div class="ss-title">Snapshots</div>
-          <div class="ss-sub">Capture and restore provider state (watchlist / ratings / history). Stored under <span class="ss-muted">/config/snapshots</span>.</div>
+          <div class="ss-title">Captures</div>
+          <div class="ss-sub">Capture and restore provider state (watchlist / ratings / history). <span class="ss-muted">Point-in-time API export - not a full backup.</span> Stored under <span class="ss-muted">/config/snapshots</span>.</div>
         </div>
         <div class="ss-actions">
           <button id="ss-refresh" class="iconbtn" title="Refresh" aria-label="Refresh"><span id="ss-refresh-icon" class="material-symbol ss-refresh-icon">sync</span></button>
@@ -403,7 +547,7 @@ const toast = (msg, ok = true) => {
 
       <div class="ss-wrap">
         <div class="ss-card ss-accent">
-          <h3>Create snapshot</h3>
+          <h3>Create capture</h3>
 
           <div class="ss-field">
             <select id="ss-prov"></select>
@@ -423,7 +567,7 @@ const toast = (msg, ok = true) => {
           </div>
 
           <div class="ss-row" style="margin-top:12px">
-            <button id="ss-create" class="btn primary" style="width:100%">Create Snapshot</button>
+            <button id="ss-create" class="btn primary" style="width:100%">Create Capture</button>
           </div>
           <div id="ss-create-progress" class="ss-progress hidden">
             <div class="ss-pbar"></div>
@@ -432,26 +576,31 @@ const toast = (msg, ok = true) => {
         </div>
 
         <div class="ss-card">
-          <h3>Snapshots</h3>
+          <h3>Captures</h3>
           <div class="ss-row">
-            <input id="ss-filter" class="input grow" placeholder="Filter snapshots..."/>
+            <input id="ss-filter" class="input grow" placeholder="Filter captures..."/>
           </div>
           <div class="ss-row" style="margin-top:10px">
             <select id="ss-filter-provider" class="input grow"></select>
             <select id="ss-filter-feature" class="input grow"></select>
           </div>
           <div class="ss-hr"></div>
+          <div class="ss-comparehint"><span class="material-symbol">compare_arrows</span><div><b>Compare</b>: tick two boxes on the right (same provider and feature) or <b>click on a capture to restore</b>.</span></div></div>
           <div id="ss-list" class="ss-list"></div>
           <div id="ss-list-footer" class="ss-row" style="justify-content:space-between;margin-top:10px"></div>
         </div>
 
         <div class="ss-col">
-          <div class="ss-card">
-            <h3>Restore snapshot</h3>
-            <div id="ss-selected" class="ss-muted ss-small">Pick a snapshot from the list.</div>
+          <div class="ss-card ss-coll" data-coll="restore">
+  <div class="ss-coll-head" data-coll-head="restore" role="button" tabindex="0" aria-expanded="true">
+    <h3>Restore capture</h3>
+    <span class="material-symbol ss-coll-ico">expand_more</span>
+  </div>
+  <div class="ss-coll-body" data-coll-body="restore">
+<div id="ss-selected" class="ss-muted ss-small">Pick a capture from the list.</div>
             <div class="ss-hr"></div>
             <div class="ss-note">
-              <b>Merge</b> adds missing items only. <b>Clear + restore</b> wipes the provider feature first, then restores exactly the snapshot.
+              <b>Merge</b> adds missing items only. <b>Clear and restore</b> wipes the provider feature first, then restores exactly the capture.
             </div>
             <div class="ss-row" style="margin-top:12px">
               <select id="ss-restore-inst" class="input grow"></select>
@@ -459,7 +608,7 @@ const toast = (msg, ok = true) => {
             <div class="ss-row" style="margin-top:12px">
               <select id="ss-restore-mode" class="input grow">
                 <option value="merge">Merge</option>
-                <option value="clear_restore">Clear + restore</option>
+                <option value="clear_restore">Clear and restore</option>
               </select>
             </div>
             <div class="ss-row" style="margin-top:10px">
@@ -471,25 +620,21 @@ const toast = (msg, ok = true) => {
               <div class="ss-plabel">Working…</div>
             </div>
             <div id="ss-restore-out" class="ss-small ss-muted" style="margin-top:10px"></div>
-          </div>
+  </div>
+</div>
 
 
 <div class="ss-card ss-coll is-collapsed" data-coll="compare">
   <div class="ss-coll-head" data-coll-head="compare" role="button" tabindex="0" aria-expanded="false">
-    <h3>Compare snapshots</h3>
+    <h3>Compare captures</h3>
     <span class="material-symbol ss-coll-ico">expand_more</span>
   </div>
   <div class="ss-coll-body hidden" data-coll-body="compare">
   <div class="ss-note">
-    Select two snapshots and compare what changed: <b>Added</b>, <b>Deleted</b>, and <b>Updated</b> (with old/new values).
+    Select two captures and compare what changed: <b>Added</b>, <b>Deleted</b>, and <b>Updated</b> (with old/new values).
   </div>
-  <div class="ss-row" style="margin-top:12px">
-    <select id="ss-diff-a" class="input grow" data-bsel-noicon="1"></select>
-  </div>
-  <div class="ss-row" style="margin-top:10px">
-    <select id="ss-diff-b" class="input grow" data-bsel-noicon="1"></select>
-  </div>
-  <div class="ss-row" style="margin-top:10px">
+  <div id="ss-diff-picked" class="ss-picked" style="margin-top:12px"></div>
+<div class="ss-row" style="margin-top:10px">
     <select id="ss-diff-kind" class="input grow">
       <option value="all">All changes</option>
       <option value="added">Added</option>
@@ -508,7 +653,6 @@ const toast = (msg, ok = true) => {
   </div>
   <div class="ss-row" style="margin-top:10px">
     <button id="ss-diff-run" class="btn" style="width:100%">Compare</button>
-    <button id="ss-diff-swap" class="btn" style="width:100%">Swap</button>
   </div>
   <div id="ss-diff-progress" class="ss-progress hidden">
     <div class="ss-pbar"></div>
@@ -552,6 +696,7 @@ const toast = (msg, ok = true) => {
       </div>
     `;
 
+    wireCollapsible("restore");
     wireCollapsible("compare");
     wireCollapsible("tools");
 
@@ -592,6 +737,18 @@ const toast = (msg, ok = true) => {
     el.style.setProperty("--pcol", tone === "danger" ? "var(--danger)" : "var(--accent)");
     el.classList.toggle("hidden", !on);
   }
+  function setCollapsed(id, collapsed) {
+    const page = document.getElementById("page-snapshots");
+    if (!page) return;
+    const card = page.querySelector(`.ss-card[data-coll="${id}"]`);
+    const head = page.querySelector(`[data-coll-head="${id}"]`);
+    const body = page.querySelector(`[data-coll-body="${id}"]`);
+    if (!card || !head || !body) return;
+    card.classList.toggle("is-collapsed", !!collapsed);
+    body.classList.toggle("hidden", !!collapsed);
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+
   function wireCollapsible(id) {
     const page = document.getElementById("page-snapshots");
     if (!page) return;
@@ -646,93 +803,118 @@ const toast = (msg, ok = true) => {
 
 
 
-function _snapOptionLabel(s) {
-  const stamp = String((s && s.stamp) || "");
-  const when = stamp ? fmtTsFromStamp(stamp) : "";
-  const prov = String((s && s.provider) || "").toUpperCase();
-  const inst = String((s && (s.instance || s.instance_id || s.profile)) || "default");
-  const feat = String((s && s.feature) || "").toLowerCase();
-  const label = String((s && s.label) || "").trim();
-  const head = [when || stamp || "snapshot", prov + "#" + inst, feat].filter(Boolean).join(" • ");
-  return label ? (head + " • " + label) : head;
-}
-
 function repopDiffSelects() {
-  const page = document.getElementById("page-snapshots");
-  if (!page) return;
-
-  const aSel = $("#ss-diff-a", page);
-  const bSel = $("#ss-diff-b", page);
-  const limSel = $("#ss-diff-limit", page);
-  const kindSel = $("#ss-diff-kind", page);
-
-  const fill = (sel, cur, placeholder) => {
-    if (!sel) return;
-    const snapRows = Array.isArray(state.snapshots) ? state.snapshots : [];
-    sel.innerHTML = "";
-    const o0 = document.createElement("option");
-    o0.value = "";
-    o0.textContent = placeholder;
-    sel.appendChild(o0);
-
-    snapRows.forEach((s) => {
-      const path = String((s && s.path) || "");
-      if (!path) return;
-      const feat = String((s && s.feature) || "").toLowerCase();
-      if (feat === "all") return;
-      const o = document.createElement("option");
-      o.value = path;
-      o.textContent = _snapOptionLabel(s);
-      sel.appendChild(o);
-    });
-
-    const has = Array.from(sel.options).some((o) => String(o.value) === String(cur || ""));
-    sel.value = has ? String(cur || "") : "";
-  };
-
-  fill(aSel, state.diffAPath, "- snapshot A -");
-  fill(bSel, state.diffBPath, "- snapshot B -");
-
-  if (aSel) _rebuildBrandSelectMenu(aSel);
-  if (bSel) _rebuildBrandSelectMenu(bSel);
-
-  if (limSel) limSel.value = String(state.diffLimit || 200);
-  if (kindSel) kindSel.value = String(state.diffKind || "all");
-
+  renderDiffPicked();
   updateDiffAvailability();
   renderDiff();
 }
+
 
 function updateDiffAvailability() {
   const page = document.getElementById("page-snapshots");
   if (!page) return;
 
-  const a = String($("#ss-diff-a", page)?.value || "");
-  const b = String($("#ss-diff-b", page)?.value || "");
+  const { a, b, sa, sb } = _diffPickAB();
   const run = $("#ss-diff-run", page);
-  const swap = $("#ss-diff-swap", page);
-  const ok = !!a && !!b && a !== b;
+
+  const same = !!sa && !!sb
+    && String(sa.provider || "").toLowerCase() === String(sb.provider || "").toLowerCase()
+    && String(sa.feature || "").toLowerCase() === String(sb.feature || "").toLowerCase();
+
+  const ok = !!a && !!b && a !== b && same;
 
   if (run) {
     run.disabled = state.busy || !ok;
-    run.title = ok ? "" : "Pick two different snapshots";
-  }
-  if (swap) {
-    swap.disabled = state.busy || !(a || b);
-    swap.title = (a || b) ? "" : "Pick snapshots first";
+    run.title = ok ? "" : "Pick two captures (same provider and feature)";
   }
 }
+
+function renderDiffPicked() {
+  const page = document.getElementById("page-snapshots");
+  if (!page) return;
+  const host = $("#ss-diff-picked", page);
+  if (!host) return;
+
+  const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+  if (picks.length !== 2) {
+    const scope = _diffScope();
+    host.innerHTML = `<div class="ss-muted ss-small">Tick <b>two</b> boxes to compare${scope ? ` (<b>${escapeHtml(scope.provider)}</b> • <b>${escapeHtml(scope.feature)}</b>)` : ""}.</div>` +
+      `<div class="ss-muted ss-small" style="margin-top:6px">Drag A/B cards to swap order</div>`;
+    return;
+  }
+
+  const aPath = String(picks[0] || "");
+  const bPath = String(picks[1] || "");
+  const sa = _findSnapByPath(aPath);
+  const sb = _findSnapByPath(bPath);
+
+  const mkCard = (snap, tag, path, idx) => {
+    const d = document.createElement("div");
+    d.className = "ss-pick-card";
+    d.setAttribute("draggable", "true");
+    d.dataset.diffIndex = String(idx);
+    d.dataset.diffPath = String(path || "");
+    d.title = "Drag to swap A/B";
+
+    if (!snap) {
+      d.innerHTML = `<div class="ss-pick-date">${tag}</div><div class="ss-muted ss-small">Capture not found</div>`;
+      return d;
+    }
+
+    const feat = String(snap.feature || "-").toLowerCase();
+    const inst = String(snap.instance || snap.instance_id || snap.profile || "default");
+    const showInst = inst && String(inst).toLowerCase() !== "default";
+    const when = snap.stamp ? fmtTsFromStamp(snap.stamp) : (snap.mtime ? new Date(Number(snap.mtime || 0) * 1000).toLocaleString() : "");
+    const meta = `${(snap.provider || "-").toUpperCase()}${showInst ? " • " + inst : ""} • ${feat}`;
+    const sub = snap.label ? String(snap.label).slice(0, 60) : String(snap.path || "").slice(0, 80);
+
+    d.innerHTML = `<div class="ss-pick-date">${tag}: ${escapeHtml(when || "-")}</div>` +
+      `<div class="ss-pick-meta">${escapeHtml(meta)}</div>` +
+      `<div class="ss-muted ss-small">${escapeHtml(sub)}</div>`;
+    return d;
+  };
+
+  host.innerHTML = "";
+  const ca = mkCard(sa, "A", aPath, 0);
+  const cb = mkCard(sb, "B", bPath, 1);
+  host.appendChild(ca);
+  host.appendChild(cb);
+
+  const wireDnD = (el) => {
+    el.addEventListener("dragstart", (e) => {
+      el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(el.dataset.diffIndex || ""));
+    });
+    el.addEventListener("dragend", () => { el.classList.remove("dragging"); });
+    el.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const from = Number(e.dataTransfer.getData("text/plain"));
+      const to = Number(el.dataset.diffIndex || "0");
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) return;
+      const arr = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+      if (arr.length !== 2) return;
+      const tmp = arr[from];
+      arr[from] = arr[to];
+      arr[to] = tmp;
+      state.diffPick = arr;
+      state.diffManualOrder = true;
+      renderList();
+      renderDiffPicked();
+      updateDiffAvailability();
+    });
+  };
+
+  wireDnD(ca);
+  wireDnD(cb);
+}
+
+
 
 function _matchesDiffQ(row, q) {
   const s = JSON.stringify(row || {});
   return s.toLowerCase().includes(q);
-}
-
-function _snapLabelFromItem(item) {
-  if (!item || typeof item !== "object") return "";
-  const t = String(item.type || "");
-  const y = item.year ? String(item.year) : "";
-  return [t, y].filter(Boolean).join(" ");
 }
 
 function renderDiff() {
@@ -745,7 +927,7 @@ function renderDiff() {
 
   const r = state.diffResult;
   if (!r) {
-    out.textContent = "Pick two snapshots and hit Compare.";
+    out.textContent = "Pick two captures and hit Compare.";
     list.innerHTML = "";
     return;
   }
@@ -754,14 +936,13 @@ function renderDiff() {
   const trunc = r.truncated || {};
   const extra = (trunc.added || trunc.removed || trunc.updated) ? ` (showing up to ${r.limit} per section)` : "";
   out.innerHTML = `
-    <div class="ss-row" style="justify-content:space-between">
-      <span class="ss-pill"><strong>${sum.added ?? 0}</strong> added</span>
-      <span class="ss-pill"><strong>${sum.removed ?? 0}</strong> deleted</span>
-      <span class="ss-pill"><strong>${sum.updated ?? 0}</strong> updated</span>
-      <span class="ss-pill"><strong>${sum.unchanged ?? 0}</strong> unchanged</span>
-    </div>
-    <div class="ss-small ss-muted" style="margin-top:8px">${extra}</div>
-  `;
+<div class="ss-diff-summary">
+  <span class="ss-pill"><strong>${sum.added ?? 0}</strong> <span class="lbl">added</span></span>
+  <span class="ss-pill"><strong>${sum.removed ?? 0}</strong> <span class="lbl">deleted</span></span>
+  <span class="ss-pill"><strong>${sum.updated ?? 0}</strong> <span class="lbl">updated</span></span>
+  <span class="ss-pill"><strong>${sum.unchanged ?? 0}</strong> <span class="lbl">unchanged</span></span>
+</div>
+<div class="ss-small ss-muted" style="margin-top:8px">${extra}</div>`;
 
   const kind = String(state.diffKind || "all");
   const q = String(state.diffQ || "").trim().toLowerCase();
@@ -801,41 +982,40 @@ function renderDiff() {
     }
   };
 
+    function _diffName(it) {
+    const item = it && typeof it === "object" ? it : {};
+    const t = String(item.type || "").toLowerCase();
+    const title = String(item.series_title || item.show_title || item.title || "").trim();
+    const year = item.year ? ` (${item.year})` : "";
+    const sN = item.season != null ? String(item.season).padStart(2, "0") : "";
+    const eN = item.episode != null ? String(item.episode).padStart(2, "0") : "";
+    const ep = (sN && eN) ? ` - S${sN}E${eN}` : "";
+    if (t === "episode") return `${title || "Episode"}${ep}`;
+    return `${title || (t ? t : "Item")}${year}`;
+  }
+
   list.innerHTML = rows.map((row) => {
     const k = row._k;
     const key = String(row.key || "");
     const item = row.item || row.new || row.old || {};
-    const title = String(item.title || "").trim();
-    const year = item.year ? ` (${item.year})` : "";
-    const type = item.type ? String(item.type) : "";
-    const head = title ? `${title}${year}` : (type ? `${type}` : "Item");
+    const head = _diffName(item);
 
     const exp = !!state.diffExpanded[key];
-    let details = "";
-    if (k === "updated") {
-      const ch = Array.isArray(row.changes) ? row.changes : [];
-      const chCount = ch.length;
-      const btn = `<button class="btn" data-diff-toggle="${encodeURIComponent(key)}" style="margin-left:auto">${exp ? "Hide" : "Details"} (${chCount})</button>`;
-      const chLines = ch.map((c) => `${c.path}: ${line(c.old)}  →  ${line(c.new)}`).join("\n");
-      details = `
-        <div class="ss-diffhead" style="margin-top:8px">
-          <span class="ss-muted ss-small">${escapeHtml(head)}</span>
-          ${btn}
-        </div>
-        ${exp ? `<div class="ss-code">${escapeHtml(chLines || "(no details)")}</div>` : ``}
-      `;
-    } else {
-      details = `<div class="ss-muted ss-small" style="margin-top:8px">${escapeHtml(head)}</div>`;
-    }
+    const btn = (k === "updated")
+      ? `<button class="btn" data-diff-toggle="${encodeURIComponent(key)}" style="margin-left:auto">${exp ? "Hide" : "Details"}</button>`
+      : "";
+
+    const ch = (k === "updated" && Array.isArray(row.changes)) ? row.changes : [];
+    const chLines = ch.map((c) => `${c.path}: ${line(c.old)}  →  ${line(c.new)}`).join("\n");
 
     return `
-      <div class="ss-diffitem">
+      <div class="ss-diffrow">
         <div class="ss-diffhead">
           ${badge(k)}
-          <span class="ss-muted ss-small">${escapeHtml(_snapLabelFromItem(item) || "")}</span>
+          <div class="ss-difftitle">${escapeHtml(head)}</div>
+          ${btn}
         </div>
-        <div class="ss-diffkey">${escapeHtml(key)}</div>
-        ${details}
+        ${k === "updated" && exp ? `<div class="ss-code">${escapeHtml(chLines || "(no details)")}</div>` : ``}
       </div>
     `;
   }).join("");
@@ -856,12 +1036,15 @@ async function onDiffRun() {
   const page = document.getElementById("page-snapshots");
   if (!page) return;
 
-  const a = String($("#ss-diff-a", page)?.value || "");
-  const b = String($("#ss-diff-b", page)?.value || "");
+  const { a, b, sa, sb } = _diffPickAB();
   const kind = String($("#ss-diff-kind", page)?.value || "all");
   const lim = parseInt(String($("#ss-diff-limit", page)?.value || "200"), 10) || 200;
 
-  if (!a || !b || a === b) return toast("Pick two different snapshots", false);
+  const same = !!sa && !!sb
+    && String(sa.provider || "").toLowerCase() === String(sb.provider || "").toLowerCase()
+    && String(sa.feature || "").toLowerCase() === String(sb.feature || "").toLowerCase();
+
+  if (!a || !b || a === b || !same) return toast("Pick two captures (same provider + feature)", false);
 
   state.diffAPath = a;
   state.diffBPath = b;
@@ -880,29 +1063,15 @@ async function onDiffRun() {
     console.warn("[snapshots] diff failed", e);
     state.diffResult = null;
     renderDiff();
-    toast(`Diff failed: ${e.message || e}`, false);
+    toast(`Diff failed: ${String(e?.message || e || "unknown")}`, false);
   } finally {
-    setProgress("#ss-diff-progress", false, "", "accent");
     setBusy(false);
+    setProgress("#ss-diff-progress", false);
+    updateDiffAvailability();
   }
 }
 
-function onDiffSwap() {
-  const page = document.getElementById("page-snapshots");
-  if (!page) return;
 
-  const aSel = $("#ss-diff-a", page);
-  const bSel = $("#ss-diff-b", page);
-  if (!aSel || !bSel) return;
-
-  const a = String(aSel.value || "");
-  const b = String(bSel.value || "");
-  aSel.value = b;
-  bSel.value = a;
-  state.diffAPath = String(aSel.value || "");
-  state.diffBPath = String(bSel.value || "");
-  updateDiffAvailability();
-}
   function setBusy(on) {
     state.busy = !!on;
     if (!on) {
@@ -965,25 +1134,19 @@ function onDiffSwap() {
 
 
 // Diff UI
-const diffA = $("#ss-diff-a", page);
-const diffB = $("#ss-diff-b", page);
 const diffRun = $("#ss-diff-run", page);
-const diffSwap = $("#ss-diff-swap", page);
 const diffKind = $("#ss-diff-kind", page);
 const diffLim = $("#ss-diff-limit", page);
 const diffQ = $("#ss-diff-q", page);
 
-if (diffA) diffA.addEventListener("change", () => { state.diffAPath = String(diffA.value || ""); updateDiffAvailability(); });
-if (diffB) diffB.addEventListener("change", () => { state.diffBPath = String(diffB.value || ""); updateDiffAvailability(); });
 if (diffKind) diffKind.addEventListener("change", () => { state.diffKind = String(diffKind.value || "all"); renderDiff(); });
 if (diffLim) diffLim.addEventListener("change", () => { state.diffLimit = parseInt(String(diffLim.value || "200"), 10) || 200; updateDiffAvailability(); });
 if (diffQ) diffQ.addEventListener("input", () => { state.diffQ = String(diffQ.value || ""); renderDiff(); });
 
 if (diffRun) diffRun.addEventListener("click", (e) => { e.preventDefault(); onDiffRun(); });
-if (diffSwap) diffSwap.addEventListener("click", (e) => { e.preventDefault(); onDiffSwap(); });
 
 repopDiffSelects();
-  }
+}
 
   function _providerById(pid) {
     const id = String(pid || "").toUpperCase();
@@ -1173,7 +1336,7 @@ repopDiffSelects();
       } else if (state.showAll && topOnly.length > (state.listLimit || 5)) {
         footer.innerHTML = `<div class="ss-small ss-muted">Showing ${topOnly.length} of ${topOnly.length}</div><button id="ss-less" class="btn">Show less</button>`;
       } else {
-        footer.innerHTML = topOnly.length ? `<div class="ss-small ss-muted">${topOnly.length} snapshot(s)</div>` : "";
+        footer.innerHTML = topOnly.length ? `<div class="ss-small ss-muted">${topOnly.length} capture(s)</div>` : "";
       }
 
       const more = $("#ss-more", footer);
@@ -1183,7 +1346,7 @@ repopDiffSelects();
     }
 
     if (rows.length === 0) {
-      list.innerHTML = `<div class="ss-empty">No snapshots found.</div>`;
+      list.innerHTML = `<div class="ss-empty">No captures found.</div>`;
       return;
     }
 
@@ -1201,7 +1364,7 @@ repopDiffSelects();
       item.dataset.path = s.path || "";
 
       const stamp = s.stamp ? fmtTsFromStamp(s.stamp) : "";
-      const when = stamp || (s.mtime ? new Date((s.mtime || 0) * 1000).toLocaleString() : "");
+      const when = stamp || (s.mtime ? new Date(Number(s.mtime || 0) * 1000).toLocaleString() : "");
 
       const feat = String(s.feature || "-").toLowerCase();
       const isBundle = feat === "all";
@@ -1213,21 +1376,39 @@ repopDiffSelects();
         ? `<button class="ss-mini" data-act="toggle">${exp ? "Hide" : "Show"} ${childCount}</button>`
         : "";
 
+const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
+      const scope = _diffScope();
+      const inScope = !scope || _snapMatchesScope(s, scope);
+      const pth = String(s.path || "");
+      const ixPick = pth ? picks.indexOf(pth) : -1;
+      const abTag = ixPick === 0 ? "A" : (ixPick === 1 ? "B" : "");
+      const showPick = !isBundle && (inScope || ixPick !== -1);
+      const pickHtml = showPick
+        ? `${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}">${abTag}</span>` : ""}` +
+          `<input class="ss-chk" type="checkbox" title="Select for compare" data-act="diffpick" ${ixPick !== -1 ? "checked" : ""} />`
+        : "";
+
       item.innerHTML = `
         <div style="flex:1 1 auto;min-width:0">
           <div class="ss-meta">
             <span class="ss-badge ok">${(s.provider || "-").toUpperCase()}</span>
             ${showInst ? `<span class="ss-badge">${inst}</span>` : ``}
             <span class="ss-badge">${feat}</span>
-            ${s.label ? `<span class="ss-badge warn">${String(s.label).slice(0, 40)}</span>` : ``}
+            ${s.label ? `<span class="ss-badge warn">${escapeHtml(_uiCaptureLabel(s.label)).slice(0, 40)}</span>` : ``}
             ${extra}
           </div>
           <div class="d">${when} * ${humanBytes(s.size)} * <span class="ss-muted">${s.path || ""}</span></div>
         </div>
-        <div class="chev">></div>
+        <div class="ss-right">${pickHtml}<div class="chev">></div></div>
       `;
 
-      const toggleBtn = item.querySelector('[data-act="toggle"]');
+      const pick = item.querySelector('input[data-act="diffpick"]');
+      if (pick) {
+        pick.addEventListener("click", (ev) => { ev.stopPropagation(); });
+        pick.addEventListener("change", () => { toggleDiffPick(String(s.path || ""), !!pick.checked); });
+      }
+
+const toggleBtn = item.querySelector('[data-act="toggle"]');
       if (toggleBtn) {
         toggleBtn.addEventListener("click", (ev) => {
           ev.preventDefault();
@@ -1241,6 +1422,8 @@ repopDiffSelects();
       }
 
       item.addEventListener("click", () => {
+        clearDiffPicks();
+        try { setCollapsed("compare", true); setCollapsed("restore", false); } catch {}
         const p = String(s.path || "");
         if (p && state.selectedPath === p) {
           state.selectedPath = "";
@@ -1287,7 +1470,7 @@ function renderSelected() {
     const s = state.selectedSnap;
     if (!s) {
       host.classList.add("ss-muted");
-      host.innerHTML = "Pick a snapshot from the list.";
+      host.innerHTML = "Pick a capture from the list.";
       return;
     }
 
@@ -1309,7 +1492,7 @@ function renderSelected() {
         <span class="ss-badge ok">${String(s.provider || "").toUpperCase()}</span>
         ${showInst ? `<span class="ss-badge">${inst}</span>` : ``}
         <span class="ss-badge">${String(s.feature || "").toLowerCase()}</span>
-        ${s.label ? `<span class="ss-badge warn">${String(s.label).slice(0, 40)}</span>` : ``}
+        ${s.label ? `<span class="ss-badge warn">${escapeHtml(_uiCaptureLabel(s.label)).slice(0, 40)}</span>` : ``}
       </div>
       <div class="ss-small ss-muted" style="margin-top:8px">
         ${s.created_at ? new Date(String(s.created_at)).toLocaleString() : "-"} * <b>${Number(stats.count || 0)}</b> items
@@ -1426,7 +1609,7 @@ function renderSelected() {
       if (snap && snap.path) {
         await selectSnapshot(snap.path);
       }
-      toast("Snapshot created", true);
+      toast("Capture created", true);
     } catch (e) {
       console.warn("[snapshots] create failed", e);
       const msg = String(e && e.message ? e.message : e);
@@ -1450,7 +1633,7 @@ function renderSelected() {
     const s = state.selectedSnap || {};
     const prov = String(s.provider || "").toUpperCase();
     const feat = String(s.feature || "");
-    const label = s.label ? " (" + String(s.label) + ")" : "";
+    const label = s.label ? " (" + _uiCaptureLabel(s.label) + ")" : "";
     const isBundle = feat.toLowerCase() === "all";
     const msg = isBundle
       ? "Delete this bundle snapshot" + label + " and its child snapshots?\n\n" + prov + " - ALL"
