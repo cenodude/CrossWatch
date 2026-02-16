@@ -1469,10 +1469,9 @@ def as_epoch(v: Any) -> int | None:
     if v is None:
         return None
     if isinstance(v, (int, float)):
-        return int(v)
+        n = int(v)
+        return n // 1000 if n >= 10**12 else n
     if isinstance(v, datetime):
-        if v.tzinfo is None:
-            v = v.replace(tzinfo=timezone.utc)
         return int(v.timestamp())
     if isinstance(v, str):
         s = v.strip()

@@ -61,6 +61,20 @@ _dbg, _info, _warn, _error, _log = make_logger("history")
 def _emit(evt: dict[str, Any]) -> None:
     emit(evt, default_feature="history")
 
+
+def _epoch_from_history_entry(entry: Any) -> int | None:
+    data = getattr(entry, "_data", None)
+    if data is not None and hasattr(data, "get"):
+        for k in ("viewedAt", "lastViewedAt"):
+            ts = _as_epoch(data.get(k))
+            if ts:
+                return ts
+    for k in ("viewedAt", "viewed_at", "lastViewedAt"):
+        ts = _as_epoch(getattr(entry, k, None))
+        if ts:
+            return ts
+    return None
+
 def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     cfg = _plex_cfg(adapter)
     val = cfg.get(key, default) if isinstance(cfg, dict) else default
@@ -334,7 +348,18 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             elif not explicit_user and cli_acct_id:
                 base_kwargs["accountID"] = int(cli_acct_id)
             if since is not None:
-                base_kwargs["mindate"] = datetime.fromtimestamp(int(since), tz=timezone.utc).replace(tzinfo=None)
+                base_kwargs["mindate"] = int(since)
+
+            def _call_history(**kwargs: Any) -> list[Any]:
+                try:
+                    return list(srv.history(**kwargs) or [])
+                except Exception as e:
+                    if "mindate" in kwargs:
+                        _dbg("mindate_fallback_drop", error=str(e))
+                        kwargs.pop("mindate", None)
+                        return list(srv.history(**kwargs) or [])
+                    raise
+
 
             if allow:
                 _dbg("history_fetch_scoped", sections=sorted(allow))
@@ -344,18 +369,18 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         kwargs["librarySectionID"] = int(sec_id)
                     except Exception:
                         continue
-                    part = list(srv.history(**kwargs) or [])
+                    part = _call_history(**kwargs)
                     if not part and "accountID" in kwargs and not explicit_user:
                         _dbg("retry_without_account_scope", librarySectionID=sec_id)
                         kwargs.pop("accountID", None)
-                        part = list(srv.history(**kwargs) or [])
+                        part = _call_history(**kwargs)
                     rows.extend(part)
             else:
-                rows = list(srv.history(**base_kwargs) or [])
+                rows = _call_history(**base_kwargs)
                 if not rows and "accountID" in base_kwargs and not explicit_user:
                     _dbg("retry_without_account_scope")
                     base_kwargs.pop("accountID", None)
-                    rows = list(srv.history(**base_kwargs) or [])
+                    rows = _call_history(**base_kwargs)
         except Exception as e:
             _warn("history_fetch_failed", error=str(e))
             return {}
@@ -405,11 +430,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 if cli_uname and not _username_match(entry, cli_uname):
                     continue
 
-            ts = (
-                _as_epoch(getattr(entry, "viewedAt", None))
-                or _as_epoch(getattr(entry, "viewed_at", None))
-                or _as_epoch(getattr(entry, "lastViewedAt", None))
-            )
+            ts = _epoch_from_history_entry(entry)
             if not ts or (since is not None and ts < int(since)):
                 continue
             rk = getattr(entry, "ratingKey", None) or getattr(entry, "key", None)
