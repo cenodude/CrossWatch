@@ -29,6 +29,8 @@ function css() {
   .cc-modal .pill{border:1px solid rgba(255,255,255,.14);background:#080a12;color:#e5ecff;border-radius:16px;padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:0 0 auto}
   .cc-modal .pill.ghost{background:transparent}
   .cc-modal .pill[disabled]{opacity:.55;pointer-events:none}
+  .cc-modal .pill.cc-copied{border-color:rgba(35,213,255,.65);box-shadow:0 0 12px rgba(35,213,255,.22)}
+  .cc-modal .pill.cc-fail{border-color:rgba(255,59,127,.65);box-shadow:0 0 12px rgba(255,59,127,.18)}
   .cc-modal .close-btn{border:1px solid rgba(255,255,255,.16);background:#11131e;color:#fff;border-radius:10px;padding:6px 10px}
 
   .cc-modal .cc-toolbar{display:flex;flex-wrap:nowrap;gap:6px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:#05060c;align-items:center;overflow-x:auto;scrollbar-width:none}
@@ -212,7 +214,10 @@ async function copyText(t) {
       ta.style.position = "fixed";
       ta.style.left = "-9999px";
       document.body.appendChild(ta);
+      // Ensure focus and selection for browsers that require it
+      ta.focus({ preventScroll: true });
       ta.select();
+      ta.setSelectionRange(0, ta.value.length);
       document.execCommand("copy");
       ta.remove();
       return true;
@@ -221,6 +226,20 @@ async function copyText(t) {
     }
   }
 }
+
+function flashCopy(btn, ok, okText = "Copied", failText = "Copy blocked") {
+  if (!btn) return;
+  const orig = btn.dataset.ccOrig || btn.textContent || "";
+  btn.dataset.ccOrig = orig;
+  btn.classList.remove("cc-copied", "cc-fail");
+  btn.classList.add(ok ? "cc-copied" : "cc-fail");
+  btn.textContent = ok ? okText : failText;
+  window.setTimeout(() => {
+    btn.textContent = btn.dataset.ccOrig || orig;
+    btn.classList.remove("cc-copied", "cc-fail");
+  }, 850);
+}
+
 
 function countsFor(records) {
   const out = { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
@@ -831,21 +850,24 @@ export default {
     Q("#cc-refresh", root)?.addEventListener("click", () => load());
     Q("#cc-close", root)?.addEventListener("click", () => window.cxCloseModal?.());
 
-    Q("#cc-copy-key", root)?.addEventListener("click", async () => {
+    Q("#cc-copy-key", root)?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
       const ok = await copyText(state.selectedKey);
-      if (!ok) return;
+      flashCopy(btn, ok, "Copied", "Copy blocked");
     });
 
-    Q("#cc-copy-a", root)?.addEventListener("click", async () => {
+    Q("#cc-copy-a", root)?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
       const row = rowByKey(state.selectedKey);
-      if (!row?.recA) return;
-      await copyText(pretty(row.recA));
+      const ok = row?.recA ? await copyText(pretty(row.recA)) : false;
+      flashCopy(btn, ok, "Copied A", "Copy blocked");
     });
 
-    Q("#cc-copy-b", root)?.addEventListener("click", async () => {
+    Q("#cc-copy-b", root)?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
       const row = rowByKey(state.selectedKey);
-      if (!row?.recB) return;
-      await copyText(pretty(row.recB));
+      const ok = row?.recB ? await copyText(pretty(row.recB)) : false;
+      flashCopy(btn, ok, "Copied B", "Copy blocked");
     });
 
     const onChipCopy = async (e) => {
