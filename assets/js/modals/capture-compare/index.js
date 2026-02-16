@@ -126,7 +126,7 @@ function css() {
   .cc-modal .chip .k{opacity:.75;text-transform:uppercase;letter-spacing:.03em;font-weight:850}
   .cc-modal details{border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);padding:10px 11px;margin:10px 0 0}
   .cc-modal details>summary{cursor:pointer;font-weight:900;opacity:.95}
-  .cc-modal pre{margin:10px 0 0;white-space:pre-wrap;word-break:break-word;background:#04050a;border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 12px;max-height:420px;overflow:auto}
+  .cc-modal pre{margin:10px 0 0;white-space:pre-wrap;word-break:break-word;background:#04050a;border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 12px;max-height:none;overflow:visible}
 
   .cc-modal .empty{padding:18px 12px;opacity:.75}
 
@@ -316,7 +316,7 @@ function renderRecordCard(label, rec, missingText = "Missing") {
           .join("")}
       </div>
       ${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}
-      <details>
+      <details data-cc-raw="1">
         <summary>Raw JSON</summary>
         <pre class="mono">${esc(pretty(rec))}</pre>
       </details>
@@ -908,6 +908,38 @@ export default {
       try { recAEl?.removeEventListener("scroll", onScrollA); } catch {}
       try { recBEl?.removeEventListener("scroll", onScrollB); } catch {}
     });
+
+    // Sync Raw JSON toggle (open/close both sides)
+    const onRawJsonToggle = (e) => {
+      const sum = e.target.closest?.('details[data-cc-raw="1"] > summary');
+      if (!sum) return;
+      const details = sum.parentElement;
+      const inA = !!sum.closest("#cc-rec-a");
+      const inB = !!sum.closest("#cc-rec-b");
+      if (!inA && !inB) return;
+
+      e.preventDefault();
+
+      const open = !details.open;
+      details.open = open;
+
+      const otherHost = inA ? recBEl : recAEl;
+      const other = otherHost?.querySelector?.('details[data-cc-raw="1"]');
+      if (other) other.open = open;
+
+      // Keep scroll position unified
+      if (recAEl && recBEl) {
+        ccSyncing = true;
+        if (inA) recBEl.scrollTop = recAEl.scrollTop;
+        else recAEl.scrollTop = recBEl.scrollTop;
+        ccSyncing = false;
+      }
+    };
+    root.addEventListener("click", onRawJsonToggle);
+    cleanup.push(() => {
+      try { root.removeEventListener("click", onRawJsonToggle); } catch {}
+    });
+
 
 
     const applyDefaultLayout = () => {
