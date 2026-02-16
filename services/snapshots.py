@@ -187,6 +187,138 @@ def _index_dict(idx_raw: Any) -> dict[str, dict[str, Any]]:
         idx[str(k)] = dict(v)
     return idx
 
+def _as_int(v: Any) -> int | None:
+    try:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        return int(v)
+    except Exception:
+        return None
+
+
+def _item_kind(it: Mapping[str, Any]) -> str:
+    t = str(it.get("type") or it.get("media_type") or it.get("entity") or "").strip().lower()
+    if t in ("episode",):
+        return "episode"
+    if t in ("season",):
+        return "season"
+    if t in ("tv", "show", "shows", "series", "anime"):
+        return "show"
+    if t in ("movie", "movies", "film", "films"):
+        return "movie"
+    if it.get("episode") is not None:
+        return "episode"
+    if it.get("season") is not None:
+        return "season"
+    return "unknown"
+
+
+def _pick_id(
+    ids: Mapping[str, Any] | None,
+    show_ids: Mapping[str, Any] | None,
+    order: Sequence[str],
+) -> tuple[str, str, str] | None:
+    ids = ids if isinstance(ids, Mapping) else {}
+    show_ids = show_ids if isinstance(show_ids, Mapping) else {}
+
+    for k in order:
+        v = ids.get(k)
+        if v not in (None, "", 0, False):
+            return (str(k), str(v), "ids")
+    for k in order:
+        v = show_ids.get(k)
+        if v not in (None, "", 0, False):
+            return (str(k), str(v), "show_ids")
+    return None
+
+
+def _epoch_from_item_or_key(item: Mapping[str, Any], orig_key: str) -> int | None:
+    dt = item.get("watched_at") or item.get("watchedAt") or item.get("watched")
+    parsed = _parse_iso_dt(dt)
+    if parsed:
+        try:
+            return int(parsed.timestamp())
+        except Exception:
+            pass
+    ts = _ts_from_history_key(orig_key)
+    return ts or None
+
+
+def _canonical_item_key(provider: str, feature: Feature, orig_key: str, item: Mapping[str, Any]) -> str:
+    pid = str(provider or "").strip().upper()
+    kind = _item_kind(item)
+
+    raw_ids = item.get("ids")
+    ids = raw_ids if isinstance(raw_ids, Mapping) else {}
+    raw_show_ids = item.get("show_ids")
+    show_ids = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
+
+    native: dict[str, list[str]] = {
+        "TRAKT": ["trakt"],
+        "SIMKL": ["simkl", "simkl_id"],
+        "ANILIST": ["anilist"],
+    }
+
+    if pid in native:
+        picked = _pick_id(ids, show_ids, native[pid])
+    else:
+        picked = _pick_id(ids, show_ids, ["tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist"])
+
+    if not picked:
+        return str(orig_key or "").strip()
+
+    id_key, id_val, src = picked
+    base = f"{id_key}:{id_val}"
+
+    season = _as_int(item.get("season"))
+    episode = _as_int(item.get("episode"))
+
+    if kind == "season" and season is not None:
+        if src == "show_ids" or id_key in ("tmdb", "imdb", "tvdb"):
+            base = f"{base}#season:{season}"
+
+    if kind == "episode" and season is not None and episode is not None:
+        if src == "show_ids" or id_key in ("tmdb", "imdb", "tvdb"):
+            base = f"{base}#s{season:02d}e{episode:02d}"
+
+    if feature == "history":
+        ts = _epoch_from_item_or_key(item, str(orig_key or ""))
+        if ts:
+            base = f"{base}@{ts}"
+
+    return base
+
+
+def _item_score(it: Mapping[str, Any]) -> int:
+    score = 0
+    raw_ids = it.get("ids")
+    ids = raw_ids if isinstance(raw_ids, Mapping) else {}
+    raw_show_ids = it.get("show_ids")
+    show_ids = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
+    score += len([1 for v in ids.values() if v not in (None, "", 0, False)])
+    score += len([1 for v in show_ids.values() if v not in (None, "", 0, False)])
+    score += len(it.keys())
+    return score
+
+
+def _canonicalize_index(provider: str, feature: Feature, items: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in items.items():
+        if not k or not isinstance(v, Mapping):
+            continue
+        ck = _canonical_item_key(provider, feature, str(k), v)
+        vv = dict(v)
+        if ck in out:
+            if _item_score(vv) > _item_score(out[ck]):
+                out[ck] = vv
+            continue
+        out[ck] = vv
+    return out
+
+
+
 
 def _create_single_snapshot(
     *,
@@ -201,6 +333,7 @@ def _create_single_snapshot(
     cfg_view = build_provider_config_view(cfg, pid, instance)
     idx_raw = ops.build_index(cfg_view, feature=feat) or {}
     idx = _index_dict(idx_raw)
+    idx = _canonicalize_index(pid, feat, idx)
     stats = _stats_for(feat, idx)
 
     inst = normalize_instance_id(instance)
@@ -422,6 +555,9 @@ def _restore_single_snapshot(
         if not k or not isinstance(v, Mapping):
             continue
         cur[str(k)] = dict(v)
+
+    snap_items = _canonicalize_index(pid, feat, snap_items)
+    cur = _canonicalize_index(pid, feat, cur)
 
     snap_keys = set(str(k) for k in snap_items.keys())
     cur_keys = set(cur.keys())
@@ -645,6 +781,20 @@ def _path_join(base: str, key: str) -> str:
 def _diff_any(a: Any, b: Any, *, path: str, out: list[dict[str, Any]], max_depth: int, max_changes: int, depth: int = 0) -> None:
     if len(out) >= max_changes:
         return
+
+    # Ignore second-level for watched timestamps - no second-level precision
+    leaf = (str(path or "").rsplit(".", 1)[-1]).lower()
+    if leaf in ("watched_at", "watchedat"):
+        ma = _dt_minute_bucket(a)
+        mb = _dt_minute_bucket(b)
+        if ma is not None and mb is not None and ma == mb:
+            return
+    if leaf in ("watched_ats", "watchedats") and isinstance(a, Sequence) and isinstance(b, Sequence) and not isinstance(a, (str, bytes)) and not isinstance(b, (str, bytes)):
+        a_set = set(_iso_minute(x) or str(x) for x in a)
+        b_set = set(_iso_minute(x) or str(x) for x in b)
+        if a_set == b_set:
+            return
+
     if a == b:
         return
     if depth >= max_depth:
@@ -685,6 +835,50 @@ def _parse_iso_dt(v: Any) -> datetime | None:
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
+
+
+def _dt_minute_bucket(v: Any) -> int | None:
+    """Returns an epoch-minute bucket for ISO timestamps.
+
+    Used for compare-only logic where second-level differences are noise.
+    """
+
+    dt = _parse_iso_dt(v)
+    if not dt:
+        return None
+    try:
+        u = dt.astimezone(timezone.utc)
+        return int(u.timestamp() // 60)
+    except Exception:
+        return None
+
+
+def _iso_minute(v: Any) -> str | None:
+    dt = _parse_iso_dt(v)
+    if not dt:
+        return None
+    try:
+        u = dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        return u.strftime("%Y-%m-%dT%H:%MZ")
+    except Exception:
+        return None
+
+
+def _minute_set(xs: Sequence[Any]) -> set[str]:
+    return set(_iso_minute(x) or str(x) for x in xs)
+
+
+def _cmp_record_minute(rec: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy a record for stable comparisons.
+
+    Keeps raw output intact but compares watched timestamps at minute precision.
+    """
+
+    out = dict(rec)
+    for k in ("watched_at", "watchedAt", "watched"):
+        if k in out:
+            out[k] = _dt_minute_bucket(out.get(k))
+    return out
 
 
 def _history_base_key(key: str) -> str:
@@ -728,7 +922,7 @@ def _history_items_by_base_key(items: Mapping[str, Any]) -> dict[str, Any]:
             grouped[bk] = vv
             src[bk] = raw_key
             dates[bk] = set()
-        # Capture watched_at (ISO)
+            
         dt = None
         if isinstance(v, Mapping):
             dt = v.get("watched_at") or v.get("watchedAt") or v.get("watched")
@@ -797,6 +991,9 @@ def diff_snapshots(
     if not same_scope:
         raise ValueError("Compare Captures only supports the same provider and feature.")
 
+    items_a_raw = _canonicalize_index(prov_a, _norm_feature(feat_a), items_a_raw)
+    items_b_raw = _canonicalize_index(prov_a, _norm_feature(feat_a), items_b_raw)
+
     history_multi = False
     if feat_a == "history":
         items_a = _history_items_by_base_key(items_a_raw)
@@ -824,14 +1021,16 @@ def diff_snapshots(
             b_tmp = ob.get("watched_ats")
             a_dates = a_tmp if isinstance(a_tmp, list) else []
             b_dates = b_tmp if isinstance(b_tmp, list) else []
-            if set(str(x) for x in a_dates) != set(str(x) for x in b_dates):
+            a_set = set(_iso_minute(x) or str(x) for x in a_dates)
+            b_set = set(_iso_minute(x) or str(x) for x in b_dates)
+            if a_set != b_set:
                 updated_keys.append(k)
                 continue
             oa2 = dict(oa)
             ob2 = dict(ob)
             oa2.pop("watched_ats", None)
             ob2.pop("watched_ats", None)
-            if oa2 != ob2:
+            if _cmp_record_minute(oa2) != _cmp_record_minute(ob2):
                 updated_keys.append(k)
             continue
         if va != vb:
@@ -870,8 +1069,8 @@ def diff_snapshots(
             b_tmp = ob.get("watched_ats")
             a_dates = a_tmp if isinstance(a_tmp, list) else []
             b_dates = b_tmp if isinstance(b_tmp, list) else []
-            a_set = set(str(x) for x in a_dates)
-            b_set = set(str(x) for x in b_dates)
+            a_set = _minute_set([str(x) for x in a_dates])
+            b_set = _minute_set([str(x) for x in b_dates])
             added_dates = sorted(b_set - a_set)
             removed_dates = sorted(a_set - b_set)
 
@@ -884,7 +1083,7 @@ def diff_snapshots(
             ob2 = dict(ob)
             oa2.pop("watched_ats", None)
             ob2.pop("watched_ats", None)
-            if oa2 != ob2:
+            if _cmp_record_minute(oa2) != _cmp_record_minute(ob2):
                 _diff_any(oa2, ob2, path="", out=changes, max_depth=max_depth, max_changes=max_changes)
         else:
             _diff_any(va, vb, path="", out=changes, max_depth=max_depth, max_changes=max_changes)
@@ -919,5 +1118,235 @@ def diff_snapshots(
             "updated": len(updated_keys) > lim,
         },
         "limit": lim,
+    }
+
+
+def diff_snapshots_extended(
+    a_path: str,
+    b_path: str,
+    *,
+    kind: str = "all",
+    q: str = "",
+    offset: int = 0,
+    limit: int = 5000,
+    max_depth: int = 6,
+    max_changes: int = 250,
+) -> dict[str, Any]:
+    """Extended diff for power-users.
+
+    Returns *all* records (including unchanged) with optional filtering/paging.
+    """
+
+    a = read_snapshot(a_path)
+    b = read_snapshot(b_path)
+
+    kind_a = str(a.get("kind") or "").strip().lower()
+    kind_b = str(b.get("kind") or "").strip().lower()
+    feat_a = str(a.get("feature") or "").strip().lower()
+    feat_b = str(b.get("feature") or "").strip().lower()
+
+    if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
+        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history capture.")
+    if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
+        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history capture.")
+
+    items_a_raw = a.get("items") or {}
+    items_b_raw = b.get("items") or {}
+    if not isinstance(items_a_raw, Mapping) or not isinstance(items_b_raw, Mapping):
+        raise ValueError("Invalid capture contents")
+
+    prov_a = str(a.get("provider") or "").strip().upper()
+    prov_b = str(b.get("provider") or "").strip().upper()
+    inst_a = str(a.get("instance") or a.get("instance_id") or a.get("profile") or "default").strip().lower()
+    inst_b = str(b.get("instance") or b.get("instance_id") or b.get("profile") or "default").strip().lower()
+    same_scope = prov_a == prov_b and inst_a == inst_b and feat_a == feat_b
+    if not same_scope:
+        raise ValueError("Compare Captures only supports the same provider and feature.")
+
+    feat = _norm_feature(feat_a)
+    items_a_raw = _canonicalize_index(prov_a, feat, items_a_raw)
+    items_b_raw = _canonicalize_index(prov_a, feat, items_b_raw)
+
+    history_multi = False
+    if feat_a == "history":
+        items_a = _history_items_by_base_key(items_a_raw)
+        items_b = _history_items_by_base_key(items_b_raw)
+        history_multi = True
+    else:
+        items_a = dict(items_a_raw)
+        items_b = dict(items_b_raw)
+
+    keys_a = set(str(k) for k in items_a.keys())
+    keys_b = set(str(k) for k in items_b.keys())
+    common = sorted(keys_a & keys_b)
+
+    added_keys = sorted(keys_b - keys_a)
+    removed_keys = sorted(keys_a - keys_b)
+
+    updated_keys: list[str] = []
+    unchanged_keys: list[str] = []
+    for k in common:
+        va = items_a.get(k)
+        vb = items_b.get(k)
+        if history_multi:
+            oa = va if isinstance(va, Mapping) else {}
+            ob = vb if isinstance(vb, Mapping) else {}
+            a_tmp = oa.get("watched_ats")
+            b_tmp = ob.get("watched_ats")
+            a_dates = a_tmp if isinstance(a_tmp, list) else []
+            b_dates = b_tmp if isinstance(b_tmp, list) else []
+            a_set = _minute_set([str(x) for x in a_dates])
+            b_set = _minute_set([str(x) for x in b_dates])
+            if a_set != b_set:
+                updated_keys.append(k)
+                continue
+            oa2 = dict(oa)
+            ob2 = dict(ob)
+            oa2.pop("watched_ats", None)
+            ob2.pop("watched_ats", None)
+            if _cmp_record_minute(oa2) != _cmp_record_minute(ob2):
+                updated_keys.append(k)
+            else:
+                unchanged_keys.append(k)
+            continue
+        if va != vb:
+            updated_keys.append(k)
+        else:
+            unchanged_keys.append(k)
+
+    def meta(s: Mapping[str, Any]) -> dict[str, Any]:
+        stats_raw = s.get("stats")
+        stats: Mapping[str, Any] = stats_raw if isinstance(stats_raw, Mapping) else {}
+        return {
+            "path": str(s.get("path") or ""),
+            "provider": str(s.get("provider") or ""),
+            "instance": str(s.get("instance") or s.get("instance_id") or s.get("profile") or "default"),
+            "feature": str(s.get("feature") or ""),
+            "label": str(s.get("label") or ""),
+            "created_at": str(s.get("created_at") or ""),
+            "count": int(stats.get("count") or 0),
+        }
+
+    # Filter helpers
+    want = str(kind or "all").strip().lower()
+    if want not in ("all", "added", "removed", "updated", "unchanged"):
+        want = "all"
+    needle = str(q or "").strip().lower()
+
+    def _hay(k: str, it: Any) -> str:
+        brief = _brief_item(it)
+        parts = [k]
+        if isinstance(brief, Mapping):
+            for kk in ("title", "series_title", "show_title", "type", "year", "season", "episode", "status"):
+                vv = brief.get(kk)
+                if vv not in (None, "", 0, False):
+                    parts.append(str(vv))
+            ids = brief.get("ids")
+            if isinstance(ids, Mapping):
+                parts.extend([f"{ik}:{iv}" for ik, iv in ids.items() if iv not in (None, "", 0, False)])
+        return " ".join(parts).lower()
+
+    def _sort_tuple(k: str, it: Any) -> tuple[Any, ...]:
+        b = _brief_item(it)
+        title = ""
+        year = 0
+        season = -1
+        episode = -1
+        typ = ""
+        if isinstance(b, Mapping):
+            typ = str(b.get("type") or "")
+            title = str(b.get("series_title") or b.get("show_title") or b.get("title") or "")
+            year = int(b.get("year") or 0) if str(b.get("year") or "").isdigit() else 0
+            season = int(b.get("season") or -1) if str(b.get("season") or "").lstrip("-").isdigit() else -1
+            episode = int(b.get("episode") or -1) if str(b.get("episode") or "").lstrip("-").isdigit() else -1
+        return (title.lower(), year, season, episode, typ, k)
+
+    def _mk_row(status: str, k: str) -> dict[str, Any]:
+        va = items_a.get(k)
+        vb = items_b.get(k)
+        row: dict[str, Any] = {"key": k, "status": status, "brief": _brief_item(vb if vb is not None else va)}
+        if status == "added":
+            row["new"] = vb
+        elif status == "removed":
+            row["old"] = va
+        elif status == "unchanged":
+            row["item"] = vb
+        else:  # updated
+            row["old"] = va
+            row["new"] = vb
+            changes: list[dict[str, Any]] = []
+            if history_multi:
+                oa = va if isinstance(va, Mapping) else {}
+                ob = vb if isinstance(vb, Mapping) else {}
+                a_tmp = oa.get("watched_ats")
+                b_tmp = ob.get("watched_ats")
+                a_dates = a_tmp if isinstance(a_tmp, list) else []
+                b_dates = b_tmp if isinstance(b_tmp, list) else []
+                a_set = _minute_set([str(x) for x in a_dates])
+                b_set = _minute_set([str(x) for x in b_dates])
+                add_dates = sorted(b_set - a_set)
+                del_dates = sorted(a_set - b_set)
+                if add_dates:
+                    changes.append({"path": "watched_ats.added", "old": [], "new": add_dates})
+                if del_dates:
+                    changes.append({"path": "watched_ats.removed", "old": del_dates, "new": []})
+                oa2 = dict(oa)
+                ob2 = dict(ob)
+                oa2.pop("watched_ats", None)
+                ob2.pop("watched_ats", None)
+                if _cmp_record_minute(oa2) != _cmp_record_minute(ob2):
+                    _diff_any(oa2, ob2, path="", out=changes, max_depth=max_depth, max_changes=max_changes)
+            else:
+                _diff_any(va, vb, path="", out=changes, max_depth=max_depth, max_changes=max_changes)
+            row["changes"] = changes
+        return row
+
+    # Build full list
+    groups: list[tuple[str, list[str]]] = [
+        ("added", added_keys),
+        ("removed", removed_keys),
+        ("updated", updated_keys),
+        ("unchanged", unchanged_keys),
+    ]
+
+    rows_all: list[dict[str, Any]] = []
+    for st, keys in groups:
+        if want != "all" and st != want:
+            continue
+
+        keys_sorted = sorted(keys, key=lambda kk: _sort_tuple(kk, items_b.get(kk) if st != "removed" else items_a.get(kk)))
+        for kk in keys_sorted:
+            it = items_b.get(kk) if st != "removed" else items_a.get(kk)
+            if needle:
+                if needle not in _hay(kk, it):
+                    continue
+            rows_all.append(_mk_row(st, kk))
+
+    off = max(0, int(offset or 0))
+    lim = max(1, min(int(limit or 5000), 20000))
+    page_rows = rows_all[off : off + lim]
+
+    stats_a_raw = a.get("stats")
+    stats_b_raw = b.get("stats")
+    stats_a: Mapping[str, Any] = stats_a_raw if isinstance(stats_a_raw, Mapping) else {}
+    stats_b: Mapping[str, Any] = stats_b_raw if isinstance(stats_b_raw, Mapping) else {}
+
+    return {
+        "ok": True,
+        "a": meta(a),
+        "b": meta(b),
+        "summary": {
+            "total_a": len(keys_a),
+            "total_b": len(keys_b),
+            "raw_total_a": int(stats_a.get("count") or len(items_a_raw)),
+            "raw_total_b": int(stats_b.get("count") or len(items_b_raw)),
+            "added": len(added_keys),
+            "removed": len(removed_keys),
+            "updated": len(updated_keys),
+            "unchanged": len(unchanged_keys),
+        },
+        "query": {"kind": want, "q": needle, "offset": off, "limit": lim},
+        "total": len(rows_all),
+        "items": page_rows,
     }
 

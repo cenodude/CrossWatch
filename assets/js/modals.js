@@ -27,6 +27,7 @@ ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight
 ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.js')));
 ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
 ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-warning/index.js')));
+ModalRegistry.register('capture-compare', () => import(_cwVer('./modals/capture-compare/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -59,3 +60,4 @@ window.cxOpenModalFor = async (pairOrId = null) => {
 };
 
 window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-settings', props);
+window.openCaptureCompare = (props = {}) => ModalRegistry.open('capture-compare', props);

@@ -652,8 +652,10 @@ function bundleKey(s) {
     <input id="ss-diff-q" class="input grow" placeholder="Filter results..."/>
   </div>
   <div class="ss-row" style="margin-top:10px">
-    <button id="ss-diff-run" class="btn" style="width:100%">Compare</button>
+    <button id="ss-diff-run" class="btn grow">Compare</button>
+    <button id="ss-diff-extend" class="btn grow">Advanced</button>
   </div>
+  <div class="ss-small ss-muted" style="margin-top:8px">Advanced opens a full diff modal (includes unchanged records).</div>
   <div id="ss-diff-progress" class="ss-progress hidden">
     <div class="ss-pbar"></div>
     <div class="ss-plabel">Working…</div>
@@ -816,6 +818,7 @@ function updateDiffAvailability() {
 
   const { a, b, sa, sb } = _diffPickAB();
   const run = $("#ss-diff-run", page);
+  const ext = $("#ss-diff-extend", page);
 
   const same = !!sa && !!sb
     && String(sa.provider || "").toLowerCase() === String(sb.provider || "").toLowerCase()
@@ -827,6 +830,29 @@ function updateDiffAvailability() {
     run.disabled = state.busy || !ok;
     run.title = ok ? "" : "Pick two captures (same provider and feature)";
   }
+
+  if (ext) {
+    ext.disabled = state.busy || !ok;
+    ext.title = ok ? "Open advanced diff" : "Pick two captures (same provider and feature)";
+  }
+}
+
+async function onDiffExtend() {
+  const page = document.getElementById("page-snapshots");
+  if (!page) return;
+
+  const { a, b, sa, sb } = _diffPickAB();
+
+  const same = !!sa && !!sb
+    && String(sa.provider || "").toLowerCase() === String(sb.provider || "").toLowerCase()
+    && String(sa.feature || "").toLowerCase() === String(sb.feature || "").toLowerCase();
+
+  if (!a || !b || a === b || !same) return toast("Pick two captures (same provider and feature)", false);
+  if (!window.openCaptureCompare) return toast("Capture Compare modal not available", false);
+
+  state.diffAPath = a;
+  state.diffBPath = b;
+  window.openCaptureCompare({ aPath: a, bPath: b });
 }
 
 function renderDiffPicked() {
@@ -1044,7 +1070,7 @@ async function onDiffRun() {
     && String(sa.provider || "").toLowerCase() === String(sb.provider || "").toLowerCase()
     && String(sa.feature || "").toLowerCase() === String(sb.feature || "").toLowerCase();
 
-  if (!a || !b || a === b || !same) return toast("Pick two captures (same provider + feature)", false);
+  if (!a || !b || a === b || !same) return toast("Pick two captures (same provider and feature)", false);
 
   state.diffAPath = a;
   state.diffBPath = b;
@@ -1135,6 +1161,7 @@ async function onDiffRun() {
 
 // Diff UI
 const diffRun = $("#ss-diff-run", page);
+const diffExt = $("#ss-diff-extend", page);
 const diffKind = $("#ss-diff-kind", page);
 const diffLim = $("#ss-diff-limit", page);
 const diffQ = $("#ss-diff-q", page);
@@ -1144,6 +1171,7 @@ if (diffLim) diffLim.addEventListener("change", () => { state.diffLimit = parseI
 if (diffQ) diffQ.addEventListener("input", () => { state.diffQ = String(diffQ.value || ""); renderDiff(); });
 
 if (diffRun) diffRun.addEventListener("click", (e) => { e.preventDefault(); onDiffRun(); });
+if (diffExt) diffExt.addEventListener("click", (e) => { e.preventDefault(); onDiffExtend(); });
 
 repopDiffSelects();
 }
