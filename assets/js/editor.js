@@ -1815,9 +1815,9 @@
       if (current) {
         const d = new Date(current);
         if (!Number.isNaN(d.getTime())) {
-          const iso = d.toISOString();
-          dateInput.value = iso.slice(0, 10);
-          timeInput.value = iso.slice(11, 16);
+          const pad = n => String(n).padStart(2, "0");
+          dateInput.value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+          timeInput.value = pad(d.getHours()) + ":" + pad(d.getMinutes());
         }
       }
 
@@ -1862,7 +1862,7 @@
             mm = parseInt(tparts[1], 10) || 0;
           }
 
-          const dt = new Date(Date.UTC(y, m - 1, dDay, hh, mm, 0));
+          const dt = new Date(y, m - 1, dDay, hh, mm, 0);
           let iso = dt.toISOString();
           iso = iso.replace(/\.\d{3}Z$/, ".000Z");
           row.raw.watched_at = iso;
