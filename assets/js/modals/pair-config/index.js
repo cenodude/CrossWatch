@@ -16,6 +16,7 @@ const HELP_TEXT = {
   "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
   "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
   "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\n It's either mass-delete or drop-guard or none; not both.",
+  "gl-oneway-remove": "Deletions based on Source\nWhen enabled there should always be a match between source and destination before deletion.\nWhen disabled it acts in mirror mode, meaning it will always follow source (destructive; use with care)",
   "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
   "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
@@ -174,7 +175,7 @@ function defaultState(){
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     emby:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
     globals:{
-      dry_run:false,verify_after_write:false,drop_guard:false,allow_mass_delete:true,
+      dry_run:false,verify_after_write:false,drop_guard:false,allow_mass_delete:true,one_way_remove_mode:"source_deletes",
       tombstone_ttl_days:30,include_observed_deletes:true,
       blackbox:{enabled:true,promote_after:1,unresolved_days:0,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true}
     },
@@ -271,6 +272,7 @@ async function loadConfigBits(state){
     verify_after_write:!!s.verify_after_write,
     drop_guard:dropOn,
     allow_mass_delete:massOn,
+    one_way_remove_mode:(String(s.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror"?"mirror":"source_deletes"),
     tombstone_ttl_days:Number.isFinite(s.tombstone_ttl_days)?s.tombstone_ttl_days:30,
     include_observed_deletes:!!s.include_observed_deletes,
     blackbox:Object.assign(
@@ -827,7 +829,7 @@ function renderFeaturePanel(state){
 
     left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals</div>
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div
+      <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
       <div id="gl-drop-adv" class="prov-box" style="margin:8px 0 4px; ${g.drop_guard?"":"opacity:.5;pointer-events:none;"}">
         <div class="panel-title small">Suspect guard (shrinking inventories)</div>
@@ -848,7 +850,8 @@ function renderFeaturePanel(state){
           </div>
         </div>
       </div>
-      <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>`;
+      <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
+      <div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${((String(g.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror")?"":"checked")}><span class="slider"></span></label></div>`;
     right.innerHTML=`<div class="panel-title">Advanced</div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div><div class="muted"></div>
@@ -1554,10 +1557,9 @@ async function saveConfigBits(state){
       const s={
         dry_run:!!ID("gl-dry")?.checked,
         verify_after_write:!!ID("gl-verify")?.checked,
-        drop_guard:!!ID("gl-drop")?.checked,
-        allow_mass_delete:!!ID("gl-mass")?.checked,
         drop_guard:dropOn,
         allow_mass_delete:massOn,
+        one_way_remove_mode:!!ID("gl-oneway-remove")?.checked ? "source_deletes" : "mirror",
         tombstone_ttl_days:Math.max(0,parseInt(ID("gl-ttl")?.value||"0",10)||0),
         include_observed_deletes:!!ID("gl-observed")?.checked
       };
