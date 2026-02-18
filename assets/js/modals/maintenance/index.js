@@ -471,6 +471,22 @@ export default {
               <button type="button" class="run-btn" data-label="Reset statistics">Run</button>
             </div>
 
+            <div class="action-row" data-op="playing">
+              <div class="action-main">
+                <div class="action-icon">
+                  <span class="material-symbols-rounded" aria-hidden="true">play_disabled</span>
+                </div>
+                <div class="action-copy">
+                  <div class="action-line">
+                    <div class="action-title">Reset currently playing</div>
+                  </div>
+                  <div class="action-desc">
+                    Clears <code>currently_watching.json</code> so stuck “currently playing” entries disappear.
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="run-btn" data-label="Reset currently playing">Run</button>
+            </div>
 
             <div class="action-row" data-op="defaults">
               <div class="action-main">
@@ -489,23 +505,6 @@ export default {
                 </div>
               </div>
               <button type="button" class="run-btn" data-label="Reset all to default">Run</button>
-            </div>
-
-            <div class="action-row" data-op="playing">
-              <div class="action-main">
-                <div class="action-icon">
-                  <span class="material-symbols-rounded" aria-hidden="true">play_disabled</span>
-                </div>
-                <div class="action-copy">
-                  <div class="action-line">
-                    <div class="action-title">Reset currently playing</div>
-                  </div>
-                  <div class="action-desc">
-                    Clears <code>currently_watching.json</code> so stuck “currently playing” entries disappear.
-                  </div>
-                </div>
-              </div>
-              <button type="button" class="run-btn" data-label="Reset currently playing">Run</button>
             </div>
           </div>
 
