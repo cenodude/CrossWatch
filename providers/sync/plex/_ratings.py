@@ -173,6 +173,13 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if not isinstance(it, Mapping):
         return None
     ids = ids_from(cast(Mapping[str, Any], it))
+    show_ids: dict[str, Any] = {}
+    try:
+        raw_show_ids = it.get("show_ids") or {}
+        if isinstance(raw_show_ids, Mapping):
+            show_ids = ids_from({"ids": dict(raw_show_ids)})
+    except Exception:
+        show_ids = {}
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return None
@@ -215,7 +222,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     series_title = (it.get("series_title") or "").strip()
     query_title = series_title if (is_episode or is_season) and series_title else title
     strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
-    if not query_title and not ids:
+    if not query_title and not ids and not show_ids:
         return None
 
     year = it.get("year")
@@ -227,9 +234,20 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
 
     hits: list[Any] = []
 
-    if ids:
+    if ids or (show_ids and (is_episode or is_season)):
         try:
-            guids = sort_guid_candidates(candidate_guids_from_ids({"ids": ids}))
+            guid_candidates: list[str] = []
+            if ids:
+                guid_candidates += candidate_guids_from_ids({"ids": ids, "guid": it.get("guid")})
+            if show_ids and (is_episode or is_season):
+                guid_candidates += candidate_guids_from_ids({"ids": show_ids})
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for g in guid_candidates:
+                if g and g not in seen:
+                    seen.add(g)
+                    deduped.append(g)
+            guids = sort_guid_candidates(deduped)
             rk_any = server_find_rating_key_by_guid(srv, guids)
         except Exception:
             rk_any = None

@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
 
 from .._log import log as cw_log
 
@@ -232,7 +233,7 @@ def plex_headers(
     *,
     product: str = "CrossWatch",
     platform: str = "CrossWatch",
-    version: str = "4.1.0",
+    version: str = "5.0.0",
     client_id: str | None = None,
     accept: str = "application/json, application/xml;q=0.9, */*;q=0.5",
     user_agent: str | None = None,
@@ -263,17 +264,39 @@ def _safe_int(v: Any) -> int | None:
 def _as_base_url(srv: Any) -> str | None:
     if not srv:
         return None
-    v = getattr(srv, "baseurl", None)
-    if isinstance(v, str) and v.startswith(("http://", "https://")):
-        return v.rstrip("/")
+
+    def _root(u: str) -> str | None:
+        try:
+            p = urlsplit(u)
+        except Exception:
+            return None
+        if not p.scheme or not p.netloc:
+            return None
+        return f"{p.scheme}://{p.netloc}"
+
+    for attr in ("baseurl", "_baseurl", "serverUrl", "_serverUrl"):
+        v = getattr(srv, attr, None)
+        if isinstance(v, str):
+            out = _root(v)
+            if out:
+                return out
+
     u = getattr(srv, "url", None)
     if callable(u):
-        try:
-            u = u()
-        except Exception:
-            u = None
-    if isinstance(u, str) and u.startswith(("http://", "https://")):
-        return u.rstrip("/")
+        for key in ("/", ""):
+            try:
+                v = u(key, includeToken=False)
+            except TypeError:
+                try:
+                    v = u(key)
+                except Exception:
+                    v = None
+            except Exception:
+                v = None
+            if isinstance(v, str):
+                out = _root(v)
+                if out:
+                    return out
     return None
 
 
@@ -477,6 +500,9 @@ def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
             "type": a.get("type"),
             "title": a.get("title"),
             "year": _safe_int(a.get("year")),
+            "viewCount": _safe_int(a.get("viewCount")),
+            "viewedAt": _safe_int(a.get("viewedAt")),
+            "lastViewedAt": _safe_int(a.get("lastViewedAt")),
             "guid": a.get("guid"),
             "ratingKey": a.get("ratingKey"),
             "parentGuid": a.get("parentGuid"),
@@ -755,14 +781,15 @@ def sort_guid_candidates(guids: list[str], *, priority: list[str] | None = None)
         pri = [str(p).strip().lower() for p in priority if str(p).strip()]
         if not pri:
             pri = []
+
         def score(g: str) -> tuple[int, int]:
             s = g.lower()
             for i, p in enumerate(pri):
-                if p == "tmdb" and s.startswith("tmdb://"):
+                if p == "tmdb" and (s.startswith("tmdb://") or s.startswith("themoviedb://") or s.startswith("com.plexapp.agents.themoviedb://")):
                     return (i, len(s))
-                if p == "imdb" and s.startswith("imdb://"):
+                if p == "imdb" and (s.startswith("imdb://") or s.startswith("com.plexapp.agents.imdb://")):
                     return (i, len(s))
-                if p == "tvdb" and s.startswith("tvdb://"):
+                if p == "tvdb" and (s.startswith("tvdb://") or s.startswith("com.plexapp.agents.thetvdb://")):
                     return (i, len(s))
                 if p == "agent:themoviedb:en" and s.startswith("com.plexapp.agents.themoviedb://") and "?lang=en" in s:
                     return (i, len(s))
@@ -770,7 +797,10 @@ def sort_guid_candidates(guids: list[str], *, priority: list[str] | None = None)
                     return (i, len(s))
                 if p == "agent:imdb" and s.startswith("com.plexapp.agents.imdb://"):
                     return (i, len(s))
+                if p == "agent:tvdb" and s.startswith("com.plexapp.agents.thetvdb://"):
+                    return (i, len(s))
             return (99, len(s))
+
         return sorted(list(guids), key=score)
 
     pri: list[str] = []
@@ -782,13 +812,18 @@ def sort_guid_candidates(guids: list[str], *, priority: list[str] | None = None)
             rest.remove(g)
         return out
 
+    # Prefer TMDB first (including common Plex agent GUID variants), then IMDb, then TVDB.
     pri += pick("tmdb://")
-    pri += pick("imdb://")
-    pri += pick("tvdb://")
+    pri += pick("themoviedb://")
     pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.themoviedb://") and "?lang=en" in g)
     pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.themoviedb://") and "?lang=en-US" in g)
     pri += pick("com.plexapp.agents.themoviedb://")
+    pri += pick("imdb://")
     pri += pick("com.plexapp.agents.imdb://")
+    pri += pick("tvdb://")
+    pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.thetvdb://") and "?lang=en" in g)
+    pri += pick("", contains=lambda g: g.startswith("com.plexapp.agents.thetvdb://") and "?lang=en-US" in g)
+    pri += pick("com.plexapp.agents.thetvdb://")
     return pri + rest
 
 def candidate_guids_from_ids(it: Mapping[str, Any], *, include_raw_ids: bool = False) -> list[str]:

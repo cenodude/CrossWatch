@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from pathlib import Path
@@ -53,9 +53,145 @@ def _save_marked_state(data: Mapping[str, Any]) -> None:
     except Exception:
         pass
 
-_FETCH_CACHE: dict[str, dict[str, Any]] = {}
 
+
+def _watermark_path() -> Path:
+    return state_file("plex_history.watermark.json")
+
+def _wm_key(acct_id: int, uname: str) -> str:
+    if acct_id:
+        return f"acct:{acct_id}"
+    if uname:
+        return f"user:{uname.lower()}"
+    return "default"
+
+def _load_watermark(key: str) -> int | None:
+    try:
+        data = read_json(_watermark_path()) or {}
+        by_user = data.get("by_user") or {}
+        v = by_user.get(key)
+        return int(v) if v else None
+    except Exception:
+        return None
+
+def _save_watermark(key: str, epoch: int) -> None:
+    try:
+        path = _watermark_path()
+        data = read_json(path) or {}
+        by_user = dict(data.get("by_user") or {})
+        cur = int(by_user.get(key) or 0)
+        epoch_i = int(epoch or 0)
+        if epoch_i <= 0 or epoch_i <= cur:
+            return
+        by_user[key] = epoch_i
+        out = {"by_user": by_user, "updated_at": _iso(epoch_i)}
+        write_json(path, out, indent=0, sort_keys=False, separators=(",", ":"))
+    except Exception:
+        pass
+
+def _guid_index_path() -> Path:
+    return state_file("plex_history.guid_index.json")
+
+def _load_guid_index(srv: Any, allow: set[str]) -> bool:
+    try:
+        data = read_json(_guid_index_path()) or {}
+        mid = str(getattr(srv, "machineIdentifier", "") or "")
+        if not mid or data.get("machine_id") != mid:
+            return False
+        stored_allow = set(str(x) for x in (data.get("allow") or []))
+        if stored_allow != set(str(x) for x in (allow or set())):
+            return False
+        # TTL to avoid stale indices forever.
+        ttl_days = int(os.environ.get("CW_PLEX_GUID_INDEX_TTL_DAYS", "0") or "7")
+        created = int(data.get("created_epoch") or 0)
+        if created and ttl_days > 0 and (int(time.time()) - created) > ttl_days * 86400:
+            return False
+        movies = data.get("movies") or {}
+        shows = data.get("shows") or {}
+        if not isinstance(movies, dict) or not isinstance(shows, dict):
+            return False
+        _GUID_INDEX_MOVIE.update({str(k): str(v) for k, v in movies.items() if k and v})
+        _GUID_INDEX_SHOW.update({str(k): str(v) for k, v in shows.items() if k and v})
+        return bool(_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW)
+    except Exception:
+        return False
+
+def _save_guid_index(srv: Any, allow: set[str]) -> None:
+    try:
+        mid = str(getattr(srv, "machineIdentifier", "") or "")
+        if not mid:
+            return
+        out = {
+            "machine_id": mid,
+            "allow": sorted(str(x) for x in (allow or set())),
+            "created_epoch": int(time.time()),
+            "movies": _GUID_INDEX_MOVIE,
+            "shows": _GUID_INDEX_SHOW,
+        }
+        write_json(_guid_index_path(), out, indent=0, sort_keys=False, separators=(",", ":"))
+    except Exception:
+        pass
 _dbg, _info, _warn, _error, _log = make_logger("history")
+
+
+# PMS GUID index cache (used for strict ID matching).
+_GUID_INDEX_MOVIE: dict[str, str] = {}
+_GUID_INDEX_SHOW: dict[str, str] = {}
+
+def _meta_guids(meta_obj: Any) -> list[str]:
+    vals: list[str] = []
+    try:
+        if getattr(meta_obj, "guid", None):
+            vals.append(str(meta_obj.guid))
+        for gg in getattr(meta_obj, "guids", []) or []:
+            gid = getattr(gg, "id", None)
+            if gid:
+                vals.append(str(gid))
+    except Exception:
+        pass
+    return vals
+
+def _build_guid_index(adapter: Any, allow: set[str]) -> None:
+    if _GUID_INDEX_MOVIE or _GUID_INDEX_SHOW:
+        return
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if srv and _load_guid_index(srv, allow):
+        _dbg("guid_index_loaded", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
+        return
+    try:
+        for sec in adapter.libraries(types=("movie", "show")) or []:
+            sid = str(getattr(sec, "key", "") or "").strip()
+            if allow and sid and sid not in allow:
+                continue
+            libtype = "movie" if getattr(sec, "type", "") == "movie" else "show"
+            dst = _GUID_INDEX_MOVIE if libtype == "movie" else _GUID_INDEX_SHOW
+            try:
+                for obj in (sec.all() or []):
+                    try:
+                        rk = str(getattr(obj, "ratingKey", "") or "").strip()
+                        if not rk:
+                            continue
+                        for g in _meta_guids(obj):
+                            gg = str(g or "").strip().lower()
+                            if gg and gg not in dst:
+                                dst[gg] = rk
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        if srv:
+            _save_guid_index(srv, allow)
+        _dbg("guid_index_done", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
+    except Exception:
+        pass
+
+def _pms_find_in_guid_index(libtype: str, candidates: list[str]) -> str | None:
+    src = _GUID_INDEX_SHOW if libtype == "show" else _GUID_INDEX_MOVIE
+    for g in candidates or []:
+        gg = str(g or "").strip().lower()
+        if gg and gg in src:
+            return src[gg]
+    return None
 
 
 def _emit(evt: dict[str, Any]) -> None:
@@ -73,6 +209,30 @@ def _epoch_from_history_entry(entry: Any) -> int | None:
         ts = _as_epoch(getattr(entry, k, None))
         if ts:
             return ts
+    return None
+
+def _account_id_from_history_entry(entry: Any) -> int | None:
+    v = getattr(entry, "accountID", None)
+    if v is None:
+        return None
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return None
+
+def _username_from_history_entry(entry: Any) -> str | None:
+    for attr in ("username", "userName", "accountName", "userTitle", "user"):
+        v = getattr(entry, attr, None)
+        if v is None:
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        for sub in ("username", "title", "name"):
+            sv = getattr(v, sub, None)
+            if isinstance(sv, str):
+                s = sv.strip()
+                return s or None
     return None
 
 def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
@@ -136,6 +296,9 @@ def _event_key(item: Mapping[str, Any]) -> str:
 def _load_shadow() -> dict[str, Any]:
     return read_json(_shadow_path())
 
+def _shadow_load() -> dict[str, Any]:
+    return _load_shadow()
+
 def _save_shadow(data: Mapping[str, Any]) -> None:
     write_json(_shadow_path(), data)
 
@@ -188,20 +351,26 @@ def _keep_in_snapshot(adapter: Any, minimal: Mapping[str, Any]) -> bool:
             return False
     return True
 
-def _fetch_one(srv: Any, rating_key: str) -> dict[str, Any] | None:
-    try:
-        obj = srv.fetchItem(int(rating_key))
-        if not obj:
-            return None
-        meta = plex_normalize(obj) or {}
-        return meta if meta else None
-    except Exception:
-        return None
+
+def _marked_section_id(sec: Any) -> str | None:
+    for attr in ("librarySectionID", "sectionID", "id", "key"):
+        v = getattr(sec, attr, None)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        if s.isdigit():
+            return s
+        m = re.search(r"/library/sections/(\d+)", s)
+        if m:
+            return m.group(1)
+    return None
 
 def _iter_marked_watched_from_library(
     adapter: Any,
     allow: set[str],
-    since: int | None,
+    since: int | None = None,
 ) -> list[tuple[dict[str, Any], int]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -245,11 +414,10 @@ def _iter_marked_watched_from_library(
         sections = []
 
     for sec in sections:
-        try:
-            section_id = str(getattr(sec, "key", "") or "").strip()
-        except Exception:
-            section_id = ""
-        if allow and section_id and section_id not in allow:
+        section_id = _marked_section_id(sec) or ""
+        if not section_id:
+            continue
+        if allow and section_id not in allow:
             continue
 
         section_type = (getattr(sec, "type", "") or "").lower()
@@ -338,342 +506,187 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         cli_uname = str(getattr(getattr(adapter, "client", None), "user_username", "") or "").strip().lower()
         uname = cfg_uname or cli_uname
 
+        wm_key = _wm_key(acct_id, uname)
+        wm = _load_watermark(wm_key) if (since is None or int(since or 0) <= 0) else None
+        eff_since = int(since) if (since is not None and int(since or 0) > 0) else (int(wm) if wm else None)
+
         allow = _allowed_history_sec_ids(adapter)
+        explicit_user = bool(cfg_acct_id or cfg_uname)
+
+        base_kwargs: dict[str, Any] = {}
+        if cfg_acct_id and (not cli_acct_id or int(cfg_acct_id) != int(cli_acct_id)):
+            base_kwargs["accountID"] = int(cfg_acct_id)
+        elif not explicit_user and cli_acct_id:
+            base_kwargs["accountID"] = int(cli_acct_id)
+
+        if eff_since is not None and eff_since > 0:
+            base_kwargs["mindate"] = datetime.fromtimestamp(eff_since, tz=timezone.utc)
+
+        maxresults = _int_or_zero(_history_cfg_get(adapter, "maxresults", 0))
+        if maxresults:
+            base_kwargs["maxresults"] = int(maxresults)
+
+        def _call_history(**kwargs: Any) -> list[Any]:
+            try:
+                return list(srv.history(**kwargs) or [])
+            except Exception as e:
+                if "mindate" in kwargs:
+                    _dbg("mindate_fallback_drop", error=str(e))
+                    kwargs.pop("mindate", None)
+                    return list(srv.history(**kwargs) or [])
+                raise
+
         rows: list[Any] = []
         try:
-            explicit_user = bool(cfg_acct_id or cfg_uname)
-            base_kwargs: dict[str, Any] = {}
-            if cfg_acct_id and (not cli_acct_id or int(cfg_acct_id) != int(cli_acct_id)):
-                base_kwargs["accountID"] = int(cfg_acct_id)
-            elif not explicit_user and cli_acct_id:
-                base_kwargs["accountID"] = int(cli_acct_id)
-            if since is not None:
-                base_kwargs["mindate"] = int(since)
-
-            def _call_history(**kwargs: Any) -> list[Any]:
-                try:
-                    return list(srv.history(**kwargs) or [])
-                except Exception as e:
-                    if "mindate" in kwargs:
-                        _dbg("mindate_fallback_drop", error=str(e))
-                        kwargs.pop("mindate", None)
-                        return list(srv.history(**kwargs) or [])
-                    raise
-
-
             if allow:
-                _dbg("history_fetch_scoped", sections=sorted(allow))
-                for sec_id in sorted(allow):
-                    kwargs = dict(base_kwargs)
+                for sid in sorted(allow):
                     try:
-                        kwargs["librarySectionID"] = int(sec_id)
+                        kw = dict(base_kwargs)
+                        kw["librarySectionID"] = int(sid)
+                        part = _call_history(**kw)
                     except Exception:
-                        continue
-                    part = _call_history(**kwargs)
-                    if not part and "accountID" in kwargs and not explicit_user:
-                        _dbg("retry_without_account_scope", librarySectionID=sec_id)
-                        kwargs.pop("accountID", None)
-                        part = _call_history(**kwargs)
+                        part = []
+                    if not part and "accountID" in kw and not explicit_user:
+                        try:
+                            kw2 = dict(kw)
+                            kw2.pop("accountID", None)
+                            part = _call_history(**kw2)
+                        except Exception:
+                            part = []
                     rows.extend(part)
             else:
                 rows = _call_history(**base_kwargs)
                 if not rows and "accountID" in base_kwargs and not explicit_user:
-                    _dbg("retry_without_account_scope")
-                    base_kwargs.pop("accountID", None)
-                    rows = _call_history(**base_kwargs)
+                    base_kwargs2 = dict(base_kwargs)
+                    base_kwargs2.pop("accountID", None)
+                    rows = _call_history(**base_kwargs2)
         except Exception as e:
             _warn("history_fetch_failed", error=str(e))
-            return {}
+            rows = []
 
-        def _username_match(entry: Any, target_uname: str) -> bool:
-            if not target_uname:
-                return True
-            try:
-                fields = [
-                    getattr(getattr(entry, "Account", None), "title", None),
-                    getattr(getattr(entry, "Account", None), "name", None),
-                    getattr(entry, "account", None),
-                    getattr(entry, "username", None),
-                ]
-                target_lower = target_uname.lower()
-                return any(str(v).strip().lower() == target_lower for v in fields if v)
-            except Exception:
-                return False
+        max_seen = 0
+        for r in rows:
+            ts = _epoch_from_history_entry(r) or 0
+            if ts and ts > max_seen:
+                max_seen = ts
 
-        raw_by_rk: dict[str, Any] = {}
-        orphans: list[tuple[Any, int]] = []
-        work: list[tuple[str, int]] = []
-        for entry in rows:
-            if allow:
-                section_id = _row_section_id(entry)
-                if section_id and section_id not in allow:
-                    continue
-
-            entry_acct = getattr(entry, "accountID", None)
-
-            if cfg_acct_id:
-                try:
-                    if not entry_acct or int(entry_acct) != int(cfg_acct_id):
-                        continue
-                except Exception:
-                    continue
-            elif cfg_uname:
-                if not _username_match(entry, cfg_uname):
-                    continue
-            elif cli_acct_id:
-                try:
-                    if not entry_acct or int(entry_acct) != int(cli_acct_id):
-                        continue
-                except Exception:
-                    continue
-            else:
-                if cli_uname and not _username_match(entry, cli_uname):
-                    continue
-
-            ts = _epoch_from_history_entry(entry)
-            if not ts or (since is not None and ts < int(since)):
-                continue
-            rk = getattr(entry, "ratingKey", None) or getattr(entry, "key", None)
-            if rk is None:
-                if fallback_guid:
-                    try:
-                        orphans.append((entry, int(ts)))
-                    except Exception:
-                        pass
-                continue
-            try:
-                rk_str = str(int(rk))
-                work.append((rk_str, int(ts)))
-                raw_by_rk[rk_str] = entry
-            except Exception:
-                if fallback_guid:
-                    try:
-                        orphans.append((entry, int(ts)))
-                    except Exception:
-                        pass
-                continue
-        if not work and not (fallback_guid and orphans):
-            if prog:
-                try:
-                    prog.done(ok=True, total=0)
-                except Exception:
-                    pass
-            _info("index_done", count=0, reason="filters_or_empty")
-            return {}
-
-        work.sort(key=lambda x: x[1], reverse=True)
-        if isinstance(limit, int) and limit > 0:
-            work = work[: int(limit)]
-        total = len(work) + (len(orphans) if fallback_guid else 0)
+        total = len(rows)
         if prog:
-            try:
-                prog.tick(0, total=total, force=True)
-            except Exception:
-                pass
-
-        unique_rks = sorted({rk for rk, _ in work})
-        workers = _get_workers(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 10)
-        to_fetch = [rk for rk in unique_rks if rk not in _FETCH_CACHE]
-        if to_fetch:
-            try:
-                with ThreadPoolExecutor(max_workers=workers) as ex:
-                    futures = {ex.submit(_fetch_one, srv, rk): rk for rk in to_fetch}
-                    for fut in as_completed(futures):
-                        rk = futures[fut]
-                        meta = fut.result()
-                        if rk and meta:
-                            _FETCH_CACHE[rk] = meta
-            except Exception as e:
-                _warn("parallel_fetch_error", error=str(e))
-
-        if fallback_guid:
-            misses = [rk for rk in to_fetch if rk not in _FETCH_CACHE]
-            for rk in misses:
-                _emit({"event": "fallback_guid", "provider": "PLEX", "feature": "history", "action": "try", "rk": rk})
-                fb = minimal_from_history_row(raw_by_rk.get(rk), allow_discover=True)
-                _emit(
-                    {
-                        "event": "fallback_guid",
-                        "provider": "PLEX",
-                        "feature": "history",
-                        "action": "ok" if fb else "miss",
-                        "rk": rk,
-                    }
-                )
-                if fb:
-                    _FETCH_CACHE[rk] = fb
-
-        extras: list[tuple[dict[str, Any], int]] = []
-        if fallback_guid and orphans:
-            for row_obj, ts in orphans:
-                fb = minimal_from_history_row(row_obj, allow_discover=True)
-                if fb:
-                    extras.append((fb, ts))
+            prog.tick(0, total=total, force=True)
 
         out: dict[str, dict[str, Any]] = {}
-        done = 0
-        ignored = 0
-        for rk_str, ts in work:
-            meta = _FETCH_CACHE.get(rk_str)
-            if not meta or not _keep_in_snapshot(adapter, meta):
-                if meta:
-                    ignored += 1
-                done += 1
-                if prog:
-                    try:
-                        prog.tick(done, total=total)
-                    except Exception:
-                        pass
+        for i, raw in enumerate(rows, start=1):
+            if prog:
+                prog.tick(i, total=total)
+
+            ts = _epoch_from_history_entry(raw)
+            if not ts:
                 continue
+            ts_i = int(ts)
+
+            if eff_since is not None and ts_i < int(eff_since):
+                continue
+
             if allow:
-                lid = meta.get("library_id")
-                if lid is not None and str(lid) not in allow:
-                    done += 1
-                    if prog:
-                        try:
-                            prog.tick(done, total=total)
-                        except Exception:
-                            pass
+                sid = _row_section_id(raw)
+                if sid and sid not in allow:
                     continue
+
+            aid = _account_id_from_history_entry(raw)
+            if cfg_acct_id and aid is not None and int(aid) != int(cfg_acct_id):
+                continue
+            if cfg_uname:
+                u = _username_from_history_entry(raw) or ""
+                if u.strip().lower() != cfg_uname:
+                    continue
+            if not explicit_user and cli_acct_id and aid is not None and int(aid) != int(cli_acct_id):
+                continue
+
+            meta = minimal_from_history_row(raw, token=None, allow_discover=False)
+            if not meta and fallback_guid:
+                meta = minimal_from_history_row(raw, token=None, allow_discover=True)
+            if not meta:
+                continue
+            if not _keep_in_snapshot(adapter, meta):
+                continue
+
             row = dict(meta)
             _force_episode_title(row)
             row["watched"] = True
-            row["watched_at"] = _iso(ts)
-            out[f"{canonical_key(row)}@{ts}"] = row
-            done += 1
-            if prog:
-                try:
-                    prog.tick(done, total=total)
-                except Exception:
-                    pass
+            row["watched_at"] = _iso(ts_i)
 
-        if extras:
-            for meta, ts in extras:
-                if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
-                    _info("index_truncated", limit=limit, reason="including_extras")
-                    break
-                if not _keep_in_snapshot(adapter, meta):
-                    done += 1
-                    if prog:
-                        try:
-                            prog.tick(done, total=total)
-                        except Exception:
-                            pass
+            key = f"{canonical_key(row)}@{ts_i}"
+            out[key] = row
+            if limit and len(out) >= int(limit):
+                break
+
+        include_marked = bool(_history_cfg_get(adapter, "include_marked", True))
+        include_shadow = bool(_history_cfg_get(adapter, "include_shadow", True))
+
+        if include_shadow:
+            shadow = _shadow_load()
+            for _, entry in (shadow or {}).items():
+                item = (entry or {}).get("item")
+                watched_at = (entry or {}).get("watched_at")
+                ts2 = _as_epoch(watched_at) if watched_at else None
+                if not item or not ts2:
                     continue
-                if allow:
-                    lid = meta.get("library_id")
-                    if lid is not None and str(lid) not in allow:
-                        done += 1
-                        if prog:
-                            try:
-                                prog.tick(done, total=total)
-                            except Exception:
-                                pass
-                        continue
-                row = dict(meta)
+                row = dict(item)
                 _force_episode_title(row)
                 row["watched"] = True
-                row["watched_at"] = _iso(ts)
-                out[f"{canonical_key(row)}@{ts}"] = row
-                done += 1
-                if prog:
-                    try:
-                        prog.tick(done, total=total)
-                    except Exception:
-                        pass
-
-        try:
-            shadow = _load_shadow()
-            if shadow:
-                for _, entry in list(shadow.items()):
-                    meta = entry.get("item") or {}
-                    ts = _as_epoch(entry.get("watched_at"))
-                    if not ts:
-                        continue
-                    row = dict(meta)
-                    _force_episode_title(row)
-                    row["watched"] = True
-                    row["watched_at"] = _iso(ts)
-                    key = f"{canonical_key(row)}@{ts}"
-                    if key not in out:
-                        out[key] = row
-        except Exception:
-            pass
-
-        include_marked_cfg = bool(_history_cfg_get(adapter, "include_marked_watched", False))
-        include_marked = False
-        if include_marked_cfg:
-            cli = getattr(adapter, "client", None)
-            try:
-                token_is_owner = int(getattr(cli, "token_account_id", 0) or 0) == 1 if cli else False
-            except Exception:
-                token_is_owner = False
-
-            can_home = False
-            try:
-                can_home = bool(getattr(cli, "can_home_switch")()) if cli else False
-            except Exception:
-                can_home = False
-
-            if not token_is_owner and not can_home:
-                _info("marked_watched_disabled", reason="not_owner_or_home_user")
-            elif need_home_scope and not did_home_switch:
-                _info("marked_watched_disabled", reason="home_scope_not_applied", selected=(sel_aid or sel_uname))
-            else:
-                include_marked = True
-
-        if include_marked:
-            try:
-                base_keys: set[str] = set()
-                for row in out.values():
-                    try:
-                        base_key = canonical_key(row)
-                        if base_key:
-                            base_keys.add(base_key)
-                    except Exception:
-                        continue
-
-                marked = _iter_marked_watched_from_library(adapter, allow, since)
-                _info("marked_watched_scan", found=len(marked), allow=(sorted(allow) if allow else "ALL"))
-                added_marked = 0
-
-                for meta, ts in marked:
-                    if isinstance(limit, int) and limit > 0 and len(out) >= int(limit):
-                        _info("index_truncated", limit=limit, reason="including_marked_watched")
+                row["watched_at"] = _iso(int(ts2))
+                key = f"{canonical_key(row)}@{int(ts2)}"
+                if key not in out and _keep_in_snapshot(adapter, row):
+                    out[key] = row
+                    if limit and len(out) >= int(limit):
                         break
-                    if ts is None:
-                        continue
-                    if not _keep_in_snapshot(adapter, meta):
-                        continue
-                    if allow:
-                        lid = meta.get("library_id")
-                        if lid is not None and str(lid) not in allow:
-                            continue
-                    row = dict(meta)
-                    _force_episode_title(row)
-                    row["watched"] = True
-                    ts_int = int(ts)
-                    row["watched_at"] = _iso(ts_int)
-                    base_key = canonical_key(row)
-                    if base_key and base_key in base_keys:
-                        continue
-                    out[f"{base_key}@{ts_int}"] = row
-                    if base_key:
-                        base_keys.add(base_key)
-                    added_marked += 1
 
-                _info("marked_watched_hydrate_done", added=added_marked)
-            except Exception as e:
-                _warn("marked_watched_hydrate_failed", error=str(e))
+        if include_marked and (not limit or len(out) < int(limit)):
+            marked = _load_marked_state().get("items") or {}
+            found = 0
+            for item in _iter_marked_watched_from_library(adapter, allow):
+                entry: Mapping[str, Any]
+                if isinstance(item, tuple) and item and isinstance(item[0], dict):
+                    entry = item[0]
+                else:
+                    entry = item  # type: ignore[assignment]
+                rk = str(ids_from(entry).get("plex") or "")
+                if rk and rk not in marked:
+                    marked[rk] = entry
+                found += 1
+            if found:
+                st = _load_marked_state()
+                st["items"] = marked
+                _save_marked_state(st)
+
+            for rk, item in (marked or {}).items():
+                row = dict(item)
+                _force_episode_title(row)
+                row["watched"] = True
+                row["watched_at"] = row.get("watched_at") or _iso(max_seen or int(time.time()))
+                key = f"{canonical_key(row)}@{_as_epoch(row.get('watched_at')) or 0}"
+                if key not in out and _keep_in_snapshot(adapter, row):
+                    out[key] = row
+                    if limit and len(out) >= int(limit):
+                        break
 
         if prog:
-            try:
-                prog.done(ok=True, total=total)
-            except Exception:
-                pass
+            prog.done(total=len(out), ok=True)
 
-        _info("index_done", count=len(out), ignored=ignored, since=since, scanned=total, workers=workers, unique=len(unique_rks), selected=(acct_id or uname), token_acct_id=_int_or_zero(getattr(getattr(adapter, 'client', None), 'user_account_id', None)), include_marked=include_marked)
+        if max_seen:
+            _save_watermark(wm_key, int(max_seen))
+
+        _info(
+            "index_done",
+            count=len(out),
+            include_marked=include_marked,
+            scanned=total,
+            token_acct_id=(cli_acct_id or 0),
+            selected=(cfg_acct_id or cli_acct_id or 0),
+            since=(eff_since or 0),
+        )
         return out
+
     finally:
         home_scope_exit(adapter, did_home_switch)
 
@@ -768,46 +781,130 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         home_scope_exit(adapter, did_home_switch)
 
 def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
+    def _match(ep: Any) -> str | None:
+        try:
+            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
+            episode_ok = episode is None or getattr(ep, "index", None) == episode
+            if season_ok and episode_ok:
+                rk = getattr(ep, "ratingKey", None)
+                return str(rk) if rk else None
+        except Exception:
+            return None
+        return None
+
     try:
         try:
             episodes = show_obj.episodes() or []
         except Exception:
             episodes = []
         for ep in episodes:
-            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
-            episode_ok = episode is None or getattr(ep, "index", None) == episode
-            if season_ok and episode_ok:
-                rk = getattr(ep, "ratingKey", None)
-                if rk:
-                    return str(rk)
+            rk = _match(ep)
+            if rk:
+                return rk
     except Exception:
         pass
+
     try:
         srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
-        show_id = getattr(show_obj, "ratingKey", None)
-        if srv and show_id and hasattr(srv, "_session"):
-            resp = srv._session.get(
-                srv.url(f"/library/metadata/{show_id}/children"),
-                params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 500},
-                timeout=8,
-            )
-            if resp.ok:
+        obj_id = getattr(show_obj, "ratingKey", None)
+        if not (srv and obj_id and hasattr(srv, "_session")):
+            return None
+
+        def _scan_xml(path: str) -> str | None:
+            try:
+                resp = srv._session.get(
+                    srv.url(path),
+                    params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
+                    timeout=12,
+                )
+                if not resp.ok:
+                    return None
                 import xml.etree.ElementTree as ET
 
                 root = ET.fromstring(resp.text or "")
                 for ep in root.findall(".//Video"):
-                    season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
-                    episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
-                    if season_ok and episode_ok:
-                        rk = ep.attrib.get("ratingKey")
-                        if rk:
-                            return str(rk)
+                    try:
+                        season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
+                        episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
+                        if season_ok and episode_ok:
+                            rk = ep.attrib.get("ratingKey")
+                            if rk:
+                                return str(rk)
+                    except Exception:
+                        continue
+            except Exception:
+                return None
+            return None
+
+        rk = _scan_xml(f"/library/metadata/{obj_id}/children")
+        if rk:
+            return rk
+
+        return _scan_xml(f"/library/metadata/{obj_id}/allLeaves")
     except Exception:
-        pass
-    return None
+        return None
+
+def _extract_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
+    v = item.get("show_ids")
+    if isinstance(v, Mapping):
+        return dict(v)
+    show = item.get("show") or item.get("series") or item.get("grandparent")
+    if isinstance(show, Mapping):
+        ids = show.get("ids")
+        if isinstance(ids, Mapping):
+            return dict(ids)
+    return {}
+
+def _has_matchable_ids(ids: Mapping[str, Any]) -> bool:
+    for k in ("tmdb", "imdb", "tvdb"):
+        if ids.get(k):
+            return True
+    return False
+
+def _type_of_obj(obj: Any) -> str:
+    return (getattr(obj, "type", "") or "").lower()
+
+def _section_allowed(obj: Any, allow: set[str]) -> bool:
+    if not allow:
+        return True
+    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "").strip()
+    return not sid or sid in allow
+
+def _guid_candidates(ids: Mapping[str, Any], show_ids: Mapping[str, Any], item: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+    for g in candidate_guids_from_ids({"ids": ids, "guid": item.get("guid")}) or []:
+        if g and g not in out:
+            out.append(g)
+    for g in candidate_guids_from_ids({"ids": show_ids, "guid": item.get("show_guid") or item.get("grandparentGuid")}) or []:
+        if g and g not in out:
+            out.append(g)
+    for key in ("plex_guid", "grandparentGuid", "show_guid"):
+        g = item.get(key)
+        if g and str(g) not in out:
+            out.append(str(g))
+    return sort_guid_candidates(out)
+
+def _resolve_obj_by_guids(srv: Any, guids: list[str], allow: set[str], accept: set[str]) -> Any | None:
+    if not guids:
+        return None
+    rk = server_find_rating_key_by_guid(srv, guids)
+    if not rk:
+        return None
+    try:
+        obj = srv.fetchItem(int(rk))
+    except Exception:
+        obj = None
+    if not obj:
+        return None
+    if accept and _type_of_obj(obj) not in accept:
+        return None
+    if not _section_allowed(obj, allow):
+        return None
+    return obj
 
 def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     ids = ids_from(item)
+    show_ids = _extract_show_ids(item)
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return None
@@ -824,39 +921,84 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     if kind == "anime":
         kind = "episode"
     is_episode = kind == "episode"
-    title = (item.get("title") or "").strip()
-    series_title = (item.get("series_title") or "").strip()
-    query_title = series_title if is_episode and series_title else title
-    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
-    if not query_title and not ids:
-        return None
 
-    year = item.get("year")
+    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
+    allow = _allowed_history_sec_ids(adapter)
+
     season = item.get("season") or item.get("season_number")
     episode = item.get("episode") or item.get("episode_number")
 
+    guids = _guid_candidates(ids, show_ids, item)
+
+    if strict:
+        if not (guids or _has_matchable_ids(ids) or _has_matchable_ids(show_ids)):
+            return None
+
+        if is_episode:
+            rk_show = show_ids.get("plex")
+            if rk_show:
+                try:
+                    obj0 = srv.fetchItem(int(rk_show))
+                except Exception:
+                    obj0 = None
+                if obj0 and _section_allowed(obj0, allow):
+                    rk0 = _episode_rk_from_show(obj0, season, episode)
+                    if rk0:
+                        return rk0
+
+            obj = _resolve_obj_by_guids(srv, guids, allow, {"episode"})
+            if obj:
+                return str(getattr(obj, "ratingKey", None) or "")
+            obj2 = _resolve_obj_by_guids(srv, guids, allow, {"show", "season"})
+            if obj2:
+                rk2 = _episode_rk_from_show(obj2, season, episode)
+                return rk2
+
+            _build_guid_index(adapter, allow)
+            rk_show_g = _pms_find_in_guid_index("show", guids)
+            if rk_show_g:
+                try:
+                    obj_g = srv.fetchItem(int(rk_show_g))
+                except Exception:
+                    obj_g = None
+                if obj_g and _section_allowed(obj_g, allow):
+                    rk_g = _episode_rk_from_show(obj_g, season, episode)
+                    if rk_g:
+                        return rk_g
+            return None
+
+        obj = _resolve_obj_by_guids(srv, guids, allow, {"movie"})
+        if obj:
+            return str(getattr(obj, "ratingKey", None) or "")
+        _build_guid_index(adapter, allow)
+        rk_movie_g = _pms_find_in_guid_index("movie", guids)
+        if rk_movie_g:
+            if not allow:
+                return str(rk_movie_g)
+            try:
+                obj_g = srv.fetchItem(int(rk_movie_g))
+            except Exception:
+                obj_g = None
+            if obj_g and _section_allowed(obj_g, allow):
+                return str(getattr(obj_g, "ratingKey", None) or "")
+        return None
+
+    title = (item.get("title") or "").strip()
+    series_title = (item.get("series_title") or "").strip()
+    query_title = series_title if is_episode and series_title else title
+    year = item.get("year")
+
+    if not (query_title or guids):
+        return None
+
     sec_types = ("show",) if is_episode else ("movie",)
-    allow = _allowed_history_sec_ids(adapter)
     hits: list[Any] = []
 
-    if ids:
-        try:
-            guids = sort_guid_candidates(candidate_guids_from_ids({"ids": ids}))
-            rk_any = server_find_rating_key_by_guid(srv, guids)
-        except Exception:
-            rk_any = None
+    obj = _resolve_obj_by_guids(srv, guids, allow, {"movie", "episode", "show", "season"})
+    if obj:
+        hits.append(obj)
 
-        if rk_any:
-            try:
-                obj = srv.fetchItem(int(rk_any))
-                if obj:
-                    section_id = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
-                    if not allow or not section_id or section_id in allow:
-                        hits.append(obj)
-            except Exception:
-                pass
-
-    if not hits and query_title and not strict:
+    if not hits and query_title:
         for sec in adapter.libraries(types=sec_types) or []:
             section_id = str(getattr(sec, "key", "")).strip()
             if allow and section_id not in allow:
@@ -870,15 +1012,13 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             except Exception:
                 continue
 
-    if not hits and query_title and not strict:
+    if not hits and query_title:
         try:
             mediatype = "episode" if is_episode else "movie"
             search_hits = srv.search(query_title, mediatype=mediatype) or []
             for obj in search_hits:
-                section_id = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
-                if allow and section_id and section_id not in allow:
-                    continue
-                hits.append(obj)
+                if _section_allowed(obj, allow):
+                    hits.append(obj)
         except Exception:
             pass
 
@@ -899,6 +1039,8 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             for key in ("tmdb", "imdb", "tvdb"):
                 if key in meta_ids and key in ids and meta_ids[key] == ids[key]:
                     score += 4
+                if key in meta_ids and key in show_ids and meta_ids[key] == show_ids[key]:
+                    score += 2
         except Exception:
             pass
         return score
@@ -907,12 +1049,12 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
         return None
 
     if is_episode:
-        ep_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "episode"]
+        ep_hits = [o for o in hits if _type_of_obj(o) == "episode"]
         if ep_hits:
             best_ep = max(ep_hits, key=_score)
             rk_val = getattr(best_ep, "ratingKey", None)
             return str(rk_val) if rk_val else None
-        show_hits = [o for o in hits if (getattr(o, "type", "") or "").lower() == "show"]
+        show_hits = [o for o in hits if _type_of_obj(o) in ("show", "season")]
         for show in show_hits:
             rk_val = _episode_rk_from_show(show, season, episode)
             if rk_val:
@@ -923,39 +1065,70 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     rk_val = getattr(best, "ratingKey", None)
     return str(rk_val) if rk_val else None
 
+
+def _active_token(srv: Any) -> str | None:
+    try:
+        ses = getattr(srv, "_session", None)
+        tok = (getattr(ses, "headers", {}) or {}).get("X-Plex-Token")
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    except Exception:
+        pass
+    for attr in ("token", "_token"):
+        tok = getattr(srv, attr, None)
+        if tok and str(tok).strip():
+            return str(tok).strip()
+    return None
+
 def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
     try:
+        obj = None
         try:
             obj = srv.fetchItem(int(rating_key))
-            if obj:
-                obj_type = (getattr(obj, "type", "") or "").lower()
-                if obj_type not in ("episode", "movie"):
-                    return False
-                try:
-                    obj.markWatched()
-                    return True
-                except Exception:
-                    pass
+            obj_type = (getattr(obj, "type", "") or "").lower()
+            if obj_type and obj_type not in ("episode", "movie"):
+                return False
         except Exception:
-            pass
+            obj = None
 
-        url = srv.url("/:/scrobble")
-        token = getattr(srv, "token", None) or getattr(srv, "_token", None)
-        params = {"key": int(rating_key), "identifier": "com.plexapp.plugins.library", "viewedAt": int(epoch)}
-        if token:
-            params["X-Plex-Token"] = token
-        resp = srv._session.get(url, params=params, headers=getattr(srv._session, "headers", None), timeout=10)
-        if resp.status_code == 401 and token:
-            params2 = {
-                "ratingKey": int(rating_key),
-                "identifier": "com.plexapp.plugins.library",
-                "viewedAt": int(epoch),
-                "X-Plex-Token": token,
-            }
-            resp = srv._session.get(url, params=params2, headers=getattr(srv._session, "headers", None), timeout=10)
-        if not resp.ok:
-            _warn("scrobble_failed", rating_key=str(rating_key), status=resp.status_code)
-        return resp.ok
+        base = _as_base_url(srv)
+        ses = getattr(srv, "_session", None)
+        tok = _active_token(srv)
+        if not (base and ses and tok):
+            return False
+
+        url = f"{base}/:/scrobble"
+        headers = dict(getattr(ses, "headers", {}) or {})
+        headers.update(plex_headers(tok))
+
+        for key_name in ("key", "ratingKey"):
+            params = {key_name: int(rating_key), "identifier": "com.plexapp.plugins.library", "viewedAt": int(epoch)}
+            try:
+                resp = ses.get(url, params=params, headers=headers, timeout=10)
+            except Exception as e:
+                _warn("scrobble_request_failed", rating_key=str(rating_key), error=str(e))
+                continue
+
+            # Plex often returns 200 before the library reflects the new view state. At least that is what i hope...
+            if resp.ok:
+                return True
+
+            _warn(
+                "scrobble_http_failed",
+                rating_key=str(rating_key),
+                status=resp.status_code,
+                body_snippet=(resp.text or "")[:200].replace("\n", " "),
+            )
+
+        if obj:
+            try:
+                obj.markWatched()
+                return True
+            except Exception:
+                pass
+
+        return False
+
     except Exception as e:
         _warn("scrobble_exception", rating_key=str(rating_key), error=str(e))
         return False
