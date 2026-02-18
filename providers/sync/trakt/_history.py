@@ -117,21 +117,40 @@ def _iso8601(v: Any) -> str | None:
     s = str(v).strip()
     if not s:
         return None
+
+    epoch: int | None = None
     if s.isdigit() and len(s) >= 13:
         try:
-            return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(int(s) // 1000))
+            epoch = int(s) // 1000
         except Exception:
             return None
-    if s.isdigit():
+    elif s.isdigit():
         try:
-            return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(int(s)))
+            epoch = int(s)
         except Exception:
             return None
-    if "T" in s and s.endswith("Z"):
-        return s
-    if "T" in s:
-        return s + "Z"
-    return None
+    else:
+        if "T" not in s:
+            return None
+        try:
+            from datetime import datetime
+            iso = s
+            if iso.endswith("Z"):
+                iso = iso.replace("Z", "+00:00")
+            else:
+                tail = iso[10:]
+                if "+" not in tail and "-" not in tail:
+                    iso = iso + "+00:00"
+            epoch = int(datetime.fromisoformat(iso).timestamp())
+        except Exception:
+            return None
+
+    if epoch is None:
+        return None
+
+    # Trakt is moving watched_at to minute precision (seconds + milliseconds => 00.000Z).
+    epoch = (epoch // 60) * 60
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
 
 
 def _as_epoch(iso: str) -> int | None:
