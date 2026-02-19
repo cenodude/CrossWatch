@@ -111,11 +111,11 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
         <li>Headless scheduled runs</li>
       </ul>
       <p style="margin:10px 0 6px 0;"><b>Trackers</b><br>
-        <img src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&amp;logoColor=white" alt="CrossWatch">
-        <img src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328" alt="SIMKL">
-        <img src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328" alt="AniList">
-        <img src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328" alt="Trakt">
-        <img src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328" alt="MDBList">
+          <img src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI%2BCiAgPHJlY3QgeD0iMjQiIHk9IjIiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxMCIgcng9IjQiIGZpbGw9IiNmZmYiLz4KICA8cmVjdCB4PSIyNCIgeT0iNTIiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxMCIgcng9IjQiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIxOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjYiIGZpbGw9Im5vbmUiLz4KICA8cGF0aCBkPSJNMzIgMjR2MTZNMjQgMzJoMTYiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc%2B" alt="CrossWatch">
+          <img src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328&amp;logo=simkl&amp;logoColor=white" alt="SIMKL">
+          <img src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328&amp;logo=anilist&amp;logoColor=white" alt="AniList">
+          <img src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328&amp;logo=trakt&amp;logoColor=white" alt="Trakt">
+          <img src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328&amp;logo=mdblist&amp;logoColor=white" alt="MDBList">
         <img src="https://img.shields.io/badge/TMDb-01B4E4?labelColor=1f2328&logo=themoviedatabase&logoColor=white" alt="TMDb">
       </p>
       <p style="margin:10px 0 6px 0;"><b>Media servers</b><br>
@@ -124,7 +124,7 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
         <img src="https://img.shields.io/badge/Emby-52B54B?logo=emby&amp;logoColor=white&amp;labelColor=1f2328" alt="Emby">
       </p>
       <p style="margin:10px 0 0 0;"><b>Others</b><br>
-        <img src="https://img.shields.io/badge/Tautulli-FF5C5C?labelColor=1f2328" alt="Tautulli">
+       <img src="https://img.shields.io/badge/Tautulli-FF5C5C?labelColor=1f2328&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI%2BCiAgPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTE0IDE0aDM2djhIMzZ2MjhoLThWMjJIMTR6Ii8%2BCjwvc3ZnPg%3D%3D&amp;logoColor=white" alt="Tautulli">
       </p>
     </td>
   </tr>
