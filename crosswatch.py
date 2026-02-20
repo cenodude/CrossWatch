@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from collections.abc import AsyncIterator
 
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
@@ -88,21 +89,7 @@ from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
 from providers.scrobble.trakt.sink import TraktSink
 from providers.scrobble.simkl.sink import SimklSink
 from providers.scrobble.mdblist.sink import MDBListSink
-from providers.scrobble.plex.watch import WatchService as PlexWatchService
 
-# Watcher: Emby autostart helper
-try:
-    from providers.scrobble.emby import watch as _emby_watch_mod
-    emby_autostart = getattr(_emby_watch_mod, "autostart_from_config", None)
-except Exception:
-    emby_autostart = None
-
-# Plex as fallback
-try:
-    from providers.scrobble.plex import watch as _plex_watch_mod
-    plex_autostart = getattr(_plex_watch_mod, "autostart_from_config", None)
-except Exception:
-    plex_autostart = None
 
 # Webhook: Plex
 try:
@@ -241,10 +228,10 @@ def _apply_debug_env_from_config() -> None:
 def _build_sinks_from_config(cfg) -> list:
     sc = cfg.get("scrobble") or {}
     watch_cfg = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
-    sink_cfg = "trakt" if "sink" not in watch_cfg else (watch_cfg.get("sink") or "")
-    raw = str(sink_cfg).strip()
-    if not raw:
+    sink_cfg = str(watch_cfg.get("sink") or "").strip()
+    if not sink_cfg or sink_cfg.lower() in ("none", "off", "disabled", "false", "0"):
         return []
+    raw = sink_cfg
 
     names = [s.strip().lower() for s in re.split(r"[,&+]", raw) if s and s.strip()]
     added, sinks = set(), []
@@ -265,11 +252,6 @@ def _build_sinks_from_config(cfg) -> list:
             except Exception:
                 pass
 
-    if not sinks:
-        try:
-            sinks = [TraktSink()]
-        except Exception:
-            sinks = []
     return sinks
 
 # Watcher: Autostart watch service from config
@@ -293,14 +275,6 @@ def autostart_from_config():
     filters = (watch_cfg.get("filters") or {}) if isinstance(watch_cfg, dict) else {}
     sinks = _build_sinks_from_config(cfg)
 
-    if not sinks:
-        if watch_cfg.get("autostart") is not False:
-            watch_cfg["autostart"] = False
-            try:
-                save_config(cfg)
-            except Exception:
-                pass
-        return None
 
     try:
         if provider == "emby":
@@ -331,12 +305,13 @@ def autostart_from_config():
 # Scheduler: Next run computation
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
-def _compute_next_run_from_cfg(scfg: dict, now_ts: int | None = None) -> int:
+def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None = None) -> int:
     now = int(time.time()) if now_ts is None else int(now_ts)
-    if not scfg or not scfg.get("enabled"):
+    scfg = scfg or {}
+    if not scfg.get("enabled"):
         return 0
 
-    mode = (scfg.get("mode") or "every_n_hours").lower()
+    mode = str(scfg.get("mode") or "every_n_hours").lower()
 
     if mode == "every_n_hours":
         n = max(1, int(scfg.get("every_n_hours") or 1))
@@ -458,10 +433,9 @@ def get_primary_ip() -> str:
 
 # Log buffers
 MAX_LOG_LINES = 3000
-LOG_BUFFERS: Dict[str, List[str]] = {
-    "SYNC": [], "PLEX": [], "JELLYFIN": [], "EMBY": [],
-    "SIMKL": [], "TRBL": [], "TRAKT": [], "MDBLIST": []
-}
+LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": []}
+LOG_BASE_SEQ: Dict[str, int] = {"SYNC": 1}
+LOG_NEXT_SEQ: Dict[str, int] = {"SYNC": 1}
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_STRIP = re.compile(r"\x1b\[[0-9;]*m")
@@ -474,13 +448,30 @@ def _escape_html(s: str) -> str:
 def strip_ansi(s: str) -> str:
     return ANSI_STRIP.sub("", s)
 
-def _norm_log_tag(tag: str) -> str:
+def _norm_log_tag(tag: str | None) -> str:
     t = (tag or "").strip().upper()
     if t in {"JFIN", "JELLY"}:
         return "JELLYFIN"
     if not t:
         return "SYNC"
     return t
+
+def _get_log_buf(tag: str | None) -> List[str]:
+    t = _norm_log_tag(tag)
+    buf = LOG_BUFFERS.setdefault(t, [])
+    if t not in LOG_NEXT_SEQ:
+        LOG_NEXT_SEQ[t] = 1
+        LOG_BASE_SEQ[t] = 1
+    # If another module reset the list, realign base to the next sequence.
+    if not buf:
+        LOG_BASE_SEQ[t] = int(LOG_NEXT_SEQ.get(t, 1))
+    return buf
+
+def _log_lines(tag: str | None, tail: int | None = None) -> List[str]:
+    buf = _get_log_buf(tag)
+    if not tail:
+        return list(buf)
+    return buf[-int(tail):]
 
 def ansi_to_html(line: str) -> str:
     out, pos = [], 0
@@ -531,12 +522,15 @@ def ansi_to_html(line: str) -> str:
     return "".join(out)
 
 def _append_log(tag: str, raw_line: str) -> None:
-    tag = _norm_log_tag(tag)
+    t = _norm_log_tag(tag)
     html = ansi_to_html(raw_line.rstrip("\n"))
-    buf = LOG_BUFFERS.setdefault(tag, [])
+    buf = _get_log_buf(t)
     buf.append(html)
+    LOG_NEXT_SEQ[t] = int(LOG_NEXT_SEQ.get(t, 1)) + 1
     if len(buf) > MAX_LOG_LINES:
-        LOG_BUFFERS[tag] = buf[-MAX_LOG_LINES:]
+        drop = len(buf) - MAX_LOG_LINES
+        del buf[:drop]
+        LOG_BASE_SEQ[t] = int(LOG_BASE_SEQ.get(t, 1)) + drop
 
 def _install_ui_log_forwarder() -> None:
     try:
@@ -615,7 +609,7 @@ def _json_safe(obj: Any) -> Any:
 
 # Startup sequence
 @asynccontextmanager
-async def _lifespan(app):
+async def _lifespan(app: Any) -> AsyncIterator[None]:
     app.state.watch = None
     app.state.watch_groups = {}
     app.state.watch_manager = None
@@ -677,12 +671,13 @@ async def _lifespan(app):
             if w:
                 app.state.watch = w
                 globals()["WATCH"] = w
-                started = bool(getattr(w, "is_alive", lambda: False)())
+                alive = bool(getattr(w, "is_alive", lambda: True)())
+                started = True
                 _UIHostLogger(
                     "TRAKT",
                     "WATCH",
                 )(
-                    "watch autostarted" if started else "watch autostart returned but not alive",
+                    "watch autostarted" if alive else "watch autostarted (initializing)",
                     level="INFO",
                 )
             else:
@@ -699,56 +694,18 @@ async def _lifespan(app):
             except Exception:
                 pass
 
-        if not started:
-            try:
-                cfg = load_config()
-                sc = (cfg.get("scrobble") or {})
-                if bool(sc.get("enabled")) and (sc.get("mode") or "").lower() == "watch" and bool((sc.get("watch") or {}).get("autostart")):
-                    from providers.scrobble.trakt.sink import TraktSink
-                    prov = ((sc.get("watch") or {}).get("provider") or "plex").lower().strip()
-                    if prov == "emby":
-                        from providers.scrobble.emby.watch import make_default_watch as make_default_watch
-                    elif prov == "jellyfin":
-                        from providers.scrobble.jellyfin.watch import make_default_watch as make_default_watch
-                    else:
-                        from providers.scrobble.plex.watch import make_default_watch as make_default_watch
-                    sinks_fb = _build_sinks_from_config(cfg)
-                    w2 = make_default_watch(sinks=sinks_fb)
-                    try:
-                        filters = ((sc.get("watch") or {}).get("filters") or {})
-                        if isinstance(filters, dict) and hasattr(w2, "set_filters"):
-                            getattr(w2, "set_filters")(filters)
-                    except Exception:
-                        pass
-
-                    if hasattr(w2, "start_async"):
-                        w2.start_async()
-                    else:
-                        import threading
-                        threading.Thread(target=w2.start, daemon=True).start()
-
-                    app.state.watch = w2
-                    globals()["WATCH"] = w2
-                    started = True
-                    _UIHostLogger("TRAKT", "WATCH")("fallback default watch started", level="INFO")
-            except Exception as e:
-                try:
-                    _UIHostLogger("TRAKT", "WATCH")(f"fallback start failed: {e}", level="ERROR")
-                except Exception:
-                    pass
 
     try:
         global scheduler
         if scheduler is not None:
             scheduler.start()  # idempotent
-            scfg = (load_config().get("scheduling") or {})
-            if bool(scfg.get("enabled")) and hasattr(scheduler, "refresh"):
+            if hasattr(scheduler, "refresh"):
                 scheduler.refresh()
-            _UIHostLogger("SYNC")("scheduler: started and refreshed", level="INFO")
     except Exception as e:
-        try: _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
-        except Exception: pass
-
+        try:
+            _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
+        except Exception:
+            pass
     try:
         yield
     finally:
@@ -843,26 +800,35 @@ def api_list_files(
 @app.get("/api/logs/dump", tags=["logging"])
 def logs_dump(channel: str = "TRAKT", n: int = 50):
     channel = _norm_log_tag(channel)
-    return {"channel": channel, "lines": LOG_BUFFERS.get(channel, [])[-n:]}
+    return {"channel": channel, "lines": _log_lines(channel, tail=n)}
 
 @app.get("/api/logs/stream", tags=["logging"])
 async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
     tag = _norm_log_tag(tag)
 
     async def agen():
-        buf = LOG_BUFFERS.get(tag, [])
+        buf = _get_log_buf(tag)
         for line in buf:
             yield f"data: {line}\n\n"
-        idx = len(buf)
+        base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
+        last_seq = base + len(buf) - 1
         last = time.time()
         while True:
             if await request.is_disconnected():
                 break
-            new_buf = LOG_BUFFERS.get(tag, [])
-            while idx < len(new_buf):
-                yield f"data: {new_buf[idx]}\n\n"
+            new_buf = _get_log_buf(tag)
+            base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
+            if last_seq < base - 1:
+                last_seq = base - 1
+            start_seq = max(last_seq + 1, base)
+            start_idx = int(start_seq - base)
+            if start_idx < 0:
+                start_idx = 0
+            for i in range(start_idx, len(new_buf)):
+                line = new_buf[i]
+                yield f"data: {line}\n\n"
                 last = time.time()
-                idx += 1
+                last_seq = base + i
             if time.time() - last > 15:
                 yield "event: ping\ndata: 1\n\n"
                 last = time.time()
@@ -888,7 +854,7 @@ async def api_logs_watcher(
             watch_cfg = cfg.get("watch") or {}
 
         provider = _norm_log_tag(str(watch_cfg.get("provider") or "plex"))
-        sinks_raw = str(watch_cfg.get("sink") or "trakt")
+        sinks_raw = str(watch_cfg.get("sink") or "")
         sinks = [_norm_log_tag(s) for s in re.split(r"[,&+]", sinks_raw) if s and str(s).strip()]
         sel = [provider, *sinks]
 
@@ -899,15 +865,16 @@ async def api_logs_watcher(
     tags_sel = out or ["SYNC"]
 
     async def agen():
-        idx: Dict[str, int] = {}
+        last_seq: Dict[str, int] = {}
 
         for t in tags_sel:
-            buf = LOG_BUFFERS.get(t, [])
+            buf = _get_log_buf(t)
             start = max(0, len(buf) - int(tail))
             for line in buf[start:]:
                 safe = (line or "").replace("\n", " ")
                 yield f"event: {t}\ndata: {safe}\n\n"
-            idx[t] = len(buf)
+            base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
+            last_seq[t] = base + len(buf) - 1
 
         last = time.time()
         while True:
@@ -915,16 +882,22 @@ async def api_logs_watcher(
                 break
 
             for t in tags_sel:
-                buf = LOG_BUFFERS.get(t, [])
-                i = idx.get(t, 0)
-                if i > len(buf):
-                    i = len(buf)
-                while i < len(buf):
-                    safe = (buf[i] or "").replace("\n", " ")
+                buf = _get_log_buf(t)
+                base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
+                seen = int(last_seq.get(t, base - 1))
+                if seen < base - 1:
+                    seen = base - 1
+                start_seq = max(seen + 1, base)
+                start_idx = int(start_seq - base)
+                if start_idx < 0:
+                    start_idx = 0
+                for i in range(start_idx, len(buf)):
+                    line = buf[i]
+                    safe = (line or "").replace("\n", " ")
                     yield f"event: {t}\ndata: {safe}\n\n"
                     last = time.time()
-                    i += 1
-                idx[t] = i
+                    seen = base + i
+                last_seq[t] = seen
 
             if time.time() - last > 15:
                 yield "event: ping\ndata: 1\n\n"
@@ -992,10 +965,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         RUNNING_PROCS.pop("SYNC", None)
 
 # Scheduler sync starter
-def _start_sync_from_scheduler() -> bool:
+def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
     try:
-        payload = {"source": "scheduler"}
-        res = api_run_sync(payload) or {}
+        p = dict(payload or {})
+        p.setdefault("source", "scheduler")
+        res = api_run_sync(p) or {}
     except Exception as e:
         _append_log("SYNC", f"[!] Scheduler: api_run_sync failed: {e}")
         return False
@@ -1012,6 +986,7 @@ scheduler = SyncScheduler(
     load_config, save_config,
     run_sync_fn=_start_sync_from_scheduler,
     is_sync_running_fn=_is_sync_running,
+    log_fn=_UIHostLogger("SYNC", "SCHED"),
 )
 
 # Platform and metadata managers
