@@ -401,10 +401,14 @@ DEFAULT_CFG: dict[str, Any] = {
 
     # --- Scheduling ----------------------------------------------------------
     "scheduling": {
-        "enabled": False,                               # Master toggle for periodic runs
-        "mode": "hourly",                               # "hourly" or "daily"
-        "every_n_hours": 2,                             # When mode=hourly, run every N hours (1–12)
-        "daily_time": "03:30",                          # When mode=daily, run at this time (HH:MM, 24h)
+        "enabled": False,                               # Standard scheduler master toggle
+        "mode": "every_n_hours",                        # "every_n_hours" | "daily_time"
+        "every_n_hours": 12,                            # When mode=every_n_hours, run every N hours (1–12)
+        "daily_time": "03:30",                          # When mode=daily_time, run at this time (HH:MM, 24h)
+        "advanced": {
+            "enabled": False,                           # Advanced scheduler master toggle
+            "jobs": [],
+        },
     },
 
     # --- User Interface ------------------------------------------------------
@@ -623,6 +627,113 @@ def _normalize_tmdb_sync(cfg: dict[str, Any]) -> None:
         t["_pending_created_at"] = 0
 
 
+
+def _is_hhmm(v: str) -> bool:
+    s = (v or "").strip()
+    if len(s) != 5 or s[2] != ":":
+        return False
+    hh, mm = s[:2], s[3:]
+    if not hh.isdigit() or not mm.isdigit():
+        return False
+    try:
+        h = int(hh)
+        m = int(mm)
+    except Exception:
+        return False
+    return 0 <= h <= 23 and 0 <= m <= 59
+
+
+def _normalize_scheduling(cfg: dict[str, Any]) -> None:
+    s = _ensure_dict(cfg, "scheduling")
+    s["enabled"] = bool(s.get("enabled", False))
+
+    mode_raw = str(s.get("mode", "every_n_hours") or "every_n_hours").strip().lower()
+    if mode_raw in {"disabled", "off", "none"}:
+        mode = "disabled"
+    elif mode_raw in {"hourly", "every_hour"}:
+        mode = "hourly"
+        s["every_n_hours"] = 1
+    elif mode_raw in {"daily", "daily_at", "daily_time"}:
+        mode = "daily_time"
+    elif mode_raw == "every_n_hours":
+        mode = "every_n_hours"
+    else:
+        mode = "every_n_hours"
+    s["mode"] = mode
+
+    try:
+        n = int(s.get("every_n_hours", 2) or 2)
+    except Exception:
+        n = 2
+    if n < 1:
+        n = 1
+    if n > 12:
+        n = 12
+    s["every_n_hours"] = n
+
+    t = str(s.get("daily_time", "03:30") or "03:30").strip()
+    if not _is_hhmm(t):
+        t = "03:30"
+    s["daily_time"] = t
+
+    adv = _ensure_dict(s, "advanced")
+    adv["enabled"] = bool(adv.get("enabled", False))
+
+    jobs0 = adv.get("jobs")
+    jobs: list[dict[str, Any]] = []
+    if isinstance(jobs0, list):
+        for it in jobs0:
+            if isinstance(it, dict):
+                jobs.append(dict(it))
+
+    out: list[dict[str, Any]] = []
+    for i, j in enumerate(jobs):
+        jid = str(j.get("id") or "").strip()
+        if not jid:
+            jid = f"job_{i+1}"
+        j["id"] = jid
+
+        pair_id = j.get("pair_id")
+        if pair_id is None:
+            j["pair_id"] = None
+        else:
+            s_pair = str(pair_id).strip()
+            j["pair_id"] = s_pair or None
+
+        at = str(j.get("at") or "").strip()
+        if at and not _is_hhmm(at):
+            at = ""
+        j["at"] = at or None
+
+        after = j.get("after")
+        if after is None:
+            j["after"] = None
+        else:
+            a = str(after).strip()
+            if a and not _is_hhmm(a):
+                a = ""
+            j["after"] = a or None
+
+        days0 = j.get("days")
+        days: list[int] = []
+        if isinstance(days0, list):
+            for d in days0:
+                try:
+                    di = int(d)
+                except Exception:
+                    continue
+                if di < 1 or di > 7:
+                    continue
+                if di not in days:
+                    days.append(di)
+        j["days"] = days
+
+        j["active"] = bool(j.get("active", True))
+        out.append(j)
+
+    adv["jobs"] = out
+
+
 def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui = _ensure_dict(cfg, "ui")
 
@@ -668,6 +779,7 @@ def load_config() -> dict[str, Any]:
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
     cfg.setdefault("version", _current_version_norm())
     _normalize_tmdb_sync(cfg)
+    _normalize_scheduling(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -745,6 +857,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
     data["version"] = _current_version_norm()
     _normalize_tmdb_sync(data)
+    _normalize_scheduling(data)
     _normalize_ui(data)
     pairs = data.get("pairs")
     if isinstance(pairs, list):

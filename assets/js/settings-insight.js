@@ -145,7 +145,7 @@
       const n = Number(p.count || 0) || 0;
       const src = `/assets/img/${key}-log.svg`;
       const title = `${label}: ${n} configured ${n === 1 ? "profile" : "profiles"}`;
-      return `<span class="si-pchip" title="${title}"><img src="${src}" alt="${label}"><span class="n">${n}</span></span>`;
+      return `<span class="si-pchip" title="${title}"><img loading="lazy" decoding="async" src="${src}" alt="${label}"><span class="n">${n}</span></span>`;
     }).join("");
     return `<div class="si-pchips">${chips}</div>`;
   }
@@ -529,9 +529,13 @@
   async function getSchedulingSummary(){
     const cfg = await fetchJSON("/api/scheduling?t=" + Date.now());
     const st  = await fetchJSON("/api/scheduling/status?t=" + Date.now());
-    const enabled = !!(cfg && cfg.enabled);
+
+    const stdEnabled = !!(cfg && cfg.enabled);
+    const advEnabled = !!(cfg && cfg.advanced && cfg.advanced.enabled);
+    const enabled = stdEnabled || advEnabled;
+
     let next = coalesceNextRun(st); if (next===null) next = coalesceNextRun(cfg);
-    return { enabled, nextRun: next };
+    return { enabled, advanced: advEnabled, nextRun: next };
   }
 
   
@@ -761,13 +765,40 @@
     `;
   }
 
+  // Rendering optimizations
+  let _siLastRenderKey = "";
+
+  function _siStableStringify(v) {
+    if (v === null || v === undefined) return String(v);
+    const t = typeof v;
+    if (t === "number" || t === "boolean") return String(v);
+    if (t === "string") return JSON.stringify(v);
+    if (Array.isArray(v)) return "[" + v.map(_siStableStringify).join(",") + "]";
+    if (t === "object") {
+      const keys = Object.keys(v).sort();
+      return "{" + keys.map((k) => JSON.stringify(k) + ":" + _siStableStringify(v[k])).join(",") + "}";
+    }
+    return JSON.stringify(String(v));
+  }
+
+  function _siComputeRenderKey(data) {
+    if (!data?.auth?.configured) return "wizard";
+    const scrobReady = !!(data?.scrob?.enabled);
+    if (data.auth.configured && data?.pairs?.count === 0 && !scrobReady) return "pairsWizard";
+    return "main:" + _siStableStringify(data);
+  }
+
+
+
   function render(data){
     const body=$("#cw-si-body"); if(!body) return;
 
-    if (!data.auth.configured) return renderWizard();
+    const key = _siComputeRenderKey(data);
+    if (key === _siLastRenderKey) return;
+    _siLastRenderKey = key;
 
-    const scrobReady = !!(data?.scrob?.enabled);
-    if (data.auth.configured && data.pairs.count === 0 && !scrobReady) return renderPairsWizard();
+    if (key === "wizard") return renderWizard();
+    if (key === "pairsWizard") return renderPairsWizard();
 
     body.innerHTML="";
         body.appendChild(row("lock","Authentication Providers", authProfilesHTML(data.auth)));
@@ -790,7 +821,7 @@
       ));
     }
     body.appendChild(row("schedule","Scheduling",
-      data.sched.enabled ? `Enabled | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
+      data.sched.enabled ? `${data.sched.advanced ? "Enabled (Advanced)" : "Enabled"} | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
         const scMode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");
     const scStatus = !data.scrob.enabled ? "" : (data.scrob.mode==="watch" ? (data.scrob.watcher.alive ? "Running" : "Stopped") : "—");
     const provs = Array.isArray(data.scrob.providers) ? data.scrob.providers.filter(Boolean) : [];
@@ -843,7 +874,7 @@
         syncHeight();
         _scheduleTick(10000);
       } else {
-        _scheduleTick(3000);
+        _scheduleTick(60000);
       }
     } finally {
       _tickBusy = false;

@@ -30,9 +30,10 @@
 .sch-adv th,.sch-adv td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
 .sch-adv th{font-weight:600;color:var(--muted)}
 .sch-adv select,.sch-adv input[type=time]{width:100%}
-.sch-adv .chipdays{display:flex;gap:6px;flex-wrap:wrap}
-.sch-adv .chipdays label{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--border);border-radius:10px;cursor:pointer}
+.sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:center}
+.sch-adv .chipdays label{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 8px;border:1px solid var(--border);border-radius:10px;cursor:pointer;width:100%}
 .sch-adv .chipdays input{transform:translateY(1px)}
+.sch-adv .chipdays .chipspacer{width:100%;height:1px;visibility:hidden;pointer-events:none}
 .sch-adv .row-disabled{opacity:.55;filter:grayscale(.25)}
 .sch-adv option[disabled]{color:#666}
 .sch-adv .status{margin-top:10px;min-height:20px}
@@ -88,16 +89,72 @@ const ensureStdEnabledToggle = () => {
   syncFromSel();
 
   cb.onchange = () => {
+    // Standard on -> force advanced off
+    if (cb.checked) {
+      const advCb = $("#schAdvEnabled");
+      if (advCb && advCb.checked) advCb.checked = false;
+      _advEnabled = !!$("#schAdvEnabled")?.checked;
+    }
+
     setBooleanSelect(sel, cb.checked);
     try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
     try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-    try { window.refreshSchedulingBanner?.(); } catch {}
-    try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+
+    applyModeLocks();
   };
 
   sel.addEventListener("change", syncFromSel);
   sel.__toggleEnhanced = true;
 };
+
+  const setAdvDisabled = (disabled) => {
+    const adv = $("#schAdv");
+    if (!adv) return;
+    adv.classList.toggle("adv-disabled", !!disabled);
+    [...adv.querySelectorAll("select,input,button")].forEach((n) => {
+      if (n && n.id === "schAdvEnabled") return;
+      n.disabled = !!disabled;
+    });
+  };
+
+  const applyModeLocks = () => {
+    const sel = $("#schEnabled");
+    const stdToggle = $("#schEnabledToggle");
+    const advCb = $("#schAdvEnabled");
+
+    const stdEnabled = String(sel?.value || "").trim().toLowerCase() === "true";
+    const advEnabled = !!advCb?.checked;
+
+    if (advEnabled) {
+      // Advanced on -> force standard off
+      if (stdEnabled) {
+        setBooleanSelect(sel, false);
+        try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+        try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+      }
+      if (stdToggle) stdToggle.checked = false;
+    } else if (stdEnabled) {
+      // Standard on -> force advanced off
+      if (advCb && advCb.checked) advCb.checked = false;
+      _advEnabled = !!advCb?.checked;
+    }
+
+    const advOn = !!advCb?.checked;
+    const stdOn = String(sel?.value || "").trim().toLowerCase() === "true";
+
+    // Lock standard fields when advanced is on
+    const lockStdFields = advOn;
+    ["schMode", "schN", "schTime"].forEach((id) => {
+      const n = $("#" + id);
+      if (n) n.disabled = lockStdFields;
+    });
+
+    // Lock advanced fields when standard is on 
+    setAdvDisabled(stdOn);
+
+    try { window.refreshSchedulingBanner?.(); } catch {}
+    try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+  };
 
   // data
   const fetchPairs = async () => {
@@ -136,6 +193,7 @@ const ensureStdEnabledToggle = () => {
       const lab = el("label"), chk = Object.assign(el("input"), { type: "checkbox", checked: cur.has(i+1) });
       chk.onchange = () => { const S = new Set(Array.isArray(j.days) ? j.days : []); chk.checked ? S.add(i+1) : S.delete(i+1); j.days = [...S].sort((a,b)=>a-b); };
       lab.append(chk, document.createTextNode(d)); wrap.appendChild(lab);
+    if(i===2){ wrap.appendChild(el("span","chipspacer")); }
     });
     tdDays.appendChild(wrap);
 
@@ -202,7 +260,17 @@ const ensureStdEnabledToggle = () => {
     };
     $("#schAdvEnabled").onchange = () => {
       _advEnabled = !!$("#schAdvEnabled").checked;
-      try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+
+      // Advanced on -> force standard off
+      if (_advEnabled) {
+        const sel = $("#schEnabled");
+        setBooleanSelect(sel, false);
+        try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+        try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+        try { sel.__toggleSync?.(); } catch {}
+      }
+
+      applyModeLocks();
     };
   };
 
@@ -218,7 +286,7 @@ const ensureStdEnabledToggle = () => {
     try { window.cwSchedSettingsHubUpdate?.(); } catch {}
   };
 
-  // load (guarded)
+  // load
   const loadScheduling = async () => {
     if (_loading) return; _loading = true;
     try {
@@ -248,6 +316,8 @@ const ensureStdEnabledToggle = () => {
       })) : [];
       renderJobs();
 
+      applyModeLocks();
+
       try { window.cwSchedSettingsHubInit?.(); } catch {}
       try { window.cwSchedSettingsHubUpdate?.(); } catch {}
 
@@ -269,13 +339,17 @@ const ensureStdEnabledToggle = () => {
     }))
   });
 
-  // public patch accessor (used by Save)
+  // public getter for current scheduling patch
   window.getSchedulingPatch = () => {
-    const enabled = ($("#schEnabled")?.value || "").trim() === "true";
     const mode = $("#schMode")?.value || "hourly";
     const every_n_hours = parseInt($("#schN")?.value || "2", 10);
     const daily_time = $("#schTime")?.value || "03:30";
     const advanced = serializeAdvanced();
+
+    // Advanced plan disables standard scheduling
+    const stdEnabled = ($("#schEnabled")?.value || "").trim() === "true";
+    const enabled = advanced.enabled ? false : stdEnabled;
+
     return { enabled, mode, every_n_hours, daily_time, advanced };
   };
 

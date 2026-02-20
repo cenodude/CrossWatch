@@ -115,7 +115,7 @@ wrap.innerHTML=`<div class="sched" id="chip-sched" aria-live="polite"><span clas
 <div class="sched" id="chip-hook" aria-live="polite"><span class="ic dot" aria-hidden="true"></span><span class="sub" id="hook-sub">Webhook: —</span></div>`; host.appendChild(wrap) } return wrap}
 
 /* Helpers */
-const tClock=s=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,d=new Date(ms);return isNaN(+d)?'—':d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+const tClock=(s,withDay=false)=>{if(!s)return'—';const ms=s<1e10?s*1e3:s,dt=new Date(ms);if(isNaN(+dt))return'—';const time=dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});if(!withDay)return time;const now=new Date();if(dt.toDateString()===now.toDateString())return time;const tom=new Date(now);tom.setDate(now.getDate()+1);if(dt.toDateString()===tom.toDateString())return `tomorrow ${time}`;const dow=dt.toLocaleDateString([],{weekday:'short'});return `${dow} ${time}`;};
 
 /* Polling policy */
 const SCROBBLE_POLL_WATCH_MS=15000;
@@ -125,7 +125,7 @@ const MIN_SCHED_FETCH_MS=2000;
 const MIN_SCROBBLE_FETCH_MS=2000;
 
 /* State */
-let S={enabled:false,running:false,next:0,busy:false},
+let S={enabled:false,running:false,next:0,advanced:false,busy:false},
     W={enabled:false,alive:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null,streams_count:0},
     H={enabled:false,busy:false,title:null,media_type:null,year:null,season:null,episode:null,progress:0,state:null,streams_count:0};
 
@@ -193,7 +193,7 @@ function renderSched(){
   chip.classList.toggle('ok',true);
   chip.classList.toggle('bad',false);
   chip.classList.toggle('live',!!S.running);
-  sub.textContent=`Scheduler: ${S.running?'running':'scheduled'}${S.next?` (next ${tClock(S.next)})`:''}`;
+  sub.textContent=`Scheduler: ${S.advanced?'advanced ':''}${S.running?'running':'scheduled'}${S.next?` (next ${tClock(S.next,true)})`:''}`;
 }
 
 function renderWatch(){
@@ -267,8 +267,12 @@ async function fetchSched(force=false){ if(S.busy){ _schedQueued=true; _schedQue
 try{
   if(document.hidden){ S.busy=false; return; }
   const r=await fetch('/api/scheduling/status?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw 0; const j=await r.json();
-  S.enabled=!!(j?.config?.enabled); S.running=!!j?.running; S.next=+(j?.next_run_at||0)||0
-}catch{ S.enabled=false; S.running=false; S.next=0 }
+  const cfg=j?.config||{};
+  S.advanced=!!(cfg?.advanced?.enabled);
+  S.enabled=!!(cfg?.enabled||S.advanced);
+  S.running=!!j?.running;
+  S.next=+(j?.next_run_at||0)||0
+}catch{ S.enabled=false; S.running=false; S.next=0; S.advanced=false }
 _schedLastAt=Date.now();
 S.busy=false; renderSched();
 if(_schedQueued){ const f=_schedQueuedForce; _schedQueued=false; _schedQueuedForce=false; setTimeout(()=>fetchSched(f),0); } }

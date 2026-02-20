@@ -112,6 +112,36 @@ def replan_now() -> dict[str, Any]:
 
     return {"ok": True, **st}
 
+
+@router.post("/trigger_now")
+def trigger_now(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
+    _, _, scheduler, _, _, log = _env()
+    try:
+        log("SYNC", "SCHED")("trigger_now: manual request received", level="INFO")
+    except Exception:
+        pass
+
+    ok = False
+    try:
+        if scheduler is not None and hasattr(scheduler, "trigger_payload"):
+            ok = bool(scheduler.trigger_payload(payload or None))
+        elif scheduler is not None and hasattr(scheduler, "trigger_once"):
+            scheduler.trigger_once()  # type: ignore[attr-defined]
+            ok = True
+    except Exception as e:
+        try:
+            log("SYNC", "SCHED")(f"trigger_now failed: {e}", level="ERROR")
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)}
+
+    try:
+        st = scheduler.status()  # type: ignore[union-attr]
+    except Exception:
+        st = {}
+
+    return {"ok": True, "triggered": ok, **st}
+
 @router.get("")
 def sched_get() -> dict[str, Any]:
     load_config, *_ = _env()
@@ -134,7 +164,9 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         nxt = 0
 
     try:
-        if (scfg or {}).get("enabled"):
+        effective_enabled = bool((scfg or {}).get("enabled") or ((scfg or {}).get("advanced") or {}).get("enabled"))
+
+        if effective_enabled:
             if hasattr(scheduler, "start"):
                 scheduler.start()
             if hasattr(scheduler, "refresh"):
