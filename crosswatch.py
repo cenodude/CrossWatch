@@ -32,6 +32,10 @@ import requests
 import uvicorn
 import asyncio
 
+# Mute Unverified HTTPS request warnings from requests/urllib3
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # Internal imports
 from api import (
     register as register_api,
