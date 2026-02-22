@@ -129,7 +129,7 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
     return cls()
 
 
-def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider: Callable[[], dict[str, Any]]) -> Any:
+def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider: Callable[[], dict[str, Any]], instance_id: str) -> Any:
     prov = (provider or "plex").strip().lower() or "plex"
     make_watch: Any
     if prov == "emby":
@@ -140,12 +140,14 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
         from providers.scrobble.plex.watch import make_default_watch as make_watch
         prov = "plex"
 
-    if _supports_kw(make_watch, "dispatcher") or _supports_kw(make_watch, "cfg_provider"):
+    if _supports_kw(make_watch, "dispatcher") or _supports_kw(make_watch, "cfg_provider") or _supports_kw(make_watch, "instance_id"):
         kwargs: dict[str, Any] = {}
         if _supports_kw(make_watch, "dispatcher"):
             kwargs["dispatcher"] = cast(Any, group_dispatcher)
         if _supports_kw(make_watch, "cfg_provider"):
             kwargs["cfg_provider"] = cfg_provider
+        if _supports_kw(make_watch, "instance_id"):
+            kwargs["instance_id"] = instance_id
         if _supports_kw(make_watch, "sinks"):
             kwargs["sinks"] = []
         return make_watch(**kwargs)
@@ -155,7 +157,12 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
             from providers.scrobble.plex.watch import WatchService
 
             if _supports_kw(WatchService.__init__, "dispatcher"):
-                return WatchService(dispatcher=cast(Any, group_dispatcher))
+                kwargs: dict[str, Any] = {"dispatcher": cast(Any, group_dispatcher)}
+                if _supports_kw(WatchService.__init__, "cfg_provider"):
+                    kwargs["cfg_provider"] = cfg_provider
+                if _supports_kw(WatchService.__init__, "instance_id"):
+                    kwargs["instance_id"] = instance_id
+                return WatchService(**kwargs)
         except Exception:
             pass
 
@@ -215,7 +222,7 @@ class WatchManager:
                         {"provider": p, "provider_instance": i, "sink": "", "sink_instance": "default", "filters": {}},
                     )
 
-                watcher = _make_watcher(prov, md, group_cfg_provider)
+                watcher = _make_watcher(prov, md, group_cfg_provider, inst)
                 if hasattr(watcher, "start_async"):
                     watcher.start_async()
                 else:
