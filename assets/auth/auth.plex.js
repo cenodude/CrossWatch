@@ -187,6 +187,10 @@ function ensurePlexInstanceUI() {
     if (sub === "whitelist") {
       try { mountPlexLibraryMatrix(); } catch {}
     }
+
+    if (sub === "settings") {
+      setTimeout(() => { try { plexRefreshPmsSuggestions({ force: true }); } catch {} }, 0);
+    }
   }
 
   function mountPlexAuthTabs() {
@@ -255,12 +259,7 @@ function ensurePlexInstanceUI() {
     else { setPlexBanner(null, ""); setPlexBannerDetail(null, ""); }
   }
 
-  function setPlexPending(text) {
-    setPlexBanner("warn", text || "Waiting for Plex...");
-    setPlexBannerDetail(null, "");
-  }
-
-  function setPlexConnected(token) {
+  function setPlexConnected() {
     setPlexSuccess(true, "Connected");
     setPlexBannerDetail(null, "");
     schedulePlexPmsProbe(200);
@@ -382,7 +381,10 @@ function ensurePlexInstanceUI() {
           // Token poll is a post-auth synchronizer
           if (urlEl && cfgUrl && urlEl.value.trim() !== cfgUrl)  urlEl.value = cfgUrl;
           if (userEl && cfgUser && userEl.value.trim() !== cfgUser) userEl.value = cfgUser;
-          if (idEl && cfgId && idEl.value.trim() !== cfgId)    idEl.value = cfgId;
+          if (idEl) {
+            if (cfgId && cfgId !== "1" && idEl.value.trim() !== cfgId) idEl.value = cfgId;
+            if (cfgId === "1" && idEl.value.trim() === "1") idEl.value = "";
+          }
 
           if (!autoTried && typeof plexAuto === "function" && (!cfgUser || !cfgId || !cfgUrl)) {
             autoTried = true;
@@ -455,12 +457,15 @@ async function plexDeleteToken() {
       const set = (id, val) => { const el = $(id); if (el != null && val != null) el.value = String(val); };
       set("plex_token", p.account_token || "");
       const tok = String(p.account_token || '').trim();
-      if (tok) setPlexConnected(tok);
+      if (tok) setPlexConnected();
       else setPlexSuccess(false);
       set("plex_pin", p._pending_pin?.code || "");
       set("plex_server_url", p.server_url || "");
       set("plex_username", p.username || "");
-      set("plex_account_id", p.account_id ?? "");
+      const aid = (p.account_id != null ? String(p.account_id).trim() : "");
+      set("plex_account_id", (aid && aid !== "1") ? aid : "");
+      // If account_id is missing (or still the legacy placeholder), resolve via /api/plex/pickusers.
+      await resolvePlexAccountIdFromUsers({ bustCache: true });
       try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
 
       const st = getPlexState();
@@ -477,6 +482,7 @@ async function plexDeleteToken() {
           if (id === "plex_lib_scrobble") o.selected = st.scr.has(o.value);
         });
       });
+      try { plexRefreshPmsSuggestions(); } catch {}
     } catch (e) { console.warn("[plex] hydrate failed", e); }
   }
 
@@ -526,14 +532,16 @@ async function plexDeleteToken() {
       const privateHost = isPrivateHost(host);
       const effProto = proto || (url.startsWith("https://") ? "https" : "http");
 
-      const score =
-        (local ? 8 : 0) +
-        (!relay ? 4 : 0) +
-        (privateHost ? 3 : 0) +
-        (effProto === "http" ? 2 : 0) +
-        (hostKind === "ip" ? 1 : 0);
+      const remote = !local;
+      const direct = !relay;
 
-      const tags = [
+      const score =
+        (remote ? 16 : 0) +
+        (effProto === "https" ? 8 : 0) +
+        (direct ? 4 : 0) +
+        (hostKind === "domain" ? 2 : 0) +
+        (!privateHost ? 1 : 0);
+const tags = [
         local ? "local" : "remote",
         relay ? "relay" : "direct",
         effProto,
@@ -574,7 +582,95 @@ async function plexDeleteToken() {
       .map((it) => `<option value="${it.url}" label="${it.label}"></option>`)
       .join("");
 
+    // Also expose suggestions as a visible dropdown (datalist is easy to miss)
+    try {
+      const sel = document.getElementById("plex_server_url_select");
+      const hint = document.getElementById("plex_server_url_select_hint");
+      const urlEl = document.getElementById("plex_server_url");
+
+      if (sel) {
+        // Show the discovered URL picker only when Server URL is empty.
+        // This avoids displaying the same URL twice (input + dropdown).
+        const curr = (urlEl?.value || "").trim().replace(/\/+$/, "");
+        const show = !curr && items.length > 0;
+
+        sel.innerHTML = [
+          `<option value="">— Pick a discovered server URL —</option>`,
+          ...items.map((it) => `<option value="${it.url}">${it.label}</option>`)
+        ].join("");
+
+        sel.value = ""; // Keep placeholder selected
+
+        sel.classList.toggle("hidden", !show);
+        if (hint) hint.classList.toggle("hidden", !show);
+
+        if (!sel.__wired) {
+          sel.__wired = true;
+          sel.addEventListener("change", () => {
+            const v = (sel.value || "").trim();
+            if (!v || !urlEl) return;
+            urlEl.value = v;
+            urlEl.dispatchEvent(new Event("input", { bubbles: true }));
+            urlEl.dispatchEvent(new Event("change", { bubbles: true }));
+
+            // Hide after selection to keep UI clean
+            sel.value = "";
+            sel.classList.add("hidden");
+            if (hint) hint.classList.add("hidden");
+          });
+        }
+      }
+    } catch {}
     return items[0]?.url || "";
+  }
+
+
+  // Fetch PMS connections to populate the discovered Server URL picker.
+  // Only shows the picker when Server URL is empty.
+  const __plexPmsSugCache = { inst: "", at: 0, servers: null, inFlight: false };
+
+  async function plexRefreshPmsSuggestions(opts = {}) {
+    const force = !!opts.force;
+    const urlEl = $("plex_server_url");
+    const sel = $("plex_server_url_select");
+    const hint = $("plex_server_url_select_hint");
+    if (!sel) return;
+
+    const curr = (urlEl?.value || "").trim().replace(/\/+$/, "");
+    if (curr) {
+      sel.classList.add("hidden");
+      if (hint) hint.classList.add("hidden");
+      return;
+    }
+
+    const tok = String($("plex_token")?.value || "").trim();
+    if (!tok) return;
+
+    const inst = getPlexInstance();
+    const now = Date.now();
+    const fresh = __plexPmsSugCache.inst === inst && (now - __plexPmsSugCache.at) < 15000 && Array.isArray(__plexPmsSugCache.servers);
+
+    if (!force && fresh) {
+      try { fillPlexServerSuggestions(__plexPmsSugCache.servers); } catch {}
+      return;
+    }
+
+    if (__plexPmsSugCache.inFlight) return;
+    __plexPmsSugCache.inFlight = true;
+    try {
+      const r = await fetch(plexApi("/api/plex/pms"), { cache: "no-store" });
+      if (!r.ok) return;
+      const j = await r.json().catch(() => ({}));
+      const servers = Array.isArray(j?.servers) ? j.servers : [];
+      __plexPmsSugCache.inst = inst;
+      __plexPmsSugCache.at = now;
+      __plexPmsSugCache.servers = servers;
+      try { fillPlexServerSuggestions(servers); } catch {}
+    } catch {
+      // ignore
+    } finally {
+      __plexPmsSugCache.inFlight = false;
+    }
   }
 
   // Auto-Fetch: prefer /api/plex/pms; then hydrate user/id via /api/plex/inspect
@@ -640,16 +736,65 @@ async function plexDeleteToken() {
           };
           setIfEmpty(urlEl, dta.server_url);
           if (dta.username) set("plex_username", dta.username);
-          if (dta.account_id != null) set("plex_account_id", dta.account_id);
+          if (dta.account_id != null) {
+            const v = String(dta.account_id).trim();
+            if (v && v !== "1") set("plex_account_id", v);
+            else set("plex_account_id", "");
+          }
         }
       } catch {}
 
-    } catch (e) {
+      // Resolve account_id via /api/plex/pickusers if missing/legacy.
+      await resolvePlexAccountIdFromUsers({ bustCache: true });
+} catch (e) {
       console.warn("[plex] Auto-Fetch failed", e);
     }
     try { schedulePlexPmsProbe(200); } catch {}
   }
   
+
+
+  // Resolve account_id via /api/plex/pickusers (shared by hydrate + auto-fetch)
+  async function resolvePlexAccountIdFromUsers(opts = {}) {
+    try {
+      const idEl = $("plex_account_id");
+      if (!idEl) return;
+      const userEl = $("plex_username");
+      const wantUser = String(opts.username ?? (userEl?.value || "")).trim().toLowerCase();
+      const currId = String(idEl.value || "").trim();
+      const needsResolve = !currId || currId === "1";
+      if (!(needsResolve || wantUser)) return;
+
+      if (opts.bustCache) {
+        try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
+      }
+
+      const users = await fetchPlexUsers();
+      const norm = (u) => String(u?.username || u?.title || "").trim().toLowerCase();
+
+      const match = wantUser ? (users.find((u) => norm(u) === wantUser) || null) : null;
+      let pick = match;
+
+      if (!pick && needsResolve) {
+        pick = users.find((u) => String(u?.type || "").toLowerCase() === "self") || null;
+        if (!pick) pick = users.find((u) => String(u?.type || "").toLowerCase() === "owner") || null;
+        if (!pick) pick = users.find((u) => String(u?.type || "").toLowerCase() === "managed") || null;
+        if (!pick) pick = users[0] || null;
+      }
+
+      const uid = pick ? (pick.id ?? pick.account_id) : null;
+      if (uid != null) {
+        const next = String(uid).trim();
+        idEl.value = (next && next !== "1") ? next : "";
+      }
+
+      if (userEl && !userEl.value && pick) {
+        const u = String(pick.username || pick.title || "").trim();
+        if (u) userEl.value = u;
+      }
+    } catch {}
+  }
+
   // User picker
   const __plexUsersByInst = new Map();
 
@@ -977,24 +1122,6 @@ async function plexDeleteToken() {
     })();
   }
 
-  // Read UI on save
-  function readMatrixSelection(which) {
-    const host = $("plex_lib_matrix");
-    if (!host) return null;
-    const sels = new Set();
-    const sel = which === "hist" ? ".lm-dot.hist.on" : (which === "rate" ? ".lm-dot.rate.on" : ".lm-dot.scr.on");
-    host.querySelectorAll(sel).forEach(btn => {
-      const id = btn.closest(".lm-row")?.dataset?.id;
-      const n = parseInt(String(id), 10);
-      if (Number.isFinite(n)) sels.add(n);
-    });
-    return Array.from(sels);
-  }
-  function readSelectInts(sel) {
-    const el = q(sel); if (!el) return null;
-    return Array.from(el.selectedOptions || []).map(o => parseInt(String(o.value), 10)).filter(Number.isFinite);
-  }
-
   function mergePlexIntoCfg(cfg) {
     const v = (sel) => {
       const el = q(sel);
@@ -1014,11 +1141,14 @@ async function plexDeleteToken() {
 
     if (pin !== null) plex.home_pin = pin;
 
-    // Always ensure account_id is a positive integer; fallback to 1
+    // account_id is optional. Keep it empty unless the user picked/entered a valid id.
     if (aid !== null) {
-      let n = parseInt(aid, 10);
-      if (!Number.isFinite(n) || n <= 0) n = 1;
-      plex.account_id = n;
+      const raw = String(aid || "").trim();
+      if (!raw) plex.account_id = "";
+      else {
+        const n = parseInt(raw, 10);
+        plex.account_id = (Number.isFinite(n) && n > 0) ? n : "";
+      }
     }
 
     try { const cb = $("plex_verify_ssl"); if (cb) plex.verify_ssl = !!cb.checked; } catch {}
@@ -1109,6 +1239,17 @@ async function plexDeleteToken() {
         urlEl.__pmsProbeWired = true;
         urlEl.addEventListener("change", () => schedulePlexPmsProbe(300));
         urlEl.addEventListener("blur", () => schedulePlexPmsProbe(300));
+        urlEl.addEventListener("input", () => {
+          const v = (urlEl.value || "").trim();
+          const sel = $("plex_server_url_select");
+          const hint = $("plex_server_url_select_hint");
+          if (v) {
+            if (sel) sel.classList.add("hidden");
+            if (hint) hint.classList.add("hidden");
+          } else {
+            try { plexRefreshPmsSuggestions(); } catch {}
+          }
+        });
       }
       const sslEl = $("plex_verify_ssl");
       if (sslEl && !sslEl.__pmsProbeWired) {
@@ -1132,7 +1273,6 @@ async function plexDeleteToken() {
       try { mountPlexAuthTabs(); } catch {}
       await waitFor("#plex_server_url");
       try { hydratePlexFromConfigRaw(); } catch {}
-      try { plexAuto(); } catch {}
       try { await plexLoadLibraries(); } catch {}
       try { mountPlexLibraryMatrix(); } catch {}
       try { mountPlexUserPicker(); } catch {}
