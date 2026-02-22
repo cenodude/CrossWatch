@@ -44,6 +44,25 @@ def _cache_path() -> Path:
     return state_file("trakt_history.index.json")
 
 
+def _bust_index_cache(reason: str) -> None:
+    try:
+        p = _cache_path()
+        if p.exists():
+            p.unlink()
+            _info("index_cache_bust", reason=reason)
+    except Exception as e:
+        _warn("index_cache_bust_failed", reason=reason, error=str(e))
+
+
+
+def _not_found_count(nf: Any) -> int:
+    if not isinstance(nf, dict):
+        return 0
+    c = 0
+    for v in nf.values():
+        if isinstance(v, list):
+            c += len(v)
+    return c
 
 def _record_limit_error(feature: str) -> None:
     if _pair_scope() is None:
@@ -787,48 +806,24 @@ def _batch_add(
         number = it.get("episode") or it.get("episode_number")
         show_ids = _extract_show_ids_for_episode(it)
         ids = ids_for_trakt(it)
+
+        # Prefer show and season and episode payload
+        if show_ids and season is not None and number is not None:
+            skey = _show_key(show_ids)
+            show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
+            seasons = show_entry["seasons"]  # type: ignore[assignment]
+            season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
+            season_entry["episodes"].append({"number": int(number), "watched_at": when})
+            e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
+            accepted_minimals.append(e_min)
+            accepted_keys.append(key_of(e_min))
+            continue
+
         if ids:
             episodes_flat.append({"ids": ids, "watched_at": when})
             e_min = id_minimal({"type": "episode", "ids": ids})
             accepted_minimals.append(e_min)
             accepted_keys.append(key_of(e_min))
-            continue
-        if show_ids and season is not None and number is not None:
-            if _history_number_fallback_enabled(adapter):
-                skey = _show_key(show_ids)
-                show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
-                seasons = show_entry["seasons"]  # type: ignore[assignment]
-                season_entry = seasons.setdefault(
-                    int(season),
-                    {"number": int(season), "episodes": []},
-                )
-                season_entry["episodes"].append({"number": int(number), "watched_at": when})
-                e_min = id_minimal(
-                    {"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)}
-                )
-                accepted_minimals.append(e_min)
-                accepted_keys.append(key_of(e_min))
-            else:
-                timeout = float(_cfg_num(adapter, "timeout", 10, float))
-                retries = int(_cfg_num(adapter, "max_retries", 3, int))
-                rids = _resolve_episode_ids_via_trakt(
-                    adapter,
-                    show_ids,
-                    season,
-                    number,
-                    timeout=timeout,
-                    retries=retries,
-                )
-                if rids:
-                    episodes_flat.append({"ids": rids, "watched_at": when})
-                    e_min = id_minimal({"type": "episode", "ids": rids})
-                    accepted_minimals.append(e_min)
-                    accepted_keys.append(key_of(e_min))
-                else:
-                    unresolved.append(
-                        {"item": id_minimal(it), "hint": "episode ids missing; resolver failed"}
-                    )
-                    _freeze_item_if_enabled(adapter, it, action="add", reasons=["episode-ids-missing"])
             continue
         unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
         _freeze_item_if_enabled(adapter, it, action="add", reasons=["episode-scope-missing"])
@@ -888,48 +883,24 @@ def _batch_remove(
         number = it.get("episode") or it.get("episode_number")
         show_ids = _extract_show_ids_for_episode(it)
         ids = ids_for_trakt(it)
+
+        # Prefer show and season and episode payload
+        if show_ids and season is not None and number is not None:
+            skey = _show_key(show_ids)
+            show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
+            seasons = show_entry["seasons"]  # type: ignore[assignment]
+            season_entry = seasons.setdefault(int(season), {"number": int(season), "episodes": []})
+            season_entry["episodes"].append({"number": int(number), "watched_at": when})
+            e_min = id_minimal({"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)})
+            accepted_minimals.append(e_min)
+            accepted_keys.append(key_of(e_min))
+            continue
+
         if ids:
             episodes_flat.append({"ids": ids, "watched_at": when})
             e_min = id_minimal({"type": "episode", "ids": ids})
             accepted_minimals.append(e_min)
             accepted_keys.append(key_of(e_min))
-            continue
-        if show_ids and season is not None and number is not None:
-            if _history_number_fallback_enabled(adapter):
-                skey = _show_key(show_ids)
-                show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
-                seasons = show_entry["seasons"]  # type: ignore[assignment]
-                season_entry = seasons.setdefault(
-                    int(season),
-                    {"number": int(season), "episodes": []},
-                )
-                season_entry["episodes"].append({"number": int(number), "watched_at": when})
-                e_min = id_minimal(
-                    {"type": "episode", "show_ids": show_ids, "season": int(season), "episode": int(number)}
-                )
-                accepted_minimals.append(e_min)
-                accepted_keys.append(key_of(e_min))
-            else:
-                timeout = float(_cfg_num(adapter, "timeout", 10, float))
-                retries = int(_cfg_num(adapter, "max_retries", 3, int))
-                rids = _resolve_episode_ids_via_trakt(
-                    adapter,
-                    show_ids,
-                    season,
-                    number,
-                    timeout=timeout,
-                    retries=retries,
-                )
-                if rids:
-                    episodes_flat.append({"ids": rids, "watched_at": when})
-                    e_min = id_minimal({"type": "episode", "ids": rids})
-                    accepted_minimals.append(e_min)
-                    accepted_keys.append(key_of(e_min))
-                else:
-                    unresolved.append(
-                        {"item": id_minimal(it), "hint": "episode ids missing; resolver failed"}
-                    )
-                    _freeze_item_if_enabled(adapter, it, action="remove", reasons=["episode-ids-missing"])
             continue
         unresolved.append({"item": id_minimal(it), "hint": "episode scope or ids missing"})
         _freeze_item_if_enabled(adapter, it, action="remove", reasons=["episode-scope-missing"])
@@ -1062,8 +1033,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 unresolved.append({"item": m, "hint": "not_found"})
                 _freeze_item_if_enabled(adapter, m, action="add", reasons=["not-found"])
+        if _not_found_count(nf) > 0 and ok == 0:
+            _bust_index_cache("write:add:not_found")
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
+            _bust_index_cache("write:add")
             if _history_collection_enabled(adapter):
                 coll_body = _history_body_to_collection(body, _history_collection_types(adapter))
                 if coll_body:
@@ -1138,6 +1112,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 _freeze_item_if_enabled(adapter, m, action="remove", reasons=["not-found"])
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
+            _bust_index_cache("write:remove")
     else:
         _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:200]))
         for m in accepted_minimals:
