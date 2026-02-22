@@ -41,6 +41,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "server_url": "",                               # http(s)://host:32400 (required for sync & watcher).
         "verify_ssl": False,                            # Verify TLS certificates
         "account_token": "",                            # Plex token (a.k.a. authentication token).
+        "pms_token": "",                                # PMS resource token for the selected server
         "client_id": "",                                # Set by PIN login; reused for headers.
         "machine_id": "",                               # PMS machineIdentifier (UUID).
         "username": "",                                 # Preferred Plex Home user/profile.
