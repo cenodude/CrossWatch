@@ -459,6 +459,8 @@ def _iter_marked_watched_from_library(
                     newest = ts_i
                 meta = normalize_discover_row(row, token=token) or {}
                 if meta:
+                    meta['_cw_marked'] = True
+                    meta['watched_at'] = meta.get('watched_at') or _iso(int(ts_i))
                     results.append((meta, ts_i))
 
             if stop:
@@ -479,6 +481,48 @@ def _iter_marked_watched_from_library(
 
     return results
 
+def _pms_fetch_metadata_row(adapter: Any, rating_key: str) -> Mapping[str, Any] | None:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if not srv:
+        return None
+    base = _as_base_url(srv)
+    ses = getattr(srv, "_session", None)
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    if not (base and ses and token and rating_key):
+        return None
+    headers = dict(getattr(ses, "headers", {}) or {})
+    headers.update(plex_headers(token))
+    headers["Accept"] = "application/json"
+    try:
+        r = ses.get(f"{base}/library/metadata/{rating_key}", headers=headers, timeout=15)
+    except Exception:
+        return None
+    if not getattr(r, "ok", False):
+        return None
+    try:
+        ctype = (r.headers.get("content-type") or "").lower()
+        data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
+        mc = data.get("MediaContainer") or {}
+        rows = mc.get("Metadata") or []
+        if isinstance(rows, list) and rows and isinstance(rows[0], Mapping):
+            return rows[0]
+    except Exception:
+        return None
+    return None
+
+
+def _pms_row_is_watched(row: Mapping[str, Any]) -> bool:
+    try:
+        vc = row.get("viewCount")
+        if vc is None:
+            vc = row.get("leafCountViewed")
+        return int(vc or 0) > 0
+    except Exception:
+        return False
+
+
+def _pms_row_watched_ts(row: Mapping[str, Any]) -> int | None:
+    return _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
     need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
@@ -632,6 +676,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 if not item or not ts2:
                     continue
                 row = dict(item)
+                row["_cw_marked"] = True
                 _force_episode_title(row)
                 row["watched"] = True
                 row["watched_at"] = _iso(int(ts2))
@@ -641,30 +686,85 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     if limit and len(out) >= int(limit):
                         break
 
+
         if include_marked and (not limit or len(out) < int(limit)):
-            marked = _load_marked_state().get("items") or {}
+            st = _load_marked_state() or {}
+            marked0 = st.get("items") or {}
+            marked: dict[str, Any] = dict(marked0) if isinstance(marked0, Mapping) else {}
+            changed = False
+
+            # Discover newly watched items
             found = 0
-            for item in _iter_marked_watched_from_library(adapter, allow):
-                entry: Mapping[str, Any]
-                if isinstance(item, tuple) and item and isinstance(item[0], dict):
-                    entry = item[0]
-                else:
-                    entry = item  # type: ignore[assignment]
+            for entry, ts_i in _iter_marked_watched_from_library(adapter, allow, since=eff_since):
                 rk = str(ids_from(entry).get("plex") or "")
-                if rk and rk not in marked:
-                    marked[rk] = entry
+                if not rk:
+                    continue
+                prev = marked.get(rk)
+                prev_ts = _as_epoch((prev or {}).get("watched_at")) if isinstance(prev, Mapping) else None
+                if not prev or (ts_i and (not prev_ts or int(ts_i) != int(prev_ts))):
+                    e = dict(entry)
+                    e["_cw_marked"] = True
+                    e["watched"] = True
+                    e["watched_at"] = e.get("watched_at") or _iso(int(ts_i))
+                    marked[rk] = e
+                    changed = True
                 found += 1
-            if found:
-                st = _load_marked_state()
+
+            # Validate watched/unwatched toggles directly from PMS metadata.
+            for rk, item in list(marked.items()):
+                if not isinstance(item, Mapping):
+                    continue
+                row = _pms_fetch_metadata_row(adapter, str(rk))
+                if not row:
+                    continue
+                is_watched = _pms_row_is_watched(row)
+                prev_watched = bool(item.get("watched"))
+                ts = _pms_row_watched_ts(row)
+                prev_ts = _as_epoch(item.get("watched_at"))
+                if is_watched != prev_watched:
+                    e = dict(item)
+                    e["watched"] = bool(is_watched)
+                    if is_watched:
+                        if ts and (not prev_ts or int(ts) > int(prev_ts)):
+                            use_ts = int(ts)
+                        else:
+                            use_ts = int(time.time())
+                        e["watched_at"] = _iso(use_ts)
+                    marked[rk] = e
+                    changed = True
+                elif is_watched:
+                    # Keep watched_at stable; only upgrade if PMS has a newer timestamp.
+                    if ts and (not prev_ts or int(ts) > int(prev_ts)):
+                        e = dict(item)
+                        e["watched"] = True
+                        e["watched_at"] = _iso(int(ts))
+                        marked[rk] = e
+                        changed = True
+                else:
+                    # Unwatched: keep entry for future re-watch detection.
+                    if prev_watched:
+                        e = dict(item)
+                        e["watched"] = False
+                        marked[rk] = e
+                        changed = True
+
+            if found or changed:
+                st = dict(st) if isinstance(st, Mapping) else {}
                 st["items"] = marked
+                st["last_updated_at"] = int(time.time())
                 _save_marked_state(st)
 
             for rk, item in (marked or {}).items():
+                if not isinstance(item, Mapping) or not item.get("watched"):
+                    continue
                 row = dict(item)
                 _force_episode_title(row)
+                ts3 = _as_epoch(row.get("watched_at"))
+                if not ts3:
+                    continue
                 row["watched"] = True
-                row["watched_at"] = row.get("watched_at") or _iso(max_seen or int(time.time()))
-                key = f"{canonical_key(row)}@{_as_epoch(row.get('watched_at')) or 0}"
+                row["watched_at"] = _iso(int(ts3))
+                key = f"{canonical_key(row)}@{int(ts3)}"
                 if key not in out and _keep_in_snapshot(adapter, row):
                     out[key] = row
                     if limit and len(out) >= int(limit):
