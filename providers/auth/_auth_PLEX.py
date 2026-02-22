@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import copy
 import secrets
 import time
 from collections.abc import Mapping, MutableMapping
@@ -11,7 +12,7 @@ from typing import Any
 import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
-from cw_platform.config_base import save_config
+from cw_platform.config_base import DEFAULT_CFG, save_config
 from cw_platform.provider_instances import ensure_provider_block, ensure_instance_block, normalize_instance_id
 
 try:
@@ -137,14 +138,48 @@ class PlexAuth(AuthProvider):
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
-        plex = ensure_instance_block(cfgd, "plex", inst)
-        plex.pop("account_token", None)
-        plex.pop("_pending_pin", None)
-        save_config(cfgd)
-        log(f"Plex[{inst}]: disconnected", level="INFO", module="AUTH")
-        return AuthStatus(connected=False, label="Plex")
+        defaults = DEFAULT_CFG.get("plex")
+        if not isinstance(defaults, dict) or not defaults:
+            return AuthStatus(connected=False, label="Plex")
 
+        cfgd: dict[str, Any] = cfg if isinstance(cfg, dict) else dict(cfg)
+        base = cfgd.get("plex")
+        if not isinstance(base, dict):
+            base = {}
+            cfgd["plex"] = base
+
+        def reset_block(dst: dict[str, Any], *, keep_instances: bool) -> None:
+            keep = dst.get("instances") if keep_instances else None
+            dst.clear()
+            dst.update(copy.deepcopy(defaults))
+            dst["account_id"] = ""
+            if keep_instances and isinstance(keep, dict) and keep:
+                dst["instances"] = keep
+
+        if inst == "default":
+            reset_block(base, keep_instances=True)
+            save_config(cfgd)
+            log("Plex[default]: disconnected (reset)", level="INFO", module="AUTH")
+            return AuthStatus(connected=False, label="Plex")
+
+        insts = base.get("instances")
+        blk = insts.get(inst) if isinstance(insts, dict) else None
+        if isinstance(blk, dict):
+            reset_block(blk, keep_instances=False)
+            save_config(cfgd)
+            log(f"Plex[{inst}]: disconnected (reset)", level="INFO", module="AUTH")
+            return AuthStatus(connected=False, label="Plex")
+
+        has_base_profile = any(
+            str(base.get(k) or "").strip()
+            for k in ("account_token", "pms_token", "server_url", "client_id", "machine_id", "username", "account_id")
+        )
+        if (not isinstance(insts, dict) or not insts) and has_base_profile:
+            reset_block(base, keep_instances=True)
+            save_config(cfgd)
+            log(f"Plex[{inst}]: missing profile, reset default instead", level="INFO", module="AUTH")
+
+        return AuthStatus(connected=False, label="Plex")
 
 PROVIDER = PlexAuth()
 __all__ = ["PROVIDER", "PlexAuth", "html", "__VERSION__"]
@@ -352,6 +387,11 @@ def html() -> str:
                   <span class="lbl">Verify SSL</span>
                 </label>
               </div>
+              <div class="fieldline" style="margin-top:6px">
+                <select id="plex_server_url_select" class="hidden" style="width:100%" title="Discovered server URLs"></select>
+              </div>
+              <div id="plex_server_url_select_hint" class="sub hidden" style="margin-top:4px">Pick a discovered URL to fill Server URL.</div>
+
               <div class="sub">Leave blank to discover.</div>
 
               <label style="margin-top:10px">Username</label>
