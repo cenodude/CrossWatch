@@ -569,7 +569,7 @@ function clearStickyNote(id) {
 
   const API = {
     cfgGet: () => j("/api/config"),
-    providerInstances: (p) => j(`/api/provider-instances/${encodeURIComponent(String(p || ""))}`),
+    providerInstances: (p) => j(`/api/provider-instances/${encodeURIComponent(String(p || ""))}?ts=${Date.now()}`),
     users: async (instanceId) => {
   const prov = provider();
   const routesMode = isRoutesMode();
@@ -2814,6 +2814,9 @@ function chip(text, onRemove, onClick) {
 
         STATE.cfg = fresh;
 
+        // Provider instances (profiles) can change outside this view; drop instance options cache.
+        try { delete STATE._routesCache; } catch {}
+
         const uiProv = String(STATE.ui?.watchProvider || "").toLowerCase().trim();
         const uiSinkRaw = STATE.ui?.watchSink;
         const uiEnabled = STATE.ui?.scrobbleEnabled;
@@ -3820,6 +3823,7 @@ async function init(opts = {}) {
         try {
           if (!d.hidden) {
             try { await refreshCfgBeforePopulate(); } catch {}
+            try { if (isRoutesMode()) await renderRoutesUi(); } catch {}
             try { await refreshWatcher(); } catch {}
             try { applyModeDisable(); } catch {}
           }
