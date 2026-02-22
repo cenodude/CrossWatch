@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import time, threading, re, base64, hmac, hashlib
+import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 from typing import Any, Iterable, Mapping, Callable, cast
 
 from plexapi.server import PlexServer
@@ -16,7 +18,8 @@ try:
 except Exception:
     BASE_LOG = None
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
 from providers.scrobble.scrobble import (
     Dispatcher,
     ScrobbleSink,
@@ -50,9 +53,9 @@ def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
     return cfg2
 
 
-def _is_debug() -> bool:
+def _is_debug_cfg(cfg: dict[str, Any]) -> bool:
     try:
-        v = ((_cfg().get("runtime") or {}).get("debug"))
+        v = ((cfg.get("runtime") or {}).get("debug"))
         if isinstance(v, bool):
             return v
         if isinstance(v, (int, float)):
@@ -64,12 +67,146 @@ def _is_debug() -> bool:
         return False
 
 
-def _plex_btok(cfg: dict[str, Any]) -> tuple[str, str]:
+def _plex_btok(cfg: dict[str, Any], instance_id: Any = None) -> tuple[str, str]:
     px = cfg.get("plex") or {}
     base = (px.get("server_url") or px.get("base_url") or "http://127.0.0.1:32400").strip().rstrip("/")
     if "://" not in base:
         base = f"http://{base}"
-    return base, (px.get("account_token") or px.get("token") or "")
+    cloud = (px.get("account_token") or px.get("token") or "").strip()
+    pms = (px.get("pms_token") or "").strip()
+    if not pms:
+        pms_blk = px.get("pms") or {}
+        if isinstance(pms_blk, dict):
+            pms = str(pms_blk.get("token") or pms_blk.get("x_plex_token") or "").strip()
+
+    if pms:
+        return base, pms
+    pms2, _ = _try_discover_pms_token(cfg, base, cloud, instance_id=instance_id)
+    return base, (pms2 or cloud)
+
+
+def _try_discover_pms_token(cfg: dict[str, Any], baseurl: str, cloud_token: str, instance_id: Any = None) -> tuple[str | None, str | None]:
+    tok = (cloud_token or "").strip()
+    base = (baseurl or "").strip()
+    if not tok or not base:
+        return None, None
+
+    px = cfg.get("plex") or {}
+    client_id = str(px.get("client_id") or "crosswatch").strip() or "crosswatch"
+    want_mid = str(px.get("machine_id") or "").strip().lower() or None
+
+    try:
+        u = urlparse(base)
+        want_host = (u.hostname or "").strip().lower()
+        want_port = int(u.port or 32400)
+        want_scheme = (u.scheme or "").strip().lower()
+    except Exception:
+        return None, None
+
+    headers = {
+        "X-Plex-Token": tok,
+        "X-Plex-Client-Identifier": client_id,
+        "X-Plex-Product": "CrossWatch",
+        "X-Plex-Platform": "CrossWatch",
+        "Accept": "application/xml",
+    }
+
+    try:
+        r = requests.get(
+            "https://plex.tv/api/resources",
+            params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+            headers=headers,
+            timeout=8,
+        )
+        r.raise_for_status()
+        root = ET.fromstring(r.text or "")
+    except Exception:
+        return None, None
+
+    best_score = -1
+    best_mid: str | None = None
+    best_tok: str | None = None
+
+    for dev in list(root):
+        if (dev.tag or "").lower() != "device":
+            continue
+        attrs = dev.attrib or {}
+        provides = (attrs.get("provides") or "").lower()
+        if "server" not in provides:
+            continue
+        mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip()
+        atok = (attrs.get("accessToken") or "").strip()
+        if not atok:
+            continue
+
+        if want_mid and mid.strip().lower() == want_mid:
+            best_mid, best_tok, best_score = (mid or None), atok, 1000
+            break
+
+        score = -1
+        for conn in dev.findall(".//Connection"):
+            uri = (conn.attrib.get("uri") or "").strip()
+            if not uri:
+                continue
+            try:
+                cu = urlparse(uri)
+                host = (cu.hostname or "").strip().lower()
+                port = int(cu.port or 32400)
+                scheme = (cu.scheme or "").strip().lower()
+            except Exception:
+                continue
+            if host != want_host or port != want_port:
+                continue
+            score = max(score, 100 if scheme == want_scheme else 80)
+
+        if score > best_score:
+            best_score = score
+            best_mid = mid or None
+            best_tok = atok
+
+    if not best_tok and not want_mid:
+        try:
+            px = cfg.get("plex") or {}
+            verify_ssl = True
+            if isinstance(px, dict) and "verify_ssl" in px:
+                verify_ssl = bool(px.get("verify_ssl") is not False)
+            r2 = requests.get(
+                base.rstrip("/") + "/identity",
+                headers={"X-Plex-Token": tok, "Accept": "application/xml"},
+                timeout=6,
+                verify=verify_ssl,
+            )
+            if r2.ok and (r2.text or "").lstrip().startswith("<"):
+                mid2 = str(ET.fromstring(r2.text).attrib.get("machineIdentifier") or "").strip().lower() or None
+                if mid2:
+                    for dev in list(root):
+                        if (dev.tag or "").lower() != "device":
+                            continue
+                        attrs = dev.attrib or {}
+                        cid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip().lower()
+                        if cid and cid == mid2:
+                            atok = (attrs.get("accessToken") or "").strip()
+                            if atok:
+                                best_mid = attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or None
+                                best_tok = atok
+                                break
+        except Exception:
+            pass
+
+    if best_tok:
+        try:
+            cfgd = load_config() or {}
+            inst = normalize_instance_id(instance_id)
+            px2 = ensure_instance_block(cfgd, "plex", inst)
+            if not str(px2.get("pms_token") or "").strip():
+                px2["pms_token"] = best_tok
+            if best_mid and not str(px2.get("machine_id") or "").strip():
+                px2["machine_id"] = best_mid
+            save_config(cfgd)
+            _CFG_CACHE.update({"ts": 0.0})
+        except Exception:
+            pass
+    return best_tok, best_mid
 
 
 def _safe_int(x: Any) -> int | None:
@@ -77,6 +214,33 @@ def _safe_int(x: Any) -> int | None:
         return int(x)
     except Exception:
         return None
+
+def _ids_from_guids_any(guids: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    try:
+        for g in (guids or []):
+            if isinstance(g, str):
+                gid = g.lower()
+            elif isinstance(g, dict):
+                gid = str(g.get("id") or g.get("guid") or "").lower()
+            else:
+                gid = str(getattr(g, "id", "") or "").lower()
+            if not gid:
+                continue
+            if "imdb://" in gid:
+                out.setdefault("imdb", gid.split("imdb://", 1)[1])
+            elif "tmdb://" in gid:
+                v = gid.split("tmdb://", 1)[1]
+                if v.isdigit():
+                    out.setdefault("tmdb", int(v))
+            elif "thetvdb://" in gid or "tvdb://" in gid:
+                v = gid.split("://", 1)[1]
+                if v.isdigit():
+                    out.setdefault("tvdb", int(v))
+    except Exception:
+        pass
+    return out
+
 
 
 def _as_set_str(v: Any) -> set[str]:
@@ -154,8 +318,16 @@ def _normalize_ids(ids: dict[str, Any]) -> dict[str, str]:
 
 
 class WatchService:
-    def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, dispatcher: Dispatcher | None = None) -> None:
-        self._dispatch = dispatcher or Dispatcher(list(sinks or []), _cfg)
+    def __init__(
+        self,
+        sinks: Iterable[ScrobbleSink] | None = None,
+        dispatcher: Dispatcher | None = None,
+        cfg_provider: Callable[[], dict[str, Any]] | None = None,
+        instance_id: Any = None,
+    ) -> None:
+        self._cfg_provider = cfg_provider or _cfg
+        self._instance_id = normalize_instance_id(instance_id)
+        self._dispatch = dispatcher or Dispatcher(list(sinks or []), self._cfg_provider)
         self._plex: PlexServer | None = None
         self._listener: AlertListener | None = None
         self._stop = threading.Event()
@@ -164,7 +336,6 @@ class WatchService:
         self._allowed_sessions: set[str] = set()
         self._last_seen: dict[str, float] = {}
         self._last_emit: dict[str, tuple[str, int]] = {}
-        self._wl_removed: set[str] = set()
         self._attempt = 0
         self._max_seen: dict[str, int] = {}
         self._first_seen: dict[str, float] = {}
@@ -174,7 +345,7 @@ class WatchService:
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
-        if lvl == "DEBUG" and not _is_debug():
+        if lvl == "DEBUG" and not _is_debug_cfg(self._cfg_provider() or {}):
             return
         if BASE_LOG is not None:
             try:
@@ -329,24 +500,6 @@ class WatchService:
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
 
-    def _ids_from_guids(self, guids: Any) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        try:
-            for g in (guids or []):
-                gid = str(getattr(g, "id", "")).lower()
-                if "imdb://" in gid:
-                    out.setdefault("imdb", gid.split("imdb://", 1)[1])
-                elif "tmdb://" in gid:
-                    v = gid.split("tmdb://", 1)[1]
-                    if v.isdigit():
-                        out.setdefault("tmdb", int(v))
-                elif "thetvdb://" in gid or "tvdb://" in gid:
-                    v = gid.split("://", 1)[1]
-                    if v.isdigit():
-                        out.setdefault("tvdb", int(v))
-        except Exception:
-            pass
-        return out
 
     def _resolve_account_from_session(self, session_key: str | None) -> str | None:
         if not (self._plex and session_key):
@@ -383,7 +536,7 @@ class WatchService:
             title = getattr(it, "title", None)
             year = getattr(it, "year", None)
             ids_raw: dict[str, Any] = dict(ev.ids or {}, plex=int(rk))
-            ids_raw.update(self._ids_from_guids(getattr(it, "guids", [])))
+            ids_raw.update(_ids_from_guids_any(getattr(it, "guids", [])))
             ids = _normalize_ids(ids_raw)
             season, number = ev.season, ev.number
             if media_type == "episode":
@@ -395,7 +548,7 @@ class WatchService:
                 season = getattr(it, "seasonNumber", None) if hasattr(it, "seasonNumber") else season
                 number = getattr(it, "index", None) if hasattr(it, "index") else number
                 if show:
-                    show_ids_raw = self._ids_from_guids(getattr(show, "guids", []))
+                    show_ids_raw = _ids_from_guids_any(getattr(show, "guids", []))
                     for k, v in show_ids_raw.items():
                         ids.setdefault(f"{k}_show", str(v))
 
@@ -603,7 +756,7 @@ class WatchService:
 
     def start(self) -> None:
         self._stop.clear()
-        cfg = _cfg() or {}
+        cfg = self._cfg_provider() or {}
         sc = (cfg.get("scrobble") or {})
         if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
             self._log("Watcher disabled by config; not starting", "INFO")
@@ -611,7 +764,7 @@ class WatchService:
         self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
         while not self._stop.is_set():
             try:
-                base, token = _plex_btok(_cfg())
+                base, token = _plex_btok(self._cfg_provider() or {}, instance_id=self._instance_id)
                 if not token:
                     self._log("Missing plex.account_token or plex.token in config.json", "ERROR")
                     return
@@ -655,8 +808,13 @@ class WatchService:
         return bool(self._stop and self._stop.is_set())
 
 
-def make_default_watch(sinks: Iterable[ScrobbleSink]) -> WatchService:
-    return WatchService(sinks=sinks)
+def make_default_watch(
+    sinks: Iterable[ScrobbleSink] | None = None,
+    dispatcher: Dispatcher | None = None,
+    cfg_provider: Callable[[], dict[str, Any]] | None = None,
+    instance_id: Any = None,
+) -> WatchService:
+    return WatchService(sinks=sinks, dispatcher=dispatcher, cfg_provider=cfg_provider, instance_id=instance_id)
 
 
 _AUTO_WATCH: WatchService | None = None
@@ -839,27 +997,6 @@ def _plex_rating_to_10(v: Any) -> int | None:
         n = 1
     return max(0, min(10, n))
 
-
-def _ids_from_guids_simple(guids: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    try:
-        for g in (guids or []):
-            gid = str(getattr(g, "id", "") or "").lower()
-            if not gid:
-                continue
-            if "imdb://" in gid:
-                out.setdefault("imdb", gid.split("imdb://", 1)[1])
-            elif "tmdb://" in gid:
-                v = gid.split("tmdb://", 1)[1]
-                if v.isdigit():
-                    out.setdefault("tmdb", int(v))
-            elif "thetvdb://" in gid or "tvdb://" in gid:
-                v = gid.split("://", 1)[1]
-                if v.isdigit():
-                    out.setdefault("tvdb", int(v))
-    except Exception:
-        pass
-    return out
 
 
 def _library_allowed(cfg: dict[str, Any], payload: dict[str, Any]) -> bool:
@@ -1079,11 +1216,11 @@ def process_rating_webhook(
                 px = PlexServer(base, token)
                 it = px.fetchItem(int(rk))
                 if it is not None:
-                    ids.update(_ids_from_guids_simple(getattr(it, "guids", [])))
+                    ids.update(_ids_from_guids_any(getattr(it, "guids", [])))
                     if media_type == "episode":
                         try:
                             show = it.show()
-                            ids.update(_ids_from_guids_simple(getattr(show, "guids", [])))
+                            ids.update(_ids_from_guids_any(getattr(show, "guids", [])))
                         except Exception:
                             pass
         except Exception:
