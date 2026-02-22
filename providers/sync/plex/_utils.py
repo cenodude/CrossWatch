@@ -8,6 +8,7 @@ import re
 import time
 import ipaddress
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 from typing import Any, Mapping
 
 import requests
@@ -131,6 +132,210 @@ def _plex_headers(token: str) -> dict[str, str]:
         user_agent="CrossWatch/1.0",
     )
 
+
+def _resource_token_for_connection(token: str, client_id: str | None, baseurl: str, timeout: float = 8.0) -> tuple[str | None, str | None]:
+    tok = (token or "").strip()
+    base = (baseurl or "").strip()
+    if not tok or not base:
+        return None, None
+    try:
+        u = urlparse(base)
+        want_host = (u.hostname or "").strip().lower()
+        want_port = int(u.port or 32400)
+        want_scheme = (u.scheme or "").strip().lower()
+    except Exception:
+        return None, None
+
+    headers = _plex_headers(tok)
+    if client_id and str(client_id).strip():
+        headers["X-Plex-Client-Identifier"] = str(client_id).strip()
+
+    r = requests.get(
+        "https://plex.tv/api/resources",
+        params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+        headers=headers,
+        timeout=float(timeout),
+    )
+    r.raise_for_status()
+    root = ET.fromstring(r.text or "")
+
+    best: tuple[int, str | None, str | None] = (-1, None, None)
+    for dev in list(root):
+        if (dev.tag or "").lower() != "device":
+            continue
+        attrs = dev.attrib or {}
+        provides = (attrs.get("provides") or "").lower()
+        if "server" not in provides:
+            continue
+        mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip() or None
+        atok = (attrs.get("accessToken") or "").strip() or None
+        if not atok:
+            continue
+
+        score = -1
+        for conn in dev.findall(".//Connection"):
+            uri = (conn.attrib.get("uri") or "").strip()
+            if not uri:
+                continue
+            try:
+                cu = urlparse(uri)
+                host = (cu.hostname or "").strip().lower()
+                port = int(cu.port or 32400)
+                scheme = (cu.scheme or "").strip().lower()
+            except Exception:
+                continue
+            if host != want_host or port != want_port:
+                continue
+            score = max(score, 100 if scheme == want_scheme else 80)
+
+        if score > best[0]:
+            best = (score, mid, atok)
+
+    return best[1], best[2]
+
+
+def _resource_host_flags(uri: str) -> tuple[str, bool, bool]:
+    try:
+        u = urlparse(uri)
+        host = (u.hostname or "").strip().lower()
+        if not host:
+            return "", False, False
+        is_private = False
+        is_ip = False
+        try:
+            ip = ipaddress.ip_address(host)
+            is_ip = True
+            is_private = bool(ip.is_private or ip.is_link_local)
+            return host, is_private, is_ip
+        except Exception:  # noqa: BLE001
+            pass
+        m = re.match(r"^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$", host, re.IGNORECASE)
+        if m:
+            dotted = m.group(1).replace("-", ".")
+            try:
+                ip = ipaddress.ip_address(dotted)
+                is_private = bool(ip.is_private or ip.is_link_local)
+            except Exception:  # noqa: BLE001
+                is_private = False
+        return host, is_private, is_ip
+    except Exception:  # noqa: BLE001
+        return "", False, False
+
+
+def _resource_conn_score(uri: str, local: bool, relay: bool) -> int:
+    uri = (uri or "").strip()
+    https = uri.startswith("https://")
+    host, is_private, is_ip = _resource_host_flags(uri)
+    score = 0
+    score += 8 if not local else 1
+    score += 6 if https else 0
+    score += 4 if not relay else 2
+    score += 3 if not is_private else 0
+    score += 2 if host.endswith(".plex.direct") else 0
+    score += 1 if (host and not is_ip) else 0
+    return score
+
+
+def discover_pms_access_from_cloud(
+    token: str,
+    base_url: str | None = None,
+    machine_id: str | None = None,
+    timeout: float = 8.0,
+) -> tuple[str | None, str | None, str | None]:
+
+    t = (token or "").strip()
+    if not t:
+        return None, None, None
+
+    want_host = ""
+    want_port = 32400
+    want_scheme = ""
+    if base_url:
+        try:
+            u = urlparse((base_url or "").strip())
+            want_host = (u.hostname or "").strip().lower()
+            want_port = int(u.port or 32400)
+            want_scheme = (u.scheme or "").strip().lower()
+        except Exception:  # noqa: BLE001
+            want_host, want_port, want_scheme = "", 32400, ""
+
+    headers = _plex_headers(t)
+    try:
+        r = requests.get(
+            "https://plex.tv/api/resources",
+            params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+            headers=headers,
+            timeout=float(timeout),
+        )
+        if not r.ok or not (r.text or "").lstrip().startswith("<"):
+            return None, None, None
+        root = ET.fromstring(r.text or "")
+    except Exception:  # noqa: BLE001
+        return None, None, None
+
+    best: tuple[int, str | None, str | None, str | None] = (-1, None, None, None)
+
+    for dev in list(root):
+        if (dev.tag or "").lower() != "device":
+            continue
+        attrs = dev.attrib or {}
+        provides = (attrs.get("provides") or "").lower()
+        if "server" not in provides:
+            continue
+
+        dev_mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip() or None
+        dev_tok = (attrs.get("accessToken") or "").strip() or None
+        if not dev_tok:
+            continue
+
+        hard_match = False
+        soft_match = False
+        if machine_id and dev_mid and dev_mid == str(machine_id).strip():
+            hard_match = True
+
+        best_uri = ""
+        best_uri_score = -1
+        base_match_score = -1
+
+        for conn in dev.findall(".//Connection"):
+            uri = (conn.attrib.get("uri") or "").strip().rstrip("/")
+            if not uri:
+                continue
+            local = (conn.attrib.get("local") or "").strip().lower() in ("1", "true", "yes")
+            relay = (conn.attrib.get("relay") or "").strip().lower() in ("1", "true", "yes")
+
+            cs = _resource_conn_score(uri, local=local, relay=relay)
+            if cs > best_uri_score:
+                best_uri_score = cs
+                best_uri = uri
+
+            if want_host:
+                try:
+                    cu = urlparse(uri)
+                    host = (cu.hostname or "").strip().lower()
+                    port = int(cu.port or 32400)
+                    scheme = (cu.scheme or "").strip().lower()
+                except Exception:  # noqa: BLE001
+                    continue
+                if host == want_host and port == want_port:
+                    soft_match = True
+                    base_match_score = max(base_match_score, 200 if scheme == want_scheme else 160)
+
+        if not (hard_match or soft_match):
+            continue
+
+        dev_score = best_uri_score
+        if hard_match:
+            dev_score += 1000
+        if soft_match:
+            dev_score += 800
+        dev_score += base_match_score if base_match_score > 0 else 0
+
+        if dev_score > best[0]:
+            best = (dev_score, dev_tok, dev_mid, best_uri or None)
+
+    return best[1], best[2], best[3]
+
 def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str, instance_id: Any = None) -> bool:
     if not str(url).lower().startswith("https"):
         return True
@@ -191,43 +396,23 @@ def _try_get(session: requests.Session, base: str, path: str, timeout: float) ->
 
 def _pick_server_url_from_resources(xml_text: str) -> str:
     try:
-        from urllib.parse import urlparse
-
-        def host_flags(uri: str) -> tuple[bool, bool]:
-            host = (urlparse(uri).hostname or "").strip()
-            if not host:
-                return False, False
-            try:
-                ip = ipaddress.ip_address(host)
-                return True, bool(ip.is_private or ip.is_link_local)
-            except Exception:  # noqa: BLE001
-                pass
-            m = re.match(r"^(\d{1,3}(?:-\d{1,3}){3})\.plex\.direct$", host, re.IGNORECASE)
-            if m:
-                dotted = m.group(1).replace("-", ".")
-                try:
-                    ip = ipaddress.ip_address(dotted)
-                    return False, bool(ip.is_private or ip.is_link_local)
-                except Exception:  # noqa: BLE001
-                    pass
-            return False, False
-
         root = ET.fromstring(xml_text)
-        servers: list[tuple[bool, bool, bool, bool, bool, str]] = []
+        best_uri = ""
+        best_score = -1
         for dev in root.findall(".//Device"):
-            if "server" in (dev.attrib.get("provides") or ""):
-                for conn in dev.findall(".//Connection"):
-                    uri = (conn.attrib.get("uri") or "").strip()
-                    if not uri:
-                        continue
-                    local = (conn.attrib.get("local") or "") in ("1", "true", "yes")
-                    relay = (conn.attrib.get("relay") or "") in ("1", "true", "yes")
-                    direct = not relay
-                    http = uri.startswith("http://")
-                    is_ip, is_private = host_flags(uri)
-                    servers.append((local, direct, is_private, http, is_ip, uri.rstrip("/")))
-        servers.sort(key=lambda t: (t[0], t[1], t[2], t[3], t[4]), reverse=True)
-        return servers[0][5] if servers else ""
+            if "server" not in (dev.attrib.get("provides") or ""):
+                continue
+            for conn in dev.findall(".//Connection"):
+                uri = (conn.attrib.get("uri") or "").strip().rstrip("/")
+                if not uri:
+                    continue
+                local = (conn.attrib.get("local") or "").strip().lower() in ("1", "true", "yes")
+                relay = (conn.attrib.get("relay") or "").strip().lower() in ("1", "true", "yes")
+                score = _resource_conn_score(uri, local=local, relay=relay)
+                if score > best_score:
+                    best_score = score
+                    best_uri = uri
+        return best_uri
     except Exception:  # noqa: BLE001
         return ""
 
@@ -235,7 +420,7 @@ def _pick_server_url_from_resources(xml_text: str) -> str:
 def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> str | None:
     try:
         response = requests.get(
-            "https://plex.tv/api/resources?includeHttps=1",
+            "https://plex.tv/api/resources?includeHttps=1&includeRelay=1&includeIPv6=1",
             headers={"X-Plex-Token": token, "Accept": "application/xml"},
             timeout=timeout,
         )
@@ -337,12 +522,6 @@ def fetch_cloud_home_users(token: str, timeout: float = 8.0) -> list[dict[str, A
 
 
 def fetch_cloud_account_users(token: str, timeout: float = 8.0) -> list[dict[str, Any]]:
-    """Fetch all Plex account users (incl. friends) from plex.tv.
-
-    plex.tv/api/v2/home/users covers Plex Home only. The older plex.tv/api/users
-    endpoint returns a broader set including users you shared with.
-    """
-
     t = (token or "").strip()
     if not t:
         return []
@@ -354,7 +533,6 @@ def fetch_cloud_account_users(token: str, timeout: float = 8.0) -> list[dict[str
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
             if not r.ok:
-                # Some deployments only accept the token as a query param.
                 r = requests.get(url, headers={k: v for k, v in headers.items() if k != "X-Plex-Token"}, params={"X-Plex-Token": t}, timeout=timeout)
             if not r.ok:
                 continue
@@ -428,7 +606,7 @@ def _pick_owner_id(accounts: list[tuple[int, str]]) -> tuple[str | None, int | N
 def _parse_accounts_xml_for_username(xml_text: str, username: str) -> int | None:
     target = (username or "").strip().lower()
     for aid, name in _parse_accounts_all(xml_text):
-        if (name or "").lower() == target and not _looks_cloudish(aid):
+        if (name or "").lower() == target:
             return int(aid)
     return None
 
@@ -486,6 +664,70 @@ def fetch_account_id_for_username(
     return aid
 
 
+
+def _parse_accounts_xml_for_cloud_id(xml_text: str, cloud_account_id: int) -> int | None:
+    try:
+        target = int(cloud_account_id)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:  # noqa: BLE001
+        return None
+    for account in root.findall(".//Account"):
+        pms_id = _pms_id_from_attr_map(account.attrib)
+        if pms_id is None or pms_id <= 0:
+            continue
+        attrs = account.attrib or {}
+        raw = (
+            attrs.get("accountID")
+            or attrs.get("accountId")
+            or attrs.get("account_id")
+            or attrs.get("cloudID")
+            or attrs.get("cloudId")
+            or attrs.get("cloud_id")
+        )
+        try:
+            cid = int(raw) if raw is not None and str(raw).strip().isdigit() else None
+        except Exception:  # noqa: BLE001
+            cid = None
+        if cid is not None and cid == target:
+            return int(pms_id)
+    return None
+
+
+def fetch_account_id_for_cloud_id(
+    base_url: str,
+    token: str,
+    cloud_account_id: int,
+    verify: bool,
+    timeout: float = 10.0,
+) -> int | None:
+    try:
+        cid = int(cloud_account_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if cid <= 0:
+        return None
+    cache_key = f"{base_url.rstrip('/')}\n{token or ''}\ncloud:{cid}\n{1 if verify else 0}"
+    bucket = _CACHE["aid_by_user"]
+    ent = bucket.get(cache_key)
+    if ent and _cache_hit(ent.get("ts", 0.0), _ACCT_TTL_S):
+        return ent.get("aid")
+    if _throttle("/accounts"):
+        return ent.get("aid") if ent else None
+    aid: int | None = None
+    try:
+        session = _build_session(token, verify)
+        response = _try_get(session, base_url, "/accounts", timeout)
+        if response and response.ok and (response.text or "").lstrip().startswith("<"):
+            aid = _parse_accounts_xml_for_cloud_id(response.text, cid)
+    except Exception as e:  # noqa: BLE001
+        _warn("account_id_cloud_fetch_failed", error=str(e))
+    bucket[cache_key] = {"ts": time.time(), "aid": aid}
+    return aid
+
+
 def _libs_key(base_url: str, token: str, verify: bool) -> tuple[str, str, bool]:
     return base_url.rstrip("/"), token or "", bool(verify)
 
@@ -523,23 +765,38 @@ def fetch_libraries(
 def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
-    token = (plex.get("account_token") or "").strip()
+    cloud_token = (plex.get("account_token") or "").strip()
+    pms_token = (plex.get("pms_token") or "").strip()
     base = (plex.get("server_url") or "").strip()
-    if not token:
+    if not cloud_token:
         return []
     if not base:
-        base_url = discover_server_url_from_cloud(token) or ""
+        base_url = discover_server_url_from_cloud(cloud_token) or ""
         if base_url:
             _insert_key_first_inplace(plex, "server_url", base_url)
             save_config(cfg)
         base = base_url
     if not base:
         return []
+
+    if not pms_token:
+        try:
+            mid2, tok2 = _resource_token_for_connection(cloud_token, plex.get("client_id"), base, timeout=8.0)
+            if tok2:
+                _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
+                pms_token = tok2
+            if mid2 and not str(plex.get("machine_id") or "").strip():
+                _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
+            if tok2 or mid2:
+                save_config(cfg)
+        except Exception as e:  # noqa: BLE001
+            _warn("pms_token_discovery_failed", error=str(e))
+
     verify = _resolve_verify_from_cfg(cfg, base, instance_id)
-    libs = fetch_libraries(base, token, verify=verify)
+    libs = fetch_libraries(base, (pms_token or cloud_token), verify=verify)
     if not libs and verify:
         _info("libs_retry_insecure")
-        libs = fetch_libraries(base, token, verify=False)
+        libs = fetch_libraries(base, (pms_token or cloud_token), verify=False)
     return libs
 
 
@@ -547,9 +804,50 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
     token = (plex.get("account_token") or "").strip()
+    pms_token = (plex.get("pms_token") or "").strip()
     base = (plex.get("server_url") or "").strip()
+    machine_id = (plex.get("machine_id") or "").strip()
     username = plex.get("username") or ""
     account_id = plex.get("account_id")
+    cloud_account_id: int | None = None
+    try:
+        raw_cid = ((plex.get("_cloud") or {}) if isinstance(plex.get("_cloud"), dict) else {}).get("account_id")
+        cloud_account_id = int(raw_cid) if raw_cid is not None and str(raw_cid).strip().isdigit() else None
+        if cloud_account_id is not None and cloud_account_id <= 0:
+            cloud_account_id = None
+    except Exception:
+        cloud_account_id = None
+
+
+    cloud: dict[str, Any] | None = None
+    if token and (_is_empty(username) or cloud_account_id is None):
+        cloud = fetch_cloud_user_info(token) or None
+        if isinstance(cloud, dict):
+            if cloud_account_id is None:
+                try:
+                    cid = cloud.get("id")
+                    if isinstance(cid, int):
+                        cloud_account_id = cid if cid > 0 else None
+                    elif cid is not None and str(cid).strip().isdigit():
+                        cloud_account_id = int(str(cid).strip())
+                        if cloud_account_id <= 0:
+                            cloud_account_id = None
+                except Exception:  # noqa: BLE001
+                    pass
+            if cloud_account_id is not None:
+                try:
+                    if not isinstance(plex.get("_cloud"), dict):
+                        plex["_cloud"] = {}
+                    plex["_cloud"]["account_id"] = int(cloud_account_id)
+                except Exception:
+                    pass
+            if _is_empty(username):
+                u = ((cloud or {}).get("username") or (cloud or {}).get("title") or "").strip()
+                if u:
+                    after = "account_id" if "account_id" in plex else "client_id"
+                    _insert_key_after_inplace(plex, after, "username", u)
+                    username = u
+
 
     if token and not base:
         base_url = discover_server_url_from_cloud(token) or ""
@@ -560,42 +858,39 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
         base = base_url
 
     if token and base:
+        if not pms_token or not machine_id:
+            try:
+                mid2, tok2 = _resource_token_for_connection(token, plex.get("client_id"), base, timeout=8.0)
+                if tok2 and not pms_token:
+                    _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
+                    pms_token = tok2
+                if mid2 and not machine_id:
+                    _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
+                    machine_id = mid2
+            except Exception as e:  # noqa: BLE001
+                _warn("pms_token_discovery_failed", error=str(e))
+
         verify = _resolve_verify_from_cfg(cfg, base, instance_id)
-        server_user: str | None = None
-        server_aid: int | None = None
 
-        if (username or "").strip():
-            server_aid = fetch_account_id_for_username(base, token, username, verify=verify)
-        if server_aid is None:
-            server_user, server_aid = fetch_accounts_owner(base, token, verify=verify)
 
-        if _is_empty(account_id) and server_aid is not None:
-            _insert_key_after_inplace(plex, "client_id", "account_id", int(server_aid))
-            account_id = int(server_aid)
+        # account_id is PMS-local; resolve it from /accounts.
+        legacy_placeholder = str(account_id).strip() == "1"
+        if (username or "").strip() and (_is_empty(account_id) or legacy_placeholder) or (cloud_account_id is not None and (_is_empty(account_id) or legacy_placeholder)):
+            server_aid: int | None = None
+            try:
+                if cloud_account_id is not None:
+                    server_aid = fetch_account_id_for_cloud_id(base, (pms_token or token), int(cloud_account_id), verify=verify)
+            except Exception:  # noqa: BLE001
+                server_aid = None
+            if server_aid is None and (username or "").strip():
+                server_aid = fetch_account_id_for_username(base, (pms_token or token), username, verify=verify)
+            if server_aid is not None:
+                _insert_key_after_inplace(plex, "client_id", "account_id", int(server_aid))
+                account_id = int(server_aid)
 
-        if _is_empty(username) and server_user:
-            after = "account_id" if "account_id" in plex else "client_id"
-            _insert_key_after_inplace(plex, after, "username", server_user)
-            username = server_user
-
-    if token and _is_empty(username):
-        try:
-            response = requests.get("https://plex.tv/api/v2/user", headers=_plex_headers(token), timeout=8)
-            if response.ok:
-                data = response.json()
-                u = (data.get("username") or data.get("title") or "").strip()
-                if u:
-                    after = "account_id" if "account_id" in plex else "client_id"
-                    _insert_key_after_inplace(plex, after, "username", u)
-                    username = u
-                cid = data.get("id")
-                if isinstance(cid, int):
-                    plex.setdefault("_cloud", {})["account_id"] = cid
-        except Exception as e:  # noqa: BLE001
-            _warn("cloud_user_probe_failed", error=str(e))
 
     save_config(cfg)
-    return {"server_url": base, "username": username, "account_id": account_id}
+    return {"server_url": base, "username": username, "account_id": account_id, "machine_id": machine_id, "pms_token": bool(pms_token)}
 
 
 def resolve_owner_account_id(srv: Any, token: str) -> int | None:
@@ -625,7 +920,7 @@ def resolve_account_id_by_username(srv: Any, token: str, username: str) -> int |
         return None
     try:
         for account in srv.systemAccounts() or []:
-            if (account.name or "").strip().lower() == uname.lower() and not _looks_cloudish(account.id):
+            if (account.name or "").strip().lower() == uname.lower():
                 return int(account.id)
     except Exception:  # noqa: BLE001
         pass
@@ -650,9 +945,9 @@ def resolve_user_scope(
 ) -> tuple[str | None, int | None]:
     cfg_uname = (cfg_username or "").strip() or None
     cfg_aid = int(cfg_account_id) if cfg_account_id is not None else None
-    if cfg_uname and cfg_aid is not None:
+    if cfg_uname and cfg_aid is not None and int(cfg_aid) != 1:
         return cfg_uname, cfg_aid
-    if cfg_aid is not None:
+    if cfg_aid is not None and int(cfg_aid) != 1:
         return None, cfg_aid
     try:
         owner_name = getattr(account, "username", None)
