@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+import copy
+
 import importlib
 import secrets
 import threading
@@ -15,7 +17,7 @@ import requests
 from fastapi import Body, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from cw_platform.config_base import load_config, save_config
+from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 from providers.sync.emby._utils import (
     ensure_whitelist_defaults as emby_ensure_whitelist_defaults,
@@ -56,6 +58,38 @@ def _safe_log(fn: Optional[Callable[[str, str], None]], tag: str, msg: str) -> N
         if callable(fn): fn(tag, msg)
     except Exception:
         pass
+def _defaults_for_provider(provider_key: str) -> dict[str, Any]:
+    blk = DEFAULT_CFG.get(provider_key)
+    return copy.deepcopy(blk) if isinstance(blk, dict) else {}
+
+
+def _reset_provider_block(cfg: dict[str, Any], provider_key: str, inst: str) -> bool:
+    defaults = _defaults_for_provider(provider_key)
+    if not defaults:
+        return False
+    base = cfg.get(provider_key)
+    if not isinstance(base, dict):
+        base = {}
+        cfg[provider_key] = base
+    if inst == "default":
+        insts = base.get("instances")
+        base.clear()
+        base.update(copy.deepcopy(defaults))
+        if provider_key == "plex":
+            base["account_id"] = ""
+        if isinstance(insts, dict) and insts:
+            base["instances"] = insts
+        return True
+    insts = base.get("instances")
+    if not isinstance(insts, dict) or inst not in insts or not isinstance(insts.get(inst), dict):
+        return False
+    blk = insts[inst]
+    blk.clear()
+    blk.update(copy.deepcopy(defaults))
+    if provider_key == "plex":
+        blk["account_id"] = ""
+    return True
+
     
 def _to_int(val: Any, default: int = 0) -> int:
     try:
@@ -157,12 +191,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         plex["client_id"] = cid
         save_config(cfg)
 
-        headers = {
-            "Accept": "application/json", "User-Agent": "CrossWatch/1.0",
-            "X-Plex-Product": "CrossWatch", "X-Plex-Version": "1.0",
-            "X-Plex-Client-Identifier": cid, "X-Plex-Platform": "Web",
-        }
-
         _PLEX_PROVIDER = _import_provider("providers.auth._auth_PLEX")
         code: Optional[str] = None
         pin_id: Optional[int] = None
@@ -180,7 +208,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if not code or not pin_id:
             raise RuntimeError("Plex PIN could not be issued")
 
-        return {"id": pin_id, "code": code, "expires_epoch": int(time.time()) + 300, "headers": headers}
+        return {"id": pin_id, "code": code, "expires_epoch": int(time.time()) + 300}
 
     
     def plex_wait_for_token(pin_id: int, instance_id: Any, *, timeout_sec: int = 300, interval: float = 1.0) -> Optional[str]:
@@ -233,7 +261,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     existing_url = (plex_cfg.get("server_url") or "").strip()
                     existing_user = (plex_cfg.get("username") or "").strip()
                     existing_aid = str(plex_cfg.get("account_id") or "").strip()
-                    need_auto_inspect = not (existing_url or existing_user or existing_aid)
+                    existing_pms = (plex_cfg.get("pms_token") or "").strip()
+                    existing_mid = (plex_cfg.get("machine_id") or "").strip()
+                    legacy_aid = existing_aid == "1"
+                    need_auto_inspect = (not existing_url) or (not existing_user) or (not existing_aid) or legacy_aid or (not existing_pms) or (not existing_mid)
 
                     save_config(cfg)
 
@@ -282,16 +313,24 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     
     @app.post("/api/plex/token/delete", tags=["auth"])
     def api_plex_token_delete(instance: str | None = Query(None)) -> dict[str, Any]:
-        cfg = load_config()
+        cfg = load_config() or {}
+        if not isinstance(cfg, dict):
+            cfg = dict(cfg)
         inst = normalize_instance_id(instance)
-        plex = ensure_instance_block(cfg, "plex", inst)
-        plex["account_token"] = ""
-        plex.pop("_pending_pin", None)
+        ok = _reset_provider_block(cfg, "plex", inst)
+        if not ok and inst != "default":
+            base = cfg.get("plex")
+            if isinstance(base, dict):
+                insts = base.get("instances")
+                if (not isinstance(insts, dict) or not insts) and any(str(base.get(k) or "").strip() for k in ("account_token","pms_token","server_url","client_id","machine_id","username","account_id")):
+                    ok = _reset_provider_block(cfg, "plex", "default")
+                    if ok:
+                        inst = "default"
+        if not ok:
+            return {"ok": False, "error": "not_found", "instance": inst}
         save_config(cfg)
         _probe_bust("plex")
         return {"ok": True, "instance": inst}
-
-    
     @app.get("/api/plex/libraries", tags=["media providers"])
     def plex_libraries(instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
@@ -369,13 +408,32 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             lambda x: (isinstance(x, int) and 0 < x < 100000)
             or (str(x).isdigit() and 0 < int(x) < 100000)
         )
-        rank = {"owner": 0, "managed": 1, "friend": 2}
+        rank = {"self": 0, "owner": 1, "managed": 2, "friend": 3}
 
         pms_by_cloud: dict[int, dict[str, Any]] = {}
         pms_rows = []
         if base:
             verify = plex_utils._resolve_verify_from_cfg(cfg, base, instance_id=inst)
-            s = plex_utils._build_session(token, verify)
+            pms_token = (plex.get("pms_token") or "").strip()
+            if not pms_token:
+                try:
+                    tok2, mid2, url2 = plex_utils.discover_pms_access_from_cloud(token, base_url=base, machine_id=(plex.get("machine_id") or ""), timeout=8.0)
+                    if tok2:
+                        plex["pms_token"] = tok2
+                        pms_token = tok2
+                    if mid2 and not (plex.get("machine_id") or "").strip():
+                        plex["machine_id"] = mid2
+                    if url2 and not (plex.get("server_url") or "").strip():
+                        plex["server_url"] = url2
+                        base = url2
+                    try:
+                        save_config(cfg)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            sess_tok = pms_token or token
+            s = plex_utils._build_session(sess_tok, verify)
             r = plex_utils._try_get(s, base, "/accounts", timeout=10.0)
             if r and r.ok and (r.text or "").lstrip().startswith("<"):
                 try:
@@ -453,16 +511,19 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             cloud_user = ""
             cloud_id = None
 
+        self_local_id: int | None = _local_id_for_cloud_id(cloud_id, cloud_user)
+
         owner_local_id: int | None = None
+        owner_name: str | None = None
         if pms_rows:
             try:
-                owner_local_id = next((int(r.get("pms_account_id")) for r in pms_rows if r.get("type") == "owner" and r.get("pms_account_id") is not None), None)
+                owner_row = next((r for r in pms_rows if r.get("type") == "owner"), None)
+                if owner_row:
+                    owner_local_id = _to_int(owner_row.get("pms_account_id")) or None
+                    owner_name = (owner_row.get("username") or "").strip() or None
             except Exception:
                 owner_local_id = None
-        if owner_local_id is None:
-            owner_local_id = _local_id_for_cloud_id(cloud_id, cloud_user)
-        if owner_local_id is None and cloud_user:
-            owner_local_id = 1
+                owner_name = None
 
         users: list[dict[str, Any]] = []
         seen: set[tuple[str, int]] = set()
@@ -490,7 +551,15 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             users.append(u)
 
         if cloud_user:
-            add({"username": cloud_user, "account_id": owner_local_id or 1, "cloud_account_id": cloud_id, "type": "owner", "label": "Owner", "source": "cloud"})
+            add({
+                "username": cloud_user,
+                "account_id": self_local_id if self_local_id is not None else cloud_id,
+                "pms_account_id": self_local_id,
+                "cloud_account_id": cloud_id,
+                "type": "self",
+                "label": "You",
+                "source": "cloud",
+            })
 
         for u in (plex_utils.fetch_cloud_home_users(token) or []):
             uname = (u.get("username") or u.get("title") or "").strip()
@@ -506,13 +575,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             add({"username": uname, "account_id": local or cid, "cloud_account_id": cid, "type": "friend", "label": "Friend", "source": "cloud"})
         if cloud_id is not None and int(cloud_id) in pms_by_cloud:
             r0 = pms_by_cloud[int(cloud_id)]
-            add({"username": r0.get("username") or cloud_user, "account_id": r0.get("pms_account_id") or 1, "cloud_account_id": cloud_id, "type": r0.get("type") or "owner", "label": r0.get("label") or "Owner", "source": "pms"})
+            add({"username": r0.get("username") or cloud_user, "account_id": r0.get("pms_account_id") or r0.get("cloud_account_id"), "cloud_account_id": cloud_id, "type": r0.get("type") or "owner", "label": r0.get("label") or "Owner", "source": "pms"})
 
         for row in pms_rows:
             add({
                 "username": row.get("username") or "",
                 # Prefer PMS-local IDs (needed for Home user scope switching).
-                "account_id": row.get("pms_account_id") or row.get("cloud_account_id") or 1,
+                "account_id": row.get("pms_account_id") or row.get("cloud_account_id"),
                 "pms_account_id": row.get("pms_account_id"),
                 "cloud_account_id": row.get("cloud_account_id"),
                 "type": row.get("type") or "friend",
@@ -603,17 +672,18 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     @app.get("/api/jellyfin/inspect", tags=["media providers"])
     def jf_inspect(instance: str | None = Query(None)):
+        inst = normalize_instance_id(instance)
         cfg = load_config()
-        jf_ensure_whitelist_defaults(cfg, instance_id=instance)
-        return jf_inspect_and_persist(cfg, instance_id=instance)
+        jf_ensure_whitelist_defaults(cfg, instance_id=inst)
+        return jf_inspect_and_persist(cfg, instance_id=inst)
 
     @app.get("/api/jellyfin/libraries", tags=["media providers"])
     def jf_libraries(instance: str | None = Query(None)):
         cfg = load_config()
         inst = normalize_instance_id(instance)
-        jf_ensure_whitelist_defaults(cfg, instance_id=instance)
+        jf_ensure_whitelist_defaults(cfg, instance_id=inst)
         return {
-            "libraries": jf_fetch_libraries_from_cfg(cfg, instance_id=instance),
+            "libraries": jf_fetch_libraries_from_cfg(cfg, instance_id=inst),
             "instance": inst,
         }
 
@@ -1783,4 +1853,3 @@ def simkl_exchange_code(cfg: dict[str, Any], instance_id: Any, client_id: str, c
     if expires_in:
         out["expires_in"] = expires_in
     return out
-
