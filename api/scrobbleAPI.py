@@ -379,7 +379,12 @@ def _list_pms_servers(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
     servers: list[dict[str, Any]] = []
     try:
-        for r in acc.resources():
+        resources = None
+        try:
+            resources = acc.resources(includeHttps=True, includeRelay=True, includeIPv6=True)
+        except TypeError:
+            resources = acc.resources()
+        for r in (resources or []):
             if "server" not in (r.provides or "") or (r.product or "") != "Plex Media Server":
                 continue
 
