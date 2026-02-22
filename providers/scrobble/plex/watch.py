@@ -324,9 +324,11 @@ class WatchService:
         dispatcher: Dispatcher | None = None,
         cfg_provider: Callable[[], dict[str, Any]] | None = None,
         instance_id: Any = None,
+        quiet_startup: bool = False,
     ) -> None:
         self._cfg_provider = cfg_provider or _cfg
         self._instance_id = normalize_instance_id(instance_id)
+        self._quiet_startup = bool(quiet_startup)
         self._dispatch = dispatcher or Dispatcher(list(sinks or []), self._cfg_provider)
         self._plex: PlexServer | None = None
         self._listener: AlertListener | None = None
@@ -761,7 +763,8 @@ class WatchService:
         if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
             self._log("Watcher disabled by config; not starting", "INFO")
             return
-        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        self._log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
         while not self._stop.is_set():
             try:
                 base, token = _plex_btok(self._cfg_provider() or {}, instance_id=self._instance_id)
@@ -774,7 +777,7 @@ class WatchService:
                     callbackError=lambda e: self._log(f"Watcher error: {e}", "ERROR"),
                 )
                 self._attempt = 0
-                self._log("Watcher connected", "INFO")
+                self._log(f"Watcher connected; inst={self._instance_id}", lvl)
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
                     time.sleep(0.5)
             except Exception as e:
@@ -793,7 +796,8 @@ class WatchService:
                 self._listener.stop()
         except Exception:
             pass
-        self._log("Watch service stopping", "INFO")
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        self._log(f"Watch service stopping; inst={self._instance_id}", lvl)
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
@@ -813,8 +817,15 @@ def make_default_watch(
     dispatcher: Dispatcher | None = None,
     cfg_provider: Callable[[], dict[str, Any]] | None = None,
     instance_id: Any = None,
+    quiet_startup: bool = False,
 ) -> WatchService:
-    return WatchService(sinks=sinks, dispatcher=dispatcher, cfg_provider=cfg_provider, instance_id=instance_id)
+    return WatchService(
+        sinks=sinks,
+        dispatcher=dispatcher,
+        cfg_provider=cfg_provider,
+        instance_id=instance_id,
+        quiet_startup=quiet_startup,
+    )
 
 
 _AUTO_WATCH: WatchService | None = None

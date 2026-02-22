@@ -523,7 +523,15 @@ def _normalize_ids(ids: dict[str, Any]) -> dict[str, str]:
 
 
 class JellyfinWatchService:
-    def __init__(self, sinks: Iterable[ScrobbleSink] | None = None, poll_secs: float = 1.5) -> None:
+    def __init__(
+        self,
+        sinks: Iterable[ScrobbleSink] | None = None,
+        poll_secs: float = 1.5,
+        dispatcher: Any | None = None,
+        cfg_provider: Any | None = None,
+        instance_id: Any = None,
+        quiet_startup: bool = False,
+    ) -> None:
         cfg = _cfg()
         self._base, self._tok = _jf_bt(cfg)
         self._disabled = False
@@ -532,9 +540,11 @@ class JellyfinWatchService:
             self._server_id: str | None = None
         else:
             self._server_id = _server_id(self._base, self._tok, cfg)
-
         self._sinks = list(sinks or [])
-        self._dispatch = Dispatcher(self._sinks, cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
+        self._instance_id = str(instance_id or 'default').strip() or 'default'
+        self._quiet_startup = bool(quiet_startup)
+        _ = cfg_provider
+        self._dispatch = cast(Any, dispatcher) if dispatcher is not None else Dispatcher(self._sinks, cfg_provider=lambda: _cfg_for_dispatch(self._server_id))
         self._poll = max(0.5, float(poll_secs))
         self._idle_steps = 0
         self._max_idle_sleep = 6.0
@@ -549,7 +559,8 @@ class JellyfinWatchService:
         self._view_roots_cache: dict[str, tuple[float, set[str]]] = {}
         self._item_root_cache: dict[str, str | None] = {}
 
-        self._log(f"Ensuring Watcher is running; wired sinks: {self.sinks_count()}", "INFO")
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        self._log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -1001,7 +1012,8 @@ class JellyfinWatchService:
         if self._disabled:
             self._log("Missing jellyfin.server or jellyfin.access_token in config.json", "ERROR")
             return
-        self._log("Watcher connected", "INFO")
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        self._log(f"Watcher connected; inst={self._instance_id}", lvl)
         while not self._stop.is_set():
             active = self._tick()
             if active:
@@ -1014,7 +1026,8 @@ class JellyfinWatchService:
 
     def stop(self) -> None:
         self._stop.set()
-        self._log("Jellyfin watcher stopping", "INFO")
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        self._log(f"Watch service stopping; inst={self._instance_id}", lvl)
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():
@@ -1033,5 +1046,17 @@ def mhash(x: Any) -> int:
         return abs(hash(str(x)))
 
 
-def make_default_watch(sinks: Iterable[ScrobbleSink]) -> JellyfinWatchService:
-    return JellyfinWatchService(sinks=sinks)
+def make_default_watch(
+    sinks: Iterable[ScrobbleSink] | None = None,
+    dispatcher: Any | None = None,
+    cfg_provider: Any | None = None,
+    instance_id: Any = None,
+    quiet_startup: bool = False,
+) -> JellyfinWatchService:
+    return JellyfinWatchService(
+        sinks=sinks,
+        dispatcher=dispatcher,
+        cfg_provider=cfg_provider,
+        instance_id=instance_id,
+        quiet_startup=quiet_startup,
+    )
