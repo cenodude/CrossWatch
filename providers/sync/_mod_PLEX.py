@@ -8,6 +8,7 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlparse
 
 from ._log import log as cw_log
 
@@ -34,7 +35,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "5.0.0"
+__VERSION__ = "5.1.0"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -225,6 +226,67 @@ def _plex_tv_resource_access_token(
     return None
 
 
+def _plex_tv_resource_for_connection(
+    token: str,
+    client_id: str,
+    baseurl: str,
+    timeout: float = 10.0,
+) -> tuple[str | None, str | None]:
+    if not token or not baseurl:
+        return None, None
+
+    try:
+        u = urlparse(str(baseurl).strip())
+        want_host = (u.hostname or "").strip().lower()
+        want_port = int(u.port or 32400)
+        want_scheme = (u.scheme or "").strip().lower()
+    except Exception:
+        return None, None
+
+    s = _plex_tv_session(token, client_id)
+    r = s.get(
+        "https://plex.tv/api/resources",
+        params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    root = ET.fromstring(r.text or "")
+
+    best: tuple[int, str | None, str | None] = (-1, None, None)
+    for dev in list(root):
+        if (dev.tag or "").lower() != "device":
+            continue
+        attrs = dev.attrib or {}
+        provides = (attrs.get("provides") or "").lower()
+        if "server" not in provides:
+            continue
+        mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip() or None
+        atok = (attrs.get("accessToken") or "").strip() or None
+        if not atok:
+            continue
+
+        score = -1
+        for conn in dev.findall(".//Connection"):
+            uri = (conn.attrib.get("uri") or "").strip()
+            if not uri:
+                continue
+            try:
+                cu = urlparse(uri)
+                host = (cu.hostname or "").strip().lower()
+                port = int(cu.port or 32400)
+                scheme = (cu.scheme or "").strip().lower()
+            except Exception:
+                continue
+            if host != want_host or port != want_port:
+                continue
+            score = max(score, 100 if scheme == want_scheme else 80)
+
+        if score > best[0]:
+            best = (score, mid, atok)
+
+    return best[1], best[2]
+
+
 def _pick_home_user(
     home_users: list[dict[str, Any]],
     target: str | None,
@@ -284,6 +346,7 @@ def get_manifest() -> Mapping[str, Any]:
 @dataclass
 class PLEXConfig:
     token: str | None = None
+    pms_token: str | None = None
     baseurl: str | None = None
     client_id: str | None = None
     server_name: str | None = None
@@ -337,9 +400,10 @@ class PLEXClient:
             else:
                 raise PLEXAuthError("Missing Plex auth (account token or username/password)")
 
-            token = self.cfg.token or self._account.authenticationToken
-            self._pms_token = token
-            self.cloud_token = token
+            cloud_token = self.cfg.token or self._account.authenticationToken
+            pms_token = (self.cfg.pms_token or "").strip() or None
+            self._pms_token = pms_token
+            self.cloud_token = cloud_token
 
             cid = _plex_tv_client_id(self.cfg)
             self.session.headers.setdefault("X-Plex-Client-Identifier", cid)
@@ -347,36 +411,69 @@ class PLEXClient:
             self.session.headers.setdefault("X-Plex-Platform", "CrossWatch")
             self.session.headers.setdefault("X-Plex-Version", __VERSION__)
             self.session.headers.setdefault("Accept", "application/xml")
-            self.session.headers["X-Plex-Token"] = token
+            self.session.headers["X-Plex-Token"] = pms_token or cloud_token
 
             if self.cfg.baseurl:
                 try:
-                    self.server = PlexServer(self.cfg.baseurl, token, timeout=self.cfg.timeout)
+                    self.server = PlexServer(self.cfg.baseurl, (pms_token or cloud_token), timeout=self.cfg.timeout)
                     self.server._session = self.session  # type: ignore[attr-defined]
                     self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
-                    if self._pms_baseurl:
-                        configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
+                    if self._pms_baseurl and (pms_token or cloud_token):
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token))
                 except Exception as e:
                     _warn("pms_connect_failed", baseurl=str(self.cfg.baseurl or ""), error=str(e), mode="account_only")
-                    self._post_connect_user_scope(token)
+                    self._post_connect_user_scope(str(pms_token or cloud_token))
                     return self
 
-                self._post_connect_user_scope(token)
+                # Shared users need a server-scoped resource token for PMS endpoints.
+                if not pms_token:
+                    try:
+                        baseurl = str(self.cfg.baseurl or "").strip()
+                        mid = (self.cfg.machine_id or "").strip() or None
+                        if baseurl:
+                            m2, t2 = _plex_tv_resource_for_connection(cloud_token, cid, baseurl=baseurl, timeout=float(self.cfg.timeout))
+                            if m2 and not mid:
+                                mid = m2
+                            if t2:
+                                pms_token = t2
+                        if not pms_token:
+                            if not mid:
+                                mid = self._infer_machine_id(self.server)
+                            if mid:
+                                pms_token = _plex_tv_resource_access_token(cloud_token, cid, machine_id=mid, timeout=float(self.cfg.timeout))
+                        if pms_token and mid:
+                            self.cfg.machine_id = mid
+                    except Exception:
+                        pass
+
+                if pms_token:
+                    self._apply_pms_token(pms_token)
+                    if self._pms_baseurl:
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token))
+
+                self._post_connect_user_scope(str(pms_token or cloud_token))
                 return self
 
             try:
                 res = self._pick_resource(self._account)
+                res_tok = str(getattr(res, "accessToken", None) or "").strip() or None
+                res_mid = str(getattr(res, "clientIdentifier", None) or "").strip() or None
                 self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore[assignment]
                 self.server._session = self.session  # type: ignore[attr-defined]
                 self._pms_baseurl = str(getattr(self.server, "baseurl", None) or "")
-                if self._pms_baseurl:
-                    configure_plex_context(baseurl=str(self._pms_baseurl), token=token)
+                if res_mid and not (self.cfg.machine_id or "").strip():
+                    self.cfg.machine_id = res_mid
+                if res_tok:
+                    pms_token = res_tok
+                    self._apply_pms_token(pms_token)
+                if self._pms_baseurl and (pms_token or cloud_token):
+                    configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token))
             except Exception as e:
                 _warn("pms_resource_connect_failed", error=str(e), mode="account_only")
-                self._post_connect_user_scope(token)
+                self._post_connect_user_scope(str(pms_token or cloud_token))
                 return self
 
-            self._post_connect_user_scope(token)
+            self._post_connect_user_scope(str(pms_token or cloud_token))
             return self
 
         except Exception as e:
@@ -403,6 +500,46 @@ class PLEXClient:
         if servers:
             return servers[0]
         raise PLEXNotFound("No Plex Media Server resource found")
+
+    def _apply_pms_token(self, token: str) -> None:
+        tok = str(token or "").strip()
+        if not tok:
+            return
+        self._pms_token = tok
+        try:
+            self.session.headers["X-Plex-Token"] = tok
+        except Exception:
+            pass
+        srv = self.server
+        if srv:
+            try:
+                srv._token = tok  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            try:
+                sess = getattr(srv, "_session", None) or self.session
+                sess.headers["X-Plex-Token"] = tok
+            except Exception:
+                pass
+
+    def _infer_machine_id(self, srv: PlexServer | None) -> str | None:
+        if not srv:
+            return None
+        try:
+            mid = str(getattr(srv, "machineIdentifier", None) or "").strip()
+            if mid:
+                return mid
+        except Exception:
+            pass
+        try:
+            rr = request_with_retries(self.session, "GET", srv.url("/identity"), timeout=float(self.cfg.timeout), max_retries=1)
+            if rr.ok:
+                root = ET.fromstring(rr.text or "")
+                mid = str(root.attrib.get("machineIdentifier") or "").strip()
+                return mid or None
+        except Exception:
+            return None
+        return None
 
     def _post_connect_user_scope(self, token: str) -> None:
         srv = self.server
@@ -449,7 +586,7 @@ class PLEXClient:
         return bool(self.home_users())
 
     def home_users(self, *, force: bool = False) -> list[dict[str, Any]]:
-        token = self._pms_token or self.cfg.token
+        token = self.cloud_token or self.cfg.token
         if not token:
             return []
         now = time.time()
@@ -476,7 +613,7 @@ class PLEXClient:
         pin: str | None = None,
     ) -> bool:
         srv = self.server
-        token = self._pms_token or self.cfg.token
+        token = self.cloud_token or self.cfg.token
         if not srv or not token:
             return False
 
@@ -679,8 +816,10 @@ class PLEXModule:
         self.config = cfg
         plex_cfg = dict(cfg.get("plex") or {})
         baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url")
+        pms = plex_cfg.get("pms") or {}
         self.cfg = PLEXConfig(
             token=plex_cfg.get("account_token") or plex_cfg.get("token"),
+            pms_token=plex_cfg.get("pms_token") or pms.get("token") or pms.get("x_plex_token"),
             baseurl=baseurl,
             client_id=plex_cfg.get("client_id"),
             server_name=plex_cfg.get("server_name") or plex_cfg.get("server"),
@@ -696,7 +835,7 @@ class PLEXModule:
             strict_id_matching=bool(plex_cfg.get("strict_id_matching", False)),
         )
 
-        configure_plex_context(baseurl=self.cfg.baseurl or "", token=self.cfg.token or "")
+        configure_plex_context(baseurl=self.cfg.baseurl or "", token=(self.cfg.pms_token or self.cfg.token or ""))
 
         if self.cfg.client_id:
             cid = str(self.cfg.client_id)
@@ -1036,14 +1175,14 @@ class _PlexOPS:
         pl = c.get("plex") or {}
         au = (c.get("auth") or {}).get("plex") or {}
         account_token = (pl.get("account_token") or au.get("account_token") or "").strip()
-
+        flat_pms_token = (pl.get("pms_token") or "").strip()
         pms = pl.get("pms") or {}
         pms_url = (pms.get("url") or "").strip()
         pms_token = (pms.get("token") or "").strip()
         if not pms_token:
             pms_token = (pms.get("x_plex_token") or "").strip()
 
-        return bool(account_token or (pms_url and pms_token))
+        return bool(account_token or flat_pms_token or (pms_url and pms_token))
 
     def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
         return PLEXModule(cfg)
