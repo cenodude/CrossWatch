@@ -631,7 +631,7 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             except Exception:
                 pass
     except Exception as e:
-        try: _UIHostLogger("TRAKT", "WATCH")(f"startup hook error: {e}", level="ERROR")
+        try: _UIHostLogger("WATCH", "WATCH")(f"startup hook error: {e}", level="ERROR")
         except Exception: pass
 
     started = False
@@ -649,23 +649,23 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
                 res = _wm_start(app)
                 if isinstance(res, dict):
                     started = any(bool(g.get("running")) for g in (res.get("groups") or []))
-                _UIHostLogger("TRAKT", "WATCH")(
+                _UIHostLogger("WATCH", "WATCH")(
                     "watch routes autostarted" if started else "watch routes autostart returned but not running",
                     level="INFO",
                 )
             except Exception as e:
                 try:
-                    _UIHostLogger("TRAKT", "WATCH")(f"watch routes autostart failed: {e}", level="ERROR")
+                    _UIHostLogger("WATCH", "WATCH")(f"watch routes autostart failed: {e}", level="ERROR")
                 except Exception:
                     pass
         else:
             if watch.get("autostart") is False:
-                _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
+                _UIHostLogger("WATCH", "WATCH")("Autostart is disabled", level="INFO")
             else:
-                _UIHostLogger("TRAKT", "WATCH")("watch autostart not requested", level="INFO")
+                _UIHostLogger("WATCH", "WATCH")("watch autostart not requested", level="INFO")
     except Exception as e:
         try:
-            _UIHostLogger("TRAKT", "WATCH")(f"watch autostart check failed: {e}", level="ERROR")
+            _UIHostLogger("WATCH", "WATCH")(f"watch autostart check failed: {e}", level="ERROR")
         except Exception:
             pass
 
@@ -678,7 +678,7 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
                 alive = bool(getattr(w, "is_alive", lambda: True)())
                 started = True
                 _UIHostLogger(
-                    "TRAKT",
+                    "WATCH",
                     "WATCH",
                 )(
                     "watch autostarted" if alive else "watch autostarted (initializing)",
@@ -689,12 +689,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
                 sc2 = (cfg2.get("scrobble") or {})
                 watch2 = (sc2.get("watch") or {}) if isinstance(sc2.get("watch"), dict) else {}
                 if watch2.get("autostart") is False:
-                    _UIHostLogger("TRAKT", "WATCH")("Autostart is disabled", level="INFO")
+                    _UIHostLogger("WATCH", "WATCH")("Autostart is disabled", level="INFO")
                 else:
-                    _UIHostLogger("TRAKT", "WATCH")("autostart_from_config() returned None", level="INFO")
+                    _UIHostLogger("WATCH", "WATCH")("autostart_from_config() returned None", level="INFO")
         except Exception as e:
             try:
-                _UIHostLogger("TRAKT", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
+                _UIHostLogger("WATCH", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
             except Exception:
                 pass
 
@@ -724,7 +724,7 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
                 except Exception:
                     pass
         except Exception as e:
-            try: _UIHostLogger("TRAKT", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
+            try: _UIHostLogger("WATCH", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
             except Exception: pass
 
         try:
@@ -737,12 +737,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             w = getattr(app.state, "watch", None) or (WATCH if 'WATCH' in globals() else None)
             if w:
                 w.stop()
-                _UIHostLogger("TRAKT", "WATCH")("watch stopped", level="INFO")
+                _UIHostLogger("WATCH", "WATCH")("watch stopped", level="INFO")
             app.state.watch = None
             if 'WATCH' in globals():
                 globals()['WATCH'] = None
         except Exception as e:
-            try: _UIHostLogger("TRAKT", "WATCH")(f"watch stop failed: {e}", level="ERROR")
+            try: _UIHostLogger("WATCH", "WATCH")(f"watch stop failed: {e}", level="ERROR")
             except Exception: pass
 
 app.router.lifespan_context = _lifespan
