@@ -3709,6 +3709,7 @@ async function saveSettings() {
 
   ([
     "plex_token",
+    "plex_home_pin",
     "simkl_client_id",
     "simkl_client_secret",
     "trakt_client_id",
@@ -3752,6 +3753,29 @@ async function saveSettings() {
     const serverCfg = await serverResp.json();
     const cfg = JSON.parse(JSON.stringify(serverCfg || {}));
     let changed = false;
+
+    const _cwNormInst = (v) => {
+      const s = String(v || "").trim();
+      return (s && s.toLowerCase() !== "default") ? s : "default";
+    };
+
+    const _cwSelectedInst = (provider, storageKey = "") => {
+      try {
+        const el = document.getElementById(`${provider}_instance`);
+        const raw = String((el && el.value) || (storageKey ? localStorage.getItem(storageKey) : "") || "default").trim();
+        return _cwNormInst(raw);
+      } catch {
+        return "default";
+      }
+    };
+
+    const _cwInstBlock = (root, inst) => {
+      const base = (root && typeof root === "object") ? root : {};
+      if (inst === "default") return base;
+      return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
+        ? base.instances[inst]
+        : {};
+    };
 
     try { delete cfg.app_auth; } catch {}
 
@@ -3833,21 +3857,32 @@ async function saveSettings() {
       if (e && e.__cwAbortSave) throw e;
     }
 
+    const plexSecretInst    = _cwSelectedInst("plex");
+    const simklSecretInst   = _cwSelectedInst("simkl");
+    const traktSecretInst   = _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1");
+    const anilistSecretInst = _cwSelectedInst("anilist");
+    const mdblistSecretInst = _cwSelectedInst("mdblist");
+
     const prevMode     = serverCfg?.sync?.bidirectional?.mode || "two-way";
     const prevSource   = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
     const prevDebug     = !!serverCfg?.runtime?.debug;
     const prevDebugMods = !!serverCfg?.runtime?.debug_mods;
     const prevDebugHttp = !!serverCfg?.runtime?.debug_http;
-    const prevPlex     = norm(serverCfg?.plex?.account_token);
-    const prevHomePin  = norm(serverCfg?.plex?.home_pin);
-    const prevAniCid = norm(serverCfg?.anilist?.client_id);
-    const prevAniSec = norm(serverCfg?.anilist?.client_secret);
-    const prevCid      = norm(serverCfg?.simkl?.client_id);
-    const prevSec      = norm(serverCfg?.simkl?.client_secret);
+    const prevPlexBlkSecrets   = _cwInstBlock(serverCfg?.plex, plexSecretInst);
+    const prevSimklBlkSecrets  = _cwInstBlock(serverCfg?.simkl, simklSecretInst);
+    const prevTraktBlkSecrets  = _cwInstBlock(serverCfg?.trakt, traktSecretInst);
+    const prevAnilistBlkSecrets = _cwInstBlock(serverCfg?.anilist, anilistSecretInst);
+    const prevMdblistBlkSecrets = _cwInstBlock(serverCfg?.mdblist, mdblistSecretInst);
+    const prevPlex     = norm(prevPlexBlkSecrets?.account_token);
+    const prevHomePin  = norm(prevPlexBlkSecrets?.home_pin);
+    const prevAniCid = norm(prevAnilistBlkSecrets?.client_id);
+    const prevAniSec = norm(prevAnilistBlkSecrets?.client_secret);
+    const prevCid      = norm(prevSimklBlkSecrets?.client_id);
+    const prevSec      = norm(prevSimklBlkSecrets?.client_secret);
     const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
-    const prevTraktCid = norm(serverCfg?.trakt?.client_id);
-    const prevTraktSec = norm(serverCfg?.trakt?.client_secret);
-    const prevMdbl     = norm(serverCfg?.mdblist?.api_key);
+    const prevTraktCid = norm(prevTraktBlkSecrets?.client_id);
+    const prevTraktSec = norm(prevTraktBlkSecrets?.client_secret);
+    const prevMdbl     = norm(prevMdblistBlkSecrets?.api_key);
     const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
     const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
     const prevUiShow     = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
@@ -4035,38 +4070,72 @@ async function saveSettings() {
 
     if (sMdbl.changed) {
       cfg.mdblist = cfg.mdblist || {};
-      if (sMdbl.clear) delete cfg.mdblist.api_key; else cfg.mdblist.api_key = sMdbl.set;
+      if (mdblistSecretInst === "default") {
+        if (sMdbl.clear) delete cfg.mdblist.api_key; else cfg.mdblist.api_key = sMdbl.set;
+      } else {
+        cfg.mdblist.instances = cfg.mdblist.instances || {};
+        cfg.mdblist.instances[mdblistSecretInst] = cfg.mdblist.instances[mdblistSecretInst] || {};
+        const mdblInstCfg = cfg.mdblist.instances[mdblistSecretInst];
+        if (sMdbl.clear) delete mdblInstCfg.api_key; else mdblInstCfg.api_key = sMdbl.set;
+      }
       changed = true;
     }
 
-    if (sPlex.changed) {
+    if (sPlex.changed || sHomePin.changed) {
       cfg.plex = cfg.plex || {};
-      if (sPlex.clear) delete cfg.plex.account_token; else cfg.plex.account_token = sPlex.set;
+      let plexSecretCfg = cfg.plex;
+      if (plexSecretInst !== "default") {
+        cfg.plex.instances = cfg.plex.instances || {};
+        cfg.plex.instances[plexSecretInst] = cfg.plex.instances[plexSecretInst] || {};
+        plexSecretCfg = cfg.plex.instances[plexSecretInst];
+      }
+      if (sPlex.changed) {
+        if (sPlex.clear) delete plexSecretCfg.account_token; else plexSecretCfg.account_token = sPlex.set;
+      }
+      if (sHomePin.changed) {
+        if (sHomePin.clear) plexSecretCfg.home_pin = ""; else plexSecretCfg.home_pin = sHomePin.set;
+      }
       changed = true;
     }
-    if (sHomePin.changed) {
-      cfg.plex = cfg.plex || {};
-      if (sHomePin.clear) cfg.plex.home_pin = ""; else cfg.plex.home_pin = sHomePin.set;
-      changed = true;
-    }
-    if (sCid.changed) {
+    if (sCid.changed || sSec.changed) {
       cfg.simkl = cfg.simkl || {};
-      if (sCid.clear) delete cfg.simkl.client_id; else cfg.simkl.client_id = sCid.set;
+      let simklSecretCfg = cfg.simkl;
+      if (simklSecretInst !== "default") {
+        cfg.simkl.instances = cfg.simkl.instances || {};
+        cfg.simkl.instances[simklSecretInst] = cfg.simkl.instances[simklSecretInst] || {};
+        simklSecretCfg = cfg.simkl.instances[simklSecretInst];
+      }
+      if (sCid.changed) {
+        if (sCid.clear) delete simklSecretCfg.client_id; else simklSecretCfg.client_id = sCid.set;
+      }
+      if (sSec.changed) {
+        if (sSec.clear) delete simklSecretCfg.client_secret; else simklSecretCfg.client_secret = sSec.set;
+      }
       changed = true;
     }
-    if (sSec.changed) {
-      cfg.simkl = cfg.simkl || {};
-      if (sSec.clear) delete cfg.simkl.client_secret; else cfg.simkl.client_secret = sSec.set;
-      changed = true;
-    }
-    if (sTrkCid.changed) {
+    if (sTrkCid.changed || sTrkSec.changed) {
       cfg.trakt = cfg.trakt || {};
-      if (sTrkCid.clear) delete cfg.trakt.client_id; else cfg.trakt.client_id = sTrkCid.set;
-      changed = true;
-    }
-    if (sTrkSec.changed) {
-      cfg.trakt = cfg.trakt || {};
-      if (sTrkSec.clear) delete cfg.trakt.client_secret; else cfg.trakt.client_secret = sTrkSec.set;
+
+      if (traktSecretInst === "default") {
+        if (sTrkCid.changed) {
+          if (sTrkCid.clear) delete cfg.trakt.client_id; else cfg.trakt.client_id = sTrkCid.set;
+        }
+        if (sTrkSec.changed) {
+          if (sTrkSec.clear) delete cfg.trakt.client_secret; else cfg.trakt.client_secret = sTrkSec.set;
+        }
+      } else {
+        cfg.trakt.instances = cfg.trakt.instances || {};
+        cfg.trakt.instances[traktSecretInst] = cfg.trakt.instances[traktSecretInst] || {};
+        const trkInstCfg = cfg.trakt.instances[traktSecretInst];
+
+        if (sTrkCid.changed) {
+          if (sTrkCid.clear) delete trkInstCfg.client_id; else trkInstCfg.client_id = sTrkCid.set;
+        }
+        if (sTrkSec.changed) {
+          if (sTrkSec.clear) delete trkInstCfg.client_secret; else trkInstCfg.client_secret = sTrkSec.set;
+        }
+      }
+
       changed = true;
     }
     if (sTmdb.changed) {
@@ -4074,19 +4143,24 @@ async function saveSettings() {
       if (sTmdb.clear) delete cfg.tmdb.api_key; else cfg.tmdb.api_key = sTmdb.set;
       changed = true;
     }
-    if (sAniCid.changed) {
+    if (sAniCid.changed || sAniSec.changed) {
       cfg.anilist = cfg.anilist || {};
-      if (sAniCid.clear) delete cfg.anilist.client_id; else cfg.anilist.client_id = sAniCid.set;
-      changed = true;
-    }
-    if (sAniSec.changed) {
-      cfg.anilist = cfg.anilist || {};
-      if (sAniSec.clear) delete cfg.anilist.client_secret; else cfg.anilist.client_secret = sAniSec.set;
+      let aniSecretCfg = cfg.anilist;
+      if (anilistSecretInst !== "default") {
+        cfg.anilist.instances = cfg.anilist.instances || {};
+        cfg.anilist.instances[anilistSecretInst] = cfg.anilist.instances[anilistSecretInst] || {};
+        aniSecretCfg = cfg.anilist.instances[anilistSecretInst];
+      }
+      if (sAniCid.changed) {
+        if (sAniCid.clear) delete aniSecretCfg.client_id; else aniSecretCfg.client_id = sAniCid.set;
+      }
+      if (sAniSec.changed) {
+        if (sAniSec.clear) delete aniSecretCfg.client_secret; else aniSecretCfg.client_secret = sAniSec.set;
+      }
       changed = true;
     }
 
 
-    
     try {
       const norm = (s) => (s ?? "").trim();
       const first = (...ids) => {
