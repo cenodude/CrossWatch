@@ -221,6 +221,21 @@ def _account_id_from_history_entry(entry: Any) -> int | None:
         return None
 
 def _username_from_history_entry(entry: Any) -> str | None:
+    data = getattr(entry, "_data", None)
+    if isinstance(data, Mapping):
+        for attr in ("username", "userName", "accountName", "userTitle", "user"):
+            v = data.get(attr)
+            if isinstance(v, str):
+                s = v.strip()
+                if s:
+                    return s
+            if isinstance(v, Mapping):
+                for sub in ("username", "title", "name"):
+                    sv = v.get(sub)
+                    if isinstance(sv, str):
+                        s = sv.strip()
+                        if s:
+                            return s
     for attr in ("username", "userName", "accountName", "userTitle", "user"):
         v = getattr(entry, attr, None)
         if v is None:
@@ -640,8 +655,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if cfg_acct_id and aid is not None and int(aid) != int(cfg_acct_id):
                 continue
             if cfg_uname:
-                u = _username_from_history_entry(raw) or ""
-                if u.strip().lower() != cfg_uname:
+                u = (_username_from_history_entry(raw) or "").strip().lower()
+                if u and u != cfg_uname:
                     continue
             if not explicit_user and cli_acct_id and aid is not None and int(aid) != int(cli_acct_id):
                 continue
