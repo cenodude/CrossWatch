@@ -45,11 +45,18 @@ def _cache_path() -> Path:
 
 
 def _bust_index_cache(reason: str) -> None:
+    if _pair_scope() is None:
+        return
     try:
         p = _cache_path()
-        if p.exists():
-            p.unlink()
-            _info("index_cache_bust", reason=reason)
+        legacy = _legacy_path(p)
+        removed: list[str] = []
+        for x in (p, legacy):
+            if x and x.exists():
+                x.unlink()
+                removed.append(x.name)
+        if removed:
+            _info("index_cache_bust", reason=reason, removed=removed)
     except Exception as e:
         _warn("index_cache_bust_failed", reason=reason, error=str(e))
 
@@ -807,7 +814,7 @@ def _batch_add(
         show_ids = _extract_show_ids_for_episode(it)
         ids = ids_for_trakt(it)
 
-        # Prefer show and season and episode payload
+        # Prefer show+season+episode payload
         if show_ids and season is not None and number is not None:
             skey = _show_key(show_ids)
             show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
@@ -884,7 +891,7 @@ def _batch_remove(
         show_ids = _extract_show_ids_for_episode(it)
         ids = ids_for_trakt(it)
 
-        # Prefer show and season and episode payload
+        # Prefer show+season+episode payload
         if show_ids and season is not None and number is not None:
             skey = _show_key(show_ids)
             show_entry = shows_map.setdefault(skey, {"ids": show_ids, "seasons": {}})
