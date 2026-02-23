@@ -591,6 +591,7 @@ class MDBListSink(ScrobbleSink):
         sk = str(getattr(ev, "session_key", None) or "?")
         mk = self._mkey(ev)
         p_now = _clamp(getattr(ev, "progress", 0) or 0)
+        force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
         tol = _regress_tolerance_percent(cfg)
         p_sess = self._p_sess.get((sk, mk), -1)
         p_glob = self._p_glob.get(mk, -1)
@@ -601,7 +602,12 @@ class MDBListSink(ScrobbleSink):
         name = _media_name(ev)
         key = self._ckey(ev)
 
-        if action == "start":
+        if force_seek:
+            if action == "start":
+                p_send = max(2, p_now)
+            else:
+                p_send = p_now
+        elif action == "start":
             if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
                 _log("Restart detected: align start floor to 2% (no 0%)", "DEBUG")
                 p_send = 2
@@ -648,7 +654,6 @@ class MDBListSink(ScrobbleSink):
                 p_send = last_sess
 
         step = _progress_step(cfg)
-        force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
         p_payload = int(float(p_send))
         bucket: int | None = None
         if action == "start" and step > 1 and not force_seek:
