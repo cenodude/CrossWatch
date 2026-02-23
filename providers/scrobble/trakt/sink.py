@@ -693,9 +693,10 @@ class TraktSink(ScrobbleSink):
                 p_send = last_sess
 
         step = _trakt_progress_step(cfg)
+        force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
         p_payload = int(float(p_send))
         bucket: int | None = None
-        if action == "start" and step > 1:
+        if action == "start" and step > 1 and not force_seek:
             bucket = (int(float(p_send)) // step) * step
             if bucket < 1:
                 bucket = 1
