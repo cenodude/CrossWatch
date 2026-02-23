@@ -316,6 +316,13 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         if opt in item:
             out[opt] = item.get(opt)
 
+    # Preserve internal flags needed by orchestrator blocklist logic.
+    try:
+        if bool(item.get("_cw_marked")):
+            out["_cw_marked"] = True
+    except Exception:
+        pass
+
     if typ in ("season", "episode"):
         sids_raw = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else None
         if sids_raw:
