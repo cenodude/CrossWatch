@@ -814,7 +814,7 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
     const sink = String(route.sink || "").trim().toLowerCase();
     if (prov) deepSet(STATE.cfg, "scrobble.watch.provider", prov);
     if (sink) deepSet(STATE.cfg, "scrobble.watch.sink", sink);
-    if (prov && sink) deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
+    deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
     try {
       const pvSel = $("#sc-provider", STATE.mount);
       if (pvSel && prov) pvSel.value = prov;
@@ -1177,354 +1177,6 @@ function chip(text, onRemove, onClick) {
     if (up) up.textContent = st?.uptime ? `Up: ${st.uptime}` : "";
   }
 
-  const LIVE = {
-    enabled: false,
-    reconnectTimer: null,
-    sse: null,
-    max: 3,
-    items: [],
-    pending: new Map(),
-    dedupe: new Map(),
-    ctx: { lastMedia: "", lastMediaAt: 0 },
-  };
-
-  const LIVE_ORDER = ["EMBY", "PLEX", "JELLYFIN", "TRAKT", "SIMKL", "MDBLIST", "Watcher"];
-  const LIVE_GROUP_WINDOW_MS = 1400;
-  const LIVE_CTX_MEDIA_TTL_MS = 6000;
-
-  const LIVE_NOISE = [/Ensuring Watcher is running/i];
-
-  const LIVE_RATE_LIMIT = [
-    { key: "connected", re: /Watcher connected/i, ms: 120000 },
-    { key: "autostart", re: /\bwatch autostarted\b/i, ms: 300000 },
-    { key: "stopping", re: /watcher stopping/i, ms: 60000 },
-  ];
-
-  const LIVE_ACTION_COOLDOWN_MS = { start: 5000, pause: 12000, stop: 12000, resume: 5000, connected: 120000 };
-
-  function htmlToText(html) {
-    const raw = String(html || "");
-    if (!raw) return "";
-    try {
-      const tmp = d.createElement("div");
-      tmp.innerHTML = raw;
-      return String(tmp.textContent || "").replace(/\u00a0/g, " ");
-    } catch {
-      return raw.replace(/<[^>]*>/g, " ").replace(/\u00a0/g, " ");
-    }
-  }
-
-  function escapeHtml(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  function parseInfoLine(text, fallbackSrc) {
-    const s0 = String(text || "").trim();
-    if (!s0) return null;
-    if (!/\bINFO\b/.test(s0)) return null;
-
-    const levelMatch = s0.match(/\b(INFO|WARN|WARNING|ERROR|DEBUG)\b/);
-    const level = (levelMatch ? levelMatch[1] : "INFO").toUpperCase();
-    if (level !== "INFO") return null;
-
-    const parts = [...s0.matchAll(/\[([^\]]+)\]/g)].map((m) => String(m[1] || ""));
-    const ts = parts.find((p) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(p)) || "";
-    const srcGuess = parts.find((p) => /^[A-Za-z]+$/.test(p) && p.toUpperCase() !== "WATCH") || "";
-    const src = String(fallbackSrc || srcGuess || "Watcher").trim();
-
-    let msg = s0;
-    if (ts) msg = msg.replace(`[${ts}]`, "");
-    if (srcGuess) msg = msg.replace(`[${srcGuess}]`, "");
-    msg = msg.replace(/\bINFO\b/, "");
-    msg = msg.replace(/\[WATCH\]\s*/g, "");
-    msg = msg.replace(/\s+/g, " ").replace(/^[-–—:]+\s*/, "").trim();
-    if (!msg) return null;
-
-    const time = ts ? String(ts).slice(11) : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    return { src, time, msg, at: Date.now() };
-  }
-
-  function primarySourceLabel(sources) {
-    const arr = Array.from(sources || []);
-    if (!arr.length) return "Watcher";
-    for (const k of LIVE_ORDER) if (arr.includes(k)) return k;
-    return arr[0];
-  }
-
-  function formatSourceBadge(sources) {
-    const arr = Array.from(sources || []);
-    const primary = primarySourceLabel(arr);
-    const extra = Math.max(0, arr.length - 1);
-    return extra ? `${primary}+${extra}` : primary;
-  }
-
-  function cooldownFor(action) {
-    const a = String(action || "").toLowerCase();
-    return LIVE_ACTION_COOLDOWN_MS[a] ?? 6000;
-  }
-
-  function isRateLimited(msg, now) {
-    for (const r of LIVE_RATE_LIMIT) {
-      if (!r.re.test(msg)) continue;
-      const k = `rl:${r.key}`;
-      const last = LIVE.dedupe.get(k) || 0;
-      if (now - last < r.ms) return true;
-      LIVE.dedupe.set(k, now);
-      return false;
-    }
-    return false;
-  }
-
-  function shouldDropMsg(msg, now) {
-    for (const re of LIVE_NOISE) if (re.test(msg)) return true;
-    if (isRateLimited(msg, now)) return true;
-    return false;
-  }
-
-  function parseScrobble(msg) {
-    const m = msg.match(/user='[^']+'\s+(start|pause|stop|resume)\s+([0-9.]+)%\s+•\s+(.+)/i);
-    if (!m) return null;
-    const action = String(m[1] || "").toLowerCase();
-    const prog = Number(m[2] || 0);
-    const media = String(m[3] || "").trim();
-    if (!media) return null;
-    const p = Number.isFinite(prog) ? Math.round(prog * 10) / 10 : null;
-    const pStr = p === null ? "" : `${p}%`;
-    return { action, media, pretty: `${action} ${pStr} • ${media}`.replace(/\s+/g, " ").trim() };
-  }
-
-  function parseEmbyEvent(msg) {
-    const m = msg.match(/^event\s+(start|pause|stop)\b/i);
-    if (!m) return null;
-    const action = String(m[1] || "").toLowerCase();
-    return { action };
-  }
-
-  function trimLiveList(list, max) {
-    const nodes = Array.from(list.children);
-    for (const n of nodes.slice(max)) {
-      if (n.classList.contains("out")) continue;
-      n.classList.add("out");
-      setTimeout(() => {
-        try {
-          n.remove();
-        } catch {}
-      }, 420);
-    }
-  }
-
-  function addLiveLine(it) {
-    const list = $("#sc-livelist", STATE.mount);
-    const box = $("#sc-livebox", STATE.mount);
-    if (!list || !box) {
-      LIVE.items = [it, ...(LIVE.items || [])].slice(0, LIVE.max);
-      return;
-    }
-
-    if (box.classList.contains("empty")) list.innerHTML = "";
-    box.classList.remove("empty");
-
-    const line = el("div", {
-      className: "sc-line new",
-      innerHTML: `<span class="sc-time">${escapeHtml(it.time)}</span><span class="sc-src">${escapeHtml(it.src)}</span><span class="sc-msg">${escapeHtml(it.msg)}</span>`,
-    });
-    list.prepend(line);
-    requestAnimationFrame(() => line.classList.remove("new"));
-
-    trimLiveList(list, LIVE.max);
-    LIVE.items = [it, ...(LIVE.items || [])].slice(0, LIVE.max);
-  }
-
-  function renderLiveBuffer() {
-    const list = $("#sc-livelist", STATE.mount);
-    const box = $("#sc-livebox", STATE.mount);
-    if (!list || !box) return;
-    const items = Array.isArray(LIVE.items) ? LIVE.items.slice(0, LIVE.max) : [];
-    if (!items.length) return;
-    box.classList.remove("empty");
-    list.innerHTML = "";
-    for (const it of items) {
-      const line = el("div", {
-        className: "sc-line",
-        innerHTML: `<span class="sc-time">${escapeHtml(it.time)}</span><span class="sc-src">${escapeHtml(it.src)}</span><span class="sc-msg">${escapeHtml(it.msg)}</span>`,
-      });
-      list.append(line);
-    }
-    trimLiveList(list, LIVE.max);
-  }
-
-
-  function flushGroup(key) {
-    const g = LIVE.pending.get(key);
-    if (!g) return;
-    LIVE.pending.delete(key);
-
-    const now = Date.now();
-    const cd = cooldownFor(g.action || "");
-    const last = LIVE.dedupe.get(`emit:${key}`) || 0;
-    if (now - last < cd) return;
-    LIVE.dedupe.set(`emit:${key}`, now);
-
-    addLiveLine({
-      time: g.time,
-      src: formatSourceBadge(g.sources),
-      msg: g.msg,
-    });
-  }
-
-  function queueGrouped(key, it) {
-    const now = it.at || Date.now();
-    const existing = LIVE.pending.get(key);
-    if (existing && now - existing.createdAt <= LIVE_GROUP_WINDOW_MS) {
-      existing.sources.add(it.src);
-      if (it.msg && it.msg.length >= existing.msg.length) existing.msg = it.msg;
-      existing.time = it.time || existing.time;
-      return;
-    }
-
-    if (existing) flushGroup(key);
-
-    const g = {
-      createdAt: now,
-      time: it.time,
-      msg: it.msg,
-      sources: new Set([it.src]),
-      action: it.action || "",
-    };
-    LIVE.pending.set(key, g);
-    setTimeout(() => flushGroup(key), LIVE_GROUP_WINDOW_MS + 10);
-  }
-
-  function handleLiveInfo(it) {
-    const now = it.at || Date.now();
-    if (shouldDropMsg(it.msg, now)) return;
-
-    // Status
-    if (/Watcher connected/i.test(it.msg)) {
-      addLiveLine({ time: it.time, src: it.src, msg: "Connected" });
-      return;
-    }
-    if (/watcher stopping/i.test(it.msg)) {
-      addLiveLine({ time: it.time, src: it.src, msg: "Stopping" });
-      return;
-    }
-
-    // Scrobble-like INFO from sinks
-    const sc = parseScrobble(it.msg);
-    if (sc) {
-      LIVE.ctx.lastMedia = sc.media;
-      LIVE.ctx.lastMediaAt = now;
-      const key = `scrobble:${sc.action}:${sc.media}`;
-      queueGrouped(key, { ...it, msg: sc.pretty, action: sc.action });
-      return;
-    }
-
-
-    const em = parseEmbyEvent(it.msg);
-    if (em) {
-      const mediaOk = LIVE.ctx.lastMedia && now - (LIVE.ctx.lastMediaAt || 0) <= LIVE_CTX_MEDIA_TTL_MS;
-      if (!mediaOk) return;
-      const key = `scrobble:${em.action}:${LIVE.ctx.lastMedia}`;
-      queueGrouped(key, { ...it, msg: `${em.action} • ${LIVE.ctx.lastMedia}`, action: em.action });
-      return;
-    }
-
-    
-    if (it.msg.length <= 64) addLiveLine({ time: it.time, src: it.src, msg: it.msg });
-  }
-
-  function startWatcherLiveFeed() {
-    if (!LIVE.enabled) return;
-    if (LIVE.sse) return;
-    try {
-      const es = new EventSource("/api/logs/watcher");
-      LIVE.sse = es;
-
-      const handler = (src) => (e) => {
-        if (!e || !e.data) return;
-        const txt = htmlToText(e.data).replace(/\s+/g, " ").trim();
-        const base = parseInfoLine(txt, src);
-        if (!base) return;
-        handleLiveInfo(base);
-      };
-
-      ["EMBY", "PLEX", "JELLYFIN", "TRAKT", "SIMKL", "MDBLIST"].forEach((k) => es.addEventListener(k, handler(k)));
-      es.onmessage = handler("Watcher");
-      es.addEventListener("ping", () => {});
-
-      es.onerror = () => {
-        if (!LIVE.enabled) return;
-        if (es.readyState === EventSource.CLOSED) {
-          LIVE.sse = null;
-          if (LIVE.reconnectTimer) return;
-          LIVE.reconnectTimer = setTimeout(() => {
-            LIVE.reconnectTimer = null;
-            startWatcherLiveFeed();
-          }, 1500);
-        }
-      };
-    } catch {
-      LIVE.sse = null;
-    }
-  }
-
-  function stopWatcherLiveFeed() {
-    try {
-      LIVE.sse?.close();
-    } catch {}
-    LIVE.sse = null;
-    if (LIVE.reconnectTimer) {
-      try { clearTimeout(LIVE.reconnectTimer); } catch {}
-      LIVE.reconnectTimer = null;
-    }
-  }
-
-  function syncLiveToggleUi() {
-    const btn = $("#sc-live-toggle", STATE.mount);
-    const hint = $("#sc-livehint", STATE.mount);
-    const on = !!LIVE.enabled;
-    if (btn) {
-      btn.classList.toggle("on", on);
-      btn.classList.toggle("off", !on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.textContent = on ? "Live On" : "Live Off";
-      btn.title = on ? "Disable live log stream" : "Enable live log stream";
-    }
-    if (hint) hint.textContent = on ? "INFO only" : "Off";
-  }
-
-  function setLivePlaceholder(msg, force = false) {
-    const list = $("#sc-livelist", STATE.mount);
-    const box = $("#sc-livebox", STATE.mount);
-    if (!list || !box) return;
-    const hasItems = Array.isArray(LIVE.items) && LIVE.items.length;
-    if (hasItems && !force) return;
-    box.classList.add("empty");
-    list.innerHTML = `<div class="sc-line"><span class="sc-msg">${escapeHtml(msg)}</span></div>`;
-  }
-
-  function setLiveFeedEnabled(on, opts = {}) {
-    const next = !!on;
-    if (LIVE.enabled === next && !opts.force) {
-      syncLiveToggleUi();
-      return;
-    }
-    LIVE.enabled = next;
-    if (next) {
-      setLivePlaceholder("Waiting for events…");
-      startWatcherLiveFeed();
-    } else {
-      stopWatcherLiveFeed();
-      setLivePlaceholder("Live is off");
-    }
-    syncLiveToggleUi();
-  }
-
   function applyModeDisable() {
   const enabled = !!read("scrobble.enabled", false);
   const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
@@ -1556,7 +1208,7 @@ function chip(text, onRemove, onClick) {
     if (!String(n.id || "").startsWith("sc-enable-webhook")) n.disabled = !webhookOn;
   });
   $all(".input, input, button, select, textarea", watchRoot).forEach((n) => {
-    if (n.id !== "sc-enable-watcher" && n.id !== "sc-live-toggle") n.disabled = !watcherOn;
+    if (n.id !== "sc-enable-watcher") n.disabled = !watcherOn;
   });
 
   const prov = provider();
@@ -1911,21 +1563,6 @@ function chip(text, onRemove, onClick) {
           .cc-state .lbl{font-size:12px;opacity:.75}
           .cc-state .val{font-size:22px;font-weight:800;letter-spacing:.2px}
           .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85}
-          .cc-live{flex:1 1 260px;min-width:0;display:flex;justify-content:flex-end;margin-left:auto}
-          .sc-livebox{width:min(440px,100%);display:grid;gap:6px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.12);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
-          .sc-livehead{display:flex;justify-content:space-between;align-items:center;font-size:11px;opacity:.82}
-          .sc-live-toggle{padding:4px 8px;font-size:11px;line-height:1}
-          .sc-linelist{display:grid;gap:4px}
-          .sc-line>span{display:inline-block}
-          .sc-line{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden;max-height:28px;opacity:.92;transition:opacity .35s ease,transform .35s ease,filter .35s ease,max-height .35s ease,margin .35s ease,padding .35s ease}
-          .sc-linelist .sc-line:nth-child(2){opacity:.82}
-          .sc-linelist .sc-line:nth-child(3){opacity:.72}
-          .sc-line.new{opacity:0;transform:translateY(-6px)}
-          .sc-line.out{opacity:0;transform:translateY(6px);filter:blur(2px);max-height:0;margin:0;padding:0}
-          .sc-src{font-size:10px;line-height:1;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);opacity:.86;flex:none}
-          .sc-time{font-size:10px;opacity:.65;flex:none}
-          .sc-msg{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-          .sc-livebox.empty .sc-linelist{opacity:.65}
           .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
           .cc-auto{display:flex;justify-content:center;margin-top:2px}
           .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor}
@@ -2037,14 +1674,6 @@ function chip(text, onRemove, onClick) {
                 <div class="cc-state">
                   <span class="lbl">Status</span>
                   <span id="sc-status-text" class="val">Inactive</span>
-                </div>
-                <div class="cc-live">
-                  <div class="sc-livebox empty" id="sc-livebox" aria-label="Watcher live info">
-                    <div class="sc-livehead"><span>Live</span><span style="display:flex;gap:8px;align-items:center"><button type="button" id="sc-live-toggle" class="sc-pill sc-live-toggle off" aria-pressed="false">Live Off</button><span id="sc-livehint">Off</span></span></div>
-                    <div class="sc-linelist" id="sc-livelist">
-                      <div class="sc-line"><span class="sc-msg">Live is off</span></div>
-                    </div>
-                  </div>
                 </div>
               </div>
               <div class="cc-meta">
@@ -3388,10 +3017,6 @@ async function hydrateJellyfin() {
         populate();
       }
     });
-    on($("#sc-live-toggle", STATE.mount), "click", (e) => {
-      e.preventDefault();
-      setLiveFeedEnabled(!LIVE.enabled);
-    });
     on($("#sc-fetch-uuid", STATE.mount), "click", () => {
       fetchServerUUID();
     });
@@ -3803,14 +3428,6 @@ async function init(opts = {}) {
 
     buildUI();
     wire();
-
-    renderLiveBuffer();
-    setLiveFeedEnabled(false, { force: true });
-    if (!STATE.__liveFeedBound) {
-      STATE.__liveFeedBound = true;
-      w.addEventListener("beforeunload", stopWatcherLiveFeed);
-    }
-
     if (!STATE.__authChangedBound) {
       STATE.__authChangedBound = true;
       let t = null;
