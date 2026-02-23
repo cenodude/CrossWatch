@@ -350,6 +350,7 @@ class WatchService:
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
         self._sess_user_cache: dict[str, tuple[str, float]] = {}
+        self._sess_identity_cache: dict[str, dict[str, Any]] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -706,18 +707,27 @@ class WatchService:
                 return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
             wl_list = wl if isinstance(wl, list) else [wl]
-            if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
+            ident = self._resolve_session_identity(ev.session_key) or {}
+            seen_name = str(ident.get("name") or ev.account or "").strip()
+
+            if any(not str(x).lower().startswith(("id:", "uuid:", "userid:", "homeid:")) and norm(str(x)) == norm(seen_name) for x in wl_list):
                 pass
             else:
-                n = (self._find_psn(ev.raw or {}) or [None])[0] or {}
-                acc_id, acc_uuid = str(n.get("accountID") or ""), str(n.get("accountUUID") or "").lower()
+                n = self._best_psn_entry(self._find_psn(ev.raw or {}) or []) or {}
+                acc_id = str(n.get("accountID") or ident.get("account_id") or "").strip()
+                acc_uuid = str(n.get("accountUUID") or ident.get("account_uuid") or "").strip().lower()
+                user_id = str(ident.get("user_id") or n.get("userID") or "").strip()
                 ok = False
                 for e in wl_list:
-                    s = str(e).strip().lower()
-                    if s.startswith("id:") and acc_id and s.split(":", 1)[1].strip() == acc_id:
+                    s = str(e).strip()
+                    sl = s.lower()
+                    if sl.startswith("id:") and acc_id and sl.split(":", 1)[1].strip() == acc_id:
                         ok = True
                         break
-                    if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid:
+                    if sl.startswith("uuid:") and acc_uuid and sl.split(":", 1)[1].strip() == acc_uuid:
+                        ok = True
+                        break
+                    if (sl.startswith("userid:") or sl.startswith("homeid:")) and user_id and sl.split(":", 1)[1].strip() == user_id:
                         ok = True
                         break
                 if not ok:
@@ -744,46 +754,80 @@ class WatchService:
             if isinstance(v, dict) and ("ratingKey" in v or "ratingkey" in v):
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
-    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
+    
+    def _resolve_session_identity(self, session_key: str | None) -> dict[str, Any] | None:
         if not (self._plex and session_key):
             return None
         sk = str(session_key).strip()
         if not sk:
             return None
         now = time.time()
-        cache = getattr(self, "_sess_user_cache", None)
+        cache = getattr(self, "_sess_identity_cache", None)
         if isinstance(cache, dict):
             hit = cache.get(sk)
-            if hit and (now - float(hit[1])) < 15.0:
-                v = str(hit[0] or "").strip()
-                return v or None
+            if isinstance(hit, dict) and (now - float(hit.get("ts") or 0.0)) < 15.0:
+                return hit
         try:
             el: Any = self._plex.query("/status/sessions")
             if el is None or not hasattr(el, "iter"):
                 return None
-            name: str | None = None
+            ident: dict[str, Any] | None = None
             for v in el.iter("Video"):
                 if v.get("sessionKey") != sk:
                     continue
+                user_name = ""
+                user_id = ""
+                acc_name = ""
+                acc_id = ""
+                acc_uuid = ""
+
+                u = v.find("User")
+                if u is not None:
+                    user_id = str(u.get("id") or "").strip()
+                    for attr in ("title", "name", "username"):
+                        val = u.get(attr)
+                        if val:
+                            user_name = str(val).strip()
+                            break
+
                 acc = v.find("Account")
                 if acc is not None:
-                    for attr in ("name", "title", "username"):
+                    acc_id = str(acc.get("id") or "").strip()
+                    acc_uuid = str(acc.get("uuid") or "").strip().lower()
+                    for attr in ("title", "name", "username"):
                         val = acc.get(attr)
                         if val:
-                            name = str(val).strip()
+                            acc_name = str(val).strip()
                             break
-                if not name:
-                    u = v.find("User")
-                    if u is not None:
-                        val = u.get("username") or u.get("name") or u.get("title")
-                        if val:
-                            name = str(val).strip()
+
+                ident = {
+                    "name": user_name or acc_name,
+                    "user_name": user_name,
+                    "user_id": user_id,
+                    "account_name": acc_name,
+                    "account_id": acc_id,
+                    "account_uuid": acc_uuid,
+                    "ts": now,
+                }
                 break
-            if name and isinstance(cache, dict):
-                cache[sk] = (name, now)
-            return name or None
+
+            if ident and isinstance(cache, dict):
+                cache[sk] = ident
+                uc = getattr(self, "_sess_user_cache", None)
+                if isinstance(uc, dict):
+                    nm = str(ident.get("name") or "").strip()
+                    if nm:
+                        uc[sk] = (nm, now)
+            return ident
         except Exception:
             return None
+
+    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
+        ident = self._resolve_session_identity(session_key)
+        if not isinstance(ident, dict):
+            return None
+        name = str(ident.get("name") or "").strip()
+        return name or None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
         try:
