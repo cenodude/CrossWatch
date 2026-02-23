@@ -140,7 +140,7 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
         from providers.scrobble.plex.watch import make_default_watch as make_watch
         prov = "plex"
 
-    if _supports_kw(make_watch, "dispatcher") or _supports_kw(make_watch, "cfg_provider") or _supports_kw(make_watch, "instance_id") or _supports_kw(make_watch, "quiet_startup"):
+    if _supports_kw(make_watch, "dispatcher") or _supports_kw(make_watch, "cfg_provider") or _supports_kw(make_watch, "instance_id"):
         kwargs: dict[str, Any] = {}
         if _supports_kw(make_watch, "dispatcher"):
             kwargs["dispatcher"] = cast(Any, group_dispatcher)
@@ -148,8 +148,6 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
             kwargs["cfg_provider"] = cfg_provider
         if _supports_kw(make_watch, "instance_id"):
             kwargs["instance_id"] = instance_id
-        if _supports_kw(make_watch, "quiet_startup"):
-            kwargs["quiet_startup"] = True
         if _supports_kw(make_watch, "sinks"):
             kwargs["sinks"] = []
         return make_watch(**kwargs)
@@ -193,15 +191,7 @@ class WatchManager:
                 inst = str(r.get("provider_instance") or "default").strip() or "default"
                 grouped.setdefault((prov, inst), []).append(r)
 
-            breakdown = ""
-            if grouped:
-                prov_counts: dict[str, int] = {}
-                for (p, _i) in grouped.keys():
-                    prov_counts[p] = prov_counts.get(p, 0) + 1
-                breakdown = ", ".join(f"{p}:{n}" for p, n in sorted(prov_counts.items()))
-
             watch_groups: dict[str, WatchGroup] = {}
-            total_routes = 0
             for (prov, inst), rs in grouped.items():
                 runners: list[RouteRunner] = []
 
@@ -223,8 +213,6 @@ class WatchManager:
 
                 if not runners:
                     continue
-
-                total_routes += len(runners)
 
                 md = MultiDispatcher([rr.dispatcher for rr in runners])
 
@@ -250,17 +238,12 @@ class WatchManager:
                 )
 
             self._app.state.watch_groups = watch_groups
-            if watch_groups:
-                extra = f" ({breakdown})" if breakdown else ""
-                _log(f"Watch mode started; wired providers: {len(watch_groups)}{extra} | wired sinks: {total_routes}", "INFO")
             return self.status()
 
     def stop_all(self) -> dict[str, Any]:
         with self._lock:
             groups = getattr(self._app.state, "watch_groups", None)
             if isinstance(groups, dict):
-                if groups:
-                    _log(f"Watch mode stopping; wired providers: {len(groups)}", "INFO")
                 for g in list(groups.values()):
                     try:
                         _stop_blocking(getattr(g, "watcher", None))
