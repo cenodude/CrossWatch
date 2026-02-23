@@ -344,6 +344,11 @@ class WatchService:
         self._last_pause_ts: dict[str, float] = {}
         self._filtered_ts: dict[str, float] = {}
         self._last_probe: dict[str, float] = {}
+        self._best_offset: dict[str, tuple[int, int, float]] = {}
+        self._dur_cache: dict[int, tuple[int, float]] = {}
+        self._last_event: dict[str, ScrobbleEvent] = {}
+        self._tl_last: dict[str, tuple[int, int, int, float]] = {}
+        self._last_seek_emit: dict[str, float] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -391,6 +396,238 @@ class WatchService:
                 if r:
                     return r
         return None
+
+    def _best_psn_entry(self, psn: Any) -> dict[str, Any] | None:
+        if isinstance(psn, dict):
+            cand = [psn]
+        elif isinstance(psn, list):
+            cand = [x for x in psn if isinstance(x, dict)]
+        else:
+            return None
+        if not cand:
+            return None
+
+        def _i(v: Any) -> int:
+            try:
+                return int(v)
+            except Exception:
+                return 0
+
+        def score(d: dict[str, Any]) -> tuple[int, int]:
+            s = 0
+            st = str(d.get("state") or "").lower()
+            if st == "playing":
+                s += 5
+            vo = _i(d.get("viewOffset") or d.get("time") or 0)
+            if vo > 0:
+                s += 4
+            dur = _i(d.get("duration") or 0)
+            if dur > 0:
+                s += 2
+            if d.get("ratingKey") or d.get("ratingkey"):
+                s += 2
+            if d.get("sessionKey"):
+                s += 1
+            if d.get("guid"):
+                s += 1
+            return s, vo
+
+        return max(cand, key=score)
+
+    def _normalize_ms(self, off: int | None, dur: int | None) -> tuple[int | None, int | None]:
+        o = _safe_int(off) if off is not None else None
+        d = _safe_int(dur) if dur is not None else None
+        if o is None and d is None:
+            return None, None
+        if o is not None and o < 0:
+            o = 0
+        if d is not None and d > 0:
+            # Plex mixes seconds and milliseconds.
+            if d < 36000 and o is not None and o < 36000:
+                o = o * 1000
+                d = d * 1000
+            elif d > 36000 and o is not None and 0 < o < 36000:
+                o = o * 1000
+        return o, d
+
+    def _duration_ms_for(self, rating_key: int | None) -> int | None:
+        if not rating_key or not self._plex:
+            return None
+        now = time.time()
+        cached = self._dur_cache.get(int(rating_key))
+        if cached and (now - float(cached[1])) < 300.0:
+            return int(cached[0])
+        try:
+            it = self._plex.fetchItem(int(rating_key))
+        except Exception:
+            it = None
+        if not it:
+            return None
+        try:
+            d = getattr(it, "duration", None)
+            d = int(d) if d is not None else None
+        except Exception:
+            d = None
+        if d and d > 0:
+            self._dur_cache[int(rating_key)] = (int(d), now)
+            return int(d)
+        return None
+
+    def _update_best_offset(self, session_key: str, off_ms: int, dur_ms: int) -> None:
+        if not session_key or dur_ms <= 0:
+            return
+        o = max(0, int(off_ms))
+        d = int(dur_ms)
+        if o > d:
+            o = d
+        self._best_offset[str(session_key)] = (o, d, time.time())
+
+    def _best_progress_for_session(self, session_key: str | None) -> int | None:
+        if not session_key:
+            return None
+        v = self._best_offset.get(str(session_key))
+        if not v:
+            return None
+        off_ms, dur_ms, ts = v
+        if dur_ms <= 0:
+            return None
+        if (time.time() - float(ts)) > 90.0:
+            return None
+        try:
+            return max(0, min(100, int(round(100 * max(0, min(off_ms, dur_ms)) / float(dur_ms)))))
+        except Exception:
+            return None
+
+    def _is_seek_jump(self, prev: tuple[int, int, float] | None, off_ms: int, dur_ms: int, now: float) -> tuple[bool, int, float]:
+        if not prev:
+            return False, 0, 0.0
+        try:
+            po, pd, pts = int(prev[0]), int(prev[1]), float(prev[2])
+            o, d = int(off_ms), int(dur_ms)
+            dt = float(now) - pts
+        except Exception:
+            return False, 0, 0.0
+        if d <= 0 or pd <= 0:
+            return False, 0, dt
+        if dt <= 0.2 or dt > 120.0:
+            return False, 0, dt
+        if abs(d - pd) > max(2000, int(pd * 0.05)):
+            return False, 0, dt
+        jump = abs(o - po)
+        dt_ms = dt * 1000.0
+
+        if jump >= 20_000 and jump > (dt_ms * 1.6 + 8_000):
+            return True, int(jump), dt
+        return False, int(jump), dt
+
+    def _emit_seek_update(self, session_key: str, pct: int, cfg: dict[str, Any], src: str) -> None:
+        sk = str(session_key or "").strip()
+        if not sk:
+            return
+        base = self._last_event.get(sk)
+        if not isinstance(base, ScrobbleEvent) or base.action != "start":
+            return
+        try:
+            pct_i = int(pct)
+        except Exception:
+            return
+        if pct_i < 0 or pct_i > 100:
+            return
+        if abs(pct_i - int(base.progress)) < 1:
+            return
+        now = time.time()
+        last_ts = float(self._last_seek_emit.get(sk, 0.0) or 0.0)
+        if (now - last_ts) < 1.0:
+            return
+        sup_at = _watch_suppress_start_at(cfg)
+        if pct_i >= int(sup_at):
+            return
+        last = self._last_emit.get(sk)
+        if last and last[0] == "start" and abs(pct_i - int(last[1])) < 1:
+            return
+        raw = dict(base.raw or {})
+        raw["_cw_seek"] = True
+        raw["_cw_seek_src"] = str(src or "timeline")
+        raw["_cw_seek_ts"] = now
+        ev2 = ScrobbleEvent(**{**base.__dict__, "progress": pct_i, "raw": raw})
+        self._last_seek_emit[sk] = now
+        self._last_seen[sk] = now
+        self._last_emit[sk] = ("start", pct_i)
+        self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
+        try:
+            _cw_update("plex", ev2)
+        except Exception:
+            pass
+        self._log(f"seek update p={pct_i}% sess={ev2.session_key}", "DEBUG")
+        self._dispatch.dispatch(ev2)
+
+    # Ingest progress from PSN, TimelineEntry, and ProgressNotification alerts.
+    def _ingest_progress_from_alert(self, alert: dict[str, Any], cfg: dict[str, Any] | None = None) -> None:
+        cfg = cfg or _cfg()
+        psn = alert.get("PlaySessionStateNotification")
+        best_psn = self._best_psn_entry(psn)
+        if isinstance(best_psn, dict):
+            sk = str(best_psn.get("sessionKey") or "").strip()
+            rk = _safe_int(best_psn.get("ratingKey") or best_psn.get("ratingkey"))
+            off = best_psn.get("viewOffset")
+            if off is None:
+                off = best_psn.get("time")
+            dur = best_psn.get("duration")
+            o, d = self._normalize_ms(_safe_int(off), _safe_int(dur))
+            if d is None or d <= 0:
+                d = self._duration_ms_for(rk)
+            if sk and o is not None and d is not None and d > 0:
+                now = time.time()
+                try:
+                    o_i, d_i = int(o), int(d)
+                except Exception:
+                    o_i, d_i = None, None
+                if o_i is not None and d_i is not None:
+                    prev = self._best_offset.get(sk)
+                    is_seek, _jump, _dt = self._is_seek_jump(prev, o_i, d_i, now)
+                    if is_seek:
+                        try:
+                            pct = int(round(100 * max(0, min(o_i, d_i)) / float(d_i)))
+                            pct = max(0, min(100, pct))
+                            self._emit_seek_update(sk, pct, cfg, 'psn')
+                        except Exception:
+                            pass
+                    self._update_best_offset(sk, o_i, d_i)
+
+        for key in ("TimelineEntry", "ProgressNotification"):
+            data = alert.get(key)
+            items: list[dict[str, Any]] = []
+            if isinstance(data, dict):
+                items = [data]
+            elif isinstance(data, list):
+                items = [x for x in data if isinstance(x, dict)]
+            for entry in items:
+                sk = str(entry.get("sessionKey") or entry.get("session") or "").strip()
+                if not sk:
+                    continue
+                off = entry.get("viewOffset")
+                if off is None:
+                    off = entry.get("time")
+                dur = entry.get("duration")
+                o, d = self._normalize_ms(_safe_int(off), _safe_int(dur))
+                if o is None or d is None or d <= 0:
+                    continue
+                self._update_best_offset(sk, o, d)
+                try:
+                    o_i, d_i = int(o), int(d)
+                    pct = int(round(100 * max(0, min(o_i, d_i)) / float(d_i)))
+                    pct = max(0, min(100, pct))
+                except Exception:
+                    continue
+                now = time.time()
+                prev = self._tl_last.get(sk)
+                self._tl_last[sk] = (pct, o_i, d_i, now)
+                if prev:
+                    pp, po, pd, pts = prev
+                    is_seek, _jump, _dt = self._is_seek_jump((int(po), int(pd), float(pts)), o_i, d_i, now)
+                    if is_seek:
+                        self._emit_seek_update(sk, pct, cfg, key.lower())
+
 
     def _plex_section_id(self, ev: ScrobbleEvent) -> str | None:
         raw = ev.raw or {}
@@ -494,15 +731,14 @@ class WatchService:
         if not isinstance(raw, dict):
             return None
         psn = raw.get("PlaySessionStateNotification")
-        if isinstance(psn, list) and psn:
-            rk = psn[0].get("ratingKey") or psn[0].get("ratingkey")
+        best = self._best_psn_entry(psn)
+        if isinstance(best, dict):
+            rk = best.get("ratingKey") or best.get("ratingkey")
             return _safe_int(rk) if rk is not None else None
         for v in raw.values():
             if isinstance(v, dict) and ("ratingKey" in v or "ratingkey" in v):
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
-
-
     def _resolve_account_from_session(self, session_key: str | None) -> str | None:
         if not (self._plex and session_key):
             return None
@@ -633,9 +869,19 @@ class WatchService:
     def _handle_alert(self, alert: dict[str, Any]) -> None:
         try:
             t = (alert.get("type") or "").lower()
-            if t != "playing":
-                return
         except Exception:
+            return
+        if t in ("timeline", "progress"):
+            try:
+                cfg = _cfg()
+                sc = (cfg.get("scrobble") or {})
+                if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+                    return
+                self._ingest_progress_from_alert(alert, cfg)
+            except Exception:
+                pass
+            return
+        if t != "playing":
             return
         try:
             try:
@@ -646,14 +892,22 @@ class WatchService:
             sc = (cfg.get("scrobble") or {})
             if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
                 return
+
+            try:
+                self._ingest_progress_from_alert(alert)
+            except Exception:
+                pass
+
             defaults = {
                 "username": (cfg.get("plex") or {}).get("username") or "",
                 "server_uuid": server_uuid or (cfg.get("plex") or {}).get("server_uuid") or "",
             }
+
             ev: ScrobbleEvent | None = None
             psn = alert.get("PlaySessionStateNotification")
-            if isinstance(psn, list) and psn:
-                ev = from_plex_pssn({"PlaySessionStateNotification": psn}, defaults=defaults)
+            best_psn = self._best_psn_entry(psn)
+            if isinstance(best_psn, dict):
+                ev = from_plex_pssn({"PlaySessionStateNotification": [best_psn]}, defaults=defaults)
                 if ev and ev.session_key:
                     self._psn_sessions.add(str(ev.session_key))
             if not ev:
@@ -662,23 +916,62 @@ class WatchService:
                 ev = from_plex_flat_playing(flat, defaults=defaults)
                 if ev and ev.session_key:
                     self._psn_sessions.add(str(ev.session_key))
-            if not ev:
+            if not isinstance(ev, ScrobbleEvent):
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
+
+            if not ev.account:
+                u = (defaults.get("username") or "").strip()
+                if u:
+                    ev = ScrobbleEvent(**{**ev.__dict__, "account": u})
+
             ev = self._enrich_event_with_plex(ev)
+            sk = str(ev.session_key) if ev.session_key else None
+            vo = None
+            dur = None
+            if isinstance(best_psn, dict):
+                vo = best_psn.get("viewOffset")
+                if vo is None:
+                    vo = best_psn.get("time")
+                dur = best_psn.get("duration")
+
+            rk = _safe_int((ev.ids or {}).get("plex")) or self._find_rating_key(ev.raw or {})
+            o, d = self._normalize_ms(_safe_int(vo), _safe_int(dur))
+            if d is None or d <= 0:
+                d = self._duration_ms_for(rk)
+            if (o is None or o <= 0) and sk:
+                b = self._best_offset.get(sk)
+                if b:
+                    o, d, _ts = b
+
+            if o is not None and d is not None and d > 0:
+                pct = int(round(100 * max(0, min(int(o), int(d))) / float(int(d))))
+                pct = max(0, min(100, pct))
+                if sk:
+                    self._update_best_offset(sk, int(o), int(d))
+                if pct != ev.progress:
+                    self._dbg(f"progress normalized: {pct}%")
+                    ev = ScrobbleEvent(**{**ev.__dict__, "progress": pct})
+
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
                 return
+
             self._log(
                 f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
                 "DEBUG",
             )
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
-            sk = str(ev.session_key) if ev.session_key else None
+
             if sk and sk not in self._first_seen:
                 self._first_seen[sk] = time.time()
+
             want = ev.progress
             best = want
+
+            tl = self._best_progress_for_session(sk)
+            if tl is not None and abs(tl - best) >= 2:
+                best = tl
 
             probe_key = sk
             if not probe_key:
@@ -686,7 +979,7 @@ class WatchService:
                 if px_id:
                     probe_key = f"rk:{px_id}"
 
-            need_probe = (ev.action == "stop") or (want < 5) or (want > 95)
+            need_probe = (ev.action == "stop") or (best < 5) or (best > 95)
             if need_probe and probe_key:
                 now = time.time()
                 lastp = self._last_probe.get(probe_key, 0.0)
@@ -733,7 +1026,6 @@ class WatchService:
                     if ev.progress < fstop and age < 2.0:
                         self._dbg(f"drop stop due to debounce sess={skd} p={ev.progress} thr={fstop} age={age:.2f}s")
                         # Keep STOP to close the session; do not drop it.
-
             if ev.session_key:
                 self._last_seen[str(ev.session_key)] = time.time()
             if sk:
@@ -751,11 +1043,13 @@ class WatchService:
                 _cw_update("plex", ev)
             except Exception:
                 pass
+            if sk and ev.action == "start":
+                self._last_event[sk] = ev
             self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
             self._dispatch.dispatch(ev)
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")
-
+            
     def start(self) -> None:
         self._stop.clear()
         cfg = self._cfg_provider() or {}
