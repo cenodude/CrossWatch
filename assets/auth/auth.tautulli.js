@@ -187,6 +187,16 @@
     m.classList.add(ok ? "ok" : "warn");
   }
 
+  function showActionsRow() {
+    const row = el("tautulli_actions_row");
+    if (!row) return;
+    row.hidden = false;
+    row.removeAttribute("hidden");
+    row.classList.remove("hidden");
+    row.style.display = "flex";
+  }
+
+
   function pickFieldBox(input) {
     if (!input) return null;
     let cur = input;
@@ -202,7 +212,8 @@
 
   function ensureFieldsLayout() {
     const root = document.getElementById("sec-tautulli") || document.querySelector("#sec-tautulli");
-    if (!root || root.__cwTautulliFieldsV2) return;
+    if (!root) return;
+    if (root.__cwTautulliFieldsV2 && document.getElementById("tautulli_actions_row")) return;
 
     const serverEl = el("tautulli_server");
     const keyEl = el("tautulli_key");
@@ -238,6 +249,9 @@
       msgEl,
     };
 
+    const canBuildActions = !!saved.actions || !!(saved.saveBtn && saved.verifyBtn && saved.discBtn && saved.msgEl);
+    if (!canBuildActions) return;
+
     function mkField(labelText, inputEl) {
       const w = document.createElement("div");
       const lab = document.createElement("label");
@@ -248,7 +262,7 @@
     }
 
     try {
-      // Rebuild the left column to avoid earlier DOM surgery leaving broken wrappers.
+      // Rebuild the left column
       leftCol.innerHTML = "";
 
       const row1 = document.createElement("div");
@@ -299,13 +313,15 @@
         if (oldCol && oldCol !== row && root.contains(oldCol)) oldCol.style.display = "none";
       }
 
-      root.__cwTautulliFieldsV2 = true;
+      showActionsRow();
+      if (leftCol.querySelector("#tautulli_actions_row")) root.__cwTautulliFieldsV2 = true;
     } catch (_) {}
   }
 
   function compactLayout() {
     const root = document.getElementById("sec-tautulli") || document.querySelector("#sec-tautulli");
-    if (!root || root.__cwTautulliCompact) return;
+    if (!root) return;
+    if (root.__cwTautulliCompact && document.getElementById("tautulli_actions_row")) return;
 
     const save = el("tautulli_save");
     const verify = el("tautulli_verify");
@@ -314,12 +330,12 @@
     if (!save || !verify || !disc || !msg) return;
     if (!root.contains(save) || !root.contains(verify) || !root.contains(disc) || !root.contains(msg)) return;
 
-    // Capture the original status column so we can hide it after moving the controls.
+    // Capture the original status
     const oldInline = verify.closest(".inline") || verify.parentElement;
     const oldCol = oldInline ? oldInline.parentElement : null;
 
     const user = el("tautulli_user_id");
-    let anchor = user ? (user.closest("div") || user.parentElement) : null;
+    let anchor = user ? (user.parentElement || user.closest("div")) : null;
     if (!anchor || !root.contains(anchor)) anchor = save.closest("div") || save.parentElement;
 
     const row = document.createElement("div");
@@ -329,10 +345,7 @@
     row.style.gap = "10px";
     row.style.alignItems = "center";
     row.style.marginTop = "12px";
-
     msg.style.marginLeft = "auto";
-
-    // Move buttons into a single, Trakt-style action row.
     row.appendChild(save);
     row.appendChild(verify);
     row.appendChild(disc);
@@ -341,7 +354,8 @@
 
     if (oldCol && oldCol !== row && root.contains(oldCol)) oldCol.style.display = "none";
 
-    root.__cwTautulliCompact = true;
+    showActionsRow();
+    if (document.getElementById("tautulli_actions_row")) root.__cwTautulliCompact = true;
   }
 
   function maskKey(i, has) {
@@ -367,6 +381,7 @@
     ensureTautulliInstanceUI();
     compactLayout();
     ensureFieldsLayout();
+    showActionsRow();
     const cfg = window._cfgCache || await getCfg();
     const t = getTautulliCfgBlock(cfg);
     const h = t && typeof t.history === "object" ? t.history : {};
@@ -431,6 +446,7 @@
   function wire() {
     compactLayout();
     ensureFieldsLayout();
+    showActionsRow();
     const s = el("tautulli_save");
     if (s && !s.__wired) { s.addEventListener("click", onSave); s.__wired = true; }
 
@@ -463,7 +479,7 @@
       u.__wiredUser = true;
     }
 
-    // Keep layout consistent if the section is re-rendered.
+    // Keep layout consistent
     compactLayout();
   }
 
