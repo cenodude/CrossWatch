@@ -1298,7 +1298,7 @@ def minimal_from_history_row(
     key = _fb_key_from_row(row)
     memo = _fb_cache_load()
     hit = memo.get(key, None)
-    if hit == _FBGUID_NOHIT:
+    if hit == _FBGUID_NOHIT and not allow_discover:
         return None
     if isinstance(hit, dict) and hit:
         return dict(hit)
@@ -1328,6 +1328,7 @@ def minimal_from_history_row(
             )
             if extra:
                 m["ids"].update({k: v for k, v in extra.items() if v})
+                
     if kind == "episode" and not _has_ext_ids(m.get("show_ids", {})):
         tok = token or _PLEX_CTX["token"]
         gp_rk = _row_get(row, "grandparentRatingKey")
@@ -1351,6 +1352,7 @@ def minimal_from_history_row(
             )
             if extra2:
                 m.setdefault("show_ids", {}).update({k: v for k, v in extra2.items() if v})
+                
     if not _has_ext_ids(m.get("ids", {})) and allow_discover:
         tok = token or _PLEX_CTX["token"]
         title = m.get("series_title") if kind == "episode" else m.get("title")
@@ -1418,13 +1420,17 @@ def minimal_from_history_row(
                         m["series_title"] = nd.get("series_title") or nd.get("title")
                 if not m.get("title") and nd.get("title"):
                     m["title"] = nd["title"]
+                    
     if not (m.get("title") or m.get("series_title")):
-        _FBGUID_MEMO[key] = _FBGUID_NOHIT
-        _fb_cache_save()
+        if allow_discover:
+            _FBGUID_MEMO[key] = _FBGUID_NOHIT
+            _fb_cache_save()
         return None
+    
     if not _has_ext_ids(m.get("ids", {})) and not _has_ext_ids(m.get("show_ids", {})):
-        _FBGUID_MEMO[key] = _FBGUID_NOHIT
-        _fb_cache_save()
+        if allow_discover:
+            _FBGUID_MEMO[key] = _FBGUID_NOHIT
+            _fb_cache_save()
         return None
     _FBGUID_MEMO[key] = dict(m)
     _fb_cache_save()
