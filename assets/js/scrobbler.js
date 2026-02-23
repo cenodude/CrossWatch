@@ -1244,7 +1244,6 @@ function chip(text, onRemove, onClick) {
     msg = msg.replace(/\[WATCH\]\s*/g, "");
     msg = msg.replace(/\s+/g, " ").replace(/^[-–—:]+\s*/, "").trim();
     if (!msg) return null;
-    if (/^autostart_from_config\(\)\s+returned\s+none$/i.test(msg)) msg = "Autostart is disabled";
 
     const time = ts ? String(ts).slice(11) : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     return { src, time, msg, at: Date.now() };
