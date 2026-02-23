@@ -801,6 +801,10 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
     def _sig_for_event(e: dict) -> str:
         k = str(e.get("key") or "").strip().lower()
         if k:
+            if "@" in k:
+                k = k.split("@", 1)[0]
+            if "|" in k:
+                k = k.split("|")[-1]
             return k
         ids = (e.get("ids") or {}) or {}
         for idk in ("tmdb", "imdb", "tvdb", "slug"):
@@ -1296,6 +1300,17 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
     if not isinstance(provs, dict):
         return key_map, id_map
 
+    def put(d: dict[str, str], k: str, v: str, *, force: bool = False) -> None:
+        k0 = str(k or "").strip().lower()
+        v0 = str(v or "").strip()
+        if not k0 or not v0:
+            return
+        if force:
+            d[k0] = v0
+            return
+        if k0 not in d:
+            d[k0] = v0
+
     for _, pdata in provs.items():
         if not isinstance(pdata, dict):
             continue
@@ -1321,24 +1336,23 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
                     continue
 
                 typ = str(it.get("type") or "").lower()
+                is_show = typ in ("show", "series", "anime")
+
                 title = (it.get("series_title") or it.get("show_title") or "").strip()
-                if not title and typ in ("show", "series", "anime"):
+                if not title and is_show:
                     title = (it.get("title") or it.get("name") or "").strip()
                 if not title:
                     continue
 
-                if k:
-                    k0 = str(k).strip().lower()
-                    key_map[k0] = title
-                    if "#" in k0:
-                        key_map[k0.split("#", 1)[0]] = title
-
-                kk = it.get("key")
-                if kk:
+                for kk in (k, it.get("key")):
+                    if not kk:
+                        continue
                     kk0 = str(kk).strip().lower()
-                    key_map[kk0] = title
+                    put(key_map, kk0, title, force=is_show)
+                    if "|" in kk0:
+                        put(key_map, kk0.split("|")[-1], title, force=is_show)
                     if "#" in kk0:
-                        key_map[kk0.split("#", 1)[0]] = title
+                        put(key_map, kk0.split("#", 1)[0], title, force=is_show)
 
                 raw_show_ids = it.get("show_ids")
                 show_ids = raw_show_ids if isinstance(raw_show_ids, dict) else {}
@@ -1350,7 +1364,8 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
                     for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
                         v = ids.get(idk)
                         if v:
-                            id_map[f"{idk}:{str(v).lower()}"] = title
+                            force = is_show and (idk != "slug")
+                            put(id_map, f"{idk}:{str(v).lower()}", title, force=force)
 
     return key_map, id_map
 
@@ -1461,22 +1476,55 @@ def _key_lookup_candidates(raw_key: Any) -> list[str]:
         if x and x not in out:
             out.append(x)
 
-    add(k)
+    _ID_NS = {
+        "imdb",
+        "tmdb",
+        "tvdb",
+        "trakt",
+        "simkl",
+        "slug",
+        "plex",
+        "guid",
+        "anidb",
+        "mal",
+        "anilist",
+        "kitsu",
+    }
 
-    if "#" in k:
-        base = k.split("#", 1)[0]
-        add(base)
+    def add_variants(x: str) -> None:
+        x0 = str(x or "").strip().lower()
+        if not x0:
+            return
 
-    # Normalize keys that embed the media type
-    parts = k.split(":")
-    if len(parts) >= 3:
-        add(f"{parts[0]}:{parts[-1]}")
+        raws: set[str] = {x0}
+        if "@" in x0:
+            raws.add(x0.split("@", 1)[0])
 
-    if "#" in k:
-        parts2 = k.split("#", 1)[0].split(":")
-        if len(parts2) >= 3:
-            add(f"{parts2[0]}:{parts2[-1]}")
+        for r in list(raws):
+            if "|" in r:
+                raws.add(r.split("|")[-1])
 
+        for base in raws:
+            base = str(base or "").strip().lower()
+            if not base:
+                continue
+
+            add(base)
+
+            if "#" in base:
+                add(base.split("#", 1)[0])
+
+            parts = base.split(":")
+            if len(parts) >= 3 and parts[0] in _ID_NS:
+                add(f"{parts[0]}:{parts[-1]}")
+
+            if "#" in base:
+                base2 = base.split("#", 1)[0]
+                parts2 = base2.split(":")
+                if len(parts2) >= 3 and parts2[0] in _ID_NS:
+                    add(f"{parts2[0]}:{parts2[-1]}")
+
+    add_variants(k)
     return out
 
 
