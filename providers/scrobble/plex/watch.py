@@ -349,6 +349,7 @@ class WatchService:
         self._last_event: dict[str, ScrobbleEvent] = {}
         self._tl_last: dict[str, tuple[int, int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
+        self._sess_user_cache: dict[str, tuple[str, float]] = {}
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -692,6 +693,36 @@ class WatchService:
         want = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
         if want and ev.server_uuid and str(ev.server_uuid) != str(want):
             return False
+
+        def _allow() -> bool:
+            if sk:
+                self._allowed_sessions.add(sk)
+            return True
+
+        if wl:
+            import re as _re
+
+            def norm(s: str) -> str:
+                return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+            wl_list = wl if isinstance(wl, list) else [wl]
+            if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
+                pass
+            else:
+                n = (self._find_psn(ev.raw or {}) or [None])[0] or {}
+                acc_id, acc_uuid = str(n.get("accountID") or ""), str(n.get("accountUUID") or "").lower()
+                ok = False
+                for e in wl_list:
+                    s = str(e).strip().lower()
+                    if s.startswith("id:") and acc_id and s.split(":", 1)[1].strip() == acc_id:
+                        ok = True
+                        break
+                    if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid:
+                        ok = True
+                        break
+                if not ok:
+                    return False
+
         libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
         if libs:
             sid = self._plex_section_id(ev)
@@ -699,33 +730,7 @@ class WatchService:
                 return False
             if sid not in libs:
                 return False
-
-        def _allow() -> bool:
-            if sk:
-                self._allowed_sessions.add(sk)
-            return True
-
-        if not wl:
-            return _allow()
-
-        import re as _re
-
-        def norm(s: str) -> str:
-            return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
-
-        wl_list = wl if isinstance(wl, list) else [wl]
-        if any(not str(x).lower().startswith(("id:", "uuid:")) and norm(str(x)) == norm(ev.account or "") for x in wl_list):
-            return _allow()
-
-        n = (self._find_psn(ev.raw or {}) or [None])[0] or {}
-        acc_id, acc_uuid = str(n.get("accountID") or ""), str(n.get("accountUUID") or "").lower()
-        for e in wl_list:
-            s = str(e).strip().lower()
-            if s.startswith("id:") and acc_id and s.split(":", 1)[1].strip() == acc_id:
-                return _allow()
-            if s.startswith("uuid:") and acc_uuid and s.split(":", 1)[1].strip() == acc_uuid:
-                return _allow()
-        return False
+        return _allow()
 
     def _find_rating_key(self, raw: dict[str, Any]) -> int | None:
         if not isinstance(raw, dict):
@@ -742,22 +747,51 @@ class WatchService:
     def _resolve_account_from_session(self, session_key: str | None) -> str | None:
         if not (self._plex and session_key):
             return None
+        sk = str(session_key).strip()
+        if not sk:
+            return None
+        now = time.time()
+        cache = getattr(self, "_sess_user_cache", None)
+        if isinstance(cache, dict):
+            hit = cache.get(sk)
+            if hit and (now - float(hit[1])) < 15.0:
+                v = str(hit[0] or "").strip()
+                return v or None
         try:
             el: Any = self._plex.query("/status/sessions")
             if el is None or not hasattr(el, "iter"):
                 return None
+            name: str | None = None
             for v in el.iter("Video"):
-                if v.get("sessionKey") == str(session_key):
+                if v.get("sessionKey") != sk:
+                    continue
+                acc = v.find("Account")
+                if acc is not None:
+                    for attr in ("name", "title", "username"):
+                        val = acc.get(attr)
+                        if val:
+                            name = str(val).strip()
+                            break
+                if not name:
                     u = v.find("User")
-                    return (u.get("title") if u is not None else None)
+                    if u is not None:
+                        val = u.get("username") or u.get("name") or u.get("title")
+                        if val:
+                            name = str(val).strip()
+                break
+            if name and isinstance(cache, dict):
+                cache[sk] = (name, now)
+            return name or None
         except Exception:
-            pass
-        return None
+            return None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
         try:
             if not self._plex:
                 return ev
+            acc = self._resolve_account_from_session(ev.session_key)
+            if acc and _norm_user(acc) != _norm_user(ev.account or ""):
+                ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
             rk = self._find_rating_key(ev.raw or {})
             if not rk:
                 if not ev.account:
@@ -898,9 +932,16 @@ class WatchService:
             except Exception:
                 pass
 
+            px = (cfg.get("plex") or {})
+            inst = {}
+            if self._instance_id and str(self._instance_id) != "default":
+                try:
+                    inst = ((px.get("instances") or {}).get(str(self._instance_id)) or {})
+                except Exception:
+                    inst = {}
             defaults = {
-                "username": (cfg.get("plex") or {}).get("username") or "",
-                "server_uuid": server_uuid or (cfg.get("plex") or {}).get("server_uuid") or "",
+                "username": str((inst.get("username") or px.get("username") or "")).strip(),
+                "server_uuid": str((server_uuid or inst.get("server_uuid") or px.get("server_uuid") or "")).strip(),
             }
 
             ev: ScrobbleEvent | None = None
@@ -924,6 +965,15 @@ class WatchService:
                 u = (defaults.get("username") or "").strip()
                 if u:
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": u})
+
+
+            acc = self._resolve_account_from_session(ev.session_key)
+            if acc and _norm_user(acc) != _norm_user(ev.account or ""):
+                ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
+
+            if not self._passes_filters(ev):
+                self._throttled_filtered_log(ev)
+                return
 
             ev = self._enrich_event_with_plex(ev)
             sk = str(ev.session_key) if ev.session_key else None
@@ -952,10 +1002,6 @@ class WatchService:
                 if pct != ev.progress:
                     self._dbg(f"progress normalized: {pct}%")
                     ev = ScrobbleEvent(**{**ev.__dict__, "progress": pct})
-
-            if not self._passes_filters(ev):
-                self._throttled_filtered_log(ev)
-                return
 
             self._log(
                 f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
