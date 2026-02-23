@@ -664,7 +664,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if limit and len(out) >= int(limit):
                 break
 
-        include_marked = bool(_history_cfg_get(adapter, "include_marked", True))
+        include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
         include_shadow = bool(_history_cfg_get(adapter, "include_shadow", True))
 
         if include_shadow:
