@@ -128,7 +128,7 @@ def _history_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]
     if hit_ts is None:
         return False
 
-    if watched_ts is not None and int(watched_ts) > int(hit_ts):
+    if watched_ts is not None and int(watched_ts) >= int(hit_ts):
         return False
 
     return True
