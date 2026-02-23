@@ -245,13 +245,61 @@ function ensurePlexInstanceUI() {
     el.textContent = text || "";
   }
 
+  function ensurePlexPanelNotice() {
+    const panel = q('#sec-plex .cw-meta-provider-panel[data-provider="plex"]');
+    if (!panel) return null;
+    let el = q('#plex_panel_notice', panel);
+    if (el) return el;
+
+    el = d.createElement('div');
+    el.id = 'plex_panel_notice';
+    el.className = 'hidden';
+    el.style.margin = '8px 0 2px';
+    el.style.padding = '8px 10px';
+    el.style.borderRadius = '8px';
+    el.style.border = '1px solid rgba(247,185,85,.35)';
+    el.style.background = 'rgba(247,185,85,.08)';
+    el.style.fontSize = '12px';
+    el.style.lineHeight = '1.35';
+
+    const head = q('.cw-panel-head', panel);
+    if (head && head.parentNode) {
+      head.insertAdjacentElement('afterend', el);
+    } else {
+      panel.insertBefore(el, panel.firstChild || null);
+    }
+    return el;
+  }
+
+  function setPlexPanelNotice(kind, text) {
+    const el = ensurePlexPanelNotice();
+    if (!el) return;
+    if (!kind || !text) {
+      el.classList.add('hidden');
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = text || '';
+    const warn = String(kind || '').toLowerCase() === 'warn';
+    el.style.color = warn ? '#f7b955' : '';
+    el.style.borderColor = warn ? 'rgba(247,185,85,.35)' : 'rgba(120,120,120,.25)';
+    el.style.background = warn ? 'rgba(247,185,85,.08)' : 'rgba(120,120,120,.08)';
+  }
+
   function setPlexBannerDetail(kind, text) {
     const el = $("plex_msg_detail");
-    if (!el) return;
-    el.classList.remove("hidden", "warn");
-    if (!kind || !text) { el.classList.add("hidden"); el.textContent = ""; return; }
-    if (kind) el.classList.add(kind);
-    el.textContent = text || "";
+    if (el) {
+      el.classList.remove("hidden", "warn");
+      if (!kind || !text) {
+        el.classList.add("hidden");
+        el.textContent = "";
+      } else {
+        if (kind) el.classList.add(kind);
+        el.textContent = text || "";
+      }
+    }
+    setPlexPanelNotice(kind, text);
   }
 
   function setPlexSuccess(on, text) {
